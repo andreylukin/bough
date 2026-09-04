@@ -183,3 +183,28 @@ func TestCatalogueAnswersForUnlistedModels(t *testing.T) {
 		t.Fatalf("override source: %q", src)
 	}
 }
+
+// Caching only pays if it is priced as caching: a cached read is a
+// tenth of the input rate, so billing it as fresh input would hide the
+// saving and overstate the bill.
+func TestCachedInputIsPricedAsCached(t *testing.T) {
+	l := &stubLLM{model: "claude-opus-5", u: llm.Usage{
+		InputTokens: 100_000, OutputTokens: 1_000,
+		CacheReadTokens: 90_000, CacheCreationTokens: 5_000,
+	}}
+	s := &Service{rep: l, model: l.Model, plugin: func() string { return "llm-anthropic" }, table: Table{}}
+	got := s.Usage().Cost
+
+	// opus-5: 5 in, 25 out, 0.5 cache read, 6.25 cache write.
+	want := 5_000*5.0/1e6 + 90_000*0.5/1e6 + 5_000*6.25/1e6 + 1_000*25.0/1e6
+	if math.Abs(got-want) > 1e-9 {
+		t.Fatalf("cost = %f, want %f", got, want)
+	}
+	// Priced as if nothing were cached, it would be much more.
+	if flat := 100_000*5.0/1e6 + 1_000*25.0/1e6; got >= flat {
+		t.Fatalf("caching did not reduce the bill: %f vs %f", got, flat)
+	}
+	if pct := s.Usage().Cached(); pct != 90 {
+		t.Fatalf("cached share = %d%%, want 90", pct)
+	}
+}

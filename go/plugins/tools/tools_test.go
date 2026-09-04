@@ -127,8 +127,10 @@ func TestViewAndPatch(t *testing.T) {
 	if got, _ := view(path, 1, 3); got != "1│one\n2│2\n3│2b\n" {
 		t.Fatalf("after patch: %q", got)
 	}
+	// Two writes to the same path count once: a turn that edits a file
+	// three times used to end with "✔ wrote a.txt, a.txt, a.txt".
 	files, _, _ := st.Take()
-	if len(files) != 2 {
+	if len(files) != 1 || !strings.HasSuffix(files[0], "a.txt") {
 		t.Fatalf("stats files = %v", files)
 	}
 }
@@ -234,5 +236,49 @@ func TestViewMissingFileSuggestsNeighbours(t *testing.T) {
 	}
 	if _, err := (&Stats{}).patch(dir+"/turn.go", "a", "b"); err == nil || !strings.Contains(err.Error(), "loop.go") {
 		t.Fatalf("patch suggests neighbours too: %v", err)
+	}
+}
+
+// A not-found patch points at what is nearly there: "hellp" is a typo
+// of "hello", so the error shows that line's neighbourhood.
+func TestPatchNotFoundShowsClosestMatch(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/f.txt"
+	if err := os.WriteFile(path, []byte("hello\nworld\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := (&Stats{}).patch(path, "hellp", "hi")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !strings.Contains(err.Error(), "old text not found") {
+		t.Fatalf("error should keep the old message: %v", err)
+	}
+	if !strings.Contains(err.Error(), "closest match near line 1") || !strings.Contains(err.Error(), "hello") {
+		t.Fatalf("error should show the closest match's neighbourhood: %v", err)
+	}
+}
+
+func TestClosestMatch(t *testing.T) {
+	if line, ok := closestMatch("aa\nbb\ncc\n", "bb\ncc"); line != 3 || !ok {
+		t.Fatalf("closest to \"bb\\ncc\" = line %d, %v; want 3, true", line, ok)
+	}
+	if line, ok := closestMatch("hello\nworld\n", "hellp"); line != 1 || !ok {
+		t.Fatalf("closest to \"hellp\" = line %d, %v; want 1, true", line, ok)
+	}
+	if _, ok := closestMatch("one line\n", ""); ok {
+		t.Fatal("an empty old has no match")
+	}
+	if _, ok := closestMatch("one\n", "two\nlines\n"); ok {
+		t.Fatal("a file shorter than old has no window")
+	}
+	if d := editDistance("kitten", "sitting"); d != 3 {
+		t.Fatalf("editDistance(kitten, sitting) = %d, want 3", d)
+	}
+	if got := nearestLines("a\nb\nc\nd\ne\n", 3, 2); got != "1│a\n2│b\n3│c\n4│d\n5│e\n" {
+		t.Fatalf("nearestLines = %q", got)
+	}
+	if got := nearestLines("a\nb\n", 99, 2); got != "" {
+		t.Fatalf("nearestLines past EOF = %q, want empty", got)
 	}
 }

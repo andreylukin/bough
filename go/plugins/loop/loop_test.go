@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/andreylukin/bough/internal/schema"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -222,6 +223,67 @@ func TestTruncateKeepsUTF8Whole(t *testing.T) {
 		if !strings.Contains(out, "bytes cut") {
 			t.Fatalf("n=%d: no marker: %q", n, out)
 		}
+	}
+}
+
+// capOutput spills the whole oversized result to a file and names the
+// file and its line count: the cut middle is a grep away, not gone.
+func TestCapOutputSpillsOversizedResult(t *testing.T) {
+	spillDirOverride = t.TempDir()
+	defer func() { spillDirOverride = "" }()
+	s := "HEAD" + strings.Repeat("x", 5000) + "TAIL"
+	got := capOutput(s, 400)
+	if !strings.HasPrefix(got, "HEAD") {
+		t.Fatalf("the head must survive: %.20q", got)
+	}
+	if !strings.Contains(got, "TAIL") || !strings.Contains(got, "bytes cut") {
+		t.Fatalf("the preview must keep the tail and name the cut: %q", got[len(got)-80:])
+	}
+	if !strings.Contains(got, spillDirOverride) {
+		t.Fatalf("the spill path must be named: %q", got)
+	}
+	if !strings.Contains(got, "1 lines;") {
+		t.Fatalf("the line count must be named: %q", got)
+	}
+	entries, err := os.ReadDir(spillDirOverride)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected exactly one spill file, got %d (err %v)", len(entries), err)
+	}
+	data, err := os.ReadFile(filepath.Join(spillDirOverride, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != s {
+		t.Fatal("the spill file must hold the whole result")
+	}
+}
+
+// capOutput degrades to the bare cut when the spill write fails.
+func TestCapOutputKeepsCutWhenSpillFails(t *testing.T) {
+	notDir := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(notDir, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spillDirOverride = notDir
+	defer func() { spillDirOverride = "" }()
+	got := capOutput("HEAD"+strings.Repeat("x", 5000)+"TAIL", 400)
+	if !strings.Contains(got, "bytes cut") {
+		t.Fatalf("the cut must still be named: %q", got)
+	}
+	if strings.Contains(got, "full output saved") {
+		t.Fatalf("no spill line when the write failed: %q", got)
+	}
+}
+
+// capOutput leaves a result under the cap exactly as it came.
+func TestCapOutputLeavesSmallResultsAlone(t *testing.T) {
+	spillDirOverride = t.TempDir()
+	defer func() { spillDirOverride = "" }()
+	if got := capOutput("small", 400); got != "small" {
+		t.Fatalf("small result must pass through unchanged: %q", got)
+	}
+	if entries, err := os.ReadDir(spillDirOverride); err != nil || len(entries) != 0 {
+		t.Fatalf("nothing should be spilled: %d file(s) (err %v)", len(entries), err)
 	}
 }
 

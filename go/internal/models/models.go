@@ -42,14 +42,33 @@ const URL = "https://models.dev/api.json"
 // refresh is started. Prices move on the scale of months.
 const maxAge = 7 * 24 * time.Hour
 
+// cacheVersion is the shape of ~/.bough/models.json. A cache written
+// by an older bough is missing whatever fields were added since — the
+// prompt-cache rates landed this way, and a week-old cache silently
+// priced every cached token at the full rate. A cache from another
+// version is ignored and refetched.
+const cacheVersion = 2
+
+// cacheFile is what the cache holds: the catalogue plus its version.
+type cacheFile struct {
+	Version   int       `json:"v"`
+	Catalogue Catalogue `json:"c"`
+}
+
 // Model is what bough needs to know about one model.
 type Model struct {
-	Input   float64  `json:"i,omitempty"` // $ per million input tokens
-	Output  float64  `json:"o,omitempty"` // $ per million output tokens
-	Tiers   []Tier   `json:"t,omitempty"` // price steps by context size
-	Context int      `json:"c,omitempty"` // context window in tokens
-	Release string   `json:"r,omitempty"` // release date, "YYYY-MM-DD"
-	Efforts []string `json:"e,omitempty"` // reasoning levels it accepts
+	Input  float64 `json:"i,omitempty"` // $ per million input tokens
+	Output float64 `json:"o,omitempty"` // $ per million output tokens
+	// CacheRead/CacheWrite are the prompt-cache rates: a cached read
+	// is a tenth of the input price on Anthropic, a write a little
+	// over. Without them a cached turn is billed as if nothing were
+	// cached, which is the opposite of the truth.
+	CacheRead  float64  `json:"cr,omitempty"`
+	CacheWrite float64  `json:"cw,omitempty"`
+	Tiers      []Tier   `json:"t,omitempty"` // price steps by context size
+	Context    int      `json:"c,omitempty"` // context window in tokens
+	Release    string   `json:"r,omitempty"` // release date, "YYYY-MM-DD"
+	Efforts    []string `json:"e,omitempty"` // reasoning levels it accepts
 }
 
 // Tier is a price that applies once a request's input passes Over
@@ -132,13 +151,33 @@ func Lookup(plugin, model string) (Model, bool) {
 // the request passes wins, which is how OpenAI's long-context
 // surcharge works.
 func (m Model) Cost(in, out int) float64 {
+	return m.CostCached(in, out, 0, 0)
+}
+
+// CostCached prices a request whose input was partly served from the
+// prompt cache. read and write are counted inside in (the providers
+// report them that way), so they are subtracted before the full rate
+// applies and charged at their own. A model with no cache rates falls
+// back to the input rate, which is what was charged before caching.
+func (m Model) CostCached(in, out, read, write int) float64 {
 	inRate, outRate := m.Input, m.Output
 	for _, t := range m.Tiers {
 		if in >= t.Over && t.Input > 0 {
 			inRate, outRate = t.Input, t.Output
 		}
 	}
-	return float64(in)*inRate/1e6 + float64(out)*outRate/1e6
+	readRate, writeRate := m.CacheRead, m.CacheWrite
+	if readRate == 0 {
+		readRate = inRate
+	}
+	if writeRate == 0 {
+		writeRate = inRate
+	}
+	full := in - read - write
+	if full < 0 {
+		full = 0
+	}
+	return (float64(full)*inRate + float64(read)*readRate + float64(write)*writeRate + float64(out)*outRate) / 1e6
 }
 
 // List is a provider's model ids, newest first (undated ones last,
@@ -222,7 +261,7 @@ func refresh() {
 	out := loaded
 	mu.Unlock()
 	if p := cachePath(); p != "" {
-		if b, err := json.Marshal(out); err == nil {
+		if b, err := json.Marshal(cacheFile{Version: cacheVersion, Catalogue: out}); err == nil {
 			_ = os.MkdirAll(filepath.Dir(p), 0o755)
 			tmp := p + ".tmp"
 			if os.WriteFile(tmp, b, 0o644) == nil {
@@ -271,22 +310,29 @@ func fetch(ctx context.Context, url string) (Catalogue, error) {
 	return Trim(b)
 }
 
-// decode reads a cached catalogue (already trimmed).
+// decode reads a cached catalogue (already trimmed). A file from a
+// different cacheVersion is refused, so it is refetched rather than
+// answering with fields it never had.
 func decode(b []byte) (Catalogue, error) {
-	var c Catalogue
-	if err := json.Unmarshal(b, &c); err != nil {
+	var f cacheFile
+	if err := json.Unmarshal(b, &f); err != nil {
 		return nil, err
 	}
-	return c, nil
+	if f.Version != cacheVersion {
+		return nil, errors.New("models: cache written by another version")
+	}
+	return f.Catalogue, nil
 }
 
 // upstream is the slice of models.dev's api.json Trim reads.
 type upstream map[string]struct {
 	Models map[string]struct {
 		Cost *struct {
-			Input  float64 `json:"input"`
-			Output float64 `json:"output"`
-			Tiers  []struct {
+			Input      float64 `json:"input"`
+			Output     float64 `json:"output"`
+			CacheRead  float64 `json:"cache_read"`
+			CacheWrite float64 `json:"cache_write"`
+			Tiers      []struct {
 				Input  float64 `json:"input"`
 				Output float64 `json:"output"`
 				Tier   struct {
@@ -325,6 +371,7 @@ func Trim(b []byte) (Catalogue, error) {
 			e := Model{Release: m.Release}
 			if m.Cost != nil {
 				e.Input, e.Output = m.Cost.Input, m.Cost.Output
+				e.CacheRead, e.CacheWrite = m.Cost.CacheRead, m.Cost.CacheWrite
 				for _, t := range m.Cost.Tiers {
 					if t.Tier.Size > 0 {
 						e.Tiers = append(e.Tiers, Tier{Over: t.Tier.Size, Input: t.Input, Output: t.Output})

@@ -1271,7 +1271,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 				}
 				out += "error: " + runErr.Error()
 			}
-			out = truncate(noneNoted(out), maxResultBytes)
+			out = capOutput(noneNoted(out), maxResultBytes)
 			if dropped > 0 {
 				out += fmt.Sprintf("\n\n[only the first of your %d code blocks ran. Write ONE block per reply, read its output, then decide the next one.]", dropped+1)
 			}
@@ -1348,6 +1348,55 @@ func truncate(s string, n int) string {
 		tail--
 	}
 	return fmt.Sprintf("%s\n… [%d bytes cut] …\n%s", s[:head], len(s)-head-tail, s[len(s)-tail:])
+}
+
+// spillDirOverride points the spill directory somewhere else (tests);
+// empty means ~/.bough/spill.
+var spillDirOverride string
+
+// writeSpill saves s to a new file under ~/.bough/spill and returns
+// its path. CreateTemp, not a numbered name: two loops in one process
+// (workers) must not race for one slot.
+func writeSpill(s string) (string, error) {
+	dir := spillDirOverride
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		dir = filepath.Join(home, ".bough", "spill")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	f, err := os.CreateTemp(dir, "result-*.log")
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.WriteString(s); err != nil {
+		f.Close()
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	return f.Name(), nil
+}
+
+// capOutput cuts a block result down to n bytes the way truncate
+// does, but saves the whole output first and appends the spill file's
+// path and line count, so the hidden middle is a grep away instead of
+// gone. When the spill write fails it degrades to the bare cut.
+func capOutput(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	if path, err := writeSpill(s); err == nil {
+		lines := strings.Count(strings.TrimRight(s, "\n"), "\n") + 1
+		return truncate(s, n) +
+			fmt.Sprintf("\n[full output saved to %s — %d lines; use tools.view or grep it]", path, lines)
+	}
+	return truncate(s, n)
 }
 
 type plugin struct{}

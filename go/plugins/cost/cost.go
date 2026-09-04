@@ -204,9 +204,11 @@ func (s *Service) Usage() llm.Usage {
 		return u
 	}
 	if m, _, ok := s.lookup(); ok {
-		// Cost applies tiered rates by input size: gpt-5.6-sol doubles
-		// above 272k tokens, which a flat price undercharged by half.
-		u.Cost = m.Cost(u.InputTokens, u.OutputTokens)
+		// Tiered rates by input size (gpt-5.6-sol doubles above 272k),
+		// and the prompt cache priced as a cache: a cached read is a
+		// tenth of the input rate, so billing it as fresh input would
+		// hide the saving caching exists for.
+		u.Cost = m.CostCached(u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheCreationTokens)
 		u.Priced = true
 	}
 	return u

@@ -70,9 +70,14 @@ func (s *Stats) Take() (files []string, exit int, ran bool) {
 	return files, exit, ran
 }
 
+// wrote records a file this turn touched, once: a turn that edits the
+// same file three times ended with "✔ wrote llm.go, llm.go, llm.go".
 func (s *Stats) wrote(path string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if slices.Contains(s.files, path) {
+		return
+	}
 	s.files = append(s.files, path)
 }
 
@@ -379,6 +384,83 @@ func withNeighbours(path string, err error) error {
 	return fmt.Errorf("%w — %s holds: %s", err, dir, strings.Join(list, " "))
 }
 
+// closestMatch returns the 1-based line of the run of lines (as many
+// as old spans) in data most similar to old, and whether the file has
+// one: a model that mistyped its old text or copied it from an older
+// version of the file should be shown what is nearly there, not left
+// to view the whole file and guess again. Ties go to the earliest
+// window. Pure.
+func closestMatch(data, old string) (int, bool) {
+	if old == "" {
+		return 0, false
+	}
+	ls := splitLines(data)
+	n := strings.Count(old, "\n") + 1
+	if len(ls) < n {
+		return 0, false
+	}
+	best, bestDist := 0, -1
+	for i := 0; i+n <= len(ls); i++ {
+		w := strings.Join(ls[i:i+n], "\n")
+		// |len(a)-len(b)| is a lower bound on the distance: skip
+		// windows that cannot beat the best so far, so a long file
+		// with a good early match stays cheap.
+		gap := len(w) - len(old)
+		if gap < 0 {
+			gap = -gap
+		}
+		if bestDist >= 0 && gap >= bestDist {
+			continue
+		}
+		if d := editDistance(old, w); bestDist < 0 || d < bestDist {
+			best, bestDist = i+n/2+1, d
+		}
+	}
+	return best, true
+}
+
+// editDistance is the Levenshtein distance between a and b: how many
+// single-character insertions, deletions or replacements turn a into
+// b. Pure.
+func editDistance(a, b string) int {
+	ar, br := []rune(a), []rune(b)
+	prev := make([]int, len(br)+1)
+	cur := make([]int, len(br)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ar); i++ {
+		cur[0] = i
+		for j := 1; j <= len(br); j++ {
+			cost := 1
+			if ar[i-1] == br[j-1] {
+				cost = 0
+			}
+			cur[j] = min(min(cur[j-1]+1, prev[j]+1), prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(br)]
+}
+
+// nearestLines renders the lines of data around line at (1-based),
+// lines on each side, numbered "N│text" like view: the neighbourhood
+// the model should have copied old from. "" when at is outside the
+// file.
+func nearestLines(data string, at, lines int) string {
+	ls := splitLines(data)
+	if at < 1 || at > len(ls) {
+		return ""
+	}
+	lo, hi := max(at-lines, 1), min(at+lines, len(ls))
+	width := len(strconv.Itoa(hi))
+	var b strings.Builder
+	for n := lo; n <= hi; n++ {
+		fmt.Fprintf(&b, "%*d│%s\n", width, n, ls[n-1])
+	}
+	return b.String()
+}
+
 // patch replaces one exact occurrence of old with new in path. old
 // must match exactly once (include more context when it repeats). An
 // empty old creates the file with new when it does not exist yet.
@@ -410,6 +492,11 @@ func (s *Stats) patch(path, old, new string) (string, error) {
 	}
 	switch n := strings.Count(string(data), old); n {
 	case 0:
+		if line, ok := closestMatch(string(data), old); ok {
+			if near := nearestLines(string(data), line, 2); near != "" {
+				return "", fmt.Errorf("patch: old text not found in %s (view it and copy the exact lines) — closest match near line %d:\n%s", path, line, near)
+			}
+		}
 		return "", fmt.Errorf("patch: old text not found in %s (view it and copy the exact lines)", path)
 	case 1:
 	default:

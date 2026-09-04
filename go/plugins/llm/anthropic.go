@@ -72,7 +72,12 @@ func (a *anthropicLLM) params(system string, messages []Message) anthropic.Messa
 		MaxTokens: 4096,
 	}
 	if system != "" {
-		params.System = []anthropic.TextBlockParam{{Text: system}}
+		// cache_control on the system prompt lets Anthropic reuse it
+		// across turns instead of re-reading it every request.
+		params.System = []anthropic.TextBlockParam{{
+			Text:         system,
+			CacheControl: anthropic.NewCacheControlEphemeralParam(),
+		}}
 	}
 	for _, m := range messages {
 		block := anthropic.NewTextBlock(m.Content)
@@ -112,15 +117,15 @@ func (a *anthropicLLM) stream(ctx context.Context, system string, messages []Mes
 	stream := a.client.Messages.NewStreaming(ctx, a.params(system, messages))
 	defer stream.Close()
 	var out strings.Builder
-	var in, outTok int
+	var in, outTok, cacheRead, cacheCreate int
 	for stream.Next() {
 		switch ev := stream.Current().AsAny().(type) {
 		case anthropic.MessageStartEvent:
 			// InputTokens excludes cache_read/cache_creation tokens;
-			// nothing sets cache_control today, so it is the whole
-			// prompt. Sum the three once caching lands or the
-			// context % reads ~0.
+			// sum the three so the context % reads the whole prompt.
 			in += int(ev.Message.Usage.InputTokens)
+			cacheRead += int(ev.Message.Usage.CacheReadInputTokens)
+			cacheCreate += int(ev.Message.Usage.CacheCreationInputTokens)
 		case anthropic.MessageDeltaEvent:
 			outTok += int(ev.Usage.OutputTokens)
 		case anthropic.ContentBlockDeltaEvent:
@@ -134,9 +139,11 @@ func (a *anthropicLLM) stream(ctx context.Context, system string, messages []Mes
 		return "", a.wrapErr(err)
 	}
 	a.mu.Lock()
-	a.usage.InputTokens += in
+	a.usage.InputTokens += in + cacheRead + cacheCreate
 	a.usage.OutputTokens += outTok
-	a.usage.LastInputTokens = in
+	a.usage.LastInputTokens = in + cacheRead + cacheCreate
+	a.usage.CacheReadTokens += cacheRead
+	a.usage.CacheCreationTokens += cacheCreate
 	a.mu.Unlock()
 	return out.String(), nil
 }
@@ -156,10 +163,13 @@ func (a *anthropicLLM) complete(ctx context.Context, system string, messages []M
 	if err != nil {
 		return "", a.wrapErr(err)
 	}
+	in := int(resp.Usage.InputTokens) + int(resp.Usage.CacheReadInputTokens) + int(resp.Usage.CacheCreationInputTokens)
 	a.mu.Lock()
-	a.usage.InputTokens += int(resp.Usage.InputTokens)
+	a.usage.InputTokens += in
 	a.usage.OutputTokens += int(resp.Usage.OutputTokens)
-	a.usage.LastInputTokens = int(resp.Usage.InputTokens)
+	a.usage.LastInputTokens = in
+	a.usage.CacheReadTokens += int(resp.Usage.CacheReadInputTokens)
+	a.usage.CacheCreationTokens += int(resp.Usage.CacheCreationInputTokens)
 	a.mu.Unlock()
 	var out strings.Builder
 	for _, b := range resp.Content {

@@ -98,12 +98,16 @@ func Name(l LLM) string {
 // LastInputTokens is the most recent request's input alone — the
 // size of the context the model last saw — for the status bar's
 // context percentage; 0 when the provider reports no per-request usage.
+// CacheReadTokens/CacheCreationTokens are Anthropic prompt-cache
+// counters; they overlap InputTokens, which already sums all three.
 type Usage struct {
-	InputTokens     int
-	OutputTokens    int
-	LastInputTokens int
-	Cost            float64
-	Priced          bool
+	InputTokens         int
+	OutputTokens        int
+	LastInputTokens     int
+	CacheReadTokens     int
+	CacheCreationTokens int
+	Cost                float64
+	Priced              bool
 }
 
 // Modeler is the optional seam naming the model an llm service runs;
@@ -116,6 +120,16 @@ type Modeler interface {
 // status bar and /cost; a provider that cannot count stays silent.
 type UsageReporter interface {
 	Usage() Usage
+}
+
+// Cached is the share of input tokens served from the prompt cache,
+// 0 when nothing was (or the provider does not report it). /cost shows
+// it: a session whose cache is working reads mostly from it.
+func (u Usage) Cached() int {
+	if u.InputTokens <= 0 {
+		return 0
+	}
+	return u.CacheReadTokens * 100 / u.InputTokens
 }
 
 // String renders the tally as "in/out tokens" plus the cost when

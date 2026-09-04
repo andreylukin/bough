@@ -16,6 +16,42 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+// taskLabel is what a card shows for its task. Sibling cards spawned
+// together usually share an opening ("You are working in /tmp/x; the
+// repo is…"), which made three cards read identically; the shared
+// opening is dropped so the distinguishing part is what you see.
+func (m *model) taskLabel(b *block) string {
+	label := b.label
+	prefix := ""
+	for i := range m.blocks {
+		o := &m.blocks[i]
+		if o.kind != "spawn" || o.sub == nil || b.sub == nil || o.sub.worker == b.sub.worker {
+			continue
+		}
+		if p := commonPrefixOf(label, o.label); len(p) > len(prefix) {
+			prefix = p
+		}
+	}
+	// Only a substantial shared opening is worth hiding, and only at a
+	// word boundary, so the remainder still reads as a sentence.
+	if len(prefix) >= 24 {
+		if i := strings.LastIndexAny(prefix, " ;:,"); i > 0 {
+			return strings.TrimLeft(label[i+1:], " ;:,")
+		}
+	}
+	return label
+}
+
+// commonPrefixOf is the shared opening of two strings, in bytes.
+func commonPrefixOf(a, b string) string {
+	n := min(len(a), len(b))
+	i := 0
+	for i < n && a[i] == b[i] {
+		i++
+	}
+	return a[:i]
+}
+
 // line is one sanitized line of s, cut to n runes.
 func line(s string, n int) string {
 	s = strings.SplitN(strings.TrimSpace(sanitizeText(s)), "\n", 2)[0]
@@ -162,7 +198,7 @@ func (m *model) renderSpawn(b *block, th theme) string {
 	}
 	parts := []string{fmt.Sprintf("subagent %d", s.worker)}
 	if b.collapsed {
-		task := line(b.label, 44)
+		task := line(m.taskLabel(b), 44)
 		if task == "" {
 			task = "task"
 		}

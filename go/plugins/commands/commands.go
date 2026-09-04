@@ -297,6 +297,17 @@ func Ellipsize(s string, n int) string {
 
 // costText is /cost: the llm service's running tally, when it reports
 // one.
+// tokens renders a count the way the status bar does.
+func tokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1e3)
+	}
+	return fmt.Sprint(n)
+}
+
 func costText(ctx *kernel.Context) (string, error) {
 	// The cost row's priced view first (it also says where the price
 	// came from); the llm's own tally otherwise.
@@ -311,6 +322,12 @@ func costText(ctx *kernel.Context) (string, error) {
 		return "cost: nothing used yet this session", nil
 	}
 	out := "cost: " + u.String()
+	if pct := u.Cached(); pct > 0 {
+		// What the prompt cache is doing for you: a working cache reads
+		// most of its input at a tenth of the price.
+		out += fmt.Sprintf("\ncache: %d%% of input read from the prompt cache (%s cached, %s written)",
+			pct, tokens(u.CacheReadTokens), tokens(u.CacheCreationTokens))
+	}
 	if s, ok := rep.(interface{ Source() string }); ok {
 		out += " — " + s.Source()
 	} else if !u.Priced {

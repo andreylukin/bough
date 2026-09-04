@@ -144,3 +144,53 @@ func TestMergeKeepsMissingProviders(t *testing.T) {
 		t.Fatalf("anthropic was not replaced: %v", got)
 	}
 }
+
+// A cache written by an older bough is missing whatever fields were
+// added since — the prompt-cache rates landed that way, and a
+// week-old cache would have priced every cached token at the full
+// rate. Only this version's cache is read.
+func TestCacheVersionIsChecked(t *testing.T) {
+	current, err := json.Marshal(cacheFile{Version: cacheVersion,
+		Catalogue: Catalogue{"anthropic": {"m": {Input: 1, CacheRead: 0.1}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := decode(current)
+	if err != nil || c["anthropic"]["m"].CacheRead != 0.1 {
+		t.Fatalf("this version's cache did not read back: %v %v", c, err)
+	}
+
+	old := []byte(`{"anthropic":{"m":{"i":1}}}`) // the pre-version layout
+	if _, err := decode(old); err == nil {
+		t.Fatal("a cache with no version must be refused, not trusted")
+	}
+	future, _ := json.Marshal(cacheFile{Version: cacheVersion + 1, Catalogue: Catalogue{"a": {}}})
+	if _, err := decode(future); err == nil {
+		t.Fatal("a newer cache must be refused too")
+	}
+}
+
+// Cache rates come through the trim, and price a cached request.
+func TestCacheRatesSurviveTrimAndPrice(t *testing.T) {
+	c, err := Trim([]byte(`{"anthropic":{"models":{"m":{
+	   "cost":{"input":5,"output":25,"cache_read":0.5,"cache_write":6.25},
+	   "limit":{"context":100}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := c["anthropic"]["m"]
+	if m.CacheRead != 0.5 || m.CacheWrite != 6.25 {
+		t.Fatalf("rates lost in the trim: %+v", m)
+	}
+	// 5k fresh, 90k read from cache, 5k written, 1k out.
+	got := m.CostCached(100_000, 1_000, 90_000, 5_000)
+	want := 5_000*5.0/1e6 + 90_000*0.5/1e6 + 5_000*6.25/1e6 + 1_000*25.0/1e6
+	if math.Abs(got-want) > 1e-9 {
+		t.Fatalf("CostCached = %f, want %f", got, want)
+	}
+	// A model with no cache rates charges the input rate, as before.
+	plain := Model{Input: 3, Output: 15}
+	if got, want := plain.CostCached(1_000, 0, 500, 0), 3*1_000/1e6; math.Abs(got-want) > 1e-9 {
+		t.Fatalf("no-rate fallback = %f, want %f", got, want)
+	}
+}
