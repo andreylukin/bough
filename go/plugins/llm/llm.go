@@ -98,8 +98,9 @@ func Name(l LLM) string {
 // LastInputTokens is the most recent request's input alone — the
 // size of the context the model last saw — for the status bar's
 // context percentage; 0 when the provider reports no per-request usage.
-// CacheReadTokens/CacheCreationTokens are Anthropic prompt-cache
-// counters; they overlap InputTokens, which already sums all three.
+// CacheReadTokens/CacheCreationTokens are prompt-cache counters; they
+// overlap InputTokens: Anthropic reports them beside it (the plugin
+// sums the three), OpenAI and OpenRouter inside it.
 type Usage struct {
 	InputTokens         int
 	OutputTokens        int

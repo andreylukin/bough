@@ -192,6 +192,11 @@ type openaiResponse struct {
 	Usage *struct {
 		InputTokens  int `json:"input_tokens"`
 		OutputTokens int `json:"output_tokens"`
+		// OpenAI caches prompts automatically; cached_tokens is the
+		// share served from the cache, counted inside input_tokens.
+		InputTokensDetails *struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"input_tokens_details"`
 	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
@@ -222,10 +227,15 @@ func (o *openaiLLM) finish(r *openaiResponse) (string, error) {
 	var out strings.Builder
 	out.WriteString(strings.Join(parts, "\n\n"))
 	if u := r.Usage; u != nil {
+		cached := 0
+		if u.InputTokensDetails != nil {
+			cached = u.InputTokensDetails.CachedTokens
+		}
 		o.mu.Lock()
 		o.usage.InputTokens += u.InputTokens
 		o.usage.OutputTokens += u.OutputTokens
 		o.usage.LastInputTokens = u.InputTokens
+		o.usage.CacheReadTokens += cached
 		o.mu.Unlock()
 	}
 	if r.Status == "incomplete" && r.IncompleteDetails != nil && r.IncompleteDetails.Reason == "max_output_tokens" {

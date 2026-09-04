@@ -84,3 +84,21 @@ func TestOpenaiJoinsMessageItems(t *testing.T) {
 		t.Fatalf("finish() = %q, want %q", got, want)
 	}
 }
+
+// OpenAI caches prompts automatically; the response's
+// input_tokens_details.cached_tokens must land in CacheReadTokens.
+func TestOpenaiUsageCache(t *testing.T) {
+	var r openaiResponse
+	body := `{"status":"completed","output":[],"usage":{"input_tokens":100,"output_tokens":5,"input_tokens_details":{"cached_tokens":90}}}`
+	if err := json.Unmarshal([]byte(body), &r); err != nil {
+		t.Fatal(err)
+	}
+	o := &openaiLLM{}
+	if _, err := o.finish(&r); err != nil {
+		t.Fatal(err)
+	}
+	u := o.Usage()
+	if u.InputTokens != 100 || u.CacheReadTokens != 90 {
+		t.Fatalf("usage = %+v, want InputTokens 100, CacheReadTokens 90", u)
+	}
+}

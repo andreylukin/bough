@@ -69,6 +69,28 @@ type orMessage struct {
 	Content string `json:"content"`
 }
 
+// orRequestMessage is an outgoing message. Content is the usual
+// string, or OpenRouter's array of text parts when the system prompt
+// is marked for caching (see orPart).
+type orRequestMessage struct {
+	Role    string `json:"role"`
+	Content any    `json:"content"`
+}
+
+// orPart is one text part of a request message; CacheControl marks it
+// as a cache breakpoint, OpenRouter's normalised form — translated to
+// prompt_cache_breakpoint toward OpenAI models, and for Anthropic
+// models the only way anything is cached at all.
+type orPart struct {
+	Type         string          `json:"type"`
+	Text         string          `json:"text,omitempty"`
+	CacheControl *orCacheControl `json:"cache_control,omitempty"`
+}
+
+type orCacheControl struct {
+	Type string `json:"type"`
+}
+
 func (o *openrouterLLM) Complete(ctx context.Context, system string, messages []Message) (string, error) {
 	return o.call(ctx, system, messages, nil, nil)
 }
@@ -117,16 +139,24 @@ func (o *openrouterLLM) call(ctx context.Context, system string, messages []Mess
 		return "", o.err
 	}
 
-	var msgs []orMessage
+	var msgs []orRequestMessage
 	if system != "" {
-		msgs = append(msgs, orMessage{Role: "system", Content: system})
+		// cache_control on the system prompt as text parts: the same
+		// marker llm-anthropic sends natively. Anthropic models behind
+		// OpenRouter cache nothing without it; providers that cache
+		// automatically ignore or translate it.
+		msgs = append(msgs, orRequestMessage{Role: "system", Content: []orPart{{
+			Type:         "text",
+			Text:         system,
+			CacheControl: &orCacheControl{Type: "ephemeral"},
+		}}})
 	}
 	for _, m := range messages {
 		role := m.Role
 		if role != "assistant" {
 			role = "user"
 		}
-		msgs = append(msgs, orMessage{Role: role, Content: m.Content})
+		msgs = append(msgs, orRequestMessage{Role: role, Content: m.Content})
 	}
 
 	payload := map[string]any{
@@ -193,9 +223,10 @@ func (o *openrouterLLM) parse(data []byte) (string, bool, error) {
 			Message string `json:"message"`
 		} `json:"error"`
 		Usage *struct {
-			PromptTokens     int     `json:"prompt_tokens"`
-			CompletionTokens int     `json:"completion_tokens"`
-			Cost             float64 `json:"cost"`
+			PromptTokens        int                    `json:"prompt_tokens"`
+			CompletionTokens    int                    `json:"completion_tokens"`
+			Cost                float64                `json:"cost"`
+			PromptTokensDetails *orPromptTokensDetails `json:"prompt_tokens_details"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &parsed); err != nil {
@@ -208,18 +239,31 @@ func (o *openrouterLLM) parse(data []byte) (string, bool, error) {
 		return "", false, fmt.Errorf("llm-openrouter: no choices in response")
 	}
 	if u := parsed.Usage; u != nil {
-		o.addUsage(u.PromptTokens, u.CompletionTokens, u.Cost)
+		o.addUsage(u.PromptTokens, u.CompletionTokens, u.Cost, u.PromptTokensDetails)
 	}
 	return parsed.Choices[0].Message.Content, false, nil
 }
 
-func (o *openrouterLLM) addUsage(in, out int, cost float64) {
+// orPromptTokensDetails is OpenRouter's cache counters, counted
+// inside prompt_tokens: cached_tokens read from the cache,
+// cache_write_tokens written to it (the first request of a
+// conversation).
+type orPromptTokensDetails struct {
+	CachedTokens     int `json:"cached_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens"`
+}
+
+func (o *openrouterLLM) addUsage(in, out int, cost float64, d *orPromptTokensDetails) {
 	o.mu.Lock()
 	o.usage.InputTokens += in
 	o.usage.OutputTokens += out
 	o.usage.LastInputTokens = in
 	o.usage.Cost += cost
 	o.usage.Priced = true
+	if d != nil {
+		o.usage.CacheReadTokens += d.CachedTokens
+		o.usage.CacheCreationTokens += d.CacheWriteTokens
+	}
 	o.mu.Unlock()
 }
 
@@ -257,9 +301,10 @@ func (o *openrouterLLM) readStream(body io.Reader, onDelta, onThink func(string)
 				Message string `json:"message"`
 			} `json:"error"`
 			Usage *struct {
-				PromptTokens     int     `json:"prompt_tokens"`
-				CompletionTokens int     `json:"completion_tokens"`
-				Cost             float64 `json:"cost"`
+				PromptTokens        int                    `json:"prompt_tokens"`
+				CompletionTokens    int                    `json:"completion_tokens"`
+				Cost                float64                `json:"cost"`
+				PromptTokensDetails *orPromptTokensDetails `json:"prompt_tokens_details"`
 			} `json:"usage"`
 		}
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
@@ -286,7 +331,7 @@ func (o *openrouterLLM) readStream(body io.Reader, onDelta, onThink func(string)
 			}
 		}
 		if u := chunk.Usage; u != nil {
-			o.addUsage(u.PromptTokens, u.CompletionTokens, u.Cost)
+			o.addUsage(u.PromptTokens, u.CompletionTokens, u.Cost, u.PromptTokensDetails)
 		}
 	}
 	if err := sc.Err(); err != nil {
