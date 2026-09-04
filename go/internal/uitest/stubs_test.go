@@ -309,7 +309,9 @@ func TestToolOutputShapes(t *testing.T) {
 		{"empty", "true", nil, []string{"✗"}},
 		{"stderr", "echo to-stderr 1>&2", []string{"to-stderr"}, nil},
 		{"exit-code", "echo partial; exit 3", []string{"exit status 3", "partial"}, nil},
-		{"many-lines", "seq 1 3000", []string{"[truncated]"}, nil}, // 8 KiB cap; the cut is announced at the box's end
+		// Over the 64 KiB cap: the cut keeps both ends, so the LAST line
+		// of a huge result still reaches the model.
+		{"many-lines", "seq 1 20000", []string{"20000"}, nil},
 		{"long-line", "head -c 12000 /dev/zero | tr '\\0' x", []string{"xxxxxxxx"}, nil},
 		{"ansi", "printf '\\033[1;31mred\\033[0m plain'", []string{"red plain"}, []string{"[1;31m", "[0m"}},
 		{"osc-link", "printf '\\033]8;;http://x\\033\\\\linked\\033]8;;\\033\\\\'", []string{"linked"}, []string{"]8;;", "http://x"}},
