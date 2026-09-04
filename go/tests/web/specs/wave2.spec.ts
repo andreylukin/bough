@@ -92,8 +92,8 @@ test('/model shows the provider row and swaps to llm-echo live', async ({ launch
   const b = await launchBough({ sets: ['llm.plugin=llm-anthropic', 'llm.model=claude-test'] });
   await boot(page, b.url);
 
-  // No args: current row + catalog + usage.
-  await say(page, '/model');
+  // List: both rows, the providers, and the usage line.
+  await say(page, '/model list');
   await waitForTermText(page, 'model: llm-anthropic · claude-test');
   await waitForTermText(page, 'llm-openrouter');
   await waitForTermText(page, 'usage: /model');

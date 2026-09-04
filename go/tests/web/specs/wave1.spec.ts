@@ -8,7 +8,7 @@ import { boot, clickCell, findRow, say, termText, waitForTermText } from '../hel
 const askProvider = `
 bough.provider("asker", function (system, messages) {
   var last = messages[messages.length - 1].content;
-  if (last.indexOf("[tool output]") >= 0) return "final answer: " + last;
+  if (last.indexOf("[tool output]") >= 0) return "\\u0060\\u0060\\u0060stop\\nfinal answer: " + last + "\\n\\u0060\\u0060\\u0060";
   return "\\u0060\\u0060\\u0060js\\nconsole.log(tools.ask('fav color?', 'red', 'blue'))\\n\\u0060\\u0060\\u0060";
 });
 bough.setup({ provider: { default: "asker" } });
@@ -22,10 +22,10 @@ var fence = "\\u0060\\u0060\\u0060";
 bough.provider("spawner", function (system, messages) {
   var last = messages[messages.length - 1].content;
   if (system.indexOf("bough subagent") >= 0) {
-    if (last.indexOf("[tool output]") >= 0) return "CHILD_FINAL " + last;
+    if (last.indexOf("[tool output]") >= 0) return "\\u0060\\u0060\\u0060stop\\nCHILD_FINAL " + last + "\\n\\u0060\\u0060\\u0060";
     return fence + "js\\nconsole.log(tools.bash('echo from-child'))\\n" + fence;
   }
-  if (last.indexOf("[tool output]") >= 0) return "PARENT_FINAL " + last;
+  if (last.indexOf("[tool output]") >= 0) return "\\u0060\\u0060\\u0060stop\\nPARENT_FINAL " + last + "\\n\\u0060\\u0060\\u0060";
   return fence + "js\\nconsole.log(tools.spawn('run the echo'))\\n" + fence;
 });
 bough.setup({ provider: { default: "spawner" } });

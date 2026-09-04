@@ -136,7 +136,9 @@ func (m *model) runAction(name, via string, cfg *uiCfg) tea.Cmd {
 			m.flash = "no todo list yet (/todo add <text>)"
 			return nil
 		}
-		m.todoPinned = !m.todoPinned
+		// The strip shows itself; the key is how you put it away.
+		m.todoHidden = !m.todoHidden
+		m.layoutComposer()
 	case "external_editor":
 		if m.inspecting {
 			return nil

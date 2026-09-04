@@ -111,7 +111,7 @@ type model struct {
 	title      string         // the session's name (session-title plugin); "" until named
 	activity   string         // what the agent is doing now (activity plugin); "" when idle
 	pred       predictState   // the small model's guess at the rest of the draft (predict.go)
-	todoPinned bool           // todo list pinned above the composer (todo_toggle)
+	todoHidden bool           // the todo strip dismissed for now (todo_toggle)
 	sessRows   sessList       // mid-session picker list (see session.go); nil = launch picker
 	welcome    bool           // fresh-session orientation text (see welcomeView)
 	pendingAsk string         // ask id the composer routes answers to; "" = none
@@ -361,6 +361,16 @@ func (m *model) header(b *block, th theme) string {
 	// it only leaked internals. Unlabeled code and results keep their
 	// first line as the preview.
 	head := fmt.Sprintf("%s %s (%d %s)", glyph, tag, n, unit)
+	// A todo receipt shows no preview: the live list is pinned above
+	// the composer, and repeating its first line here prints the same
+	// item twice on one screen.
+	if b.kind == "todo" {
+		st := th["dim"]
+		if b.id == m.focusID {
+			st = th["focus"]
+		}
+		return st.Render(head)
+	}
 	if b.kind != "code" || tag == "code js" {
 		head += ": " + strings.SplitN(b.text, "\n", 2)[0]
 	}
@@ -811,13 +821,16 @@ func (m *model) addEvent(ev Event) {
 		if n := len(m.blocks); n > 0 {
 			if last := &m.blocks[n-1]; last.kind == "todo" ||
 				(last.kind == "system" && last.text == ev.Text) {
-				last.kind, last.text = "todo", ev.Text
+				last.kind, last.text, last.collapsed = "todo", ev.Text, true
 				m.refresh()
 				m.vp.GotoBottom()
 				return
 			}
 		}
-		m.blocks = append(m.blocks, block{id: id, kind: "todo", text: ev.Text, collapsed: m.closedByDefault(ev.Text)})
+		// The live list is pinned above the composer now, so the
+		// transcript keeps only a receipt of the change: an open copy
+		// here would print the same list twice, a few rows apart.
+		m.blocks = append(m.blocks, block{id: id, kind: "todo", text: ev.Text, collapsed: true})
 	case "system":
 		// A note that supersedes the reply above it (the loop asking
 		// again for a stop block): drop that reply, or the user reads
@@ -1321,6 +1334,12 @@ func (m model) View() tea.View {
 // frame renders the full-screen content; View wraps it in a panic guard.
 func (m model) frame() string {
 	cfg := m.cfg.Load()
+	// The strips above and below the composer come and go with state
+	// the layout is not notified of (inspect mode, the pickers, a todo
+	// event, a job starting). Re-fitting here — on the render's own
+	// copy of the model — keeps the frame exactly as tall as the
+	// terminal without every one of those paths remembering to say so.
+	(&m).layoutComposer()
 	if m.picking {
 		return m.pickerView(cfg)
 	}
@@ -1335,10 +1354,16 @@ func (m model) frame() string {
 		// rows, directly above the composer — sized to its content,
 		// never reflowing the layout under a filtering list.
 		body = overlayBottom(body, lines)
-	} else if m.todoPinned && m.todoText != "" {
-		body = overlayBottom(body, m.todoPanel(cfg))
 	}
-	out := body + "\n" + m.statusBar(cfg) + "\n" + m.input.View()
+	out := body
+	// The todo list sits directly above the composer, always, while
+	// there is one: a plan you have to press a key to see is a plan
+	// you forget the agent is working from. Its rows come out of the
+	// transcript, like the status bar's and the job strip's.
+	if rows := m.todoRows(cfg); len(rows) > 0 {
+		out += "\n" + strings.Join(rows, "\n")
+	}
+	out += "\n" + m.statusBar(cfg) + "\n" + m.input.View()
 	if strip := m.jobStrip(cfg); strip != "" {
 		out += "\n" + strip
 	}
@@ -1362,6 +1387,41 @@ const todoPanelMax = 8
 // todoPanel renders the pinned todo list: a dim header naming the key
 // that hides it, open items first as they are, done items dimmed,
 // "+N more" past todoPanelMax. Pinned it tracks every todo event.
+// todoRows is the strip above the composer: the todo panel while
+// there is a list and the user has not dismissed it. Empty otherwise,
+// and empty in the overlays that own the bottom rows themselves.
+func (m *model) todoRows(cfg *uiCfg) []string {
+	if m.todoHidden || m.todoText == "" || m.inspecting || m.picking || m.mp.open {
+		return nil
+	}
+	if len(m.overlayRows()) > 0 {
+		return nil // the palette is already sitting there
+	}
+	return fit(m.todoPanel(cfg), m.stripRoom(cfg))
+}
+
+// stripRoom is how many rows the strips above the composer may take:
+// what is left after the status bar, the composer, the job strip and
+// one row of transcript. Zero on a pane too short to spare any.
+func (m *model) stripRoom(cfg *uiCfg) int {
+	used := 1 + min(max(m.input.Height(), 1), composerMaxLines) + len(m.jobRows(cfg)) + 1
+	return max(m.height-used, 0)
+}
+
+// fit cuts rows to n, marking the cut when anything was dropped.
+func fit(rows []string, n int) []string {
+	if n <= 0 {
+		return nil
+	}
+	if len(rows) <= n {
+		return rows
+	}
+	if n == 1 {
+		return rows[:1]
+	}
+	return append(rows[:n-1:n-1], "  …")
+}
+
 func (m *model) todoPanel(cfg *uiCfg) []string {
 	th := cfg.theme
 	items := strings.Split(strings.TrimRight(m.todoText, "\n"), "\n")
@@ -1374,7 +1434,7 @@ func (m *model) todoPanel(cfg *uiCfg) []string {
 		if strings.HasPrefix(l, "[x]") {
 			l = th["dim"].Render(l)
 		}
-		lines = append(lines, xansi.Truncate(l, max(m.width, 1), "…"))
+		lines = append(lines, xansi.Truncate(sanitizeText(l), max(m.width, 1), "…"))
 	}
 	return lines
 }

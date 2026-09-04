@@ -19,7 +19,7 @@ import {
 const longres = `
 bough.provider("longres", function (system, messages) {
   var last = messages[messages.length - 1].content;
-  if (last.indexOf("[tool output]") >= 0) return "finished::" + messages.length;
+  if (last.indexOf("[tool output]") >= 0) return "\\u0060\\u0060\\u0060stop\\nfinished::" + messages.length + "\\n\\u0060\\u0060\\u0060";
   if (last.indexOf("RUNIT") >= 0) {
     return "\\u0060\\u0060\\u0060js\\nfor (var i = 1; i <= 30; i++) console.log('RESLINE_' + i + '_X')\\n\\u0060\\u0060\\u0060";
   }
@@ -64,7 +64,7 @@ bough.provider("longp", function (system, messages) {
   if (last.indexOf("GIMME") >= 0) {
     var lines = [];
     for (var i = 1; i <= 200; i++) lines.push("LINE_" + i + "_END");
-    return lines.join("\\n");
+    return "\\u0060\\u0060\\u0060stop\\n" + lines.join("\\n") + "\\n\\u0060\\u0060\\u0060";
   }
   return "plain: " + last;
 });
@@ -74,7 +74,7 @@ bough.setup({ provider: { default: "longp" } });
   await boot(page, b.url);
   await say(page, 'GIMME');
   await waitForTermText(page, 'LINE_200_END');
-  expect(await termText(page)).not.toContain('LINE_50_END'); // bottom-pinned
+  expect(await vpText(page)).not.toContain('LINE_50_END'); // bottom-pinned (viewport-scoped; the status bar previews LINE_1)
 
   // Wheel up over the terminal scrolls the transcript back.
   const box = await page.locator('#terminal').boundingBox();
@@ -84,7 +84,7 @@ bough.setup({ provider: { default: "longp" } });
   for (let i = 0; i < 40 && !sawEarlier; i++) {
     await page.mouse.wheel(0, -120);
     await page.waitForTimeout(30);
-    sawEarlier = (await termText(page)).includes('LINE_50_END');
+    sawEarlier = (await vpText(page)).includes('LINE_50_END');
   }
   expect(sawEarlier).toBe(true);
 
@@ -93,7 +93,7 @@ bough.setup({ provider: { default: "longp" } });
   for (let i = 0; i < 80 && !sawBottom; i++) {
     await page.mouse.wheel(0, 120);
     await page.waitForTimeout(30);
-    sawBottom = (await termText(page)).includes('LINE_200_END');
+    sawBottom = (await vpText(page)).includes('LINE_200_END');
   }
   expect(sawBottom).toBe(true);
 });

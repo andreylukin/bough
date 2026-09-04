@@ -32,6 +32,20 @@ export function termText(page: Page): Promise<string> {
   });
 }
 
+/** The transcript viewport: every buffer row except the trailing
+ * separator/status/composer rows. The status bar previews the newest
+ * block's first line, so a buffer-wide not.toContain on a reply's
+ * first line is always false — assert here instead. */
+export async function vpText(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const b = (window as any).sipTerm.term.buffer.active;
+    const rows: string[] = [];
+    const n = Math.max(0, b.length - 3);
+    for (let i = 0; i < n; i++) rows.push(b.getLine(i).translateToString(true));
+    return rows.join('\n');
+  });
+}
+
 /** Wait until substr appears somewhere on the terminal screen. */
 export async function waitForTermText(
   page: Page,

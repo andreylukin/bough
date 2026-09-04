@@ -834,3 +834,29 @@ func TestInventedOutputFences(t *testing.T) {
 		t.Fatalf("the stop fence was stripped: %q", got)
 	}
 }
+
+// A model that opens ```stop and writes to the end of its reply has
+// stopped: requiring the closing fence made glm-5.3-flash repeat its
+// answer three times and the user read "did not stop" under it.
+func TestUnclosedStopFenceStillStops(t *testing.T) {
+	text, stopped, _ := Finish("```stop\nCreated three todos and marked the first done.")
+	if !stopped {
+		t.Fatal("an unterminated stop fence is still a stop")
+	}
+	if text != "Created three todos and marked the first done." {
+		t.Fatalf("answer = %q", text)
+	}
+	// Closed, with prose above it, is unchanged.
+	text, stopped, _ = Finish("Here it is.\n```stop\nDone.\n```")
+	if !stopped || text != "Here it is.\n\nDone." {
+		t.Fatalf("closed fence = %q (stopped=%v)", text, stopped)
+	}
+	// An empty unterminated block is not an answer.
+	if _, stopped, _ := Finish("```stop\n   "); stopped {
+		t.Fatal("an empty stop block must not end the turn")
+	}
+	// A js block still wins: the reply is working, not finished.
+	if _, stopped, _ := Finish("```js\nx()\n```\n```stop\nDone."); stopped {
+		t.Fatal("a pending js block must not be skipped")
+	}
+}

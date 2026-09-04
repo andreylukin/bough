@@ -100,3 +100,36 @@ func TestShortDur(t *testing.T) {
 		}
 	}
 }
+
+// Both strips at once: todos above the composer, jobs below it, and
+// the frame still fits the terminal.
+func TestTodoAndJobStripsCoexist(t *testing.T) {
+	m := withJobs(t, tools.Running{ID: 1, Cmd: "go test ./...", Since: 5 * time.Second})
+	m.resize(80, 24)
+	m.addEvent(Event{Kind: "todo", Text: "[ ] 1. wire the strip\n[ ] 2. test it"})
+	m.addEvent(Event{Kind: "assistant", Text: strings.Repeat("filler\n", 40)})
+
+	frame := stripANSI(m.frame())
+	if got := strings.Count(frame, "\n") + 1; got > 24 {
+		t.Fatalf("frame is %d lines for a 24-line terminal:\n%s", got, frame)
+	}
+	lines := strings.Split(frame, "\n")
+	todo, prompt, job := -1, -1, -1
+	for i, l := range lines {
+		switch {
+		case strings.Contains(l, "wire the strip"):
+			todo = i
+		case strings.HasPrefix(l, "> "):
+			prompt = i
+		case strings.Contains(l, "go test ./..."):
+			job = i
+		}
+	}
+	if todo < 0 || prompt < 0 || job < 0 {
+		t.Fatalf("todo=%d prompt=%d job=%d:\n%s", todo, prompt, job, frame)
+	}
+	if !(todo < prompt && prompt < job) {
+		t.Fatalf("want todo above the prompt and jobs below it (todo=%d prompt=%d job=%d):\n%s",
+			todo, prompt, job, frame)
+	}
+}

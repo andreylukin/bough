@@ -171,8 +171,15 @@ func TestTodoConsecutiveEventsUpdateInPlace(t *testing.T) {
 	if len(d.m.blocks) != 1 || d.m.blocks[0].kind != "todo" {
 		t.Fatalf("consecutive todo events must collapse into one block, got %+v", d.m.blocks)
 	}
-	if n := strings.Count(d.plain(), "[ ] 1 a"); n != 1 {
-		t.Errorf("list rendered %d times, want 1:\n%s", n, d.plain())
+	// The list itself renders once — in the strip above the composer.
+	// The transcript keeps a collapsed receipt with no preview, or the
+	// same item would print twice on one screen.
+	p := d.plain()
+	if n := strings.Count(p, "[ ] 1 a"); n != 1 {
+		t.Errorf("list rendered %d times, want 1:\n%s", n, p)
+	}
+	if !strings.Contains(p, "▸ todo (2 lines)") {
+		t.Errorf("want a collapsed todo receipt:\n%s", p)
 	}
 }
 

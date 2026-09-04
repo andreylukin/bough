@@ -926,8 +926,12 @@ func (r *runner) completeMsgs(ctx context.Context, sys string, msgs []Message, e
 }
 
 // stopFence matches the block that ends a turn: everything the model
-// wants the user to read goes inside it.
-var stopFence = regexp.MustCompile("(?s)```stop[^\n]*\n(.*?)```")
+// wants the user to read goes inside it. The closing fence is
+// optional — a model that opens ```stop and simply writes to the end
+// of its reply has stopped, and nothing after it would run anyway.
+// Requiring it cost three calls and a confusing "did not stop" note
+// per turn on glm-5.3-flash, which omits it about half the time.
+var stopFence = regexp.MustCompile("(?s)```stop[^\n]*\n(.*?)(?:```|$)")
 
 // stoppedOnErrorNote is fed back when the model stops immediately
 // after a failed block. Cline's attempt_completion has the same rule —

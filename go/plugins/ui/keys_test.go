@@ -388,22 +388,24 @@ func TestNewEventAtBottomStaysPinned(t *testing.T) {
 	}
 }
 
-// ctrl+t pins the latest todo list above the composer; again unpins;
-// without a list it only flashes a hint.
-func TestTodoTogglePinsList(t *testing.T) {
+// The todo list sits above the composer on its own, from the moment
+// there is one: ctrl+t is how you put it away, and bring it back.
+func TestTodoStripShowsItselfAndCtrlTHidesIt(t *testing.T) {
 	d := defaultDrv(t)
 	d.press(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if d.m.todoPinned || !strings.Contains(d.plain(), "no todo list yet") {
+	if !strings.Contains(d.plain(), "no todo list yet") {
 		t.Fatalf("ctrl+t without todos should flash a hint:\n%s", d.plain())
 	}
+
 	d.event("todo", "[ ] 1. write tests\n[x] 2. read code")
 	d.event("assistant", "filler one")
 	d.event("assistant", "filler two")
-	d.press(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	p := d.plain()
-	if !d.m.todoPinned || !strings.Contains(p, "todo · ctrl+t hides") {
-		t.Fatalf("ctrl+t should pin the todo panel:\n%s", p)
+	if !strings.Contains(p, "todo · ctrl+t hides") {
+		t.Fatalf("the todo strip should show itself:\n%s", p)
 	}
+
+	// It sits directly above the composer, under its own header.
 	lines := strings.Split(p, "\n")
 	hdr := -1
 	for i, l := range lines {
@@ -412,14 +414,23 @@ func TestTodoTogglePinsList(t *testing.T) {
 		}
 	}
 	if hdr < 0 || !strings.Contains(lines[hdr+1], "write tests") || !strings.Contains(lines[hdr+2], "read code") {
-		t.Fatalf("panel rows should sit under the header at the pane bottom:\n%s", p)
+		t.Fatalf("panel rows should follow the header:\n%s", p)
 	}
+	if !strings.Contains(strings.Join(lines[hdr:], "\n"), "> ") {
+		t.Fatalf("the strip should be above the composer, not below it:\n%s", p)
+	}
+
 	d.event("todo", "[x] 1. write tests\n[x] 2. read code\n[ ] 3. ship")
 	if !strings.Contains(d.plain(), "3. ship") {
-		t.Fatalf("pinned panel should track todo events:\n%s", d.plain())
+		t.Fatalf("the strip should track todo events:\n%s", d.plain())
+	}
+
+	d.press(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	if !d.m.todoHidden || strings.Contains(d.plain(), "ctrl+t hides") {
+		t.Fatalf("ctrl+t should put it away:\n%s", d.plain())
 	}
 	d.press(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
-	if d.m.todoPinned || strings.Contains(d.plain(), "ctrl+t hides") {
-		t.Fatal("second ctrl+t should unpin")
+	if d.m.todoHidden || !strings.Contains(d.plain(), "ctrl+t hides") {
+		t.Fatalf("ctrl+t again should bring it back:\n%s", d.plain())
 	}
 }

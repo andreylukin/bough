@@ -1,6 +1,6 @@
 // Codemode flows: js execution, result collapse, long-output scrolling.
 import { test, expect } from '../helpers/fixtures';
-import { boot, say, termText, waitForTermText } from '../helpers/term';
+import { boot, say, termText, vpText, waitForTermText } from '../helpers/term';
 
 test('CODE! runs the js block and shows code, result, and done separator', async ({ launchBough, page }) => {
   const b = await launchBough();
@@ -40,7 +40,7 @@ bough.setup({ provider: { default: "longres" } });
   let screen = await termText(page);
   expect(screen).toContain('RESLINE_1_X'); // header preview shows the first line
   expect(screen).not.toContain('RESLINE_30_X'); // body hidden while collapsed
-  await page.keyboard.press('Shift+Tab'); // block_prev: focus the newest block (the result)
+  await page.keyboard.press('Tab'); // block_next: with nothing focused, starts at the newest block (the result)
   await page.keyboard.press('Enter'); // collapse_toggle on the focused block
   await waitForTermText(page, 'RESLINE_30_X');
 });
@@ -64,14 +64,17 @@ bough.setup({ provider: { default: "longp" } });
   await boot(page, b.url);
   await say(page, 'GIMME');
   await waitForTermText(page, 'LINE_200_END');
-  expect(await termText(page)).not.toContain('LINE_1_END'); // scrolled past
+  // The viewport is bottom-pinned (the status bar previews LINE_1, so
+  // the assertion is scoped to the transcript rows).
+  let vp = await vpText(page);
+  expect(vp).not.toContain('LINE_1_END');
 
   // Page up until the first line comes into view.
-  let found = false;
+  let found = vp.includes('LINE_1_END');
   for (let i = 0; i < 20 && !found; i++) {
     await page.keyboard.press('PageUp');
     await page.waitForTimeout(50);
-    found = (await termText(page)).includes('LINE_1_END');
+    found = (await vpText(page)).includes('LINE_1_END');
   }
   expect(found).toBe(true);
 });
