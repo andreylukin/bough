@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -302,7 +303,7 @@ func TestChildGetsTheParentsToolPrompt(t *testing.T) {
 	l := &scriptLLM{script: []string{"done"}}
 	w := &Workers{llm: l, code: &stubCode{}, secs: stubSections{text: "## mcp\nbough mcp call graphiti/..."}, ctx: context.Background(), maxSteps: 2}
 	w.emit = func(kind, text string, data map[string]any) {}
-	if _, err := w.runChild("count files", 1); err != nil {
+	if _, err := w.runChild("count files", 1, w.code.Run); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"tools.bash(cmd)", "tools.patch(path, old, new)", "bough mcp call graphiti/", SubSystemPrompt} {
@@ -384,4 +385,59 @@ func TestChildDoesNotSeeTheSpawnAdvert(t *testing.T) {
 	if !strings.Contains(l.seenSys, "tools.bash(cmd)") {
 		t.Fatalf("the child keeps every other section:\n%s", l.seenSys)
 	}
+}
+
+// spawnAll runs its children at once and returns their reports in the
+// order the tasks were given, whatever order they finish in.
+func TestSpawnAllRunsChildrenConcurrently(t *testing.T) {
+	var live, peak int32
+	l := &gateLLM{live: &live, peak: &peak, reply: "Status: ok\nFindings: done"}
+	w := &Workers{llm: l, code: stubCode{}, maxSpawns: 8, maxSteps: 6,
+		ctx: context.Background(), emit: func(string, string, map[string]any) {}}
+	tasks := []string{"alpha", "beta", "gamma"}
+	got, err := w.spawnAll(tasks)
+	if err != nil {
+		t.Fatalf("spawnAll: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("want 3 reports, got %d", len(got))
+	}
+	for i, want := range []string{"subagent 1 · task: alpha", "subagent 2 · task: beta", "subagent 3 · task: gamma"} {
+		if !strings.Contains(got[i], want) {
+			t.Fatalf("report %d out of order: %q", i, got[i])
+		}
+	}
+	if atomic.LoadInt32(&peak) < 2 {
+		t.Fatalf("children must overlap; peak concurrency was %d", peak)
+	}
+	if w.spawns != 3 {
+		t.Fatalf("spawnAll must charge one slot per task, got %d", w.spawns)
+	}
+	if _, err := w.spawnAll(nil); err == nil {
+		t.Fatal("an empty task list is an error")
+	}
+	w.spawns = 7
+	if _, err := w.spawnAll([]string{"a", "b"}); err == nil {
+		t.Fatal("spawnAll must refuse to overrun the per-turn budget")
+	}
+}
+
+// gateLLM holds every call until all of them have arrived, so the test
+// fails unless the children really do overlap.
+type gateLLM struct {
+	live, peak *int32
+	reply      string
+	mu         sync.Mutex
+}
+
+func (g *gateLLM) Complete(context.Context, string, []llm.Message) (string, error) {
+	n := atomic.AddInt32(g.live, 1)
+	g.mu.Lock()
+	if n > atomic.LoadInt32(g.peak) {
+		atomic.StoreInt32(g.peak, n)
+	}
+	g.mu.Unlock()
+	time.Sleep(30 * time.Millisecond) // long enough for the others to arrive
+	atomic.AddInt32(g.live, -1)
+	return g.reply, nil
 }

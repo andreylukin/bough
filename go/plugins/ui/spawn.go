@@ -97,8 +97,10 @@ func (m *model) addSubEvent(ev Event) {
 	case "assistant":
 		b.text = strings.TrimSpace(ev.Text) // the latest reply is the report
 	case "error":
+		// A failed command is not a failed child: it recovers and keeps
+		// going. Remember the last one for the header, but let the done
+		// event decide the card's verdict.
 		s.errText = strings.SplitN(strings.TrimSpace(ev.Text), "\n", 2)[0]
-		s.status = "error"
 	case "done":
 		// A replayed history lands in one burst: its cards would all
 		// claim "<1s". No real subagent finishes inside a second, so

@@ -743,3 +743,24 @@ func TestDoneSummaryMarksFailureAndHidesKilled(t *testing.T) {
 		t.Errorf("zero collapse note = %q", got)
 	}
 }
+
+// One failed command does not condemn the card: a child recovers, and
+// only its done event decides the verdict.
+func TestSubagentErrorDoesNotPreEmptTheVerdict(t *testing.T) {
+	t.Parallel()
+	m := testModel(t)
+	w := map[string]any{"worker": 1}
+	m.addEvent(Event{Kind: "sub:start", Text: "t", Data: w})
+	m.addEvent(Event{Kind: "sub:error", Text: "error: bash: exit status 127", Data: w})
+	if got := m.blocks[0].sub.status; got != "running" {
+		t.Fatalf("a failed command must leave the card running, got %q", got)
+	}
+	m.addEvent(Event{Kind: "sub:assistant", Text: "Status: ok\nFindings: fine", Data: w})
+	m.addEvent(Event{Kind: "sub:done", Data: map[string]any{"worker": 1, "status": "ok"}})
+	if got := m.blocks[0].sub.status; got != "ok" {
+		t.Fatalf("a recovered child ends ok, got %q", got)
+	}
+	if head := stripANSI(m.render(&m.blocks[0], m.cfg.Load())); strings.Contains(head, "127") {
+		t.Fatalf("a finished ok card must not still show an old error:\n%s", head)
+	}
+}

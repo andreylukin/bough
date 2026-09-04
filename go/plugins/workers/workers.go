@@ -51,7 +51,10 @@ Open: questions or blockers for the parent, or "none"`
 
 // promptSection documents tools.spawn to the parent model (registered
 // into the loop's "prompt-sections" service when present).
-const promptSection = `Subagents: tools.spawn(task) -> string runs a bounded child agent (same tools, fresh context, no nested spawns) on the task string and returns its final report. Use it to delegate self-contained work, never a shell command. Limits: at most %d spawns per turn and %d steps per child — give each child one well-scoped task and do small things yourself.`
+const promptSection = `Subagents:
+- tools.spawn(task) -> string runs ONE bounded child agent (same tools, fresh context, no nested spawns) on the task string and returns its report.
+- tools.spawnAll([task1, task2, …]) -> [report, …] runs several children AT ONCE and returns their reports in order. Prefer it whenever you have more than one independent task: the children wait on the model in parallel, so N tasks take about as long as the slowest one.
+Both are synchronous — no await. Use them to delegate self-contained work, never a shell command. Limits: at most %d spawns per turn and %d steps per child, so give each child one well-scoped task and do small things yourself.`
 
 // sections is the slice of the loop's "prompt-sections" service we need:
 // Set to advertise tools.spawn to the parent, Text to hand the child the
@@ -145,7 +148,7 @@ func (w *Workers) spawn(task string) (string, error) {
 	if p, ok := w.code.(pauser); ok {
 		defer p.Pause()()
 	}
-	reply, err := w.runChild(task, id)
+	reply, err := w.runChild(task, id, w.code.Run)
 	if err != nil {
 		// A child the provider killed never got to work: refund its
 		// slot, or a flaky minute burns the whole turn's budget.
@@ -191,10 +194,95 @@ func reportStatus(report string) string {
 	return ""
 }
 
+// codeReq is a child asking the parent's goroutine to run a block. The
+// goja VM belongs to one goroutine, so concurrent children hand their
+// code back to the owner and wait; their LLM calls, which is where the
+// minutes go, overlap freely.
+type codeReq struct {
+	code string
+	resp chan codeRes
+}
+
+type codeRes struct {
+	out string
+	err error
+}
+
+// spawnAll runs several children at once and returns their reports in
+// the order the tasks were given. Each child's code executes on this
+// goroutine (the VM owner); only the waiting overlaps.
+func (w *Workers) spawnAll(tasks []string) ([]string, error) {
+	if len(tasks) == 0 {
+		return nil, fmt.Errorf("workers: spawnAll needs at least one task")
+	}
+	w.mu.Lock()
+	if w.inChild {
+		w.mu.Unlock()
+		return nil, fmt.Errorf("workers: subagent depth 1 only")
+	}
+	if w.spawns+len(tasks) > w.maxSpawns {
+		left := w.maxSpawns - w.spawns
+		w.mu.Unlock()
+		return nil, fmt.Errorf("workers: %d task(s) but only %d spawn(s) left this turn — send fewer, or do the rest yourself", len(tasks), left)
+	}
+	ids := make([]int, len(tasks))
+	for i := range tasks {
+		w.spawns++
+		w.nextID++
+		ids[i] = w.nextID
+	}
+	w.inChild = true
+	w.mu.Unlock()
+	defer func() {
+		w.mu.Lock()
+		w.inChild = false
+		w.mu.Unlock()
+	}()
+	if p, ok := w.code.(pauser); ok {
+		defer p.Pause()()
+	}
+
+	reqCh := make(chan codeReq)
+	doneCh := make(chan struct{}, len(tasks))
+	reports := make([]string, len(tasks))
+	for i := range tasks {
+		go func(i int) {
+			defer func() { doneCh <- struct{}{} }()
+			run := func(code string) (string, error) {
+				r := codeReq{code: code, resp: make(chan codeRes, 1)}
+				select {
+				case reqCh <- r:
+				case <-w.ctx.Done():
+					return "", w.ctx.Err()
+				}
+				res := <-r.resp
+				return res.out, res.err
+			}
+			reply, err := w.runChild(tasks[i], ids[i], run)
+			if err != nil {
+				reports[i] = fmt.Sprintf("[subagent %d · task: %s]\nStatus: failed\n%v", ids[i], oneLine(tasks[i], 80), err)
+				return
+			}
+			reports[i] = fmt.Sprintf("[subagent %d · task: %s]\n%s", ids[i], oneLine(tasks[i], 80), reply)
+		}(i)
+	}
+	// Serve the children's blocks until every one of them has finished.
+	for left := len(tasks); left > 0; {
+		select {
+		case r := <-reqCh:
+			out, err := w.code.Run(r.code)
+			r.resp <- codeRes{out: out, err: err}
+		case <-doneCh:
+			left--
+		}
+	}
+	return reports, nil
+}
+
 // runChild drives one child agent run: fresh context seeded with the
 // task, up to maxSteps llm steps, js blocks executed via codemode. The
 // final plain-text reply (no js block) is the result.
-func (w *Workers) runChild(task string, id int) (string, error) {
+func (w *Workers) runChild(task string, id int, run func(string) (string, error)) (string, error) {
 	// note mirrors child activity: a "sub:<kind>" session-history entry
 	// (when history is mounted) and a "loop/event" with the same kind,
 	// both carrying the worker number.
@@ -250,7 +338,7 @@ func (w *Workers) runChild(task string, id int) (string, error) {
 		for _, m := range blocks {
 			code := m[1]
 			note("code", code, nil)
-			out, runErr := w.code.Run(code)
+			out, runErr := run(code)
 			if runErr != nil {
 				if out = strings.TrimRight(out, "\n"); out != "" {
 					out += "\n"
@@ -378,6 +466,7 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	})
 
 	cm.RegisterTool("spawn", w.spawn)
+	cm.RegisterTool("spawnAll", w.spawnAll)
 	// Optional seam: the loop's prompt-sections registry, so the model
 	// learns tools.spawn exists. Withdrawn on unmount.
 	if s, err := kernel.Get[sections](kctx, "prompt-sections"); err == nil {
