@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/andreylukin/bough/internal/models"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/llm"
 )
@@ -161,9 +162,39 @@ func (p Price) Cost(in, out int) float64 {
 
 // Service is the "usage" provider: the llm's tally, priced.
 type Service struct {
-	rep   llm.UsageReporter
-	model func() string
-	table Table
+	rep    llm.UsageReporter
+	model  func() string
+	plugin func() string // the llm row's plugin, for the catalogue
+	table  Table
+}
+
+// llmPlugin is the llm row's plugin name, "" when the service was
+// built without one (a bare Service in a test).
+func (s *Service) llmPlugin() string {
+	if s.plugin == nil {
+		return ""
+	}
+	return s.plugin()
+}
+
+// lookup finds the price for the current model and says where it came
+// from: the row's own `prices` first (a person overriding on purpose),
+// then the model catalogue (models.dev, refreshed weekly), then the
+// built-in table that predates it.
+func (s *Service) lookup() (models.Model, string, bool) {
+	model := s.model()
+	if p, ok := s.table.Lookup(model); ok && len(s.table) > 0 {
+		if _, mine := s.table[Canonical(model)]; mine {
+			return models.Model{Input: p.Input, Output: p.Output}, "the cost row's prices", true
+		}
+	}
+	if m, ok := models.Lookup(s.llmPlugin(), model); ok && m.Input > 0 {
+		return m, "the model catalogue (models.dev)", true
+	}
+	if p, ok := s.table.Lookup(model); ok {
+		return models.Model{Input: p.Input, Output: p.Output}, "the built-in table for " + Canonical(model), true
+	}
+	return models.Model{}, "", false
 }
 
 // Usage implements llm.UsageReporter.
@@ -172,8 +203,10 @@ func (s *Service) Usage() llm.Usage {
 	if u.Priced {
 		return u
 	}
-	if p, ok := s.table.Lookup(s.model()); ok {
-		u.Cost = p.Cost(u.InputTokens, u.OutputTokens)
+	if m, _, ok := s.lookup(); ok {
+		// Cost applies tiered rates by input size: gpt-5.6-sol doubles
+		// above 272k tokens, which a flat price undercharged by half.
+		u.Cost = m.Cost(u.InputTokens, u.OutputTokens)
 		u.Priced = true
 	}
 	return u
@@ -181,15 +214,20 @@ func (s *Service) Usage() llm.Usage {
 
 // ContextLimit is the current model's context window in tokens (0 =
 // unknown), for the status bar's context percentage.
-func (s *Service) ContextLimit() int { return ContextLimit(s.model()) }
+func (s *Service) ContextLimit() int {
+	if m, ok := models.Lookup(s.llmPlugin(), s.model()); ok && m.Context > 0 {
+		return m.Context
+	}
+	return ContextLimit(s.model())
+}
 
 // Source says where the price came from, for /cost.
 func (s *Service) Source() string {
 	if s.rep.Usage().Priced {
 		return "the provider's own per-response price"
 	}
-	if _, ok := s.table.Lookup(s.model()); ok {
-		return "the cost table for " + Canonical(s.model())
+	if _, src, ok := s.lookup(); ok {
+		return src
 	}
 	return "no price known for " + s.model() + " (add it under the cost row's prices)"
 }
@@ -270,6 +308,15 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if m, err := kernel.Get[llm.Modeler](ctx, "llm"); err == nil {
 		model = m.Model
 	}
-	ctx.Provide("usage", &Service{rep: rep, model: model, table: table})
+	// Read at call time, not now: /model swaps the row mid-session.
+	plugin := func() string {
+		for _, r := range ctx.Desired() {
+			if r.ID == "llm" {
+				return r.Plugin
+			}
+		}
+		return ""
+	}
+	ctx.Provide("usage", &Service{rep: rep, model: model, plugin: plugin, table: table})
 	return nil
 }

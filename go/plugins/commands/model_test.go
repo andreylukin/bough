@@ -8,6 +8,7 @@ package commands
 
 import (
 	"errors"
+	"github.com/andreylukin/bough/internal/models"
 	"maps"
 	"slices"
 	"strings"
@@ -137,8 +138,10 @@ func TestModelShowsCurrentAndProviders(t *testing.T) {
 func TestModelShowSuggestsModels(t *testing.T) {
 	row := kernel.Row{ID: "llm", Plugin: "llm-openrouter", Config: map[string]any{"model": "x/y"}}
 	out := showModel(row, "llm-openrouter · cheap/one", []string{"llm-openrouter"})
+	// The suggestions come from the model catalogue now, so assert the
+	// shape rather than a model id that will age out.
 	for _, want := range []string{"model: llm-openrouter · x/y", "small: llm-openrouter · cheap/one",
-		"try: anthropic/claude-sonnet-4.5", "usage: /model"} {
+		"try: ", "usage: /model"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("showModel missing %q:\n%s", want, out)
 		}
@@ -262,12 +265,37 @@ func TestModelBareOpensPicker(t *testing.T) {
 	}
 }
 
-func TestModelChoicesCurrentCurated(t *testing.T) {
-	row := kernel.Row{Plugin: "llm-cerebras", Config: map[string]any{"model": "qwen-3.8-27b"}}
-	cur, rows := modelChoices(row, []string{"llm-cerebras"})
-	if cur != "llm-cerebras qwen-3.8-27b" || len(rows) != 2 {
-		t.Fatalf("curated current should not be duplicated: %q %v", cur, rows)
+// A model the catalogue lists is not repeated at the top; one it does
+// not know still shows, so the picker always names what is running.
+func TestModelChoicesKeepCurrentOnce(t *testing.T) {
+	known := models.List("llm-cerebras", 1)
+	if len(known) == 0 {
+		t.Skip("no catalogue entry for llm-cerebras")
 	}
+	row := kernel.Row{Plugin: "llm-cerebras", Config: map[string]any{"model": known[0]}}
+	cur, rows := modelChoices(row, []string{"llm-cerebras"})
+	if cur != "llm-cerebras "+known[0] {
+		t.Fatalf("current = %q", cur)
+	}
+	if n := countOf(rows, cur); n != 1 {
+		t.Fatalf("current listed %d times: %v", n, rows)
+	}
+
+	row = kernel.Row{Plugin: "llm-cerebras", Config: map[string]any{"model": "a-model-nobody-has"}}
+	cur, rows = modelChoices(row, []string{"llm-cerebras"})
+	if rows[0] != cur {
+		t.Fatalf("an unknown current model must lead the list: %v", rows)
+	}
+}
+
+func countOf(rows []string, want string) int {
+	n := 0
+	for _, r := range rows {
+		if r == want {
+			n++
+		}
+	}
+	return n
 }
 
 // /model targets either row: bare for the agent's model, "small" for

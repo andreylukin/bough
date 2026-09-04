@@ -100,7 +100,7 @@ func TestServicePricesTokensAndPassesPricedThrough(t *testing.T) {
 	if u.Short() != "$0.4500 · 1.1M tok" && u.Short() != "$0.4500 · 1100.0k tok" {
 		t.Fatalf("status bar text: %q", u.Short())
 	}
-	if s.Source() != "the cost table for gpt-5-mini" {
+	if s.Source() != "the built-in table for gpt-5-mini" {
 		t.Fatalf("source: %q", s.Source())
 	}
 
@@ -146,5 +146,40 @@ func TestMountProvidesUsageOverTheLLM(t *testing.T) {
 	}
 	if err := (plugin{}).Apply(kernel.NewContext(), map[string]any{"nope": 1}); err == nil {
 		t.Fatal("unknown config key must fail the mount")
+	}
+}
+
+// The catalogue answers for models no hand-written table ever had, and
+// prices a long request at the tier it actually falls in.
+func TestCatalogueAnswersForUnlistedModels(t *testing.T) {
+	l := &stubLLM{model: "z-ai/glm-5.3-flash"}
+	s := &Service{rep: l, model: l.Model, plugin: func() string { return "llm-openrouter" }, table: Table{}}
+	if got := s.ContextLimit(); got != 1_310_720 {
+		t.Fatalf("glm context = %d, want the catalogue's 1310720", got)
+	}
+	l.u = llm.Usage{InputTokens: 1_000_000, OutputTokens: 100_000}
+	u := s.Usage()
+	if !u.Priced || math.Abs(u.Cost-(0.075+0.025)) > 1e-9 {
+		t.Fatalf("glm price: %+v", u)
+	}
+	if s.Source() != "the model catalogue (models.dev)" {
+		t.Fatalf("source: %q", s.Source())
+	}
+
+	// gpt-5.6-sol doubles above 272k input tokens; the flat table used
+	// to charge half.
+	sol := &stubLLM{u: llm.Usage{InputTokens: 300_000, OutputTokens: 10_000}, model: "gpt-5.6-sol"}
+	ss := &Service{rep: sol, model: sol.Model, plugin: func() string { return "llm-openai" }, table: Table{}}
+	got := ss.Usage().Cost
+	want := 300_000*8.0/1e6 + 10_000*30.0/1e6
+	if math.Abs(got-want) > 1e-9 {
+		t.Fatalf("tiered cost = %f, want %f", got, want)
+	}
+
+	// A row's own `prices` still wins over the catalogue.
+	own := &Service{rep: l, model: l.Model, plugin: func() string { return "llm-openrouter" },
+		table: Table{"glm-5.3-flash": {Input: 99, Output: 99}}}
+	if src := own.Source(); src != "the cost row's prices" {
+		t.Fatalf("override source: %q", src)
 	}
 }

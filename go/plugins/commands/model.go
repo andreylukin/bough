@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/andreylukin/bough/internal/models"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/llm"
 )
@@ -105,17 +106,20 @@ func describeRow(r kernel.Row) string {
 
 const modelUsage = "usage: /model [small] | /model list | /model [small] <provider> [model] | /model [small] <model>"
 
-// curatedModels is the short list /model suggests per provider (there
-// is no history of used models yet; OpenRouter's catalog is too long
-// to print).
-var curatedModels = map[string][]string{
-	"llm-openrouter": {
-		"anthropic/claude-sonnet-4.5", "anthropic/claude-opus-4.1",
-		"openai/gpt-5", "google/gemini-2.5-pro", "deepseek/deepseek-chat-v3.1",
-	},
-	"llm-anthropic": {"claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"},
-	"llm-openai":    {"gpt-5", "gpt-5-mini", "gpt-5-nano"},
-	"llm-cerebras":  {"gpt-oss-120b", "qwen-3.8-27b"},
+// pickerModels caps what one provider contributes to the picker: the
+// catalogue has 359 OpenRouter models and a list that long is not a
+// choice. Newest first, so the cap keeps what a person is likely
+// reaching for; any id still works as an argument.
+const pickerModels = 12
+
+// suggestModels is a provider's models, newest first, from the model
+// catalogue (models.dev, refreshed weekly, embedded snapshot offline).
+// n <= 0 is the picker's cap.
+func suggestModels(plugin string, n int) []string {
+	if n <= 0 {
+		n = pickerModels
+	}
+	return models.List(plugin, n)
 }
 
 // modelChoices is the picker's list: "provider model" for every
@@ -128,7 +132,7 @@ func modelChoices(row kernel.Row, provs []string) (current string, choices []str
 		current += " " + m
 	}
 	for _, p := range provs {
-		list := curatedModels[p]
+		list := suggestModels(p, 0)
 		if len(list) == 0 {
 			choices = append(choices, p)
 			continue
@@ -148,7 +152,7 @@ func modelChoices(row kernel.Row, provs []string) (current string, choices []str
 func showModel(row kernel.Row, small string, provs []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "model: %s\nsmall: %s\nproviders: %s\n", describeRow(row), small, strings.Join(provs, ", "))
-	if list := curatedModels[row.Plugin]; len(list) > 0 {
+	if list := suggestModels(row.Plugin, 6); len(list) > 0 {
 		fmt.Fprintf(&b, "try: %s\n", strings.Join(list, ", "))
 	}
 	b.WriteString(modelUsage)
