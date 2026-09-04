@@ -89,7 +89,26 @@ func (m *model) atQuery() string {
 	return ""
 }
 
+// pathQuery reports whether an "@" word names a filesystem path rather
+// than a fuzzy search of the project: "~/…", "/…", "./…", "../…". The
+// project walk only knows this directory's files, so those queries used
+// to match nothing and the picker went blank.
+func pathQuery(q string) bool {
+	return strings.HasPrefix(q, "~") || strings.HasPrefix(q, "/") ||
+		strings.HasPrefix(q, "./") || strings.HasPrefix(q, "../")
+}
+
 func (m *model) atItems() []paletteItem {
+	if q := m.atQuery(); pathQuery(q) {
+		// A path: list that directory, as typed ("~/" stays "~/"), so
+		// the picker completes it the way tab does.
+		cands := pathCandidates(unescapePath(q))
+		items := make([]paletteItem, len(cands))
+		for i, c := range cands {
+			items[i] = paletteItem{name: escapePath(c), prefix: "@"}
+		}
+		return items
+	}
 	items := make([]paletteItem, len(m.atFiles))
 	for i, f := range m.atFiles {
 		items[i] = paletteItem{name: f, prefix: "@"}
@@ -131,7 +150,14 @@ func (m *model) atKey(key string) (bool, tea.Cmd) {
 		if i < 0 {
 			return false, nil
 		}
-		m.input.SetValue(draft[:i] + "@" + name + " ")
+		// A directory does not end the reference: no trailing space,
+		// and the picker stays open on its contents.
+		tail := " "
+		if strings.HasSuffix(name, "/") {
+			tail = ""
+			m.at.open, m.at.selected = true, 0
+		}
+		m.input.SetValue(draft[:i] + "@" + name + tail)
 		m.input.CursorEnd()
 		m.syncPalette()
 		m.layoutComposer() // the completion can add a wrapped row
