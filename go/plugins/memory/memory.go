@@ -86,6 +86,7 @@ type Memory struct {
 	mu      sync.Mutex
 	written map[string]bool
 	busy    bool
+	failed  bool // the extraction error has been reported once
 }
 
 // Fact is one extracted triple.
@@ -213,9 +214,19 @@ func (m *Memory) harvest() {
 	reply, err := m.llm.Complete(ctx, fmt.Sprintf(Prompt, m.maxFacts), []llm.Message{{Role: "user", Content: digest}})
 	if err != nil {
 		// Never loud: a failed harvest costs nothing and the turn is
-		// already over. It still says so once, dimmed, so a broken
-		// llm-small row is not silent forever.
-		m.emit("memory", "memory: extraction failed — "+err.Error())
+		// already over. It still says so ONCE, dimmed, so a broken
+		// llm-small row is not silent forever — the comment promised
+		// that before the flag existed, and an invalid key meant every
+		// turn ended with the same provider error under it.
+		m.mu.Lock()
+		first := !m.failed
+		m.failed = true
+		m.mu.Unlock()
+		if first {
+			// One line: a provider's error carries its whole HTTP body,
+			// and a receipt for a background job is not the place for it.
+			m.emit("memory", "memory: extraction failed — "+firstLine(err.Error()))
+		}
 		return
 	}
 	facts := ParseFacts(reply, m.maxFacts)
@@ -340,4 +351,14 @@ func toInt(v any) (int, error) {
 		}
 	}
 	return 0, fmt.Errorf("not an integer: %v", v)
+}
+
+// firstLine is text up to its first newline, trimmed. A provider error
+// arrives with its response body attached; the harvest receipt shows
+// the sentence, not the JSON.
+func firstLine(text string) string {
+	if i := strings.IndexByte(text, '\n'); i >= 0 {
+		text = text[:i]
+	}
+	return strings.TrimSpace(text)
 }

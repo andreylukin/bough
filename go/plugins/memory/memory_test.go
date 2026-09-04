@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -192,4 +193,47 @@ func (s *slowLLM) Complete(ctx context.Context, system string, msgs []llm.Messag
 	s.once.Do(func() { close(s.started) })
 	<-s.release
 	return "NOTHING", nil
+}
+
+// A broken provider must not narrate itself after every turn. The
+// receipt is one line, and only the first time.
+func TestExtractionFailureIsReportedOnceAndTrimmed(t *testing.T) {
+	var mu sync.Mutex
+	var got []string
+	m := &Memory{
+		llm:      failLLM{},
+		hist:     &stubHist{entries: []history.Entry{{Kind: "input", Data: map[string]any{"text": "do a thing"}}}},
+		maxFacts: 3,
+		ctx:      context.Background(),
+		written:  map[string]bool{},
+		emit: func(kind, text string) {
+			mu.Lock()
+			defer mu.Unlock()
+			got = append(got, text)
+		},
+	}
+	for range 3 {
+		m.harvest()
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("a failing harvest should report once, got %d: %v", len(got), got)
+	}
+	if strings.Contains(got[0], "\n") {
+		t.Errorf("the receipt should be one line, got %q", got[0])
+	}
+	if strings.Contains(got[0], "authentication_error") {
+		t.Errorf("the provider's response body does not belong in the receipt: %q", got[0])
+	}
+	if !strings.Contains(got[0], "401 Unauthorized") {
+		t.Errorf("the receipt should still say what went wrong: %q", got[0])
+	}
+}
+
+type failLLM struct{}
+
+func (failLLM) Complete(context.Context, string, []llm.Message) (string, error) {
+	return "", errors.New("llm-anthropic: POST \"https://api.anthropic.com/v1/messages\": 401 Unauthorized\n" +
+		`{"type":"error","error":{"type":"authentication_error","message":"API key is invalid."}}`)
 }
