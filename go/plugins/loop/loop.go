@@ -140,6 +140,14 @@ func (s *Sections) Text() string {
 	return strings.Join(parts, "\n\n")
 }
 
+// Notices is the optional "job-notices" service seam (tools-basic's
+// background jobs): Take drains the notices a finished job queued, and
+// Wake fires when one arrives so an idle agent starts a turn on it.
+type Notices interface {
+	Take() []string
+	Wake() <-chan struct{}
+}
+
 // History is the optional "history" service seam: append-only session
 // record. Absent, the loop keeps a process-local in-memory list.
 type History interface {
@@ -189,12 +197,27 @@ console.log(tools.bash("ls"))
 
 Available in the runtime:
 - tools.bash(cmd) -> string: run a shell command, returns its output.
-  It is killed after 60 s (the error says so); split long work into
-  shorter commands or background it yourself.
+  It is killed after 60 s (the error says so). For anything longer,
+  give it a limit — tools.bash(cmd, 600) — and it runs in the
+  background instead, telling you when it finishes.
 - tools.view(path, [start, end]) -> string: a file's lines, numbered ("12│text"); optional 1-based inclusive range
 - tools.write(path, content) -> string: create or overwrite a whole file (use this for new files and rewrites, never a shell heredoc)
 - tools.patch(path, old, new) -> string: replace ONE exact occurrence of old with new (copy old verbatim from view, enough lines to be unique)
 - console.log(...): print; everything printed is returned to you
+
+Background jobs:
+- tools.bash(cmd, limit) runs cmd in the BACKGROUND: limit is seconds
+  (or "10m") and the call returns a job id at once. Use it for anything
+  longer than the 60 s foreground kill — a test suite, a build, a long
+  download, a server you need up while you work.
+- tools.bash(cmd, limit, until) also watches the output and tells you as
+  soon as it matches the regexp until, without stopping the job.
+- tools.jobs() lists them, tools.job(id) returns one job's status and
+  output so far, tools.jobWait(id, [seconds]) blocks until it exits,
+  tools.jobKill(id) stops it.
+When a job exits (or matches until) you are told automatically — before
+your next step, or as a fresh turn if you had already finished. Start
+the job, get on with other work, and read the result when it lands.
 
 The runtime is synchronous: there is no event loop, and async, await
 and Promise are SYNTAX ERRORS that kill the whole block. Every tool
@@ -245,6 +268,9 @@ consumer — clamp, threshold, or handle the case where it is used.`
 // rows in the UI.
 const askPromptSection = `You may ask the user a question from code: tools.ask(question, ...options) -> string blocks until they answer and returns the answer. Pass each option as a separate argument — tools.ask(question, opt1, opt2, ...) — so they render as clickable choices; never inline the options into the question text.`
 
+// jobWake opens the turn a finished background job starts on its own.
+const jobWake = "[background job] A command you started in the background has finished while you were idle. Deal with it if it needs anything, then reply to the user with what happened.\n\n"
+
 var jsBlock = regexp.MustCompile("(?s)```js\\s*\n(.*?)```")
 
 // anyBlock matches every fenced block; group 1 is the info string.
@@ -288,6 +314,10 @@ const cancelledNote = "[cancelled] The user interrupted this turn. Do not resume
 
 // undoPrefix opens the note an "undo" entry projects to; the reverted
 // paths follow.
+// jobNotePrefix opens the note a background job's "job" entry
+// projects to.
+const jobNotePrefix = "[background job] "
+
 const undoPrefix = "[undo] The user reverted these files to their content from before the turn that wrote them: "
 
 func DefaultProject(entries []history.Entry) []llm.Message {
@@ -336,6 +366,11 @@ func DefaultProject(entries []history.Entry) []llm.Message {
 			} else {
 				msgs = append(msgs, llm.Message{Role: "user", Content: undoNote})
 			}
+		case "job":
+			// A background job finished (or matched its watch) while
+			// the model was working: its notice is a user-side fact,
+			// exactly like tool output.
+			msgs = append(msgs, llm.Message{Role: "user", Content: jobNotePrefix + text})
 		case "command":
 			if !strings.HasPrefix(text, "!") {
 				continue
@@ -395,6 +430,7 @@ type runner struct {
 	cog      Cognition
 	proj     Projection
 	stats    TurnStats
+	notices  Notices
 	cp       Checkpointer
 	secs     *Sections
 	hasAsk   bool // an "ask-answers" service is mounted: document tools.ask
@@ -482,6 +518,18 @@ func (r *runner) landSteers(ctx context.Context, emit func(kind, text string), f
 		landed = true
 	}
 	return landed
+}
+
+// landJobs records every notice a background job has queued as a "job"
+// entry, so the next model step sees it. Cheap when none are pending,
+// which is the normal case.
+func (r *runner) landJobs(emit func(kind, text string)) {
+	if r.notices == nil {
+		return
+	}
+	for _, text := range r.notices.Take() {
+		r.note(emit, "job", text, nil)
+	}
 }
 
 // doneData builds the "done" entry's data: files written this turn and
@@ -668,6 +716,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	retried := false
 	for step := 0; step < maxSteps; step++ {
 		r.landSteers(ctx, emit, false) // a steer sent during the last block joins the context now
+		r.landJobs(emit)               // a background job that finished during the last block reports now
 		sys := system
 		if r.cog != nil {
 			sys = r.cog.System(sys)
@@ -864,6 +913,9 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	if st, err := kernel.Get[TurnStats](kctx, "turn-stats"); err == nil {
 		r.stats = st
 	}
+	if n, err := kernel.Get[Notices](kctx, "job-notices"); err == nil {
+		r.notices = n
+	}
 	if c, err := kernel.Get[Checkpointer](kctx, "checkpoints"); err == nil {
 		r.cp = c
 	}
@@ -879,12 +931,40 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		for input := range inputs {
-			t.run(ctx, r, input, func(kind, text string) {
-				// Live gets what replay gets: a noted entry's data
-				// (the done marker's files and exit) rides along.
-				kctx.Emit("loop/event", Event{Kind: kind, Text: text, Data: r.noteData})
-			})
+		emit := func(kind, text string) {
+			// Live gets what replay gets: a noted entry's data
+			// (the done marker's files and exit) rides along.
+			kctx.Emit("loop/event", Event{Kind: kind, Text: text, Data: r.noteData})
+		}
+		// A background job that finishes while the agent is idle has
+		// nobody to tell: its wake starts a turn of its own. A job that
+		// finishes mid-turn is landed by landJobs instead, so the wake
+		// then finds nothing pending and starts nothing.
+		var wake <-chan struct{}
+		if r.notices != nil {
+			wake = r.notices.Wake()
+		}
+		for {
+			select {
+			case input, ok := <-inputs:
+				if !ok {
+					return
+				}
+				t.run(ctx, r, input, emit)
+			case <-wake:
+				pending := r.notices.Take()
+				if len(pending) == 0 {
+					continue
+				}
+				news := strings.Join(pending, "\n\n")
+				// The turn nobody asked for still says where it came
+				// from: without this row the transcript shows a reply
+				// with no question above it.
+				emit("job", news)
+				t.run(ctx, r, jobWake+news, emit)
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 	kctx.Effect(func() {

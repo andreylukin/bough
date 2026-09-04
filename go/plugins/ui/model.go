@@ -70,7 +70,7 @@ func (m *model) closedByDefault(text string) bool {
 
 func (b *block) collapsible() bool {
 	switch b.kind {
-	case "code", "result", "thinking", "spawn", "error", "system", "todo":
+	case "code", "result", "thinking", "spawn", "error", "system", "todo", "job":
 		return true
 	}
 	return false
@@ -337,7 +337,7 @@ func (m *model) header(b *block, th theme) string {
 	switch b.kind {
 	case "code":
 		tag = codeLabel(b.text)
-	case "thinking", "error", "system", "todo":
+	case "thinking", "error", "system", "todo", "job":
 		tag = b.kind
 	}
 	if b.label != "" {
@@ -496,6 +496,13 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 		// The dispatched "/" line: a dim echo of what was typed, so
 		// the system block below reads as its answer.
 		return "\n" + th["dim"].Render("❯ "+b.text)
+	case "job":
+		// A background job reported back. Dim like other machinery,
+		// but it is news the user did not ask for, so it says so.
+		if b.collapsed {
+			return m.header(b, th)
+		}
+		return th["system"].Width(max(m.width, 10)).Render(b.text)
 	case "system":
 		// Dimmed command output, wrapped to width so /help rows never
 		// clip off the right edge; a collapsed one is a header row.
@@ -750,7 +757,8 @@ func (m *model) addEvent(ev Event) {
 	default: // assistant, anything future
 		// A loop-event system note is detail; command output (slash.go)
 		// is what the user asked for and stays open.
-		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: ev.Text, collapsed: ev.Kind == "system" && m.closedByDefault(ev.Text)})
+		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: ev.Text,
+			collapsed: (ev.Kind == "system" || ev.Kind == "job") && m.closedByDefault(ev.Text)})
 	}
 	m.refresh() // pins to the bottom only when it already was there
 	if !m.vp.AtBottom() {

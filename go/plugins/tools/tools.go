@@ -37,10 +37,15 @@ type runContexter interface {
 	RunContext() context.Context
 }
 
+// pauser is codemode's seam for a tool that blocks longer than the
+// script timeout (tools.ask uses it too); tools.jobWait needs it.
+type pauser interface{ Pause() func() }
+
 // Stats is the "turn-stats" service: side-effect tallies of the basic
 // tools, reset by Take.
 type Stats struct {
 	runCtx func() context.Context // the running script's context; nil = none
+	jobs   *Jobs                  // background jobs (never nil after Apply)
 
 	mu    sync.Mutex
 	files []string
@@ -88,7 +93,20 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if rc, ok := reg.(runContexter); ok {
 		st.runCtx = rc.RunContext
 	}
+	// A background job outlives the turn that started it, so it hangs
+	// off the plugin's context, not the script's.
+	jctx, cancelJobs := context.WithCancel(context.Background())
+	ctx.Effect(cancelJobs)
+	st.jobs = newJobs(jctx)
+	if p, ok := reg.(pauser); ok {
+		st.jobs.pause = p.Pause
+	}
+	ctx.Provide("job-notices", st.jobs)
 	reg.RegisterTool("bash", st.bash)
+	reg.RegisterTool("jobs", st.jobs.jobs)
+	reg.RegisterTool("job", st.jobs.job)
+	reg.RegisterTool("jobWait", st.jobs.jobWait)
+	reg.RegisterTool("jobKill", st.jobs.jobKill)
 	reg.RegisterTool("view", view)
 	reg.RegisterTool("patch", st.patch)
 	reg.RegisterTool("write", st.write)
@@ -96,7 +114,32 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	return nil
 }
 
-func (s *Stats) bash(cmd string) (string, error) {
+// bash runs cmd. With no limit it runs in the foreground and is killed
+// after bashTimeout; given a limit (seconds, or a duration string) it
+// becomes a background job that outlives the turn, and an optional
+// third argument is a regexp to watch its output for.
+func (s *Stats) bash(cmd string, opts ...any) (string, error) {
+	if len(opts) > 0 && opts[0] != nil {
+		limit, err := jobLimit(opts[0])
+		if err != nil {
+			return "", err
+		}
+		until := ""
+		if len(opts) > 1 {
+			if u, ok := opts[1].(string); ok {
+				until = u
+			}
+		}
+		b, err := s.jobs.start(cmd, limit, until)
+		if err != nil {
+			return "", err
+		}
+		msg := fmt.Sprintf("job %d started in the background (limit %s): %s", b.id, limit, firstLine(cmd))
+		if until != "" {
+			msg += fmt.Sprintf("\nwatching its output for %q", until)
+		}
+		return msg + "\nYou will be told when it finishes; tools.job(" + strconv.Itoa(b.id) + ") reads it meanwhile.", nil
+	}
 	parent := context.Background()
 	if s.runCtx != nil {
 		parent = s.runCtx()

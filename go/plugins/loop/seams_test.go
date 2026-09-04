@@ -514,3 +514,54 @@ func TestEmptyReplyRetriedThenErrors(t *testing.T) {
 		}
 	}
 }
+
+// A background job's notice reaches the model as a user-side fact,
+// like tool output — it is news the model must react to, not narration.
+func TestDefaultProjectJobNotice(t *testing.T) {
+	got := DefaultProject([]history.Entry{
+		{Kind: "input", Data: map[string]any{"text": "run the tests in the background"}},
+		{Kind: "assistant", Data: map[string]any{"text": "started"}},
+		{Kind: "job", Data: map[string]any{"text": "job 1 [exited 0] go test ./... (3m2s)"}},
+	})
+	if len(got) != 3 || got[2].Role != "user" ||
+		got[2].Content != jobNotePrefix+"job 1 [exited 0] go test ./... (3m2s)" {
+		t.Fatalf("DefaultProject = %v", got)
+	}
+}
+
+// landJobs drains the notices seam into "job" entries; with none
+// pending it records nothing at all.
+func TestLandJobs(t *testing.T) {
+	n := &fakeNotices{pending: []string{"job 1 finished", "job 2 finished"}}
+	h := &memHistory{}
+	r := &runner{hist: h, notices: n}
+	var kinds []string
+	emit := func(kind, text string) { kinds = append(kinds, kind) }
+
+	r.landJobs(emit)
+	if len(kinds) != 2 || kinds[0] != "job" || kinds[1] != "job" {
+		t.Fatalf("emitted %v", kinds)
+	}
+	if len(h.Entries()) != 2 {
+		t.Fatalf("recorded %d entries, want 2", len(h.Entries()))
+	}
+	r.landJobs(emit)
+	if len(kinds) != 2 {
+		t.Fatalf("a second drain invented %d more events", len(kinds)-2)
+	}
+	// No seam mounted at all is a clean no-op, not a panic.
+	(&runner{hist: h}).landJobs(emit)
+}
+
+type fakeNotices struct {
+	pending []string
+	wake    chan struct{}
+}
+
+func (f *fakeNotices) Take() []string {
+	p := f.pending
+	f.pending = nil
+	return p
+}
+
+func (f *fakeNotices) Wake() <-chan struct{} { return f.wake }
