@@ -132,23 +132,39 @@ func TestHeadlessResumeExactID(t *testing.T) {
 	}
 }
 
-// --resume with an unknown id exits 1, naming near matches.
-func TestResumeBadIDExitsOne(t *testing.T) {
+// A session id is a UUIDv7 now, so an unambiguous PREFIX resumes that
+// session; an ambiguous one and an unknown one both exit 1, naming the
+// candidates.
+func TestResumeByPrefix(t *testing.T) {
 	t.Parallel()
 	home, cwd, _ := sandbox(t, launchOpts{home: map[string]string{
 		".bough/history/abc-session.jsonl": `{"seq":1,"kind":"input","data":{"text":"kept"}}` + "\n",
 	}})
 	out, code := runCLI(t, home, cwd, "--set", "llm.plugin=llm-echo", "-r", "abc", "--headless")
-	if code != 1 {
-		t.Fatalf("exit %d, want 1:\n%s", code, out)
+	if code != 0 {
+		t.Fatalf("a unique prefix must resume; exit %d:\n%s", code, out)
 	}
-	mustContain(t, out, `no session "abc"`, "did you mean:", "abc-session")
 
 	out, code = runCLI(t, home, cwd, "--set", "llm.plugin=llm-echo", "-r", "zzz", "--headless")
 	if code != 1 {
 		t.Fatalf("exit %d, want 1:\n%s", code, out)
 	}
 	mustContain(t, out, `no session "zzz"`, "bough sessions")
+}
+
+// An ambiguous prefix resumes nothing and lists what it matched: the
+// wrong session silently continued is worse than an error.
+func TestResumeAmbiguousPrefixExitsOne(t *testing.T) {
+	t.Parallel()
+	home, cwd, _ := sandbox(t, launchOpts{home: map[string]string{
+		".bough/history/abc-one.jsonl": `{"seq":1,"kind":"input","data":{"text":"one"}}` + "\n",
+		".bough/history/abc-two.jsonl": `{"seq":1,"kind":"input","data":{"text":"two"}}` + "\n",
+	}})
+	out, code := runCLI(t, home, cwd, "--set", "llm.plugin=llm-echo", "-r", "abc", "--headless")
+	if code != 1 {
+		t.Fatalf("exit %d, want 1:\n%s", code, out)
+	}
+	mustContain(t, out, "matches 2 sessions", "abc-one", "abc-two")
 }
 
 // Bare --resume in headless mode prints the session list and exits 2.

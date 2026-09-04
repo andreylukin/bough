@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -267,5 +269,40 @@ func TestListMissingDirEmpty(t *testing.T) {
 	infos, err := List(filepath.Join(t.TempDir(), "nosuch"))
 	if err != nil || len(infos) != 0 {
 		t.Fatalf("List(missing) = %v, %v; want empty, nil", infos, err)
+	}
+}
+
+// Session ids are UUIDv7s: unique, and still sorting oldest-first by
+// their leading timestamp so a name-ordered listing stays chronological.
+func TestNewIDIsSortableAndUnique(t *testing.T) {
+	seen := map[string]bool{}
+	var ids []string
+	for range 50 {
+		id := NewID()
+		if seen[id] {
+			t.Fatalf("duplicate session id %s", id)
+		}
+		seen[id] = true
+		ids = append(ids, id)
+		if len(id) != 36 || strings.Count(id, "-") != 4 {
+			t.Fatalf("not a uuid: %q", id)
+		}
+		if v := id[14]; v != '7' {
+			t.Fatalf("uuid %s is version %c, want 7", id, v)
+		}
+	}
+	if !slices.IsSorted(ids) {
+		t.Fatal("ids do not sort in creation order")
+	}
+}
+
+// A UUIDv7 name has no ":" and so needs no ref sanitizing, but old
+// RFC3339-named sessions still resolve to the same refs they always did.
+func TestTurnRefAcceptsBothNameStyles(t *testing.T) {
+	if got := TurnRef("0199b0f1-2c3d-7a4b-8c5d-6e7f80912345", 4); got != "refs/bough/turns/0199b0f1-2c3d-7a4b-8c5d-6e7f80912345/4" {
+		t.Fatalf("TurnRef = %q", got)
+	}
+	if got := TurnRef("2026-09-03T20:56:08Z-74482", 4); got != "refs/bough/turns/2026-09-03T20-56-08Z-74482/4" {
+		t.Fatalf("TurnRef = %q", got)
 	}
 }

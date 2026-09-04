@@ -332,6 +332,10 @@ func (w *Workers) runChild(task string, id int, run func(string) (string, error)
 			note("done", "", map[string]any{"status": "error", "steps": steps})
 			return "", fmt.Errorf("workers: subagent llm: %w", err)
 		}
+		// A child's reply reaches the parent as tool output: a
+		// fabricated system message in it would read there as an
+		// instruction from the harness.
+		reply = loop.StripFabrications(reply)
 		note("assistant", reply, nil)
 		msgs = append(msgs, llm.Message{Role: "assistant", Content: reply})
 		blocks := jsBlock.FindAllStringSubmatch(reply, -1)

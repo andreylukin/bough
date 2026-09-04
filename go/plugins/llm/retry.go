@@ -9,6 +9,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+
+	"github.com/anthropics/anthropic-sdk-go"
 	"strings"
 	"time"
 )
@@ -35,6 +37,19 @@ func retryableErr(err error) bool {
 // retryableStatus reports whether an HTTP status is worth another try.
 func retryableStatus(code int) bool {
 	return code == http.StatusTooManyRequests || code >= 500
+}
+
+// retryable is retryableErr plus the status of a typed SDK error: the
+// anthropic client returns *anthropic.Error, whose 429/5xx is worth
+// another try but whose 400/401/404 is not.
+func retryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if apiErr, ok := errors.AsType[*anthropic.Error](err); ok {
+		return retryableStatus(apiErr.StatusCode)
+	}
+	return retryableErr(err)
 }
 
 // withRetries runs do up to retryAttempts times while it reports a

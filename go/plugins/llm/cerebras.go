@@ -22,7 +22,8 @@ import (
 	"github.com/andreylukin/bough/kernel"
 )
 
-const cerebrasURL = "https://api.cerebras.ai/v1/chat/completions"
+// cerebrasURL is a var so a test can point the client at a stub.
+var cerebrasURL = "https://api.cerebras.ai/v1/chat/completions"
 
 func init() {
 	kernel.Register("llm-cerebras", func() kernel.Plugin { return &cerebrasPlugin{} })
@@ -117,55 +118,61 @@ func (c *cerebrasLLM) call(ctx context.Context, system string, messages []Messag
 		return "", fmt.Errorf("llm-cerebras: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cerebrasURL, bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("llm-cerebras: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.key)
-	req.Header.Set("Content-Type", "application/json")
+	delivered := false
+	return withRetries(ctx, func() (string, bool, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, cerebrasURL, bytes.NewReader(body))
+		if err != nil {
+			return "", false, fmt.Errorf("llm-cerebras: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+c.key)
+		req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("llm-cerebras: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(resp.Body)
-		return "", cerebrasErr(resp.StatusCode, c.model, data)
-	}
-	if onDelta != nil {
-		return c.readStream(resp.Body, onDelta)
-	}
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("llm-cerebras: %w", err)
-	}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return "", retryableErr(err), fmt.Errorf("llm-cerebras: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			data, _ := io.ReadAll(resp.Body)
+			return "", retryableStatus(resp.StatusCode), cerebrasErr(resp.StatusCode, c.model, data)
+		}
+		if onDelta != nil {
+			// A stream that already delivered text is never retried:
+			// the user would see the reply twice.
+			out, err := c.readStream(resp.Body, func(d string) { delivered = true; onDelta(d) })
+			return out, err != nil && !delivered && retryableErr(err), err
+		}
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", retryableErr(err), fmt.Errorf("llm-cerebras: %w", err)
+		}
 
-	var parsed struct {
-		Choices []struct {
-			Message orMessage `json:"message"`
-		} `json:"choices"`
-		Error *struct {
-			Message string `json:"message"`
-		} `json:"error"`
-		Usage *struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-		} `json:"usage"`
-	}
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		return "", fmt.Errorf("llm-cerebras: bad response: %w", err)
-	}
-	if parsed.Error != nil {
-		return "", fmt.Errorf("llm-cerebras: %s", parsed.Error.Message)
-	}
-	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("llm-cerebras: no choices in response")
-	}
-	if u := parsed.Usage; u != nil {
-		c.addUsage(u.PromptTokens, u.CompletionTokens)
-	}
-	return parsed.Choices[0].Message.Content, nil
+		var parsed struct {
+			Choices []struct {
+				Message orMessage `json:"message"`
+			} `json:"choices"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+			Usage *struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+			} `json:"usage"`
+		}
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			return "", false, fmt.Errorf("llm-cerebras: bad response: %w", err)
+		}
+		if parsed.Error != nil {
+			return "", false, fmt.Errorf("llm-cerebras: %s", parsed.Error.Message)
+		}
+		if len(parsed.Choices) == 0 {
+			return "", false, fmt.Errorf("llm-cerebras: no choices in response")
+		}
+		if u := parsed.Usage; u != nil {
+			c.addUsage(u.PromptTokens, u.CompletionTokens)
+		}
+		return parsed.Choices[0].Message.Content, false, nil
+	})
 }
 
 func (c *cerebrasLLM) addUsage(in, out int) {

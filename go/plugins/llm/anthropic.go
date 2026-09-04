@@ -99,6 +99,16 @@ func (a *anthropicLLM) Stream(ctx context.Context, system string, messages []Mes
 	if err := a.init(); err != nil {
 		return "", err
 	}
+	// A stream that already delivered text is never retried: the user
+	// would see the reply twice.
+	delivered := false
+	return withRetries(ctx, func() (string, bool, error) {
+		out, err := a.stream(ctx, system, messages, func(d string) { delivered = true; onDelta(d) })
+		return out, err != nil && !delivered && retryable(err), err
+	})
+}
+
+func (a *anthropicLLM) stream(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
 	stream := a.client.Messages.NewStreaming(ctx, a.params(system, messages))
 	defer stream.Close()
 	var out strings.Builder
@@ -135,6 +145,13 @@ func (a *anthropicLLM) Complete(ctx context.Context, system string, messages []M
 	if err := a.init(); err != nil {
 		return "", err
 	}
+	return withRetries(ctx, func() (string, bool, error) {
+		out, err := a.complete(ctx, system, messages)
+		return out, retryable(err), err
+	})
+}
+
+func (a *anthropicLLM) complete(ctx context.Context, system string, messages []Message) (string, error) {
 	resp, err := a.client.Messages.New(ctx, a.params(system, messages))
 	if err != nil {
 		return "", a.wrapErr(err)

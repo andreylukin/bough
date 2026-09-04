@@ -202,7 +202,9 @@ func runTree(ctx *kernel.Context, args string) (string, error) {
 	if src == "" {
 		return "", fmt.Errorf("tree: this session has no history file to fork")
 	}
-	name := fmt.Sprintf("%s-%d-f%d", time.Now().UTC().Format(time.RFC3339), os.Getpid(), seq)
+	// A fork gets its own session id, with the forked-at seq kept in
+	// the name so a listing shows where it came from.
+	name := fmt.Sprintf("%s-f%d", history.NewID(), seq)
 	if err := history.Fork(src, seq, filepath.Join(filepath.Dir(src), name+".jsonl")); err != nil {
 		return "", fmt.Errorf("tree: %w", err)
 	}

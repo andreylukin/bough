@@ -163,8 +163,27 @@ func resolveSession(cont, resume bool, id, mode string) (resumePath string, need
 		id = strings.TrimSuffix(id, ".jsonl")
 		p := filepath.Join(dir, id+".jsonl")
 		if _, err := os.Stat(p); err != nil {
-			fmt.Fprintf(os.Stderr, "bough: no session %q in %s\n", id, dir)
 			infos, _ := history.List(dir)
+			// Session ids are UUIDv7s now: nobody types one in full,
+			// so an unambiguous prefix resumes. Ambiguous or unknown
+			// falls through to the suggestions below.
+			var pre []history.SessionInfo
+			for _, in := range infos {
+				if strings.HasPrefix(in.ID, id) {
+					pre = append(pre, in)
+				}
+			}
+			if len(pre) == 1 {
+				return pre[0].Path, false
+			}
+			if len(pre) > 1 {
+				fmt.Fprintf(os.Stderr, "bough: %q matches %d sessions in %s:\n", id, len(pre), dir)
+				for _, in := range pre {
+					fmt.Fprintf(os.Stderr, "  %s\n", in.ID)
+				}
+				os.Exit(1)
+			}
+			fmt.Fprintf(os.Stderr, "bough: no session %q in %s\n", id, dir)
 			near := 0
 			for _, in := range infos {
 				if strings.Contains(in.ID, id) {

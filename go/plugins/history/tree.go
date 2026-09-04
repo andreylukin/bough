@@ -73,7 +73,8 @@ func Snapshot(dir string) (string, error) {
 var refUnsafe = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 
 // TurnRef is the ref a turn's checkpoint is pinned under; the session
-// id is sanitized (a ":" from the RFC3339 stamp is not ref-safe).
+// id is sanitized (a ":" from an old RFC3339-stamped session name is
+// not ref-safe; a UUIDv7 id needs no sanitizing).
 func TurnRef(session string, seq int64) string {
 	return fmt.Sprintf("refs/bough/turns/%s/%d", refUnsafe.ReplaceAllString(session, "-"), seq)
 }

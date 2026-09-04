@@ -1,6 +1,6 @@
 // Package history is the "history" plugin: an append-only, inspectable
 // JSONL record of the session. One file per session under
-// ~/.bough/history/<RFC3339 ts>-<pid>.jsonl; entries are never rewritten.
+// ~/.bough/history/<uuidv7>.jsonl; entries are never rewritten.
 // It provides the "history" service the loop appends every turn to.
 package history
 
@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/andreylukin/bough/kernel"
+	"github.com/google/uuid"
 )
 
 // Entry is one history record. At marshals as RFC3339Nano. Parent is
@@ -116,10 +117,23 @@ func readEntries(path string) ([]Entry, error) {
 	return entries, nil
 }
 
+// NewID is a session id: a UUIDv7, so it is unique per session (two
+// bough processes starting in the same second used to be able to
+// collide on the old <RFC3339>-<pid> name once the pid wrapped) while
+// still sorting oldest-first by its leading millisecond timestamp.
+// A failed random read falls back to a timestamp-and-pid name rather
+// than refusing to record the session.
+func NewID() string {
+	if id, err := uuid.NewV7(); err == nil {
+		return id.String()
+	}
+	return time.Now().UTC().Format("20060102T150405.000Z") + "-" + strconv.Itoa(os.Getpid())
+}
+
 // SessionInfo describes one stored session, for `bough sessions` and
 // the ui session picker (the "sessions" service is []SessionInfo).
 type SessionInfo struct {
-	ID      string    // file base name without .jsonl
+	ID      string    // file base name without .jsonl (a UUIDv7 for new sessions)
 	Path    string    // full path
 	ModTime time.Time // file mtime (last activity)
 	Entries int       // parseable entry count
@@ -296,7 +310,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		if err != nil {
 			return fmt.Errorf("history: home dir: %w", err)
 		}
-		name := time.Now().UTC().Format(time.RFC3339) + "-" + strconv.Itoa(os.Getpid()) + ".jsonl"
+		name := NewID() + ".jsonl"
 		if s, err = Open(filepath.Join(home, ".bough", "history", name)); err != nil {
 			return err
 		}

@@ -278,6 +278,18 @@ var anyBlock = regexp.MustCompile("(?s)```([^\\s`]*)[^\n]*\n.*?```")
 
 const removedBlock = "[guessed output omitted]"
 
+// fakeSystem matches a <system-…> pseudo-tag the MODEL wrote: a
+// fabricated system message, paired with its closing tag or dangling.
+// Real system text in bough comes from bough, never from a reply, so
+// the whole span is the model's invention.
+var fakeSystem = regexp.MustCompile(`(?is)<\s*system-[a-z0-9_-]*\s*>.*?(?:<\s*/\s*system-[a-z0-9_-]*\s*>|$)`)
+
+// looseSystemTag catches a stray opening or closing tag left behind
+// (mismatched names, a closing tag with no opening).
+var looseSystemTag = regexp.MustCompile(`(?is)<\s*/?\s*system-[a-z0-9_-]*\s*>`)
+
+const removedSystem = "[fabricated system message removed]"
+
 // errEmptyReply is the turn error after two empty replies in a row.
 var errEmptyReply = errors.New("the model returned an empty reply twice (provider hiccup) — send again, or switch with /model")
 
@@ -293,7 +305,26 @@ var outputTags = map[string]bool{"": true, "output": true, "text": true, "txt": 
 // removedBlock: those are model-guessed results, and left in the
 // transcript they render like real runtime output. Language-tagged
 // fences are kept: they are code being shown, not results.
+// stripFakeSystem removes system messages the model invented. Seen in
+// the wild from z-ai/glm-5.3-flash: a <system-variant-warmup> block
+// announcing itself as an "AUTOMATED TEST MESSAGE", asserting a false
+// repository state and instructing the agent to delete files and
+// force-push. Left in place it renders as if bough had said it, and —
+// worse — goes back into the model's own context as an authoritative
+// prior instruction. Same treatment as an invented ```output fence:
+// replaced by a marker, so the user still sees that it happened.
+func stripFakeSystem(reply string) string {
+	out := fakeSystem.ReplaceAllString(reply, removedSystem)
+	return looseSystemTag.ReplaceAllString(out, removedSystem)
+}
+
+// StripFabrications is stripFakeSystem for other plugins: a subagent's
+// report crosses into the parent's context as tool output, so a child
+// that invents a system message must not be able to hand it upward.
+func StripFabrications(text string) string { return stripFakeSystem(text) }
+
 func stripFakeBlocks(reply string) string {
+	reply = stripFakeSystem(reply)
 	return anyBlock.ReplaceAllStringFunc(reply, func(m string) string {
 		tag := anyBlock.FindStringSubmatch(m)[1]
 		if tag == "js" || !outputTags[strings.ToLower(tag)] {
