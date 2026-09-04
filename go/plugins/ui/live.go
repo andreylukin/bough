@@ -83,7 +83,10 @@ type uiCfg struct {
 	// small is the "llm-small" service and ONLY that: the status-line
 	// label and the composer's guess are worth a cheap model's time,
 	// never the agent's own (in money or in latency).
-	small    llm.LLM
+	small llm.LLM
+	// jobs is the background-job service, for the strip under the
+	// composer; nil when the tools row is absent.
+	jobs     jobLister
 	limit    contextLimiter // the usage service when it knows the model's context window; nil otherwise
 	mdStyle  string         // "dark"/"light" glamour override; "" = detect
 	notice   string         // launcher "notice" service: a first-row warning (stale binary)
@@ -249,6 +252,9 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 	if s, err := kernel.Get[llm.LLM](ctx, llm.SmallKey); err == nil {
 		cfg.small = s
+	}
+	if j, err := kernel.Get[jobLister](ctx, "job-notices"); err == nil {
+		cfg.jobs = j
 	} else if smallRowConfigured(ctx) {
 		// The row is there but the service is not: either the row is
 		// missing `service: llm-small` (so it published under "llm"

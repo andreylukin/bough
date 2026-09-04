@@ -138,6 +138,36 @@ func newJobs(ctx context.Context) *Jobs {
 	return &Jobs{ctx: ctx, wake: make(chan struct{}, 1)}
 }
 
+// Running is one live background job, for the strip the ui draws under
+// the composer: a job that outlives its turn is otherwise invisible
+// until it finishes.
+type Running struct {
+	ID    int
+	Cmd   string        // the command, first line
+	Since time.Duration // how long it has been running
+	Watch string        // the until pattern, "" when there is none
+}
+
+// Running lists the jobs still going, oldest first.
+func (j *Jobs) Running() []Running {
+	j.mu.Lock()
+	list := append([]*job(nil), j.list...)
+	j.mu.Unlock()
+	var out []Running
+	for _, b := range list {
+		b.mu.Lock()
+		if !b.done {
+			r := Running{ID: b.id, Cmd: firstLine(b.cmd), Since: b.elapsed()}
+			if b.until != nil {
+				r.Watch = b.until.String()
+			}
+			out = append(out, r)
+		}
+		b.mu.Unlock()
+	}
+	return out
+}
+
 // Take drains the queued notices (the loop's Notices seam).
 func (j *Jobs) Take() []string {
 	j.mu.Lock()

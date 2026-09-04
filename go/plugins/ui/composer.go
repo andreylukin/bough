@@ -63,6 +63,9 @@ func newComposer() textarea.Model {
 // off the height.
 func (m *model) layoutComposer() {
 	n := min(max(m.input.Height(), 1), composerMaxLines)
+	// The background-job strip sits under the composer and takes its
+	// rows from the transcript, like the status bar does.
+	n += len(m.jobRows(m.cfg.Load()))
 	if h := m.height - 1 - n; h > 0 {
 		atBottom := m.vp.AtBottom()
 		m.vp.SetHeight(h)

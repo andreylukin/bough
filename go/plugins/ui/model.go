@@ -621,11 +621,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case spinner.TickMsg:
-		if !m.running {
+		// The spinner drives two things: the running turn, and the
+		// background-job strip (which outlives the turn). Either keeps
+		// it ticking.
+		if !m.running && len(m.jobRows(m.cfg.Load())) == 0 {
 			return m, nil
 		}
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
+		m.layoutComposer() // a job that just started or ended resizes the pane
 		// The transcript pane is content set at refresh time, not
 		// drawn per frame like the status bar: a running subagent
 		// card's spinner and elapsed only move if the pane is rebuilt
@@ -1334,7 +1338,11 @@ func (m model) frame() string {
 	} else if m.todoPinned && m.todoText != "" {
 		body = overlayBottom(body, m.todoPanel(cfg))
 	}
-	return body + "\n" + m.statusBar(cfg) + "\n" + m.input.View()
+	out := body + "\n" + m.statusBar(cfg) + "\n" + m.input.View()
+	if strip := m.jobStrip(cfg); strip != "" {
+		out += "\n" + strip
+	}
+	return out
 }
 
 // overlayBottom replaces the bottom rows of body with lines (when

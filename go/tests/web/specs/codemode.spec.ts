@@ -6,8 +6,8 @@ test('CODE! runs the js block and shows code, result, and done separator', async
   const b = await launchBough();
   await boot(page, b.url);
   await say(page, 'CODE!');
-  // The code header names the action and carries the tool call.
-  await waitForTermText(page, 'tools.bash');
+  // The tool call renders as its collapsed "Ran:" header.
+  await waitForTermText(page, 'Ran: echo hi from codemode');
   // The bash tool actually ran.
   await waitForTermText(page, 'hi from codemode');
   // The turn finishes: echo answers the fed-back tool output, then done.
@@ -25,7 +25,7 @@ test('long result collapses; tab + enter expands it', async ({ launchBough, page
   const init = `
 bough.provider("longres", function (system, messages) {
   var last = messages[messages.length - 1].content;
-  if (last.indexOf("[tool output]") >= 0) return "finished::" + messages.length;
+  if (last.indexOf("[tool output]") >= 0) return "\\u0060\\u0060\\u0060stop\\nfinished::" + messages.length + "\\n\\u0060\\u0060\\u0060";
   if (last.indexOf("RUNIT") >= 0) {
     return "\\u0060\\u0060\\u0060js\\nfor (var i = 1; i <= 30; i++) console.log('RESLINE_' + i + '_X')\\n\\u0060\\u0060\\u0060";
   }
@@ -54,7 +54,7 @@ bough.provider("longp", function (system, messages) {
   if (last.indexOf("GIMME") >= 0) {
     var lines = [];
     for (var i = 1; i <= 200; i++) lines.push("LINE_" + i + "_END");
-    return lines.join("\\n");
+    return "\\u0060\\u0060\\u0060stop\\n" + lines.join("\\n") + "\\n\\u0060\\u0060\\u0060";
   }
   return "plain: " + last;
 });
