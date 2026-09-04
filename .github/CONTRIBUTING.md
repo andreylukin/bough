@@ -9,6 +9,7 @@ that design.
   reference for the kernel, the service keys, the loop, history, and the test layers.
 - Behavior attaches as a plugin row, not as a change to the loop. If your change needs the
   kernel or the loop to know something new, open an issue first.
+  [`go/docs/PLUGINS.md`](../go/docs/PLUGINS.md) walks through a working plugin end to end.
 
 Bugs, typos, flaky tests, better error messages: just send the PR.
 

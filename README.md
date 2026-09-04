@@ -152,6 +152,9 @@ Save the file and the running process reconciles per row: changed rows and their
 
 Hooks are `.js` files under `~/.bough/hooks/<event>/` (`session-start`, `user-prompt-submit`, `pre-code-exec`, `post-result`, `stop`, `session-end`), re-read on every fire. Skills are `~/.claude/skills/<name>/SKILL.md`, injected when their name appears in your message.
 
+Writing your own row is [go/docs/PLUGINS.md](go/docs/PLUGINS.md) — a walkthrough of
+[a working example plugin](go/plugins/example/example.go) that ships in the binary.
+
 The full reference, including the service-key table, the history and projection model, subagent and ask semantics, and the three test layers, is [go/README.md](go/README.md).
 
 ## Repository layout
@@ -162,7 +165,7 @@ The full reference, including the service-key table, the history and projection 
 | `go/cmd/bough/` | the launcher: flags, config discovery, hot reload, subcommands |
 | `go/plugins/` | llm, codemode, loop, tools, workers, ui, history, graph, mcp, hooks, skills, todo, ask, cost, commands, initjs, contextmd |
 | `go/e2e/`, `go/internal/` | headless and PTY end-to-end suites, shared LLM stubs, the real-terminal suite |
-| `go/docs/` | `INIT.md` (the init.js API), `graph-memory.md` (the memory graph design) |
+| `go/docs/` | `PLUGINS.md` (writing a plugin), `INIT.md` (the init.js API), `graph-memory.md` (the memory graph design) |
 | `bench/harbor/` | Terminal-Bench 4.0 via Harbor on Modal |
 
 ## Development

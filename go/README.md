@@ -27,7 +27,9 @@ The kernel (`kernel/`) is the only non-plugin code besides the launcher
   picks it up. `./bough rows` prints the live state table.
 
 Plugins register via `kernel.Register(name, factory)` in their `init()`
-and are wired together only through service keys:
+and are wired together only through service keys. To write one, see
+[docs/PLUGINS.md](docs/PLUGINS.md), which walks through the worked
+example in `plugins/example/`:
 
 | key        | provided by        | consumed by     |
 |------------|--------------------|-----------------|
