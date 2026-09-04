@@ -117,3 +117,40 @@ func TestStopFenceStillBoundsTheAnswer(t *testing.T) {
 		t.Fatalf("text after the fence should be dropped, got %q", text)
 	}
 }
+
+// A tool call the loop cannot run must not end the turn. Under the old
+// contract this was covered by accident; the real reply below ended a
+// turn with markup as its answer once the contract was inverted.
+func TestMisfencedToolCallIsRefused(t *testing.T) {
+	real := "\n<html>\n<body>\n<div class=\"container\">\n<script>\nconsole.log(tools.write(\"/tmp/hunt/pkg/stack_test.go\", `package pkg`))\n</script>\n</div>\n</body>\n</html>\n"
+	for name, reply := range map[string]string{
+		"html script wrapper": real,
+		"wrong fence tag":     "Here it is:\n```javascript\nconsole.log(tools.bash(\"ls\"))\n```",
+		"bare tool call":      "I'll list the files.\nconsole.log(tools.bash(\"ls\"))",
+		"unfenced tools line": "tools.view(\"a.go\")",
+	} {
+		if !meantToRunCode(reply) {
+			t.Errorf("%s: should be refused, not taken as the answer:\n%s", name, reply)
+		}
+	}
+}
+
+// Prose that merely mentions a tool is an answer, not an attempt.
+func TestProseAboutToolsStillAnswers(t *testing.T) {
+	for _, reply := range []string{
+		"Use tools.bash(cmd) to run a command; it returns the combined output.",
+		"The failure came from tools.view(path) being called on a directory.",
+		"`tools.spawn` runs a child agent. It is bounded to depth 1.",
+	} {
+		if meantToRunCode(reply) {
+			t.Errorf("discussion of a tool is an answer, not a misfenced call: %q", reply)
+		}
+	}
+}
+
+// A properly fenced block never reaches the check.
+func TestFencedBlockIsNotMisfenced(t *testing.T) {
+	if meantToRunCode("```js\nconsole.log(tools.bash(\"ls\"))\n```") {
+		t.Error("a real js block is not a misfenced call")
+	}
+}

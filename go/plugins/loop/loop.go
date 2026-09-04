@@ -1009,6 +1009,47 @@ var announceRe = regexp.MustCompile(`(?i)\b(?:` +
 	`|running it now|doing that now` +
 	`)\b`)
 
+// meantToRunNote is fed back when a reply tried to call a tool in a
+// form the loop cannot run.
+const meantToRunNote = "[unfinished] You wrote a tool call, but not inside a ```js block, so nothing ran and nobody saw it. Only a fenced ```js block is executed — no <script> tags, no other language tags, no bare code. Write the block again, properly fenced."
+
+// scriptTag and wrongFence are the two shapes a misfenced tool call
+// arrives in: HTML wrapping (a real reply opened with <html><body>…
+// <script>console.log(tools.write(…))</script>) and a fence tagged
+// with the wrong language.
+var (
+	scriptTag  = regexp.MustCompile(`(?i)<script[\s>]`)
+	wrongFence = regexp.MustCompile("(?s)```(?:javascript|typescript|ts|node|jsx)[^\n]*\n(.*?)```")
+	toolLine   = regexp.MustCompile(`(?m)^\s*(?:console\.log\(\s*)?tools\.\w+\(`)
+)
+
+// meantToRunCode reports whether a reply attempted a tool call the loop
+// cannot execute. Under the old contract this was covered by accident —
+// anything without a stop block was pushed back — and losing it cost a
+// real turn: a model answered with <html><body><script>console.log(
+// tools.write(…))</script></body></html>, nothing ran, and because the
+// reply held no js block the turn ENDED with that markup as the answer.
+//
+// The check runs only when no js block was found, so a properly fenced
+// reply never reaches it. It errs toward pushing back: a false veto
+// costs one round-trip and the model answers again, while a miss hands
+// the user a non-answer and burns the turn.
+func meantToRunCode(reply string) bool {
+	if jsBlock.FindStringIndex(reply) != nil {
+		return false
+	}
+	if scriptTag.MatchString(reply) {
+		return true
+	}
+	if m := wrongFence.FindStringSubmatch(reply); m != nil && strings.Contains(m[1], "tools.") {
+		return true
+	}
+	// A bare tool call at the start of a line: prose that mentions
+	// tools.bash inline is discussion, a line that begins with one is
+	// an attempt to run it.
+	return toolLine.MatchString(reply)
+}
+
 // announcesWork reports whether a reply promises an action rather than
 // reporting one. A reply that trails off into a colon counts too: the
 // block it was introducing never arrived.
@@ -1270,6 +1311,8 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			switch {
 			case strings.TrimSpace(reply) == "":
 				why, note0 = "was empty", saidNothingNote
+			case meantToRunCode(reply):
+				why, note0 = "wrote a tool call that was not in a ```js block", meantToRunNote
 			case announcesWork(reply):
 				why, note0 = "announced work it did not do", announcedNote
 			case lastFailed:
