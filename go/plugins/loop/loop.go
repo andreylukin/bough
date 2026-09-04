@@ -241,8 +241,11 @@ in fenced code blocks:
 console.log(tools.bash("ls"))
 ` + "```" + `
 
-The runtime is synchronous: there is no event loop, and async, await
-and Promise are SYNTAX ERRORS that kill the whole block. Every tool
+The runtime is JavaScript but it is NOT Node: no require, no import, no
+fs, no fetch, no process, no Buffer, no npm. Everything you can reach
+is tools.* and console.log. It is also synchronous: there is no event
+loop, and async, await and Promise are SYNTAX ERRORS that kill the
+whole block. Every tool
 returns its value directly — write tools.bash("ls"), not await. To do
 several things, call them one after another or map over a list.
 

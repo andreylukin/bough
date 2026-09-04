@@ -199,10 +199,27 @@ func (s *Stats) bash(cmd string, opts ...any) (string, error) {
 			code = ee.ExitCode()
 		}
 		s.exited(code)
-		return "", fmt.Errorf("bash: %v\n%s", err, out)
+		// "bash: exit status 1" alone is the header a collapsed error
+		// row shows, and it says nothing. Lead with what failed and
+		// what it said.
+		return "", fmt.Errorf("bash: %s: %v%s", firstLine(cmd), err, tail(string(out)))
 	}
 	s.exited(0)
 	return string(out), nil
+}
+
+// tail is a command's output for an error message: its first line on
+// the header line (where a collapsed row can show it), then the rest.
+func tail(out string) string {
+	out = strings.TrimRight(out, "\n")
+	if out == "" {
+		return ""
+	}
+	head, rest, _ := strings.Cut(out, "\n")
+	if rest == "" {
+		return " — " + head
+	}
+	return " — " + head + "\n" + rest
 }
 
 // write creates or overwrites path with content, making parent

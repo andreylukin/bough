@@ -44,6 +44,15 @@ func (s *Skills) Inject(input string) []string {
 		if !re.MatchString(input) {
 			continue
 		}
+		// A skill named after an ordinary word fires on ordinary
+		// English: "check three things in parallel" pulled in 3k
+		// characters of the web-search skill. Such a skill is opt-in
+		// per mention — "/parallel" runs it, prose does not — either
+		// because its SKILL.md says `manual: true` or because its name
+		// is a word people write without meaning it.
+		if (manual(found[name]) || commonWord(name)) && !strings.Contains(input, "/"+name) {
+			continue
+		}
 		matched++
 		if len(blocks) >= maxBlocks {
 			continue
@@ -82,6 +91,37 @@ func (s *Skills) scan() map[string]string {
 		}
 	}
 	return found
+}
+
+// commonWords are skill names that are also ordinary English: a
+// mention of one is usually the word, not the skill. The list is
+// short on purpose — `manual: true` in the SKILL.md is the general
+// answer, this is the default for the handful that bite immediately.
+var commonWords = map[string]bool{
+	"parallel": true, "wiki": true, "commit": true, "host": true,
+	"prose": true, "notes": true, "search": true, "review": true,
+	"test": true, "plan": true, "build": true, "deploy": true,
+}
+
+func commonWord(name string) bool { return commonWords[strings.ToLower(name)] }
+
+// manual reports whether a SKILL.md opts out of being injected on a
+// mention (`manual: true` in its frontmatter); it is still available
+// as /name.
+func manual(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if v, ok := strings.CutPrefix(line, "manual:"); ok {
+			return strings.TrimSpace(strings.Trim(strings.TrimSpace(v), `"'`)) == "true"
+		}
+		if strings.HasPrefix(line, "---") && strings.TrimSpace(line) == "---" && len(line) > 0 {
+			continue
+		}
+	}
+	return false
 }
 
 // description pulls the frontmatter "description:" line of a SKILL.md

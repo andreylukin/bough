@@ -53,10 +53,36 @@ type toolDoc struct {
 var nativeFrame = regexp.MustCompile(` at github\.com/andreylukin/bough/\S+ \(native\)`)
 
 // cleanErr strips native Go frames from a JS error message.
+// nodeGlobals are the things a model reaches for when it mistakes this
+// runtime for Node. goja has none of them, and "require is not
+// defined" does not say why, so the error says what to use instead.
+var nodeGlobals = map[string]string{
+	"require": "there are no modules here — use tools.bash, tools.view, tools.write, tools.patch",
+	"Buffer":  "no Buffer — tools.bash returns a string, and tools.write takes one",
+	"process": "no process — the shell is tools.bash(\"…\")",
+	"fetch":   "no fetch — run curl through tools.bash",
+	"fs":      "no fs — read with tools.view, write with tools.write",
+	"module":  "there are no modules here — everything is tools.*",
+}
+
+// nodeHint appends what to use instead when a ReferenceError names a
+// Node global.
+func nodeHint(msg string) string {
+	name, _, ok := strings.Cut(msg, " is not defined")
+	if !ok {
+		return ""
+	}
+	if hint, node := nodeGlobals[strings.TrimSpace(strings.TrimPrefix(name, "ReferenceError:"))]; node {
+		return " — this is not Node: " + hint
+	}
+	return ""
+}
+
 func cleanErr(err error) error {
-	msg := err.Error()
-	if c := nativeFrame.ReplaceAllString(msg, ""); c != msg {
-		return fmt.Errorf("%s", c)
+	msg := nativeFrame.ReplaceAllString(err.Error(), "")
+	msg += nodeHint(msg)
+	if msg != err.Error() {
+		return fmt.Errorf("%s", msg)
 	}
 	return err
 }

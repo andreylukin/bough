@@ -207,3 +207,27 @@ func TestSyntaxErrorShowsTheOffendingLine(t *testing.T) {
 		t.Fatalf("the error must quote the line and point at the column:\n%v", err)
 	}
 }
+
+// A model that mistakes this runtime for Node gets told what to use
+// instead: "require is not defined" alone does not say why.
+func TestNodeGlobalsExplainThemselves(t *testing.T) {
+	cm := New(2 * time.Second)
+	for _, tc := range []struct{ code, want string }{
+		{`require("fs")`, "not Node"},
+		{`Buffer.from("x")`, "tools.write"},
+		{`fetch("http://x")`, "curl"},
+		{`process.exit(1)`, "tools.bash"},
+	} {
+		_, err := cm.Run(tc.code)
+		if err == nil {
+			t.Fatalf("%s did not error", tc.code)
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s -> %v, want a hint mentioning %q", tc.code, err, tc.want)
+		}
+	}
+	// An ordinary undefined name keeps its plain message.
+	if _, err := cm.Run(`somethingElse()`); err == nil || strings.Contains(err.Error(), "not Node") {
+		t.Fatalf("plain ReferenceError = %v", err)
+	}
+}

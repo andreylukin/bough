@@ -59,11 +59,13 @@ func TestInjectWordBoundary(t *testing.T) {
 func TestInjectShadowing(t *testing.T) {
 	global := t.TempDir()
 	project := t.TempDir()
-	addSkill(t, global, "wiki", "global body")
-	addSkill(t, project, "wiki", "project body")
+	// A distinctive name: "wiki" is an ordinary word, and those are
+	// opt-in (see TestOrdinaryWordsAreOptIn).
+	addSkill(t, global, "kubectl", "global body")
+	addSkill(t, project, "kubectl", "project body")
 	s := New(global, project)
 
-	got := s.Inject("open the wiki")
+	got := s.Inject("run kubectl get pods")
 	if len(got) != 1 {
 		t.Fatalf("got %d blocks, want 1", len(got))
 	}
@@ -143,5 +145,39 @@ func TestNamesSortedAcrossPools(t *testing.T) {
 	}
 	if got := New(filepath.Join(global, "nope")).Names(); len(got) != 0 {
 		t.Errorf("Names with no pool = %v, want none", got)
+	}
+}
+
+// A skill named after an ordinary word fires on ordinary English:
+// "check three things in parallel" pulled 3k characters of the
+// web-search skill into a turn about goroutines. Those are opt-in.
+func TestOrdinaryWordsAreOptIn(t *testing.T) {
+	dir := t.TempDir()
+	addSkill(t, dir, "parallel", "web search body")
+	addSkill(t, dir, "kubectl", "cluster body")
+	s := New(dir)
+
+	if got := s.Inject("check three things in parallel"); len(got) != 0 {
+		t.Fatalf("prose pulled in a common-word skill: %v", got)
+	}
+	if got := s.Inject("/parallel search for the docs"); len(got) != 1 {
+		t.Fatalf("an explicit /parallel must still inject, got %d", len(got))
+	}
+	if got := s.Inject("run kubectl get pods"); len(got) != 1 {
+		t.Fatalf("a distinctive name still injects on a mention, got %d", len(got))
+	}
+}
+
+// `manual: true` in the frontmatter opts any skill out of mention
+// injection, while leaving it available as /name.
+func TestManualSkillsOnlyInjectOnTheCommand(t *testing.T) {
+	dir := t.TempDir()
+	addSkill(t, dir, "todoist", "manual: true\n\nbody here")
+	s := New(dir)
+	if got := s.Inject("add a todoist task"); len(got) != 0 {
+		t.Fatalf("a manual skill injected on a mention: %v", got)
+	}
+	if got := s.Inject("/todoist add a task"); len(got) != 1 {
+		t.Fatalf("/todoist must inject, got %d", len(got))
 	}
 }
