@@ -249,6 +249,14 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 	if s, err := kernel.Get[llm.LLM](ctx, llm.SmallKey); err == nil {
 		cfg.small = s
+	} else if smallRowConfigured(ctx) {
+		// The row is there but the service is not: either the row is
+		// missing `service: llm-small` (so it published under "llm"
+		// and quietly REPLACED the agent's model), or the binary
+		// predates that config key. Both are silent otherwise — the
+		// kernel's warning goes to stderr, which under `bough web` is
+		// a log file nobody reads.
+		cfg.notice = strings.TrimSpace(cfg.notice + "\nan llm-small row is configured but provides no llm-small service: add `service: llm-small` to its config, or run `bough update` if this binary predates it")
 	}
 	if a, err := kernel.Get[askAnswers](ctx, "ask-answers"); err == nil {
 		cfg.ask = a
@@ -323,6 +331,21 @@ func attachLive(ctx *kernel.Context, inputs chan<- string, cfg *uiCfg) {
 		}
 		liveMu.Unlock()
 	})
+}
+
+// smallRowConfigured reports whether the config tree means to provide
+// a small model: a row named llm-small, or any row asking for that
+// service key.
+func smallRowConfigured(ctx *kernel.Context) bool {
+	for _, r := range ctx.Desired() {
+		if r.ID == llm.SmallKey {
+			return true
+		}
+		if s, ok := r.Config["service"].(string); ok && s == llm.SmallKey {
+			return true
+		}
+	}
+	return false
 }
 
 // sendLive delivers one input line to the current mount, waiting out

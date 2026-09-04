@@ -92,8 +92,15 @@ func runWeb(args []string) {
 		return
 	}
 
+	// The web session is detached: its stderr goes to a log nobody
+	// reads, so a stale binary — which is how an llm-small row ends up
+	// silently replacing the agent's model — has to be said here.
+	if n := staleNotice(resolveExe()); n != "" {
+		fmt.Fprintln(os.Stderr, "bough web: "+n)
+	}
 	if pid, a, ok := runningWeb(home); ok {
 		fmt.Printf("bough web: already running at %s (pid %d)\n", webURL(a), pid)
+		fmt.Println("bough web: `bough web stop` then `bough web` to pick up a new build or config")
 		openBrowser(webURL(a))
 		return
 	}
