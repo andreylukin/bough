@@ -31,7 +31,17 @@ func startTmux(t *testing.T, cols, rows int) *tmuxApp {
 	tm := &tmuxApp{t: t, sock: fmt.Sprintf("vtreal-%d-%d", os.Getpid(), time.Now().UnixNano())}
 	shell := fmt.Sprintf("cd %s && HOME=%s TERM=xterm-256color %s -config %s", home, home, bin, cfg)
 	tm.run("new-session", "-d", "-x", fmt.Sprint(cols), "-y", fmt.Sprint(rows), shell)
-	t.Cleanup(func() { _ = exec.Command("tmux", "-L", tm.sock, "kill-server").Run() })
+	t.Cleanup(func() {
+		_ = exec.Command("tmux", "-L", tm.sock, "kill-server").Run()
+		// kill-server does not always take the socket file with it, and
+		// this suite runs often enough to leave hundreds of dead
+		// sockets in the tmux tmpdir.
+		dir := os.Getenv("TMUX_TMPDIR")
+		if dir == "" {
+			dir = "/tmp"
+		}
+		_ = os.Remove(filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()), tm.sock))
+	})
 	tm.waitFor("say something")
 	return tm
 }
