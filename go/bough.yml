@@ -98,6 +98,16 @@
   # config:
   #   timeout_minutes: 10  # unanswered asks error after this
 
+# A cheap model for the jobs that are not the conversation: naming a
+# session, extracting a fact worth remembering. Any llm-* plugin with
+# {service: llm-small}; without this row those jobs use the agent's own
+# model.
+# - id: llm-small
+#   plugin: llm-openrouter
+#   config:
+#     service: llm-small
+#     model: z-ai/glm-5.3-flash
+
 - id: loop
   plugin: loop
 
@@ -112,6 +122,19 @@
 # that blocks on the VM would stall the settle pass behind the first turn.
 - id: graph
   plugin: graph
+
+# After every turn a small model writes down what is worth remembering
+# (a decision and its reason, where something lives, a proven dead end)
+# and asserts it into the graph — or appends to ~/.bough/memory.md when
+# the graph row is absent. Runs off the turn, on llm-small when a row
+# provides it. config: {max_facts: 3, file: ~/.bough/memory.md}
+- id: auto-memory
+  plugin: auto-memory
+
+# One cheap call per session names it, so `bough sessions` and the
+# picker read as a list of jobs instead of opening sentences.
+- id: session-title
+  plugin: session-title
 
 # Colors: a bundled palette by name (forest, forest_light, ansi,
 # tokyonight, catppuccin_mocha, gruvbox, nord, dracula); /theme lists

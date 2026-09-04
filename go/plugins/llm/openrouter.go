@@ -36,7 +36,7 @@ func (p *openrouterPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error 
 	default:
 		return fmt.Errorf("llm-openrouter: effort must be low, medium, high or xhigh, got %q", effort)
 	}
-	ctx.Provide("llm", &openrouterLLM{model: model, effort: effort})
+	ctx.Provide(serviceKey(cfg), &openrouterLLM{model: model, effort: effort})
 	return nil
 }
 

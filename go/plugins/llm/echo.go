@@ -17,7 +17,7 @@ func (p *echoPlugin) Name() string     { return "llm-echo" }
 func (p *echoPlugin) Inject() []string { return nil }
 
 func (p *echoPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
-	ctx.Provide("llm", echoLLM{})
+	ctx.Provide(serviceKey(cfg), echoLLM{})
 	return nil
 }
 

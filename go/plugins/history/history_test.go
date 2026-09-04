@@ -306,3 +306,31 @@ func TestTurnRefAcceptsBothNameStyles(t *testing.T) {
 		t.Fatalf("TurnRef = %q", got)
 	}
 }
+
+// A named session (the session-title plugin's "title" entry) lists
+// under its name, not its opening sentence; an unnamed one still falls
+// back to the first line of the first input.
+func TestListPrefersTheTitleEntry(t *testing.T) {
+	dir := t.TempDir()
+	named := filepath.Join(dir, "named.jsonl")
+	os.WriteFile(named, []byte(
+		`{"seq":1,"kind":"input","data":{"text":"the gate is red, find out why\nand fix it"}}`+"\n"+
+			`{"seq":2,"kind":"title","data":{"text":"Fix the flaky golden test"}}`+"\n"), 0o644)
+	plain := filepath.Join(dir, "plain.jsonl")
+	os.WriteFile(plain, []byte(`{"seq":1,"kind":"input","data":{"text":"just asking\nsecond line"}}`+"\n"), 0o644)
+
+	infos, err := List(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, in := range infos {
+		got[in.ID] = in.Title
+	}
+	if got["named"] != "Fix the flaky golden test" {
+		t.Fatalf("named session title = %q", got["named"])
+	}
+	if got["plain"] != "just asking" {
+		t.Fatalf("unnamed session title = %q", got["plain"])
+	}
+}

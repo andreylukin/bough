@@ -29,6 +29,11 @@ func (m *model) statusBar(cfg *uiCfg) string {
 	th := cfg.theme
 	tokens, cost, ctx, mdl := usageParts(cfg)
 	left := " " + cfg.status
+	if m.title != "" {
+		// Once the session has a name it is more use than the app's:
+		// several bough windows are told apart by what they are doing.
+		left = " " + m.title
+	}
 	if mdl != "" {
 		// The right side names the model; a duplicate on the left
 		// would crowd the tokens out at 80-100 columns.

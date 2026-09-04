@@ -94,3 +94,18 @@ func TestThinkingBlockStreamsAndSettles(t *testing.T) {
 		t.Fatalf("blocks = %+v", m.blocks)
 	}
 }
+
+// A named session shows its name in the status bar and adds no block
+// to the transcript: the title is what the conversation IS, not
+// something that happened in it.
+func TestSessionTitleGoesToTheBar(t *testing.T) {
+	m := testModel(t)
+	before := len(m.blocks)
+	m.addEvent(Event{Kind: "title", Text: "Fix the flaky golden test"})
+	if len(m.blocks) != before {
+		t.Fatalf("title added %d blocks", len(m.blocks)-before)
+	}
+	if bar := m.statusBar(m.cfg.Load()); !strings.Contains(bar, "Fix the flaky golden test") {
+		t.Fatalf("status bar = %q", bar)
+	}
+}

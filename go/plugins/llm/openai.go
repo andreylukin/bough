@@ -44,7 +44,7 @@ func (p *openaiPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if b, ok := cfg["base_url"].(string); ok && b != "" {
 		o.base = strings.TrimRight(b, "/")
 	}
-	ctx.Provide("llm", o)
+	ctx.Provide(serviceKey(cfg), o)
 	return nil
 }
 

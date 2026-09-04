@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"slices"
+
+	"github.com/andreylukin/bough/kernel"
 )
 
 // Message is one turn of a conversation.
@@ -51,6 +53,43 @@ var Efforts = []string{"off", "low", "medium", "high", "xhigh"}
 // ValidEffort reports whether level is one Efforter accepts.
 func ValidEffort(level string) bool {
 	return level == "" || slices.Contains(Efforts, level)
+}
+
+// serviceKey is the service a provider row publishes under: "llm" (the
+// agent's model) unless the row says otherwise. A second row with
+// {service: llm-small} gives the harness a cheap model for the jobs
+// that are not the conversation — naming a session, extracting a fact
+// worth remembering — the way opencode's small_model does.
+func serviceKey(cfg map[string]any) string {
+	if s, ok := cfg["service"].(string); ok && s != "" {
+		return s
+	}
+	return "llm"
+}
+
+// SmallKey is the service key of that cheap model.
+const SmallKey = "llm-small"
+
+// Small returns the small model, falling back to the main one when no
+// row provides it (so a caller never has to branch), plus whether the
+// fallback happened.
+func Small(ctx *kernel.Context) (LLM, bool) {
+	if l, err := kernel.Get[LLM](ctx, SmallKey); err == nil {
+		return l, true
+	}
+	l, err := kernel.Get[LLM](ctx, "llm")
+	if err != nil {
+		return nil, false
+	}
+	return l, false
+}
+
+// Name is a provider's model id, "" when it does not say.
+func Name(l LLM) string {
+	if m, ok := l.(Modeler); ok {
+		return m.Model()
+	}
+	return ""
 }
 
 // Usage is a provider's running token/cost tally for this mount (it

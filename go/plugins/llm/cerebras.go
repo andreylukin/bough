@@ -43,7 +43,7 @@ func (p *cerebrasPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if e, ok := cfg["effort"].(string); ok {
 		c.effort = e
 	}
-	ctx.Provide("llm", c)
+	ctx.Provide(serviceKey(cfg), c)
 	return nil
 }
 

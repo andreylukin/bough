@@ -28,7 +28,7 @@ func (p *anthropicPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if !ok || model == "" {
 		return fmt.Errorf("llm-anthropic: config needs model (string)")
 	}
-	ctx.Provide("llm", &anthropicLLM{model: model})
+	ctx.Provide(serviceKey(cfg), &anthropicLLM{model: model})
 	return nil
 }
 

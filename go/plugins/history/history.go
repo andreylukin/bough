@@ -164,6 +164,14 @@ func List(dir string) ([]SessionInfo, error) {
 		}
 		title, cwd := "", ""
 		for _, e := range entries {
+			// A "title" entry is a name the session was given (the
+			// session-title plugin); it wins over the opening line.
+			if e.Kind == "title" {
+				if t, _ := e.Data["text"].(string); t != "" {
+					title = t
+					continue
+				}
+			}
 			if e.Kind == "meta" && cwd == "" {
 				cwd, _ = e.Data["cwd"].(string)
 			}

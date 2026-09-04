@@ -70,7 +70,7 @@ func (m *model) closedByDefault(text string) bool {
 
 func (b *block) collapsible() bool {
 	switch b.kind {
-	case "code", "result", "thinking", "spawn", "error", "system", "todo", "job", "context":
+	case "code", "result", "thinking", "spawn", "error", "system", "todo", "job", "context", "memory":
 		return true
 	}
 	return false
@@ -108,6 +108,7 @@ type model struct {
 	pick       int            // picker cursor index into cfg.sessions
 	mp         modelPicker    // "/model" picker (see modelpick.go)
 	todoText   string         // latest todo list text (the todo plugin's event)
+	title      string         // the session's name (session-title plugin); "" until named
 	todoPinned bool           // todo list pinned above the composer (todo_toggle)
 	sessRows   sessList       // mid-session picker list (see session.go); nil = launch picker
 	welcome    bool           // fresh-session orientation text (see welcomeView)
@@ -342,7 +343,7 @@ func (m *model) header(b *block, th theme) string {
 		if b.live {
 			tag = "thinking…" // still arriving; the count grows as it does
 		}
-	case "error", "system", "todo", "job", "context":
+	case "error", "system", "todo", "job", "context", "memory":
 		tag = b.kind
 	}
 	if b.label != "" {
@@ -506,6 +507,13 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 		// The dispatched "/" line: a dim echo of what was typed, so
 		// the system block below reads as its answer.
 		return "\n" + th["dim"].Render("❯ "+b.text)
+	case "memory":
+		// What was written down after the turn. Dim and closed: it is
+		// a receipt, not the work.
+		if b.collapsed {
+			return m.header(b, th)
+		}
+		return th["system"].Width(max(m.width, 10)).Render(b.text)
 	case "context":
 		// Text the model was given that the user never typed: an
 		// AGENTS.md, a skill a word in the message matched, a hook's
@@ -750,6 +758,13 @@ func (m *model) addEvent(ev Event) {
 		// the parent's transcript is the story, the child's is detail
 		// behind the card.
 		m.addSubEvent(ev)
+	case "title":
+		// The session's name belongs in the bar, not the transcript:
+		// it is what this conversation IS, not something that happened
+		// in it.
+		m.title = ev.Text
+		m.refresh()
+		return
 	case "thinking-delta":
 		m.addThinkDelta(id, ev.Text)
 	case "thinking":
@@ -783,7 +798,8 @@ func (m *model) addEvent(ev Event) {
 		// A loop-event system note is detail; command output (slash.go)
 		// is what the user asked for and stays open.
 		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: ev.Text,
-			collapsed: (ev.Kind == "system" || ev.Kind == "job" || ev.Kind == "context") && m.closedByDefault(ev.Text)})
+			collapsed: (ev.Kind == "system" || ev.Kind == "job" || ev.Kind == "context" || ev.Kind == "memory") &&
+				m.closedByDefault(ev.Text)})
 	}
 	m.refresh() // pins to the bottom only when it already was there
 	if !m.vp.AtBottom() {
