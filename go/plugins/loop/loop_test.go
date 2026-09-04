@@ -573,10 +573,10 @@ func TestNoStopIsAskedAgain(t *testing.T) {
 	}
 }
 
-// A model that never stops costs a bounded number of calls, and the
-// user still gets its last reply.
+// A model that keeps announcing work it never does costs a bounded
+// number of calls, and the user still gets its last reply.
 func TestStopRetriesAreCapped(t *testing.T) {
-	llm := &seqLLM{replies: []string{"still thinking about it"}}
+	llm := &seqLLM{replies: []string{"Let me check the tests first"}}
 	r := &runner{llm: llm, code: &stubCode{}, hist: &memHistory{}, secs: &Sections{}, stopRetries: 2}
 	var kinds, texts []string
 	_ = r.Run(context.Background(), "go", collect(&kinds, &texts))
@@ -586,7 +586,7 @@ func TestStopRetriesAreCapped(t *testing.T) {
 	if kinds[len(kinds)-1] != "done" {
 		t.Fatalf("the turn never ended: %v", kinds)
 	}
-	if i := slices.Index(texts, "still thinking about it"); i < 0 {
+	if i := slices.Index(texts, "Let me check the tests first"); i < 0 {
 		t.Fatal("the user lost the model's last reply")
 	}
 }
@@ -851,9 +851,11 @@ func TestUnclosedStopFenceStillStops(t *testing.T) {
 	if !stopped || text != "Here it is.\n\nDone." {
 		t.Fatalf("closed fence = %q (stopped=%v)", text, stopped)
 	}
-	// An empty unterminated block is not an answer.
-	if _, stopped, _ := Finish("```stop\n   "); stopped {
-		t.Fatal("an empty stop block must not end the turn")
+	// An empty block says nothing, and the marker itself is not an
+	// answer: the turn ends (running nothing does) with empty text,
+	// which the loop refuses as "was empty".
+	if text, _, _ := Finish("```stop\n   "); text != "" {
+		t.Fatalf("an empty stop block should leave no answer, got %q", text)
 	}
 	// A js block still wins: the reply is working, not finished.
 	if _, stopped, _ := Finish("```js\nx()\n```\n```stop\nDone."); stopped {

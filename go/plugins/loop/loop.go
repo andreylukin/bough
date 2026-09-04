@@ -258,23 +258,28 @@ persist between blocks; print what you need to carry over. Never write
 output or result blocks yourself; only the runtime returns output. Take
 as many steps as you need.
 
-Ending the turn is an ACT, not the absence of one. When the work is
-done — and only when your last block actually SUCCEEDED, never straight
-after an error — put your answer to the user in a stop block:
+A reply that runs no js block ENDS THE TURN: whatever you wrote is your
+answer to the user. So do not write a word until you have run what you
+meant to run. Never announce what you are about to do ("I'll verify…",
+"Next, let me…") — either do it in a js block in that same reply, or
+say what you found. Announcing a step and running nothing wastes the
+turn, and you will be asked again.
+
+When the answer needs a clear boundary — there is machinery above it
+you do not want read as the answer — put it in a stop block:
 
 ` + "```stop" + `
 What you did, what you found, what is left.
 ` + "```" + `
 
-That is the only thing that hands the turn back. It is final: never ask
-a question inside it ("shall I also…?", "do you want me to…?") — the
-turn is over by the time it is read, so ask with tools.ask inside a js
-block, or decide and say what you decided. A reply with neither a js
-block nor a stop block runs nothing and ends nothing: you will simply
-be asked again. So never announce what you are about to do ("I'll
-verify…", "Next, let me…") — either do it in a js block in that same
-reply, or stop. Everything the user needs to read goes inside the stop
-block; the transcript above it is machinery they have collapsed.
+Only what is inside it reaches the user then. The block is optional;
+plain prose ends the turn just as well.
+
+Either way the ending is final: never ask a question in it ("shall I
+also…?", "do you want me to…?") — the turn is over by the time it is
+read, so ask with tools.ask inside a js block, or decide and say what
+you decided. And never end on a failed block: if your last block
+errored, whatever you would claim is unverified.
 
 Before you stop, run the task's own checks (its tests, a build, the
 command the brief names) and fix what they show; stop only when the work
@@ -451,15 +456,33 @@ func FirstBlockOnly(reply string) (string, int) { return firstBlockOnly(reply) }
 func StopAnswer(reply string) (string, bool) { return stopAnswer(reply) }
 
 // Finish applies the whole end-of-reply rule in one place: a js block
-// before the stop fence means the reply is still working (run it, drop
-// the rest), otherwise a stop fence ends the turn with its answer.
+// means the reply is still working (run it, drop the rest), and a reply
+// that runs nothing is the answer — with or without a stop fence.
 // workers calls this rather than reimplementing it — a child that ran
 // 74 blocks out of one hallucinated reply got there because the two
 // copies had drifted apart.
+//
+// Running nothing IS stopping. Every other harness works this way: the
+// Cline SDK completes "after the model returns text without tool
+// calls", and Claude Code's Stop hook fires once the model has already
+// decided to stop, as a veto. bough required the marker instead, so
+// the model's most natural ending — a plain-prose final answer — was
+// an error on every clean turn, and the answer arrived twice: once as
+// the rejected draft, once reworded inside a fence. The fence is still
+// honoured (it says where the answer starts); it is no longer the only
+// way to hand the turn back. The reasons a stop is REFUSED live in the
+// loop, where the turn's history is.
 func Finish(reply string) (text string, stopped bool, dropped int) {
 	if !jsFirst(reply) {
 		if answer, ok := stopAnswer(reply); ok {
 			return answer, true, 0
+		}
+		if jsBlock.FindStringIndex(reply) == nil {
+			// stopAnswer declined, so any fence here is empty: keep the
+			// prose around it and drop the marker, or the user reads
+			// "```stop" as the answer. Nothing left means nothing was
+			// said, which the loop refuses.
+			return strings.TrimSpace(stopFence.ReplaceAllString(reply, "$1")), true, 0
 		}
 	}
 	text, dropped = firstBlockOnly(reply)
@@ -958,12 +981,38 @@ const SchemaNote = "[unfinished] Your stop block does not match the schema this 
 // askedInStopNote is fed back when the final answer ends in a question.
 const askedInStopNote = "[unfinished] You ended the turn with a question. The turn is over when you stop, so the user reads it with no way to answer inside it. Either decide it yourself and say what you decided, or ask properly with tools.ask(question, ...options) inside a js block, which blocks until they answer."
 
-// noStopNote is fed back to a model whose reply neither ran anything
-// nor ended the turn. The commonest shape by far is a plan with
-// nothing attached ("I'm locating the service definition, then I'll
-// open the PR."), which used to end the turn silently and leave the
-// user looking at an intention.
-const noStopNote = "[unfinished] That reply did neither: no ```js block, so nothing ran, and no ```stop block, so the turn is not over. Do the next thing in a ```js block, or — if the work really is done — put your answer in a ```stop block. A question in plain text does not reach the user; ask with tools.ask(question, ...options) inside a ```js block."
+// announcedNote is fed back to a model that described its next action
+// instead of taking it. This is the one refusal the old
+// stop-block-or-retry contract was really earning: of 22 nudges in a
+// week of real sessions, 7 recovered work, and every one of those was
+// a reply that announced a step it had not run. The other 15 were
+// finished answers that came back reworded.
+const announcedNote = "[unfinished] You said what you were about to do instead of doing it, and ran nothing — so nothing happened. Do it now in a ```js block. If it turns out there is nothing left to run, just say what you found; a reply that runs nothing ends the turn."
+
+// saidNothingNote is fed back for an empty reply: no code, no words.
+const saidNothingNote = "[unfinished] That reply was empty: nothing ran and nothing was said. Do the next thing in a ```js block, or answer the user."
+
+// announceRe matches prose that promises the model's own next action
+// ("Let me check…", "Now running…", "I'll verify…"). It is deliberately
+// verb-anchored: a bare "I'll" also appears in finished answers ("I'll
+// be notified when it finishes"), which must not be refused.
+var announceRe = regexp.MustCompile(`(?i)\b(?:` +
+	`(?:let me|let'?s|i'?ll|i will|i'?m going to|now i'?ll|next,? i'?ll)\s+(?:\w+\s+){0,2}` +
+	`(?:check|run|read|look|write|fix|verify|test|make|add|see|confirm|inspect|probe|dig|gather|start|build|try|patch|apply|update|remove|search|find|open|dump|measure|port|wire|land)` +
+	`|(?:now|first|next),?\s+(?:checking|running|reading|writing|fixing|verifying|testing|looking|probing|gathering|building)` +
+	`|running it now|doing that now` +
+	`)\b`)
+
+// announcesWork reports whether a reply promises an action rather than
+// reporting one. A reply that trails off into a colon counts too: the
+// block it was introducing never arrived.
+func announcesWork(reply string) bool {
+	t := strings.TrimSpace(reply)
+	if t == "" {
+		return false
+	}
+	return announceRe.MatchString(t) || strings.HasSuffix(t, ":")
+}
 
 // stopAnswer returns the turn's final answer when the reply carries a
 // stop block: the prose around it plus the block's body, with the
@@ -1202,17 +1251,21 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			if r.landSteers(ctx, emit, true) {
 				continue
 			}
-			// Ending a turn is an act, not the absence of one: the
-			// model says so with a ```stop block. A reply that neither
-			// runs anything nor stops is a plan the user cannot use,
-			// so the turn goes back for another round.
-			// A stop is refused twice over: on the heels of a failed
-			// block (the claim is unverified) and when it asks the
-			// user something (nobody can answer a finished turn).
+			// A reply that runs nothing has ended the turn (Finish).
+			// What is left here is the veto: the handful of reasons a
+			// turn may NOT end yet, which is how a stop hook works
+			// everywhere else — the model decides it is done, and the
+			// harness overrules it with a reason when it is wrong.
+			// A stop is refused when the reply only announces work, on
+			// the heels of a failed block (the claim is unverified),
+			// when it asks the user something (nobody can answer a
+			// finished turn), and when a schema is unmet.
 			why, note0 := "", ""
 			switch {
-			case !stopped:
-				why, note0 = "ran nothing and did not stop", noStopNote
+			case strings.TrimSpace(reply) == "":
+				why, note0 = "was empty", saidNothingNote
+			case announcesWork(reply):
+				why, note0 = "announced work it did not do", announcedNote
 			case lastFailed:
 				why, note0 = "stopped straight after a failed block", stoppedOnErrorNote
 			case len(r.schema) > 0:
