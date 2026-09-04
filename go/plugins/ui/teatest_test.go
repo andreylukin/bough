@@ -24,7 +24,11 @@ func sendQuit(tm *teatest.TestModel) {
 	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 }
 
-// waitBudget is generous on purpose: CI runs under -race on two vCPUs.
+// waitBudget is generous on purpose: CI runs under -race on two vCPUs,
+// and GitHub's macOS runners are slower and more contended than its
+// Linux ones. It covers teardown too — a shutdown that takes a moment
+// longer than usual is not the bug any of these tests are looking for,
+// and a tighter budget there only produces flakes.
 const waitBudget = 15 * time.Second
 
 func startProgram(t *testing.T, events chan Event, sendFn func(string)) *teatest.TestModel {
@@ -69,7 +73,7 @@ func TestProgramTurnFlow(t *testing.T) {
 	waitForOutput(t, tm, "❯ hello world", "echo: hello world")
 
 	sendQuit(tm)
-	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
+	tm.WaitFinished(t, teatest.WithFinalTimeout(waitBudget))
 }
 
 func TestProgramSpinnerBetweenSendAndDone(t *testing.T) {
@@ -92,7 +96,7 @@ func TestProgramSpinnerBetweenSendAndDone(t *testing.T) {
 	close(gate)
 	waitForOutput(t, tm, "late")
 	sendQuit(tm)
-	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
+	tm.WaitFinished(t, teatest.WithFinalTimeout(waitBudget))
 }
 
 func TestProgramExternalEventsRender(t *testing.T) {
@@ -104,7 +108,7 @@ func TestProgramExternalEventsRender(t *testing.T) {
 	events <- Event{Kind: "done"}
 	waitForOutput(t, tm, "hi from codemode", "Ran: echo hi from codemode (1 line)")
 	sendQuit(tm)
-	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
+	tm.WaitFinished(t, teatest.WithFinalTimeout(waitBudget))
 }
 
 func TestProgramMouseClickTogglesBlock(t *testing.T) {
@@ -126,7 +130,7 @@ func TestProgramMouseClickTogglesBlock(t *testing.T) {
 	tm.Send(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
 	tm.Send(tea.MouseReleaseMsg{X: 0, Y: 0, Button: tea.MouseLeft})
 	sendQuit(tm)
-	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
+	tm.WaitFinished(t, teatest.WithFinalTimeout(waitBudget))
 	fm, ok := tm.FinalModel(t).(model)
 	if !ok || len(fm.blocks) != 1 || !fm.blocks[0].collapsed {
 		t.Fatalf("second click did not collapse the block (ok=%v blocks=%d)", ok, len(fm.blocks))
@@ -138,7 +142,7 @@ func TestProgramQuitCleanly(t *testing.T) {
 	tm := startProgram(t, make(chan Event, 16), func(string) {})
 	waitForOutput(t, tm, "bough") // first frame drawn
 	sendQuit(tm)
-	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
+	tm.WaitFinished(t, teatest.WithFinalTimeout(waitBudget))
 	if fm, ok := tm.FinalModel(t).(model); !ok {
 		t.Errorf("final model has unexpected type %T", tm.FinalModel(t))
 	} else if fm.running {

@@ -12,13 +12,20 @@ import (
 )
 
 // hangLLM blocks until its context is cancelled: a provider mid-stream.
+//
+// The fallback is long on purpose. It exists only so a broken cancel
+// cannot leave a goroutine parked forever — it must never RACE the
+// test's own wait budget. At 10s it could, and did: on a loaded macOS
+// runner the keypress landed after the fallback had already returned
+// "too late" normally, so no cancelled row ever appeared and the test
+// failed for the one reason it was not testing.
 type hangLLM struct{}
 
 func (hangLLM) Complete(ctx context.Context, _ string, _ []llm.Message) (string, error) {
 	select {
 	case <-ctx.Done():
 		return "", ctx.Err()
-	case <-time.After(10 * time.Second):
+	case <-time.After(2 * time.Minute):
 		return "too late", nil
 	}
 }

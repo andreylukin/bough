@@ -779,5 +779,5 @@ func TestProgramSlashDispatch(t *testing.T) {
 	default:
 	}
 	sendQuit(tm)
-	tm.WaitFinished(t, teatest.WithFinalTimeout(4*time.Second))
+	tm.WaitFinished(t, teatest.WithFinalTimeout(waitBudget))
 }
