@@ -64,8 +64,11 @@ test('/todo add + list render checkbox lines; done flips the box', async ({ laun
   await say(page, '/todo done 1');
   await waitForTermText(page, '[x] 1 buy milk');
 
-  // Bare /todo re-renders the list.
+  // Bare /todo re-renders the list. say() only types and submits, so
+  // the screen has to be waited for — reading it straight after was a
+  // race that only lost under a full-suite parallel run.
   await say(page, '/todo');
+  await waitForTermText(page, '[x] 1 buy milk');
   const screen = await termText(page);
   expect(screen).toContain('[x] 1 buy milk');
   expect(screen).toContain('[ ] 2 wash car');
@@ -78,8 +81,8 @@ test('a spawn renders sub: blocks and the parent reply carries the child output'
 
   // One card per spawn, updated in place: task, call count, and a
   // ✔ once the child is done.
-  await waitForTermText(page, 'sub 1 · run the echo');
-  await waitForTermText(page, '✔ sub 1');
+  await waitForTermText(page, 'subagent 1 · run the echo');
+  await waitForTermText(page, '✔ subagent 1');
 
   // The child's answer re-enters the parent turn as the spawn result,
   // under its provenance line.

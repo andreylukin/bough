@@ -24,13 +24,21 @@ test('typing "/" opens the palette and typing filters it', async ({ launchBough,
   await boot(page, b.url);
 
   await typeInTerm(page, '/');
-  // All built-ins are on the overlay: name + dimmed summary per row.
+  // The overlay is a window on the commands: name + dimmed summary per
+  // row, at most palMaxRows (10) of them. There are more built-ins than
+  // that now, so the ones past the window are reached by typing, which
+  // is the next assertion.
   await waitForTermText(page, 'exit bough'); // /quit's summary
   let screen = await termText(page);
   expect(screen).toContain('/help');
   expect(screen).toContain('list commands');
   expect(screen).toContain('/clear');
-  expect(screen).toContain('pick a session to resume');
+
+  // A command below the fold is found by filtering, not by scrolling.
+  await typeInTerm(page, 'ses');
+  await waitForTermText(page, 'pick a session to resume');
+  for (let i = 0; i < 3; i++) await page.keyboard.press('Backspace');
+  await waitForTermText(page, 'exit bough');
 
   // "he" narrows to /help alone (prefix tier); the rest drop off.
   await typeInTerm(page, 'he');

@@ -10,6 +10,7 @@ import {
   findRow,
   say,
   termText,
+  vpText,
   waitForTermText,
   ask,
 } from '../helpers/term';

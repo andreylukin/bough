@@ -2,7 +2,7 @@
 // projection — the whole bough.* config surface, observed end-to-end
 // through the browser terminal.
 import { test, expect } from '../helpers/fixtures';
-import { ask, boot, say, termText, typeInTerm, waitForTermText } from '../helpers/term';
+import { ask, boot, say, termText, typeInTerm, vpText, waitForTermText } from '../helpers/term';
 
 test('a theme change from init.js recolors the user line', async ({ launchBough, page }) => {
   const init = `
@@ -108,8 +108,13 @@ bough.project(function (entries) {
   await boot(page, b.url);
   // llm-echo sees only what the projection produced.
   await ask(page, 'the real input', 'echo: PROJECTED_INPUT_2718');
-  const screen = await termText(page);
-  expect(screen).not.toContain('echo: the real input');
+  // Viewport-scoped: the projection governs the LOOP's messages, not
+  // every call in the process. The session-title plugin names the
+  // session from what the user actually typed (naming it
+  // "PROJECTED_INPUT_2718" would be absurd), and with no llm-small row
+  // that title comes from llm-echo too — so it lands on the status
+  // bar, outside the transcript this assertion is about.
+  expect(await vpText(page)).not.toContain('echo: the real input');
 });
 
 test('an unknown bough.setup key fails the mount loudly', async ({ launchBough }) => {
