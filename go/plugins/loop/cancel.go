@@ -30,6 +30,9 @@ type turns struct {
 	cancel   context.CancelFunc
 	steering bool // a turn runs and has a boundary left for a steer
 	steers   []string
+	// pending is a cancel that arrived before the turn it belongs to
+	// installed its own: see Cancel.
+	pending bool
 }
 
 // Steer queues text for the turn in flight; false while idle or past
@@ -57,13 +60,29 @@ func (t *turns) takeSteers(final bool) []string {
 	return s
 }
 
-// Cancel aborts the turn in flight; a no-op while idle.
+// Cancel aborts the turn in flight. A cancel that arrives before the
+// turn has installed its context is REMEMBERED, not dropped: run
+// honours it the moment it starts.
+//
+// There is a real gap between the two. The ui marks itself running as
+// it submits, and only then does the input reach run and get a
+// cancellable context, so a ctrl+c in between used to hit `cancel ==
+// nil` and do nothing — the ui believed it had cancelled and the turn
+// carried on. Pressing ctrl+c the instant you realise the prompt was
+// wrong is exactly when the gap is open, and a loaded CI runner
+// widened it enough to lose the cancel every time.
+//
+// It cannot misfire on a later turn: the ui only calls Cancel while a
+// turn is in flight (idle, ctrl+c arms the quit instead), so a pending
+// flag always belongs to the turn that is about to start.
 func (t *turns) Cancel() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.cancel != nil {
 		t.cancel()
+		return
 	}
+	t.pending = true
 }
 
 // run executes one input under a per-turn child of ctx, taking
@@ -74,7 +93,12 @@ func (t *turns) run(ctx context.Context, r *runner, input string, emit func(kind
 	t.mu.Lock()
 	t.cancel = cancel
 	t.steering = true
+	pending := t.pending
+	t.pending = false
 	t.mu.Unlock()
+	if pending {
+		cancel() // cancelled before it began; the runner unwinds at once
+	}
 	_ = r.Run(tctx, input, emit)
 	t.mu.Lock()
 	t.cancel = nil
