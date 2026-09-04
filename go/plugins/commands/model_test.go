@@ -62,12 +62,12 @@ func applyTestSets(rows []kernel.Row, sets []string) {
 
 // mountModelTree mounts llm-stub + commands with a launcher-shaped
 // "config-set" service (base rows + accumulated sets -> Reconcile).
-func mountModelTree(t *testing.T) (*kernel.Context, *Registry) {
+func mountModelTree(t *testing.T, extra ...kernel.Row) (*kernel.Context, *Registry) {
 	t.Helper()
-	base := []kernel.Row{
+	base := append([]kernel.Row{
 		{ID: "llm", Plugin: "llm-stub", Config: map[string]any{"model": "m1"}},
 		{ID: "commands", Plugin: "commands"},
-	}
+	}, extra...)
 	ctx := kernel.NewContext()
 	var recorded []string
 	ctx.Provide("config-set", func(sets ...string) error {
@@ -136,13 +136,14 @@ func TestModelShowsCurrentAndProviders(t *testing.T) {
 // ids; a stub provider has none to suggest.
 func TestModelShowSuggestsModels(t *testing.T) {
 	row := kernel.Row{ID: "llm", Plugin: "llm-openrouter", Config: map[string]any{"model": "x/y"}}
-	out := showModel(row, []string{"llm-openrouter"})
-	for _, want := range []string{"model: llm-openrouter · x/y", "try: anthropic/claude-sonnet-4.5", "usage: /model"} {
+	out := showModel(row, "llm-openrouter · cheap/one", []string{"llm-openrouter"})
+	for _, want := range []string{"model: llm-openrouter · x/y", "small: llm-openrouter · cheap/one",
+		"try: anthropic/claude-sonnet-4.5", "usage: /model"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("showModel missing %q:\n%s", want, out)
 		}
 	}
-	if out := showModel(kernel.Row{Plugin: "llm-stub"}, nil); strings.Contains(out, "try:") {
+	if out := showModel(kernel.Row{Plugin: "llm-stub"}, "(none)", nil); strings.Contains(out, "try:") {
 		t.Fatalf("stub provider should suggest nothing:\n%s", out)
 	}
 }
@@ -252,9 +253,9 @@ func TestModelBareOpensPicker(t *testing.T) {
 	if !errors.As(err, &act) {
 		t.Fatalf("bare /model should return a UIAction, got %v", err)
 	}
-	cur, rows, ok := ModelPickerChoices(act)
-	if !ok || cur != "llm-stub m1" {
-		t.Fatalf("picker action: ok=%v current=%q", ok, cur)
+	target, cur, rows, ok := ModelPickerChoices(act)
+	if !ok || cur != "llm-stub m1" || target != "" {
+		t.Fatalf("picker action: ok=%v target=%q current=%q", ok, target, cur)
 	}
 	if rows[0] != "llm-stub m1" || !slices.Contains(rows, "llm-stub2") || !slices.Contains(rows, "llm-cerebras gpt-oss-120b") {
 		t.Fatalf("choices: %v", rows)
@@ -266,5 +267,62 @@ func TestModelChoicesCurrentCurated(t *testing.T) {
 	cur, rows := modelChoices(row, []string{"llm-cerebras"})
 	if cur != "llm-cerebras qwen-3.8-27b" || len(rows) != 2 {
 		t.Fatalf("curated current should not be duplicated: %q %v", cur, rows)
+	}
+}
+
+// /model targets either row: bare for the agent's model, "small" for
+// the cheap one, and the picker action says which.
+func TestModelPicksEitherRow(t *testing.T) {
+	ctx, r := mountModelTree(t, kernel.Row{ID: "llm-small", Plugin: "llm-stub",
+		Config: map[string]any{"service": "llm-small", "model": "cheap1"}})
+
+	_, err := r.Run("model", "small")
+	var act UIAction
+	if !errors.As(err, &act) {
+		t.Fatalf("/model small should open the picker, got %v", err)
+	}
+	target, cur, _, ok := ModelPickerChoices(act)
+	if !ok || target != "small" || cur != "llm-stub cheap1" {
+		t.Fatalf("picker: ok=%v target=%q current=%q", ok, target, cur)
+	}
+
+	// The swap changes the small row and leaves the agent's alone.
+	out, err := r.Run("model", "small cheap2")
+	if err != nil {
+		t.Fatalf("swap: %v", err)
+	}
+	if !strings.Contains(out, "small model: llm-stub · cheap2") {
+		t.Fatalf("swap said %q", out)
+	}
+	main, err := llmRow(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if main.Config["model"] != "m1" {
+		t.Fatalf("the agent's model changed: %v", main.Config)
+	}
+
+	// /model list names both.
+	out, err = r.Run("model", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"model: llm-stub · m1", "small: llm-stub · cheap2"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("/model list missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// Without a small row, /model small explains how to add one instead of
+// failing obscurely.
+func TestModelSmallWithoutARow(t *testing.T) {
+	_, r := mountModelTree(t)
+	_, err := r.Run("model", "small")
+	if err == nil || !strings.Contains(err.Error(), "service: llm-small") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := r.Run("model", "small gpt-nano"); err == nil {
+		t.Fatal("a swap with no small row should fail")
 	}
 }

@@ -17,13 +17,14 @@ import (
 type modelPicker struct {
 	open    bool
 	pick    int
+	target  string // "" the agent's model, "small" the cheap one
 	current string
 	rows    []string
 }
 
 // openModelPicker shows the picker, cursor on the current choice.
-func (m *model) openModelPicker(current string, rows []string) {
-	m.mp = modelPicker{open: true, current: current, rows: rows}
+func (m *model) openModelPicker(target, current string, rows []string) {
+	m.mp = modelPicker{open: true, target: target, current: current, rows: rows}
 	for i, r := range rows {
 		if r == current {
 			m.mp.pick = i
@@ -52,12 +53,23 @@ func (m model) handleModelPickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if len(m.mp.rows) == 0 {
 			return m, nil
 		}
-		choice, cur := m.mp.rows[m.mp.pick], m.mp.current
+		choice, cur, target := m.mp.rows[m.mp.pick], m.mp.current, m.mp.target
 		m.mp = modelPicker{}
 		if choice == cur {
 			return m, nil
 		}
+		if target != "" {
+			return m, m.dispatch("/model " + target + " " + choice)
+		}
 		return m, m.dispatch("/model " + choice)
+	case "tab":
+		// One picker, either model: tab re-opens it on the other row.
+		next := "small"
+		if m.mp.target == "small" {
+			next = ""
+		}
+		m.mp = modelPicker{}
+		return m, m.dispatch(strings.TrimSpace("/model " + next))
 	case "esc":
 		m.mp = modelPicker{}
 	}
@@ -68,8 +80,12 @@ func (m model) handleModelPickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // row marked, the selected row in the focus style.
 func (m *model) modelPickerView(cfg *uiCfg) string {
 	th := cfg.theme
+	what := "· pick a model"
+	if m.mp.target == "small" {
+		what = "· pick the small model (session names, memory, status line, autocomplete)"
+	}
 	lines := []string{
-		th["accent"].Render("bough") + " " + th["dim"].Render("· pick a model"),
+		th["accent"].Render("bough") + " " + th["dim"].Render(what),
 		"",
 	}
 	if len(m.mp.rows) == 0 {

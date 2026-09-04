@@ -104,21 +104,23 @@ func ResumeID(a UIAction) (string, bool) {
 const modelPickerPrefix = "model-picker:"
 
 // ModelPickerAction is the UIAction that opens the model picker over
-// choices ("provider" or "provider model"), current marking the row
-// in effect.
-func ModelPickerAction(current string, choices []string) UIAction {
-	return UIAction(modelPickerPrefix + current + "\n" + strings.Join(choices, "\n"))
+// choices ("provider" or "provider model"), current marking the row in
+// effect. target is "" for the agent's own model and "small" for the
+// cheap one, so the picker knows which row a choice changes.
+func ModelPickerAction(target, current string, choices []string) UIAction {
+	return UIAction(modelPickerPrefix + target + "\t" + current + "\n" + strings.Join(choices, "\n"))
 }
 
 // ModelPickerChoices reports whether a is a model-picker action and
-// its current line and choices.
-func ModelPickerChoices(a UIAction) (current string, choices []string, ok bool) {
+// its target, current line and choices.
+func ModelPickerChoices(a UIAction) (target, current string, choices []string, ok bool) {
 	body, ok := strings.CutPrefix(string(a), modelPickerPrefix)
 	if !ok {
-		return "", nil, false
+		return "", "", nil, false
 	}
 	lines := strings.Split(body, "\n")
-	return lines[0], lines[1:], true
+	target, current, _ = strings.Cut(lines[0], "\t")
+	return target, current, lines[1:], true
 }
 
 // Registry is the "commands" service: a concurrency-safe name ->

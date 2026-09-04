@@ -21,7 +21,7 @@ func modelDrv(t *testing.T) (*drv, *[]string) {
 		func(args string) (string, error) {
 			ran = append(ran, args)
 			if args == "" {
-				return "", commands.ModelPickerAction("llm-anthropic claude-sonnet-5",
+				return "", commands.ModelPickerAction("", "llm-anthropic claude-sonnet-5",
 					[]string{"llm-anthropic claude-sonnet-5", "llm-cerebras gpt-oss-120b", "llm-echo"})
 			}
 			return "model: " + args, nil

@@ -272,8 +272,12 @@ func hlDispatch(line string) bool {
 	switch {
 	case isAct:
 		out = "/" + name
-		if cur, rows, ok := commands.ModelPickerChoices(act); ok {
-			out = "model: " + cur + "\nchoices: " + strings.Join(rows, ", ")
+		if target, cur, rows, ok := commands.ModelPickerChoices(act); ok {
+			label := "model: "
+			if target == "small" {
+				label = "small model: "
+			}
+			out = label + cur + "\nchoices: " + strings.Join(rows, ", ")
 		}
 		if id, ok := commands.ResumeID(act); ok {
 			// No session swap here: name the file so it can be resumed.

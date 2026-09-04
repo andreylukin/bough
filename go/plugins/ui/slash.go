@@ -332,8 +332,8 @@ func (m *model) perform(act commands.UIAction) tea.Cmd {
 		m.resumeID(id)
 		return nil
 	}
-	if cur, rows, ok := commands.ModelPickerChoices(act); ok {
-		m.openModelPicker(cur, rows)
+	if target, cur, rows, ok := commands.ModelPickerChoices(act); ok {
+		m.openModelPicker(target, cur, rows)
 		return nil
 	}
 	switch act {
