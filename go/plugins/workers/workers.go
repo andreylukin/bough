@@ -51,10 +51,12 @@ Open: questions or blockers for the parent, or "none"`
 
 // promptSection documents tools.spawn to the parent model (registered
 // into the loop's "prompt-sections" service when present).
-const promptSection = `Subagents:
-- tools.spawn(task) -> string runs ONE bounded child agent (same tools, fresh context, no nested spawns) on the task string and returns its report.
-- tools.spawnAll([task1, task2, …]) -> [report, …] runs several children AT ONCE and returns their reports in order. Prefer it whenever you have more than one independent task: the children wait on the model in parallel, so N tasks take about as long as the slowest one.
-Both are synchronous — no await. Use them to delegate self-contained work, never a shell command. Limits: at most %d spawns per turn and %d steps per child, so give each child one well-scoped task and do small things yourself.`
+const promptSection = `Subagents — when to delegate:
+- Exploring a codebase to answer a broad question ("what is this project", "how does X work", "where is Y handled") is the case delegation exists for: split it into independent areas and send them to tools.spawnAll in ONE call. The children read the files; only their reports reach you, so a wide survey costs you a few hundred lines instead of tens of thousands.
+- A needle lookup you can do in one command — a known path, a single grep — is faster done yourself. Do not delegate a shell command.
+- Prefer spawnAll over several spawn calls: the children wait on the model in parallel, so N tasks take about as long as the slowest one.
+- Give each child one self-contained brief: what to find out, where to look, and what to report. It cannot see this conversation and cannot spawn.
+Both calls are synchronous — no await. Limits: at most %d spawns per turn and %d steps per child, so scope each child's task to fit and do small things yourself.`
 
 // sections is the slice of the loop's "prompt-sections" service we need:
 // Set to advertise tools.spawn to the parent, Text to hand the child the
@@ -552,6 +554,10 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 
 	cm.RegisterTool("spawn", w.spawn)
 	cm.RegisterTool("spawnAll", w.spawnAll)
+	if d, ok := cm.(interface{ Describe(name, line string) }); ok {
+		d.Describe("spawn", `tools.spawn(task) -> string: run ONE bounded child agent (same tools, fresh context, no nested spawns) and get its report.`)
+		d.Describe("spawnAll", `tools.spawnAll([task, …]) -> [report, …]: run several children AT ONCE; N tasks take about as long as the slowest.`)
+	}
 	// Optional seam: the loop's prompt-sections registry, so the model
 	// learns tools.spawn exists. Withdrawn on unmount.
 	if s, err := kernel.Get[sections](kctx, "prompt-sections"); err == nil {

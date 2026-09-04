@@ -30,6 +30,13 @@ func (echoLLM) Complete(ctx context.Context, system string, messages []Message) 
 			last = m.Content
 		}
 	}
+	// A sentinel like CODE!, for inspecting what the model is actually
+	// told: the assembled prompt is built from the base, the live
+	// sections and the tool catalogue, so reading the source is not
+	// the same as reading the prompt.
+	if strings.Contains(last, "SYSTEM!") {
+		return system, nil
+	}
 	if strings.Contains(last, "CODE!") {
 		return "```js\ntools.bash(\"echo hi from codemode\")\n```", nil
 	}

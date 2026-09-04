@@ -142,6 +142,9 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	// providers (this plus todo's) Get+Provide the same single-slot
 	// service and reload each other forever.
 	code.RegisterTool("ask", a.ask)
+	if d, ok := code.(interface{ Describe(name, line string) }); ok {
+		d.Describe("ask", `tools.ask(question, ...options) -> string: ask the USER a question and block until they answer. Pass each option as a separate argument so they render as clickable choices.`)
+	}
 	ctx.Provide("ask-answers", a)
 	return nil
 }

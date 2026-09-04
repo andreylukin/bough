@@ -69,6 +69,10 @@ _CONFIG = """\
   plugin: loop
   config:
     max_steps: 300
+    # The graded-task brief (find a defect in every module, keep every
+    # public interface, hidden checks call the original API). It is
+    # bench-only: the daily-driver prompt must not carry it.
+    task_guidance: true
 - id: ui
   plugin: ui
 """

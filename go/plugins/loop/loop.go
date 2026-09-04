@@ -45,6 +45,14 @@ type Codemode interface {
 	Run(code string) (string, error)
 }
 
+// cataloguer is codemode's optional prompt-catalogue seam: the tool
+// list the model is shown is generated from the tools actually
+// registered, so it cannot drift from what is mounted (it nearly did
+// when background jobs landed and the hand-written list did not know).
+type cataloguer interface {
+	Catalogue() string
+}
+
 // Hooks is the optional "hooks" service seam. Fire runs every hook
 // file for event and returns the merged result object (nil if none).
 type Hooks interface {
@@ -195,30 +203,6 @@ in fenced code blocks:
 console.log(tools.bash("ls"))
 ` + "```" + `
 
-Available in the runtime:
-- tools.bash(cmd) -> string: run a shell command, returns its output.
-  It is killed after 60 s (the error says so). For anything longer,
-  give it a limit — tools.bash(cmd, 600) — and it runs in the
-  background instead, telling you when it finishes.
-- tools.view(path, [start, end]) -> string: a file's lines, numbered ("12│text"); optional 1-based inclusive range
-- tools.write(path, content) -> string: create or overwrite a whole file (use this for new files and rewrites, never a shell heredoc)
-- tools.patch(path, old, new) -> string: replace ONE exact occurrence of old with new (copy old verbatim from view, enough lines to be unique)
-- console.log(...): print; everything printed is returned to you
-
-Background jobs:
-- tools.bash(cmd, limit) runs cmd in the BACKGROUND: limit is seconds
-  (or "10m") and the call returns a job id at once. Use it for anything
-  longer than the 60 s foreground kill — a test suite, a build, a long
-  download, a server you need up while you work.
-- tools.bash(cmd, limit, until) also watches the output and tells you as
-  soon as it matches the regexp until, without stopping the job.
-- tools.jobs() lists them, tools.job(id) returns one job's status and
-  output so far, tools.jobWait(id, [seconds]) blocks until it exits,
-  tools.jobKill(id) stops it.
-When a job exits (or matches until) you are told automatically — before
-your next step, or as a fresh turn if you had already finished. Start
-the job, get on with other work, and read the result when it lands.
-
 The runtime is synchronous: there is no event loop, and async, await
 and Promise are SYNTAX ERRORS that kill the whole block. Every tool
 returns its value directly — write tools.bash("ls"), not await. To do
@@ -228,11 +212,11 @@ Write ONE code block per reply: only the first block runs, anything
 after it is dropped. That block is executed and its output is sent back
 to you as the next message. Do not write the next command before you
 have seen the output of this one — put several steps in ONE program
-instead when they belong together. Declarations (const/let/var) do not persist between
-blocks; print what you need to carry over. Never write output or result
-blocks yourself; only the runtime returns output. Take as many steps as
-you need. When you are done, reply with plain text only — no code block —
-and that ends the turn.
+instead when they belong together. Declarations (const/let/var) do not
+persist between blocks; print what you need to carry over. Never write
+output or result blocks yourself; only the runtime returns output. Take
+as many steps as you need. When you are done, reply with plain text
+only — no code block — and that ends the turn.
 
 A reply without a code block ENDS the turn, whatever it says. Never
 announce what you will do next ("I'll verify…", "Next, let me…") without
@@ -241,7 +225,45 @@ task's own checks (its tests, a build, the command the brief names) and
 fix what they show; end only when the work is actually done or you have
 hit a wall, and say which.
 
-Be thorough over broad briefs: re-read the brief before finishing and
+Answering:
+- Your reply is read in a terminal. Be brief and direct: answer the
+  question that was asked, in as few lines as it takes. No preamble
+  ("Great question", "Let me explain"), no postamble summarising what
+  you just did, no restating the request back.
+- Give detail when the question calls for it — a design question, an
+  explanation the user asked for, a report you were asked to write —
+  and not otherwise. Match the length to the question, not to the
+  effort you spent.
+- Point at code as file/path.go:120 so the user can jump to it.
+- Say what you actually found. If a check failed, show the failure; if
+  you skipped something, say so; if you are unsure, say that rather
+  than picking the answer the user seems to want. Being right matters
+  more than being agreeable — disagree when you have reason to.
+- Never invent a URL, a file path, an API, or a command's output.
+- No emoji unless the user uses them first.
+
+Conventions and safety:
+- Read before you write: look at the surrounding file and its
+  neighbours, and match the style, naming and idiom you find there.
+- Never assume a dependency is available. Check the manifest (go.mod,
+  package.json, Cargo.toml, pyproject.toml) or an existing import first.
+- Do not add comments that restate the code, and do not reformat or
+  "improve" lines the task did not ask you to touch.
+- The working tree is the user's and may already be dirty. Never revert
+  or stash a change you did not make, and never run a destructive git
+  command (reset --hard, checkout --, clean -fd, push --force) unless
+  the user asked for exactly that.
+- Do not commit or push unless you were asked to.
+- Ask only when you are genuinely blocked: do everything that does not
+  depend on the answer first, then ask ONE question with the option you
+  recommend. Never ask for permission to proceed.`
+
+// TaskGuidance is the benchmark harness's extra brief, appended only
+// when the loop row sets {task_guidance: true}. It is written for a
+// graded task with hidden checks — find a defect in every module, keep
+// every public interface — which is the opposite of what a person at a
+// terminal wants when they ask what a codebase does. Bench only.
+const TaskGuidance = `Be thorough over broad briefs: re-read the brief before finishing and
 check each requirement against a change you made. When it says every
 module or utility has defects, find a concrete defect in each one and
 fix it against the textbook definition — a comment in the code that
@@ -249,8 +271,9 @@ names a shortcut ("biased", "approximate", "TODO") is a defect, not a
 design choice. Make that concrete: early on, grep the code you are
 fixing for TODO|FIXME|XXX|HACK|biased|approx|simplif|naive|placeholder|
 for now, print the hits, and carry that list to the end — each hit is a
-defect to fix (or to rule out with a reason in your final reply). Your final reply lists each defect as file: what was
-wrong → what you changed; never claim a fix you did not make.
+defect to fix (or to rule out with a reason in your final reply). Your
+final reply lists each defect as file: what was wrong → what you
+changed; never claim a fix you did not make.
 
 Fix in place: keep every public interface as it is — function names and
 signatures, return types and shapes, dict keys, CLI flags and exit codes,
@@ -269,7 +292,7 @@ consumer — clamp, threshold, or handle the case where it is used.`
 // options nudge matters: options inlined into the question string
 // render as plain text, separate arguments render as clickable option
 // rows in the UI.
-const askPromptSection = `You may ask the user a question from code: tools.ask(question, ...options) -> string blocks until they answer and returns the answer. Pass each option as a separate argument — tools.ask(question, opt1, opt2, ...) — so they render as clickable choices; never inline the options into the question text.`
+const askPromptSection = `tools.ask(question, ...options) -> string blocks the turn until the user answers, so ask only what you cannot work out yourself. Never inline the options into the question text — pass each as its own argument, or they render as prose instead of clickable rows.`
 
 // jobWake opens the turn a finished background job starts on its own.
 const jobWake = "[background job] A command you started in the background has finished while you were idle. Deal with it if it needs anything, then reply to the user with what happened.\n\n"
@@ -495,6 +518,8 @@ type runner struct {
 	proj     Projection
 	stats    TurnStats
 	notices  Notices
+	cat      func() string // the live tool catalogue; nil without the seam
+	guidance string        // the benchmark brief, when task_guidance is set
 	cp       Checkpointer
 	secs     *Sections
 	hasAsk   bool // an "ask-answers" service is mounted: document tools.ask
@@ -741,9 +766,20 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		note("done", "", extra)
 	}
 
+	// The catalogue is rebuilt per turn: a plugin mounted mid-session
+	// (an mcp server, a reloaded init.js tool) documents itself here.
+	if r.cat != nil {
+		if c := r.cat(); c != "" {
+			r.secs.Set("tools", "Available in the runtime:\n"+c+
+				"\n- console.log(...): print; everything printed is returned to you")
+		}
+	}
 	if !r.started {
 		r.started = true
 		r.system = SystemPrompt
+		if r.guidance != "" {
+			r.system += "\n\n" + r.guidance
+		}
 		if r.hasAsk {
 			r.system += "\n\n" + askPromptSection
 		}
@@ -948,6 +984,23 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		return err
 	}
 	r := &runner{llm: llm, code: code, hist: &memHistory{}, secs: &Sections{}}
+	if c, ok := code.(cataloguer); ok {
+		r.cat = c.Catalogue
+	}
+	if v, ok := cfg["task_guidance"]; ok {
+		on, ok := v.(bool)
+		if !ok {
+			if s, isStr := v.(string); isStr {
+				on, ok = s == "true", s == "true" || s == "false"
+			}
+		}
+		if !ok {
+			return fmt.Errorf("loop: task_guidance must be a bool, got %v", v)
+		}
+		if on {
+			r.guidance = TaskGuidance
+		}
+	}
 	if v, ok := cfg["max_steps"]; ok {
 		n, err := toInt(v)
 		if err != nil || n < 1 {

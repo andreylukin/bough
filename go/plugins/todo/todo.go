@@ -304,6 +304,9 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			},
 			"list": func() string { return t.Render() },
 		})
+		if d, ok := any(cm).(interface{ Describe(name, line string) }); ok {
+			d.Describe("todo", `tools.todo.add(text) -> id, tools.todo.done(id), tools.todo.list() -> string: the shared TODO list, shown to the user as you work.`)
+		}
 		t.hasTools = true
 		ctx.Effect(func() { cm.RegisterTool("todo", nil) })
 	}

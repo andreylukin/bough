@@ -34,6 +34,17 @@ type CodeMode struct {
 	timer   *time.Timer     // innermost Run's interrupt timer; see Pause
 	scoped  goja.Callable   // (src) => eval(src): per-block function scope
 	runCtx  context.Context // the innermost RunCtx's context; Background between runs
+
+	docsMu sync.Mutex
+	docs   []toolDoc // the prompt catalogue, in registration order
+}
+
+// toolDoc is one line of the runtime catalogue the model is shown.
+// Keeping it next to the registration is the point: a tool that is
+// mounted is documented, and one that is not cannot be advertised.
+type toolDoc struct {
+	name string
+	line string
 }
 
 // nativeFrame is the Go-frame tail goja appends to a GoError message
@@ -154,6 +165,33 @@ func (cm *CodeMode) RegisterTool(name string, fn any) {
 	nested := cm.lock()
 	defer cm.unlock(nested)
 	cm.tools.Set(name, fn)
+}
+
+// Describe records the one-line catalogue entry for tools.<name>
+// (signature and what it returns). Re-describing a name replaces it,
+// so a remount does not double up.
+func (cm *CodeMode) Describe(name, line string) {
+	cm.docsMu.Lock()
+	defer cm.docsMu.Unlock()
+	for i, d := range cm.docs {
+		if d.name == name {
+			cm.docs[i].line = line
+			return
+		}
+	}
+	cm.docs = append(cm.docs, toolDoc{name: name, line: line})
+}
+
+// Catalogue is every described tool as prompt bullets, in registration
+// order (bash first, whatever a plugin added last at the end).
+func (cm *CodeMode) Catalogue() string {
+	cm.docsMu.Lock()
+	defer cm.docsMu.Unlock()
+	var b strings.Builder
+	for _, d := range cm.docs {
+		b.WriteString("- " + d.line + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // Run executes code with an interrupt after the timeout. Returns any

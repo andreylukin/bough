@@ -383,13 +383,54 @@ func TestPromptSectionsAppended(t *testing.T) {
 	if !strings.HasSuffix(llm.system, "SECTION A\n\nSECTION B") {
 		t.Fatalf("sections missing or unsorted:\n%s", llm.system)
 	}
-	if !strings.Contains(llm.system, "killed after 60 s") {
-		t.Fatalf("bash timeout not documented:\n%s", llm.system)
-	}
 	r.secs.Set("a", "")
 	_ = r.Run(context.Background(), "again", collect(&kinds, &texts))
 	if strings.Contains(llm.system, "SECTION A") || !strings.HasSuffix(llm.system, "SECTION B") {
 		t.Fatalf("section removal not live:\n%s", llm.system)
+	}
+}
+
+// The tool catalogue is generated from the tools actually registered,
+// not hand-written in the prompt: it is rebuilt every turn, so a plugin
+// mounted mid-session is documented and one that went away is not.
+func TestToolCatalogueFromRegistry(t *testing.T) {
+	llm := &recordLLM{}
+	r := buildRunnerWith(t, llm, nil)
+	tools := "tools.bash(cmd) -> string: run it"
+	r.cat = func() string { return tools }
+
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "hi", collect(&kinds, &texts))
+	for _, want := range []string{"Available in the runtime:", tools, "console.log(...)"} {
+		if !strings.Contains(llm.system, want) {
+			t.Fatalf("catalogue missing %q:\n%s", want, llm.system)
+		}
+	}
+
+	tools = "tools.spawn(task) -> string: delegate"
+	_ = r.Run(context.Background(), "again", collect(&kinds, &texts))
+	if !strings.Contains(llm.system, "tools.spawn(task)") || strings.Contains(llm.system, "tools.bash(cmd) -> string: run it") {
+		t.Fatalf("catalogue is not rebuilt per turn:\n%s", llm.system)
+	}
+}
+
+// The benchmark's brief is opt-in: a person at a terminal must not be
+// told to hunt a defect in every module.
+func TestTaskGuidanceIsOptIn(t *testing.T) {
+	llm := &recordLLM{}
+	r := buildRunnerWith(t, llm, nil)
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "hi", collect(&kinds, &texts))
+	if strings.Contains(llm.system, "Be thorough over broad briefs") {
+		t.Fatalf("bench guidance leaked into the default prompt:\n%s", llm.system)
+	}
+
+	llm2 := &recordLLM{}
+	r2 := buildRunnerWith(t, llm2, nil)
+	r2.guidance = TaskGuidance
+	_ = r2.Run(context.Background(), "hi", collect(&kinds, &texts))
+	if !strings.Contains(llm2.system, "Be thorough over broad briefs") {
+		t.Fatalf("task_guidance did not append the brief:\n%s", llm2.system)
 	}
 }
 

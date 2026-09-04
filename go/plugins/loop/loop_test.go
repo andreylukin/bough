@@ -175,7 +175,7 @@ func TestSystemPromptDocumentsAskWhenMounted(t *testing.T) {
 	llm := &sysLLM{}
 	runTurn(t, llm, map[string]any{"ask-answers": struct{}{}})
 	sys := llm.seen()
-	for _, want := range []string{"tools.ask(", "separate argument", "clickable choices"} {
+	for _, want := range []string{"tools.ask(", "its own argument", "clickable rows"} {
 		if !strings.Contains(sys, want) {
 			t.Errorf("system prompt should contain %q:\n%s", want, sys)
 		}

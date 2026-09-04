@@ -30,6 +30,13 @@ type registry interface {
 	RegisterTool(name string, fn any)
 }
 
+// describer is codemode's optional prompt-catalogue seam: a tool
+// documents itself where it is registered, so the model is never told
+// about a tool that is not mounted (or left ignorant of one that is).
+type describer interface {
+	Describe(name, line string)
+}
+
 // runContexter is the optional slice of codemode that exposes the
 // running script's context: the turn's cancel reaches tools.bash
 // through it.
@@ -102,6 +109,21 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		st.jobs.pause = p.Pause
 	}
 	ctx.Provide("job-notices", st.jobs)
+	if d, ok := reg.(describer); ok {
+		for _, doc := range [][2]string{
+			{"bash", `tools.bash(cmd) -> string: run a shell command, returns its output. Killed after 60 s (the error says so).`},
+			{"bash-bg", `tools.bash(cmd, limit[, until]) -> string: the same command in the BACKGROUND — limit is seconds (or "10m"), the call returns a job id at once, and you are told when it exits or when its output matches the regexp until. Use it for anything longer than the 60 s foreground kill: a test suite, a build, a server you need up while you work.`},
+			{"jobs", `tools.jobs() -> string: the background jobs and their state.`},
+			{"job", `tools.job(id) -> string: one job's status and output so far.`},
+			{"jobWait", `tools.jobWait(id, [seconds]) -> string: block until a job exits.`},
+			{"jobKill", `tools.jobKill(id) -> string: stop a job.`},
+			{"view", `tools.view(path, [start, end]) -> string: a file's lines, numbered ("12│text"); optional 1-based inclusive range.`},
+			{"write", `tools.write(path, content) -> string: create or overwrite a whole file (use this for new files and rewrites, never a shell heredoc).`},
+			{"patch", `tools.patch(path, old, new) -> string: replace ONE exact occurrence of old with new (copy old verbatim from view, enough lines to be unique).`},
+		} {
+			d.Describe(doc[0], doc[1])
+		}
+	}
 	reg.RegisterTool("bash", st.bash)
 	reg.RegisterTool("jobs", st.jobs.jobs)
 	reg.RegisterTool("job", st.jobs.job)
