@@ -349,3 +349,24 @@ func TestParseConfigAndMount(t *testing.T) {
 	}
 	ctx.Unmount()
 }
+
+// bough.db keeps epoch milliseconds; the graph works in seconds. Every
+// edge the old-database backfill wrote was dated in the year 58000,
+// where no time-bounded query could reach it — 1,076 of 1,162 edges in
+// a real graph.
+func TestBackfillTimestampsAreSeconds(t *testing.T) {
+	ms := int64(1787355955996) // 2026-08-21 in milliseconds
+	if got := secs(ms); got != 1787355955 {
+		t.Fatalf("secs(%d) = %d", ms, got)
+	}
+	// A value already in seconds is left alone.
+	for _, s := range []int64{0, 1, 1787355955} {
+		if got := secs(s); got != s {
+			t.Fatalf("secs(%d) = %d, want it unchanged", s, got)
+		}
+	}
+	// The point of the conversion: an edge dated from it is visible now.
+	if secs(ms) > time.Now().Unix() {
+		t.Fatal("a 2026 timestamp still lands in the future")
+	}
+}

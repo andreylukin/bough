@@ -299,7 +299,20 @@ func label(e Entity) string {
 
 // Resolve turns a free-form reference into an entity: a key that
 // exists, else the parsed kind/key when the graph has it.
+// Resolve finds an existing entity by reference. A "kind:key" pair is
+// accepted as itself first — the ids this graph prints (session:old:…,
+// repo:github.com/x/y) contain colons, and parsing them as a bare
+// reference guessed "concept" and failed.
 func (s *Service) Resolve(ref string) (Entity, error) {
+	if kind, key, ok := strings.Cut(ref, ":"); ok && kind != "" && key != "" && !strings.ContainsAny(kind, " /") {
+		if e, err := s.Store.Get(kind, key); err == nil {
+			return e, nil
+		}
+	}
+	return s.resolveRef(ref)
+}
+
+func (s *Service) resolveRef(ref string) (Entity, error) {
 	r, ok := ParseRef(ref)
 	if !ok {
 		return Entity{}, fmt.Errorf("graph: cannot read %q as a ticket, pr, repo, person, branch or slug", ref)
@@ -475,7 +488,8 @@ func runCLI(cfg map[string]any, args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("concepts %d, cites %d, commands %d, repos %d, sessions %d\n", r.Concepts, r.Cites, r.Commands, r.Repos, r.Sessions)
+		fmt.Printf("concepts %d, cites %d, commands %d, repos %d, sessions %d, conversations %d, models %d, tickets %d\n",
+			r.Concepts, r.Cites, r.Commands, r.Repos, r.Sessions, r.Conversations, r.Models, r.Tickets)
 		for _, sk := range r.Skipped {
 			fmt.Println("skipped:", sk)
 		}

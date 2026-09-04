@@ -22,6 +22,7 @@ import (
 // BackfillReport says what a backfill did.
 type BackfillReport struct {
 	Concepts, Cites, Commands, Repos, Sessions int
+	Conversations, Models, Tickets             int
 	Skipped                                    []string // sources not present, with why
 }
 
@@ -97,7 +98,7 @@ func (s *Store) backfillBoughDB(path string, r *BackfillReport) error {
 				rows.Close()
 				return err
 			}
-			if _, err := s.Assert(src, "cites", dst, ep, "session", AssertOpts{ValidFrom: at, ObservedAt: at, Claim: src.Title + " cites " + ref}); err != nil {
+			if _, err := s.Assert(src, "cites", dst, ep, "session", AssertOpts{ValidFrom: secs(at), ObservedAt: secs(at), Claim: src.Title + " cites " + ref}); err != nil {
 				rows.Close()
 				return err
 			}
@@ -131,7 +132,7 @@ func (s *Store) backfillBoughDB(path string, r *BackfillReport) error {
 				repos[key] = re
 				r.Repos++
 			}
-			attrs, _ := json.Marshal(map[string]any{"tags": tags, "exit": exit, "ts": ts, "repo": key})
+			attrs, _ := json.Marshal(map[string]any{"tags": tags, "exit": exit, "ts": secs(ts), "repo": key})
 			ce, err := s.Upsert("command", fmt.Sprintf("old:%d", id), firstLine(cmd), string(attrs))
 			if err != nil {
 				rows.Close()
@@ -147,11 +148,11 @@ func (s *Store) backfillBoughDB(path string, r *BackfillReport) error {
 				}
 				sessions[sess] = se
 			}
-			if _, err := s.Assert(se, "touches", re, ep, "session", AssertOpts{ValidFrom: ts, ObservedAt: ts}); err != nil {
+			if _, err := s.Assert(se, "touches", re, ep, "session", AssertOpts{ValidFrom: secs(ts), ObservedAt: secs(ts)}); err != nil {
 				rows.Close()
 				return err
 			}
-			if _, err := s.Assert(se, "ran", ce, ep, "session", AssertOpts{ValidFrom: ts, ObservedAt: ts, Weight: 0.2}); err != nil {
+			if _, err := s.Assert(se, "ran", ce, ep, "session", AssertOpts{ValidFrom: secs(ts), ObservedAt: secs(ts), Weight: 0.2}); err != nil {
 				rows.Close()
 				return err
 			}
@@ -163,7 +164,7 @@ func (s *Store) backfillBoughDB(path string, r *BackfillReport) error {
 					rows.Close()
 					return err
 				}
-				if _, err := s.Assert(se, "touches", te, ep, "session", AssertOpts{ValidFrom: ts, ObservedAt: ts}); err != nil {
+				if _, err := s.Assert(se, "touches", te, ep, "session", AssertOpts{ValidFrom: secs(ts), ObservedAt: secs(ts)}); err != nil {
 					rows.Close()
 					return err
 				}
@@ -172,7 +173,130 @@ func (s *Store) backfillBoughDB(path string, r *BackfillReport) error {
 		rows.Close()
 		r.Sessions += len(sessions)
 	}
+	return s.backfillConversations(old, ep, r)
+}
+
+// backfillConversations reads the old database's sessions table: the
+// conversations themselves, which the command/notes passes above never
+// touched. Each becomes a named session entity — its title, the model
+// it ran on, what it cost — linked to the repo it worked in, the model
+// it used, the session it forked from, and any ticket its title or
+// prompts name. That turns 254 rows of "a conversation happened" into
+// something the agent can actually ask about: what did I do in this
+// repo, on which model, and what came of it.
+func (s *Store) backfillConversations(old *sql.DB, ep int64, r *BackfillReport) error {
+	// parent_id is NULL even for forks in the old schema — the lineage
+	// of a fork, a compaction and a subagent lives in origin_id, which
+	// is how the listings collapsed them. Take whichever is set, or
+	// 101 of 254 conversations lose where they came from.
+	rows, err := old.Query(`SELECT id, COALESCE(NULLIF(parent_id,''), origin_id, ''), COALESCE(title,''), COALESCE(kind,''),
+	  created_at, COALESCE(workspace,''), COALESCE(model,''), COALESCE(cost_usd,0),
+	  COALESCE(input_tokens,0), COALESCE(output_tokens,0)
+	  FROM sessions ORDER BY created_at`)
+	if err != nil {
+		return nil // an older schema without the table is not a failure
+	}
+	defer rows.Close()
+
+	type link struct{ child, parent string }
+	var parents []link
+	models := map[string]Entity{}
+	repos := map[string]Entity{}
+	for rows.Next() {
+		var id, parent, title, kind, workspace, model string
+		var created, in, out int64
+		var cost float64
+		if err := rows.Scan(&id, &parent, &title, &kind, &created, &workspace, &model, &cost, &in, &out); err != nil {
+			return err
+		}
+		attrs, _ := json.Marshal(map[string]any{
+			"kind": kind, "model": model, "cost_usd": cost,
+			"input_tokens": in, "output_tokens": out, "created_at": secs(created),
+			"workspace": workspace,
+		})
+		se, err := s.Upsert("session", "old:"+id, firstLine(title), string(attrs))
+		if err != nil {
+			return err
+		}
+		r.Conversations++
+
+		if workspace != "" {
+			key := RepoKey(workspace)
+			re, ok := repos[key]
+			if !ok {
+				if re, err = s.Upsert("repo", key, RepoName(key), ""); err != nil {
+					return err
+				}
+				repos[key] = re
+				r.Repos++
+			}
+			if _, err := s.Assert(se, "touches", re, ep, "session",
+				AssertOpts{ValidFrom: secs(created), ObservedAt: secs(created), Claim: firstLine(title)}); err != nil {
+				return err
+			}
+		}
+		if model != "" {
+			me, ok := models[model]
+			if !ok {
+				if me, err = s.Upsert("model", model, model, ""); err != nil {
+					return err
+				}
+				models[model] = me
+				r.Models++
+			}
+			if _, err := s.Assert(se, "ran_on", me, ep, "session",
+				AssertOpts{ValidFrom: secs(created), ObservedAt: secs(created), Weight: 0.2}); err != nil {
+				return err
+			}
+		}
+		for _, t := range Tickets(title) {
+			te, err := s.Upsert("ticket", t, t, "")
+			if err != nil {
+				return err
+			}
+			if _, err := s.Assert(se, "touches", te, ep, "session",
+				AssertOpts{ValidFrom: secs(created), ObservedAt: secs(created)}); err != nil {
+				return err
+			}
+			r.Tickets++
+		}
+		if parent != "" {
+			parents = append(parents, link{child: id, parent: parent})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	// Threads second, so both ends exist: a fork, a compaction and a
+	// subagent all say where they came from.
+	for _, l := range parents {
+		child, err := s.Upsert("session", "old:"+l.child, "", "")
+		if err != nil {
+			return err
+		}
+		parent, err := s.Upsert("session", "old:"+l.parent, "", "")
+		if err != nil {
+			return err
+		}
+		if _, err := s.Assert(child, "branched_from", parent, ep, "session", AssertOpts{}); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// secs converts a timestamp from the old database to the graph's unit.
+// bough.db keeps epoch MILLISECONDS (sessions.created_at,
+// command_history.ts, section_citations.at); the graph works in
+// seconds, and every edge this backfill has ever written was therefore
+// dated tens of thousands of years in the future, where no
+// time-bounded query could see it. 1e12 seconds is the year 33658, so
+// anything above it is milliseconds.
+func secs(ts int64) int64 {
+	if ts > 1e12 {
+		return ts / 1000
+	}
+	return ts
 }
 
 // citedKind maps a section_citations.kind to an entity kind: urls stay
@@ -219,7 +343,7 @@ func (s *Store) backfillSessions(dir string, r *BackfillReport) error {
 			if err != nil {
 				return err
 			}
-			if _, err := s.Assert(se, "touches", re, ep, "session", AssertOpts{ValidFrom: ts, ObservedAt: ts}); err != nil {
+			if _, err := s.Assert(se, "touches", re, ep, "session", AssertOpts{ValidFrom: secs(ts), ObservedAt: secs(ts)}); err != nil {
 				return err
 			}
 		}
@@ -228,7 +352,7 @@ func (s *Store) backfillSessions(dir string, r *BackfillReport) error {
 			if err != nil {
 				return err
 			}
-			if _, err := s.Assert(se, "touches", te, ep, "session", AssertOpts{ValidFrom: ts, ObservedAt: ts}); err != nil {
+			if _, err := s.Assert(se, "touches", te, ep, "session", AssertOpts{ValidFrom: secs(ts), ObservedAt: secs(ts)}); err != nil {
 				return err
 			}
 		}
@@ -237,7 +361,7 @@ func (s *Store) backfillSessions(dir string, r *BackfillReport) error {
 			if err != nil {
 				return err
 			}
-			if _, err := s.Assert(se, "touches", pe, ep, "session", AssertOpts{ValidFrom: ts, ObservedAt: ts}); err != nil {
+			if _, err := s.Assert(se, "touches", pe, ep, "session", AssertOpts{ValidFrom: secs(ts), ObservedAt: secs(ts)}); err != nil {
 				return err
 			}
 		}
