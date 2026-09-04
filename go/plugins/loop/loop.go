@@ -378,6 +378,23 @@ var errEmptyReply = errors.New("the model returned an empty reply twice (provide
 var outputTags = map[string]bool{"": true, "output": true, "text": true, "txt": true,
 	"plaintext": true, "console": true, "stdout": true, "stderr": true, "result": true, "log": true}
 
+// invented reports whether a fence's info string is a model's word for
+// runtime output. The exact list above misses the ones a model coins on
+// the spot ("bg-output", "tool_result", "shell-stdout"), which then
+// render as if bough had produced them.
+func invented(tag string) bool {
+	t := strings.ToLower(tag)
+	if outputTags[t] {
+		return true
+	}
+	for _, mark := range []string{"output", "stdout", "stderr", "result", "console"} {
+		if strings.Contains(t, mark) {
+			return true
+		}
+	}
+	return false
+}
+
 // stripFakeBlocks replaces every output-looking fenced block
 // (```output, ```text, bare ```...) in an assistant reply with
 // removedBlock: those are model-guessed results, and left in the
@@ -430,6 +447,29 @@ func FirstBlockOnly(reply string) (string, int) { return firstBlockOnly(reply) }
 // run on the same contract.
 func StopAnswer(reply string) (string, bool) { return stopAnswer(reply) }
 
+// Finish applies the whole end-of-reply rule in one place: a js block
+// before the stop fence means the reply is still working (run it, drop
+// the rest), otherwise a stop fence ends the turn with its answer.
+// workers calls this rather than reimplementing it — a child that ran
+// 74 blocks out of one hallucinated reply got there because the two
+// copies had drifted apart.
+func Finish(reply string) (text string, stopped bool, dropped int) {
+	if !jsFirst(reply) {
+		if answer, ok := stopAnswer(reply); ok {
+			return answer, true, 0
+		}
+	}
+	text, dropped = firstBlockOnly(reply)
+	// A stop block under the block that is about to run is an answer
+	// to output that does not exist yet. It cannot be honoured this
+	// round, and left in the record it reads as the model's verdict.
+	if loc := stopFence.FindStringIndex(text); loc != nil {
+		text = strings.TrimRight(text[:loc[0]], "\n") + "\n" + fmt.Sprintf(extraBlocks, 1)
+		dropped++
+	}
+	return text, false, dropped
+}
+
 // StripFabrications is stripFakeSystem for other plugins: a subagent's
 // report crosses into the parent's context as tool output, so a child
 // that invents a system message must not be able to hand it upward.
@@ -439,7 +479,7 @@ func stripFakeBlocks(reply string) string {
 	reply = stripFakeSystem(reply)
 	return anyBlock.ReplaceAllStringFunc(reply, func(m string) string {
 		tag := anyBlock.FindStringSubmatch(m)[1]
-		if tag == "js" || !outputTags[strings.ToLower(tag)] {
+		if tag == "js" || tag == "stop" || !invented(tag) {
 			return m
 		}
 		return removedBlock
@@ -930,7 +970,10 @@ func stopAnswer(reply string) (string, bool) {
 	body := strings.TrimSpace(reply[loc[2]:loc[3]])
 	// Prose before the fence is kept (a model likes to introduce its
 	// answer); anything after it is dropped, like a second js block.
-	head := strings.TrimSpace(reply[:loc[0]])
+	// Any FENCE in that prose goes too: an answer is words, and a
+	// reply that imagines a whole session before stopping must not
+	// smuggle 74 code blocks into it.
+	head := strings.TrimSpace(jsBlock.ReplaceAllString(reply[:loc[0]], ""))
 	out := strings.TrimSpace(head + "\n\n" + body)
 	return out, out != ""
 }

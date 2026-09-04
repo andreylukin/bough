@@ -709,3 +709,66 @@ func TestNoSchemaLeavesProseAlone(t *testing.T) {
 		t.Fatalf("prose was refused without a schema (%d calls)", llm.calls)
 	}
 }
+
+// The bug this exists for: a child imagined a whole session — 69k
+// characters, 74 js fences — and ended it with a stop block. The stop
+// won, its "answer" carried every one of those fences, and workers ran
+// all 74. One rule, one implementation.
+func TestFinishNeverHandsBackCode(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("Let me look at the file.\n")
+	for i := range 74 {
+		fmt.Fprintf(&b, "```js\ntools.bash(\"step %d\")\n```\nlooks good.\n", i)
+	}
+	b.WriteString("```stop\nAll done: 74 steps, everything passes.\n```")
+
+	text, stopped, dropped := Finish(b.String())
+	if stopped {
+		t.Fatal("a reply that starts with a js block is still working, not stopped")
+	}
+	if c := strings.Count(text, "```js"); c != 1 {
+		t.Fatalf("%d blocks survived, want 1", c)
+	}
+	if dropped != 73 {
+		t.Fatalf("dropped %d, want 73", dropped)
+	}
+
+	// A genuine stop: prose, then the fence. The prose stays, and any
+	// fence hiding in it does not.
+	text, stopped, _ = Finish("Here is what I found.\n```js\nx()\n```\n```stop\nThe gate is green.\n```")
+	if !stopped {
+		// The js block comes first, so this one is still working —
+		// exactly the case above, in miniature.
+		if strings.Contains(text, "gate is green") {
+			t.Fatalf("the stop answer leaked while a block was pending: %q", text)
+		}
+	}
+	text, stopped, _ = Finish("Here is what I found.\n```stop\nThe gate is green.\n```")
+	if !stopped || !strings.Contains(text, "gate is green") || !strings.Contains(text, "what I found") {
+		t.Fatalf("a plain stop = %q (stopped=%v)", text, stopped)
+	}
+}
+
+// A model coins its own name for runtime output ("bg-output" was seen
+// live); an invented fence renders as if bough had produced it.
+func TestInventedOutputFences(t *testing.T) {
+	for _, tag := range []string{"output", "bg-output", "tool_result", "shell-stdout", "console", "", "TEXT"} {
+		if !invented(tag) {
+			t.Errorf("%q should read as invented output", tag)
+		}
+	}
+	for _, tag := range []string{"js", "go", "python", "diff", "yaml", "json", "sh"} {
+		if invented(tag) {
+			t.Errorf("%q is code the model wants shown, not output", tag)
+		}
+	}
+	got := stripFakeBlocks("before\n```bg-output\nfake 42\n```\nafter")
+	if strings.Contains(got, "fake 42") {
+		t.Fatalf("an invented output fence survived: %q", got)
+	}
+	// A stop block is never mistaken for invented output.
+	keep := "```stop\nreal answer\n```"
+	if got := stripFakeBlocks(keep); got != keep {
+		t.Fatalf("the stop fence was stripped: %q", got)
+	}
+}

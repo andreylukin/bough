@@ -429,16 +429,11 @@ func (w *Workers) runChild(ctx context.Context, task string, id int, run func(st
 		// the report — a child has a step budget, and an unbounded
 		// push-back loop inside a subagent is worse than a slightly
 		// informal report.
-		stopped := false
-		if answer, ok := loop.StopAnswer(reply); ok {
-			reply, stopped = answer, true
-		}
-		dropped := 0
-		if !stopped {
-			// One block per step, like the parent: a child that writes
-			// a dozen blind commands in one reply is the same failure.
-			reply, dropped = loop.FirstBlockOnly(reply)
-		}
+		// One rule, one implementation (loop.Finish): a js block before
+		// the stop fence means the child is still working, and only the
+		// first of them runs.
+		reply, stopped, dropped := loop.Finish(reply)
+		_ = stopped // a child takes a block-less reply as its report either way
 		note("assistant", reply, nil)
 		msgs = append(msgs, llm.Message{Role: "assistant", Content: reply})
 		blocks := jsBlock.FindAllStringSubmatch(reply, -1)
