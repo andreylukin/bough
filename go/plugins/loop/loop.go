@@ -490,6 +490,9 @@ func DefaultProject(entries []history.Entry) []llm.Message {
 			} else {
 				msgs = append(msgs, llm.Message{Role: "user", Content: undoNote})
 			}
+		case "nudge":
+			// The loop's own push-back on a turn that stopped mid-plan.
+			msgs = append(msgs, llm.Message{Role: "user", Content: text})
 		case "job":
 			// A background job finished (or matched its watch) while
 			// the model was working: its notice is a user-side fact,
@@ -853,6 +856,31 @@ func (r *runner) completeMsgs(ctx context.Context, sys string, msgs []Message, e
 	return r.llm.Complete(ctx, sys, msgs)
 }
 
+// unfinishedNote is fed back to a model that ended its turn without
+// doing anything: an announcement of work it did not do, or a question
+// the user cannot answer (the turn is over by the time they read it).
+// Once per turn — a model that answers prose twice is taken at its
+// word.
+const unfinishedNote = `[unfinished] That reply ended the turn: it has no code block, so nothing ran and the user is now looking at a plan instead of a result.
+
+If you were about to do something, do it NOW in a code block. If you genuinely cannot proceed without the user, call tools.ask(question, ...options) inside a block — a question in plain text does not reach them as a question. If you really are done, say what you did, in the past tense, and nothing else.`
+
+// announcing matches a reply that opens by promising work.
+var announcing = regexp.MustCompile(`(?i)^\s*(i['’]?(m| a[m]? |ll| will| need| am going| going)|let me|next[,:]|now i|first,? i|i plan to)`)
+
+// unfinished reports whether a block-less reply looks like a turn that
+// stopped mid-plan rather than an answer.
+func unfinished(reply string) bool {
+	s := strings.TrimSpace(reply)
+	if s == "" {
+		return false
+	}
+	if strings.HasSuffix(s, "?") {
+		return true // a question nobody was asked
+	}
+	return announcing.MatchString(s)
+}
+
 // outOfSteps is the last thing the model is asked when the step budget
 // runs out. A turn that spent every step on tools still owes the user
 // an answer: what was found, and what is left.
@@ -1000,6 +1028,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		maxSteps = defaultMaxSteps
 	}
 	retried := false
+	nudged := false // one push-back per turn, see unfinished()
 	for step := 0; step < maxSteps; step++ {
 		r.landSteers(ctx, emit, false) // a steer sent during the last block joins the context now
 		r.landJobs(emit)               // a background job that finished during the last block reports now
@@ -1039,6 +1068,15 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			// final take shut the gate; the next boundary's take
 			// reopens it.)
 			if r.landSteers(ctx, emit, true) {
+				continue
+			}
+			// "I'll go and look at the config" with nothing attached
+			// is not the end of a turn, it is the start of one. Push
+			// back once and let it do the thing.
+			if !nudged && unfinished(reply) {
+				nudged = true
+				r.hist.Append("nudge", map[string]any{"text": unfinishedNote})
+				note("system", "that reply announced work without doing it; asking again", nil)
 				continue
 			}
 			note("done", "", r.doneData())

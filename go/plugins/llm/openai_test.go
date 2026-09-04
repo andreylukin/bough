@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -58,5 +59,28 @@ func TestOpenaiErr(t *testing.T) {
 	}
 	if err := openaiErr(429, "m", []byte(`{"error":{"message":"rate limited"}}`)); !strings.Contains(err.Error(), "HTTP 429: rate limited") {
 		t.Fatalf("429 = %v", err)
+	}
+}
+
+// gpt-5.6 answers with a preamble message and then the answer, as two
+// output items. Concatenated bare they ran together mid-sentence
+// ("…open the PR.I need the target image tag…").
+func TestOpenaiJoinsMessageItems(t *testing.T) {
+	var r openaiResponse
+	body := `{"status":"completed","output":[
+	  {"type":"reasoning","content":[]},
+	  {"type":"message","content":[{"type":"output_text","text":"I'm locating the service definition."}]},
+	  {"type":"message","content":[{"type":"output_text","text":"I need the target image tag."}]}
+	]}`
+	if err := json.Unmarshal([]byte(body), &r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := (&openaiLLM{}).finish(&r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "I'm locating the service definition.\n\nI need the target image tag."
+	if got != want {
+		t.Fatalf("finish() = %q, want %q", got, want)
 	}
 }

@@ -203,17 +203,24 @@ func (o *openaiLLM) finish(r *openaiResponse) (string, error) {
 	if r.Error != nil {
 		return "", fmt.Errorf("llm-openai: %s", r.Error.Message)
 	}
-	var out strings.Builder
+	// A Responses reply can be several message items — gpt-5.6 sends a
+	// short preamble and then the answer — and each item several text
+	// parts. Concatenated bare they run together mid-sentence ("…open
+	// the PR.I need the target image tag…"), which reads as one
+	// confused paragraph and hides that the model said two things.
+	var parts []string
 	for _, item := range r.Output {
 		if item.Type != "message" {
 			continue
 		}
 		for _, c := range item.Content {
-			if c.Type == "output_text" {
-				out.WriteString(c.Text)
+			if c.Type == "output_text" && c.Text != "" {
+				parts = append(parts, c.Text)
 			}
 		}
 	}
+	var out strings.Builder
+	out.WriteString(strings.Join(parts, "\n\n"))
 	if u := r.Usage; u != nil {
 		o.mu.Lock()
 		o.usage.InputTokens += u.InputTokens
@@ -256,6 +263,13 @@ func (o *openaiLLM) readStream(body io.Reader, onDelta func(string)) (string, er
 			return "", fmt.Errorf("llm-openai: bad stream event: %w", err)
 		}
 		switch ev.Type {
+		case "response.output_item.added":
+			// A second message item starts: separate it as finish()
+			// does, or the live view runs two sentences together.
+			if streamed.Len() > 0 {
+				streamed.WriteString("\n\n")
+				onDelta("\n\n")
+			}
 		case "response.output_text.delta":
 			if ev.Delta != "" {
 				streamed.WriteString(ev.Delta)
