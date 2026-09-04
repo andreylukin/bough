@@ -29,7 +29,7 @@ jobs:
         working-directory: go
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go/go.mod
           cache: true # modules + build cache
@@ -48,7 +48,7 @@ jobs:
         working-directory: go
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go/go.mod
           cache: true
@@ -70,7 +70,7 @@ jobs:
         shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go/go.mod
           cache: true
