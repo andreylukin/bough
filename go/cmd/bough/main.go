@@ -322,7 +322,7 @@ func main() {
 	// forever: opening the browser again is not a new session the way
 	// running `bough` again is.
 	fresh := make(chan os.Signal, 1)
-	signal.Notify(fresh, syscall.SIGUSR1)
+	notifyFreshSession(fresh)
 
 	ctx := kernel.NewContext()
 	ctx.Provide("ui-mode", mode)

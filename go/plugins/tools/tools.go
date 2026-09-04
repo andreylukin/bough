@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/andreylukin/bough/kernel"
@@ -181,8 +180,8 @@ func (s *Stats) bash(cmd string, opts ...any) (string, error) {
 	// Its own process group, killed as a group: `sh -c` execs or forks
 	// the command, and killing sh alone leaves a sleep, a server, a
 	// build running after the turn was cancelled.
-	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	c.Cancel = func() error { return syscall.Kill(-c.Process.Pid, syscall.SIGKILL) }
+	ownProcessGroup(c)
+	c.Cancel = func() error { return killProcessGroup(c) }
 	c.WaitDelay = 2 * time.Second
 	out, err := c.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {

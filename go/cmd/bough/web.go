@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -84,7 +83,7 @@ func runWeb(args []string) {
 			fmt.Println("bough web: not running")
 			return
 		}
-		if err := syscall.Kill(w.pid, syscall.SIGINT); err != nil {
+		if err := interrupt(w.pid); err != nil {
 			fatal(fmt.Errorf("signal pid %d: %w", w.pid, err))
 		}
 		for i := 0; i < 100 && alive(w.pid); i++ {
@@ -109,7 +108,7 @@ func runWeb(args []string) {
 		// SIGUSR1 kills a bough that is not.
 		switch {
 		case w.canNewSession():
-			if err := syscall.Kill(w.pid, syscall.SIGUSR1); err != nil {
+			if err := askFreshSession(w.pid); err != nil {
 				fmt.Fprintf(os.Stderr, "bough web: could not ask for a new session: %v\n", err)
 			}
 			fmt.Printf("bough web: %s (pid %d) — new session\n", webURL(w.addr), w.pid)

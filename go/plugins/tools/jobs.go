@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -239,8 +238,8 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 	ctx, cancel := context.WithTimeout(j.ctx, limit)
 	c := exec.CommandContext(ctx, "sh", "-s")
 	c.Stdin = strings.NewReader(cmd)
-	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	c.Cancel = func() error { return syscall.Kill(-c.Process.Pid, syscall.SIGKILL) }
+	ownProcessGroup(c)
+	c.Cancel = func() error { return killProcessGroup(c) }
 	c.WaitDelay = 2 * time.Second
 
 	j.mu.Lock()

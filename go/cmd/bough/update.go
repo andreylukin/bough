@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -199,7 +198,7 @@ func restartWeb(home, bin string, out io.Writer) error {
 	}
 
 	fmt.Fprintf(out, "bough: stopping web session (pid %d)…\n", pid)
-	if err := syscall.Kill(pid, syscall.SIGINT); err != nil {
+	if err := interrupt(pid); err != nil {
 		return fmt.Errorf("signal pid %d: %w", pid, err)
 	}
 	deadline := time.Now().Add(10 * time.Second)
@@ -234,7 +233,7 @@ func launchWeb(home, bin, addr string) (int, string, error) {
 	cmd := exec.Command(bin, "--web", addr)
 	cmd.Stdout = logF
 	cmd.Stderr = logF
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	detach(cmd)
 	if err := cmd.Start(); err != nil {
 		return 0, "", fmt.Errorf("launch %s --web %s: %w", bin, addr, err)
 	}
@@ -325,14 +324,6 @@ func parsePidfile(s string) (pid int, addr, dir, config, caps string, err error)
 
 // alive is a signal-0 liveness probe. pid must be positive — never
 // signal 0/negative (process groups).
-func alive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || err == syscall.EPERM
-}
-
 // writeWebPidfile records "<pid> <addr>" for restart to find.
 // Best-effort: a failure warns and the session runs on. The returned
 // cleanup (nil on failure) removes the file on clean shutdown.

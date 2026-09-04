@@ -5,7 +5,8 @@
 #             AND macOS: macOS is where bough is used most, and it was
 #             the one platform nothing here checked
 #   cross   — every release target compiles, so a tag never discovers a
-#             build break on an architecture nobody ran
+#             build break on an architecture nobody ran, plus Windows,
+#             which ships no binary but must keep compiling
 #   web-e2e — Playwright specs against real `bough --web` processes,
 #             sharded 4 ways
 name: ci-go
@@ -41,6 +42,9 @@ jobs:
 
   # A release cross-compiles four targets from one runner. Finding out
   # at tag time that one of them does not build is finding out too late.
+  # Windows is here too: no binary is published for it and nobody has
+  # run bough there, but the Unix-only calls are behind build tags now
+  # and this is what keeps them that way.
   cross:
     runs-on: ubuntu-latest
     defaults:
@@ -56,7 +60,7 @@ jobs:
       - name: Build every release target
         run: |
           set -euo pipefail
-          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
             echo "building $target"
             CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" \
               go build -trimpath -o /dev/null ./cmd/bough

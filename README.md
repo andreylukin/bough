@@ -29,6 +29,8 @@ The model sees one tool: it writes JavaScript, bough runs it, and whatever the p
 
 macOS and Linux, x86-64 and arm64. One static binary, no runtime to install
 alongside it: code mode runs JavaScript in-process and SQLite is pure Go.
+(Windows compiles in CI but ships no binary and is untested — see
+[Windows](#windows).)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh | sh
@@ -156,6 +158,22 @@ Writing your own row is [go/docs/PLUGINS.md](go/docs/PLUGINS.md) — a walkthrou
 [a working example plugin](go/plugins/example/example.go) that ships in the binary.
 
 The full reference, including the service-key table, the history and projection model, subagent and ask semantics, and the three test layers, is [go/README.md](go/README.md).
+
+## Windows
+
+Not supported yet, but no longer out of reach. The tree compiles for
+`windows/amd64` and `windows/arm64` on every push — the process-group and
+signal calls that were Unix-only now sit behind build tags — and nothing
+else in bough is POSIX-specific.
+
+What is missing is that nobody has run it there. `tools.bash` still pipes its
+script to `sh`, so it needs Git for Windows (or another `sh`) on `PATH`;
+`bough web`'s new-session signal has no Windows equivalent; and the process
+tree is killed with `taskkill /T` rather than a process group. No release
+binary is published, because "it builds" is not the same as "it works".
+
+If you use Windows and want to try it: `go build ./cmd/bough` in `go/` and
+open an issue with what happens. That is the missing piece.
 
 ## Repository layout
 
