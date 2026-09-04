@@ -115,7 +115,19 @@ func findCheckout(exe, boughRoot, home string) (string, error) {
 		return def, nil
 	}
 	tried = append(tried, def+" has no .git")
-	return "", fmt.Errorf("cannot find a bough checkout (%s)", strings.Join(tried, "; "))
+	// Most people now install a released binary, and telling them
+	// about checkouts and $BOUGH_ROOT answers a question they did not
+	// ask. Name the two ways a binary install actually updates, and
+	// keep the search trail for the case this really is a checkout
+	// that could not be found.
+	return "", fmt.Errorf(`bough was not installed from a source checkout, so there is nothing to pull.
+
+Update it the way you installed it:
+    curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh | sh
+    brew upgrade bough
+
+To build from a checkout instead, set BOUGH_ROOT to it.
+(searched: %s)`, strings.Join(tried, "; "))
 }
 
 func hasGit(dir string) bool {
