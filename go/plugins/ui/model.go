@@ -587,7 +587,11 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 		} else {
 			out = th["error"].Width(w).Render(glyph + "✗ " + text)
 		}
-		if authErrRe.MatchString(b.text) {
+		// The generic hint is for errors that only say something was
+		// rejected. An error that already names the fix (llm.MissingKey
+		// spells out ~/.bough/env and /model) does not need it repeated
+		// underneath in shorter words.
+		if authErrRe.MatchString(b.text) && !strings.Contains(b.text, "~/.bough/env") {
 			out += "\n" + th["dim"].Width(w).Render(authHint)
 		}
 		return out

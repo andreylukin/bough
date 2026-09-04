@@ -269,6 +269,15 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 		// a log file nobody reads.
 		cfg.notice = strings.TrimSpace(cfg.notice + "\nan llm-small row is configured but provides no llm-small service: add `service: llm-small` to its config, or run `bough update` if this binary predates it")
 	}
+	// A provider that cannot run says so now, not after the user has
+	// typed a prompt and waited. Without this the TUI opens on a clean
+	// welcome and gives no sign that there is no API key — the single
+	// most likely state for someone running bough for the first time.
+	if r, err := kernel.Get[llm.Ready](ctx, "llm"); err == nil {
+		if e := r.Ready(); e != nil {
+			cfg.notice = strings.TrimSpace(cfg.notice + "\n" + e.Error())
+		}
+	}
 	if a, err := kernel.Get[askAnswers](ctx, "ask-answers"); err == nil {
 		cfg.ask = a
 	}

@@ -165,3 +165,30 @@ func kilo(n int) string {
 	}
 	return fmt.Sprint(n)
 }
+
+// Ready is the optional seam a provider implements to answer, before
+// any turn is taken, whether it can run at all. A missing API key is
+// the first thing a new user hits, and without this they only find out
+// by typing a prompt and waiting for it to fail — the TUI shows a
+// clean welcome and says nothing.
+//
+// Implementations must be cheap and offline: this is a configuration
+// check, not a health check, and it runs at mount.
+type Ready interface {
+	Ready() error
+}
+
+// MissingKey is the error a provider returns when its API key is not
+// set. It names the fix, because this is the first thing a new user
+// hits and "ANTHROPIC_API_KEY not set" alone sends them back to the
+// README to find out where a key is supposed to go.
+//
+// plugin is the row's plugin name ("llm-anthropic"), env the variable
+// it reads.
+func MissingKey(plugin, env string) error {
+	return fmt.Errorf("%s: %s is not set.\n"+
+		"  Put it where bough reads it at boot:\n"+
+		"      mkdir -p ~/.bough && echo '%s=...' >> ~/.bough/env\n"+
+		"  or export it in your shell. To use a different provider instead,\n"+
+		"  run /model, or change the llm row in your bough.yml.", plugin, env, env)
+}

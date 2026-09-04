@@ -101,15 +101,24 @@ func (c *cerebrasLLM) SetEffort(level string) error {
 	return nil
 }
 
-func (c *cerebrasLLM) call(ctx context.Context, system string, messages []Message, onDelta, onThink func(string)) (string, error) {
+// init reads the API key once. Separate from call so Ready can ask
+// whether this provider is usable without making a request.
+func (c *cerebrasLLM) init() error {
 	c.once.Do(func() {
 		c.key = os.Getenv("CEREBRAS_API_KEY")
 		if c.key == "" {
-			c.err = fmt.Errorf("llm-cerebras: CEREBRAS_API_KEY not set")
+			c.err = MissingKey("llm-cerebras", "CEREBRAS_API_KEY")
 		}
 	})
-	if c.err != nil {
-		return "", c.err
+	return c.err
+}
+
+// Ready reports whether this provider is configured (see llm.Ready).
+func (c *cerebrasLLM) Ready() error { return c.init() }
+
+func (c *cerebrasLLM) call(ctx context.Context, system string, messages []Message, onDelta, onThink func(string)) (string, error) {
+	if err := c.init(); err != nil {
+		return "", err
 	}
 
 	var msgs []orMessage

@@ -54,11 +54,15 @@ func (a *anthropicLLM) Usage() Usage {
 	return a.usage
 }
 
+// Ready reports whether this provider is configured (see llm.Ready):
+// init() is idempotent, so asking early costs nothing.
+func (a *anthropicLLM) Ready() error { return a.init() }
+
 func (a *anthropicLLM) init() error {
 	a.once.Do(func() {
 		key := os.Getenv("ANTHROPIC_API_KEY")
 		if key == "" {
-			a.err = fmt.Errorf("llm-anthropic: ANTHROPIC_API_KEY not set")
+			a.err = MissingKey("llm-anthropic", "ANTHROPIC_API_KEY")
 			return
 		}
 		a.client = anthropic.NewClient(option.WithAPIKey(key))

@@ -128,15 +128,24 @@ func (o *openrouterLLM) SetEffort(level string) error {
 	return nil
 }
 
-func (o *openrouterLLM) call(ctx context.Context, system string, messages []Message, onDelta, onThink func(string)) (string, error) {
+// init reads the API key once. Separate from call so Ready can ask
+// whether this provider is usable without making a request.
+func (o *openrouterLLM) init() error {
 	o.once.Do(func() {
 		o.key = os.Getenv("OPENROUTER_API_KEY")
 		if o.key == "" {
-			o.err = fmt.Errorf("llm-openrouter: OPENROUTER_API_KEY not set")
+			o.err = MissingKey("llm-openrouter", "OPENROUTER_API_KEY")
 		}
 	})
-	if o.err != nil {
-		return "", o.err
+	return o.err
+}
+
+// Ready reports whether this provider is configured (see llm.Ready).
+func (o *openrouterLLM) Ready() error { return o.init() }
+
+func (o *openrouterLLM) call(ctx context.Context, system string, messages []Message, onDelta, onThink func(string)) (string, error) {
+	if err := o.init(); err != nil {
+		return "", err
 	}
 
 	var msgs []orRequestMessage

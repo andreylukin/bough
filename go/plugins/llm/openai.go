@@ -123,15 +123,24 @@ func (o *openaiLLM) SetEffort(level string) error {
 	return nil
 }
 
-func (o *openaiLLM) call(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
+// init reads the API key once. Separate from call so Ready can ask
+// whether this provider is usable without making a request.
+func (o *openaiLLM) init() error {
 	o.once.Do(func() {
 		o.key = os.Getenv("OPENAI_API_KEY")
 		if o.key == "" {
-			o.err = fmt.Errorf("llm-openai: OPENAI_API_KEY not set")
+			o.err = MissingKey("llm-openai", "OPENAI_API_KEY")
 		}
 	})
-	if o.err != nil {
-		return "", o.err
+	return o.err
+}
+
+// Ready reports whether this provider is configured (see llm.Ready).
+func (o *openaiLLM) Ready() error { return o.init() }
+
+func (o *openaiLLM) call(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
+	if err := o.init(); err != nil {
+		return "", err
 	}
 	body, err := json.Marshal(o.body(system, messages, onDelta != nil))
 	if err != nil {

@@ -232,3 +232,22 @@ func TestLaunchNoticeShowsAsErrorRow(t *testing.T) {
 		}
 	}
 }
+
+// An unconfigured provider is announced at launch, not after the user
+// has typed a prompt and waited for it to fail — and the generic
+// credential hint does not repeat what the error already spells out.
+func TestMissingKeyNoticeReplacesTheGenericHint(t *testing.T) {
+	t.Parallel()
+	cfg := cfgWith(t, nil, nil, nil)
+	cfg.notice = "llm-anthropic: ANTHROPIC_API_KEY is not set.\n" +
+		"  Put it where bough reads it at boot:\n" +
+		"      mkdir -p ~/.bough && echo 'ANTHROPIC_API_KEY=...' >> ~/.bough/env"
+	d := newDrv(t, 100, 24, cfg)
+	p := d.plain()
+	if !strings.Contains(p, "ANTHROPIC_API_KEY is not set") {
+		t.Fatalf("the missing key should be on screen at launch:\n%s", p)
+	}
+	if strings.Contains(p, "hint: check your provider credentials") {
+		t.Errorf("an error that already names the fix should not carry the generic hint:\n%s", p)
+	}
+}
