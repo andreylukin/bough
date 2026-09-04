@@ -469,15 +469,20 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 	case "assistant":
 		head := th["accent"].Render("●") + " " + th["dim"].Render("bough")
 		if b.live {
-			// Streaming: the prose so far, plain, with a cursor; markdown
-			// waits for the finished reply. A code fence being written
-			// is NOT shown: it would type out as text and then jump into
-			// a collapsed code block when the reply lands. A dim note
-			// stands in for it until then.
-			prose, coding := liveView(b.text)
+			// Streaming shows only settled prose, with a cursor;
+			// markdown waits for the finished reply. Anything whose
+			// meaning is not yet known is held back and stands in as a
+			// dim note: a code fence (it becomes a block), a thinking
+			// span (it becomes a collapsed block), a fabricated
+			// <system-…> message (it is removed). Typing text out and
+			// then taking it away is worse than a moment of nothing.
+			prose, coding, thinking := liveView(b.text)
 			out := head
-			if prose != "" || !coding {
+			if prose != "" || !(coding || thinking) {
 				out += "\n" + th["assistant"].Width(m.width).Render(prose+"▌")
+			}
+			if thinking {
+				out += "\n" + th["dim"].Render("▸ thinking…")
 			}
 			if coding {
 				out += "\n" + th["dim"].Render("▸ writing code…")

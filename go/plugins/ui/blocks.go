@@ -301,15 +301,95 @@ func (m *model) dropLive() {
 	}
 }
 
-// liveView is what a streaming reply shows: the prose before the first
-// code fence, and whether a fence has started. A fence opener still
-// arriving ("`", "“") is held back too, so the tail never flickers
-// between backticks and the note. Pure.
-func liveView(text string) (prose string, coding bool) {
-	if before, _, ok := strings.Cut(text, "```"); ok {
-		return strings.TrimRight(before, "\n `"), true
+// tagStart matches a "<" that could still grow into a tag: the tail of
+// a stream is held back until it is clear which.
+var tagStart = regexp.MustCompile(`<[a-zA-Z/][a-zA-Z0-9_-]*$`)
+
+// openTag matches the next complete tag: group 1 is "/" for a closing
+// one, group 2 the name.
+var openTag = regexp.MustCompile(`<(/?)([a-zA-Z][a-zA-Z0-9_-]*)[^>]*>`)
+
+// hiddenTag reports whether a tag's content must not be shown as it
+// streams: the model's thinking (folded into its own collapsed block
+// once the reply lands) and the pseudo-system messages a model
+// sometimes fabricates (stripped from the reply entirely, so showing
+// them mid-stream would print text that is about to be deleted — and
+// worse, print an invented instruction as if bough had said it).
+func hiddenTag(name string) (thinking bool, hidden bool) {
+	l := strings.ToLower(name)
+	switch {
+	case strings.HasPrefix(l, "thinking"):
+		return true, true
+	case strings.HasPrefix(l, "system-"), strings.HasPrefix(l, "system_"):
+		return false, true
 	}
-	return strings.TrimRight(text, "`"), false
+	return false, false
+}
+
+// liveView is what a streaming reply shows: only the text whose
+// meaning is already settled. Everything else is held back rather than
+// typed out and then taken away — a code fence (it becomes a block), a
+// thinking span (it becomes a collapsed block), a fabricated
+// <system-…> message (it is removed), and a trailing "<" or "```" that
+// has not yet declared itself. coding and thinking say which of those
+// is in flight, so the caller can show a marker in its place. Pure.
+func liveView(text string) (prose string, coding, thinking bool) {
+	if before, _, ok := strings.Cut(text, "```"); ok {
+		text, coding = before, true
+	} else {
+		text = strings.TrimRight(text, "`") // a fence opener still arriving
+	}
+
+	var out strings.Builder
+	for text != "" {
+		i := strings.IndexByte(text, '<')
+		if i < 0 {
+			out.WriteString(text)
+			break
+		}
+		out.WriteString(text[:i])
+		rest := text[i:]
+		loc := openTag.FindStringSubmatchIndex(rest)
+		if loc == nil {
+			// No complete tag yet. A "<" that could still become one is
+			// held; anything else ("a < b") is ordinary text.
+			if tagStart.MatchString(rest) {
+				break
+			}
+			out.WriteString(rest[:1])
+			text = rest[1:]
+			continue
+		}
+		name := rest[loc[4]:loc[5]]
+		isThink, hide := hiddenTag(name)
+		if !hide {
+			out.WriteString(rest[:loc[1]]) // ordinary markup: show it
+			text = rest[loc[1]:]
+			continue
+		}
+		// Skip to the matching close, or to the end while it is still
+		// being written — an OPEN thinking span is the one the marker
+		// stands for; a finished one simply waits for its block.
+		rest = rest[loc[1]:]
+		if end := closeOf(rest, name); end >= 0 {
+			text = rest[end:]
+			continue
+		}
+		thinking = isThink
+		break
+	}
+	return strings.TrimRight(out.String(), "\n "), coding, thinking
+}
+
+// closeOf is the index just past "</name…>" in s, -1 while it has not
+// arrived.
+func closeOf(s, name string) int {
+	for _, loc := range openTag.FindAllStringSubmatchIndex(s, -1) {
+		if s[loc[2]:loc[3]] == "/" && strings.EqualFold(s[loc[4]:loc[5]], name) {
+			return loc[1]
+		}
+	}
+	return -1
 }
 
 // splitProse removes the executed fence from an assistant block: the
