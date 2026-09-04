@@ -434,14 +434,14 @@ func plain(v any) any {
 func (plugin) Commands() []kernel.Command {
 	return []kernel.Command{{
 		Name:    "graph",
-		Usage:   "stats | backfill | search <q> | neighbors <ref> [hops] | timeline <ref> | resolve <ref>",
+		Usage:   "stats | backfill [--no-embed] | search <q> | neighbors <ref> [hops] | timeline <ref> | resolve <ref>",
 		Summary: "the memory graph: counts, backfill from bough.db + history, and the read verbs",
 		Run:     runCLI,
 	}}
 }
 
 func runCLI(cfg map[string]any, args []string) error {
-	const usage = "usage: bough graph stats | backfill | search <q> | neighbors <ref> [hops] | timeline <ref> | resolve <ref>"
+	const usage = "usage: bough graph stats | backfill [--no-embed] | search <q> | neighbors <ref> [hops] | timeline <ref> | resolve <ref>"
 	if len(args) == 0 {
 		return errors.New(usage)
 	}
@@ -484,6 +484,15 @@ func runCLI(cfg map[string]any, args []string) error {
 		}
 		return nil
 	case "backfill":
+		// Every entity and edge write embeds when a key is present:
+		// one synchronous HTTP call each. That is fine for a few
+		// hundred rows and not for 32,504 commands, where it is the
+		// difference between a second and an hour — so a bulk import
+		// can say no and be embedded later.
+		if len(args) > 1 && (args[1] == "--no-embed" || args[1] == "-no-embed") {
+			st.SetEmbedder(nil)
+			fmt.Println("embed    off for this run (--no-embed)")
+		}
 		r, err := st.Backfill(filepath.Join(home, ".bough", "bough.db"), filepath.Join(home, ".bough", "history"))
 		if err != nil {
 			return err
