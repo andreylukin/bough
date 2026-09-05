@@ -24,9 +24,18 @@ func runUpdate(args []string) {
 	if err != nil {
 		fatal(fmt.Errorf("home dir: %w", err))
 	}
+	// Your own checkout wins: that is your tree and your branch, and
+	// update pulls it as it always did. Without one, build the newest
+	// commit on main from a clone bough manages (source.go) rather than
+	// sending you to the last tagged release.
 	root, err := findCheckout(exe, os.Getenv("BOUGH_ROOT"), home)
+	fromMain := false
 	if err != nil {
-		fatal(err)
+		root, err = fetchMain(home)
+		if err != nil {
+			fatal(err)
+		}
+		fromMain = true
 	}
 	modDir, err := moduleDir(root)
 	if err != nil {
@@ -35,9 +44,15 @@ func runUpdate(args []string) {
 	target, installed := installTarget(exe, root, modDir)
 
 	was := versionString()
-	step("pull", root, "git", "pull", "--ff-only")
+	if !fromMain {
+		step("pull", root, "git", "pull", "--ff-only")
+	}
 	if head := gitHead(root); head != "" {
-		fmt.Printf("bough: checkout at %s (this binary was built from %s)\n", short(head), was)
+		where := "checkout"
+		if fromMain {
+			where = "main"
+		}
+		fmt.Printf("bough: %s at %s (this binary was built from %s)\n", where, short(head), was)
 	}
 	if installed {
 		// Overwrite the installed copy atomically: build next to it,
@@ -114,19 +129,10 @@ func findCheckout(exe, boughRoot, home string) (string, error) {
 		return def, nil
 	}
 	tried = append(tried, def+" has no .git")
-	// Most people now install a released binary, and telling them
-	// about checkouts and $BOUGH_ROOT answers a question they did not
-	// ask. Name the two ways a binary install actually updates, and
-	// keep the search trail for the case this really is a checkout
-	// that could not be found.
-	return "", fmt.Errorf(`bough was not installed from a source checkout, so there is nothing to pull.
-
-Update it the way you installed it:
-    curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh | sh
-    brew upgrade bough
-
-To build from a checkout instead, set BOUGH_ROOT to it.
-(searched: %s)`, strings.Join(tried, "; "))
+	// No checkout is not an error any more: runUpdate builds main from
+	// its own clone instead (source.go). The trail is still returned so
+	// a caller that wanted a real checkout can say what it looked for.
+	return "", fmt.Errorf("no bough checkout found (searched: %s)", strings.Join(tried, "; "))
 }
 
 func hasGit(dir string) bool {

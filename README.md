@@ -50,7 +50,8 @@ go build -o ~/.local/bin/bough ./cmd/bough      # needs Go 1.27+
 ```
 
 The installer takes `BOUGH_VERSION` to pin a tag and `BOUGH_INSTALL_DIR` to
-choose where the binary lands (default `~/.local/bin`). Release archives and
+choose where the binary lands (default `~/.local/bin`). Releases are snapshots;
+`bough update` tracks `main`, so it is usually ahead of the newest tag. Release archives and
 their `checksums.txt` are on the [releases page](https://github.com/andreylukin/bough/releases);
 the installer verifies the checksum when both are present.
 
@@ -125,7 +126,7 @@ bough.provider("parrot", (sys, msgs) => "...");             // a full LLM provid
 | `bough mcp list \| tools \| search \| status \| call` | MCP servers and their tools, from the CLI |
 | `bough sync-mcp` | adopt Claude Code's MCP OAuth grants by keychain reference |
 | `bough graph stats \| backfill \| search \| neighbors \| timeline` | the memory graph |
-| `bough update` / `bough restart` | `git pull --ff-only`, rebuild in place (source checkouts; use your installer otherwise), bounce the web session |
+| `bough update` / `bough restart` | build the newest commit on `main` and replace this binary — pulling your checkout if you have one, else from a clone under `~/.bough/src`; bounce the web session |
 
 `bough --help` has the full list; `--dump-config` mounts the tree, prints it, and exits.
 

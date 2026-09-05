@@ -147,7 +147,8 @@ func env(home string) []string {
 	// real ~/.bough or a real checkout (bough update walks env fallbacks).
 	env := []string{"HOME=" + home}
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "HOME=") && !strings.HasPrefix(kv, "BOUGH_ROOT=") {
+		if !strings.HasPrefix(kv, "HOME=") && !strings.HasPrefix(kv, "BOUGH_ROOT=") &&
+			!strings.HasPrefix(kv, "BOUGH_UPSTREAM=") {
 			env = append(env, kv)
 		}
 	}
@@ -259,9 +260,16 @@ func runHeadless(t *testing.T, opts launchOpts, lines ...string) string {
 // returns combined output + exit code.
 func runCLI(t *testing.T, home, cwd string, args ...string) (string, int) {
 	t.Helper()
+	return runCLIEnv(t, home, cwd, nil, args...)
+}
+
+// runCLIEnv is runCLI with extra environment, for a test that has to
+// point bough somewhere of its own (BOUGH_UPSTREAM).
+func runCLIEnv(t *testing.T, home, cwd string, extra []string, args ...string) (string, int) {
+	t.Helper()
 	cmd := exec.Command(boughBin, args...)
 	cmd.Dir = cwd
-	cmd.Env = env(home)
+	cmd.Env = append(env(home), extra...)
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if err != nil {
