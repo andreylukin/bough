@@ -36,10 +36,15 @@ const (
 	// minutes. A false timeout kills real work; a true one only delays
 	// noticing a dead connection.
 	headerTimeout = 5 * time.Minute
-	// stallTimeout bounds silence WITHIN a started stream. Tokens
-	// arrive continuously once a reply begins; two minutes of nothing
-	// means the far end is gone.
-	stallTimeout = 2 * time.Minute
+	// stallTimeout bounds silence WITHIN a started stream. Most
+	// providers send keep-alive comments while a model thinks, and
+	// every byte resets this — but a provider that sends none while a
+	// reasoning model works for a long time would look identical to a
+	// dead connection, so this matches headerTimeout rather than
+	// guessing tighter. Noticing a dead stream in five minutes instead
+	// of two is still the difference between recovering and hanging
+	// forever.
+	stallTimeout = 5 * time.Minute
 )
 
 // httpClient is shared by the HTTP providers. No Client.Timeout: see
