@@ -12,10 +12,10 @@ func TestMissingKeyNamesTheFix(t *testing.T) {
 	err := MissingKey("llm-anthropic", "ANTHROPIC_API_KEY")
 	got := err.Error()
 	for _, want := range []string{
-		"llm-anthropic",     // which row
-		"ANTHROPIC_API_KEY", // which variable
-		"~/.bough/env",      // where it goes
-		"/model",            // how to use something else
+		"llm-anthropic",      // which row
+		"ANTHROPIC_API_KEY",  // which variable
+		"~/.bough/env",       // where it goes
+		"/connect anthropic", // the way that does not need a restart
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the missing-key error should mention %q:\n%s", want, got)

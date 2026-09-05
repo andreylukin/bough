@@ -245,8 +245,18 @@ type Ready interface {
 // it reads.
 func MissingKey(plugin, env string) error {
 	return fmt.Errorf("%s: %s is not set.\n"+
-		"  Put it where bough reads it at boot:\n"+
+		"  Fix it without leaving bough:\n"+
+		"      /connect %s <key>\n"+
+		"  or put it where bough reads it at boot:\n"+
 		"      mkdir -p ~/.bough && echo '%s=...' >> ~/.bough/env\n"+
-		"  or export it in your shell. To use a different provider instead,\n"+
-		"  run /model, or change the llm row in your bough.yml.", plugin, env, env)
+		"  /connect on its own lists every provider and which have a key.", plugin, env, providerName(plugin), env)
+}
+
+// providerName is the short name /connect takes, derived from the
+// plugin name: llm-openrouter -> openrouter.
+func providerName(plugin string) string {
+	if n, ok := strings.CutPrefix(plugin, "llm-"); ok {
+		return n
+	}
+	return plugin
 }
