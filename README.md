@@ -216,9 +216,12 @@ Not supported yet, but no longer out of reach. The tree compiles for
 signal calls that were Unix-only now sit behind build tags — and nothing
 else in bough is POSIX-specific.
 
-The test suite now runs there too, and says plainly where it stands: **79 of
-them fail**. The job is in CI but does not gate a merge, so the list is
-enumerated rather than imagined.
+The test suite now runs there too, and says plainly where it stands: **33 fail
+consistently**, across ten packages, and a couple of timing-sensitive TUI cases
+come and go on top of that — two consecutive runs of the same tree gave 35 and
+33. The job is in CI but does not gate a merge, so the list is enumerated
+rather than imagined; the `unit (windows-latest)` log, not this paragraph, is
+the count that is current.
 
 From the first run, most of what fails looks like assumptions in the tests
 rather than in bough: paths written into JSON fixtures without escaping the
@@ -228,9 +231,9 @@ addressed by `.gitattributes`). Underneath those, the real gaps are known:
 `sh`) on `PATH`; `bough web`'s new-session signal has no Windows equivalent;
 and the process tree is killed with `taskkill /T` rather than a process group.
 
-No release binary is published, because "it builds" is not "it works" and 79
-failures is not "it works" either. If you use Windows, the CI log is the todo
-list and a pull request against any of it is welcome.
+No release binary is published, because "it builds" is not "it works" and three
+dozen failures is not "it works" either. If you use Windows, the CI log is the
+todo list and a pull request against any of it is welcome.
 
 ## Repository layout
 

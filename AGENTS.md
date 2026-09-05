@@ -128,9 +128,9 @@ alone.
 -update` regenerates them. Hand-editing one to match a broken render is
 the failure mode the layer exists to catch.
 
-**Windows is red and does not gate.** 79 tests fail there, the job runs
-`continue-on-error`, and the CI log is the todo list — see the Windows
-section of [`README.md`](README.md). Do not "fix" a Windows failure by
+**Windows is red and does not gate.** 33 tests fail there consistently, plus
+a couple of flaky TUI cases; the job runs `continue-on-error` and the CI log
+is the todo list — see the Windows section of [`README.md`](README.md). Do not "fix" a Windows failure by
 loosening an assertion that is correct on the platforms bough ships for;
 most of what fails is a test that hardcoded a POSIX path.
 
