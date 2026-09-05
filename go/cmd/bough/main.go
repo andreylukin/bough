@@ -74,32 +74,73 @@ func (o *overrides) all() setFlags {
 	return append(setFlags(nil), o.vals...)
 }
 
-// configSource is where the config tree loads from: a file path, or
-// the embedded default when path is "" (no file — no hot reload).
+// configSource is where the config tree loads from: a file path
+// overlaid on the embedded default, or the embedded default alone
+// when path is "" (no file — no hot reload).
 type configSource struct {
 	path string
 }
 
+// load builds the effective tree. The embedded bough.yml is always
+// the base; a file on disk is an overlay merged by row id (see
+// overlay). A file used to replace the base outright, which froze
+// every user at the plugin set of the day they saved it: rows added
+// to the default since then never reached them.
+//
+// With no file, or a file that leaves the llm row alone, the llm row
+// is routed to whichever provider has a key set (see provider.go).
 func (s configSource) load() ([]kernel.Row, error) {
-	if s.path == "" {
-		rows, err := kernel.LoadBytes(bough.DefaultConfig, "embedded default config")
+	base, err := kernel.LoadBytes(bough.DefaultConfig, "embedded default config")
+	if err != nil {
+		return nil, err
+	}
+	rows := base
+	llmOverridden := false
+	if s.path != "" {
+		over, err := kernel.LoadFile(s.path)
 		if err != nil {
 			return nil, err
 		}
-		// No config of their own: run with whichever provider they
-		// actually have a key for (see provider.go).
-		rows, why := pickProvider(rows)
+		rows = overlay(base, over)
+		for _, r := range over {
+			if r.ID == "llm" {
+				llmOverridden = true
+			}
+		}
+	}
+	if !llmOverridden {
+		var why string
+		rows, why = pickProvider(rows)
 		if why != "" {
 			kernel.Logf("bough: %s\n", why)
 		}
-		return rows, nil
 	}
-	return kernel.LoadFile(s.path)
+	return rows, nil
 }
 
-// resolveConfig picks the config source. An explicit --config is used
+// overlay merges rows onto base by id: a matching id replaces the base
+// row in place (whole row, config included), a new id is appended in
+// file order. Dropping a default row is `disabled: true` on its id.
+func overlay(base, over []kernel.Row) []kernel.Row {
+	out := append([]kernel.Row(nil), base...)
+	at := map[string]int{}
+	for i, r := range out {
+		at[r.ID] = i
+	}
+	for _, r := range over {
+		if i, ok := at[r.ID]; ok {
+			out[i] = r
+			continue
+		}
+		at[r.ID] = len(out)
+		out = append(out, r)
+	}
+	return out
+}
+
+// resolveConfig picks the overlay file. An explicit --config is used
 // verbatim (a missing file stays fatal at load). Otherwise: ./bough.yml
-// if present, else ~/.bough/bough.yml, else the embedded default.
+// if present, else ~/.bough/bough.yml, else the embedded default alone.
 // (main notes a non-./bough.yml source on stderr in TUI mode.)
 func resolveConfig(explicit bool, flagVal string) configSource {
 	if explicit {
@@ -545,8 +586,8 @@ flags:
   -r, --resume [id]       resume a session by id, or pick from a list
       --set id.key=value  override a row's config (repeatable);
                           id.plugin=name swaps a row's plugin
-      --config <path>     config tree (default ./bough.yml, else
-                          ~/.bough/bough.yml, else the embedded default)
+      --config <path>     rows laid over the embedded default by id
+                          (default ./bough.yml, else ~/.bough/bough.yml)
       --headless          read lines from stdin, print "[kind] text"
                           events on stdout ("[error]" on stderr; exit 1
                           if any turn errored), no TUI
@@ -569,8 +610,8 @@ commands:
             localhost:7681); "web status" / "web stop"
 
 config:
-  ./bough.yml           project config tree (row list)
-  ~/.bough/bough.yml    global config, used when there is no ./bough.yml
+  ./bough.yml           project rows, overlaid on the embedded default
+  ~/.bough/bough.yml    global rows, used when there is no ./bough.yml
   ~/.bough/init.js      startup script: providers, tools, settings
   ~/.bough/history/     one JSONL per session (bough sessions / log)
 `

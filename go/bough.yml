@@ -1,6 +1,11 @@
 # bough config tree: a list of plugin rows. Mount order comes from
 # each plugin's Inject() deps; row order only breaks ties within a
 # mount pass (which is why optional loop seams sit above the loop row).
+#
+# This file is embedded in the binary as the base tree. A ./bough.yml
+# or ~/.bough/bough.yml is laid over it by id: same id replaces the
+# row, a new id is appended, `disabled: true` drops one. Write down
+# only the rows you change.
 
 - id: llm
   plugin: llm-anthropic

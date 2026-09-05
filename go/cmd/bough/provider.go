@@ -8,10 +8,10 @@ package main
 // before sending a single message — while holding a key that works.
 // The README says any of four keys will do, and now that is true.
 //
-// This applies ONLY to the embedded default. A bough.yml, anywhere, is
-// the user's own statement of which provider to use and is never
-// second-guessed: an explicit row that cannot run is an error worth
-// seeing, not something to route around.
+// This applies ONLY to the embedded default's llm row. A bough.yml
+// that overrides the llm row is the user's own statement of which
+// provider to use and is never second-guessed: an explicit row that
+// cannot run is an error worth seeing, not something to route around.
 
 import (
 	"os"

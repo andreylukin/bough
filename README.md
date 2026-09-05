@@ -130,9 +130,12 @@ bough.provider("parrot", (sys, msgs) => "...");             // a full LLM provid
 
 ## Configuration
 
-`./bough.yml`, else `~/.bough/bough.yml`, else an embedded default. It is a list
-of rows. [go/bough.yml](go/bough.yml) is the shipped tree, commented row by row;
-abridged, it reads:
+An embedded default tree, with `./bough.yml` (else `~/.bough/bough.yml`) laid
+over it by row id: a row with a known id replaces the shipped one, a new id is
+appended, and `disabled: true` on an id drops it. Your file only needs the rows
+you change, so plugins added in a new release reach you without editing anything.
+[go/bough.yml](go/bough.yml) is the shipped tree, commented row by row; abridged,
+it reads:
 
 ```yaml
 - id: llm
@@ -164,8 +167,15 @@ abridged, it reads:
   plugin: ui
 ```
 
-With no `bough.yml` of your own, the `llm` row follows whichever provider key you
-have — the tree above is what you get once you write one down.
+Unless your file overrides the `llm` row, it follows whichever provider key you
+have. A typical `~/.bough/bough.yml` is just that one row:
+
+```yaml
+- id: llm
+  plugin: llm-openrouter
+  config:
+    model: deepseek/deepseek-chat
+```
 
 Save the file and the running process reconciles per row: changed rows and their dependents remount, added rows mount, a row whose deps are missing waits as `pending`, a row that fails is isolated as `failed`. A file that fails to parse keeps the last good tree.
 
