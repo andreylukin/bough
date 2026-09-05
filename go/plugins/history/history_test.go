@@ -334,3 +334,58 @@ func TestListPrefersTheTitleEntry(t *testing.T) {
 		t.Fatalf("unnamed session title = %q", got["plain"])
 	}
 }
+
+// The log is append-only, so it must not drop its tail. On SIGTERM the
+// history row unmounts and closes the file while the loop is still
+// finishing its turn; every append after that used to fail with "file
+// already closed" and be lost — the last entries of the session, which
+// is the part someone resuming most wants.
+func TestAppendAfterCloseStillReachesDisk(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Append("input", map[string]any{"text": "before close"})
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// What the loop does on its way out: the turn's last entries.
+	s.Append("assistant", map[string]any{"text": "after close"})
+	s.Append("done", map[string]any{})
+
+	entries, err := readEntries(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, e := range entries {
+		kinds = append(kinds, e.Kind)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("every entry should be on disk, got %v", kinds)
+	}
+	if txt, _ := entries[1].Data["text"].(string); txt != "after close" {
+		t.Errorf("the post-close entry is wrong: %v", entries[1].Data)
+	}
+	// Seq keeps counting, so a resume does not renumber.
+	for i, e := range entries {
+		if e.Seq != int64(i+1) {
+			t.Errorf("entry %d has seq %d", i, e.Seq)
+		}
+	}
+}
+
+// Unmount can run more than once; closing twice is not an error.
+func TestCloseIsIdempotent(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "s.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Errorf("second close: %v", err)
+	}
+}

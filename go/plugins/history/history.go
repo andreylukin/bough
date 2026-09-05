@@ -52,6 +52,7 @@ type Store struct {
 	path    string
 	entries []Entry
 	seq     int64
+	closed  bool
 }
 
 // Open creates (or truncates) the JSONL file at path, creating parent
@@ -236,15 +237,38 @@ func (s *Store) Append(kind string, data map[string]any) Entry {
 	s.entries = append(s.entries, e)
 	line, err := json.Marshal(e)
 	if err == nil {
-		_, err = s.w.Write(append(line, '\n'))
-	}
-	if err == nil {
-		err = s.w.Flush()
+		err = s.write(append(line, '\n'))
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bough: history append: %v\n", err)
 	}
 	return e
+}
+
+// write puts one line on disk, reopening the file if the store has
+// already been closed.
+//
+// Shutdown does not wait for the turn: on SIGTERM the history row
+// unmounts and closes the file while the loop is still finishing, and
+// every append after that failed with "file already closed" and was
+// LOST — the tail of the session, which is the part someone resuming
+// most wants. An append-only log that drops its last entries is not
+// append-only. Reopening for those few writes is cheap and only ever
+// happens on the way out.
+func (s *Store) write(line []byte) error {
+	if !s.closed {
+		if _, err := s.w.Write(line); err != nil {
+			return err
+		}
+		return s.w.Flush()
+	}
+	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.Write(line)
+	return err
 }
 
 // Entries returns a copy of this session's entries.
@@ -273,6 +297,10 @@ func (s *Store) Path() string { return s.path }
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return nil // unmount can run twice; closing twice is not an error
+	}
+	s.closed = true
 	if err := s.w.Flush(); err != nil {
 		return err
 	}
@@ -440,3 +468,7 @@ func filePrompts(path, cwd string) (prompts []string, ok bool) {
 	}
 	return prompts, true
 }
+
+// Read parses a session JSONL without opening it for append (a plugin
+// mining other sessions must not hold their files).
+func Read(path string) ([]Entry, error) { return readEntries(path) }
