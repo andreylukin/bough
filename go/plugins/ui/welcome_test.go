@@ -38,18 +38,15 @@ func templateReg(t *testing.T, names ...string) *commands.Registry {
 	return r
 }
 
-// welcomeRows returns the non-blank rows from the title down: the mark
-// above it (splash.go) is not part of the header under test.
+// welcomeRows are the header's non-blank frame rows. The mark under
+// the header (splash.go) is drawn from the density ramp alone, so its
+// rows are dropped here: they are not the header under test.
 func welcomeRows(d *drv) []string {
 	var rows []string
 	for _, l := range strings.Split(d.plain(), "\n") {
-		if l = strings.TrimRight(l, " "); l == "" {
-			continue
+		if l = strings.TrimRight(l, " "); l != "" && strings.Trim(l, " .:-=+*#") != "" {
+			rows = append(rows, l)
 		}
-		if len(rows) == 0 && !strings.Contains(l, "bough — a coding agent") {
-			continue
-		}
-		rows = append(rows, l)
 	}
 	return rows
 }
