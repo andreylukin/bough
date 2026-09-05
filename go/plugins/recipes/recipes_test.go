@@ -1,8 +1,8 @@
 package recipes
 
 import (
-	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/andreylukin/bough/plugins/history"
@@ -59,27 +59,42 @@ func TestTurnsAndRecipes(t *testing.T) {
 	}
 }
 
-// Against the real history, when present: prints what the index would
-// do, so a run with -v is the offline dry run.
-func TestRealHistoryDryRun(t *testing.T) {
-	home, _ := os.UserHomeDir()
-	dir := filepath.Join(home, ".bough", "history")
-	if _, err := os.Stat(dir); err != nil {
-		t.Skip("no history")
-	}
-	ix := Load(dir, "")
-	t.Logf("%d recipes", ix.Len())
-	infos, _ := history.List(dir)
-	fires := 0
-	for _, info := range infos {
-		entries, _ := history.Read(info.Path)
-		for _, tr := range Turns(entries) {
-			m, ok := ix.Best(tr.Input)
-			if ok && m.Score >= Threshold && m.Recipe.Phrasing != tr.Input {
-				fires++
-				t.Logf("%.2f %q ↔ %q", m.Score, oneLine(tr.Input), oneLine(m.Recipe.Phrasing))
-			}
+func TestReplayLearnsInOrder(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, cwd string, turns ...[2]string) {
+		st, err := history.Open(filepath.Join(dir, name+".jsonl"))
+		if err != nil {
+			t.Fatal(err)
 		}
+		st.Append("meta", map[string]any{"cwd": cwd})
+		for _, tr := range turns {
+			st.Append("input", map[string]any{"text": tr[0]})
+			st.Append("code", map[string]any{"text": tr[1]})
+			st.Append("done", nil)
+		}
+		st.Close()
 	}
-	t.Logf("%d cross-turn fires", fires)
+	write("a", "/x", [2]string{"run the tests", "go test"})
+	write("b", "/y", [2]string{"run tests", "go test"}, [2]string{"run the tets", "make check"})
+	verdicts, ix, err := Replay(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ix.Len() != 3 || len(verdicts) != 3 {
+		t.Fatalf("want 3 recipes and 3 verdicts, got %d and %d", ix.Len(), len(verdicts))
+	}
+	if verdicts[0].Fire {
+		t.Error("the first turn ever has nothing to match")
+	}
+	if !verdicts[1].Fire || !verdicts[1].SameCode {
+		t.Errorf("second turn should fire and agree: %+v", verdicts[1])
+	}
+	if !verdicts[2].Fire || verdicts[2].SameCode {
+		t.Errorf("third turn should fire and disagree: %+v", verdicts[2])
+	}
+	var b strings.Builder
+	Report(&b, verdicts, ix, false)
+	if !strings.Contains(b.String(), "3 recipes learned, 3 turns replayed, 2 would fire, 1 of those ran the same code") {
+		t.Errorf("report tally:\n%s", b.String())
+	}
 }

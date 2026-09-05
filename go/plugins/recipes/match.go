@@ -1,10 +1,10 @@
-// Package recipes is the "recipes" plugin: a shadow-mode experiment in
+// Package recipes is the "recipes" plugin: an offline experiment in
 // answering routine prompts without a model call (after NPC-Forge /
 // TERMy). A recipe is a past one-block turn: what you typed and the
-// single code block the model ran, which then finished cleanly. Every
-// finished turn is scored against the recipe index and the verdict is
-// appended to ~/.bough/recipes.log; nothing is ever short-circuited.
-// /recipes shows the running tally.
+// single code block the model ran, which then finished cleanly.
+// `bough recipes` replays every session through the matcher and says
+// what would have fired and whether the model then ran the same code.
+// Nothing runs during a live session.
 package recipes
 
 import (

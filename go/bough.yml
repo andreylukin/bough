@@ -131,12 +131,6 @@
 #     service: llm-small
 #     model: z-ai/glm-5.3-flash
 
-# Shadow-mode recipe matcher: scores every finished turn against past
-# one-block turns and logs what it would have answered without a model
-# to ~/.bough/recipes.log. Never short-circuits anything. /recipes.
-- id: recipes
-  plugin: recipes
-
 - id: loop
   plugin: loop
   # config:

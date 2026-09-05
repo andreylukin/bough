@@ -1,25 +1,17 @@
 package recipes
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/andreylukin/bough/kernel"
-	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/history"
-	"github.com/andreylukin/bough/plugins/loop"
 )
-
-// History is the seam: this session's entries and where they live.
-type History interface {
-	Entries() []history.Entry
-	Path() string
-}
 
 // Turn is one finished user turn as the recipe extractor sees it.
 type Turn struct {
@@ -78,114 +70,60 @@ func recipeOf(t Turn, session, cwd string) (Recipe, bool) {
 	return Recipe{Phrasing: t.Input, Code: t.Code[0], Session: session, Cwd: cwd}, true
 }
 
-// Verdict is one shadow-log line.
+// Verdict is what the matcher would have done on one past turn.
 type Verdict struct {
-	At       time.Time `json:"at"`
-	Session  string    `json:"session"`
-	Input    string    `json:"input"`
-	Fire     bool      `json:"fire"`
-	Score    float64   `json:"score"`
-	Phrasing string    `json:"phrasing,omitempty"`
-	From     string    `json:"from,omitempty"`
-	FromCwd  string    `json:"from_cwd,omitempty"`
-	Cwd      string    `json:"cwd,omitempty"`
-	Recipe   string    `json:"recipe_code,omitempty"`
-	Actual   []string  `json:"actual_code"`
-	SameCode bool      `json:"same_code"`
+	Session  string
+	Cwd      string
+	Input    string
+	Match    Match
+	Fire     bool
+	Actual   []string
+	SameCode bool
 }
 
-// Shadow watches turns and scores them.
-type Shadow struct {
-	hist    History
-	session string
-	cwd     string
-	logPath string
-
-	mu       sync.Mutex
-	ix       *Index
-	seen     int // turns scored
-	scored   []Verdict
-	lastTurn int // turns already scored in this session
-}
-
-// Load reads every other session under dir into an index.
-func Load(dir, skip string) *Index {
-	ix := NewIndex(nil)
+// Replay walks every session oldest first and scores each turn against
+// the recipes learned from the turns before it — what a live matcher
+// would have seen at the time. It returns the verdicts and the final
+// index.
+func Replay(dir string) ([]Verdict, *Index, error) {
 	infos, err := history.List(dir)
 	if err != nil {
-		return ix
+		return nil, nil, err
 	}
+	// List is newest first; the replay must learn in the order things
+	// happened.
+	slices.SortFunc(infos, func(a, b history.SessionInfo) int { return a.ModTime.Compare(b.ModTime) })
+	ix := NewIndex(nil)
+	var out []Verdict
 	for _, info := range infos {
-		if info.Path == skip {
-			continue
-		}
 		entries, err := history.Read(info.Path)
 		if err != nil {
 			continue
 		}
 		for _, t := range Turns(entries) {
+			if strings.TrimSpace(t.Input) == "" || strings.HasPrefix(t.Input, "/") {
+				continue
+			}
+			v := Verdict{Session: info.ID, Cwd: info.Cwd, Input: t.Input, Actual: t.Code}
+			if m, ok := ix.Best(t.Input); ok {
+				v.Match = m
+				v.Fire = m.Score >= Threshold
+				v.SameCode = len(t.Code) == 1 && strings.TrimSpace(t.Code[0]) == strings.TrimSpace(m.Recipe.Code)
+			}
+			out = append(out, v)
 			if r, ok := recipeOf(t, info.ID, info.Cwd); ok {
 				ix.Add(r)
 			}
 		}
 	}
-	return ix
+	return out, ix, nil
 }
 
-// onDone scores every not-yet-scored finished turn of this session,
-// then adds the turn to the index so a repeat later this session can
-// hit it.
-func (s *Shadow) onDone() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	turns := Turns(s.hist.Entries())
-	for i := s.lastTurn; i < len(turns); i++ {
-		t := turns[i]
-		if !t.Clean && i == len(turns)-1 {
-			return // still running (a done for a steer, say); score it next time
-		}
-		s.lastTurn = i + 1
-		if strings.TrimSpace(t.Input) == "" || strings.HasPrefix(t.Input, "/") {
-			continue
-		}
-		v := Verdict{At: time.Now(), Session: s.session, Cwd: s.cwd, Input: t.Input, Actual: t.Code}
-		if m, ok := s.ix.Best(t.Input); ok {
-			v.Score = m.Score
-			v.Phrasing = m.Recipe.Phrasing
-			v.From = m.Recipe.Session
-			v.FromCwd = m.Recipe.Cwd
-			v.Recipe = m.Recipe.Code
-			v.Fire = m.Score >= Threshold
-			v.SameCode = len(t.Code) == 1 && strings.TrimSpace(t.Code[0]) == strings.TrimSpace(m.Recipe.Code)
-		}
-		s.seen++
-		s.scored = append(s.scored, v)
-		s.append(v)
-		if r, ok := recipeOf(t, s.session, s.cwd); ok {
-			s.ix.Add(r)
-		}
-	}
-}
-
-func (s *Shadow) append(v Verdict) {
-	if s.logPath == "" {
-		return
-	}
-	f, err := os.OpenFile(s.logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	b, _ := json.Marshal(v)
-	f.Write(append(b, '\n'))
-}
-
-// Report is the /recipes text: the tally and the last few would-fires.
-func (s *Shadow) Report() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// Report writes the replay as text: the tally, then every would-fire
+// with the recipe it would have run and whether the model ran the same.
+func Report(w io.Writer, verdicts []Verdict, ix *Index, all bool) {
 	fires, same := 0, 0
-	for _, v := range s.scored {
+	for _, v := range verdicts {
 		if v.Fire {
 			fires++
 			if v.SameCode {
@@ -193,27 +131,47 @@ func (s *Shadow) Report() string {
 			}
 		}
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "recipes: %d in index, %d turns scored this session, %d would fire (%d ran the same code)\n", s.ix.Len(), s.seen, fires, same)
-	if s.logPath != "" {
-		fmt.Fprintf(&b, "log: %s\n", s.logPath)
-	}
-	n := 0
-	for i := len(s.scored) - 1; i >= 0 && n < 5; i-- {
-		v := s.scored[i]
-		if !v.Fire {
+	fmt.Fprintf(w, "%d recipes learned, %d turns replayed, %d would fire, %d of those ran the same code\n", ix.Len(), len(verdicts), fires, same)
+	for _, v := range verdicts {
+		if !v.Fire && !all {
 			continue
 		}
-		n++
-		fmt.Fprintf(&b, "\n%.2f  %q\n   ↔ %q (%s)\n   recipe: %s\n", v.Score, oneLine(v.Input), oneLine(v.Phrasing), v.FromCwd, oneLine(v.Recipe))
+		mark := " "
+		switch {
+		case v.Fire && v.SameCode:
+			mark = "✓"
+		case v.Fire:
+			mark = "✗"
+		}
+		fmt.Fprintf(w, "\n%s %.2f  %q  (%s)\n", mark, v.Match.Score, oneLine(v.Input), shortCwd(v.Cwd))
+		if v.Match.Recipe.Phrasing != "" {
+			fmt.Fprintf(w, "       ↔ %q  (%s)\n", oneLine(v.Match.Recipe.Phrasing), shortCwd(v.Match.Recipe.Cwd))
+			fmt.Fprintf(w, "       recipe: %s\n", oneLine(v.Match.Recipe.Code))
+		}
+		if v.Fire && !v.SameCode {
+			fmt.Fprintf(w, "       actual: %d block(s)", len(v.Actual))
+			if len(v.Actual) > 0 {
+				fmt.Fprintf(w, ": %s", oneLine(v.Actual[0]))
+			}
+			fmt.Fprintln(w)
+		}
 	}
-	return strings.TrimRight(b.String(), "\n")
 }
 
 func oneLine(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if len(s) > 80 {
 		s = s[:80] + "…"
+	}
+	return s
+}
+
+func shortCwd(s string) string {
+	if s == "" {
+		return "?"
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		s = strings.Replace(s, home, "~", 1)
 	}
 	return s
 }
@@ -225,44 +183,60 @@ func init() {
 }
 
 func (plugin) Name() string     { return "recipes" }
-func (plugin) Inject() []string { return []string{"history"} }
+func (plugin) Inject() []string { return nil }
 
-func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
-	for k := range cfg {
-		return fmt.Errorf("recipes: unknown config key %q", k)
-	}
-	h, err := kernel.Get[History](kctx, "history")
+// Apply is a no-op: the plugin is its CLI command; there is no row.
+func (plugin) Apply(*kernel.Context, map[string]any) error { return nil }
+
+func (plugin) Commands() []kernel.Command {
+	return []kernel.Command{{
+		Name:    "recipes",
+		Usage:   "[--all] | try <prompt>",
+		Summary: "replay history through the no-model recipe matcher: what would have fired, and would it have been right",
+		Run:     runCLI,
+	}}
+}
+
+func runCLI(_ map[string]any, args []string) error {
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("recipes: needs the history service")
+		return err
 	}
-	s := &Shadow{hist: h, ix: NewIndex(nil)}
-	s.cwd, _ = os.Getwd()
-	if p := h.Path(); p != "" {
-		s.session = strings.TrimSuffix(filepath.Base(p), ".jsonl")
-		s.logPath = filepath.Join(filepath.Dir(p), "..", "recipes.log")
-		// Reading every session is I/O the turn should not wait on.
-		go func() {
-			ix := Load(filepath.Dir(p), p)
-			s.mu.Lock()
-			for _, r := range s.ix.recipes {
-				ix.Add(r)
-			}
-			s.ix = ix
-			s.mu.Unlock()
-		}()
-	}
-	kctx.Provide("recipes", s)
-	kctx.On("loop/event", func(p any) {
-		if ev, ok := p.(loop.Event); ok && ev.Kind == "done" {
-			go s.onDone()
+	dir := filepath.Join(home, ".bough", "history")
+	if len(args) > 0 && args[0] == "try" {
+		prompt := strings.Join(args[1:], " ")
+		if strings.TrimSpace(prompt) == "" {
+			return errors.New("usage: bough recipes try <prompt>")
 		}
-	})
-	if reg, err := kernel.Get[*commands.Registry](kctx, "commands"); err == nil {
-		info := commands.CommandInfo{Name: "recipes", Summary: "Shadow-mode recipe matcher tally"}
-		if err := reg.Register(info, func(string) (string, error) { return s.Report(), nil }); err != nil {
+		_, ix, err := Replay(dir)
+		if err != nil {
 			return err
 		}
-		kctx.Effect(func() { reg.Unregister("recipes") })
+		m, ok := ix.Best(prompt)
+		if !ok {
+			fmt.Println("no match")
+			return nil
+		}
+		fire := "below threshold"
+		if m.Score >= Threshold {
+			fire = "would fire"
+		}
+		fmt.Printf("%.2f  %s\n↔ %q  (%s)\n\n%s", m.Score, fire, m.Recipe.Phrasing, shortCwd(m.Recipe.Cwd), m.Recipe.Code)
+		return nil
 	}
+	all := false
+	for _, a := range args {
+		switch a {
+		case "--all", "-a":
+			all = true
+		default:
+			return fmt.Errorf("usage: bough recipes [--all] | try <prompt> (got %q)", a)
+		}
+	}
+	verdicts, ix, err := Replay(dir)
+	if err != nil {
+		return err
+	}
+	Report(os.Stdout, verdicts, ix, all)
 	return nil
 }
