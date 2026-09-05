@@ -183,14 +183,21 @@ Not supported yet, but no longer out of reach. The tree compiles for
 signal calls that were Unix-only now sit behind build tags — and nothing
 else in bough is POSIX-specific.
 
-What is missing is that nobody has run it there. `tools.bash` still pipes its
-script to `sh`, so it needs Git for Windows (or another `sh`) on `PATH`;
-`bough web`'s new-session signal has no Windows equivalent; and the process
-tree is killed with `taskkill /T` rather than a process group. No release
-binary is published, because "it builds" is not the same as "it works".
+The test suite now runs there too, and says plainly where it stands: **79 of
+them fail**. The job is in CI but does not gate a merge, so the list is
+enumerated rather than imagined.
 
-If you use Windows and want to try it: `go build ./cmd/bough` in `go/` and
-open an issue with what happens. That is the missing piece.
+From the first run, most of what fails looks like assumptions in the tests
+rather than in bough: paths written into JSON fixtures without escaping the
+backslashes, and comparisons against text a CRLF checkout had rewritten (now
+addressed by `.gitattributes`). Underneath those, the real gaps are known:
+`tools.bash` pipes its script to `sh`, so it needs Git for Windows (or another
+`sh`) on `PATH`; `bough web`'s new-session signal has no Windows equivalent;
+and the process tree is killed with `taskkill /T` rather than a process group.
+
+No release binary is published, because "it builds" is not "it works" and 79
+failures is not "it works" either. If you use Windows, the CI log is the todo
+list and a pull request against any of it is welcome.
 
 ## Repository layout
 

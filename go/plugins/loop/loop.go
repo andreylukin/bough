@@ -1472,7 +1472,13 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			note("code", code, nil)
 			out, runErr := r.runCode(ctx, code)
 			if ctx.Err() != nil {
-				finish("cancelled", nil)
+				// doneData, not nil: the block may have written files
+				// before the cancel reached it, and /undo right after
+				// esc is the only way back. The cancel-during-the-LLM
+				// -call path above has always passed it; this one did
+				// not, so a turn interrupted mid-write recorded nothing
+				// and could not be undone.
+				finish("cancelled", r.doneData())
 				return ctx.Err()
 			}
 			// Whatever the block printed BEFORE it failed is kept: a
@@ -1513,7 +1519,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	msgs := append(r.project(), Message{Role: "user", Content: outOfSteps})
 	reply, err := r.completeMsgs(ctx, system, msgs, emit)
 	if ctx.Err() != nil {
-		finish("cancelled", nil)
+		finish("cancelled", r.doneData()) // same reason as above
 		return ctx.Err()
 	}
 	if err != nil {

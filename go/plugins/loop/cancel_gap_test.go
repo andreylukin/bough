@@ -10,6 +10,8 @@ package loop
 import (
 	"context"
 	"testing"
+
+	"github.com/andreylukin/bough/plugins/history"
 )
 
 func TestCancelBeforeTheTurnStartsIsHonoured(t *testing.T) {
@@ -72,4 +74,67 @@ func TestCancelDuringATurnStillCancels(t *testing.T) {
 	if tn.pending {
 		t.Error("a cancel that reached a live turn must not also latch")
 	}
+}
+
+// A cancel that lands while a code block is RUNNING must still record
+// what the block wrote. /undo right after esc is the only way back, and
+// the turn is the thing it undoes.
+//
+// The cancel-during-the-LLM-call path always passed doneData; this one
+// passed nil, so a turn interrupted mid-write recorded no files and
+// could not be undone. It surfaced only once cancels stopped being
+// dropped (see TestCancelBeforeTheTurnStartsIsHonoured) — before that
+// the cancel usually landed during the LLM call instead.
+func TestCancelDuringCodeStillRecordsWrites(t *testing.T) {
+	code := &cancellingCode{}
+	hist := &memHistory{}
+	r := &runner{
+		llm:         &seqLLM{replies: []string{"```js\ntools.write(\"made.txt\", \"x\")\n```"}},
+		code:        code,
+		hist:        hist,
+		secs:        &Sections{},
+		stats:       &fakeStats{files: []string{"made.txt"}},
+		stopRetries: 0,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	code.cancel = cancel
+	var kinds, texts []string
+	_ = r.Run(ctx, "make a file", collect(&kinds, &texts))
+
+	entries := hist.Entries()
+	var done *history.Entry
+	for i := range entries {
+		if entries[i].Kind == "done" {
+			done = &entries[i]
+		}
+	}
+	if done == nil {
+		t.Fatalf("a cancelled turn still ends with done: %v", kinds)
+	}
+	files, _ := done.Data["files"].([]string)
+	if len(files) != 1 || files[0] != "made.txt" {
+		t.Fatalf("the cancelled turn must record what it wrote, got %v", done.Data["files"])
+	}
+}
+
+// fakeStats stands in for the tools plugin's per-turn tally.
+type fakeStats struct{ files []string }
+
+func (f *fakeStats) Take() ([]string, int, bool) {
+	files := f.files
+	f.files = nil
+	return files, 0, true
+}
+
+// cancellingCode cancels the turn from inside the block, the way esc
+// does while a command is running.
+type cancellingCode struct{ cancel context.CancelFunc }
+
+func (c *cancellingCode) RegisterTool(string, any)   {}
+func (c *cancellingCode) Run(string) (string, error) { return "", nil }
+func (c *cancellingCode) RunCtx(ctx context.Context, _ string) (string, error) {
+	c.cancel()
+	<-ctx.Done()
+	return "", ctx.Err()
 }

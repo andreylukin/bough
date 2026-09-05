@@ -28,6 +28,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # Windows does not pass yet and is not claimed to. The job runs so
+    # the failures are enumerated rather than imagined — see the
+    # Windows section of the README — but it does not gate a merge on a
+    # platform bough does not ship a binary for.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     defaults:
       run:
         working-directory: go

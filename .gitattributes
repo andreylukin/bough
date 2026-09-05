@@ -1,0 +1,13 @@
+# Check everything out with LF endings, on every platform.
+#
+# Git's default on Windows rewrites LF to CRLF on checkout, which
+# changes the bytes of files bough embeds (//go:embed) and compares —
+# the /init template's own test failed on windows-latest for exactly
+# that reason, matching "verified by\n  running them" against text the
+# checkout had turned into "\r\n". Go tooling wants LF regardless.
+* text=auto eol=lf
+
+# Never touched: these are bytes, not text.
+*.png binary
+*.gz binary
+*.ico binary
