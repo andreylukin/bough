@@ -25,29 +25,29 @@ test('typing "/" opens the palette and typing filters it', async ({ launchBough,
 
   await typeInTerm(page, '/');
   // The overlay is a window on the commands: name + dimmed summary per
-  // row, at most palMaxRows (10) of them. There are more built-ins than
-  // that now, so the ones past the window are reached by typing, which
-  // is the next assertion.
-  await waitForTermText(page, 'exit bough'); // /quit's summary
+  // row, at most palMaxRows (10) of them. Anchor on the FIRST row —
+  // "/clear" sorts first and stays visible however many commands are
+  // added. Anchoring on a row that merely happened to fit (/quit's
+  // "exit bough") broke the moment two more commands shipped.
+  await waitForTermText(page, '/clear');
   let screen = await termText(page);
   expect(screen).toContain('/help');
   expect(screen).toContain('list commands');
-  expect(screen).toContain('/clear');
 
   // A command below the fold is found by filtering, not by scrolling.
   await typeInTerm(page, 'ses');
   await waitForTermText(page, 'pick a session to resume');
   for (let i = 0; i < 3; i++) await page.keyboard.press('Backspace');
-  await waitForTermText(page, 'exit bough');
+  await waitForTermText(page, '/clear');
 
   // "he" narrows to /help alone (prefix tier); the rest drop off.
   await typeInTerm(page, 'he');
-  await waitForTermGone(page, 'exit bough');
+  await waitForTermGone(page, '/clear');
   screen = await termText(page);
   expect(screen).toContain('/help');
   expect(screen).toContain('list commands');
-  expect(screen).not.toContain('/quit');
   expect(screen).not.toContain('/clear');
+  expect(screen).not.toContain('/connect');
 });
 
 test('arrows + Enter run /help and the system block renders', async ({ launchBough, page }) => {
@@ -55,7 +55,7 @@ test('arrows + Enter run /help and the system block renders', async ({ launchBou
   await boot(page, b.url);
 
   await typeInTerm(page, '/');
-  await waitForTermText(page, 'exit bough');
+  await waitForTermText(page, '/clear');
   // /help sits first; a down then an up walks off it and back, and
   // Enter dispatches the selected row.
   await page.keyboard.press('ArrowDown');
