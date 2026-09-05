@@ -37,7 +37,15 @@ func startProgram(t *testing.T, events chan Event, sendFn func(string)) *teatest
 	var cfg atomic.Pointer[uiCfg]
 	cfg.Store(newCfg(defaultTheme(), defaultKeymap(), "bough", nil))
 	m := newModel(80, 24, sendFn, events, &cfg)
-	return teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(80, 24))
+	// Wait for the first frame before anyone types. teatest's Type
+	// sends keypresses straight into the program, and on a loaded
+	// runner they can arrive before it has drawn anything — the
+	// composer then holds a truncated line and the frame the test is
+	// waiting for never comes. That is what timed out at exactly the
+	// 15s budget on macOS while passing everywhere else.
+	waitForOutput(t, tm, m.input.Placeholder)
+	return tm
 }
 
 // waitForOutput waits until the program's cumulative NEW output (each
@@ -140,7 +148,9 @@ func TestProgramMouseClickTogglesBlock(t *testing.T) {
 func TestProgramQuitCleanly(t *testing.T) {
 	t.Parallel()
 	tm := startProgram(t, make(chan Event, 16), func(string) {})
-	waitForOutput(t, tm, "bough") // first frame drawn
+	// startProgram already waited for the first frame, and each
+	// waitForOutput drains the reader — waiting for it again here would
+	// wait for bytes that have been consumed.
 	sendQuit(tm)
 	tm.WaitFinished(t, teatest.WithFinalTimeout(waitBudget))
 	if fm, ok := tm.FinalModel(t).(model); !ok {
