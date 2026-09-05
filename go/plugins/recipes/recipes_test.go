@@ -20,12 +20,12 @@ func TestTypoAndOrderTolerantMatch(t *testing.T) {
 		"push to main":                  "B",
 		"cound the go files in plugins": "C",
 	} {
-		m, ok := ix.Best(prompt)
+		m, ok := ix.Best(prompt, nil)
 		if !ok || m.Recipe.Code != want || m.Score < Threshold {
 			t.Errorf("%q: got %+v ok=%v, want %s above threshold", prompt, m, ok, want)
 		}
 	}
-	if m, ok := ix.Best("rewrite the parser in rust and add tests"); ok && m.Score >= Threshold {
+	if m, ok := ix.Best("rewrite the parser in rust and add tests", nil); ok && m.Score >= Threshold {
 		t.Errorf("a longer, different ask must not fire: %+v", m)
 	}
 }
@@ -50,7 +50,7 @@ func TestTurnsAndRecipes(t *testing.T) {
 	}
 	var got []string
 	for _, tr := range turns {
-		if r, ok := recipeOf(tr, "s", ""); ok {
+		if r, ok := recipeOf(tr, "s", Context{}); ok {
 			got = append(got, r.Phrasing)
 		}
 	}
@@ -74,8 +74,9 @@ func TestReplayLearnsInOrder(t *testing.T) {
 		}
 		st.Close()
 	}
-	write("a", "/x", [2]string{"run the tests", "go test"})
-	write("b", "/y", [2]string{"run tests", "go test"}, [2]string{"run the tets", "make check"})
+	x, y := filepath.Join(dir, "x"), filepath.Join(dir, "y")
+	write("a", x, [2]string{"run the tests", "go test"})
+	write("b", y, [2]string{"run tests", "make check"}, [2]string{"run the tets", "make check"})
 	verdicts, ix, err := Replay(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -83,18 +84,23 @@ func TestReplayLearnsInOrder(t *testing.T) {
 	if ix.Len() != 3 || len(verdicts) != 3 {
 		t.Fatalf("want 3 recipes and 3 verdicts, got %d and %d", ix.Len(), len(verdicts))
 	}
-	if verdicts[0].Fire {
+	if verdicts[0].Words.Fire {
 		t.Error("the first turn ever has nothing to match")
 	}
-	if !verdicts[1].Fire || !verdicts[1].SameCode {
-		t.Errorf("second turn should fire and agree: %+v", verdicts[1])
+	// "run tests" in y: words match x's recipe (wrong command), but
+	// the directory gate has nothing to fire on.
+	if v := verdicts[1]; v.Dir.Fire || !v.Words.Fire || v.Words.SameCode {
+		t.Errorf("second turn: dir gate must hold, words alone would misfire: %+v", v)
 	}
-	if !verdicts[2].Fire || verdicts[2].SameCode {
-		t.Errorf("third turn should fire and disagree: %+v", verdicts[2])
+	// "run the tets" in y: the directory gate finds y's own recipe.
+	if v := verdicts[2]; !v.Dir.Fire || !v.Dir.SameCode || v.Ctx.Prev != "run tests" {
+		t.Errorf("third turn should fire in-directory and agree: %+v", v)
 	}
 	var b strings.Builder
 	Report(&b, verdicts, ix, false)
-	if !strings.Contains(b.String(), "3 recipes learned, 3 turns replayed, 2 would fire, 1 of those ran the same code") {
-		t.Errorf("report tally:\n%s", b.String())
+	for _, want := range []string{"3 recipes learned, 3 turns replayed", "same directory (the gate)     1 would fire,   1 ran the same code", "words only                    2 would fire,"} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("report should say %q:\n%s", want, b.String())
+		}
 	}
 }

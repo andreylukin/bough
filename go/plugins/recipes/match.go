@@ -13,13 +13,31 @@ import (
 	"unicode"
 )
 
-// Recipe is one memorised turn.
+// Recipe is one memorised turn: the words, the code, and the situation
+// it happened in.
 type Recipe struct {
 	Phrasing string `json:"phrasing"`
 	Code     string `json:"code"`
 	Session  string `json:"session"`
-	Cwd      string `json:"cwd,omitempty"`
+	Ctx      Context
 }
+
+// Context is everything known about a turn besides its words. Words
+// alone are not enough: "run the tests" means one command in one
+// checkout and another next door, so a recipe only fires where it was
+// learned.
+type Context struct {
+	Cwd   string   `json:"cwd,omitempty"`   // working directory of the session
+	Root  string   `json:"root,omitempty"`  // enclosing git checkout, "" outside one
+	Prev  string   `json:"prev,omitempty"`  // the prompt before this one in the session
+	Files []string `json:"files,omitempty"` // files the turn wrote (the done entry)
+}
+
+// SameDir is the firing gate: the exact working directory.
+func (c Context) SameDir(o Context) bool { return c.Cwd != "" && c.Cwd == o.Cwd }
+
+// SameRepo is the relaxed gate: the same checkout, any directory in it.
+func (c Context) SameRepo(o Context) bool { return c.Root != "" && c.Root == o.Root }
 
 // Match is the best recipe for a prompt and how sure the matcher is.
 type Match struct {
@@ -98,18 +116,19 @@ func (ix *Index) idf(w string) float64 {
 	return math.Log(1+float64(len(ix.recipes))) - math.Log(float64(ix.df[w])) + 1
 }
 
-// Best returns the highest-scoring recipe for prompt, or ok=false when
-// there is none or the prompt has no tokens. Score is symmetric-ish:
+// Best returns the highest-scoring recipe for prompt among those
+// accept admits (nil admits all), or ok=false when there is none or
+// the prompt has no tokens. Score is symmetric-ish:
 // the IDF-weighted share of recipe tokens found in the prompt, scaled
 // by the share of prompt tokens found in the recipe (so a prompt that
 // says a lot more than the recipe does not match it).
-func (ix *Index) Best(prompt string) (m Match, ok bool) {
+func (ix *Index) Best(prompt string, accept func(Recipe) bool) (m Match, ok bool) {
 	q := tokens(prompt)
 	if len(q) == 0 {
 		return m, false
 	}
 	for i, rt := range ix.toks {
-		if len(rt) == 0 {
+		if len(rt) == 0 || (accept != nil && !accept(ix.recipes[i])) {
 			continue
 		}
 		var got, total float64

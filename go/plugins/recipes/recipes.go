@@ -16,8 +16,10 @@ import (
 // Turn is one finished user turn as the recipe extractor sees it.
 type Turn struct {
 	Input string
+	Prev  string // the previous turn's input, "" for the first
 	Code  []string
-	Clean bool // ended with "done", no "error", no "cancelled"
+	Files []string // what the turn wrote, from its done entry
+	Clean bool     // ended with "done", no "error", no "cancelled"
 }
 
 // maxPhrasing bounds what counts as a routine prompt: a paragraph of
@@ -39,7 +41,11 @@ func Turns(entries []history.Entry) []Turn {
 			if in == "" {
 				in, _ = e.Data["text"].(string)
 			}
-			turns = append(turns, Turn{Input: in})
+			t := Turn{Input: in}
+			if n := len(turns); n > 0 {
+				t.Prev = turns[n-1].Input
+			}
+			turns = append(turns, t)
 			cur = &turns[len(turns)-1]
 		case "code":
 			if cur != nil {
@@ -54,6 +60,13 @@ func Turns(entries []history.Entry) []Turn {
 		case "done":
 			if cur != nil {
 				cur.Clean = true
+				if fs, ok := e.Data["files"].([]any); ok {
+					for _, f := range fs {
+						if p, ok := f.(string); ok {
+							cur.Files = append(cur.Files, p)
+						}
+					}
+				}
 				cur = nil
 			}
 		}
@@ -63,22 +76,63 @@ func Turns(entries []history.Entry) []Turn {
 
 // recipeOf is the turn as a recipe, if it is one: a short prompt, one
 // code block, a clean finish.
-func recipeOf(t Turn, session, cwd string) (Recipe, bool) {
+func recipeOf(t Turn, session string, ctx Context) (Recipe, bool) {
 	if !t.Clean || len(t.Code) != 1 || strings.TrimSpace(t.Input) == "" || len(t.Input) > maxPhrasing {
 		return Recipe{}, false
 	}
-	return Recipe{Phrasing: t.Input, Code: t.Code[0], Session: session, Cwd: cwd}, true
+	return Recipe{Phrasing: t.Input, Code: t.Code[0], Session: session, Ctx: ctx}, true
 }
 
-// Verdict is what the matcher would have done on one past turn.
+// contextOf is the turn's situation: the session's directory, its
+// checkout (walked up from the directory now, so a deleted checkout
+// has none), the prompt before, the files it wrote.
+func contextOf(t Turn, cwd string) Context {
+	return Context{Cwd: cwd, Root: gitRoot(cwd), Prev: t.Prev, Files: t.Files}
+}
+
+// gitRoot is the nearest ancestor of dir holding a .git, or "".
+func gitRoot(dir string) string {
+	for d := dir; d != "" && d != "/"; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
+			return d
+		}
+		if filepath.Dir(d) == d {
+			break
+		}
+	}
+	return ""
+}
+
+// Verdict is what the matcher would have done on one past turn, under
+// three gates: the same directory (the real one), the same checkout,
+// and words alone. Each is the best match under that gate.
 type Verdict struct {
-	Session  string
-	Cwd      string
-	Input    string
+	Session string
+	Ctx     Context
+	Input   string
+	Actual  []string
+	Dir     Outcome // same cwd: what would actually fire
+	Repo    Outcome // same git root, any directory
+	Words   Outcome // no context at all
+}
+
+// Outcome is one gate's answer.
+type Outcome struct {
 	Match    Match
 	Fire     bool
-	Actual   []string
 	SameCode bool
+}
+
+func outcome(ix *Index, t Turn, accept func(Recipe) bool) Outcome {
+	m, ok := ix.Best(t.Input, accept)
+	if !ok {
+		return Outcome{}
+	}
+	return Outcome{
+		Match:    m,
+		Fire:     m.Score >= Threshold,
+		SameCode: len(t.Code) == 1 && strings.TrimSpace(t.Code[0]) == strings.TrimSpace(m.Recipe.Code),
+	}
 }
 
 // Replay walks every session oldest first and scores each turn against
@@ -104,14 +158,13 @@ func Replay(dir string) ([]Verdict, *Index, error) {
 			if strings.TrimSpace(t.Input) == "" || strings.HasPrefix(t.Input, "/") {
 				continue
 			}
-			v := Verdict{Session: info.ID, Cwd: info.Cwd, Input: t.Input, Actual: t.Code}
-			if m, ok := ix.Best(t.Input); ok {
-				v.Match = m
-				v.Fire = m.Score >= Threshold
-				v.SameCode = len(t.Code) == 1 && strings.TrimSpace(t.Code[0]) == strings.TrimSpace(m.Recipe.Code)
-			}
+			ctx := contextOf(t, info.Cwd)
+			v := Verdict{Session: info.ID, Ctx: ctx, Input: t.Input, Actual: t.Code}
+			v.Dir = outcome(ix, t, func(r Recipe) bool { return ctx.SameDir(r.Ctx) })
+			v.Repo = outcome(ix, t, func(r Recipe) bool { return ctx.SameRepo(r.Ctx) })
+			v.Words = outcome(ix, t, nil)
 			out = append(out, v)
-			if r, ok := recipeOf(t, info.ID, info.Cwd); ok {
+			if r, ok := recipeOf(t, info.ID, ctx); ok {
 				ix.Add(r)
 			}
 		}
@@ -119,36 +172,64 @@ func Replay(dir string) ([]Verdict, *Index, error) {
 	return out, ix, nil
 }
 
-// Report writes the replay as text: the tally, then every would-fire
-// with the recipe it would have run and whether the model ran the same.
+// Report writes the replay as text: the tally under each gate, then
+// every turn the directory gate would fire on, with the recipe it
+// would run, its context, and whether the model ran the same code.
 func Report(w io.Writer, verdicts []Verdict, ix *Index, all bool) {
-	fires, same := 0, 0
-	for _, v := range verdicts {
-		if v.Fire {
-			fires++
-			if v.SameCode {
-				same++
+	tally := func(pick func(Verdict) Outcome) (fires, same int) {
+		for _, v := range verdicts {
+			if o := pick(v); o.Fire {
+				fires++
+				if o.SameCode {
+					same++
+				}
 			}
 		}
+		return
 	}
-	fmt.Fprintf(w, "%d recipes learned, %d turns replayed, %d would fire, %d of those ran the same code\n", ix.Len(), len(verdicts), fires, same)
+	fmt.Fprintf(w, "%d recipes learned, %d turns replayed\n", ix.Len(), len(verdicts))
+	for _, g := range []struct {
+		name string
+		pick func(Verdict) Outcome
+	}{
+		{"same directory (the gate)", func(v Verdict) Outcome { return v.Dir }},
+		{"same checkout", func(v Verdict) Outcome { return v.Repo }},
+		{"words only", func(v Verdict) Outcome { return v.Words }},
+	} {
+		fires, same := tally(g.pick)
+		fmt.Fprintf(w, "  %-27s %3d would fire, %3d ran the same code\n", g.name, fires, same)
+	}
 	for _, v := range verdicts {
-		if !v.Fire && !all {
+		o := v.Dir
+		if !o.Fire && !all {
 			continue
 		}
 		mark := " "
 		switch {
-		case v.Fire && v.SameCode:
+		case o.Fire && o.SameCode:
 			mark = "✓"
-		case v.Fire:
+		case o.Fire:
 			mark = "✗"
 		}
-		fmt.Fprintf(w, "\n%s %.2f  %q  (%s)\n", mark, v.Match.Score, oneLine(v.Input), shortCwd(v.Cwd))
-		if v.Match.Recipe.Phrasing != "" {
-			fmt.Fprintf(w, "       ↔ %q  (%s)\n", oneLine(v.Match.Recipe.Phrasing), shortCwd(v.Match.Recipe.Cwd))
-			fmt.Fprintf(w, "       recipe: %s\n", oneLine(v.Match.Recipe.Code))
+		fmt.Fprintf(w, "\n%s %.2f  %q\n", mark, o.Match.Score, oneLine(v.Input))
+		fmt.Fprintf(w, "       in %s", shortCwd(v.Ctx.Cwd))
+		if v.Ctx.Prev != "" {
+			fmt.Fprintf(w, "  after %q", oneLine(v.Ctx.Prev))
 		}
-		if v.Fire && !v.SameCode {
+		fmt.Fprintln(w)
+		r := o.Match.Recipe
+		if r.Phrasing != "" {
+			fmt.Fprintf(w, "       ↔ %q", oneLine(r.Phrasing))
+			if r.Ctx.Prev != "" {
+				fmt.Fprintf(w, "  after %q", oneLine(r.Ctx.Prev))
+			}
+			fmt.Fprintln(w)
+			fmt.Fprintf(w, "       recipe: %s\n", oneLine(r.Code))
+			if len(r.Ctx.Files) > 0 {
+				fmt.Fprintf(w, "       wrote:  %s\n", oneLine(strings.Join(r.Ctx.Files, " ")))
+			}
+		}
+		if o.Fire && !o.SameCode {
 			fmt.Fprintf(w, "       actual: %d block(s)", len(v.Actual))
 			if len(v.Actual) > 0 {
 				fmt.Fprintf(w, ": %s", oneLine(v.Actual[0]))
@@ -212,16 +293,21 @@ func runCLI(_ map[string]any, args []string) error {
 		if err != nil {
 			return err
 		}
-		m, ok := ix.Best(prompt)
+		cwd, _ := os.Getwd()
+		here := Context{Cwd: cwd, Root: gitRoot(cwd)}
+		m, ok := ix.Best(prompt, func(r Recipe) bool { return here.SameDir(r.Ctx) })
 		if !ok {
-			fmt.Println("no match")
+			fmt.Printf("no recipe learned in %s matches\n", shortCwd(cwd))
+			if m, ok := ix.Best(prompt, nil); ok {
+				fmt.Printf("nearest anywhere: %.2f %q in %s\n", m.Score, oneLine(m.Recipe.Phrasing), shortCwd(m.Recipe.Ctx.Cwd))
+			}
 			return nil
 		}
 		fire := "below threshold"
 		if m.Score >= Threshold {
 			fire = "would fire"
 		}
-		fmt.Printf("%.2f  %s\n↔ %q  (%s)\n\n%s", m.Score, fire, m.Recipe.Phrasing, shortCwd(m.Recipe.Cwd), m.Recipe.Code)
+		fmt.Printf("%.2f  %s\n↔ %q  in %s\n\n%s", m.Score, fire, m.Recipe.Phrasing, shortCwd(m.Recipe.Ctx.Cwd), m.Recipe.Code)
 		return nil
 	}
 	all := false
