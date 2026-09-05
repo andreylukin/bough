@@ -43,6 +43,16 @@ jobs:
           go-version-file: go/go.mod
           cache: true # modules + build cache
           cache-dependency-path: go/go.sum
+      # The pre-commit hook runs this too; CI is what catches a commit
+      # made with --no-verify. One runner is enough — gofmt's answer
+      # does not vary by platform.
+      - name: gofmt
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
       - run: go vet ./...
       # Two vCPUs: 16-way parallelism only starves the timing-sensitive
       # TUI and PTY tests. -race is the point of running it here.
