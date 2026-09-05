@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"encoding/json"
 	"github.com/andreylukin/bough/plugins/history"
 )
 
@@ -21,10 +22,14 @@ func writeSession(t *testing.T, id, cwd string, mtime time.Time) string {
 	}
 	p := filepath.Join(dir, id+".jsonl")
 	var lines string
+	// Marshalled, not concatenated: on Windows a cwd is C:\Users\…, and
+	// pasting that between quotes produces `\U`, which is not JSON. The
+	// file was then skipped as corrupt and the test failed for a reason
+	// that had nothing to do with what it was testing.
 	if cwd != "" {
-		lines += `{"seq":1,"kind":"meta","data":{"cwd":"` + cwd + `"}}` + "\n"
+		lines += mustJSON(t, map[string]any{"seq": 1, "kind": "meta", "data": map[string]any{"cwd": cwd}}) + "\n"
 	}
-	lines += `{"seq":2,"kind":"input","data":{"text":"prompt in ` + id + `"}}` + "\n"
+	lines += mustJSON(t, map[string]any{"seq": 2, "kind": "input", "data": map[string]any{"text": "prompt in " + id}}) + "\n"
 	if err := os.WriteFile(p, []byte(lines), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -87,4 +92,14 @@ func TestPrintSessionsCwdColumn(t *testing.T) {
 	if strings.Contains(buf.String(), "/proj") {
 		t.Fatalf("cwd column shown without --all:\n%s", buf.String())
 	}
+}
+
+// mustJSON encodes one history line.
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

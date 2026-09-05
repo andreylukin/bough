@@ -6,6 +6,7 @@ package e2e
 
 import (
 	"bufio"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -231,8 +232,8 @@ func TestSessionsPreferThisDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	local := `{"seq":1,"kind":"meta","data":{"cwd":"` + real + `"}}` + "\n" +
-		`{"seq":2,"kind":"input","data":{"text":"local question"}}` + "\n"
+	local := jsonLine(t, map[string]any{"seq": 1, "kind": "meta", "data": map[string]any{"cwd": real}}) + "\n" +
+		jsonLine(t, map[string]any{"seq": 2, "kind": "input", "data": map[string]any{"text": "local question"}}) + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "local.jsonl"), []byte(local), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -260,4 +261,16 @@ func TestSessionsPreferThisDirectory(t *testing.T) {
 	}
 	mustContain(t, out, "local question")
 	mustNotContain(t, out, "foreign question")
+}
+
+// jsonLine encodes one history line. Building JSON by concatenation
+// breaks on Windows, where a cwd is C:\\Users\\… and the backslashes
+// are read as escapes.
+func jsonLine(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

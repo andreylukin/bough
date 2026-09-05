@@ -44,9 +44,9 @@ func sessionsReg(t *testing.T) *commands.Registry {
 func writeJSONL(t *testing.T, dir, id, cwd, prompt string, mtime time.Time) string {
 	t.Helper()
 	p := filepath.Join(dir, id+".jsonl")
-	body := `{"seq":1,"kind":"meta","data":{"cwd":"` + cwd + `"}}` + "\n" +
-		`{"seq":2,"kind":"input","data":{"text":"` + prompt + `"}}` + "\n" +
-		`{"seq":3,"kind":"assistant","data":{"text":"answer for ` + id + `"}}` + "\n"
+	body := jsonLine(t, map[string]any{"seq": 1, "kind": "meta", "data": map[string]any{"cwd": cwd}}) + "\n" +
+		jsonLine(t, map[string]any{"seq": 2, "kind": "input", "data": map[string]any{"text": prompt}}) + "\n" +
+		jsonLine(t, map[string]any{"seq": 3, "kind": "assistant", "data": map[string]any{"text": "answer for " + id}}) + "\n"
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -256,4 +256,16 @@ func TestShortDir(t *testing.T) {
 	if s := shortDir("/h/x", "/c", "/h"); s != "~/x" {
 		t.Errorf("home = %q", s)
 	}
+}
+
+// jsonLine encodes one history line. Building JSON by concatenation
+// breaks on Windows, where a cwd is C:\\Users\\… and the backslashes
+// are read as escapes.
+func jsonLine(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

@@ -3,6 +3,7 @@ package history
 // RecentPrompts: what the composer's Up arrow reaches across sessions.
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,7 +14,7 @@ import (
 // then stamps its mtime so ordering is deterministic.
 func session(t *testing.T, dir, name, cwd string, age time.Duration, lines ...string) {
 	t.Helper()
-	body := `{"seq":1,"kind":"meta","data":{"cwd":"` + cwd + `"}}` + "\n"
+	body := jsonLine(t, map[string]any{"seq": 1, "kind": "meta", "data": map[string]any{"cwd": cwd}}) + "\n"
 	for _, l := range lines {
 		body += l + "\n"
 	}
@@ -104,4 +105,16 @@ func TestRecentPromptsEmptyDir(t *testing.T) {
 	if got := RecentPrompts(t.TempDir(), "/w", 10); got != nil {
 		t.Fatalf("empty dir should yield nothing, got %v", got)
 	}
+}
+
+// jsonLine encodes one history line. Building JSON by concatenation
+// breaks on Windows, where a cwd is C:\\Users\\… and the backslashes
+// are read as escapes.
+func jsonLine(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
