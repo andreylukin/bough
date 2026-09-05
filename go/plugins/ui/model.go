@@ -728,6 +728,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.PasteMsg:
 		m.stop.armedAt = time.Time{} // a paste is typing: it disarms quit like any key
+		m.stop.escAt = time.Time{}
 	}
 
 	var cmds []tea.Cmd
@@ -1139,6 +1140,9 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if cfg.action[key] != "quit" {
 		m.stop.armedAt = time.Time{} // any other key disarms, whichever handler takes it
+	}
+	if key != "esc" {
+		m.stop.escAt = time.Time{}
 	}
 
 	// The palette owns Up/Down/Tab/Enter/Esc while it is open, and

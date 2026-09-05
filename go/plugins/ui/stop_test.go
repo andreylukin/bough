@@ -60,13 +60,52 @@ func TestEscCancelsRunningTurn(t *testing.T) {
 	}
 }
 
-func TestEscClearsComposerWhenIdle(t *testing.T) {
+// Claude Code's contract: a single esc interrupts, a DOUBLE esc clears
+// the draft. One press only arms, and says what a second would do.
+func TestDoubleEscClearsComposerWhenIdle(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
 	d.typeStr("half a thought")
+
+	d.press(keyEsc())
+	if got := d.m.input.Value(); got != "half a thought" {
+		t.Fatalf("one esc must not clear the draft, got %q", got)
+	}
+	if !strings.Contains(d.plain(), "press esc again to clear") {
+		t.Errorf("the first press should say what a second does:\n%s", d.plain())
+	}
+
 	d.press(keyEsc())
 	if got := d.m.input.Value(); got != "" {
-		t.Errorf("esc should clear the composer, got %q", got)
+		t.Errorf("the second esc should clear the composer, got %q", got)
+	}
+}
+
+// Any other key disarms, so esc-something-esc does not clear.
+func TestEscDisarmedByAnotherKey(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.typeStr("keep me")
+	d.press(keyEsc())
+	d.typeStr("!") // any key at all
+	d.press(keyEsc())
+	if got := d.m.input.Value(); got == "" {
+		t.Error("a key between the two escs should have disarmed the pair")
+	}
+}
+
+// On an empty composer the pair opens the rewind — bough's /tree, which
+// lists the turns and forks the session at one.
+func TestDoubleEscOnEmptyComposerRewinds(t *testing.T) {
+	t.Parallel()
+	d := drvCmds(t, reg(t, "tree"))
+	d.press(keyEsc())
+	if !strings.Contains(d.plain(), "press esc again to rewind") {
+		t.Fatalf("the first press should offer the rewind:\n%s", d.plain())
+	}
+	d.press(keyEsc())
+	if p := d.plain(); !strings.Contains(p, "/tree") {
+		t.Errorf("the second esc should run /tree:\n%s", p)
 	}
 }
 

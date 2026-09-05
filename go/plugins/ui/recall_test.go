@@ -109,9 +109,10 @@ func TestEscClearedDraftIsRecallable(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
 	d.typeStr("half-written thought")
-	d.press(keyEsc())
+	d.press(keyEsc()) // arms
+	d.press(keyEsc()) // clears
 	if d.m.input.Value() != "" {
-		t.Fatal("esc should clear the draft")
+		t.Fatal("a double esc should clear the draft")
 	}
 	d.press(keyUp())
 	if got := d.m.input.Value(); got != "half-written thought" {
@@ -125,7 +126,11 @@ func TestEscOnRecalledPromptAddsNothing(t *testing.T) {
 	t.Parallel()
 	d := pastDrv(t, "from before")
 	d.press(keyUp())
-	d.press(keyEsc())
+	d.press(keyEsc()) // arms
+	d.press(keyEsc()) // clears
+	if d.m.input.Value() != "" {
+		t.Fatal("precondition: the recalled prompt should have been cleared")
+	}
 	if n := len(d.m.comp.dropped); n != 0 {
 		t.Fatalf("a recalled prompt should not be re-recorded, got %d dropped", n)
 	}

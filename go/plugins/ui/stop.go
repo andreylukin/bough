@@ -24,7 +24,10 @@ const quitHint = "press ctrl+c again to quit"
 // stopState is the quit-key arming.
 type stopState struct {
 	armedAt time.Time
-	now     func() time.Time // test seam; nil = time.Now
+	// escAt arms the second half of a double-esc, the way armedAt arms
+	// the second ctrl+c.
+	escAt time.Time
+	now   func() time.Time // test seam; nil = time.Now
 }
 
 func (s *stopState) clock() time.Time {
@@ -43,31 +46,83 @@ func (m *model) stopKey(key string, cfg *uiCfg) (bool, tea.Cmd) {
 	if !quit {
 		m.stop.armedAt = time.Time{} // any other key disarms
 	}
+	if key != "esc" {
+		m.stop.escAt = time.Time{} // ... and the same for the double-esc
+	}
 	switch {
 	case quit:
 		return true, m.quitPress(cfg.keys["quit"])
-	// A draft goes before the turn: esc with text in the composer
-	// (typed, or a recalled prompt) clears it, and only an empty
-	// composer's esc cancels the turn in flight. Clearing a draft is
-	// cheap to redo; a cancelled turn is not.
-	case key == "esc" && !m.inspecting && m.input.Value() != "":
-		// A recalled prompt is already in history; only something
-		// typed is worth saving back.
-		if m.comp.recall < 0 {
-			m.dropDraft(m.input.Value()) // Up brings it back
-		}
-		m.comp.recall = -1
-		m.input.Reset()
-		m.syncPalette()
-		m.layoutComposer()
-		return true, nil
-	case key == "esc" && m.running && !m.inspecting:
-		m.cancelTurn()
-		return true, nil
+	case key == "esc" && !m.inspecting:
+		return m.escPress()
 	case key == "ctrl+d" && !m.running && m.input.Value() == "":
 		return true, tea.Quit
 	}
 	return false, nil
+}
+
+// escWindow is how long a first esc stays armed for the second.
+const escWindow = 3 * time.Second
+
+const (
+	escClearHint  = "press esc again to clear the draft"
+	escRewindHint = "press esc again to rewind (list the turns)"
+)
+
+// escPress is one press of esc, following Claude Code: a single esc
+// interrupts the turn in flight, and a DOUBLE esc either clears the
+// draft — saved to history, so Up brings it back — or, on an empty
+// composer, opens the rewind.
+//
+// bough used to clear the draft on a single esc and cancel only when
+// the composer was empty. That protected a running turn from a stray
+// esc, but it meant esc did two unrelated things depending on what you
+// had typed, and it left no gesture for rewinding at all. The
+// protection is still there in a better form: while a turn runs, esc
+// only ever cancels, and clearing a draft now takes two presses.
+//
+// bough's rewind is /tree, which lists the turns and forks the session
+// at one — the same job as Claude Code's rewind menu.
+func (m *model) escPress() (bool, tea.Cmd) {
+	if m.running {
+		m.cancelTurn()
+		m.stop.escAt = time.Time{}
+		return true, nil
+	}
+	now := m.stop.clock()
+	if m.stop.escAt.IsZero() || now.Sub(m.stop.escAt) > escWindow {
+		// First press: arm, and say what a second one would do.
+		m.stop.escAt = now
+		if m.input.Value() != "" {
+			m.flash = escClearHint
+		} else {
+			m.flash = escRewindHint
+		}
+		return true, nil
+	}
+	m.stop.escAt = time.Time{}
+	if m.input.Value() == "" {
+		// Only when there is something to dispatch to. A tree built
+		// without a commands row has no /tree, and dispatching into a
+		// nil registry panicked the whole ui — found by the frame
+		// property test rather than by anyone pressing esc twice.
+		if !m.hasCommand("tree") {
+			m.flash = "no /tree command mounted: nothing to rewind to"
+			return true, nil
+		}
+		m.flash = ""
+		return true, m.dispatch("/tree")
+	}
+	// A recalled prompt is already in history; only something typed is
+	// worth saving back.
+	if m.comp.recall < 0 {
+		m.dropDraft(m.input.Value()) // Up brings it back
+	}
+	m.comp.recall = -1
+	m.input.Reset()
+	m.syncPalette()
+	m.layoutComposer()
+	m.flash = "draft cleared · ↑ brings it back"
+	return true, nil
 }
 
 // quitPress is one press of the quit key (or the quit chord, or the
@@ -108,4 +163,18 @@ func exitLine(h historyView) string {
 	}
 	id := strings.TrimSuffix(filepath.Base(h.Path()), ".jsonl")
 	return fmt.Sprintf("session %s · resume with: bough -r %s", id, id)
+}
+
+// hasCommand reports whether a command of that name is registered.
+func (m *model) hasCommand(name string) bool {
+	cmds := m.cfg.Load().cmds
+	if cmds == nil {
+		return false
+	}
+	for _, in := range cmds.List() {
+		if in.Name == name {
+			return true
+		}
+	}
+	return false
 }

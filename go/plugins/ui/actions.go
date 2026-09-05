@@ -223,12 +223,13 @@ func (m *model) chordKey(key string, cfg *uiCfg) tea.Cmd {
 		if key != "esc" {
 			m.flash = leader + " " + key + ": no such chord"
 		}
-		m.stop.armedAt = time.Time{}
+		m.stop.armedAt, m.stop.escAt = time.Time{}, time.Time{}
 		return nil
 	}
 	if action != "quit" {
 		m.stop.armedAt = time.Time{}
 	}
+	m.stop.escAt = time.Time{}
 	return m.runAction(action, leader+" "+key, cfg)
 }
 
