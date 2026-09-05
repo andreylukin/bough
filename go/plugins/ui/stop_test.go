@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/andreylukin/bough/plugins/history"
 )
 
 func keyEsc() tea.KeyPressMsg { return tea.KeyPressMsg{Code: tea.KeyEscape} }
@@ -94,18 +95,39 @@ func TestEscDisarmedByAnotherKey(t *testing.T) {
 	}
 }
 
-// On an empty composer the pair opens the rewind — bough's /tree, which
-// lists the turns and forks the session at one.
-func TestDoubleEscOnEmptyComposerRewinds(t *testing.T) {
+// On an empty composer the pair opens the rewind MENU — a list you walk
+// and pick from, which is what Claude Code's Esc+Esc opens.
+func TestDoubleEscOnEmptyComposerOpensTheRewindMenu(t *testing.T) {
 	t.Parallel()
-	d := drvCmds(t, reg(t, "tree"))
+	d := rewindDrv(t, "first thing", "second thing")
 	d.press(keyEsc())
 	if !strings.Contains(d.plain(), "press esc again to rewind") {
 		t.Fatalf("the first press should offer the rewind:\n%s", d.plain())
 	}
 	d.press(keyEsc())
-	if p := d.plain(); !strings.Contains(p, "/tree") {
-		t.Errorf("the second esc should run /tree:\n%s", p)
+	p := d.plain()
+	if !d.m.rw.open {
+		t.Fatalf("the second esc should open the menu:\n%s", p)
+	}
+	for _, want := range []string{"rewind", "first thing", "second thing", "(current)", "esc cancels"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("the menu should show %q:\n%s", want, p)
+		}
+	}
+}
+
+// Without a /tree command there is nothing to fork with, and the menu
+// says so instead of panicking on a nil registry.
+func TestDoubleEscWithoutTreeSaysSo(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.press(keyEsc())
+	d.press(keyEsc())
+	if d.m.rw.open {
+		t.Error("no /tree command: the menu should not open")
+	}
+	if !strings.Contains(d.plain(), "nothing to rewind to") {
+		t.Errorf("it should say why:\n%s", d.plain())
 	}
 }
 
@@ -212,4 +234,19 @@ func TestCancellingFlashClearsWhenTheTurnEnds(t *testing.T) {
 	if d.m.flash != "" {
 		t.Fatalf("flash should clear at done, got %q", d.m.flash)
 	}
+}
+
+// rewindDrv is a driver with a /tree command and a history of turns,
+// which is what the rewind menu needs to open.
+func rewindDrv(t *testing.T, prompts ...string) *drv {
+	t.Helper()
+	h := fakeHist{path: "/tmp/s.jsonl"}
+	for i, p := range prompts {
+		h.entries = append(h.entries,
+			history.Entry{Seq: int64(i*2 + 1), Kind: "input", Data: map[string]any{"text": p}},
+			history.Entry{Seq: int64(i*2 + 2), Kind: "done", Data: map[string]any{"files": []string{"a.go"}}})
+	}
+	cfg := cfgWith(t, nil, nil, h)
+	cfg.cmds = reg(t, "tree", "new")
+	return newDrv(t, 100, 30, cfg)
 }

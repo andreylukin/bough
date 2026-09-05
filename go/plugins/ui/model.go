@@ -110,6 +110,7 @@ type model struct {
 	picking    bool           // session picker shown instead of the chat view
 	pick       int            // picker cursor index into cfg.sessions
 	mp         modelPicker    // "/model" picker (see modelpick.go)
+	rw         rewindPicker   // double-esc rewind menu (see rewind.go)
 	todoText   string         // latest todo list text (the todo plugin's event)
 	title      string         // the session's name (session-title plugin); "" until named
 	activity   string         // what the agent is doing now (activity plugin); "" when idle
@@ -1172,6 +1173,9 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.mp.open {
 		return m.handleModelPickerKey(msg)
 	}
+	if m.rw.open {
+		return m.handleRewindKey(msg)
+	}
 	cfg := m.cfg.Load()
 	m.flash = ""
 	key := msg.String()
@@ -1437,6 +1441,9 @@ func (m model) frame() string {
 	}
 	if m.mp.open {
 		return m.modelPickerView(cfg)
+	}
+	if m.rw.open {
+		return m.rewindView(cfg)
 	}
 	body := m.vp.View()
 	if m.inspecting {

@@ -65,7 +65,7 @@ const escWindow = 3 * time.Second
 
 const (
 	escClearHint  = "press esc again to clear the draft"
-	escRewindHint = "press esc again to rewind (list the turns)"
+	escRewindHint = "press esc again to rewind"
 )
 
 // escPress is one press of esc, following Claude Code: a single esc
@@ -101,16 +101,21 @@ func (m *model) escPress() (bool, tea.Cmd) {
 	}
 	m.stop.escAt = time.Time{}
 	if m.input.Value() == "" {
-		// Only when there is something to dispatch to. A tree built
-		// without a commands row has no /tree, and dispatching into a
-		// nil registry panicked the whole ui — found by the frame
-		// property test rather than by anyone pressing esc twice.
+		// The rewind MENU, not a printed list: Claude Code opens a
+		// list you walk with the arrows and pick from, and reading a
+		// static dump of the turns is not the same thing.
+		//
+		// Enter in it forks the session, which needs /tree. A tree
+		// built without a commands row has neither, and dispatching
+		// into a nil registry panicked the whole ui — found by the
+		// frame property test rather than by anyone pressing esc twice.
 		if !m.hasCommand("tree") {
 			m.flash = "no /tree command mounted: nothing to rewind to"
 			return true, nil
 		}
 		m.flash = ""
-		return true, m.dispatch("/tree")
+		m.openRewind() // says why when there is nothing to show
+		return true, nil
 	}
 	// A recalled prompt is already in history; only something typed is
 	// worth saving back.
