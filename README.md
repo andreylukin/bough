@@ -15,6 +15,27 @@ The model sees one tool: it writes JavaScript, bough runs it, and whatever the p
 > [!WARNING]
 > There is no isolation boundary. Agent programs run as you, with your full authority.
 
+<details>
+<summary>What bough sends over the network</summary>
+
+Your prompts and the tool output the model needs go to whichever LLM
+provider you configured, and nothing else does. Beyond that, bough
+itself makes exactly two kinds of outbound request:
+
+- **The model catalogue.** Prices and context limits come from
+  [models.dev](https://models.dev), refreshed in the background at most
+  once a week into `~/.bough/models.json`. It carries no request of
+  yours — it is a public price list, fetched with no identifying
+  headers — and a trimmed snapshot is embedded in the binary, so an
+  install that never reaches it prices what it runs anyway.
+- **MCP servers you configured**, as their own processes, and
+  `bough update`, which fetches from this repository.
+
+There is no telemetry, no crash reporting, and no call home. `bough
+--headless --set llm.plugin=llm-echo` reaches nothing at all.
+
+</details>
+
 ## Highlights
 
 - **Code mode** — one `run(program)` surface. `tools.bash`, `tools.view`, `tools.patch`, `tools.spawn`, `tools.ask`, `tools.todo`, `tools.graph.*`, and any MCP tool are JS functions in one persistent [goja](https://github.com/dop251/goja) VM.
