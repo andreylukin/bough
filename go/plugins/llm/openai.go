@@ -154,7 +154,7 @@ func (o *openaiLLM) call(ctx context.Context, system string, messages []Message,
 		}
 		req.Header.Set("Authorization", "Bearer "+o.key)
 		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			return "", retryableErr(err), fmt.Errorf("llm-openai: %w", err)
 		}
@@ -164,7 +164,7 @@ func (o *openaiLLM) call(ctx context.Context, system string, messages []Message,
 			return "", retryableStatus(resp.StatusCode), openaiErr(resp.StatusCode, o.model, data)
 		}
 		if onDelta != nil {
-			out, err := o.readStream(resp.Body, func(d string) { delivered = true; onDelta(d) })
+			out, err := o.readStream(guardStalls(resp.Body, stallTimeout), func(d string) { delivered = true; onDelta(d) })
 			return out, err != nil && !delivered && retryableErr(err), err
 		}
 		data, err := io.ReadAll(resp.Body)

@@ -200,7 +200,7 @@ func (o *openrouterLLM) call(ctx context.Context, system string, messages []Mess
 		}
 		req.Header.Set("Authorization", "Bearer "+o.key)
 		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			return "", retryableErr(err), fmt.Errorf("llm-openrouter: %w", err)
 		}
@@ -210,7 +210,7 @@ func (o *openrouterLLM) call(ctx context.Context, system string, messages []Mess
 			return "", retryableStatus(resp.StatusCode), openrouterErr(resp.StatusCode, o.model, data)
 		}
 		if onDelta != nil {
-			out, err := o.readStream(resp.Body, func(d string) { delivered = true; onDelta(d) }, onThink)
+			out, err := o.readStream(guardStalls(resp.Body, stallTimeout), func(d string) { delivered = true; onDelta(d) }, onThink)
 			return out, err != nil && !delivered && retryableErr(err), err
 		}
 		data, err := io.ReadAll(resp.Body)

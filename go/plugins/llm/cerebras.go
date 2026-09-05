@@ -158,7 +158,7 @@ func (c *cerebrasLLM) call(ctx context.Context, system string, messages []Messag
 		req.Header.Set("Authorization", "Bearer "+c.key)
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			return "", retryableErr(err), fmt.Errorf("llm-cerebras: %w", err)
 		}
@@ -170,7 +170,7 @@ func (c *cerebrasLLM) call(ctx context.Context, system string, messages []Messag
 		if onDelta != nil {
 			// A stream that already delivered text is never retried:
 			// the user would see the reply twice.
-			out, err := c.readStream(resp.Body, func(d string) { delivered = true; onDelta(d) }, onThink)
+			out, err := c.readStream(guardStalls(resp.Body, stallTimeout), func(d string) { delivered = true; onDelta(d) }, onThink)
 			return out, err != nil && !delivered && retryableErr(err), err
 		}
 		data, err := io.ReadAll(resp.Body)

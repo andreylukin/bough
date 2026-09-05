@@ -79,7 +79,10 @@ func (a *anthropicLLM) init() error {
 			a.err = MissingKey("llm-anthropic", "ANTHROPIC_API_KEY")
 			return
 		}
-		a.client = anthropic.NewClient(option.WithAPIKey(key))
+		// The shared client: bounded dial, TLS and response-header
+		// waits, so a connection that opens and goes quiet cannot hang
+		// the turn (see httpclient.go).
+		a.client = anthropic.NewClient(option.WithAPIKey(key), option.WithHTTPClient(httpClient))
 	})
 	return a.err
 }
