@@ -37,6 +37,7 @@ import (
 	_ "github.com/andreylukin/bough/plugins/mcp"
 	_ "github.com/andreylukin/bough/plugins/memory"
 	_ "github.com/andreylukin/bough/plugins/prompts"
+	_ "github.com/andreylukin/bough/plugins/recipes"
 	_ "github.com/andreylukin/bough/plugins/scratch"
 	_ "github.com/andreylukin/bough/plugins/skills"
 	_ "github.com/andreylukin/bough/plugins/theme"
