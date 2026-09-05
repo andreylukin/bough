@@ -12,6 +12,19 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # The Playwright layer. Small and dev-only, but it is a lockfile in
+  # the tree and an unwatched lockfile is the one that rots.
+  - package-ecosystem: npm
+    directory: /go/tests/web
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: "chore(deps)"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
