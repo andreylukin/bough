@@ -1374,14 +1374,23 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 				continue
 			}
 			// A reply that runs nothing has ended the turn (Finish).
-			// What is left here is the veto: the handful of reasons a
-			// turn may NOT end yet, which is how a stop hook works
-			// everywhere else — the model decides it is done, and the
-			// harness overrules it with a reason when it is wrong.
-			// A stop is refused when the reply only announces work, on
-			// the heels of a failed block (the claim is unverified),
-			// when it asks the user something (nobody can answer a
-			// finished turn), and when a schema is unmet.
+			// What is left here is the veto: the reasons a turn may NOT
+			// end yet, which is how a stop hook works everywhere else —
+			// the model decides it is done and the harness overrules it
+			// with a reason when it is wrong. In order, a stop is
+			// refused when the reply
+			//   - carries no content at all, markup aside;
+			//   - was cut off by the provider at its output limit;
+			//   - is a tool call the loop cannot run (wrong fence, a
+			//     <script> tag, bare code, JSON tool-call syntax);
+			//   - only announces work it did not do;
+			//   - comes straight after a failed block, so the claim is
+			//     unverified;
+			//   - does not match the schema a structured turn requires;
+			//   - ends by asking the user something nobody can answer
+			//     once the turn is over.
+			// Each is capped by stopRetries, after which the reply
+			// stands: the user must never be left with nothing.
 			why, note0 := "", ""
 			switch {
 			case saysNothing(reply):
