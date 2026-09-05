@@ -9,6 +9,7 @@
 package prompts
 
 import (
+	"embed"
 	"fmt"
 	"maps"
 	"os"
@@ -21,11 +22,49 @@ import (
 	"github.com/andreylukin/bough/plugins/commands"
 )
 
-// Template is one prompt file.
+//go:embed builtin/*.md
+var builtinFS embed.FS
+
+// Template is one prompt file. Path is empty for a bundled template,
+// whose Body carries the text instead.
 type Template struct {
 	Name    string // file name without ".md"
 	Path    string
+	Body    string // bundled templates only
 	Summary string // first heading, else first non-empty line; "" when empty
+}
+
+// Read returns the template's text, from disk or from the binary.
+func (t Template) Read() (string, error) {
+	if t.Path == "" {
+		return t.Body, nil
+	}
+	b, err := os.ReadFile(t.Path)
+	return string(b), err
+}
+
+// builtins are the templates that ship in the binary: the ones every
+// project wants on day one, before anybody has written a prompt file.
+// A user template of the same name shadows one — they are a starting
+// point, not a fixture.
+func builtins() map[string]Template {
+	out := map[string]Template{}
+	entries, err := builtinFS.ReadDir("builtin")
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		name, ok := strings.CutSuffix(e.Name(), ".md")
+		if !ok {
+			continue
+		}
+		b, err := builtinFS.ReadFile("builtin/" + e.Name())
+		if err != nil {
+			continue
+		}
+		out[name] = Template{Name: name, Body: string(b), Summary: summaryOf(string(b))}
+	}
+	return out
 }
 
 // Templates scans directories for *.md templates. A later directory
@@ -39,7 +78,7 @@ func New(dirs ...string) *Templates { return &Templates{dirs: dirs} }
 
 // Scan returns the templates across the dirs, sorted by name.
 func (t *Templates) Scan() []Template {
-	found := map[string]Template{}
+	found := builtins()
 	for _, dir := range t.dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -68,8 +107,13 @@ func summary(path string) string {
 	if err != nil {
 		return ""
 	}
+	return summaryOf(string(data))
+}
+
+// summaryOf is summary for text already in hand.
+func summaryOf(text string) string {
 	first := ""
-	for line := range strings.SplitSeq(string(data), "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -114,11 +158,11 @@ func (t *Templates) registerCommands(ctx *kernel.Context, reg *commands.Registry
 		info := commands.CommandInfo{Name: tp.Name, Usage: "[args]", Kind: "template",
 			Summary: strings.TrimSpace("template: " + tp.Summary)}
 		err := reg.Register(info, func(args string) (string, error) {
-			body, err := os.ReadFile(tp.Path)
+			body, err := tp.Read()
 			if err != nil {
 				return "", err
 			}
-			text := strings.TrimSpace(Expand(string(body), args))
+			text := strings.TrimSpace(Expand(body, args))
 			if text == "" {
 				return "", fmt.Errorf("/%s: empty template (%s)", tp.Name, tp.Path)
 			}

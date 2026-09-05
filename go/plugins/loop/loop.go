@@ -32,6 +32,7 @@ import (
 	"github.com/andreylukin/bough/plugins/contextmd"
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
+	"unicode"
 )
 
 // Message is one turn of conversation. The seam type is owned by
@@ -1001,8 +1002,30 @@ const askedInStopNote = "[unfinished] You ended the turn with a question. The tu
 // finished answers that came back reworded.
 const announcedNote = "[unfinished] You said what you were about to do instead of doing it, and ran nothing — so nothing happened. Do it now in a ```js block. If it turns out there is nothing left to run, just say what you found; a reply that runs nothing ends the turn."
 
-// saidNothingNote is fed back for an empty reply: no code, no words.
-const saidNothingNote = "[unfinished] That reply was empty: nothing ran and nothing was said. Do the next thing in a ```js block, or answer the user."
+// saidNothingNote is fed back for a reply with no content: no code, no
+// words.
+const saidNothingNote = "[unfinished] That reply said nothing: no ```js block, so nothing ran, and no words, so the user has no answer. Do the next thing in a ```js block, or answer them."
+
+// tagRe strips HTML-ish tags so saysNothing can see what is left.
+var tagRe = regexp.MustCompile(`(?s)<[^>]*>`)
+
+// saysNothing reports whether a reply carries no content at all — once
+// markup is removed, not a single letter or digit remains.
+//
+// This generalises the empty-reply check, and it is the shape the
+// specific vetoes kept missing one at a time: a turn ended on "<br>",
+// an earlier one on "}". Both are what a model emits when it has lost
+// the thread, and neither is an answer. A short reply is still fine —
+// "Done.", "3 lines." — because those say something.
+func saysNothing(reply string) bool {
+	plain := tagRe.ReplaceAllString(reply, "")
+	for _, r := range plain {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
+}
 
 // announceRe matches prose that promises the model's own next action
 // ("Let me check…", "Now running…", "I'll verify…"). It is deliberately
@@ -1329,8 +1352,8 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			// finished turn), and when a schema is unmet.
 			why, note0 := "", ""
 			switch {
-			case strings.TrimSpace(reply) == "":
-				why, note0 = "was empty", saidNothingNote
+			case saysNothing(reply):
+				why, note0 = "said nothing", saidNothingNote
 			case strings.Contains(reply, llm.Truncated):
 				why, note0 = "was cut off at the output limit", truncatedNote
 			// Not under a schema: a structured turn's answer IS a bare

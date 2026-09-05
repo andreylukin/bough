@@ -9,6 +9,7 @@ import (
 
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
+	"strings"
 )
 
 // addTemplate writes <dir>/<name>.md with body.
@@ -20,6 +21,18 @@ func addTemplate(t *testing.T, dir, name, body string) {
 	if err := os.WriteFile(filepath.Join(dir, name+".md"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// onDisk drops the templates that ship in the binary, so the tests
+// about scanning directories stay about scanning directories.
+func onDisk(ts []Template) []Template {
+	var out []Template
+	for _, t := range ts {
+		if t.Path != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func TestScanProjectShadowsGlobal(t *testing.T) {
@@ -34,7 +47,7 @@ func TestScanProjectShadowsGlobal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := New(global, project).Scan()
+	got := onDisk(New(global, project).Scan())
 	if len(got) != 2 {
 		t.Fatalf("Scan = %+v, want greet and review", got)
 	}
@@ -48,7 +61,7 @@ func TestScanProjectShadowsGlobal(t *testing.T) {
 }
 
 func TestScanMissingDir(t *testing.T) {
-	if got := New(filepath.Join(t.TempDir(), "nope")).Scan(); len(got) != 0 {
+	if got := onDisk(New(filepath.Join(t.TempDir(), "nope")).Scan()); len(got) != 0 {
 		t.Errorf("Scan = %+v, want none", got)
 	}
 }
@@ -95,7 +108,12 @@ func TestRegisterCommands(t *testing.T) {
 	reg := commands.NewRegistry()
 	New(dir).registerCommands(ctx, reg)
 
-	infos := reg.List()
+	var infos []commands.CommandInfo
+	for _, in := range reg.List() {
+		if in.Name != "init" { // ships in the binary; see TestBuiltinInit
+			infos = append(infos, in)
+		}
+	}
 	if len(infos) != 2 || infos[0].Name != "empty" || infos[1].Name != "greet" {
 		t.Fatalf("List = %+v", infos)
 	}
@@ -144,6 +162,9 @@ func TestRegisterCommandsRescansOnRemount(t *testing.T) {
 	tp.registerCommands(ctx, reg)
 	var got []string
 	for _, in := range reg.List() {
+		if in.Name == "init" {
+			continue // ships in the binary; see TestBuiltinInit
+		}
 		got = append(got, in.Name+": "+in.Summary)
 	}
 	want := []string{"greet: template: Wave", "review: template: look at $ARGUMENTS"}
@@ -154,4 +175,56 @@ func TestRegisterCommandsRescansOnRemount(t *testing.T) {
 		t.Error("removed template should be gone after remount")
 	}
 	ctx.Unmount()
+}
+
+// /init ships in the binary: a fresh install has no prompt files, and
+// "write an AGENTS.md for this project" is the one every project wants
+// on day one. Both opencode and Claude Code have it.
+func TestBuiltinInit(t *testing.T) {
+	got := New(t.TempDir()).Scan()
+	var init *Template
+	for i := range got {
+		if got[i].Name == "init" {
+			init = &got[i]
+		}
+	}
+	if init == nil {
+		t.Fatal("/init should be available with no prompt files at all")
+	}
+	if init.Path != "" {
+		t.Errorf("a bundled template has no path, got %q", init.Path)
+	}
+	body, err := init.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"AGENTS.md", "build, test and run", "verified by\n  running them"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the init template should mention %q", want)
+		}
+	}
+	if init.Summary == "" {
+		t.Error("a bundled template needs a palette summary")
+	}
+}
+
+// A user's own init.md wins: bundled templates are a starting point,
+// not a fixture.
+func TestUserTemplateShadowsBuiltin(t *testing.T) {
+	dir := t.TempDir()
+	addTemplate(t, dir, "init", "# my own init\ndo it my way\n")
+	for _, tp := range New(dir).Scan() {
+		if tp.Name != "init" {
+			continue
+		}
+		if tp.Path == "" {
+			t.Fatal("a user template should shadow the bundled one")
+		}
+		body, _ := tp.Read()
+		if !strings.Contains(body, "do it my way") {
+			t.Errorf("wrong body: %q", body)
+		}
+		return
+	}
+	t.Fatal("init missing")
 }

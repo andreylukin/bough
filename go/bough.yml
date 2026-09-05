@@ -92,6 +92,13 @@
   # config:
   #   inject_prompt: false  # drop the system-prompt TODO section
 
+# Markdown prompt templates: every ~/.bough/prompts/<name>.md and
+# ./.bough/prompts/<name>.md becomes a "/name" command that expands the
+# file ($ARGUMENTS, $1..$9) and submits it as your prompt. "/init" ships
+# in the binary; a file of the same name shadows it.
+- id: prompts
+  plugin: prompts
+
 # Interactive questions: tools.ask(question, options...) blocks until
 # the user answers in the UI (headless: the next stdin line), then
 # returns the answer as the tool's output.

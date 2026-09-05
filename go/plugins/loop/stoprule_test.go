@@ -242,3 +242,23 @@ func TestSchemaTurnAcceptsBareJSON(t *testing.T) {
 		t.Fatalf("a valid structured answer should not be refused, %d calls", llmStub.calls)
 	}
 }
+
+// The shapes the specific vetoes kept missing one at a time. A turn
+// ended on "<br>" and an earlier one on "}" — what a model emits when
+// it has lost the thread, and never an answer.
+func TestRepliesWithNoContentAreRefused(t *testing.T) {
+	for _, reply := range []string{"<br>", "}", "", "   \n\n  ", "```", "---", "<div></div>", "{}", "<html><body></body></html>"} {
+		if !saysNothing(reply) {
+			t.Errorf("%q carries no content and must not end a turn", reply)
+		}
+	}
+}
+
+// Short is not the same as empty.
+func TestShortAnswersAreStillAnswers(t *testing.T) {
+	for _, reply := range []string{"Done.", "3 lines.", "Yes — the test passes now.", "42", "ok"} {
+		if saysNothing(reply) {
+			t.Errorf("%q says something and is a valid answer", reply)
+		}
+	}
+}
