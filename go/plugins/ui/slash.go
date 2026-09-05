@@ -296,6 +296,12 @@ func (m *model) dispatchAs(line, echo string) tea.Cmd {
 	m.syncPalette()
 	name, args, _ := strings.Cut(strings.TrimPrefix(line, "/"), " ")
 	args = strings.TrimSpace(args)
+	// A command whose arguments are a credential is echoed and recorded
+	// without them. The transcript is on screen and the history file is
+	// on disk; a key belongs in neither.
+	if args != "" && secretCommand(cfg, name) {
+		echo = "/" + name + " ••••"
+	}
 	m.log(cfg, "command", echo)
 	m.blocks = append(m.blocks, block{id: m.nextID, kind: "command", text: echo})
 	m.nextID++
@@ -424,4 +430,17 @@ func (m *model) log(cfg *uiCfg, kind, text string) {
 	if cfg.hlog != nil {
 		cfg.hlog.Append(kind, map[string]any{"text": text})
 	}
+}
+
+// secretCommand reports whether the named command hides its arguments.
+func secretCommand(cfg *uiCfg, name string) bool {
+	if cfg.cmds == nil {
+		return false
+	}
+	for _, in := range cfg.cmds.List() {
+		if in.Name == name {
+			return in.Secret
+		}
+	}
+	return false
 }

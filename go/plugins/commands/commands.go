@@ -29,6 +29,10 @@ type CommandInfo struct {
 	Usage   string // argument hint, "" for none
 	Summary string // one line, shown dimmed in the palette
 	Kind    string // "builtin" (default when ""), "user", "template", "skill"
+	// Secret marks a command whose ARGUMENTS must not be echoed or
+	// recorded: /connect takes an API key, and a transcript and a
+	// history file are both places a key must never end up.
+	Secret bool
 }
 
 // IsSkill reports whether the command is a skill ("/name" submits to

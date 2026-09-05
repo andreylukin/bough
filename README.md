@@ -56,7 +56,9 @@ the installer verifies the checksum when both are present.
 
 </details>
 
-Then give it a key and run it:
+Then give it a key and run it — or start bough first and use `/connect
+<provider> <key>`, which records the key and switches to it without
+leaving the session:
 
 ```sh
 mkdir -p ~/.bough && echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.bough/env   # or OPENROUTER_API_KEY / OPENAI_API_KEY / CEREBRAS_API_KEY
@@ -74,13 +76,18 @@ printf "say CODE! please\n" | bough --headless --set llm.plugin=llm-echo
 
 ## In the TUI
 
+`/init` is a good first command in a repo you have not used bough in: it reads
+the project and writes an `AGENTS.md` briefing, which every later session picks
+up as context. It is an ordinary prompt template — copy it to
+`.bough/prompts/init.md` and edit it if you want it to ask for something else.
+
 Type a task. The model's programs render as collapsed one-line headers (`▸ Ran: go test ./...`, `▸ Edited stack/stack.go`), click or press `enter` on one to open it. A finished turn ends with a chip: the files it wrote and the last exit code.
 
 <p align="center"><img src="assets/screenshot-program.png" width="720" alt="an expanded code block"></p>
 
 | Input | What it does |
 |---|---|
-| `/` | fuzzy palette over every command (`/help`, `/model`, `/sessions`, `/todo`, `/cost`, `/keys`, …); `tab` completes, `enter` runs |
+| `/` | fuzzy palette over every command (`/init`, `/connect`, `/model`, `/sessions`, `/todo`, `/cost`, `/keys`, …); `tab` completes, `enter` runs |
 | `!cmd` | run a shell command directly, output boxed in the transcript, never sent to the model |
 | `@path` | attach a file; a picker opens as you type |
 | `ctrl+c` | cancel the running turn (kills the process group); press again to quit |

@@ -23,6 +23,7 @@ import (
 	_ "github.com/andreylukin/bough/plugins/ask"
 	_ "github.com/andreylukin/bough/plugins/codemode"
 	_ "github.com/andreylukin/bough/plugins/commands"
+	_ "github.com/andreylukin/bough/plugins/connect"
 	_ "github.com/andreylukin/bough/plugins/contextmd"
 	_ "github.com/andreylukin/bough/plugins/cost"
 	_ "github.com/andreylukin/bough/plugins/example"

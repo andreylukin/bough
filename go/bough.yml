@@ -92,6 +92,15 @@
   # config:
   #   inject_prompt: false  # drop the system-prompt TODO section
 
+# /connect: add a provider API key without leaving the session. Writes
+# it to ~/.bough/env (0600), sets it in this process, and switches the
+# llm row over. The command hides its arguments, so the key reaches
+# neither the transcript nor the history file.
+- id: connect
+  plugin: connect
+  # config:
+  #   env_file: ~/.bough/env
+
 # Markdown prompt templates: every ~/.bough/prompts/<name>.md and
 # ./.bough/prompts/<name>.md becomes a "/name" command that expands the
 # file ($ARGUMENTS, $1..$9) and submits it as your prompt. "/init" ships
