@@ -27,11 +27,23 @@ import (
 )
 
 const (
-	// keepWholeResults is how many of the most recent tool outputs are
-	// shown in full. The model is usually working from the last one or
-	// two; this is generous enough to cover a read-then-edit-then-test
-	// sequence without trimming anything it is mid-thought about.
+	// keepWholeResults is the FLOOR: this many recent tool outputs stay
+	// whole no matter how large they are, so the model never loses what
+	// it is working from.
 	keepWholeResults = 8
+	// projectionBudget is what the trimming is actually for. Older
+	// results are shortened until the projection fits, and a session
+	// that never gets big is never touched at all. The floor above wins
+	// when it has to: if the most recent results are themselves larger
+	// than this, the projection stays over budget rather than taking
+	// what the model is working from.
+	//
+	// A fixed count was the first attempt and it was wrong: at eight,
+	// a long task lost the files it had read and read them AGAIN — 70
+	// tools.view calls across 7 files in one run, 19 of them the same
+	// file, against 12 in the run before. Trimming to a budget keeps
+	// far more of the recent work and still bounds the growth.
+	projectionBudget = 60_000
 	// trimHead is how much of an older result survives. Enough to
 	// recognise what the command was and what it found — a directory
 	// listing, the first failures of a test run — without the body.
@@ -57,19 +69,40 @@ func trimProjection(msgs []llm.Message, keep int) []llm.Message {
 	if keep <= 0 {
 		return msgs
 	}
-	// Find the indices of tool-output messages, newest last.
 	var results []int
+	total := 0
 	for i, m := range msgs {
+		total += len(m.Content)
 		if m.Role == "user" && strings.HasPrefix(m.Content, toolOutputPrefix) {
 			results = append(results, i)
 		}
 	}
-	if len(results) <= keep {
+	if total <= projectionBudget || len(results) <= keep {
+		return msgs
+	}
+	// Oldest first, stopping as soon as the projection is under budget.
+	// The newest `keep` are never touched however far over it we are:
+	// they are what the model is working from right now, and taking
+	// them is what made it re-read the same file nineteen times.
+	protected := len(results) - keep
+	spent := total
+	trim := map[int]bool{}
+	for n := 0; n < protected && spent > projectionBudget; n++ {
+		i := results[n]
+		short := trimOne(msgs[i].Content)
+		saved := len(msgs[i].Content) - len(short)
+		if saved <= 0 {
+			continue // already small; trimming it buys nothing
+		}
+		trim[i] = true
+		spent -= saved
+	}
+	if len(trim) == 0 {
 		return msgs
 	}
 	out := make([]llm.Message, len(msgs))
 	copy(out, msgs)
-	for _, i := range results[:len(results)-keep] {
+	for i := range trim {
 		out[i].Content = trimOne(out[i].Content)
 	}
 	return out
