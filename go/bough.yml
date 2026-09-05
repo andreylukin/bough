@@ -128,6 +128,15 @@
 
 - id: loop
   plugin: loop
+  # config:
+  #   max_steps: 100          # model steps per turn
+  #   keep_whole_results: 8   # recent tool outputs shown to the model in
+  #                           # full; older ones keep their head and say
+  #                           # what was cut. 0 shows everything, which
+  #                           # is what bough did before — on a long turn
+  #                           # that is most of the context and most of
+  #                           # the cost. Nothing is summarised and the
+  #                           # history log is untouched either way.
 
 # Long-term memory: the graph core (docs/graph-memory.md). A bi-temporal
 # graph in ~/.bough/graph.db; this session and its repo/branch tickets are

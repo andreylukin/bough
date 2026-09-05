@@ -542,6 +542,10 @@ const jobNotePrefix = "[background job] "
 
 const undoPrefix = "[undo] The user reverted these files to their content from before the turn that wrote them: "
 
+// toolOutputPrefix opens the user message a tool result projects to.
+// trim.go keys off it to find the outputs worth shortening.
+const toolOutputPrefix = "[tool output]\n"
+
 func DefaultProject(entries []history.Entry) []llm.Message {
 	var msgs []llm.Message
 	for i := 0; i < len(entries); i++ {
@@ -553,7 +557,7 @@ func DefaultProject(entries []history.Entry) []llm.Message {
 		case "assistant":
 			msgs = append(msgs, llm.Message{Role: "assistant", Content: text})
 		case "result":
-			msgs = append(msgs, llm.Message{Role: "user", Content: "[tool output]\n" + text})
+			msgs = append(msgs, llm.Message{Role: "user", Content: toolOutputPrefix + text})
 		case "cancelled":
 			// The user interrupted the turn. Without this the killed
 			// request sits in context looking merely unfinished, and a
@@ -643,6 +647,9 @@ type runner struct {
 	llm      LLM
 	code     Codemode
 	maxSteps int // model steps per turn; 0 = defaultMaxSteps
+	// keepWhole is how many recent tool outputs the projection shows in
+	// full (trim.go); 0 disables trimming.
+	keepWhole int
 	// stopRetries is how many times a turn is asked again for a stop
 	// block. 0 (a bare runner in a test) keeps the old contract: any
 	// block-less reply ends the turn.
@@ -1237,9 +1244,11 @@ func envSection() string {
 func (r *runner) project() []Message {
 	entries := r.hist.Entries()
 	if r.proj != nil {
+		// A custom projection owns its own policy entirely: an init.js
+		// author who replaced the projection did not ask for ours.
 		return r.proj.Project(entries)
 	}
-	return DefaultProject(entries)
+	return trimProjection(DefaultProject(entries), r.keepWhole)
 }
 
 func (r *runner) Run(ctx context.Context, input string, emit func(kind, text string)) error {
@@ -1653,6 +1662,17 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 			return fmt.Errorf("loop: max_steps must be a positive integer, got %v", v)
 		}
 		r.maxSteps = n
+	}
+	// keep_whole_results: how many recent tool outputs the model is
+	// shown in full. 0 turns trimming off, for anyone who would rather
+	// pay than have the model shown less (see trim.go).
+	r.keepWhole = keepWholeResults
+	if v, ok := cfg["keep_whole_results"]; ok {
+		n, err := toInt(v)
+		if err != nil || n < 0 {
+			return fmt.Errorf("loop: keep_whole_results must be a non-negative integer, got %v", v)
+		}
+		r.keepWhole = n
 	}
 	kctx.Provide("prompt-sections", r.secs)
 	// Optional seams: absent services are a clean no-op / built-in.
