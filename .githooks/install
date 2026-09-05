@@ -1,0 +1,13 @@
+#!/bin/sh
+# Point this checkout's git at the hooks in .githooks/.
+#
+#   ./.githooks/install
+#
+# It sets core.hooksPath, which is per-checkout and stays out of the
+# tree. Undo with `git config --unset core.hooksPath`.
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+git config core.hooksPath .githooks
+chmod +x .githooks/pre-commit .githooks/commit-msg .githooks/install
+printf 'hooks installed: %s\n' "$(ls .githooks | grep -v install | tr '\n' ' ')"

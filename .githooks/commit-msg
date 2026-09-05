@@ -1,0 +1,52 @@
+#!/bin/sh
+# The subject-line shape CONTRIBUTING asks for: a conventional prefix
+# scoped to the plugin, package, or file it changes.
+#
+#   ui: fold thinking blocks in the transcript
+#   loop: a code error no longer ends the turn
+#   tools, cmd: put the Unix-only calls behind build tags
+#
+# Shape only — no hook can tell you the summary is a good one.
+#
+# Skip once: git commit --no-verify
+set -eu
+
+msg=$1
+subject=$(sed -e '/^#/d' -e '/^[[:space:]]*$/d' "$msg" | head -n 1)
+
+# Git writes these itself, or a later rebase rewrites them; either way
+# the shape is not the author's to fix here.
+case $subject in
+"Merge "* | "Revert "* | "fixup!"* | "squash!"* | "amend!"*) exit 0 ;;
+esac
+
+# $2 is an optional hint printed above the override line.
+die() {
+	printf '\ncommit-msg: %s\n\n  %s\n\n%s`git commit --no-verify` overrides.\n' \
+		"$1" "$subject" "${2:-}" >&2
+	exit 1
+}
+
+[ -n "$subject" ] || die "the commit message is empty"
+
+# One scope, or several separated by commas, then a colon and a space.
+# A scope is a plugin or package name, so it is normally lowercase —
+# but `README:` and `Formula:` name files that are not.
+if ! printf '%s' "$subject" |
+	grep -qE '^[A-Za-z0-9][A-Za-z0-9._/-]*(, *[A-Za-z0-9][A-Za-z0-9._/-]*)*(\([A-Za-z0-9._/-]+\))?!?: .'; then
+	die "the subject needs a scope prefix" \
+		'Wanted: `scope: what changed`, e.g. `ui: fold thinking blocks`.
+'
+fi
+if [ "${#subject}" -gt 72 ]; then
+	die "the subject is ${#subject} characters; keep it to 72 so one-line logs stay readable"
+fi
+case $subject in
+*.) die "the subject ends in a period" ;;
+esac
+
+# A body has to be separated from the subject, or `git log` runs them
+# together as one paragraph.
+if [ -n "$(sed -e '/^#/d' "$msg" | sed -n '2p')" ]; then
+	die "line 2 must be blank — the subject is a paragraph of its own"
+fi

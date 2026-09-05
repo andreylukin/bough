@@ -1,0 +1,75 @@
+#!/bin/sh
+# The checks worth running on every commit: the ones that are fast, and
+# that CI would otherwise fail you for several minutes later.
+#
+#   gofmt        on the staged content of every staged .go file
+#   go vet       over the module, when the commit touches Go
+#   credentials  a scan of the added lines for provider keys
+#
+# The slow layers stay in CI: `go test -race ./...` is minutes, and a
+# hook nobody waits for is a hook everybody disables.
+#
+# Install:    git config core.hooksPath .githooks   (or ./.githooks/install)
+# Skip once:  git commit --no-verify
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+
+fail=0
+note() {
+	printf '\npre-commit: %s\n' "$1" >&2
+	fail=1
+}
+
+# What this commit contains: added, copied, modified, renamed. A path
+# being deleted has nothing left to check.
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -n "$staged" ] || exit 0
+go_staged=$(printf '%s\n' "$staged" | grep '\.go$' || true)
+
+# gofmt reads the staged blob, not the working tree: what is committed
+# is what gets checked, even when the file has been edited since `git
+# add`.
+if [ -n "$go_staged" ]; then
+	if ! command -v gofmt >/dev/null 2>&1; then
+		note "gofmt is not on PATH; install Go 1.27+ or commit with --no-verify"
+	else
+		unformatted=$(printf '%s\n' "$go_staged" | while IFS= read -r f; do
+			if [ -n "$(git show ":$f" | gofmt -l 2>/dev/null)" ]; then
+				printf '  %s\n' "$f"
+			fi
+		done)
+		if [ -n "$unformatted" ]; then
+			note "these are not gofmt'd — run \`gofmt -w\` on them:"
+			printf '%s\n' "$unformatted" >&2
+		fi
+	fi
+fi
+
+# vet sees the working tree, which is the staged content in the ordinary
+# case of committing everything you edited. A partial commit can differ;
+# CI is the backstop for that.
+if [ -n "$go_staged" ] && command -v go >/dev/null 2>&1; then
+	if ! vetout=$(cd go && go vet ./... 2>&1); then
+		note "go vet ./... failed:"
+		printf '%s\n' "$vetout" >&2
+	fi
+fi
+
+# A leaked provider key is the one commit you cannot take back, and
+# bough is a tool people hand keys to. Prefixes with enough trailing
+# characters that the placeholders in the docs ("sk-ant-...") do not
+# trip it. The hooks themselves are excluded so this pattern list does
+# not match its own source.
+keys='(sk-ant-[A-Za-z0-9_-]{24}|sk-or-v1-[A-Za-z0-9]{24}|sk-proj-[A-Za-z0-9_-]{24}|csk-[a-z0-9]{24}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30})'
+found=$(git diff --cached -U0 -- . ':(exclude).githooks' | grep -E "^\+.*$keys" || true)
+if [ -n "$found" ]; then
+	note "an added line looks like a live credential:"
+	printf '%s\n' "$found" | cut -c1-120 >&2
+	printf '  if it is a fixture, make it obviously fake; otherwise revoke it now.\n' >&2
+fi
+
+if [ "$fail" -ne 0 ]; then
+	printf '\ncommit refused. `git commit --no-verify` overrides.\n' >&2
+	exit 1
+fi
