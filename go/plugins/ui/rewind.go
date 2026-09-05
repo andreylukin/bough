@@ -29,7 +29,8 @@ import (
 // rewindRow is one turn on the menu.
 type rewindRow struct {
 	seq   int64
-	text  string   // the typed prompt, first line
+	text  string   // the typed prompt, first line, for the row
+	full  string   // the whole typed prompt, for the composer
 	files []string // what the turn wrote
 }
 
@@ -56,7 +57,7 @@ func rewindTurns(entries []history.Entry) []rewindRow {
 			if text == "" || strings.HasPrefix(text, "[background job] ") {
 				continue // nobody typed that one
 			}
-			rows = append(rows, rewindRow{seq: e.Seq, text: firstLine(text)})
+			rows = append(rows, rewindRow{seq: e.Seq, text: firstLine(text), full: text})
 		case "done":
 			if len(rows) > 0 {
 				rows[len(rows)-1].files = strList(e.Data["files"])
@@ -110,15 +111,23 @@ func (m model) handleRewindKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		pick, rows := m.rw.pick, m.rw.rows
 		m.rw = rewindPicker{}
-		switch {
-		case pick >= len(rows):
+		if pick >= len(rows) {
 			return m, nil // "(current)": nothing to do
-		case pick == 0:
-			// Before the first prompt is a session with no turns.
-			return m, m.dispatch("/new")
-		default:
-			return m, m.dispatch("/tree " + strconv.FormatInt(rows[pick-1].seq, 10))
 		}
+		var cmd tea.Cmd
+		if pick == 0 {
+			// Before the first prompt is a session with no turns.
+			cmd = m.dispatch("/new")
+		} else {
+			cmd = m.dispatch("/tree " + strconv.FormatInt(rows[pick-1].seq, 10))
+		}
+		// The prompt you rewound past goes back in the composer. Going
+		// back to before a turn is how you re-ask it, and retyping it
+		// from the transcript is the whole of the work you just undid.
+		// After the dispatch, not before: it resumes the forked session
+		// in place, and that path resets the composer.
+		m.setDraft(rows[pick].full)
+		return m, cmd
 	case "esc":
 		m.rw = rewindPicker{}
 	}

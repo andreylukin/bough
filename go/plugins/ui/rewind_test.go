@@ -170,3 +170,91 @@ func TestRewindShowsTheTypedPrompt(t *testing.T) {
 		t.Fatalf("row should be the typed line, got %+v", rows)
 	}
 }
+
+// Going back to before a turn is how you re-ask it, so the prompt you
+// rewound past goes back in the composer — retyping it from the
+// transcript is the whole of the work you just undid.
+func TestRewindPrepopulatesTheComposer(t *testing.T) {
+	t.Parallel()
+	d := rewindDrv(t, "add the parser", "fix the tests")
+	d.press(keyEsc())
+	d.press(keyEsc())
+	d.press(keyUp()) // "fix the tests"
+	d.press(keyEnter())
+	if got := d.m.input.Value(); got != "fix the tests" {
+		t.Fatalf("composer = %q, want the prompt that was rewound past", got)
+	}
+	// And it is editable text, not a recall browse: typing appends.
+	d.typeStr(" again")
+	if got := d.m.input.Value(); got != "fix the tests again" {
+		t.Errorf("the prepopulated draft should be editable, got %q", got)
+	}
+}
+
+// The WHOLE prompt, not the one line the menu row showed.
+func TestRewindPrepopulatesTheFullPrompt(t *testing.T) {
+	t.Parallel()
+	full := "first line of the ask\nsecond line\nthird line"
+	h := fakeHist{path: "/tmp/s.jsonl", entries: []history.Entry{
+		{Seq: 1, Kind: "input", Data: map[string]any{"text": "earlier"}},
+		{Seq: 2, Kind: "done", Data: map[string]any{}},
+		{Seq: 3, Kind: "input", Data: map[string]any{"text": full}},
+		{Seq: 4, Kind: "done", Data: map[string]any{}},
+	}}
+	cfg := cfgWith(t, nil, nil, h)
+	cfg.cmds = reg(t, "tree", "new")
+	d := newDrv(t, 100, 30, cfg)
+	d.press(keyEsc())
+	d.press(keyEsc())
+	d.press(keyUp())
+	if !strings.Contains(d.plain(), "❯ first line of the ask") {
+		t.Fatalf("the row shows one line:\n%s", d.plain())
+	}
+	d.press(keyEnter())
+	if got := d.m.input.Value(); got != full {
+		t.Errorf("the composer should get every line:\n got %q\nwant %q", got, full)
+	}
+}
+
+// A skill's body is not part of what you typed, so it is not what comes
+// back either.
+func TestRewindPrepopulatesTheTypedPromptOnly(t *testing.T) {
+	t.Parallel()
+	h := fakeHist{path: "/tmp/s.jsonl", entries: []history.Entry{
+		{Seq: 1, Kind: "input", Data: map[string]any{"text": "earlier"}},
+		{Seq: 2, Kind: "done", Data: map[string]any{}},
+		{Seq: 3, Kind: "input", Data: map[string]any{
+			"text":  "please frobnicate\n\n[skill: frobnicate]\nlots of body",
+			"typed": "please frobnicate",
+		}},
+		{Seq: 4, Kind: "done", Data: map[string]any{}},
+	}}
+	cfg := cfgWith(t, nil, nil, h)
+	cfg.cmds = reg(t, "tree", "new")
+	d := newDrv(t, 100, 30, cfg)
+	d.press(keyEsc())
+	d.press(keyEsc())
+	d.press(keyUp())
+	d.press(keyEnter())
+	if got := d.m.input.Value(); got != "please frobnicate" {
+		t.Errorf("composer = %q, want the typed line alone", got)
+	}
+}
+
+// Cancelling, or picking "(current)", leaves the composer alone.
+func TestRewindLeavesTheComposerAloneWhenNothingChanges(t *testing.T) {
+	t.Parallel()
+	for _, key := range []string{"esc", "enter"} { // esc cancels; enter on (current)
+		d := rewindDrv(t, "one", "two")
+		d.press(keyEsc())
+		d.press(keyEsc())
+		if key == "esc" {
+			d.press(keyEsc())
+		} else {
+			d.press(keyEnter())
+		}
+		if got := d.m.input.Value(); got != "" {
+			t.Errorf("%s should not fill the composer, got %q", key, got)
+		}
+	}
+}
