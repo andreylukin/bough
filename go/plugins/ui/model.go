@@ -431,8 +431,15 @@ func (m *model) header(b *block, th theme) string {
 // know; every line is clipped to the width.
 func (m *model) welcomeView(cfg *uiCfg) string {
 	th := cfg.theme
-	out := th["accent"].Render("● ") + th["dim"].Render("bough — a coding agent")
-	for _, l := range welcomeLines(cfg) {
+	lines := welcomeLines(cfg)
+	var out string
+	// The mark sits above the text when the pane can hold it whole
+	// (see splash.go); a short pane gets the text alone.
+	if art := mark(m.width, m.vp.Height(), len(lines)+3); art != nil {
+		out = strings.Join(art, "\n") + "\n\n"
+	}
+	out += th["accent"].Render("● ") + th["dim"].Render("bough — a coding agent")
+	for _, l := range lines {
 		out += "\n" + th["dim"].Render(truncateCols("  "+l, max(m.width, 4)))
 	}
 	return out
