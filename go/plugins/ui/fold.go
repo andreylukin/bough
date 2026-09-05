@@ -14,12 +14,14 @@ package ui
 // Nothing about the blocks changes — a fold is a render-time view, so
 // unfolding puts the same rows back, each collapsing as it always did.
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
-// foldMin is the shortest run worth folding. Two rows are already one
-// step's code and its result: folding that hides work without saving a
-// screen.
-const foldMin = 3
+// foldMin is the fewest steps (code blocks) worth folding. One step
+// is its own story: folding it hides work without saving a screen.
+const foldMin = 2
 
 // foldRun is a run of block indices [from, to) drawn as one row. lead
 // is the run's first block: it owns the row's identity, so focus,
@@ -28,15 +30,39 @@ type foldRun struct{ from, to, lead int }
 
 // foldable reports whether a block may be swallowed into a fold: the
 // machinery of a step, currently closed, saying nothing on its own.
+//
+// A real turn is not bare code/result pairs. Each step arrives as a
+// thinking block, a line of narration ("Let me check the loader."),
+// the code, and its result — so a fold that only ate code and result
+// never found three rows in a row, and never drew. Thinking is closed
+// machinery by definition. Narration folds when it is one line that
+// leads into a step: the reply that ends the turn is not followed by
+// code, so it always stays out.
+//
 // Folding must not read the focus — focusables is derived from the
 // folds, and a fold that dissolved when its own lead took focus could
 // never be unfolded by keyboard.
 func (m *model) foldable(i int) bool {
 	b := &m.blocks[i]
-	if !b.collapsed {
-		return false
+	switch b.kind {
+	case "code", "result", "thinking":
+		return b.collapsed
+	case "assistant":
+		return !b.live && !strings.Contains(b.text, "\n") && m.leadsIntoStep(i)
 	}
-	return b.kind == "code" || b.kind == "result"
+	return false
+}
+
+// leadsIntoStep reports whether the next block after i that is not
+// thinking is a code block: block i is the preamble to a step.
+func (m *model) leadsIntoStep(i int) bool {
+	for j := i + 1; j < len(m.blocks); j++ {
+		if m.blocks[j].kind == "thinking" {
+			continue
+		}
+		return m.blocks[j].kind == "code"
+	}
+	return false
 }
 
 // foldRuns finds the folded runs in the transcript, in order. A run
@@ -64,12 +90,23 @@ func (m *model) foldRuns() []foldRun {
 		for j < last && m.foldable(j) {
 			j++
 		}
-		if j-i >= foldMin && !m.unfolded[m.blocks[i].id] {
+		if m.stepsIn(i, j) >= foldMin && !m.unfolded[m.blocks[i].id] {
 			out = append(out, foldRun{from: i, to: j, lead: i})
 		}
 		i = j
 	}
 	return out
+}
+
+// stepsIn counts the code blocks in [from, to).
+func (m *model) stepsIn(from, to int) int {
+	n := 0
+	for i := from; i < to; i++ {
+		if m.blocks[i].kind == "code" {
+			n++
+		}
+	}
+	return n
 }
 
 // foldAt returns the run starting at block i, if one does.

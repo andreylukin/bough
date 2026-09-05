@@ -130,3 +130,34 @@ func TestRunningTurnTailIsNotFolded(t *testing.T) {
 		t.Fatalf("the finished run folds, got %v", runs)
 	}
 }
+
+// A real turn interleaves thinking and a line of narration with every
+// step (the shape from a recorded session). Those fold too; the reply
+// that ends the turn does not.
+func TestNarratedStepsFold(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.event("thinking", "which file\nholds it")
+	d.event("assistant", "Let me look at the loader.")
+	d.event("code", `tools.view("loader.go")`)
+	d.event("result", "ok")
+	d.event("assistant", "Now the test.")
+	d.event("code", `tools.bash("go test ./...")`)
+	d.event("result", "ok")
+	d.event("thinking", "done")
+	d.event("assistant", "The loader merges by id.")
+	d.event("done", "")
+	p := d.plain()
+	if !strings.Contains(p, "▸ 2 steps · read 1 file, ran 1 command") {
+		t.Fatalf("narrated steps should fold into one row:\n%s", p)
+	}
+	if strings.Contains(p, "Let me look") || strings.Contains(p, "Now the test") {
+		t.Errorf("one-line narration folds with its step:\n%s", p)
+	}
+	if !strings.Contains(p, "The loader merges by id.") {
+		t.Errorf("the reply that ends the turn stays visible:\n%s", p)
+	}
+	if strings.Count(p, "▸") != 1 { // the trailing thinking row folds too
+		t.Errorf("want exactly the fold row:\n%s", p)
+	}
+}
