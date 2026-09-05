@@ -184,6 +184,46 @@ func MarkTruncated(reply string) string {
 	return reply + Truncated
 }
 
+// overflowMarks are how the providers say the conversation no longer
+// fits. They disagree on the wording, and none of them uses a code the
+// HTTP status distinguishes from any other 400.
+var overflowMarks = []string{
+	"maximum context length",
+	"context_length_exceeded",
+	"context length exceeded",
+	"prompt is too long",
+	"too many tokens",
+	"exceeds the maximum",
+	"reduce the length of the messages",
+	"input length and `max_tokens` exceed",
+}
+
+// IsOverflow reports whether err is the conversation outgrowing the
+// model's context window.
+//
+// This is a dead end, not a hiccup: it is a 400, so it is never
+// retried, and every later turn in the session sends MORE history and
+// fails the same way. Without recognising it the session is simply
+// bricked, and the user is left reading a provider's token arithmetic.
+func IsOverflow(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	for _, m := range overflowMarks {
+		if strings.Contains(s, strings.ToLower(m)) {
+			return true
+		}
+	}
+	return false
+}
+
+// OverflowHelp is what to do about it. bough does not compact a
+// conversation behind your back, so the ways forward are a bigger
+// model or a fresh session — and the graph and auto-memory rows carry
+// what was worth keeping across that boundary.
+const OverflowHelp = "\n\nThis conversation no longer fits in the model's context window, and every further turn here would be larger still. Either:\n  /model   — switch to a model with a bigger window\n  /new     — start a fresh session (what was worth remembering is in the memory graph)\nbough never compacts a conversation without being asked, so nothing here has been dropped."
+
 // Ready is the optional seam a provider implements to answer, before
 // any turn is taken, whether it can run at all. A missing API key is
 // the first thing a new user hits, and without this they only find out

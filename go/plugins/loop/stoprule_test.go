@@ -8,6 +8,7 @@ package loop
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -261,4 +262,53 @@ func TestShortAnswersAreStillAnswers(t *testing.T) {
 			t.Errorf("%q says something and is a valid answer", reply)
 		}
 	}
+}
+
+// A conversation that outgrew the window ends the turn with a way out,
+// not with the provider's token arithmetic alone.
+func TestOverflowErrorCarriesTheWayOut(t *testing.T) {
+	llmStub := &errLLM{err: errors.New(
+		"llm-openrouter: HTTP 400: This endpoint's maximum context length is 200000 tokens. However, you requested 210000 tokens.")}
+	r := &runner{llm: llmStub, code: &stubCode{}, hist: &memHistory{}, secs: &Sections{}, stopRetries: 2}
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "carry on", collect(&kinds, &texts))
+
+	var errText string
+	for i, k := range kinds {
+		if k == "error" {
+			errText = texts[i]
+		}
+	}
+	if errText == "" {
+		t.Fatalf("no error reported: %v", kinds)
+	}
+	for _, want := range []string{"maximum context length", "/model", "/new"} {
+		if !strings.Contains(errText, want) {
+			t.Errorf("the error should keep the cause and add the way out (%q):\n%s", want, errText)
+		}
+	}
+	// The turn still ends properly rather than hanging.
+	if kinds[len(kinds)-1] != "done" {
+		t.Errorf("a failed turn still ends with done: %v", kinds)
+	}
+}
+
+// An ordinary failure is reported as it is.
+func TestOtherErrorsAreNotDecorated(t *testing.T) {
+	llmStub := &errLLM{err: errors.New("llm-openrouter: HTTP 401: Missing Authentication header")}
+	r := &runner{llm: llmStub, code: &stubCode{}, hist: &memHistory{}, secs: &Sections{}, stopRetries: 2}
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "hi", collect(&kinds, &texts))
+	for i, k := range kinds {
+		if k == "error" && strings.Contains(texts[i], "/new") {
+			t.Errorf("a 401 is not an overflow: %s", texts[i])
+		}
+	}
+}
+
+// errLLM fails every call with the same error.
+type errLLM struct{ err error }
+
+func (e errLLM) Complete(context.Context, string, []llm.Message) (string, error) {
+	return "", e.err
 }

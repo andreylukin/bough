@@ -1315,7 +1315,14 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			err = errEmptyReply
 		}
 		if err != nil {
-			note("error", err.Error(), nil)
+			text := err.Error()
+			// Outgrowing the window is a dead end rather than a
+			// failure: say what to do instead of leaving the user with
+			// a provider's token arithmetic.
+			if llm.IsOverflow(err) {
+				text += llm.OverflowHelp
+			}
+			note("error", text, nil)
 			finish("", r.doneData()) // every turn ends with a done, even on llm failure
 			return err
 		}
