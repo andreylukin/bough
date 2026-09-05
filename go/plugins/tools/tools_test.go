@@ -108,11 +108,11 @@ func TestViewAndPatch(t *testing.T) {
 	if _, err := st.patch(path, "", "again"); err == nil {
 		t.Fatal("empty old on an existing file must not overwrite it")
 	}
-	got, err := view(path, 9, 10)
+	got, err := readView(path, 9, 10)
 	if err != nil || got != " 9│nine\n10│ten\n" {
 		t.Fatalf("view range = (%q, %v)", got, err)
 	}
-	if _, err := view(path, 99); err == nil {
+	if _, err := readView(path, 99); err == nil {
 		t.Fatal("start past the end should error")
 	}
 	if _, err := st.patch(path, "zzz", "q"); err == nil || !strings.Contains(err.Error(), "not found") {
@@ -124,7 +124,7 @@ func TestViewAndPatch(t *testing.T) {
 	if out, err := st.patch(path, "two\n", "2\n2b\n"); err != nil || out != "patched "+path+" (+1 lines)\n\n-two\n+2\n+2b" {
 		t.Fatalf("patch = (%q, %v)", out, err)
 	}
-	if got, _ := view(path, 1, 3); got != "1│one\n2│2\n3│2b\n" {
+	if got, _ := readView(path, 1, 3); got != "1│one\n2│2\n3│2b\n" {
 		t.Fatalf("after patch: %q", got)
 	}
 	// Two writes to the same path count once: a turn that edits a file
@@ -224,14 +224,14 @@ func TestViewMissingFileSuggestsNeighbours(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	_, err := view(dir + "/turn.go")
+	_, err := readView(dir + "/turn.go")
 	if err == nil {
 		t.Fatal("want an error")
 	}
 	if !strings.Contains(err.Error(), "loop.go") || !strings.Contains(err.Error(), dir) {
 		t.Fatalf("error should name the directory and its files: %v", err)
 	}
-	if _, err := view(dir + "/nope/deep.go"); err == nil || !strings.Contains(err.Error(), "no directory") {
+	if _, err := readView(dir + "/nope/deep.go"); err == nil || !strings.Contains(err.Error(), "no directory") {
 		t.Fatalf("a missing directory says so: %v", err)
 	}
 	if _, err := (&Stats{}).patch(dir+"/turn.go", "a", "b"); err == nil || !strings.Contains(err.Error(), "loop.go") {

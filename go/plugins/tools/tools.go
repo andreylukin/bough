@@ -57,6 +57,10 @@ type Stats struct {
 	files []string
 	exit  int
 	ran   bool // a bash call happened since the last Take
+	// read remembers what each path looked like when it was last
+	// viewed THIS turn, so a re-read that found nothing new can say so
+	// (see view). Cleared by Take, like the rest of the turn's tally.
+	read map[string]string
 }
 
 // Take returns the files written and the last bash exit code (ran is
@@ -65,7 +69,7 @@ func (s *Stats) Take() (files []string, exit int, ran bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	files, exit, ran = s.files, s.exit, s.ran
-	s.files, s.exit, s.ran = nil, 0, false
+	s.files, s.exit, s.ran, s.read = nil, 0, false, nil
 	return files, exit, ran
 }
 
@@ -133,7 +137,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	reg.RegisterTool("job", st.jobs.job)
 	reg.RegisterTool("jobWait", st.jobs.jobWait)
 	reg.RegisterTool("jobKill", st.jobs.jobKill)
-	reg.RegisterTool("view", view)
+	reg.RegisterTool("view", st.view)
 	reg.RegisterTool("patch", st.patch)
 	reg.RegisterTool("write", st.write)
 	ctx.Provide("turn-stats", st)
@@ -320,10 +324,41 @@ func splitLines(s string) []string {
 	return strings.Split(strings.TrimSuffix(s, "\n"), "\n")
 }
 
-// view returns a file's lines numbered "N│text", optionally only
+// unchangedNote is appended when a view returns exactly what the same
+// view returned earlier in the same turn.
+//
+// A real run read one file nineteen times in thirty-eight steps and
+// nothing told it so. Re-reading after an edit is normal and this stays
+// quiet for it — the note appears only when the bytes are identical,
+// which means the step bought nothing.
+const unchangedNote = "\n[you already read this in this turn and it has not changed since — it will not change unless something writes to it]"
+
+// view is Stats.view: the read, plus the note when it repeats.
+func (s *Stats) view(path string, rng ...int) (string, error) {
+	out, err := readView(path, rng...)
+	if err != nil {
+		return out, err
+	}
+	key := path
+	for _, n := range rng {
+		key += ":" + strconv.Itoa(n)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.read == nil {
+		s.read = map[string]string{}
+	}
+	if prev, seen := s.read[key]; seen && prev == out {
+		return out + unchangedNote, nil
+	}
+	s.read[key] = out
+	return out, nil
+}
+
+// readView returns a file's lines numbered "N│text", optionally only
 // lines start..end (1-based, inclusive; end 0 = to the end). Numbers
 // make patch targets and error lines easy to refer to.
-func view(path string, rng ...int) (string, error) {
+func readView(path string, rng ...int) (string, error) {
 	if st, serr := os.Stat(path); serr == nil && st.IsDir() {
 		ents, rerr := os.ReadDir(path)
 		if rerr != nil {
