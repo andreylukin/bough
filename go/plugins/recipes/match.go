@@ -9,6 +9,7 @@ package recipes
 
 import (
 	"math"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -27,17 +28,49 @@ type Recipe struct {
 // checkout and another next door, so a recipe only fires where it was
 // learned.
 type Context struct {
-	Cwd   string   `json:"cwd,omitempty"`   // working directory of the session
-	Root  string   `json:"root,omitempty"`  // enclosing git checkout, "" outside one
-	Prev  string   `json:"prev,omitempty"`  // the prompt before this one in the session
-	Files []string `json:"files,omitempty"` // files the turn wrote (the done entry)
+	Cwd       string   `json:"cwd,omitempty"`   // working directory of the session
+	Root      string   `json:"root,omitempty"`  // checkout holding Cwd, "" outside one
+	Paths     []string `json:"paths,omitempty"` // paths the turn named: prompt, code, files written
+	Repos     []string `json:"repos,omitempty"` // checkouts those paths live in, or the inherited focus
+	Inherited bool     `json:"inherited,omitempty"`
+	Prev      string   `json:"prev,omitempty"`  // the prompt before this one in the session
+	Files     []string `json:"files,omitempty"` // files the turn wrote (the done entry)
 }
 
-// SameDir is the firing gate: the exact working directory.
+// SameRepo is the firing gate: the two turns name a checkout in
+// common (a session run from $HOME has no telling working directory;
+// what it is about is in its paths).
+func (c Context) SameRepo(o Context) bool {
+	for _, r := range c.Repos {
+		if slices.Contains(o.Repos, r) {
+			return true
+		}
+	}
+	return false
+}
+
+// SameDir is the stricter comparison: the exact working directory.
 func (c Context) SameDir(o Context) bool { return c.Cwd != "" && c.Cwd == o.Cwd }
 
-// SameRepo is the relaxed gate: the same checkout, any directory in it.
-func (c Context) SameRepo(o Context) bool { return c.Root != "" && c.Root == o.Root }
+// focus is the checkout the turn is about, "" when it names none.
+func (c Context) focus() string {
+	if len(c.Repos) == 0 {
+		return ""
+	}
+	return c.Repos[len(c.Repos)-1]
+}
+
+// where says which checkout(s) a turn was about, for the report.
+func (c Context) where() string {
+	if len(c.Repos) == 0 {
+		return "in no checkout (" + shortCwd(c.Cwd) + ")"
+	}
+	s := "in " + strings.Join(shortAll(c.Repos), ", ")
+	if c.Inherited {
+		s += " (from the session)"
+	}
+	return s
+}
 
 // Match is the best recipe for a prompt and how sure the matcher is.
 type Match struct {

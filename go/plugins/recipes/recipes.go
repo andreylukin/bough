@@ -83,37 +83,61 @@ func recipeOf(t Turn, session string, ctx Context) (Recipe, bool) {
 	return Recipe{Phrasing: t.Input, Code: t.Code[0], Session: session, Ctx: ctx}, true
 }
 
-// contextOf is the turn's situation: the session's directory, its
-// checkout (walked up from the directory now, so a deleted checkout
-// has none), the prompt before, the files it wrote.
-func contextOf(t Turn, cwd string) Context {
-	return Context{Cwd: cwd, Root: gitRoot(cwd), Prev: t.Prev, Files: t.Files}
+// contextOf is the turn's situation: the session's directory, the
+// paths the turn named (prompt, code, files written) and the checkouts
+// they resolve to, the prompt before, the files it wrote. A turn that
+// names no checkout inherits focus, the session's current one.
+func contextOf(t Turn, cwd, focus string) Context {
+	c := Context{Cwd: cwd, Root: gitRoot(cwd), Prev: t.Prev, Files: t.Files}
+	bases := []string{cwd, focus}
+	c.Paths = Paths(t.Input, bases...)
+	for _, code := range t.Code {
+		c.Paths = append(c.Paths, Paths(code, bases...)...)
+	}
+	c.Paths = append(c.Paths, t.Files...)
+	c.Repos = Repos(c.Paths)
+	if len(c.Repos) == 0 && focus != "" {
+		c.Repos = []string{focus}
+		c.Inherited = true
+	}
+	return c
 }
 
-// gitRoot is the nearest ancestor of dir holding a .git, or "".
-func gitRoot(dir string) string {
-	for d := dir; d != "" && d != "/"; d = filepath.Dir(d) {
-		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
-			return d
-		}
-		if filepath.Dir(d) == d {
-			break
-		}
+// focusOf is the checkout a session is on after a turn: the last one
+// its own paths named, else the one before. The session's working
+// directory seeds it.
+func focusOf(prev string, c Context) string {
+	if !c.Inherited && len(c.Repos) > 0 {
+		return c.Repos[len(c.Repos)-1]
 	}
-	return ""
+	return prev
 }
 
 // Verdict is what the matcher would have done on one past turn, under
-// three gates: the same directory (the real one), the same checkout,
-// and words alone. Each is the best match under that gate.
+// three gates: the same checkout (the real one), the same working
+// directory, and words alone. Each is the best match under that gate.
 type Verdict struct {
 	Session string
-	Ctx     Context
+	Ctx     Context // the whole turn, code included: what the recipe records
+	Ask     Context // what was known before the model answered: what the gate sees
 	Input   string
 	Actual  []string
-	Dir     Outcome // same cwd: what would actually fire
-	Repo    Outcome // same git root, any directory
+	Repo    Outcome // a checkout the prompt names, or the session's focus: what would actually fire
+	Dir     Outcome // same cwd
 	Words   Outcome // no context at all
+}
+
+// askOf is the context before the model answers: the prompt's own
+// paths, else the session's focus so far.
+func askOf(t Turn, cwd, focus string) Context {
+	c := Context{Cwd: cwd, Root: gitRoot(cwd), Prev: t.Prev}
+	c.Paths = Paths(t.Input, cwd, focus)
+	c.Repos = Repos(c.Paths)
+	if len(c.Repos) == 0 && focus != "" {
+		c.Repos = []string{focus}
+		c.Inherited = true
+	}
+	return c
 }
 
 // Outcome is one gate's answer.
@@ -154,14 +178,20 @@ func Replay(dir string) ([]Verdict, *Index, error) {
 		if err != nil {
 			continue
 		}
+		focus := gitRoot(info.Cwd)
 		for _, t := range Turns(entries) {
 			if strings.TrimSpace(t.Input) == "" || strings.HasPrefix(t.Input, "/") {
 				continue
 			}
-			ctx := contextOf(t, info.Cwd)
-			v := Verdict{Session: info.ID, Ctx: ctx, Input: t.Input, Actual: t.Code}
-			v.Dir = outcome(ix, t, func(r Recipe) bool { return ctx.SameDir(r.Ctx) })
-			v.Repo = outcome(ix, t, func(r Recipe) bool { return ctx.SameRepo(r.Ctx) })
+			// The gate sees what a live matcher would: the prompt and
+			// the session so far, not the code the model has not
+			// written yet.
+			ask := askOf(t, info.Cwd, focus)
+			ctx := contextOf(t, info.Cwd, focus)
+			focus = focusOf(focus, ctx)
+			v := Verdict{Session: info.ID, Ctx: ctx, Ask: ask, Input: t.Input, Actual: t.Code}
+			v.Repo = outcome(ix, t, func(r Recipe) bool { return ask.SameRepo(r.Ctx) })
+			v.Dir = outcome(ix, t, func(r Recipe) bool { return ask.SameDir(r.Ctx) })
 			v.Words = outcome(ix, t, nil)
 			out = append(out, v)
 			if r, ok := recipeOf(t, info.ID, ctx); ok {
@@ -173,7 +203,7 @@ func Replay(dir string) ([]Verdict, *Index, error) {
 }
 
 // Report writes the replay as text: the tally under each gate, then
-// every turn the directory gate would fire on, with the recipe it
+// every turn the checkout gate would fire on, with the recipe it
 // would run, its context, and whether the model ran the same code.
 func Report(w io.Writer, verdicts []Verdict, ix *Index, all bool) {
 	tally := func(pick func(Verdict) Outcome) (fires, same int) {
@@ -192,15 +222,15 @@ func Report(w io.Writer, verdicts []Verdict, ix *Index, all bool) {
 		name string
 		pick func(Verdict) Outcome
 	}{
-		{"same directory (the gate)", func(v Verdict) Outcome { return v.Dir }},
-		{"same checkout", func(v Verdict) Outcome { return v.Repo }},
+		{"same checkout (the gate)", func(v Verdict) Outcome { return v.Repo }},
+		{"same directory", func(v Verdict) Outcome { return v.Dir }},
 		{"words only", func(v Verdict) Outcome { return v.Words }},
 	} {
 		fires, same := tally(g.pick)
 		fmt.Fprintf(w, "  %-27s %3d would fire, %3d ran the same code\n", g.name, fires, same)
 	}
 	for _, v := range verdicts {
-		o := v.Dir
+		o := v.Repo
 		if !o.Fire && !all {
 			continue
 		}
@@ -212,21 +242,21 @@ func Report(w io.Writer, verdicts []Verdict, ix *Index, all bool) {
 			mark = "✗"
 		}
 		fmt.Fprintf(w, "\n%s %.2f  %q\n", mark, o.Match.Score, oneLine(v.Input))
-		fmt.Fprintf(w, "       in %s", shortCwd(v.Ctx.Cwd))
+		fmt.Fprintf(w, "       %s", v.Ask.where())
 		if v.Ctx.Prev != "" {
 			fmt.Fprintf(w, "  after %q", oneLine(v.Ctx.Prev))
 		}
 		fmt.Fprintln(w)
 		r := o.Match.Recipe
 		if r.Phrasing != "" {
-			fmt.Fprintf(w, "       ↔ %q", oneLine(r.Phrasing))
+			fmt.Fprintf(w, "       ↔ %q  %s", oneLine(r.Phrasing), r.Ctx.where())
 			if r.Ctx.Prev != "" {
 				fmt.Fprintf(w, "  after %q", oneLine(r.Ctx.Prev))
 			}
 			fmt.Fprintln(w)
 			fmt.Fprintf(w, "       recipe: %s\n", oneLine(r.Code))
-			if len(r.Ctx.Files) > 0 {
-				fmt.Fprintf(w, "       wrote:  %s\n", oneLine(strings.Join(r.Ctx.Files, " ")))
+			if len(r.Ctx.Paths) > 0 {
+				fmt.Fprintf(w, "       paths:  %s\n", oneLine(strings.Join(shortAll(r.Ctx.Paths), " ")))
 			}
 		}
 		if o.Fire && !o.SameCode {
@@ -245,6 +275,14 @@ func oneLine(s string) string {
 		s = s[:80] + "…"
 	}
 	return s
+}
+
+func shortAll(ps []string) []string {
+	out := make([]string, len(ps))
+	for i, p := range ps {
+		out[i] = shortCwd(p)
+	}
+	return out
 }
 
 func shortCwd(s string) string {
@@ -294,12 +332,13 @@ func runCLI(_ map[string]any, args []string) error {
 			return err
 		}
 		cwd, _ := os.Getwd()
-		here := Context{Cwd: cwd, Root: gitRoot(cwd)}
-		m, ok := ix.Best(prompt, func(r Recipe) bool { return here.SameDir(r.Ctx) })
+		here := askOf(Turn{Input: prompt}, cwd, gitRoot(cwd))
+		fmt.Printf("asking %s\n", here.where())
+		m, ok := ix.Best(prompt, func(r Recipe) bool { return here.SameRepo(r.Ctx) })
 		if !ok {
-			fmt.Printf("no recipe learned in %s matches\n", shortCwd(cwd))
+			fmt.Println("no recipe from that checkout matches")
 			if m, ok := ix.Best(prompt, nil); ok {
-				fmt.Printf("nearest anywhere: %.2f %q in %s\n", m.Score, oneLine(m.Recipe.Phrasing), shortCwd(m.Recipe.Ctx.Cwd))
+				fmt.Printf("nearest anywhere: %.2f %q %s\n", m.Score, oneLine(m.Recipe.Phrasing), m.Recipe.Ctx.where())
 			}
 			return nil
 		}
@@ -307,7 +346,7 @@ func runCLI(_ map[string]any, args []string) error {
 		if m.Score >= Threshold {
 			fire = "would fire"
 		}
-		fmt.Printf("%.2f  %s\n↔ %q  in %s\n\n%s", m.Score, fire, m.Recipe.Phrasing, shortCwd(m.Recipe.Ctx.Cwd), m.Recipe.Code)
+		fmt.Printf("%.2f  %s\n↔ %q  %s\n\n%s", m.Score, fire, m.Recipe.Phrasing, m.Recipe.Ctx.where(), m.Recipe.Code)
 		return nil
 	}
 	all := false
