@@ -221,19 +221,23 @@ list and a pull request against any of it is welcome.
 | `go/e2e/`, `go/internal/` | headless and PTY end-to-end suites, shared LLM stubs, the real-terminal suite |
 | `go/docs/` | `PLUGINS.md` (writing a plugin), `INIT.md` (the init.js API), `graph-memory.md` (the memory graph design) |
 | `bench/harbor/` | Terminal-Bench 4.0 via Harbor on Modal |
+| `.githooks/` | the pre-commit and commit-msg checks; `./.githooks/install` points this checkout at them |
 
 ## Development
 
 ```sh
+./.githooks/install                              # gofmt, vet, key-scan, subject shape
 cd go
 go build ./cmd/bough
-go test -race ./...                              # unit, teatest, headless + PTY e2e
+go test -race -parallel 4 ./...                  # unit, teatest, headless + PTY e2e
 go test ./plugins/ui -run Prop -rapid.checks=2000 # property tests over the TUI model
 go test ./internal/vtreal                        # the binary on a real PTY (needs tmux)
 cd tests/web && npm ci && npx playwright install chromium && npm test
 ```
 
-Every test gets its own temp HOME and a deterministic LLM (`llm-echo` or a JS provider from `init.js`); nothing touches `~/.bough` or the network. CI runs the Go layers and a four-shard Playwright matrix on every push that touches `go/`.
+Every test gets its own temp HOME and a deterministic LLM (`llm-echo` or a JS provider from `init.js`); nothing touches `~/.bough` or the network. `-parallel 4` because the teatest and PTY suites are timing-sensitive and one-worker-per-CPU starves them. CI runs the Go layers on Linux, macOS and Windows, cross-compiles every release target, and runs a four-shard Playwright matrix on every push that touches `go/`.
+
+[`AGENTS.md`](AGENTS.md) is the working briefing — conventions, gates, and the traps that have caught people — and [`.github/CONTRIBUTING.md`](.github/CONTRIBUTING.md) is the bar a pull request has to clear.
 
 ## License
 

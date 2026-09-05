@@ -7,6 +7,9 @@ that design.
 
 - [`README.md`](../README.md) is the overview; [`go/README.md`](../go/README.md) is the
   reference for the kernel, the service keys, the loop, history, and the test layers.
+- [`AGENTS.md`](../AGENTS.md) is the working briefing: the commands, the conventions the
+  code actually follows, and the traps that have caught people. It is short, and it is
+  also what bough itself reads when you point it at this repo.
 - Behavior attaches as a plugin row, not as a change to the loop. If your change needs the
   kernel or the loop to know something new, open an issue first.
   [`go/docs/PLUGINS.md`](../go/docs/PLUGINS.md) walks through a working plugin end to end.
@@ -23,6 +26,18 @@ go test -race ./...       # every layer that does not need a browser
 
 Go 1.27 or newer. The Playwright layer (`go/tests/web`) needs Node and a Chromium; see the
 Testing section of `go/README.md`.
+
+Install the hooks once per checkout:
+
+```
+./.githooks/install
+```
+
+They run on every commit: `gofmt` over the staged content of staged `.go` files, `go vet`
+when the commit touches Go, a scan of added lines for provider keys, and the commit
+subject's shape. Together they are a couple of seconds — the test suite stays out of them
+on purpose, because a hook nobody waits for is a hook everybody disables.
+`git commit --no-verify` skips them when you need it to.
 
 ## The bar for a pull request
 
@@ -67,7 +82,8 @@ ui: fold thinking blocks in the transcript
 loop: a code error no longer ends the turn
 ```
 
-Rebase on `main`; don't merge it in.
+Keep the subject under 72 columns with no trailing period; the `commit-msg` hook checks
+that much. Rebase on `main`; don't merge it in.
 
 ## Review
 

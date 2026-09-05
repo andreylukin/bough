@@ -104,11 +104,20 @@ Swap the LLM permanently by editing the `llm` row in `bough.yml`
 
 ## Updating
 
-`bough update` finds the checkout (walking up from the binary, then
-`$BOUGH_ROOT`, then `~/repos/bough`), runs `git pull --ff-only`,
-rebuilds the binary in place (an installed copy, e.g.
-`~/.local/bin/bough`, is replaced atomically), and bounces the web
-session if one is running. A `--web` session records itself in
+`bough update` builds the newest commit on `main`, whatever kind of
+install this is, and rebuilds the binary in place (an installed copy,
+e.g. `~/.local/bin/bough`, is replaced atomically), then bounces the web
+session if one is running.
+
+A checkout of your own wins: found by walking up from the binary, then
+`$BOUGH_ROOT`, then `~/repos/bough`, and pulled with `git pull --ff-only`
+on whatever branch you are on — update has no business moving you off it.
+Without one, bough clones `main` into `~/.bough/src` and fast-forwards
+that on every later run; the directory is bough's own cache, so it is
+reset hard to `origin/main` and a local edit there cannot wedge the next
+update. `$BOUGH_UPSTREAM` points the clone at a fork or an internal
+mirror. Releases are snapshots, so a tag is only ever named as the
+fallback when git or Go is missing and there is nothing to build from. A `--web` session records itself in
 `~/.bough/web.pid`; `bough restart` alone SIGINTs that recorded pid,
 waits for it to exit, and relaunches `--web` on the same addr detached
 (output appends to `~/.bough/web.log`). With no running web session
@@ -133,7 +142,7 @@ Conversation state lives in an append-only entry log, not in the loop.
 Every turn appends `input`, `assistant`, `code`, `result`, `error`,
 `done` entries; each step's model messages are projected from the log
 (`projection` service, or the built-in default). With the `history` row
-mounted the log is durable JSONL in `~/.bough/history/<ts>-<pid>.jsonl`
+mounted the log is durable JSONL in `~/.bough/history/<uuidv7>.jsonl`
 — inspect it with `./bough log`, or Ctrl+O in the TUI — and the
 conversation survives loop remounts (e.g. swapping the llm row live).
 Without the row the loop keeps an in-memory log and everything still
@@ -451,6 +460,11 @@ Parallelism knobs: `go test -parallel N` (Go layers; every test calls
 `t.Parallel()`), `npx playwright test --workers=N` or `--shard=k/n`
 (web layer; defaults to one worker per CPU).
 
-CI runs all three on every push/PR to `go-rewrite` — see
-`.github/workflows/ci.yml` (one `unit` job for both Go layers, a
-4-shard `web-e2e` matrix; traces uploaded as artifacts on failure).
+CI runs all three on every push to `main` and every PR that touches
+`go/` — see [`.github/workflows/ci-go.yml`](../.github/workflows/ci-go.yml):
+a `unit` job (`go vet` + `go test -race -parallel 4`) on Linux, macOS
+and Windows, a `cross` job that compiles every release target so a tag
+never discovers a build break, and a 4-shard `web-e2e` matrix with
+traces uploaded as artifacts on failure. The Windows job is
+`continue-on-error`: it enumerates the failures rather than gating on a
+platform bough ships no binary for.
