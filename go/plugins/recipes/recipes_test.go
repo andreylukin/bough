@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/andreylukin/bough/plugins/history"
 )
@@ -174,4 +175,51 @@ func TestReplayLearnsInOrder(t *testing.T) {
 			t.Errorf("report should say %q:\n%s", want, b.String())
 		}
 	}
+}
+
+// Two sessions can land in the same filesystem tick — a test writes
+// both in a millisecond, and a coarse mtime makes them equal. The
+// replay must still learn a before b: an arbitrary order decides which
+// session's recipes exist when the other's turns are scored.
+func TestReplayOrdersTiedModTimesByID(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, cwd, prompt, code string) {
+		st, err := history.Open(filepath.Join(dir, name+".jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		st.Append("meta", map[string]any{"cwd": cwd})
+		st.Append("input", map[string]any{"text": prompt})
+		st.Append("code", map[string]any{"text": code})
+		st.Append("done", nil)
+		st.Close()
+	}
+	// Written newest-name first, so a write-order sort would get it wrong.
+	write("b", filepath.Join(dir, "y"), "run tests", "make check")
+	write("a", filepath.Join(dir, "x"), "run the tests", "go test")
+	same := time.Unix(1700000000, 0)
+	for _, n := range []string{"a", "b"} {
+		if err := os.Chtimes(filepath.Join(dir, n+".jsonl"), same, same); err != nil {
+			t.Fatal(err)
+		}
+	}
+	verdicts, _, err := Replay(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(verdicts) != 2 || verdicts[0].Session != "a" || verdicts[1].Session != "b" {
+		t.Fatalf("want a then b, got %d verdicts from %s", len(verdicts), sessionsOf(verdicts))
+	}
+	// a is first, so it has nothing to match; b sees a's recipe.
+	if verdicts[0].Words.Fire || !verdicts[1].Words.Fire {
+		t.Errorf("a learns for b, not the other way round: %v", sessionsOf(verdicts))
+	}
+}
+
+func sessionsOf(vs []Verdict) []string {
+	out := make([]string, len(vs))
+	for i, v := range vs {
+		out[i] = v.Session
+	}
+	return out
 }
