@@ -15,6 +15,12 @@ Cover, in whatever order suits this project:
 - **What it is**, in a sentence or two: what it does and who runs it.
 - **How to build, test and run it** — the exact commands, verified by
   running them. If a command fails or is slow, say so.
+
+  Only run what is safe to run: building, testing, linting, listing.
+  Never run a target that deploys, publishes, releases, migrates a
+  database, or touches anything outside this repository — read what it
+  does and write that down instead. bough has no permission prompt
+  standing between you and the command.
 - **The layout** — the directories that matter and what lives in each.
   Skip the ones nobody edits.
 - **Conventions this codebase actually follows** — naming, error
