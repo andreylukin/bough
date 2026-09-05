@@ -46,9 +46,10 @@ func turns(entries []history.Entry) []turn {
 	for _, e := range entries {
 		switch e.Kind {
 		case "input":
-			text, _ := e.Data["text"].(string)
+			// The typed line: a turn's label should read as the thing
+			// you asked for, not as an injected skill's body.
 			cp, _ := e.Data["checkpoint"].(string)
-			ts = append(ts, turn{seq: e.Seq, at: e.At, text: text, checkpoint: cp})
+			ts = append(ts, turn{seq: e.Seq, at: e.At, text: history.Prompt(e), checkpoint: cp})
 		case "done":
 			if n := len(ts); n > 0 && !ts[n-1].done {
 				ts[n-1].done = true

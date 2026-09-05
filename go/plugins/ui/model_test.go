@@ -287,15 +287,15 @@ func TestFocusStartsAtTheNewestBlock(t *testing.T) {
 	m.addEvent(Event{Kind: "result", Text: "ok"})
 	m.moveFocus(1)
 	f := m.focusables()
-	if m.focusID != m.blocks[f[len(f)-1]].id {
-		t.Fatalf("first tab focused block id %d, want the newest %d", m.focusID, m.blocks[f[len(f)-1]].id)
+	if m.focusID != m.blocks[f[len(f)-1].idx].id {
+		t.Fatalf("first tab focused block id %d, want the newest %d", m.focusID, m.blocks[f[len(f)-1].idx].id)
 	}
 	m.moveFocus(1)
-	if m.focusID != m.blocks[f[len(f)-2]].id {
+	if m.focusID != m.blocks[f[len(f)-2].idx].id {
 		t.Fatalf("a second tab goes one older; got id %d", m.focusID)
 	}
 	m.moveFocus(-1)
-	if m.focusID != m.blocks[f[len(f)-1]].id {
+	if m.focusID != m.blocks[f[len(f)-1].idx].id {
 		t.Fatalf("shift+tab comes back to the newest; got id %d", m.focusID)
 	}
 	m2 := testModel(t)

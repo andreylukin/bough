@@ -159,7 +159,11 @@ func Digest(entries []history.Entry) string {
 		text, _ := e.Data["text"].(string)
 		switch e.Kind {
 		case "input":
-			b.WriteString("USER: " + text + "\n\n")
+			// The typed line. The digest goes to a small model to
+			// decide what is worth remembering, and an injected
+			// skill's body is neither what the user asked nor
+			// something worth paying for on every turn.
+			b.WriteString("USER: " + history.Prompt(e) + "\n\n")
 		case "assistant":
 			if strings.TrimSpace(text) != "" {
 				b.WriteString("AGENT: " + text + "\n\n")

@@ -410,7 +410,14 @@ func sessionInfo(path string) (sessInfo, error) {
 				info.repo = repoOfDir(cwd)
 			}
 		case "input":
-			text, _ := e.Data["text"].(string)
+			// The typed line, not the message that was sent: an
+			// injected skill's body would become the session's title.
+			// (This walks its own struct, so it cannot use
+			// history.Prompt.)
+			text, _ := e.Data["typed"].(string)
+			if text == "" {
+				text, _ = e.Data["text"].(string)
+			}
 			if info.title == "" {
 				info.title = truncate(firstLine(text), 80)
 			}

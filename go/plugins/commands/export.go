@@ -121,7 +121,9 @@ func writeEntry(b *strings.Builder, e history.Entry) {
 		if steer, _ := e.Data["steer"].(bool); steer {
 			head = "## You (steer)"
 		}
-		fmt.Fprintf(b, "%s\n\n%s\n\n", head, text)
+		// What you typed: a reader of the transcript did not ask for
+		// the skill that a word in it happened to inject.
+		fmt.Fprintf(b, "%s\n\n%s\n\n", head, history.Prompt(e))
 	case "assistant":
 		fmt.Fprintf(b, "## bough\n\n%s\n\n", text)
 	case "thinking":

@@ -77,8 +77,10 @@ func (b *block) collapsible() bool {
 }
 
 // lineRange maps a rendered line span [start, end) to a block index.
+// fold marks the header row of an open fold led by that block.
 type lineRange struct {
 	start, end, idx int
+	fold            bool
 }
 
 // model is the one transcript-plus-composer model used by tui and web.
@@ -93,7 +95,8 @@ type model struct {
 
 	blocks     []block
 	nextID     int
-	focusID    int // block-cursor identity; -1 when nothing focused
+	focusID    int  // block-cursor identity; -1 when nothing focused
+	focusFold  bool // the cursor is on the open-fold header above focusID, not the block
 	ranges     []lineRange
 	width      int
 	height     int
@@ -114,7 +117,7 @@ type model struct {
 	todoHidden bool           // the todo strip dismissed for now (todo_toggle)
 	sessRows   sessList       // mid-session picker list (see session.go); nil = launch picker
 	welcome    bool           // fresh-session orientation text (see welcomeView)
-	unfolded   map[int]bool   // fold lead id -> its run is shown as rows (see fold.go)
+	unfolded   map[int]int    // fold lead id -> end index of its run, shown as rows (see fold.go)
 	pendingAsk string         // ask id the composer routes answers to; "" = none
 	pal        palette        // "/" command palette (see palette.go)
 	at         palette        // "@" file picker (see atfiles.go)
@@ -195,9 +198,8 @@ func (m *model) refresh() {
 	parts := make([]string, 0, 2*len(m.blocks))
 	m.ranges = m.ranges[:0]
 	start, prev := 0, ""
-	folds := m.foldRuns()
 	next := map[int]foldRun{}
-	for _, r := range folds {
+	for _, r := range m.runs() {
 		next[r.from] = r
 	}
 	skipTo := 0
@@ -210,16 +212,28 @@ func (m *model) refresh() {
 		// one rule where the voice changes.
 		part := strings.Trim(squeezeBlanks(m.render(&m.blocks[i], cfg)), "\n")
 		voice := voiceOf(m.blocks[i].kind)
+		var header string
 		if r, ok := next[i]; ok {
-			// A folded run draws as one row owned by its lead block, so
-			// a click or the block cursor lands on the fold, not on a
-			// step the reader cannot see.
-			part = m.renderFold(r, cfg.theme)
-			skipTo = r.to
+			if r.open {
+				// An open run keeps its row as a header above its
+				// blocks: the way back to one line.
+				header = m.renderFold(r, cfg.theme)
+			} else {
+				// A folded run draws as one row owned by its lead block,
+				// so a click or the block cursor lands on the fold, not
+				// on a step the reader cannot see.
+				part = m.renderFold(r, cfg.theme)
+				skipTo = r.to
+			}
 		}
 		if i > 0 && separates(prev, voice) {
 			parts = append(parts, cfg.theme["border"].Render(strings.Repeat("─", max(m.width, 1))))
 			start++
+		}
+		if header != "" {
+			m.ranges = append(m.ranges, lineRange{start: start, end: start + 1, idx: i, fold: true})
+			start++
+			parts = append(parts, header)
 		}
 		n := strings.Count(part, "\n") + 1
 		m.ranges = append(m.ranges, lineRange{start: start, end: start + n, idx: i})
@@ -390,7 +404,7 @@ func (m *model) header(b *block, th theme) string {
 	// item twice on one screen.
 	if b.kind == "todo" {
 		st := th["dim"]
-		if b.id == m.focusID {
+		if m.focused(b) {
 			st = th["focus"]
 		}
 		return st.Render(head)
@@ -402,7 +416,7 @@ func (m *model) header(b *block, th theme) string {
 		head = string(r[:m.width-2]) + "…"
 	}
 	st := th["dim"]
-	if b.id == m.focusID {
+	if m.focused(b) {
 		st = th["focus"]
 	}
 	return st.Render(head)
@@ -977,6 +991,10 @@ func (m *model) clickTranscript(y int) tea.Cmd {
 	row := y + m.vp.YOffset()
 	for _, r := range m.ranges {
 		if row >= r.start && row < r.end {
+			if r.fold {
+				m.refold(r.idx)
+				return nil
+			}
 			b := &m.blocks[r.idx]
 			if b.kind == "ask" && b.askID == m.pendingAsk && !b.answered && !b.expired {
 				// Option rows sit directly under the question line.
@@ -1011,21 +1029,42 @@ func (m *model) clickOverlay(mouse tea.Mouse) {
 	}
 }
 
-// focusables returns the indices of collapsible blocks, in order.
-func (m *model) focusables() []int {
+// stop is one block-cursor position: a block, or (fold) the header
+// row of the open fold that block leads.
+type stop struct {
+	idx  int
+	fold bool
+}
+
+// focusables returns the block-cursor stops, in order: the collapsible
+// blocks, with an open fold's header just before its lead.
+func (m *model) focusables() []stop {
 	hidden := map[int]bool{}
-	for _, r := range m.foldRuns() {
+	open := map[int]bool{}
+	for _, r := range m.runs() {
+		if r.open {
+			open[r.lead] = true
+			continue
+		}
 		for i := r.from + 1; i < r.to; i++ {
 			hidden[i] = true // drawn as part of the lead's fold row
 		}
 	}
-	var out []int
+	var out []stop
 	for i := range m.blocks {
+		if open[i] {
+			out = append(out, stop{idx: i, fold: true})
+		}
 		if m.blocks[i].collapsible() && !hidden[i] {
-			out = append(out, i)
+			out = append(out, stop{idx: i})
 		}
 	}
 	return out
+}
+
+// focused reports whether block b holds the cursor (not its fold header).
+func (m *model) focused(b *block) bool {
+	return b.id == m.focusID && !m.focusFold
 }
 
 // moveFocus steps the block cursor over the collapsible blocks
@@ -1038,8 +1077,8 @@ func (m *model) moveFocus(delta int) {
 		return
 	}
 	cur := -1
-	for i, idx := range f {
-		if m.blocks[idx].id == m.focusID {
+	for i, s := range f {
+		if m.blocks[s.idx].id == m.focusID && s.fold == m.focusFold {
 			cur = i
 			break
 		}
@@ -1055,10 +1094,11 @@ func (m *model) moveFocus(delta int) {
 		// are; shift+tab walks back toward the newest.
 		next = (cur - delta + len(f)) % len(f)
 	}
-	m.focusID = m.blocks[f[next]].id
+	m.focusID = m.blocks[f[next].idx].id
+	m.focusFold = f[next].fold
 	m.refresh()
 	for _, r := range m.ranges {
-		if r.idx == f[next] {
+		if r.idx == f[next].idx && r.fold == f[next].fold {
 			m.vp.EnsureVisible(r.start, 0, 0)
 			break
 		}
@@ -1069,7 +1109,14 @@ func (m *model) moveFocus(delta int) {
 // nothing is focused.
 func (m *model) toggleFocused() bool {
 	for i := range m.blocks {
-		if m.blocks[i].id == m.focusID && m.blocks[i].collapsible() {
+		if m.blocks[i].id != m.focusID {
+			continue
+		}
+		if m.focusFold {
+			m.refold(i)
+			return true
+		}
+		if m.blocks[i].collapsible() {
 			m.toggleBlock(i)
 			return true
 		}
@@ -1083,15 +1130,16 @@ func (m *model) toggleFocused() bool {
 func (m *model) toggleBlock(i int) {
 	// The lead of a folded run answers for the whole run: opening it
 	// puts the steps back as rows, each still closed.
-	if _, ok := m.foldAt(i); ok {
+	if r, ok := m.foldAt(i); ok && !r.open {
 		m.unfold(i)
 		return
 	}
 	m.blocks[i].collapsed = !m.blocks[i].collapsed
 	m.focusID = m.blocks[i].id
+	m.focusFold = false
 	m.refresh()
 	for _, r := range m.ranges {
-		if r.idx == i {
+		if r.idx == i && !r.fold {
 			m.vp.EnsureVisible(r.start, 0, 0)
 			break
 		}

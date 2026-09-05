@@ -278,14 +278,14 @@ func TestPropFocusCycle(t *testing.T) {
 		for range k {
 			d.feed(keyTab())
 		}
-		want := d.m.blocks[f[((len(f)-1)-(k-1)%len(f)+len(f))%len(f)]].id
+		want := d.m.blocks[f[((len(f)-1)-(k-1)%len(f)+len(f))%len(f)].idx].id
 		if d.m.focusID != want {
 			rt.Fatalf("after %d tabs over %d blocks: focus=%d want %d", k, len(f), d.m.focusID, want)
 		}
 		for i := 0; i < k-1; i++ {
 			d.feed(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 		}
-		if newest := d.m.blocks[f[len(f)-1]].id; d.m.focusID != newest {
+		if newest := d.m.blocks[f[len(f)-1].idx].id; d.m.focusID != newest {
 			rt.Fatalf("tab x%d then shift+tab x%d did not return to newest: focus=%d want %d", k, k-1, d.m.focusID, newest)
 		}
 	})

@@ -389,3 +389,64 @@ func TestCloseIsIdempotent(t *testing.T) {
 		t.Errorf("second close: %v", err)
 	}
 }
+
+// The recorded "text" is the message that was SENT: @file expansions
+// and the body of any skill whose name appeared in the line are
+// appended to it. That is right for the model and wrong for everyone
+// else — replaying a session showed a skill's whole SKILL.md as the
+// prompt, and pressing Up put it in the composer.
+func TestPromptIsWhatWasTyped(t *testing.T) {
+	skill := "\n\n[skill: review]\n" + strings.Repeat("a long skill body\n", 40)
+	e := Entry{Kind: "input", Data: map[string]any{
+		"text":  "please review this" + skill,
+		"typed": "please review this",
+	}}
+	if got := Prompt(e); got != "please review this" {
+		t.Errorf("Prompt should be the typed line, got %q", got)
+	}
+
+	// No expansion happened, so there is no "typed" and text IS what
+	// was typed.
+	plain := Entry{Kind: "input", Data: map[string]any{"text": "just a question"}}
+	if got := Prompt(plain); got != "just a question" {
+		t.Errorf("without an expansion, Prompt is the text: %q", got)
+	}
+	if got := Prompt(Entry{Kind: "input"}); got != "" {
+		t.Errorf("an entry with no data is empty, got %q", got)
+	}
+}
+
+// The session's title and -c's last prompt read the same way.
+func TestTitleAndLastPromptSkipTheExpansion(t *testing.T) {
+	entries := []Entry{
+		{Kind: "meta", Data: map[string]any{"cwd": "/w"}},
+		{Kind: "input", Data: map[string]any{
+			"text":  "use the review skill\n\n[skill: review]\nlots of body",
+			"typed": "use the review skill",
+		}},
+	}
+	if got := LastPrompt(entries); got != "use the review skill" {
+		t.Errorf("LastPrompt = %q", got)
+	}
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "s.jsonl")
+	var body string
+	for _, e := range entries {
+		b, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body += string(b) + "\n"
+	}
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	infos, err := List(dir)
+	if err != nil || len(infos) != 1 {
+		t.Fatalf("List = %v, %v", infos, err)
+	}
+	if infos[0].Title != "use the review skill" {
+		t.Errorf("a session's title should be the typed line, got %q", infos[0].Title)
+	}
+}

@@ -58,8 +58,12 @@ func (m *model) replay() {
 			// session bookkeeping (cwd, a /undo's revert record —
 			// its system row follows), nothing to render
 		case "input":
+			// What was TYPED, not the message that was sent: an
+			// injected skill's whole SKILL.md is appended to the
+			// latter, and replaying showed it as the prompt — which
+			// then went into the composer on Up.
 			steer, _ := e.Data["steer"].(bool)
-			m.blocks = append(m.blocks, block{id: m.nextID, kind: "user", text: text, steer: steer})
+			m.blocks = append(m.blocks, block{id: m.nextID, kind: "user", text: history.Prompt(e), steer: steer})
 			m.nextID++
 		case "ask":
 			q, _ := e.Data["question"].(string)

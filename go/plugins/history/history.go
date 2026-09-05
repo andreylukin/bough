@@ -177,7 +177,7 @@ func List(dir string) ([]SessionInfo, error) {
 				cwd, _ = e.Data["cwd"].(string)
 			}
 			if e.Kind == "input" && title == "" {
-				title, _ = e.Data["text"].(string)
+				title = Prompt(e)
 				if i := strings.IndexByte(title, '\n'); i >= 0 {
 					title = title[:i]
 				}
@@ -215,12 +215,29 @@ func PreferCwd(infos []SessionInfo, cwd string) []SessionInfo {
 	return out
 }
 
+// Prompt is what the USER typed for an input entry.
+//
+// The recorded "text" is the message that was SENT: @file expansions
+// and the body of any skill whose name appeared in the line are
+// appended to it, which is right for the model and wrong for everyone
+// else. Replaying a session showed a skill's whole SKILL.md as the
+// prompt, and pressing Up put it in the composer. The loop records the
+// raw line as "typed" whenever the two differ; this returns it.
+//
+// Only the projection into the model should read "text" directly.
+func Prompt(e Entry) string {
+	if typed, _ := e.Data["typed"].(string); typed != "" {
+		return typed
+	}
+	text, _ := e.Data["text"].(string)
+	return text
+}
+
 // LastPrompt is the first line of the last "input" entry, "" if none.
 func LastPrompt(entries []Entry) string {
 	for _, e := range slices.Backward(entries) {
 		if e.Kind == "input" {
-			text, _ := e.Data["text"].(string)
-			return strings.SplitN(text, "\n", 2)[0]
+			return strings.SplitN(Prompt(e), "\n", 2)[0]
 		}
 	}
 	return ""
@@ -450,14 +467,7 @@ func filePrompts(path, cwd string) (prompts []string, ok bool) {
 				return nil, false
 			}
 		case "input":
-			// "typed" is the raw line when the message sent differs
-			// from it (@file expansion, an injected skill); recalling
-			// the expansion would put a file's contents in the
-			// composer.
-			t, _ := e.Data["typed"].(string)
-			if t == "" {
-				t, _ = e.Data["text"].(string)
-			}
+			t := Prompt(e)
 			// A background job waking an idle agent is written as an
 			// input, but the user never typed it.
 			if strings.TrimSpace(t) == "" || strings.HasPrefix(t, "[background job] ") {

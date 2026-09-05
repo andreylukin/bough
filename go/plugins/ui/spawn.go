@@ -218,7 +218,7 @@ func (m *model) renderSpawn(b *block, th theme) string {
 		parts = append(parts, line(s.errText, 80))
 	}
 	st := th["dim"]
-	if b.id == m.focusID {
+	if m.focused(b) {
 		st = th["focus"]
 	}
 	head := glyph + " " + mark + " " + st.Render(strings.Join(parts, " · "))
@@ -313,7 +313,7 @@ func (m *model) hasRunningSpawn() bool {
 // focus is elsewhere.
 func (m *model) focusedSpawn() int {
 	for i := range m.blocks {
-		if b := &m.blocks[i]; b.kind == "spawn" && b.id == m.focusID {
+		if b := &m.blocks[i]; b.kind == "spawn" && m.focused(b) {
 			return i
 		}
 	}

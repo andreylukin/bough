@@ -392,7 +392,8 @@ func TestDoubleClickRoundTripsEveryBlock(t *testing.T) {
 	t.Parallel()
 	d, _ := mixedDrv(t)
 	d.m.vp.GotoTop()
-	for _, i := range d.m.focusables() {
+	for _, s := range d.m.focusables() {
+		i := s.idx
 		d.refreshFrame()
 		var row int = -1
 		for _, r := range d.m.ranges {

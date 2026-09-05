@@ -506,7 +506,7 @@ func (m *model) renderDone(b *block, th theme) string {
 
 // mayExpand: expanding a block over previewCap lines needs focus.
 func (m *model) mayExpand(b *block, collapsed bool) bool {
-	return collapsed || strings.Count(b.text, "\n")+1 <= previewCap || b.id == m.focusID
+	return collapsed || strings.Count(b.text, "\n")+1 <= previewCap || m.focused(b)
 }
 
 // collapseNote is the feedback line for collapse/expand-all.

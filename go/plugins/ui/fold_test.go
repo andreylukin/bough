@@ -4,6 +4,7 @@ package ui
 // draws as one summary line, and opening it puts the rows back.
 
 import (
+	tea "charm.land/bubbletea/v2"
 	"strings"
 	"testing"
 )
@@ -62,7 +63,7 @@ func TestFoldOpensToItsRows(t *testing.T) {
 	d.press(keyTab()) // the fold row is the only focusable
 	d.press(keyEnter())
 	p := d.plain()
-	if strings.Contains(p, "3 steps") {
+	if strings.Contains(p, "▸ 3 steps") {
 		t.Fatalf("an opened fold is replaced by its rows:\n%s", p)
 	}
 	for _, want := range []string{"Ran: echo a", "Ran: echo b", "Ran: echo c"} {
@@ -76,11 +77,50 @@ func TestFoldOpensToItsRows(t *testing.T) {
 			t.Errorf("block %d should still be collapsed after unfolding", i)
 		}
 	}
-	// Opening is one-way: enter again expands the lead like any other
-	// block, rather than folding the run back up.
+	// The open run keeps a header row; focus rests on it, so enter
+	// folds the run back up.
+	if !strings.Contains(p, "▾ 3 steps · ran 3 commands") {
+		t.Errorf("an open fold shows its header row:\n%s", p)
+	}
+	d.press(keyEnter())
+	if p := d.plain(); !strings.Contains(p, "▸ 3 steps") || strings.Contains(p, "Ran: echo a") {
+		t.Errorf("enter on the header should fold the run back:\n%s", p)
+	}
+	// From the header, shift+tab (newer) reaches the lead block itself,
+	// and enter there expands it like any other block.
+	d.press(keyEnter()) // open again
+	d.feed(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	d.press(keyEnter())
 	if d.m.blocks[0].collapsed {
-		t.Errorf("enter on the lead should expand it, not re-fold:\n%s", d.plain())
+		t.Errorf("enter on the lead should expand it:\n%s", d.plain())
+	}
+	if !strings.Contains(d.plain(), "▾ 3 steps") {
+		t.Errorf("the header stays while the run is open:\n%s", d.plain())
+	}
+}
+
+// A click on the open fold's header folds it back; a click on a row
+// below toggles that row only.
+func TestClickRefolds(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	steps(d, 3)
+	d.m.unfold(0)
+	var hdr, lead lineRange
+	for _, r := range d.m.ranges {
+		if r.idx == 0 && r.fold {
+			hdr = r
+		} else if r.idx == 0 {
+			lead = r
+		}
+	}
+	d.m.clickTranscript(lead.start)
+	if d.m.blocks[0].collapsed || strings.Contains(d.plain(), "▸ 3 steps") {
+		t.Fatalf("click on the lead opens the lead, not the fold:\n%s", d.plain())
+	}
+	d.m.clickTranscript(hdr.start)
+	if p := d.plain(); !strings.Contains(p, "▸ 3 steps") || !d.m.blocks[0].collapsed {
+		t.Fatalf("click on the header folds the run back, expanded rows included:\n%s", p)
 	}
 }
 
@@ -90,7 +130,7 @@ func TestFoldedRunIsOneFocusStop(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
 	steps(d, 3)
-	if f := d.m.focusables(); len(f) != 1 || f[0] != 0 {
+	if f := d.m.focusables(); len(f) != 1 || f[0].idx != 0 || f[0].fold {
 		t.Fatalf("a folded run is one focus stop at its lead, got %v", f)
 	}
 }

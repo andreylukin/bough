@@ -12,7 +12,8 @@ package ui
 //	▸ 4 steps · read 2 files, ran 3 commands, edited 1 file
 //
 // Nothing about the blocks changes — a fold is a render-time view, so
-// unfolding puts the same rows back, each collapsing as it always did.
+// unfolding puts the same rows back, each collapsing as it always did,
+// under a header row ("▾ 4 steps · …") that folds them up again.
 
 import (
 	"fmt"
@@ -23,10 +24,14 @@ import (
 // is its own story: folding it hides work without saving a screen.
 const foldMin = 2
 
-// foldRun is a run of block indices [from, to) drawn as one row. lead
-// is the run's first block: it owns the row's identity, so focus,
-// hit-testing and the unfolded flag all key off its id.
-type foldRun struct{ from, to, lead int }
+// foldRun is a run of block indices [from, to) drawn as one row when
+// closed, or as a header row above its blocks when open. lead is the
+// run's first block: it owns the row's identity, so focus, hit-testing
+// and the unfolded flag all key off its id.
+type foldRun struct {
+	from, to, lead int
+	open           bool
+}
 
 // foldable reports whether a block may be swallowed into a fold: the
 // machinery of a step, currently closed, saying nothing on its own.
@@ -65,11 +70,24 @@ func (m *model) leadsIntoStep(i int) bool {
 	return false
 }
 
-// foldRuns finds the folded runs in the transcript, in order. A run
-// ends at anything that is not foldable, and the tail of a running
-// turn is left alone: while the agent works, the steps arriving are
-// the only sign it is working.
+// foldRuns finds the closed folds in the transcript, in order.
 func (m *model) foldRuns() []foldRun {
+	var out []foldRun
+	for _, r := range m.runs() {
+		if !r.open {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// runs finds every foldable run, open or closed, in order. A run ends
+// at anything that is not foldable, and the tail of a running turn is
+// left alone: while the agent works, the steps arriving are the only
+// sign it is working. An open run keeps the extent it had when it was
+// opened: expanding a row inside it must not dissolve the header that
+// folds it back.
+func (m *model) runs() []foldRun {
 	last := len(m.blocks)
 	if m.running {
 		last = 0
@@ -82,6 +100,11 @@ func (m *model) foldRuns() []foldRun {
 	}
 	var out []foldRun
 	for i := 0; i < last; {
+		if to, open := m.unfolded[m.blocks[i].id]; open {
+			out = append(out, foldRun{from: i, to: to, lead: i, open: true})
+			i = to
+			continue
+		}
 		if !m.foldable(i) {
 			i++
 			continue
@@ -90,7 +113,7 @@ func (m *model) foldRuns() []foldRun {
 		for j < last && m.foldable(j) {
 			j++
 		}
-		if m.stepsIn(i, j) >= foldMin && !m.unfolded[m.blocks[i].id] {
+		if m.stepsIn(i, j) >= foldMin {
 			out = append(out, foldRun{from: i, to: j, lead: i})
 		}
 		i = j
@@ -109,9 +132,10 @@ func (m *model) stepsIn(from, to int) int {
 	return n
 }
 
-// foldAt returns the run starting at block i, if one does.
+// foldAt returns the run (open or closed) starting at block i, if one
+// does.
 func (m *model) foldAt(i int) (foldRun, bool) {
-	for _, r := range m.foldRuns() {
+	for _, r := range m.runs() {
 		if r.from == i {
 			return r, true
 		}
@@ -119,8 +143,9 @@ func (m *model) foldAt(i int) (foldRun, bool) {
 	return foldRun{}, false
 }
 
-// renderFold draws a run as its one row: the step count and what the
-// steps did, summed over every code block in the run.
+// renderFold draws a run's row — the closed fold, or the header above
+// an open one: the step count and what the steps did, summed over
+// every code block in the run.
 func (m *model) renderFold(r foldRun, th theme) string {
 	n := map[string]int{}
 	steps := 0
@@ -140,7 +165,11 @@ func (m *model) renderFold(r foldRun, th theme) string {
 	if steps == 1 {
 		unit = "step"
 	}
-	head := fmt.Sprintf("▸ %d %s", steps, unit)
+	glyph := "▸"
+	if r.open {
+		glyph = "▾"
+	}
+	head := fmt.Sprintf("%s %d %s", glyph, steps, unit)
 	if s := summarize(n); s != "" {
 		head += " · " + s
 	}
@@ -148,27 +177,46 @@ func (m *model) renderFold(r foldRun, th theme) string {
 		head = string(rs[:m.width-2]) + "…"
 	}
 	st := th["dim"]
-	if m.blocks[r.lead].id == m.focusID {
+	if m.blocks[r.lead].id == m.focusID && (r.open == m.focusFold) {
 		st = th["focus"]
 	}
 	return st.Render(head)
 }
 
-// unfold opens the fold led by block i, leaving focus on its lead so
-// the row stays where the eye is.
-//
-// Opening is one-way: once the rows are back they are ordinary blocks,
-// and enter on the lead expands it like any other. A toggle here would
-// have to mean two things on one key — re-fold the run, or open the
-// lead — and the lead would be the one block in the transcript that
-// could never be read.
+// unfold opens the fold led by block i: its rows come back, each
+// still closed, under a header row that holds the focus so enter
+// again folds them up. The lead block below is its own stop.
 func (m *model) unfold(i int) {
 	if m.unfolded == nil {
-		m.unfolded = map[int]bool{}
+		m.unfolded = map[int]int{}
 	}
+	m.setFold(i, true)
+}
+
+// refold closes the open fold led by block i, leaving focus on the
+// closed row. Rows opened while the fold was open close with it:
+// an expanded block would otherwise break the run, and "fold it
+// back" means back to one line.
+func (m *model) refold(i int) {
+	if r, ok := m.foldAt(i); ok {
+		for j := r.from; j < r.to; j++ {
+			if m.blocks[j].collapsible() {
+				m.blocks[j].collapsed = true
+			}
+		}
+	}
+	m.setFold(i, false)
+}
+
+func (m *model) setFold(i int, open bool) {
 	id := m.blocks[i].id
-	m.unfolded[id] = true
+	if r, ok := m.foldAt(i); ok && open {
+		m.unfolded[id] = r.to
+	} else {
+		delete(m.unfolded, id)
+	}
 	m.focusID = id
+	m.focusFold = open
 	m.refresh()
 	for _, r := range m.ranges {
 		if r.idx == i {

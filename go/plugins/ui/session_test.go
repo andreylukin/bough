@@ -276,3 +276,26 @@ func TestReplayThenLiveTurnAppends(t *testing.T) {
 		t.Errorf("live send on resumed session = %q, want follow-up", d.sent[0])
 	}
 }
+
+// A skill's body belongs in the model's context, not in the
+// transcript or the composer. Replaying a session used to show the
+// whole SKILL.md as the prompt, and Up put it in the composer.
+func TestReplayShowsTheTypedPromptNotTheSkill(t *testing.T) {
+	h := fakeHist{path: "/tmp/s.jsonl", entries: []history.Entry{
+		{Seq: 1, Kind: "input", Data: map[string]any{
+			"text":  "please frobnicate\n\n[skill: frobnicate]\n" + strings.Repeat("skill body line\n", 30),
+			"typed": "please frobnicate",
+		}},
+	}}
+	d := newDrv(t, 80, 24, cfgWith(t, nil, nil, h))
+	p := d.plain()
+	if strings.Contains(p, "skill body line") {
+		t.Errorf("the replayed prompt should not carry the skill body:\n%s", p)
+	}
+	if !strings.Contains(p, "❯ please frobnicate") {
+		t.Errorf("the typed line should be the user block:\n%s", p)
+	}
+	if got := d.m.prompts(); len(got) != 1 || got[0] != "please frobnicate" {
+		t.Errorf("recall should offer the typed line, got %v", got)
+	}
+}
