@@ -19,6 +19,7 @@ import (
 
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
+	"runtime"
 )
 
 var bin string // built once in TestMain
@@ -28,7 +29,10 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	bin = filepath.Join(dir, "bough")
+	// ".exe" on Windows, or the file builds and then cannot be
+	// executed: "executable file not found in %PATH%", which was
+	// about half of the Windows failures on its own.
+	bin = filepath.Join(dir, "bough"+exeSuffix())
 	build := exec.Command("go", "build", "-o", bin, "../../cmd/bough")
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
@@ -398,4 +402,12 @@ func TestWheelScrollsTranscript(t *testing.T) {
 	if composerRow(a.lines()) < 0 {
 		t.Fatalf("composer lost after wheel scroll:\n%s", a.text())
 	}
+}
+
+// exeSuffix is ".exe" on Windows and "" everywhere else.
+func exeSuffix() string {
+	if runtime.GOOS == "windows" {
+		return ".exe"
+	}
+	return ""
 }

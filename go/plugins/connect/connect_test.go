@@ -12,6 +12,7 @@ import (
 
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
+	"runtime"
 )
 
 const testKey = "sk-or-v1-SECRETVALUE"
@@ -65,13 +66,18 @@ func TestWritesKeyAndSwitches(t *testing.T) {
 	if len(sets) != 2 || sets[0] != "llm.plugin=llm-openrouter" {
 		t.Errorf("the llm row should have been switched, got %v", sets)
 	}
-	// Credentials file, credentials permissions.
-	st, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Mode().Perm() != 0o600 {
-		t.Errorf("env file mode = %v, want 0600", st.Mode().Perm())
+	// Credentials file, credentials permissions — where the platform
+	// has them. Windows has no POSIX mode bits, so the 0600 we pass
+	// comes back as -rw-rw-rw-; what protects the file there is the
+	// ACL on the user profile directory, not the mode.
+	if runtime.GOOS != "windows" {
+		st, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Mode().Perm() != 0o600 {
+			t.Errorf("env file mode = %v, want 0600", st.Mode().Perm())
+		}
 	}
 }
 

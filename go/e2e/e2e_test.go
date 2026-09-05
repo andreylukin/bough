@@ -39,7 +39,10 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "e2e:", err)
 		os.Exit(1)
 	}
-	boughBin = filepath.Join(dir, "bough")
+	// ".exe" on Windows, or the file builds and then cannot be
+	// executed: "executable file not found in %PATH%", which was
+	// about half of the Windows failures on its own.
+	boughBin = filepath.Join(dir, "bough"+exeSuffix())
 	build := exec.Command("go", "build", "-o", boughBin, "./cmd/bough")
 	build.Dir = repoRoot
 	if out, err := build.CombinedOutput(); err != nil {
@@ -307,3 +310,11 @@ var ansiRE = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x
 
 // stripANSI removes escape sequences from raw terminal output.
 func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }
+
+// exeSuffix is ".exe" on Windows and "" everywhere else.
+func exeSuffix() string {
+	if runtime.GOOS == "windows" {
+		return ".exe"
+	}
+	return ""
+}
