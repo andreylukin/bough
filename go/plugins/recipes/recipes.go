@@ -1,6 +1,7 @@
 package recipes
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -169,8 +170,14 @@ func Replay(dir string) ([]Verdict, *Index, error) {
 		return nil, nil, err
 	}
 	// List is newest first; the replay must learn in the order things
-	// happened.
-	slices.SortFunc(infos, func(a, b history.SessionInfo) int { return a.ModTime.Compare(b.ModTime) })
+	// happened. Two sessions whose files land in the same filesystem
+	// tick tie on mtime, and a tie left to the sort is an arbitrary
+	// order — which session's recipes exist when the other's turns are
+	// scored, and so the whole verdict. The id breaks it: a UUIDv7
+	// sorts oldest-first by its leading millisecond timestamp.
+	slices.SortFunc(infos, func(a, b history.SessionInfo) int {
+		return cmp.Or(a.ModTime.Compare(b.ModTime), cmp.Compare(a.ID, b.ID))
+	})
 	ix := NewIndex(nil)
 	var out []Verdict
 	for _, info := range infos {
