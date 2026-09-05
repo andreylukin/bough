@@ -1,9 +1,12 @@
 # CI for the Go bough under go/: everything runs in parallel.
 #   unit    — go vet + go test -race ./... (kernel, plugin, teatest,
 #             headless e2e, and PTY suites; each test is isolated, so
-#             the whole tree runs fully parallel in one job) on Linux
-#             AND macOS: macOS is where bough is used most, and it was
-#             the one platform nothing here checked
+#             the whole tree runs fully parallel in one job) on Linux,
+#             macOS and Windows. macOS is where bough is used most and
+#             was long unchecked; Windows is where nobody has run it, so
+#             the tests are the only thing that can say whether it works
+#             (GitHub's runners ship Git Bash, which is the `sh` that
+#             tools.bash needs)
 #   cross   — every release target compiles, so a tag never discovers a
 #             build break on an architecture nobody ran, plus Windows,
 #             which ships no binary but must keep compiling
@@ -23,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
