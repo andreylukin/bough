@@ -1,0 +1,40 @@
+#cloud-config
+# Prepares a bough web droplet. Deliberately does NOT run `tailscale
+# up`: that login is interactive (a browser approval), so it happens
+# over the temporary SSH hole that provision.sh opens and then closes.
+users:
+  - name: bough
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+
+package_update: true
+packages: [curl, git, ca-certificates, ripgrep, build-essential]
+
+write_files:
+  - path: /etc/systemd/system/bough-web.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=bough web (browser TUI, tailnet-only)
+      After=network-online.target tailscaled.service
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      User=bough
+      WorkingDirectory=/home/bough
+      Environment=HOME=/home/bough
+      EnvironmentFile=-/home/bough/.bough/env
+      ExecStart=/home/bough/.local/bin/bough --web 127.0.0.1:7681
+      Restart=always
+      RestartSec=3
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  - su - bough -c 'curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh | sh'
+  - systemctl daemon-reload
+  - touch /var/lib/cloud-init-bough-ready
