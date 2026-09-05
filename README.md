@@ -94,7 +94,8 @@ Type a task. The model's programs render as collapsed one-line headers (`▸ Ran
 | `ctrl+o` | history inspector; on a focused subagent card, dive into the child's transcript |
 | `tab` / `shift+tab` | move the block cursor (newest first); `enter` toggles the focused block |
 | `shift+enter` | newline in the composer; `↑`/`↓` (or `ctrl+p`/`ctrl+n`) move the cursor, then recall earlier prompts — this directory's previous sessions included |
-| `esc` | clear the draft (`↑` brings it back), close the palette, decline a pending `tools.ask` question |
+| `esc` | cancel the running turn, close the palette, decline a pending `tools.ask` question |
+| `esc` `esc` | clear the draft (`↑` brings it back); on an empty composer, list the turns to rewind to |
 
 <p align="center"><img src="assets/screenshot-palette.png" width="720" alt="the slash-command palette"></p>
 
