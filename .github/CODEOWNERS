@@ -1,19 +1,26 @@
 # Owners are requested for review automatically. Last matching pattern wins.
 #
-# This repo lives under a personal account, so owners must be individual users.
-# If bough moves to an organization, replace these with teams (@bough/core, etc.)
-# and add per-crate owners below as maintainers take on areas.
+# This repo lives under a personal account, so owners must be individual
+# users. If bough moves to an organization, replace these with teams
+# (@bough/core, etc.) and give the per-area lines their own owners.
 
 *                       @andreylukin
 
-# Per-area owners — uncomment and fill in as maintainers take these on.
-# /crates/bough-core/    @andreylukin
-# /crates/bough-server/  @andreylukin
-# /crates/bough-tui/     @andreylukin
+# Per-area owners — one line per part of the tree a maintainer could
+# take on. All @andreylukin today; the point of listing them is that
+# handing one over is a one-word diff.
+/go/kernel/             @andreylukin
+/go/cmd/bough/          @andreylukin
+/go/plugins/            @andreylukin
+/go/docs/               @andreylukin
 
 # Governance, licensing, and release plumbing stay with the project lead.
 /LICENSE                @andreylukin
+/AGENTS.md              @andreylukin
 /.github/SECURITY.md    @andreylukin
 /.github/CODE_OF_CONDUCT.md @andreylukin
 /.github/               @andreylukin
+/.githooks/             @andreylukin
 /install.sh             @andreylukin
+/Formula/               @andreylukin
+/deploy/                @andreylukin

@@ -2,11 +2,11 @@
 
 ## Read this first: bough has no isolation boundary
 
-This is a design decision, documented in [`docs/spec.md`](../docs/spec.md) §2 and in the
-README. Programs the model writes run **as you, with your full authority**: filesystem,
-network, subprocesses, arbitrary `npm:` imports. There is no sandbox, no egress proxy, and
-no credential gating. Host functions are convenience and session integration, never a
-wall.
+This is a design decision, stated at the top of the [README](../README.md) and in
+[`go/README.md`](../go/README.md). Programs the model writes run **as you, with your full
+authority**: filesystem, network, subprocesses, arbitrary imports. There is no sandbox, no
+egress proxy, and no credential gating. Host functions are convenience and session
+integration, never a wall.
 
 Therefore the following are **not** vulnerabilities, and reports about them will be closed
 as working-as-designed:
@@ -24,11 +24,13 @@ because that is exactly what happens.
 - **Credential handling.** Tokens for MCP servers and model providers being written with
   loose permissions, logged, echoed into the transcript, persisted where they shouldn't
   be, or sent to a host other than the one they belong to.
-- **The loopback server.** `bough-server` binds to loopback and is unauthenticated by
+- **The browser UI.** `bough web` defaults to `localhost:7681` and is unauthenticated by
   design for the local user; anything that lets an *off-host* or cross-user party reach
-  it, or that widens its binding, is in scope.
-- **Session and history integrity.** A path where the recorded transcript, branch tree, or
-  replay journal can be made to misrepresent what actually ran.
+  it, or that binds it wider than the address you asked for, is in scope. (Deliberately
+  serving it to a network is yours to front with auth — see [`deploy/`](../deploy) for how
+  this repo does it, over a tailnet.)
+- **Session and history integrity.** A path where the transcript, the session tree, or the
+  history log can be made to misrepresent what actually ran.
 - **Supply chain.** A compromised or typosquatted dependency, or a build/release step that
   could ship something other than what is in the tree.
 - **The updater and `install.sh`.** Anything that lets a third party influence what a user
