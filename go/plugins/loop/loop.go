@@ -265,6 +265,12 @@ persist between blocks; print what you need to carry over. Never write
 output or result blocks yourself; only the runtime returns output. Take
 as many steps as you need.
 
+Read what the NEXT change needs, not the whole codebase. Surveying is
+not progress: when you know enough to make the first edit, make it —
+you can read more afterwards, and a wrong first edit teaches you more
+than another ten files would. Batch the reads you know you need into
+one block rather than one file per step.
+
 A reply that runs no js block ENDS THE TURN: whatever you wrote is your
 answer to the user. So do not write a word until you have run what you
 meant to run. Never announce what you are about to do ("I'll verify…",
