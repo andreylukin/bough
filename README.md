@@ -93,8 +93,8 @@ Type a task. The model's programs render as collapsed one-line headers (`▸ Ran
 | `ctrl+c` | cancel the running turn (kills the process group); press again to quit |
 | `ctrl+o` | history inspector; on a focused subagent card, dive into the child's transcript |
 | `tab` / `shift+tab` | move the block cursor (newest first); `enter` toggles the focused block |
-| `shift+enter` | newline in the composer; `↑`/`↓` recall earlier inputs |
-| `esc` | close the palette, decline a pending `tools.ask` question |
+| `shift+enter` | newline in the composer; `↑`/`↓` (or `ctrl+p`/`ctrl+n`) move the cursor, then recall earlier prompts — this directory's previous sessions included |
+| `esc` | clear the draft (`↑` brings it back), close the palette, decline a pending `tools.ask` question |
 
 <p align="center"><img src="assets/screenshot-palette.png" width="720" alt="the slash-command palette"></p>
 
@@ -130,13 +130,16 @@ bough.provider("parrot", (sys, msgs) => "...");             // a full LLM provid
 
 ## Configuration
 
-`./bough.yml`, else `~/.bough/bough.yml`, else an embedded default. It is a list of rows; the shipped one is [go/bough.yml](go/bough.yml):
+`./bough.yml`, else `~/.bough/bough.yml`, else an embedded default. It is a list
+of rows. [go/bough.yml](go/bough.yml) is the shipped tree, commented row by row;
+abridged, it reads:
 
 ```yaml
 - id: llm
-  plugin: llm-openrouter        # or llm-anthropic, llm-openai, llm-cerebras, llm-echo
+  plugin: llm-anthropic         # or llm-openrouter, llm-openai, llm-cerebras, llm-echo
   config:
-    model: anthropic/claude-sonnet-4.5
+    model: claude-sonnet-5
+    # max_tokens: 16384         # cap on one reply
 - id: cost
   plugin: cost
 - id: codemode
@@ -149,6 +152,10 @@ bough.provider("parrot", (sys, msgs) => "...");             // a full LLM provid
   plugin: history
 - id: mcp                       # stdio servers from config, ./.mcp.json, ~/.claude.json
   plugin: mcp
+- id: connect                   # /connect: add a provider key mid-session
+  plugin: connect
+- id: prompts                   # Markdown prompt templates, and /init
+  plugin: prompts
 - id: loop
   plugin: loop
 - id: graph
@@ -156,6 +163,9 @@ bough.provider("parrot", (sys, msgs) => "...");             // a full LLM provid
 - id: ui
   plugin: ui
 ```
+
+With no `bough.yml` of your own, the `llm` row follows whichever provider key you
+have — the tree above is what you get once you write one down.
 
 Save the file and the running process reconciles per row: changed rows and their dependents remount, added rows mount, a row whose deps are missing waits as `pending`, a row that fails is isolated as `failed`. A file that fails to parse keeps the last good tree.
 
@@ -188,7 +198,7 @@ open an issue with what happens. That is the missing piece.
 |---|---|
 | `go/kernel/` | services, events, effects, the loader, row lifecycle. The only non-plugin code besides the launcher |
 | `go/cmd/bough/` | the launcher: flags, config discovery, hot reload, subcommands |
-| `go/plugins/` | llm, codemode, loop, tools, workers, ui, history, graph, mcp, hooks, skills, todo, ask, cost, commands, initjs, contextmd |
+| `go/plugins/` | llm, codemode, loop, tools, workers, ui, history, graph, memory, mcp, hooks, skills, prompts, todo, ask, connect, cost, commands, initjs, contextmd, scratch, theme, title, activity — and `example`, the worked plugin from [docs/PLUGINS.md](go/docs/PLUGINS.md) |
 | `go/e2e/`, `go/internal/` | headless and PTY end-to-end suites, shared LLM stubs, the real-terminal suite |
 | `go/docs/` | `PLUGINS.md` (writing a plugin), `INIT.md` (the init.js API), `graph-memory.md` (the memory graph design) |
 | `bench/harbor/` | Terminal-Bench 4.0 via Harbor on Modal |

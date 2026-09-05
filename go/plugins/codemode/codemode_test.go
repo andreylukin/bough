@@ -231,3 +231,120 @@ func TestNodeGlobalsExplainThemselves(t *testing.T) {
 		t.Fatalf("plain ReferenceError = %v", err)
 	}
 }
+
+// console.log has to render what the tools return. goja's String() on
+// an object is "[object Object]", so a model printing a structured
+// result used to get nothing it could read — seen in a real run as
+// "[object Object],[object Object],[object Object],…".
+func TestConsoleLogRendersObjects(t *testing.T) {
+	cm := New(2 * time.Second)
+	out, err := cm.Run(`console.log({name: "a", n: 2})`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "[object Object]") {
+		t.Fatalf("an object should render as JSON, got %q", out)
+	}
+	for _, want := range []string{`"name": "a"`, `"n": 2`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %s in:\n%s", want, out)
+		}
+	}
+}
+
+func TestConsoleLogRendersArraysOfObjects(t *testing.T) {
+	cm := New(2 * time.Second)
+	out, err := cm.Run(`console.log([{id: 1}, {id: 2}])`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "[object Object]") {
+		t.Fatalf("an array of objects should render as JSON, got %q", out)
+	}
+	if !strings.Contains(out, `"id": 1`) || !strings.Contains(out, `"id": 2`) {
+		t.Errorf("both elements should be readable:\n%s", out)
+	}
+}
+
+// Primitives are unchanged: a logged string stays bare text, not a
+// quoted JSON string.
+func TestConsoleLogLeavesPrimitivesAlone(t *testing.T) {
+	cm := New(2 * time.Second)
+	for code, want := range map[string]string{
+		`console.log("hello")`:      "hello\n",
+		`console.log(42)`:           "42\n",
+		`console.log(true)`:         "true\n",
+		`console.log(null)`:         "null\n",
+		`console.log("a", 1, true)`: "a 1 true\n",
+	} {
+		out, err := cm.Run(code)
+		if err != nil {
+			t.Fatalf("%s: %v", code, err)
+		}
+		if out != want {
+			t.Errorf("%s = %q, want %q", code, out, want)
+		}
+	}
+}
+
+// A value JSON cannot represent must not lose the log line.
+func TestConsoleLogFallsBackOnUnmarshalable(t *testing.T) {
+	cm := New(2 * time.Second)
+	out, err := cm.Run(`var a = {}; a.self = a; console.log(a)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) == "" {
+		t.Error("a cyclic object should still print something")
+	}
+}
+
+// A tool written in Go returns its own types — map[string]int, a slice
+// of structs — and goja exports them unchanged. Matching only
+// map[string]any left every one of those printing "[object Object]",
+// which is exactly the case this was written for.
+func TestConsoleLogRendersGoTypedResults(t *testing.T) {
+	cm := New(2 * time.Second)
+	cm.RegisterTool("counts", func(string) map[string]int { return map[string]int{"a": 2} })
+	cm.RegisterTool("names", func() []string { return []string{"x", "y"} })
+	cm.RegisterTool("pair", func() struct {
+		Name string `json:"name"`
+		N    int    `json:"n"`
+	} {
+		return struct {
+			Name string `json:"name"`
+			N    int    `json:"n"`
+		}{"a", 1}
+	})
+
+	for code, want := range map[string]string{
+		`console.log(tools.counts("x"))`: `"a": 2`,
+		`console.log(tools.names())`:     `"x"`,
+		`console.log(tools.pair())`:      `"name": "a"`,
+	} {
+		out, err := cm.Run(code)
+		if err != nil {
+			t.Fatalf("%s: %v", code, err)
+		}
+		if strings.Contains(out, "[object Object]") {
+			t.Errorf("%s printed [object Object]:\n%s", code, out)
+		}
+		if !strings.Contains(out, want) {
+			t.Errorf("%s should contain %s, got:\n%s", code, want, out)
+		}
+	}
+}
+
+// Command output arrives as bytes and is text, not a structure to
+// serialise.
+func TestConsoleLogRendersBytesAsText(t *testing.T) {
+	cm := New(2 * time.Second)
+	cm.RegisterTool("raw", func() []byte { return []byte("hello from a command") })
+	out, err := cm.Run(`console.log(tools.raw())`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "hello from a command" {
+		t.Errorf("bytes should print as text, got %q", out)
+	}
+}

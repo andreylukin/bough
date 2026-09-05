@@ -15,7 +15,9 @@ import (
 
 	"github.com/dop251/goja"
 
+	"encoding/json"
 	"github.com/andreylukin/bough/kernel"
+	"reflect"
 )
 
 // CodeMode is one persistent goja VM. Not safe for concurrent Run;
@@ -164,7 +166,7 @@ func New(timeout time.Duration) *CodeMode {
 	console.Set("log", func(call goja.FunctionCall) goja.Value {
 		parts := make([]string, 0, len(call.Arguments))
 		for _, a := range call.Arguments {
-			parts = append(parts, a.String())
+			parts = append(parts, display(a))
 		}
 		cm.out.WriteString(strings.Join(parts, " ") + "\n")
 		return goja.Undefined()
@@ -394,4 +396,39 @@ func (plugin) Inject() []string { return nil }
 func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	ctx.Provide("codemode", New(30*time.Second))
 	return nil
+}
+
+// display renders one console.log argument the way the model needs to
+// read it.
+//
+// goja's String() on an object is "[object Object]", and on an array of
+// them "[object Object],[object Object],…" — which is what the model
+// gets back for any tool that returns structured data, unless it
+// remembers to wrap the call in JSON.stringify. Most tools return
+// structured data, so most of the time that was a wasted step and a
+// result nobody could use. Objects and arrays are rendered as indented
+// JSON; everything else keeps String(), so a logged string is still
+// bare text rather than a quoted one.
+func display(v goja.Value) string {
+	if v == nil || goja.IsUndefined(v) || goja.IsNull(v) {
+		return v.String()
+	}
+	exported := v.Export()
+	if b, ok := exported.([]byte); ok {
+		return string(b) // output read from a command, not a structure
+	}
+	// Reflection, not a type switch on map[string]any: a tool written
+	// in Go returns its OWN types — map[string]int, []string, a struct
+	// — and goja exports them unchanged. Matching only the generic
+	// containers left every one of those printing "[object Object]",
+	// which is the shape this exists to fix.
+	switch reflect.ValueOf(exported).Kind() {
+	case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Pointer:
+		b, err := json.MarshalIndent(exported, "", "  ")
+		if err != nil {
+			return v.String() // cycles, functions: better than nothing
+		}
+		return string(b)
+	}
+	return v.String()
 }
