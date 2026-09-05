@@ -33,6 +33,30 @@ func TestHeadlessSlashUnknown(t *testing.T) {
 	mustNotContain(t, out, "[assistant]")
 }
 
+func TestHeadlessSlashExport(t *testing.T) {
+	t.Parallel()
+	b := launchHeadless(t, launchOpts{})
+	b.send("hello there")
+	b.waitFor("echo: hello there")
+	b.send("/export")
+	b.waitFor("exported to ")
+	b.closeStdin()
+	if code := b.waitExit(); code != 0 {
+		t.Fatalf("exit %d; output:\n%s", code, b.out.String())
+	}
+
+	files, err := filepath.Glob(filepath.Join(b.home, ".bough", "exports", "*.md"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("want 1 exported file, got %v (err %v)", files, err)
+	}
+	md, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, string(md), "hello there", "echo: hello there")
+	mustContain(t, b.out.String(), "[system] exported to "+files[0])
+}
+
 func TestHeadlessJSCommandDispatches(t *testing.T) {
 	t.Parallel()
 	out := runHeadless(t, launchOpts{
