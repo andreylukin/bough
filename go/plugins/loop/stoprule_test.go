@@ -312,3 +312,67 @@ type errLLM struct{ err error }
 func (e errLLM) Complete(context.Context, string, []llm.Message) (string, error) {
 	return "", e.err
 }
+
+// The step budget used to be a cliff: free rein, then "you are out".
+// Two markers change the pacing without nagging.
+func TestBudgetNoteWarnsTwice(t *testing.T) {
+	var warned []int
+	for step := range 100 {
+		if budgetNote(step, 100) != "" {
+			warned = append(warned, step)
+		}
+	}
+	if len(warned) != 2 || warned[0] != 50 || warned[1] != 75 {
+		t.Fatalf("want warnings at half and three-quarters, got %v", warned)
+	}
+	if !strings.Contains(budgetNote(50, 100), "start doing the work") {
+		t.Errorf("the halfway note should push toward acting: %q", budgetNote(50, 100))
+	}
+	if !strings.Contains(budgetNote(75, 100), "25 left") {
+		t.Errorf("the later note should say how much is left: %q", budgetNote(75, 100))
+	}
+}
+
+// A short budget has no room for a warning to change anything.
+func TestBudgetNoteQuietWhenTurnIsShort(t *testing.T) {
+	for step := range 7 {
+		if n := budgetNote(step, 7); n != "" {
+			t.Errorf("a 7-step turn should not be narrated, got %q at %d", n, step)
+		}
+	}
+}
+
+// It reaches the model: the note rides on the system prompt for that
+// step, so a long turn is told where it stands.
+func TestBudgetNoteReachesTheModel(t *testing.T) {
+	var systems []string
+	llmStub := &captureLLM{reply: "```js\nx()\n```", systems: &systems}
+	r := &runner{llm: llmStub, code: &stubCode{}, hist: &memHistory{}, secs: &Sections{},
+		stopRetries: 0, maxSteps: 10}
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "keep going", collect(&kinds, &texts))
+
+	var seen bool
+	for _, sys := range systems {
+		if strings.Contains(sys, "Step budget:") {
+			seen = true
+		}
+	}
+	if !seen {
+		t.Fatalf("no budget note reached the model across %d calls", len(systems))
+	}
+	if strings.Contains(systems[0], "Step budget:") {
+		t.Error("the first step should not be narrated")
+	}
+}
+
+// captureLLM records every system prompt it is given.
+type captureLLM struct {
+	reply   string
+	systems *[]string
+}
+
+func (c *captureLLM) Complete(_ context.Context, sys string, _ []llm.Message) (string, error) {
+	*c.systems = append(*c.systems, sys)
+	return c.reply, nil
+}

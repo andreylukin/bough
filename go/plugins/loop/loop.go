@@ -1139,7 +1139,24 @@ func jsFirst(reply string) bool {
 // number of calls, and the user must never be left with nothing.
 const defaultStopRetries = 2
 
-// outOfSteps// outOfSteps is the last thing the model is asked when the step budget
+// budgetNote warns once at half the step budget and once at
+// three-quarters. Only those two: a note on every step is noise the
+// model learns to skip, and the point is to change the plan, not to
+// keep score.
+func budgetNote(step, max int) string {
+	if max < 8 {
+		return "" // too short for a warning to mean anything
+	}
+	switch step {
+	case max / 2:
+		return fmt.Sprintf("Step budget: you have used %d of %d steps this turn. If you are still looking around, start doing the work.", step, max)
+	case max * 3 / 4:
+		return fmt.Sprintf("Step budget: %d of %d steps used, %d left. Finish what you can verify and report; there is no more room to explore.", step, max, max-step)
+	}
+	return ""
+}
+
+// outOfSteps is the last thing the model is asked when the step budget
 // runs out. A turn that spent every step on tools still owes the user
 // an answer: what was found, and what is left.
 const outOfSteps = `You are out of steps for this turn. Do not write a code block — nothing more will run. Reply now, as plain text, with what you found and what you would do next. If you never reached an answer, say so plainly and name the obstacle.`
@@ -1295,6 +1312,14 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		r.landSteers(ctx, emit, false) // a steer sent during the last block joins the context now
 		r.landJobs(emit)               // a background job that finished during the last block reports now
 		sys := system
+		// The budget used to be a cliff: free rein for 99 steps, then
+		// "you are out". A model cannot decide to wrap up if it does
+		// not know where it is, and a turn that explores its way into
+		// the wall has nothing to show for any of it. Two markers are
+		// enough to change the pacing without nagging.
+		if note := budgetNote(step, maxSteps); note != "" {
+			sys += "\n\n" + note
+		}
 		if r.cog != nil {
 			sys = r.cog.System(sys)
 		}
