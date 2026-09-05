@@ -28,9 +28,14 @@ const (
 	// dialTimeout bounds getting a connection at all.
 	dialTimeout = 30 * time.Second
 	// headerTimeout bounds the wait for response headers after the
-	// request is sent. A slow model can think for a while before the
-	// first token, so this is generous: a false timeout kills real work.
-	headerTimeout = 2 * time.Minute
+	// request is sent. Generous on purpose, and more generous than it
+	// first looks: a STREAMING call sees headers almost at once, but a
+	// non-streaming one (the small-model jobs, and anthropic's
+	// non-stream path) may get nothing until the whole reply has been
+	// generated — which for a reasoning model on a long answer is
+	// minutes. A false timeout kills real work; a true one only delays
+	// noticing a dead connection.
+	headerTimeout = 5 * time.Minute
 	// stallTimeout bounds silence WITHIN a started stream. Tokens
 	// arrive continuously once a reply begins; two minutes of nothing
 	// means the far end is gone.
