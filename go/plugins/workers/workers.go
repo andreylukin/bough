@@ -159,7 +159,10 @@ type Workers struct {
 // and it does not spend the turn's spawn budget; it still cannot spawn
 // (depth one), and its steps show in the transcript as sub:* like any
 // child's. Provided as the "spawn-background" service.
-func (w *Workers) Background(ctx context.Context, task string, shape map[string]any) (any, error) {
+// sink, when given, receives the child's steps (kind, text) instead of
+// the transcript and history: a job nobody asked for in this session
+// must not paint its screen.
+func (w *Workers) Background(ctx context.Context, task string, shape map[string]any, sink func(kind, text string)) (any, error) {
 	w.mu.Lock()
 	w.nextID++
 	id := w.nextID
@@ -179,7 +182,7 @@ func (w *Workers) Background(ctx context.Context, task string, shape map[string]
 	if len(shape) > 0 {
 		sch = schema.Schema(shape)
 	}
-	reply, err := w.runChild(ctx, task, id, run, false, sch)
+	reply, err := w.runChildTo(ctx, task, id, run, false, sch, sink)
 	if err != nil {
 		return "", err
 	}
@@ -432,10 +435,20 @@ func (w *Workers) spawnAll(tasks []string, shape ...map[string]any) ([]any, erro
 // task, up to maxSteps llm steps, js blocks executed via codemode. The
 // final plain-text reply (no js block) is the result.
 func (w *Workers) runChild(ctx context.Context, task string, id int, run func(string) (string, error), announced bool, sch schema.Schema) (string, error) {
+	return w.runChildTo(ctx, task, id, run, announced, sch, nil)
+}
+
+// runChildTo is runChild with the child's steps sent to sink instead of
+// the transcript and history when sink is not nil.
+func (w *Workers) runChildTo(ctx context.Context, task string, id int, run func(string) (string, error), announced bool, sch schema.Schema, sink func(kind, text string)) (string, error) {
 	// note mirrors child activity: a "sub:<kind>" session-history entry
 	// (when history is mounted) and a "loop/event" with the same kind,
 	// both carrying the worker number.
 	note := func(kind, text string, extra map[string]any) {
+		if sink != nil {
+			sink(kind, text)
+			return
+		}
 		data := map[string]any{"text": text, "worker": id}
 		maps.Copy(data, extra)
 		if w.hist != nil {

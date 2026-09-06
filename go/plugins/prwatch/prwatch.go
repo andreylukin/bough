@@ -16,7 +16,8 @@
 // found with gh search, not from the session's directory. A shared
 // state file under ~/.bough/prwatch keeps sessions from working the
 // same PR twice and lets each one show, under its composer, which PRs
-// are being worked and by whom. The subagent never touches your
+// are being worked and by whom. Nothing about a job reaches the
+// transcript: its steps go to a per-job log that /background prints. The subagent never touches your
 // checkouts: the watcher keeps its own clones under ~/.bough/prwatch/
 // repos and gives each job a detached worktree of the PR's head, which
 // pushes to the branch by name.
@@ -27,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -37,7 +39,6 @@ import (
 
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
-	"github.com/andreylukin/bough/plugins/loop"
 )
 
 const (
@@ -72,8 +73,7 @@ type Watcher struct {
 	me      string
 	session string
 	run     runner
-	spawn   func(ctx context.Context, task string, shape map[string]any) (any, error)
-	emit    func(kind, text string)
+	spawn   func(ctx context.Context, task string, shape map[string]any, sink func(kind, text string)) (any, error)
 	ctx     context.Context
 	state   *stateFile
 	// worktreeFn makes the job's checkout; tests replace it.
@@ -83,6 +83,36 @@ type Watcher struct {
 
 	mu     sync.Mutex
 	failed bool
+	logs   map[string]*jobLog // this session's jobs, by PR key
+	errs   []string           // recent errors, newest last
+}
+
+// jobLog is one job's steps, kept for /background; nothing about a
+// background job reaches the transcript.
+type jobLog struct {
+	Key   string
+	Since time.Time
+	Done  bool
+	Lines []string
+}
+
+const jobLogMax = 200
+
+func (w *Watcher) logLine(key, line string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.logs == nil {
+		w.logs = map[string]*jobLog{}
+	}
+	l := w.logs[key]
+	if l == nil {
+		l = &jobLog{Key: key, Since: time.Now()}
+		w.logs[key] = l
+	}
+	l.Lines = append(l.Lines, line)
+	if len(l.Lines) > jobLogMax {
+		l.Lines = l.Lines[len(l.Lines)-jobLogMax:]
+	}
 }
 
 // ---------- state shared across sessions ----------
@@ -267,7 +297,8 @@ func (w *Watcher) task(pr PR, work Work, wt string) string {
 	b.WriteString("- A thread from a PERSON: the same, but NEVER resolve it. People close their own threads.\n")
 	b.WriteString("- A conversation comment: answer it if it asks something; otherwise leave it.\n")
 	b.WriteString("- CI: read the failed logs and fix what THIS PR broke, then push. A failure that also happens on the base branch, or on one runner only for reasons unrelated to the diff, is not yours to fix: name it in the summary and move on. If CI is stuck (nothing ran), say so in the summary; do not re-trigger it.\n")
-	b.WriteString("- One fix commit per item is fine; combine trivially related ones. Do not rewrite history, do not force-push, do not touch unrelated code.\n\n")
+	b.WriteString("- One fix commit per item is fine; combine trivially related ones. Do not rewrite history, do not force-push, do not touch unrelated code.\n")
+	b.WriteString("- Run every command in the foreground: never pass a time limit to tools.bash (a background job would wake the user's own session). Run only the tests near your change, not the whole suite.\n\n")
 	b.WriteString("COMMANDS (use exactly these; all go through tools.bash):\n")
 	fmt.Fprintf(&b, "- Reply to a review thread: gh api repos/%s/%s/pulls/%d/comments/<COMMENT_ID>/replies -f body='...'\n", pr.Owner, pr.Name, pr.Number)
 	b.WriteString("- Resolve a review thread (bots only): gh api graphql -f query='mutation { resolveReviewThread(input:{threadId:\"<THREAD_ID>\"}) { thread { isResolved } } }'\n")
@@ -389,7 +420,7 @@ func (w *Watcher) handle(pr PR, work Work) {
 			return nil
 		})
 	}()
-	w.emit("system", fmt.Sprintf("pr-watch: %s %s — %s", key, pr.Title, what))
+	w.logLine(key, fmt.Sprintf("start · %s — %s", pr.Title, what))
 	mk := w.worktreeFn
 	if mk == nil {
 		mk = w.worktree
@@ -400,8 +431,14 @@ func (w *Watcher) handle(pr PR, work Work) {
 		return
 	}
 	defer remove()
-	v, err := w.spawn(w.ctx, w.task(pr, work, wt), reportShape)
+	v, err := w.spawn(w.ctx, w.task(pr, work, wt), reportShape, func(kind, text string) {
+		if kind == "start" {
+			return // the brief; the start line above says what the job is
+		}
+		w.logLine(key, kind+" · "+oneLine(strings.TrimSpace(text), 160))
+	})
 	if err != nil {
+		w.logLine(key, "failed · "+firstLine(err.Error()))
 		w.reportOnce(err)
 		return
 	}
@@ -450,7 +487,12 @@ func (w *Watcher) handle(pr PR, work Work) {
 	if pushed {
 		tail = " (pushed)"
 	}
-	w.emit("system", fmt.Sprintf("pr-watch: %s done%s — %s", key, tail, summary))
+	w.logLine(key, "done"+tail+" · "+summary)
+	w.mu.Lock()
+	if l := w.logs[key]; l != nil {
+		l.Done = true
+	}
+	w.mu.Unlock()
 }
 
 func strs(v any) []string {
@@ -544,18 +586,58 @@ func (w *Watcher) loop() {
 	}
 }
 
+// reportOnce records an error for /background and the verbose log; a
+// background watcher never writes to the transcript.
 func (w *Watcher) reportOnce(err error) {
 	if errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "signal: killed") {
 		return // the row was remounted or the session ended mid-call
 	}
 	w.mu.Lock()
-	first := !w.failed
 	w.failed = true
-	w.mu.Unlock()
-	if first {
-		w.emit("system", "pr-watch: "+firstLine(err.Error()))
+	w.errs = append(w.errs, time.Now().Format("15:04")+" "+firstLine(err.Error()))
+	if len(w.errs) > 10 {
+		w.errs = w.errs[len(w.errs)-10:]
 	}
+	w.mu.Unlock()
 	kernel.Logf("pr-watch: %v\n", err)
+}
+
+// Background is what /background prints: the strip's rows, this
+// session's job logs, and recent errors.
+func (w *Watcher) Background() string {
+	var b strings.Builder
+	rows := w.Rows()
+	if len(rows) == 0 {
+		fmt.Fprintf(&b, "pr-watch: nothing in progress; next poll within %s\n", w.cfg.Interval)
+	}
+	for _, r := range rows {
+		b.WriteString(r + "\n")
+	}
+	w.mu.Lock()
+	keys := slices.Sorted(maps.Keys(w.logs))
+	for _, k := range keys {
+		l := w.logs[k]
+		state := "running"
+		if l.Done {
+			state = "finished"
+		}
+		fmt.Fprintf(&b, "\n%s · %s · started %s ago\n", k, state, shortDur(l.Since))
+		lines := l.Lines
+		if len(lines) > 30 {
+			lines = lines[len(lines)-30:]
+		}
+		for _, ln := range lines {
+			b.WriteString("  " + ln + "\n")
+		}
+	}
+	if len(w.errs) > 0 {
+		b.WriteString("\nerrors:\n")
+		for _, e := range w.errs {
+			b.WriteString("  " + e + "\n")
+		}
+	}
+	w.mu.Unlock()
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // Rows is the strip under the composer: every PR any session is
@@ -650,7 +732,7 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 			return fmt.Errorf("pr-watch: unknown config key %q", k)
 		}
 	}
-	spawn, err := kernel.Get[func(context.Context, string, map[string]any) (any, error)](kctx, "spawn-background")
+	spawn, err := kernel.Get[func(context.Context, string, map[string]any, func(string, string)) (any, error)](kctx, "spawn-background")
 	if err != nil {
 		return fmt.Errorf("pr-watch: needs the workers row (spawn-background)")
 	}
@@ -675,18 +757,14 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	w.ctx = ctx
 	kctx.Effect(cancel)
-	w.emit = func(kind, text string) { kctx.Emit("loop/event", loop.Event{Kind: kind, Text: text}) }
 	kctx.Provide("pr-watch", w)
 	if reg, err := kernel.Get[*commands.Registry](kctx, "commands"); err == nil {
-		info := commands.CommandInfo{Name: "prs", Summary: "what pr-watch is doing with your open PRs"}
-		if err := reg.Register(info, func(string) (string, error) {
-			rows := w.Rows()
-			if len(rows) == 0 {
-				return "pr-watch: nothing in progress; next poll within " + w.cfg.Interval.String(), nil
+		show := func(string) (string, error) { return w.Background(), nil }
+		for _, name := range []string{"background", "prs"} {
+			info := commands.CommandInfo{Name: name, Summary: "what pr-watch is doing in the background: PRs being worked, this session's job steps, errors"}
+			if err := reg.Register(info, show); err == nil {
+				kctx.Effect(func() { reg.Unregister(name) })
 			}
-			return strings.Join(rows, "\n"), nil
-		}); err == nil {
-			kctx.Effect(func() { reg.Unregister("prs") })
 		}
 	}
 	go func() {

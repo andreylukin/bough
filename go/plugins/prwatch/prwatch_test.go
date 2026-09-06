@@ -87,7 +87,7 @@ func TestTaskAndDescribe(t *testing.T) {
 		"cd /tmp/wt/pr-12 &&", "git push origin HEAD:fix-thing",
 		"[thread T1] a.go:3 (REVIEW BOT)", "[thread T4] d.go:2 (person)", "NEVER resolve",
 		"pulls/12/comments/<COMMENT_ID>/replies", "resolveReviewThread", "issues/12/comments",
-		"[comment C2] by bradley", "ci-go: FAILURE https://github.com/x/y/actions/runs/77",
+		"[comment C2] by bradley", "ci-go: FAILURE https://github.com/x/y/actions/runs/77", "never pass a time limit to tools.bash",
 	} {
 		if !strings.Contains(task, want) {
 			t.Errorf("task missing %q", want)
@@ -105,11 +105,11 @@ func TestStateLockAndRows(t *testing.T) {
 	sf := &stateFile{path: filepath.Join(t.TempDir(), "repo.json")}
 	w := &Watcher{state: sf, session: "sess-a-1234", ctx: context.Background()}
 	spawned := ""
-	w.spawn = func(_ context.Context, task string, _ map[string]any) (any, error) {
+	w.spawn = func(_ context.Context, task string, _ map[string]any, sink func(string, string)) (any, error) {
 		spawned = task
+		sink("code", "tools.bash('go test ./...')")
 		return map[string]any{"handled": []any{"101", "C2"}, "resolved": []any{"T1"}, "pushed": true, "summary": "fixed the nil check"}, nil
 	}
-	w.emit = func(string, string) {}
 	// Another session holds the lock: handle must do nothing.
 	_ = sf.update(func(st *state) error {
 		st.PRs["andreylukin/bough#12"] = &prState{Lock: &lock{Session: "other", Since: time.Now(), What: "1 review thread"}, Title: "fix thing"}
@@ -144,5 +144,11 @@ func TestStateLockAndRows(t *testing.T) {
 	rows = w.Rows()
 	if len(rows) != 1 || !strings.Contains(rows[0], "done") || !strings.Contains(rows[0], "fixed the nil check") {
 		t.Fatalf("rows should show the result: %v", rows)
+	}
+	bg := w.Background()
+	for _, want := range []string{"andreylukin/bough#12 · finished", "code · tools.bash('go test ./...')", "done (pushed) · fixed the nil check"} {
+		if !strings.Contains(bg, want) {
+			t.Fatalf("/background missing %q:\n%s", want, bg)
+		}
 	}
 }

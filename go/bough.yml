@@ -151,9 +151,9 @@
 # bot (Codex, Devin, Copilot, …) or a person left a comment, or CI
 # failed, run a subagent in a worktree of the watcher's own clone under
 # ~/.bough/prwatch to reply, fix, push, and resolve bot threads (never
-# people's). Every session shows the PRs being worked under its
-# composer; /prs lists them. Opt in: it posts on GitHub as you. Needs
-# gh logged in.
+# people's). Nothing reaches the transcript: every session shows the
+# PRs being worked under its composer, and /background prints the job's
+# steps. Opt in: it posts on GitHub as you. Needs gh logged in.
 # - id: pr-watch
 #   plugin: pr-watch
 #   config:
