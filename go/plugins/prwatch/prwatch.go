@@ -12,11 +12,14 @@
 //   - a conversation comment that asks something: answer it;
 //   - CI failed or is stuck: read the failed logs, fix, push.
 //
-// Every session of a repo runs the watcher; a shared state file under
-// ~/.bough/prwatch keeps them from working the same PR twice and lets
-// each one show, under its composer, which PRs are being worked and by
-// whom. The subagent never touches your checkout: it gets a detached
-// worktree of the PR's head and pushes to the branch by name.
+// Every session runs the watcher, wherever it was started: PRs are
+// found with gh search, not from the session's directory. A shared
+// state file under ~/.bough/prwatch keeps sessions from working the
+// same PR twice and lets each one show, under its composer, which PRs
+// are being worked and by whom. The subagent never touches your
+// checkouts: the watcher keeps its own clones under ~/.bough/prwatch/
+// repos and gives each job a detached worktree of the PR's head, which
+// pushes to the branch by name.
 package prwatch
 
 import (
@@ -34,7 +37,6 @@ import (
 
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
-	"github.com/andreylukin/bough/plugins/graph"
 	"github.com/andreylukin/bough/plugins/loop"
 )
 
@@ -66,10 +68,7 @@ type Config struct {
 // Watcher is the plugin's state for one session.
 type Watcher struct {
 	cfg     Config
-	dir     string // the checkout
-	repoKey string
-	owner   string
-	name    string
+	home    string // ~/.bough/prwatch
 	me      string
 	session string
 	run     runner
@@ -79,6 +78,8 @@ type Watcher struct {
 	state   *stateFile
 	// worktreeFn makes the job's checkout; tests replace it.
 	worktreeFn func(ctx context.Context, pr PR) (string, func(), error)
+	// cloneMu serialises clone/fetch per repo within the session.
+	cloneMu sync.Mutex
 
 	mu     sync.Mutex
 	failed bool
@@ -258,7 +259,7 @@ var reportShape = map[string]any{
 // fix rather than on discovering GitHub.
 func (w *Watcher) task(pr PR, work Work, wt string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "You are handling pull request #%d %q (%s) on branch %s in repository %s/%s, on behalf of %s.\n\n", pr.Number, pr.Title, pr.URL, pr.Branch, w.owner, w.name, w.me)
+	fmt.Fprintf(&b, "You are handling pull request #%d %q (%s) on branch %s in repository %s/%s, on behalf of %s.\n\n", pr.Number, pr.Title, pr.URL, pr.Branch, pr.Owner, pr.Name, w.me)
 	fmt.Fprintf(&b, "WORKTREE: %s is a detached checkout of the PR head (%s). Every tools.bash command that touches the code MUST start with `cd %s &&`. Never touch any other directory. To publish a fix: commit there and run `git push origin HEAD:%s`.\n\n", wt, pr.HeadSHA[:min(12, len(pr.HeadSHA))], wt, pr.Branch)
 	b.WriteString("RULES:\n")
 	b.WriteString("- Read each item, decide whether it is right, and act. Keep replies short and specific; sign nothing.\n")
@@ -268,10 +269,10 @@ func (w *Watcher) task(pr PR, work Work, wt string) string {
 	b.WriteString("- CI: read the failed logs and fix what THIS PR broke, then push. A failure that also happens on the base branch, or on one runner only for reasons unrelated to the diff, is not yours to fix: name it in the summary and move on. If CI is stuck (nothing ran), say so in the summary; do not re-trigger it.\n")
 	b.WriteString("- One fix commit per item is fine; combine trivially related ones. Do not rewrite history, do not force-push, do not touch unrelated code.\n\n")
 	b.WriteString("COMMANDS (use exactly these; all go through tools.bash):\n")
-	fmt.Fprintf(&b, "- Reply to a review thread: gh api repos/%s/%s/pulls/%d/comments/<COMMENT_ID>/replies -f body='...'\n", w.owner, w.name, pr.Number)
+	fmt.Fprintf(&b, "- Reply to a review thread: gh api repos/%s/%s/pulls/%d/comments/<COMMENT_ID>/replies -f body='...'\n", pr.Owner, pr.Name, pr.Number)
 	b.WriteString("- Resolve a review thread (bots only): gh api graphql -f query='mutation { resolveReviewThread(input:{threadId:\"<THREAD_ID>\"}) { thread { isResolved } } }'\n")
-	fmt.Fprintf(&b, "- Reply in the conversation: gh api repos/%s/%s/issues/%d/comments -f body='...'\n", w.owner, w.name, pr.Number)
-	fmt.Fprintf(&b, "- CI: gh pr checks %d ; failed logs: gh run view <RUN_ID> --log-failed (the run id is in the check link)\n\n", pr.Number)
+	fmt.Fprintf(&b, "- Reply in the conversation: gh api repos/%s/%s/issues/%d/comments -f body='...'\n", pr.Owner, pr.Name, pr.Number)
+	fmt.Fprintf(&b, "- CI: gh pr checks %d --repo %s/%s ; failed logs: gh run view <RUN_ID> --repo %s/%s --log-failed (the run id is in the check link)\n\n", pr.Number, pr.Owner, pr.Name, pr.Owner, pr.Name)
 	if len(work.Threads) > 0 {
 		b.WriteString("REVIEW THREADS needing a reply:\n")
 		for _, t := range work.Threads {
@@ -307,23 +308,43 @@ func (w *Watcher) task(pr PR, work Work, wt string) string {
 	return b.String()
 }
 
-// worktree makes a detached checkout of the PR head next to the state
-// file, fresh each job, and returns its path and a remover.
+// repoDir is the watcher's own clone of owner/name, made on first use
+// and fetched per job. Never the user's checkout.
+func (w *Watcher) repoDir(ctx context.Context, pr PR) (string, error) {
+	w.cloneMu.Lock()
+	defer w.cloneMu.Unlock()
+	dir := filepath.Join(w.home, "repos", pr.Owner+"_"+pr.Name)
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+			return "", err
+		}
+		if out, err := runCmd(ctx, w.home, "gh", "repo", "clone", pr.Owner+"/"+pr.Name, dir, "--", "--quiet"); err != nil {
+			return "", fmt.Errorf("gh repo clone %s/%s: %w: %s", pr.Owner, pr.Name, err, firstLine(out))
+		}
+	}
+	return dir, nil
+}
+
+// worktree makes a detached checkout of the PR head from the watcher's
+// clone, fresh each job, and returns its path and a remover.
 func (w *Watcher) worktree(ctx context.Context, pr PR) (string, func(), error) {
-	root := filepath.Join(filepath.Dir(w.state.path), "wt", w.repoKey)
-	path := filepath.Join(root, fmt.Sprintf("pr-%d-%s", pr.Number, w.session[:min(8, len(w.session))]))
+	repo, err := w.repoDir(ctx, pr)
+	if err != nil {
+		return "", nil, err
+	}
+	path := filepath.Join(w.home, "wt", pr.Owner+"_"+pr.Name, fmt.Sprintf("pr-%d-%s", pr.Number, w.session[:min(8, len(w.session))]))
 	git := func(args ...string) error {
-		out, err := runCmd(ctx, w.dir, "git", args...)
+		out, err := runCmd(ctx, repo, "git", args...)
 		if err != nil {
 			return fmt.Errorf("git %s: %w: %s", args[0], err, firstLine(out))
 		}
 		return nil
 	}
 	_ = git("worktree", "remove", "--force", path) // a leftover from a crashed job
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", nil, err
 	}
-	if err := git("fetch", "origin", pr.Branch); err != nil {
+	if err := git("fetch", "--quiet", "origin", pr.Branch); err != nil {
 		return "", nil, err
 	}
 	if err := git("worktree", "add", "--detach", path, pr.HeadSHA); err != nil {
@@ -333,8 +354,10 @@ func (w *Watcher) worktree(ctx context.Context, pr PR) (string, func(), error) {
 }
 
 // handle runs one PR's job: lock, worktree, subagent, record, unlock.
+func prKey(pr PR) string { return fmt.Sprintf("%s/%s#%d", pr.Owner, pr.Name, pr.Number) }
+
 func (w *Watcher) handle(pr PR, work Work) {
-	key := strconv.Itoa(pr.Number)
+	key := prKey(pr)
 	what := describe(work)
 	locked := false
 	err := w.state.update(func(st *state) error {
@@ -366,7 +389,7 @@ func (w *Watcher) handle(pr PR, work Work) {
 			return nil
 		})
 	}()
-	w.emit("system", fmt.Sprintf("pr-watch: #%d %s — %s", pr.Number, pr.Title, what))
+	w.emit("system", fmt.Sprintf("pr-watch: %s %s — %s", key, pr.Title, what))
 	mk := w.worktreeFn
 	if mk == nil {
 		mk = w.worktree
@@ -427,7 +450,7 @@ func (w *Watcher) handle(pr PR, work Work) {
 	if pushed {
 		tail = " (pushed)"
 	}
-	w.emit("system", fmt.Sprintf("pr-watch: #%d done%s — %s", pr.Number, tail, summary))
+	w.emit("system", fmt.Sprintf("pr-watch: %s done%s — %s", key, tail, summary))
 }
 
 func strs(v any) []string {
@@ -473,7 +496,7 @@ func plural(n int) string {
 func (w *Watcher) poll() {
 	ctx, cancel := context.WithTimeout(w.ctx, 2*time.Minute)
 	defer cancel()
-	prs, err := listPRs(ctx, w.run, w.dir, w.cfg.Authors, time.Now().Add(-time.Duration(w.cfg.Days)*24*time.Hour), 20)
+	prs, err := listPRs(ctx, w.run, w.home, w.cfg.Authors, time.Now().Add(-time.Duration(w.cfg.Days)*24*time.Hour), 20)
 	if err != nil {
 		w.reportOnce(err)
 		return
@@ -488,11 +511,11 @@ func (w *Watcher) poll() {
 	}
 	for i := range prs {
 		pr := &prs[i]
-		if err := fill(ctx, w.run, w.dir, w.owner, w.name, pr); err != nil {
+		if err := fill(ctx, w.run, w.home, pr); err != nil {
 			w.reportOnce(err)
 			continue
 		}
-		ps := st.PRs[strconv.Itoa(pr.Number)]
+		ps := st.PRs[prKey(*pr)]
 		if ps == nil {
 			ps = &prState{}
 		}
@@ -549,9 +572,9 @@ func (w *Watcher) Rows() []string {
 			if ps.Lock.Session != w.session {
 				who = "session " + ps.Lock.Session[:min(8, len(ps.Lock.Session))]
 			}
-			rows = append(rows, fmt.Sprintf("pr #%s %s · %s · %s · %s", key, oneLine(ps.Title, 40), ps.Lock.What, who, shortDur(ps.Lock.Since)))
+			rows = append(rows, fmt.Sprintf("pr %s %s · %s · %s · %s", key, oneLine(ps.Title, 40), ps.Lock.What, who, shortDur(ps.Lock.Since)))
 		} else if !ps.LastAt.IsZero() && time.Since(ps.LastAt) < showDone {
-			rows = append(rows, fmt.Sprintf("pr #%s done %s ago · %s", key, shortDur(ps.LastAt), oneLine(ps.Last, 70)))
+			rows = append(rows, fmt.Sprintf("pr %s done %s ago · %s", key, shortDur(ps.LastAt), oneLine(ps.Last, 70)))
 		}
 	}
 	slices.Sort(rows)
@@ -635,20 +658,19 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("pr-watch: needs the history service")
 	}
-	dir, _ := os.Getwd()
-	ws := graph.Workspace(dir)
-	if ws.Repo == "" {
-		return nil // not a checkout: nothing to watch, nothing to mount
-	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
+	root := filepath.Join(home, ".bough", "prwatch")
 	w := &Watcher{
-		cfg: c, dir: dir, repoKey: strings.NewReplacer("/", "_", ":", "_").Replace(ws.Repo),
+		cfg: c, home: root,
 		session: strings.TrimSuffix(filepath.Base(h.Path()), filepath.Ext(h.Path())),
 		run:     ghRunner, spawn: spawn,
-		state: &stateFile{path: filepath.Join(home, ".bough", "prwatch", strings.NewReplacer("/", "_", ":", "_").Replace(ws.Repo)+".json")},
+		state: &stateFile{path: filepath.Join(root, "state.json")},
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	w.ctx = ctx
@@ -675,17 +697,12 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		me := c.Me
 		if me == "" {
 			var err error
-			if me, err = whoami(ictx, w.run, dir); err != nil {
+			if me, err = whoami(ictx, w.run, root); err != nil {
 				w.reportOnce(err)
 				return
 			}
 		}
-		owner, name, err := ownerName(ictx, w.run, dir)
-		if err != nil {
-			w.reportOnce(err)
-			return
-		}
-		w.me, w.owner, w.name = me, owner, name
+		w.me = me
 		w.loop()
 	}()
 	return nil

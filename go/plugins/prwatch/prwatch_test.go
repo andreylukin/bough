@@ -26,7 +26,7 @@ func TestIsBot(t *testing.T) {
 func fixture() PR {
 	at := time.Now().Add(-time.Hour)
 	return PR{
-		Number: 12, Title: "fix thing", Branch: "fix-thing", HeadSHA: "abc123abc123", Updated: at,
+		Owner: "andreylukin", Name: "bough", Number: 12, Title: "fix thing", Branch: "fix-thing", HeadSHA: "abc123abc123", Updated: at,
 		Threads: []Thread{
 			{ID: "T1", Path: "a.go", Line: 3, Comments: []Comment{{ID: "101", Author: "chatgpt-codex-connector[bot]", Body: "nil check missing", At: at}}},
 			{ID: "T2", Path: "b.go", Line: 9, Comments: []Comment{{ID: "102", Author: "bradley", Body: "rename this", At: at}, {ID: "103", Author: "andreylukin", Body: "done", At: at}}},
@@ -80,7 +80,7 @@ func TestJudge(t *testing.T) {
 
 func TestTaskAndDescribe(t *testing.T) {
 	pr := fixture()
-	w := &Watcher{cfg: Config{Bots: defaultBots}, owner: "andreylukin", name: "bough", me: "andreylukin"}
+	w := &Watcher{cfg: Config{Bots: defaultBots}, me: "andreylukin"}
 	work := judge(pr, "andreylukin", defaultBots, &prState{}, time.Now())
 	task := w.task(pr, work, "/tmp/wt/pr-12")
 	for _, want := range []string{
@@ -112,7 +112,7 @@ func TestStateLockAndRows(t *testing.T) {
 	w.emit = func(string, string) {}
 	// Another session holds the lock: handle must do nothing.
 	_ = sf.update(func(st *state) error {
-		st.PRs["12"] = &prState{Lock: &lock{Session: "other", Since: time.Now(), What: "1 review thread"}, Title: "fix thing"}
+		st.PRs["andreylukin/bough#12"] = &prState{Lock: &lock{Session: "other", Since: time.Now(), What: "1 review thread"}, Title: "fix thing"}
 		return nil
 	})
 	rows := w.Rows()
@@ -121,14 +121,13 @@ func TestStateLockAndRows(t *testing.T) {
 	}
 	pr := fixture()
 	work := judge(pr, "andreylukin", defaultBots, &prState{}, time.Now())
-	w.dir = t.TempDir() // worktree creation will fail without a repo, but the lock check comes first
 	w.handle(pr, work)
 	if spawned != "" {
 		t.Fatal("must not run while another session holds the lock")
 	}
 	// A stale lock is taken over; the job records what was handled.
 	_ = sf.update(func(st *state) error {
-		st.PRs["12"].Lock.Since = time.Now().Add(-2 * lockStale)
+		st.PRs["andreylukin/bough#12"].Lock.Since = time.Now().Add(-2 * lockStale)
 		return nil
 	})
 	w.worktreeFn = func(context.Context, PR) (string, func(), error) { return "/tmp/wt", func() {}, nil }
@@ -137,7 +136,7 @@ func TestStateLockAndRows(t *testing.T) {
 		t.Fatal("stale lock must be taken over")
 	}
 	st, _ := sf.load()
-	ps := st.PRs["12"]
+	ps := st.PRs["andreylukin/bough#12"]
 	b, _ := json.Marshal(ps)
 	if ps.Lock != nil || ps.CIHead != pr.HeadSHA || !strings.Contains(string(b), `"101"`) || !strings.Contains(string(b), `"C2"`) || strings.Contains(string(b), `"105"`) {
 		t.Fatalf("after the job: lock released, CI head recorded, handled ids seen (not the unanswered one): %s", b)

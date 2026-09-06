@@ -146,12 +146,14 @@
   #   top_k: 6             # outputs the navigator may bring back per turn
   #   pick_timeout_seconds: 10
 
-# Keep your open PRs moving: every few minutes, list your open PRs in
-# this repo, and when a review bot (Codex, Devin, Copilot, …) or a person
-# left a comment, or CI failed, run a subagent in its own worktree to
-# reply, fix, push, and resolve bot threads (never people's). Every
-# session shows the PRs being worked under its composer; /prs lists
-# them. Opt in: it posts on GitHub as you. Needs gh logged in.
+# Keep your open PRs moving: every few minutes, find your open PRs on
+# GitHub (any repo, wherever the session started), and when a review
+# bot (Codex, Devin, Copilot, …) or a person left a comment, or CI
+# failed, run a subagent in a worktree of the watcher's own clone under
+# ~/.bough/prwatch to reply, fix, push, and resolve bot threads (never
+# people's). Every session shows the PRs being worked under its
+# composer; /prs lists them. Opt in: it posts on GitHub as you. Needs
+# gh logged in.
 # - id: pr-watch
 #   plugin: pr-watch
 #   config:

@@ -44,6 +44,8 @@ func firstLine(s string) string {
 
 // PR is one open pull request with what the watcher may act on.
 type PR struct {
+	Owner    string
+	Name     string
 	Number   int
 	Title    string
 	URL      string
@@ -98,34 +100,41 @@ func (c Check) Pending() bool {
 	return false
 }
 
-// listPRs is the open PRs in dir's repo by the given authors, updated
-// since `since`.
+// listPRs is the open PRs by the given authors across GitHub (gh
+// search), updated since `since`. The session's directory does not
+// matter: the watcher finds the work wherever it is.
 func listPRs(ctx context.Context, run runner, dir string, authors []string, since time.Time, limit int) ([]PR, error) {
 	var out []PR
-	seen := map[int]bool{}
+	seen := map[string]bool{}
 	for _, a := range authors {
-		s, err := run(ctx, dir, "pr", "list", "--state", "open", "--author", a, "--limit", fmt.Sprint(limit),
-			"--json", "number,title,url,headRefName,headRefOid,updatedAt")
+		s, err := run(ctx, dir, "search", "prs", "--state", "open", "--author", a, "--limit", fmt.Sprint(limit),
+			"--sort", "updated", "--json", "number,title,url,repository,updatedAt")
 		if err != nil {
 			return nil, err
 		}
 		var rows []struct {
-			Number      int       `json:"number"`
-			Title       string    `json:"title"`
-			URL         string    `json:"url"`
-			HeadRefName string    `json:"headRefName"`
-			HeadRefOid  string    `json:"headRefOid"`
-			UpdatedAt   time.Time `json:"updatedAt"`
+			Number     int    `json:"number"`
+			Title      string `json:"title"`
+			URL        string `json:"url"`
+			Repository struct {
+				NameWithOwner string `json:"nameWithOwner"`
+			} `json:"repository"`
+			UpdatedAt time.Time `json:"updatedAt"`
 		}
 		if err := json.Unmarshal([]byte(s), &rows); err != nil {
-			return nil, fmt.Errorf("gh pr list: %w", err)
+			return nil, fmt.Errorf("gh search prs: %w", err)
 		}
 		for _, r := range rows {
-			if seen[r.Number] || r.UpdatedAt.Before(since) {
+			key := fmt.Sprintf("%s#%d", r.Repository.NameWithOwner, r.Number)
+			if seen[key] || r.UpdatedAt.Before(since) {
 				continue
 			}
-			seen[r.Number] = true
-			out = append(out, PR{Number: r.Number, Title: r.Title, URL: r.URL, Branch: r.HeadRefName, HeadSHA: r.HeadRefOid, Updated: r.UpdatedAt})
+			owner, name, ok := strings.Cut(r.Repository.NameWithOwner, "/")
+			if !ok {
+				continue
+			}
+			seen[key] = true
+			out = append(out, PR{Owner: owner, Name: name, Number: r.Number, Title: r.Title, URL: r.URL, Updated: r.UpdatedAt})
 		}
 	}
 	return out, nil
@@ -133,7 +142,7 @@ func listPRs(ctx context.Context, run runner, dir string, authors []string, sinc
 
 const threadsQuery = `query($owner:String!,$name:String!,$n:Int!){
   repository(owner:$owner,name:$name){ pullRequest(number:$n){
-    headRefOid
+    headRefOid headRefName
     reviewThreads(first:100){ nodes{ id isResolved path line comments(first:50){ nodes{ databaseId author{login} body createdAt } } } }
     comments(first:100){ nodes{ id author{login} body createdAt } }
     statusCheckRollup: commits(last:1){ nodes{ commit{ statusCheckRollup{ contexts(first:50){ nodes{
@@ -142,9 +151,9 @@ const threadsQuery = `query($owner:String!,$name:String!,$n:Int!){
       ... on StatusContext { context state targetUrl } } } } } } }
   } } }`
 
-// fill loads threads, comments and checks for pr.
-func fill(ctx context.Context, run runner, dir, owner, name string, pr *PR) error {
-	s, err := run(ctx, dir, "api", "graphql", "-f", "query="+threadsQuery, "-F", "owner="+owner, "-F", "name="+name, "-F", "n="+fmt.Sprint(pr.Number))
+// fill loads the head, threads, comments and checks for pr.
+func fill(ctx context.Context, run runner, dir string, pr *PR) error {
+	s, err := run(ctx, dir, "api", "graphql", "-f", "query="+threadsQuery, "-F", "owner="+pr.Owner, "-F", "name="+pr.Name, "-F", "n="+fmt.Sprint(pr.Number))
 	if err != nil {
 		return err
 	}
@@ -153,6 +162,7 @@ func fill(ctx context.Context, run runner, dir, owner, name string, pr *PR) erro
 			Repository struct {
 				PullRequest struct {
 					HeadRefOid    string `json:"headRefOid"`
+					HeadRefName   string `json:"headRefName"`
 					ReviewThreads struct {
 						Nodes []struct {
 							ID         string `json:"id"`
@@ -208,6 +218,9 @@ func fill(ctx context.Context, run runner, dir, owner, name string, pr *PR) erro
 	if p.HeadRefOid != "" {
 		pr.HeadSHA = p.HeadRefOid
 	}
+	if p.HeadRefName != "" {
+		pr.Branch = p.HeadRefName
+	}
 	pr.Threads = nil
 	for _, t := range p.ReviewThreads.Nodes {
 		th := Thread{ID: t.ID, Resolved: t.IsResolved, Path: t.Path, Line: t.Line}
@@ -241,17 +254,4 @@ func fill(ctx context.Context, run runner, dir, owner, name string, pr *PR) erro
 func whoami(ctx context.Context, run runner, dir string) (string, error) {
 	s, err := run(ctx, dir, "api", "user", "--jq", ".login")
 	return strings.TrimSpace(s), err
-}
-
-// ownerName reads owner and repo name from the checkout's origin.
-func ownerName(ctx context.Context, run runner, dir string) (string, string, error) {
-	s, err := run(ctx, dir, "repo", "view", "--json", "owner,name", "--jq", ".owner.login + \"/\" + .name")
-	if err != nil {
-		return "", "", err
-	}
-	owner, name, ok := strings.Cut(strings.TrimSpace(s), "/")
-	if !ok {
-		return "", "", fmt.Errorf("gh repo view: unexpected %q", s)
-	}
-	return owner, name, nil
 }
