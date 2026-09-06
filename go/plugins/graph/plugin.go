@@ -176,7 +176,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	// The verbs, as tools.graph.* in the model's runtime.
 	if cm, err := kernel.Get[codemode](ctx, "codemode"); err == nil {
 		if d, ok := any(cm).(interface{ Describe(name, line string) }); ok {
-			d.Describe("graph", `tools.graph.search(q, n) / .neighbors(ref, hops, rel) / .timeline(ref) / .resolve(ref) / .assert(src, rel, dst, evidence) / .invalidate(edge, reason): the memory graph. rels: `+strings.Join(RelNames(), " ")+`.`)
+			d.Describe("graph", `tools.graph.world() / .search(q, n) / .neighbors(ref, hops, rel) / .timeline(ref) / .resolve(ref) / .assert(src, rel, dst, evidence) / .invalidate(edge, reason): the memory graph. rels: `+strings.Join(RelNames(), " ")+`.`)
 		}
 		if err := cm.WithVM(func(vm *goja.Runtime, tools *goja.Object) error {
 			return tools.Set("graph", svc.jsObject(vm))
@@ -454,6 +454,13 @@ func (s *Service) jsObject(vm *goja.Runtime) *goja.Object {
 			throw(err)
 		}
 		return plain(edges)
+	})
+	o.Set("world", func() any {
+		w, err := s.World()
+		if err != nil {
+			throw(err)
+		}
+		return w.Render()
 	})
 	o.Set("resolve", func(ref string) any {
 		e, err := s.Resolve(ref)

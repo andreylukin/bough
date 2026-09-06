@@ -13,12 +13,12 @@ collectors already did, and the links are in the graph.
 
 Do all of this in one program.
 
-1. Freshness. `tools.bash("bough graph status")` prints the world around me:
+1. Freshness. `tools.graph.world()` returns the world around me:
    "Waiting on me" and "Mine, open", one line per thing with its key,
    title, [status], who it awaits, a summary, and its link, ending in a
    `(collected …)` stamp. If the stamp is older than 30 minutes, run
-   `tools.bash("bough collect")` first (it takes about a minute) and read
-   the status again.
+   `tools.bash("bough collect || ~/repos/bough/go/bough collect")` first
+   (about a minute) and read the world again.
 
 2. Group by ticket. For every `ticket:` line, `tools.graph.neighbors(key)`
    finds the PRs that implement it (`implements`), the threads and pages
@@ -40,6 +40,12 @@ Do all of this in one program.
 5. Loose ends. Anything in "Waiting on me" that is not under a ticket goes
    in its own group at the top: reviews requested of me, threads where
    someone else had the last word.
+
+Print compactly. `neighbors` and `timeline` return full edge objects;
+never print them raw. Map each to one line, e.g.
+`${e.src.kind}:${e.src.key} ${e.rel} ${e.dst.kind}:${e.dst.key} ${e.dst.status} ${e.valid_to ? "closed" : ""}`,
+and for search hits the claim text. The whole program's output should fit
+in a few hundred lines.
 
 ## Output
 
