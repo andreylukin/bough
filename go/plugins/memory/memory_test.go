@@ -50,13 +50,13 @@ repo:bough | prefers | person:andrey | a fourth fact, over the cap`
 // agent's words, what it ran, the files. Tool output is left out.
 func TestDigest(t *testing.T) {
 	entries := []history.Entry{
-		{Kind: "input", Data: map[string]any{"text": "an older turn"}},
-		{Kind: "done", Data: map[string]any{}},
-		{Kind: "input", Data: map[string]any{"text": "fix the flaky test"}},
-		{Kind: "code", Data: map[string]any{"text": `tools.bash("go test ./...")`}},
-		{Kind: "result", Data: map[string]any{"text": "ENORMOUS TOOL OUTPUT"}},
-		{Kind: "assistant", Data: map[string]any{"text": "it was a stale golden file"}},
-		{Kind: "done", Data: map[string]any{"files": []string{"golden_test.go"}}},
+		{Seq: 1, Kind: "input", Data: map[string]any{"text": "an older turn"}},
+		{Seq: 2, Kind: "done", Data: map[string]any{}},
+		{Seq: 3, Kind: "input", Data: map[string]any{"text": "fix the flaky test"}},
+		{Seq: 4, Kind: "code", Data: map[string]any{"text": `tools.bash("go test ./...")`}},
+		{Seq: 5, Kind: "result", Data: map[string]any{"text": "ENORMOUS TOOL OUTPUT"}},
+		{Seq: 6, Kind: "assistant", Data: map[string]any{"text": "it was a stale golden file"}},
+		{Seq: 7, Kind: "done", Data: map[string]any{"files": []string{"golden_test.go"}}},
 	}
 	got := Digest(entries)
 	for _, want := range []string{"fix the flaky test", "go test ./...", "stale golden file", "golden_test.go"} {
@@ -64,8 +64,8 @@ func TestDigest(t *testing.T) {
 			t.Fatalf("digest missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "ENORMOUS") {
-		t.Fatalf("tool output must stay out of the digest:\n%s", got)
+	if !strings.Contains(got, "OUTPUT:\nENORMOUS") || !strings.Contains(got, "[#5]") {
+		t.Fatalf("digest must carry the head of each tool output under its seq:\n%s", got)
 	}
 	if strings.Contains(got, "an older turn") {
 		t.Fatalf("digest reached back past the last input:\n%s", got)
@@ -91,6 +91,7 @@ func (s *stubLLM) Complete(ctx context.Context, system string, msgs []llm.Messag
 type stubHist struct{ entries []history.Entry }
 
 func (s *stubHist) Entries() []history.Entry { return s.entries }
+func (s *stubHist) Path() string             { return "/tmp/hist/sess-a.jsonl" }
 
 func newMem(t *testing.T, l llm.LLM) (*Memory, string) {
 	t.Helper()
@@ -258,3 +259,54 @@ func TestHarvestSignsFactsCheap(t *testing.T) {
 		t.Fatalf("author %q rel %q", g.author, g.rel)
 	}
 }
+
+func TestVerifyAndEvidenceRef(t *testing.T) {
+	turn := []history.Entry{
+		{Seq: 3, Kind: "input", Data: map[string]any{"text": "what did bq return"}},
+		{Seq: 5, Kind: "result", Data: map[string]any{"text": "row_count: 312\nbilling_project: uni-analytics-prod\n"}},
+	}
+	facts := ParseFacts("service:bq | relates | repo:x | #5: billing_project: uni-analytics-prod\nfile:a | relates | file:b | #3: row_count:  312\nfile:c | relates | file:d | #5: owner: nobody\nfile:e | relates | file:f | plain words, no seq", 4)
+	if len(facts) != 4 || facts[0].Seq != 5 || facts[0].Quote != "billing_project: uni-analytics-prod" {
+		t.Fatalf("parse: %+v", facts)
+	}
+	if f, ok := Verify(facts[0], turn); !ok || f.Seq != 5 {
+		t.Fatalf("verbatim quote in cited entry must verify: %+v %v", f, ok)
+	}
+	if f, ok := Verify(facts[1], turn); !ok || f.Seq != 5 || !strings.HasPrefix(f.Evidence, "#5:") {
+		t.Fatalf("a quote in another entry of the turn corrects the seq: %+v %v", f, ok)
+	}
+	if _, ok := Verify(facts[2], turn); ok {
+		t.Fatal("a quote found nowhere in the turn must be dropped")
+	}
+	if _, ok := Verify(facts[3], turn); !ok {
+		t.Fatal("evidence without a seq is kept as is")
+	}
+}
+
+func TestEvidenceTool(t *testing.T) {
+	dir := t.TempDir()
+	other := filepath.Join(dir, "sess-b.jsonl")
+	if err := os.WriteFile(other, []byte(`{"seq":1,"kind":"input","data":{"text":"hi"}}`+"\n"+`{"seq":2,"kind":"result","data":{"text":"the other session's output"}}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := &Memory{session: "sess-a", hist: &pathHist{stubHist{entries: []history.Entry{{Seq: 4, Kind: "result", Data: map[string]any{"text": "own output"}}}}, filepath.Join(dir, "sess-a.jsonl")}}
+	if got, err := m.evidence("#4"); err != nil || !strings.Contains(got, "own output") || !strings.HasPrefix(got, "[sess-a#4 result]") {
+		t.Fatalf("own session: %q %v", got, err)
+	}
+	if got, err := m.evidence("sess-b#2: quoted words"); err != nil || !strings.Contains(got, "the other session's output") {
+		t.Fatalf("other session: %q %v", got, err)
+	}
+	if _, err := m.evidence("../etc#1"); err == nil {
+		t.Fatal("a path in the session name must be refused")
+	}
+	if _, err := m.evidence("sess-b#9"); err == nil {
+		t.Fatal("a missing seq must error")
+	}
+}
+
+type pathHist struct {
+	stubHist
+	path string
+}
+
+func (p *pathHist) Path() string { return p.path }

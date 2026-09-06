@@ -126,12 +126,14 @@ So bough's memory is:
   llm-small row writes the index lines and picks per turn; without it,
   first lines and recency.
 
-What the graph lacks and the drawer had: an edge's evidence is free
-text, not a `session#seq`, so traversal ends at a paraphrase rather
-than at a line the reasoner can focus. That is the one piece of the
-experiment worth carrying over, and it needs no model: evidence that
-names a chunk, and a citation check on the reasoner's replies against
-stored text.
+The one piece carried over from the experiment, needing no model:
+auto-memory's digest now marks every entry `[#seq]` and includes the
+head of each tool output; the small model's evidence must be
+`#seq: quote`; the quote is verified verbatim against the turn (a wrong
+seq is corrected, a quote found nowhere drops the fact); the edge stores
+`session#seq: quote`; and `tools.evidence("session#seq")` returns that
+entry verbatim from any session's history file. A fresh session can
+search the graph, open the cited entry, and quote the line.
 
 ## Not worth re-running
 

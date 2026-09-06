@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,7 +38,12 @@ const defaultMaxFacts = 3
 
 // digestBytes bounds what the small model reads: the tail of the turn,
 // where the conclusion is.
-const digestBytes = 6 * 1024
+const digestBytes = 12 * 1024
+
+// resultHead is how much of one tool output the digest carries: enough
+// for the value a fact turns on (a count, a path, an error line), not
+// the dump. Facts are verified against the full output afterwards.
+const resultHead = 600
 
 // Prompt is the extraction brief. It asks for pipe-separated triples
 // rather than JSON: a small model gets one line per fact right far more
@@ -52,16 +59,23 @@ subject | relation | object | evidence
 
 subject and object are kind:key, kinds: repo, file, package, tool, person, task, decision, service. Use the real paths and names from the turn.
 relation is one of: relates, requires, replaces, blocked_by, decided, authored, implements, documents.
-evidence is one sentence in plain words, quoting the number or path that makes it true.
+evidence is #N followed by a colon and a short verbatim quote from the entry marked [#N] in the turn that makes the fact true, e.g. #12: billing_project: uni-analytics-prod
 
 If nothing in this turn is worth remembering, answer with exactly: NOTHING
 
 The turn:
 `
 
-// History is the seam we read the turn from.
+// History is the seam we read the turn from. Path names the session
+// file, which is the session half of an evidence reference.
 type History interface {
 	Entries() []history.Entry
+	Path() string
+}
+
+// Codemode is the optional seam that gives the model tools.evidence.
+type Codemode interface {
+	RegisterTool(name string, fn any)
 }
 
 // Graph is the slice of the "graph" service we write through; absent,
@@ -77,6 +91,7 @@ type Memory struct {
 	llm      llm.LLM
 	small    bool // a real llm-small row, not the agent's own model
 	hist     History
+	session  string // the session file's base name, cited in evidence
 	graph    Graph
 	file     string
 	maxFacts int
@@ -89,8 +104,13 @@ type Memory struct {
 	failed  bool // the extraction error has been reported once
 }
 
-// Fact is one extracted triple.
-type Fact struct{ Src, Rel, Dst, Evidence string }
+// Fact is one extracted triple. Seq and Quote are the evidence taken
+// apart: the history entry it cites and the words it quotes from it.
+type Fact struct {
+	Src, Rel, Dst, Evidence string
+	Seq                     int64
+	Quote                   string
+}
 
 // Line renders a fact the way the memory file and the ui show it.
 func (f Fact) Line() string {
@@ -101,6 +121,43 @@ func (f Fact) Line() string {
 // differ between turns without making it a new fact.
 func (f Fact) key() string {
 	return strings.ToLower(f.Src + "|" + f.Rel + "|" + f.Dst)
+}
+
+var evidenceRe = regexp.MustCompile(`^#(\d+)\s*[:\-–—]\s*(.+)$`)
+
+// Verify checks a fact's quote against the turn: it must occur, case
+// and whitespace aside, in the entry it cites, else in some entry of
+// the turn (the seq is corrected). A quote found nowhere is the model
+// inventing, and the fact is dropped. Facts with no #seq evidence are
+// kept as they were, unverified.
+func Verify(f Fact, turn []history.Entry) (Fact, bool) {
+	if f.Seq == 0 || f.Quote == "" {
+		return f, true
+	}
+	needle := squash(f.Quote)
+	var fallback int64
+	for _, e := range turn {
+		text, _ := e.Data["text"].(string)
+		if !strings.Contains(squash(text), needle) {
+			continue
+		}
+		if e.Seq == f.Seq {
+			return f, true
+		}
+		if fallback == 0 {
+			fallback = e.Seq
+		}
+	}
+	if fallback == 0 {
+		return f, false
+	}
+	f.Seq = fallback
+	f.Evidence = fmt.Sprintf("#%d: %s", fallback, f.Quote)
+	return f, true
+}
+
+func squash(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
 }
 
 // ParseFacts reads the model's answer. Anything that is not a
@@ -129,6 +186,10 @@ func ParseFacts(reply string, max int) []Fact {
 		if f.Src == "" || f.Rel == "" || f.Dst == "" || f.Evidence == "" {
 			continue
 		}
+		if m := evidenceRe.FindStringSubmatch(f.Evidence); m != nil {
+			f.Seq, _ = strconv.ParseInt(m[1], 10, 64)
+			f.Quote = strings.TrimSpace(m[2])
+		}
 		// A relation with spaces is fine; a subject without a kind is
 		// not — it would create a junk entity.
 		if !strings.Contains(f.Src, ":") || !strings.Contains(f.Dst, ":") {
@@ -141,11 +202,8 @@ func ParseFacts(reply string, max int) []Fact {
 	return out
 }
 
-// Digest is the turn as the extractor sees it: the user's message, what
-// the agent finally said, and the files it wrote. Tool output is left
-// out on purpose — it is the bulk of a turn and almost never the part
-// worth remembering.
-func Digest(entries []history.Entry) string {
+// Turn is the entries of the last turn: from its input to the end.
+func Turn(entries []history.Entry) []history.Entry {
 	start := 0
 	for i := len(entries) - 1; i >= 0; i-- {
 		if entries[i].Kind == "input" {
@@ -153,9 +211,17 @@ func Digest(entries []history.Entry) string {
 			break
 		}
 	}
+	return entries[start:]
+}
+
+// Digest is the turn as the extractor sees it: the user's message, what
+// the agent said and ran, the head of each tool output, and the files
+// it wrote. Every entry is marked [#seq] so a fact can cite the entry
+// its quote came from; Verify then holds it to that.
+func Digest(entries []history.Entry) string {
 	var b strings.Builder
 	var files []string
-	for _, e := range entries[start:] {
+	for _, e := range Turn(entries) {
 		text, _ := e.Data["text"].(string)
 		switch e.Kind {
 		case "input":
@@ -163,13 +229,19 @@ func Digest(entries []history.Entry) string {
 			// decide what is worth remembering, and an injected
 			// skill's body is neither what the user asked nor
 			// something worth paying for on every turn.
-			b.WriteString("USER: " + history.Prompt(e) + "\n\n")
+			fmt.Fprintf(&b, "[#%d] USER: %s\n\n", e.Seq, history.Prompt(e))
 		case "assistant":
 			if strings.TrimSpace(text) != "" {
-				b.WriteString("AGENT: " + text + "\n\n")
+				fmt.Fprintf(&b, "[#%d] AGENT: %s\n\n", e.Seq, text)
 			}
 		case "code":
-			b.WriteString("AGENT RAN:\n" + text + "\n\n")
+			fmt.Fprintf(&b, "[#%d] AGENT RAN:\n%s\n\n", e.Seq, text)
+		case "result":
+			head := text
+			if len(head) > resultHead {
+				head = head[:resultHead] + "…"
+			}
+			fmt.Fprintf(&b, "[#%d] OUTPUT:\n%s\n\n", e.Seq, head)
 		case "done":
 			switch l := e.Data["files"].(type) {
 			case []string:
@@ -209,7 +281,8 @@ func (m *Memory) harvest() {
 		m.mu.Unlock()
 	}()
 
-	digest := Digest(m.hist.Entries())
+	entries := m.hist.Entries()
+	digest := Digest(entries)
 	if strings.TrimSpace(digest) == "" {
 		return
 	}
@@ -233,9 +306,24 @@ func (m *Memory) harvest() {
 		}
 		return
 	}
+	kernel.Logf("auto-memory: reply:\n%s\n", strings.TrimSpace(reply))
 	facts := ParseFacts(reply, m.maxFacts)
+	turn := Turn(entries)
 	var saved []string
+	dropped := 0
 	for _, f := range facts {
+		// The quote must be in the turn, or the fact is the model's
+		// invention. A verified fact's evidence names the session and
+		// entry, so a later reader can open it: tools.evidence(ref).
+		f, ok := Verify(f, turn)
+		if !ok {
+			kernel.Logf("auto-memory: dropped, quote not in turn: %s\n", f.Line())
+			dropped++
+			continue
+		}
+		if f.Seq != 0 {
+			f.Evidence = fmt.Sprintf("%s#%d: %s", m.session, f.Seq, f.Quote)
+		}
 		m.mu.Lock()
 		dup := m.written[f.key()]
 		m.written[f.key()] = true
@@ -253,6 +341,9 @@ func (m *Memory) harvest() {
 		return // a turn that established nothing is not worth a row
 	}
 	head := fmt.Sprintf("remembered %d fact(s)", len(saved))
+	if dropped > 0 {
+		head += fmt.Sprintf(", dropped %d whose quote was not in the turn", dropped)
+	}
 	if !m.small {
 		head += " (no llm-small row: used the agent's model)"
 	}
@@ -310,7 +401,7 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("auto-memory: needs the history service")
 	}
-	m := &Memory{llm: l, small: small, hist: h, maxFacts: max, written: map[string]bool{}}
+	m := &Memory{llm: l, small: small, hist: h, session: sessionName(h.Path()), maxFacts: max, written: map[string]bool{}}
 	if g, err := kernel.Get[Graph](kctx, "graph"); err == nil {
 		m.graph = g
 	}
@@ -336,8 +427,65 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 			go m.harvest()
 		}
 	})
+	// tools.evidence(ref): the verbatim entry an edge's evidence names,
+	// from this session or any other on disk. Optional seam: headless
+	// runs without codemode have no tools.
+	if cm, err := kernel.Get[Codemode](kctx, "codemode"); err == nil {
+		cm.RegisterTool("evidence", m.evidence)
+		if d, ok := cm.(interface{ Describe(name, line string) }); ok {
+			d.Describe("evidence", `tools.evidence("session#seq") -> string: the full text of the history entry a graph edge's evidence cites, verbatim; "#seq" alone means this session.`)
+		}
+	}
 	kctx.Provide("auto-memory", m)
 	return nil
+}
+
+// sessionName is the session half of an evidence reference: the
+// history file's base name.
+func sessionName(path string) string {
+	if path == "" {
+		return "session"
+	}
+	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+}
+
+// evidence resolves "session#seq" (or "#seq") to the entry's text.
+func (m *Memory) evidence(ref string) (string, error) {
+	sess, seqs, ok := strings.Cut(strings.TrimSpace(ref), "#")
+	if !ok {
+		return "", fmt.Errorf("evidence: want session#seq, got %q", ref)
+	}
+	seq, err := strconv.ParseInt(strings.TrimSpace(strings.SplitN(seqs, ":", 2)[0]), 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("evidence: bad seq in %q", ref)
+	}
+	sess = strings.TrimSpace(sess)
+	var entries []history.Entry
+	if sess == "" || sess == m.session {
+		entries = m.hist.Entries()
+	} else {
+		if strings.ContainsAny(sess, "/\\") {
+			return "", fmt.Errorf("evidence: bad session %q", sess)
+		}
+		entries, err = history.Read(filepath.Join(filepath.Dir(m.hist.Path()), sess+".jsonl"))
+		if err != nil {
+			return "", fmt.Errorf("evidence: session %s: %w", sess, err)
+		}
+	}
+	for _, e := range entries {
+		if e.Seq == seq {
+			text, _ := e.Data["text"].(string)
+			return fmt.Sprintf("[%s#%d %s]\n%s", sessionOf(sess, m.session), seq, e.Kind, text), nil
+		}
+	}
+	return "", fmt.Errorf("evidence: no entry #%d in session %s", seq, sessionOf(sess, m.session))
+}
+
+func sessionOf(given, own string) string {
+	if given == "" {
+		return own
+	}
+	return given
 }
 
 // toInt reads a yaml int, float, or --set string.

@@ -321,7 +321,7 @@ func (s *Service) PromptSection(ws WorkspaceInfo, hops, maxRows int) string {
 	if len(ws.Tickets) > 0 {
 		head += ", " + strings.Join(ws.Tickets, " ")
 	}
-	head += "). Look further with tools.graph.search(q), .neighbors(key), .timeline(key), .resolve(ref); record a fact with tools.graph.assert(src, rel, dst, evidence).\n"
+	head += "). Look further with tools.graph.search(q), .neighbors(key), .timeline(key), .resolve(ref); record a fact with tools.graph.assert(src, rel, dst, evidence). Evidence of the form session#seq: … names a history entry; tools.evidence(\"session#seq\") returns it verbatim.\n"
 	return head + strings.Join(lines, "\n")
 }
 
