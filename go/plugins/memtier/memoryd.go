@@ -1,12 +1,14 @@
 package memtier
 
-// The local memory model. memoryd (~/.bough/memory/memoryd.py) holds a
-// hybrid model's recurrent state per session on mlx-lm: everything the
-// agent sees is appended to it once, in order, and questions fork the
-// state to answer. This file is the client and the three things the
-// plugin does with it: feed the history into it as it grows, hand the
-// reasoner tools.recall(question), and answer each new request from
-// memory before the reasoner starts.
+// The local memory: memoryd (go/memory/memoryd.py) keeps every chunk
+// verbatim in SQLite, indexes it with BM25 plus a static embedding, and
+// answers questions by having a small local model READ the top hits and
+// return {seq, quote, answer}, which memoryd verifies against the chunk
+// before anything is returned. This file is the client and what the
+// plugin does with it: feed history into the index as it lands, write
+// a ledger record per turn, hand the reasoner tools.recall(question),
+// answer each new request from memory before the reasoner starts, and
+// pick the hidden outputs a request is about.
 
 import (
 	"bytes"
@@ -17,15 +19,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/andreylukin/bough/plugins/history"
-	"github.com/andreylukin/bough/plugins/llm"
 )
 
-// memoryClient talks to one memoryd.
 type memoryClient struct {
 	url     string
 	session string
@@ -36,77 +37,102 @@ func newMemoryClient(url, session string) *memoryClient {
 	return &memoryClient{url: strings.TrimRight(url, "/"), session: session, http: &http.Client{Timeout: 10 * time.Minute}}
 }
 
-func (c *memoryClient) post(ctx context.Context, path string, req map[string]any) (map[string]any, error) {
-	req["session"] = c.session
+func (c *memoryClient) post(ctx context.Context, path string, req map[string]any, out any) error {
 	body, _ := json.Marshal(req)
 	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url+path, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	hr.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(hr)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer resp.Body.Close()
-	var out map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("memoryd %s: %w", path, err)
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return fmt.Errorf("memoryd %s: %w", path, err)
 	}
-	if e, ok := out["error"].(string); ok && e != "" {
-		return nil, fmt.Errorf("memoryd %s: %s", path, e)
+	if e, ok := raw["error"]; ok {
+		var msg string
+		_ = json.Unmarshal(e, &msg)
+		return fmt.Errorf("memoryd %s: %s", path, msg)
 	}
-	return out, nil
+	b, _ := json.Marshal(raw)
+	return json.Unmarshal(b, out)
 }
 
-// Ingest appends text to the session state under history seq.
-func (c *memoryClient) Ingest(ctx context.Context, seq int64, text string) error {
-	_, err := c.post(ctx, "/ingest", map[string]any{"seq": seq, "text": text})
-	return err
+// Index stores one chunk and returns its index line.
+func (c *memoryClient) Index(ctx context.Context, seq int64, kind, text string) (string, error) {
+	var out struct{ Line string }
+	err := c.post(ctx, "/index", map[string]any{"session": c.session, "seq": seq, "kind": kind, "text": text}, &out)
+	return out.Line, err
 }
 
-// Ask answers a question from the state.
-func (c *memoryClient) Ask(ctx context.Context, question string, maxTokens int) (string, error) {
-	out, err := c.post(ctx, "/ask", map[string]any{"question": question, "max_tokens": maxTokens})
-	if err != nil {
-		return "", err
+type hit struct {
+	Session string
+	Seq     int64
+	Kind    string
+	Line    string
+}
+
+// Search is the index alone: the chunks a query is about, this session
+// only when session is true.
+func (c *memoryClient) Search(ctx context.Context, query string, session bool, k int) ([]hit, error) {
+	req := map[string]any{"query": query, "k": k}
+	if session {
+		req["session"] = c.session
 	}
-	a, _ := out["answer"].(string)
-	return a, nil
+	var out struct{ Hits []hit }
+	err := c.post(ctx, "/search", req, &out)
+	return out.Hits, err
 }
 
-// Save writes the state to disk. Load reads it back and returns the
-// history seq it had reached (0 when there was nothing).
-func (c *memoryClient) Save(ctx context.Context) error {
-	_, err := c.post(ctx, "/save", map[string]any{})
-	return err
+// Recalled is a verified answer, or Verified=false with nothing usable.
+type Recalled struct {
+	Answer   string
+	Seq      int64
+	Session  string
+	Quote    string
+	Verified bool
+	Raw      string // the reader's unverified answer, for the receipt only
 }
 
-func (c *memoryClient) Load(ctx context.Context) (int64, error) {
-	out, err := c.post(ctx, "/load", map[string]any{})
-	if err != nil {
-		return 0, err
+// Recall reads the top hits for a question; session=false searches
+// every session the memory has, ledger records included.
+func (c *memoryClient) Recall(ctx context.Context, question string, session bool) (Recalled, error) {
+	req := map[string]any{"question": question}
+	if session {
+		req["session"] = c.session
 	}
-	seq, _ := out["seq"].(float64)
-	return int64(seq), nil
+	var out Recalled
+	err := c.post(ctx, "/recall", req, &out)
+	return out, err
 }
 
-// Complete makes the memory usable wherever an llm.LLM is: the
-// navigator's index and pick prompts go to it as one question. The
-// state already holds every output, so the question is answered from
-// memory plus whatever the prompt carries.
-func (c *memoryClient) Complete(ctx context.Context, system string, messages []llm.Message) (string, error) {
-	var b strings.Builder
-	b.WriteString(system)
-	for _, m := range messages {
-		b.WriteString("\n\n")
-		b.WriteString(m.Content)
-	}
-	return c.Ask(ctx, b.String(), 400)
+type fact struct {
+	Seq     int64
+	Session string
+	Quote   string
+	Fact    string
+}
+
+// Note is the memory's verified facts for a new request.
+func (c *memoryClient) Note(ctx context.Context, request string) ([]fact, error) {
+	var out struct{ Facts []fact }
+	err := c.post(ctx, "/note", map[string]any{"request": request, "session": c.session}, &out)
+	return out.Facts, err
+}
+
+// Consolidate writes ledger records for one turn's chunks.
+func (c *memoryClient) Consolidate(ctx context.Context, from, to int64) (int, error) {
+	var out struct{ Records int }
+	err := c.post(ctx, "/consolidate", map[string]any{"session": c.session, "from_seq": from, "to_seq": to}, &out)
+	return out.Records, err
 }
 
 // sessionName is the memoryd session for a history file: its base
-// name, so a resumed session finds its own state.
+// name, so a resumed session finds its own chunks.
 func sessionName(path string) string {
 	if path == "" {
 		return "default"
@@ -114,18 +140,21 @@ func sessionName(path string) string {
 	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 }
 
-// feeder streams history entries into the memory in seq order, one at
-// a time, off the turn's goroutine.
+// feeder streams history entries into the index in seq order, one at
+// a time, off the turn's goroutine, and consolidates each finished
+// turn into the ledger.
 type feeder struct {
-	c    *memoryClient
-	hist interface{ Entries() []history.Entry }
-	ctx  context.Context
-	fail func(error)
+	c     *memoryClient
+	hist  interface{ Entries() []history.Entry }
+	ctx   context.Context
+	fail  func(error)
+	lines func(seq int64, line string) // the placeholder line for a chunk, as memoryd wrote it
 
-	mu    sync.Mutex
-	seq   int64 // high-water: every entry <= seq is in the memory
-	busy  bool
-	again bool
+	mu        sync.Mutex
+	seq       int64 // high-water: every entry <= seq is indexed
+	busy      bool
+	again     bool
+	pendingCn []int64 // "done" seqs whose turns await consolidation
 }
 
 // Kick feeds whatever is new; a call during a run schedules one more.
@@ -141,30 +170,75 @@ func (f *feeder) Kick() {
 	go f.run()
 }
 
+// TurnDone marks the turn ending at seq for consolidation once fed.
+func (f *feeder) TurnDone(seq int64) {
+	f.mu.Lock()
+	f.pendingCn = append(f.pendingCn, seq)
+	f.mu.Unlock()
+	f.Kick()
+}
+
 func (f *feeder) run() {
 	for {
 		f.mu.Lock()
 		f.again = false
 		hw := f.seq
 		f.mu.Unlock()
+		lastCode := ""
 		for _, e := range f.hist.Entries() {
+			if e.Kind == "code" {
+				lastCode, _ = e.Data["text"].(string)
+			}
 			if e.Seq <= hw {
 				continue
 			}
-			text := feedText(e)
-			if text != "" {
-				if err := f.c.Ingest(f.ctx, e.Seq, text); err != nil {
+			if kind, text := feedText(e); text != "" {
+				// A recall's own output is memory talking about memory;
+				// stored for the record, never used as evidence.
+				if kind == "tool output" && strings.Contains(lastCode, "tools.recall(") {
+					kind = "recall"
+				}
+				line, err := f.c.Index(f.ctx, e.Seq, kind, text)
+				if err != nil {
 					f.fail(err)
 					f.mu.Lock()
 					f.busy = false
 					f.mu.Unlock()
 					return
 				}
+				if e.Kind == "result" && f.lines != nil {
+					f.lines(e.Seq, line)
+				}
 			}
 			hw = e.Seq
 			f.mu.Lock()
 			f.seq = hw
 			f.mu.Unlock()
+		}
+		// Turns whose entries are all in: one ledger pass each.
+		f.mu.Lock()
+		var ready []int64
+		var later []int64
+		for _, s := range f.pendingCn {
+			if s <= f.seq {
+				ready = append(ready, s)
+			} else {
+				later = append(later, s)
+			}
+		}
+		f.pendingCn = later
+		f.mu.Unlock()
+		for _, s := range ready {
+			// The turn is everything from its input up to the done.
+			start := int64(1)
+			for _, e := range f.hist.Entries() {
+				if e.Kind == "input" && e.Seq <= s {
+					start = e.Seq
+				}
+			}
+			if _, err := f.c.Consolidate(f.ctx, start, s); err != nil {
+				f.fail(err)
+			}
 		}
 		f.mu.Lock()
 		if !f.again {
@@ -176,8 +250,7 @@ func (f *feeder) run() {
 	}
 }
 
-// Wait blocks until the feeder is idle or the deadline passes, so a
-// save lands after the turn's own entries.
+// Wait blocks until the feeder is idle or the deadline passes.
 func (f *feeder) Wait(d time.Duration) {
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
@@ -187,47 +260,42 @@ func (f *feeder) Wait(d time.Duration) {
 		if idle {
 			return
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
 var spillRe = regexp.MustCompile(`\[full output saved to (\S+) — \d+ lines;`)
 
-// spillMax caps what one spilled output feeds: past this the model's
-// state is better served by the head and tail the agent saw.
+// spillMax caps what one spilled output feeds the index.
 const spillMax = 400_000
 
-// feedText is what one history entry contributes to the memory: the
-// same kinds the model is shown, headed by seq and kind, so an answer
-// can cite the seq and the reasoner can focus it.
-func feedText(e history.Entry) string {
+// feedText is what one history entry contributes: its kind for the
+// index and its text, spilled outputs read back in full.
+func feedText(e history.Entry) (string, string) {
 	text, _ := e.Data["text"].(string)
 	switch e.Kind {
 	case "input":
-		return fmt.Sprintf("\n[#%d user]\n%s\n", e.Seq, text)
+		return "user", text
 	case "assistant":
-		return fmt.Sprintf("\n[#%d agent]\n%s\n", e.Seq, text)
+		return "agent", text
+	case "code":
+		return "code", text
 	case "result":
-		// A capped output names its spill file; the memory reads the
-		// whole thing, which is the point of having it.
 		if m := spillRe.FindStringSubmatch(text); m != nil {
 			if full, err := os.ReadFile(m[1]); err == nil && len(full) <= spillMax {
 				text = string(full)
 			}
 		}
-		return fmt.Sprintf("\n[#%d tool output]\n%s\n", e.Seq, text)
+		return "tool output", text
 	case "job":
-		return fmt.Sprintf("\n[#%d background job]\n%s\n", e.Seq, text)
+		return "background job", text
 	}
-	return ""
+	return "", ""
 }
 
-const notePrompt = `The user's new request to the agent is below. From the session so far, list the facts the agent will need for it: exact values, file paths, commands already run and what they returned, errors, decisions. Cite the [#SEQ] of the output each fact came from. Be brief; at most eight lines. If nothing in the session bears on it, reply exactly: nothing relevant.
-
-Request: `
-
-// note answers a new request from memory, once per turn. "" when the
-// memory has nothing, so the projection is untouched.
+// note answers a new request from memory, once per turn: the verified
+// facts, each with the seq it came from so the reasoner can focus it.
+// "" when the memory has nothing, so the projection is untouched.
 func (t *Tier) note(inputSeq int64, prompt string) string {
 	if t.mem == nil || inputSeq == 0 || strings.TrimSpace(prompt) == "" {
 		return ""
@@ -240,15 +308,15 @@ func (t *Tier) note(inputSeq int64, prompt string) string {
 	}
 	ctx, cancel := context.WithTimeout(t.ctx, t.pickTimeout)
 	defer cancel()
-	a, err := t.mem.Ask(ctx, notePrompt+prompt, 300)
+	facts, err := t.mem.Note(ctx, prompt)
 	if err != nil {
 		t.reportOnce(err)
-		a = ""
 	}
-	a = strings.TrimSpace(a)
-	if strings.EqualFold(strings.TrimRight(a, "."), "nothing relevant") || strings.EqualFold(strings.TrimRight(a, "."), "not in memory") {
-		a = ""
+	var b strings.Builder
+	for _, f := range facts {
+		fmt.Fprintf(&b, "- %s (from #%d: %q)\n", f.Fact, f.Seq, f.Quote)
 	}
+	a := strings.TrimSpace(b.String())
 	t.mu.Lock()
 	t.notes[inputSeq] = a
 	t.mu.Unlock()
@@ -258,13 +326,27 @@ func (t *Tier) note(inputSeq int64, prompt string) string {
 	return a
 }
 
-// recall is tools.recall(question) -> string: the reasoner asks the
-// memory directly.
+// recall is tools.recall(question) -> string: a verified value with its
+// source, or a plain statement that memory has nothing verified.
 func (t *Tier) recall(question string) (string, error) {
 	if t.mem == nil {
 		return "", fmt.Errorf("recall: no local memory configured (memory-tier memory_url)")
 	}
 	ctx, cancel := context.WithTimeout(t.ctx, 2*time.Minute)
 	defer cancel()
-	return t.mem.Ask(ctx, question, 400)
+	r, err := t.mem.Recall(ctx, question, false)
+	if err != nil {
+		return "", err
+	}
+	if !r.Verified {
+		if r.Raw != "" {
+			return "not in memory (the reader guessed " + strconv.Quote(r.Raw) + " but no stored output contains it; do not use it)", nil
+		}
+		return "not in memory", nil
+	}
+	where := "#" + strconv.FormatInt(r.Seq, 10)
+	if r.Session != t.mem.session {
+		where = "session " + r.Session + " " + where
+	}
+	return fmt.Sprintf("%s\n(verified in %s: %q)", r.Answer, where, r.Quote), nil
 }

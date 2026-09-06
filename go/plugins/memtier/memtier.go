@@ -226,8 +226,7 @@ func (t *Tier) placeholder(seq int64, text string) string {
 // pick asks the navigator, once per turn, which candidate outputs the
 // prompt is about. Without a navigator, or on any failure, nothing.
 func (t *Tier) pick(inputSeq int64, prompt string, cands []history.Entry) []int64 {
-	nav := t.navigator()
-	if nav == nil || inputSeq == 0 || len(cands) == 0 || strings.TrimSpace(prompt) == "" {
+	if inputSeq == 0 || len(cands) == 0 || strings.TrimSpace(prompt) == "" {
 		return nil
 	}
 	t.mu.Lock()
@@ -235,6 +234,13 @@ func (t *Tier) pick(inputSeq int64, prompt string, cands []history.Entry) []int6
 	t.mu.Unlock()
 	if done {
 		return got
+	}
+	if t.mem != nil {
+		return t.pickByIndex(inputSeq, prompt, cands)
+	}
+	nav := t.navigator()
+	if nav == nil {
+		return nil
 	}
 	var b strings.Builder
 	for _, e := range cands {
@@ -275,17 +281,40 @@ func (t *Tier) pick(inputSeq int64, prompt string, cands []history.Entry) []int6
 	return seqs
 }
 
-// navigator is the model that writes index lines and picks: the local
-// memory when configured (it already holds every output), else the
-// small model.
+// navigator is the small model that writes index lines and picks when
+// there is no local memory; with one, the index does both.
 func (t *Tier) navigator() llm.LLM {
-	if t.mem != nil {
-		return t.mem
-	}
 	if t.nav == nil {
 		return nil
 	}
 	return t.nav()
+}
+
+// pickByIndex asks the memory's index which hidden outputs the request
+// is about: milliseconds, no model.
+func (t *Tier) pickByIndex(inputSeq int64, prompt string, cands []history.Entry) []int64 {
+	ctx, cancel := context.WithTimeout(t.ctx, t.pickTimeout)
+	defer cancel()
+	hits, err := t.mem.Search(ctx, prompt, true, t.topK*3)
+	var seqs []int64
+	if err == nil {
+		valid := map[int64]bool{}
+		for _, e := range cands {
+			valid[e.Seq] = true
+		}
+		for _, h := range hits {
+			if valid[h.Seq] && len(seqs) < t.topK {
+				seqs = append(seqs, h.Seq)
+			}
+		}
+	}
+	t.mu.Lock()
+	t.picked[inputSeq] = seqs
+	t.mu.Unlock()
+	if err != nil {
+		t.reportOnce(err)
+	}
+	return seqs
 }
 
 func (t *Tier) placeholderLine(seq int64, text string) string {
@@ -304,6 +333,9 @@ const indexPrompt = `You write one-line index entries for tool outputs in a codi
 // Index summarises outputs that have no index line yet. Called off
 // the turn's goroutine; one run at a time, the rest skipped.
 func (t *Tier) Index(entries []history.Entry) {
+	if t.mem != nil {
+		return // the memory's feeder writes the lines as it indexes
+	}
 	nav := t.navigator()
 	if nav == nil {
 		return
@@ -510,21 +542,14 @@ func (t *Tier) attachMemory(kctx *kernel.Context, url string, h loop.History) er
 		return fmt.Errorf("memory-tier: memory_url needs the codemode service")
 	}
 	t.mem = newMemoryClient(url, sessionName(h.Path()))
-	f := &feeder{c: t.mem, hist: h, ctx: t.ctx, fail: t.reportOnce}
-	go func() {
-		ctx, cancel := context.WithTimeout(t.ctx, 2*time.Minute)
-		defer cancel()
-		if seq, err := t.mem.Load(ctx); err != nil {
-			t.reportOnce(err)
-			return
-		} else if seq > 0 {
-			f.mu.Lock()
-			f.seq = seq
-			f.mu.Unlock()
-			t.emit("memory", fmt.Sprintf("memory: resumed local state through #%d", seq))
-		}
-		f.Kick()
-	}()
+	f := &feeder{c: t.mem, hist: h, ctx: t.ctx, fail: t.reportOnce, lines: func(seq int64, line string) {
+		t.mu.Lock()
+		t.index[seq] = line
+		t.mu.Unlock()
+	}}
+	// A resumed session: everything already in history goes in first
+	// (memoryd skips seqs it has), then each turn as it lands.
+	f.Kick()
 	kctx.On("loop/event", func(p any) {
 		ev, ok := p.(loop.Event)
 		if !ok {
@@ -534,20 +559,15 @@ func (t *Tier) attachMemory(kctx *kernel.Context, url string, h loop.History) er
 		case "result", "assistant", "input":
 			f.Kick()
 		case "done":
-			f.Kick()
-			go func() {
-				f.Wait(5 * time.Minute)
-				ctx, cancel := context.WithTimeout(t.ctx, 2*time.Minute)
-				defer cancel()
-				if err := t.mem.Save(ctx); err != nil {
-					t.reportOnce(err)
-				}
-			}()
+			es := h.Entries()
+			if n := len(es); n > 0 {
+				f.TurnDone(es[n-1].Seq)
+			}
 		}
 	})
 	cm.RegisterTool("recall", t.recall)
 	if d, ok := cm.(interface{ Describe(name, line string) }); ok {
-		d.Describe("recall", `tools.recall(question) -> string: ask the local memory model, which has read this whole session including hidden outputs; cheap, answers in a second, verify values it gives you.`)
+		d.Describe("recall", `tools.recall(question) -> string: ask the local memory, which indexes every output of this and past sessions; returns a value only after verifying it in the stored output it cites, else "not in memory".`)
 	}
 	return nil
 }
