@@ -81,19 +81,30 @@ func linearIssues(text string) []linearIssue {
 		if !ok {
 			continue
 		}
+		// The MCP server puts the human identifier in "id" and the
+		// uuid in "uuid"; the GraphQL API has "identifier" and "id".
 		is := linearIssue{
-			ID:          str(m, "id"),
+			ID:          str(m, "uuid"),
 			Identifier:  str(m, "identifier", "key"),
 			Title:       str(m, "title"),
 			URL:         str(m, "url"),
-			State:       str(m, "state", "status"),
-			Description: str(m, "description"),
+			State:       str(m, "status", "state"),
+			Description: str(m, "description") + " " + str(m, "gitBranchName"),
 			UpdatedAt:   str(m, "updatedAt", "updated_at"),
 		}
-		if a, ok := m["assignee"].(map[string]any); ok {
+		if id := str(m, "id"); is.Identifier == "" && len(graph.Tickets(id)) == 1 {
+			is.Identifier = id
+		} else if is.ID == "" {
+			is.ID = id
+		}
+		switch a := m["assignee"].(type) {
+		case map[string]any:
 			is.Assignee.ID = str(a, "id")
 			is.Assignee.Name = str(a, "name", "displayName")
 			is.Assignee.Email = str(a, "email")
+		case string:
+			is.Assignee.Name = a
+			is.Assignee.ID = str(m, "assigneeId")
 		}
 		if l, ok := m["attachments"].([]any); ok {
 			for _, a := range l {
@@ -122,10 +133,7 @@ func (r *Run) recordIssue(is linearIssue) (ents, edges int, err error) {
 	if is.ID != "" {
 		_ = r.St.Alias(e.ID, "linear", is.ID, is.URL)
 	}
-	summary := ""
-	if is.Description != "" {
-		summary = graph.FirstSentence(is.Description, 140)
-	}
+	summary := graph.FirstSentence(is.Description, 140)
 	if _, err := r.St.SetLink(e, graph.Link{URL: is.URL, Summary: summary, UpdatedAt: at}); err != nil {
 		return ents, edges, err
 	}
@@ -138,16 +146,12 @@ func (r *Run) recordIssue(is linearIssue) (ents, edges int, err error) {
 		}
 		return err
 	}
-	// list_issues was asked for assignee=me, so a missing assignee
-	// block still means me.
-	me := r.Me
-	if is.Assignee.ID != "" || is.Assignee.Email != "" {
-		me, err = r.person("linear", is.Assignee.ID, is.Assignee.Email, is.Assignee.Name)
-		if err != nil {
-			return ents, edges, err
-		}
+	// list_issues was asked for assignee=me, so the assignee IS me:
+	// its id becomes my Linear alias, whatever the reply calls it.
+	if is.Assignee.ID != "" {
+		_ = r.St.Alias(r.Me.ID, "linear", is.Assignee.ID, "")
 	}
-	if err := count(r.assert(me, "assigned", e, at, "")); err != nil {
+	if err := count(r.assert(r.Me, "assigned", e, at, "")); err != nil {
 		return ents, edges, err
 	}
 	for _, p := range graph.PRLinks(is.Description + " " + strings.Join(is.Links, " ")) {

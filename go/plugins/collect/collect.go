@@ -282,6 +282,10 @@ func jsonIn(text string) string {
 	return text[i:]
 }
 
+func jsonDecode(raw string, v any) error {
+	return json.NewDecoder(strings.NewReader(raw)).Decode(v)
+}
+
 // str reads a string field, or a nested {name}/{title} object.
 func str(m map[string]any, keys ...string) string {
 	for _, k := range keys {

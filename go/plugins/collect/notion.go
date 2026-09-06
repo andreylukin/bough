@@ -72,7 +72,9 @@ func notionPages(text string) []notionPage {
 		}
 		p := notionPage{id: str(m, "id", "page_id"), title: str(m, "title", "name"), url: str(m, "url", "public_url"), edited: str(m, "last_edited_time", "lastEditedTime", "updated_at")}
 		if p.id == "" && p.url != "" {
-			p.id = p.url[strings.LastIndex(p.url, "-")+1:]
+			// https://app.notion.com/p/<32 hex>?pvs=… — the id is the path's last segment.
+			path, _, _ := strings.Cut(p.url, "?")
+			p.id = path[strings.LastIndex(path, "/")+1:]
 		}
 		if p.id == "" {
 			continue

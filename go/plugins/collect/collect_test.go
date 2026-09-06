@@ -2,6 +2,7 @@ package collect
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -110,19 +111,19 @@ func TestLinearFillsTitlesAndStates(t *testing.T) {
 		if tool != "list_issues" || !strings.Contains(args, `"assignee":"me"`) {
 			t.Fatalf("unexpected %s %s", tool, args)
 		}
-		return "Here are the issues:\n```json\n" + `{"issues":[
-		  {"id":"uuid-1","identifier":"NME-1673","title":"graph memory","url":"https://linear.app/asi/issue/NME-1673","state":{"name":"In Progress"},"updatedAt":"2026-09-05T10:00:00Z",
-		   "assignee":{"id":"lin-me","name":"Andrey","email":"andrey@example.com"},
-		   "description":"See https://github.com/asi/uni-nas-event-log/pull/46 for the first cut."},
-		  {"id":"uuid-2","identifier":"NME-1516","title":"old thing","url":"https://linear.app/asi/issue/NME-1516","state":"Done ","updatedAt":"2026-09-04T10:00:00Z"}
-		]}` + "\n```", nil
+		// The MCP server's shape: "id" is the identifier, "uuid" the id,
+		// status and assignee are strings.
+		return `{"issues":[
+		  {"id":"NME-1673","uuid":"225bd04c-1","title":"graph memory","description":"See https://github.com/asi/uni-nas-event-log/pull/46 for the first cut.\n\n## Done when","url":"https://linear.app/asi/issue/NME-1673/graph-memory","gitBranchName":"andrey/nme-1673-graph-memory","updatedAt":"2026-09-05T10:00:00.000Z","status":"In Progress","statusType":"started","assignee":"Andrey Lukin","assigneeId":"28c940f7-me"},
+		  {"id":"NME-1516","uuid":"7eea1225-2","title":"old thing","url":"https://linear.app/asi/issue/NME-1516","updatedAt":"2026-09-04T10:00:00.000Z","status":"Done ","assignee":"Andrey Lukin","assigneeId":"28c940f7-me"}
+		]}`, nil
 	}
 	rep := r.Linear("linear-server")
 	if rep.Err != nil {
 		t.Fatal(rep.Err)
 	}
 	tk, _ := r.St.Get("ticket", "NME-1673")
-	if tk.Title != "graph memory" || tk.Status != "in_progress" || tk.URL == "" {
+	if tk.Title != "graph memory" || tk.Status != "in_progress" || tk.URL == "" || !strings.HasPrefix(tk.Summary, "See https://github.com") {
 		t.Fatalf("ticket: %+v", tk)
 	}
 	done, _ := r.St.Get("ticket", "NME-1516")
@@ -139,28 +140,28 @@ func TestLinearFillsTitlesAndStates(t *testing.T) {
 	} else if n, _ := r.St.Neighbors(pr, 1, "implements", 0); len(n) != 1 {
 		t.Fatalf("implements: %+v", n)
 	}
-	if id, _ := r.St.AliasOwner("linear", "lin-me"); id != r.Me.ID {
+	if id, _ := r.St.AliasOwner("linear", "28c940f7-me"); id != r.Me.ID {
 		t.Fatal("linear assignee id not aliased to me")
+	}
+	if id, _ := r.St.AliasOwner("linear", "225bd04c-1"); id != tk.ID {
+		t.Fatal("issue uuid not aliased to the ticket")
 	}
 }
 
+const slackSearchReply = `{"results":"# Search Results for: <@U_ME>\n\n## Messages (1 results)\n### Result 1 of 1\nChannel: #nm-echo (ID: C1)\nFrom: Bradley Bares <bradley@example.com> (ID: U_BRAD) \nTime: 2026-09-05 04:48:10 EDT\nMessage_ts: 1757064000.000100\nReply count: 1\nPermalink: [link](https://asi.slack.com/archives/C1/p1757064000000100?thread_ts=1757064000.000100&cid=C1)\nText: \n<@U_ME|Andrey Lukin> can you look at NME-1673?\nContext after: \n- From: Olivier S <olivier@example.com> (ID: U_OLI) \n  Message_ts: 1757065000.000200\n  I think it is the sharding\n%s\n---\n"}`
+
 func TestSlackThreadsAwaitMeUntilIReply(t *testing.T) {
 	r := newRun(t)
-	thread := []any{
-		map[string]any{"ts": "1757064000.000100", "user": "U_BRAD", "text": "<@U_ME> can you look at NME-1673?"},
-	}
+	myReply := ""
 	r.call = func(server, tool, args string) (string, error) {
 		switch tool {
 		case "slack_read_user_profile":
-			return `{"id":"U_ME","email":"andrey@example.com","real_name":"Andrey"}`, nil
+			return `{"result":"User ID: U_ME\nUsername: andrey\nReal Name: Andrey Lukin\nEmail: andrey@example.com\n"}`, nil
 		case "slack_search_public_and_private":
-			if strings.Contains(args, "<@U_ME>") {
-				return `{"messages":{"matches":[{"ts":"1757064000.000100","user":"U_BRAD","text":"<@U_ME> can you look at NME-1673?","channel":{"id":"C1","name":"nm-echo"},"permalink":"https://asi.slack.com/archives/C1/p1757064000000100"}]}}`, nil
+			if strings.Contains(args, "<@U_ME> after:") {
+				return fmt.Sprintf(slackSearchReply, myReply), nil
 			}
-			return `{"messages":{"matches":[]}}`, nil
-		case "slack_read_thread":
-			b, _ := json.Marshal(map[string]any{"messages": thread})
-			return string(b), nil
+			return `{"results":"# Search Results\n\n## Messages (0 results)\n"}`, nil
 		}
 		t.Fatalf("unexpected %s", tool)
 		return "", nil
@@ -172,7 +173,7 @@ func TestSlackThreadsAwaitMeUntilIReply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if th.URL != "https://asi.slack.com/archives/C1/p1757064000000100" || th.Status != "open" || !strings.HasPrefix(th.Title, "#nm-echo:") {
+	if !strings.HasPrefix(th.URL, "https://asi.slack.com/archives/C1/p1757064000000100") || th.Status != "open" || !strings.HasPrefix(th.Title, "#nm-echo:") {
 		t.Fatalf("thread: %+v", th)
 	}
 	w, _ := r.St.WorldOf(r.Me)
@@ -182,9 +183,16 @@ func TestSlackThreadsAwaitMeUntilIReply(t *testing.T) {
 	if n, _ := r.St.Neighbors(th, 1, "discusses", 0); len(n) != 1 || n[0].Dst.Key != "NME-1673" {
 		t.Fatalf("discusses: %+v", n)
 	}
+	// People come with emails, so Bradley is one node by email.
+	if b, err := r.St.Get("person", "bradley@example.com"); err != nil || b.Title != "Bradley Bares" {
+		t.Fatalf("bradley: %+v %v", b, err)
+	}
+	if id, _ := r.St.AliasOwner("slack", "U_ME"); id != r.Me.ID {
+		t.Fatal("my slack id not aliased")
+	}
 
-	// I replied: answered, no longer awaiting me.
-	thread = append(thread, map[string]any{"ts": "1757070000.000200", "user": "U_ME", "text": "on it"})
+	// I replied last: answered, no longer awaiting me.
+	myReply = `- From: Andrey Lukin <andrey@example.com> (ID: U_ME) \n  Message_ts: 1757070000.000300\n  on it`
 	if rep := r.Slack("slack", nil); rep.Err != nil {
 		t.Fatal(rep.Err)
 	}
@@ -201,13 +209,13 @@ func TestSlackThreadsAwaitMeUntilIReply(t *testing.T) {
 func TestNotionPagesLink(t *testing.T) {
 	r := newRun(t)
 	r.call = func(server, tool, args string) (string, error) {
-		return `{"pages":[{"id":"abc123","title":"NME-1673 design notes","url":"https://notion.so/NME-1673-design-abc123","last_edited_time":"2026-09-05T10:00:00Z"}]}`, nil
+		return `{"results":[{"type":"page","url":"https://app.notion.com/p/3c8bd6d804a8816fbbd8e777b56602b5?pvs=204","title":"NME-1673 design notes","icon":"🧿"}]}`, nil
 	}
 	rep := r.Notion("notion")
 	if rep.Err != nil || rep.Entities != 1 || rep.Edges != 1 {
 		t.Fatalf("%+v", rep)
 	}
-	p, _ := r.St.Get("notion_page", "abc123")
+	p, _ := r.St.Get("notion_page", "3c8bd6d804a8816fbbd8e777b56602b5")
 	if p.URL == "" || p.Title == "" {
 		t.Fatalf("page: %+v", p)
 	}
