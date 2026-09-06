@@ -264,11 +264,30 @@ func mdStyles(style string, th theme) ansi.StyleConfig {
 	// before the punctuation after it. The background colour is what
 	// separates code from prose here, so the padding buys nothing.
 	cfg.Code.Prefix, cfg.Code.Suffix = "", ""
-	if fg := hexOf(th["accent"].GetForeground()); fg != "" {
-		cfg.Code.Color = &fg
+	accent := hexOf(th["accent"].GetForeground())
+	if accent != "" {
+		cfg.Code.Color = &accent
 	}
 	if bg := hexOf(th["status"].GetBackground()); bg != "" {
 		cfg.Code.BackgroundColor = &bg
+	}
+	// Headings: the stock style keeps the "## " markers, so a heading
+	// reads as unformatted markdown. Drop them and make the levels
+	// tell apart by weight: H1 a filled bar, H2 bold underlined, H3
+	// bold, H4+ bold and dim.
+	yes, no := true, false
+	if accent != "" {
+		cfg.Heading.Color = &accent
+	}
+	cfg.Heading.Bold = &yes
+	cfg.H1.Prefix, cfg.H1.Suffix = " ", " "
+	cfg.H2.Prefix, cfg.H2.Suffix = "", ""
+	cfg.H2.Underline = &yes
+	cfg.H3.Prefix, cfg.H3.Suffix = "", ""
+	for _, h := range []*ansi.StyleBlock{&cfg.H4, &cfg.H5, &cfg.H6} {
+		h.Prefix, h.Suffix = "", ""
+		h.Faint = &yes
+		h.Bold = &no
 	}
 	return cfg
 }
