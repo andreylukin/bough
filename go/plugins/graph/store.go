@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS edges (
 CREATE INDEX IF NOT EXISTS edges_src ON edges(src, rel) WHERE valid_to IS NULL;
 CREATE INDEX IF NOT EXISTS edges_dst ON edges(dst, rel) WHERE valid_to IS NULL;
 CREATE VIRTUAL TABLE IF NOT EXISTS graph_fts USING fts5(kind, ref, text);
+CREATE TABLE IF NOT EXISTS graph_meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS embeddings (
   kind  TEXT NOT NULL,
   ref   INTEGER NOT NULL,
@@ -112,7 +113,41 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
-	return nil
+	// FTS rows are addressed by a rowid derived from what they index
+	// (ftsRowid); a WHERE on kind/ref was a full scan of the table per
+	// write. Older files are rebuilt once.
+	var v string
+	if err := db.QueryRow(`SELECT v FROM graph_meta WHERE k='fts_rowid'`).Scan(&v); err == nil && v == "1" {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM graph_fts`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO graph_fts(rowid, kind, ref, text) SELECT id*2, 'entity', id, kind || ' ' || key || ' ' || title || ' ' || summary FROM entities`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO graph_fts(rowid, kind, ref, text)
+		SELECT e.id*2+1, 'edge', e.id, CASE WHEN e.claim <> '' THEN e.claim ELSE a.title || ' ' || e.rel || ' ' || b.title END
+		FROM edges e JOIN entities a ON a.id=e.src JOIN entities b ON b.id=e.dst`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO graph_meta(k, v) VALUES('fts_rowid', '1')`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ftsRowid addresses an FTS row: entities even, edges odd.
+func ftsRowid(kind string, id int64) int64 {
+	if kind == "edge" {
+		return id*2 + 1
+	}
+	return id * 2
 }
 
 // Entity is one node.
@@ -623,10 +658,11 @@ func ftsQuery(q string) string {
 
 // index mirrors text into FTS (replacing the row) and embeds it.
 func (s *Store) index(kind string, id int64, text string) error {
-	if _, err := s.db.Exec(`DELETE FROM graph_fts WHERE kind=? AND ref=?`, kind, id); err != nil {
+	rowid := ftsRowid(kind, id)
+	if _, err := s.db.Exec(`DELETE FROM graph_fts WHERE rowid=?`, rowid); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`INSERT INTO graph_fts(kind, ref, text) VALUES(?,?,?)`, kind, id, text); err != nil {
+	if _, err := s.db.Exec(`INSERT INTO graph_fts(rowid, kind, ref, text) VALUES(?,?,?,?)`, rowid, kind, id, text); err != nil {
 		return err
 	}
 	if s.embed == nil {
