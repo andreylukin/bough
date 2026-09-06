@@ -122,21 +122,37 @@ func (s configSource) load() ([]kernel.Row, error) {
 }
 
 // overlay merges rows onto base by id: a matching id replaces the base
-// row in place (whole row, config included), a new id is appended in
-// file order. Dropping a default row is `disabled: true` on its id.
+// row in place (whole row, config included). A new id lands right after
+// the nearest row above it in the overlay file that the tree already
+// has, so the file's order is the tree's order: an llm-small row written
+// under the llm row mounts with it, not after the ui. (Appending new
+// rows at the end put llm-small after every row that wants it, and
+// the ui's "no llm-small service" notice fired on a correct config.)
+// A new id with nothing known above it goes first. Dropping a default
+// row is `disabled: true` on its id.
 func overlay(base, over []kernel.Row) []kernel.Row {
 	out := append([]kernel.Row(nil), base...)
-	at := map[string]int{}
-	for i, r := range out {
-		at[r.ID] = i
+	at := func(id string) int {
+		for i, r := range out {
+			if r.ID == id {
+				return i
+			}
+		}
+		return -1
 	}
+	prev := "" // the last overlay row placed, the anchor for the next new one
 	for _, r := range over {
-		if i, ok := at[r.ID]; ok {
+		if i := at(r.ID); i >= 0 {
 			out[i] = r
+			prev = r.ID
 			continue
 		}
-		at[r.ID] = len(out)
-		out = append(out, r)
+		pos := 0
+		if prev != "" {
+			pos = at(prev) + 1
+		}
+		out = append(out[:pos], append([]kernel.Row{r}, out[pos:]...)...)
+		prev = r.ID
 	}
 	return out
 }

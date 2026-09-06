@@ -92,8 +92,14 @@ func TestOverlay(t *testing.T) {
 	if !byID["history"].Disabled {
 		t.Fatal("disabled: true did not carry over")
 	}
-	if rows[len(rows)-1].ID != "llm-small" {
-		t.Fatalf("new row not appended last: %s", rows[len(rows)-1].ID)
+	// A new row follows the overlay row above it, so llm-small sits
+	// right after llm and mounts before anything that wants it.
+	pos := map[string]int{}
+	for i, r := range rows {
+		pos[r.ID] = i
+	}
+	if pos["llm-small"] != pos["llm"]+1 {
+		t.Fatalf("new row must follow its predecessor in the file: llm at %d, llm-small at %d", pos["llm"], pos["llm-small"])
 	}
 	if _, ok := byID["loop"]; !ok {
 		t.Fatal("default row missing from overlay result")
