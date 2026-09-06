@@ -94,11 +94,11 @@ func runCLI(cfg map[string]any, args []string) error {
 		}
 		fmt.Printf("%s %s\n", time.Now().Format(timeLine), rep)
 	}
-	if w, err := st.WorldOf(run.Me); err == nil && !w.Empty() {
-		fmt.Println(w.Render())
-	}
 	if failed == len(sources) {
 		return fmt.Errorf("every source failed")
+	}
+	if w, err := st.WorldOf(run.Me); err == nil && !w.Empty() {
+		fmt.Println(w.Render())
 	}
 	return nil
 }
