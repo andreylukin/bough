@@ -176,7 +176,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	// The verbs, as tools.graph.* in the model's runtime.
 	if cm, err := kernel.Get[codemode](ctx, "codemode"); err == nil {
 		if d, ok := any(cm).(interface{ Describe(name, line string) }); ok {
-			d.Describe("graph", `tools.graph.search(q, n) / .neighbors(ref, hops, rel) / .timeline(ref) / .resolve(ref) / .assert(src, rel, dst, evidence) / .invalidate(edge, reason): the memory graph. rels: ` + strings.Join(RelNames(), " ") + `.`)
+			d.Describe("graph", `tools.graph.search(q, n) / .neighbors(ref, hops, rel) / .timeline(ref) / .resolve(ref) / .assert(src, rel, dst, evidence) / .invalidate(edge, reason): the memory graph. rels: `+strings.Join(RelNames(), " ")+`.`)
 		}
 		if err := cm.WithVM(func(vm *goja.Runtime, tools *goja.Object) error {
 			return tools.Set("graph", svc.jsObject(vm))
