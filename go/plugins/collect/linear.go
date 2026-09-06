@@ -40,7 +40,7 @@ func (r *Run) Linear(server string) Report {
 
 // linearIssue is the part of an issue the graph keeps.
 type linearIssue struct {
-	ID, Identifier, Title, URL, State, Description, UpdatedAt string
+	ID, Identifier, Title, URL, State, Description, Branch, UpdatedAt string
 	Assignee                                                  struct{ ID, Name, Email string }
 	Links                                                     []string // attachment / PR urls
 }
@@ -89,7 +89,8 @@ func linearIssues(text string) []linearIssue {
 			Title:       str(m, "title"),
 			URL:         str(m, "url"),
 			State:       str(m, "status", "state"),
-			Description: str(m, "description") + " " + str(m, "gitBranchName"),
+			Description: str(m, "description"),
+			Branch:      str(m, "gitBranchName"),
 			UpdatedAt:   str(m, "updatedAt", "updated_at"),
 		}
 		if id := str(m, "id"); is.Identifier == "" && len(graph.Tickets(id)) == 1 {
@@ -154,7 +155,7 @@ func (r *Run) recordIssue(is linearIssue) (ents, edges int, err error) {
 	if err := count(r.assert(r.Me, "assigned", e, at, "")); err != nil {
 		return ents, edges, err
 	}
-	for _, p := range graph.PRLinks(is.Description + " " + strings.Join(is.Links, " ")) {
+	for _, p := range graph.PRLinks(is.Description + " " + is.Branch + " " + strings.Join(is.Links, " ")) {
 		pe, err := r.pr(p, "", "")
 		if err != nil {
 			return ents, edges, err

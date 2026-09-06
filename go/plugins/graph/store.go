@@ -340,7 +340,10 @@ func (s *Store) SetState(e Entity, status string, episode int64, author string, 
 			continue
 		}
 		if o.Dst.Key == status {
-			return nil // unchanged
+			// Unchanged; still make sure the column agrees (a write that
+			// died between the edge and the column left it empty).
+			_, err := s.SetLink(e, Link{Status: status})
+			return err
 		}
 		if _, err := s.db.Exec(`UPDATE edges SET valid_to=? WHERE id=? AND valid_to IS NULL`, at, o.ID); err != nil {
 			return err
