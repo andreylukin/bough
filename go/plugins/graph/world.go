@@ -42,10 +42,9 @@ func (s *Store) WorldOf(me Entity) (World, error) {
 	// Two passes: what awaits me first, so a thing of mine that also
 	// awaits me lands under "waiting on me", the list that matters.
 	seen := map[int64]bool{}
+	// Fresh is the last collector run, whether or not it wrote anything.
+	_ = s.db.QueryRow(`SELECT COALESCE(MAX(ingested_at), 0) FROM episodes WHERE source = 'collector'`).Scan(&w.Fresh)
 	for _, e := range edges {
-		if e.Author == "collector" && e.RecordedAt > w.Fresh {
-			w.Fresh = e.RecordedAt
-		}
 		if e.Rel == "awaits" && e.Dst.ID == me.ID && IsOpen(e.Src) && !seen[e.Src.ID] {
 			seen[e.Src.ID] = true
 			w.AwaitsMe = append(w.AwaitsMe, e.Src)
