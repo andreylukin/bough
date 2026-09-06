@@ -36,9 +36,13 @@ type boardTickMsg struct{}
 
 const (
 	boardEvery = 5 * time.Second
-	boardMax   = 10 // item rows per column before "+N more"
 	boardMinW  = 90 // narrower than this: one column, NEEDS ME only
 )
+
+// boardMax is how many items a column shows before "+N more": the
+// board may take a third of the screen, two rows per item, header
+// and column titles off the top. Never fewer than two.
+func (m *model) boardMax() int { return max(2, (m.height/3-2)/2) }
 
 // boardState is the model's half.
 type boardState struct {
@@ -169,18 +173,15 @@ func (m *model) boardColumn(cfg *uiCfg, items []attention.Item, style lipgloss.S
 	th := cfg.theme
 	var out []string
 	for i, it := range items {
-		if i == boardMax {
+		if i == m.boardMax() {
 			out = append(out, th["dim"].Render(fmt.Sprintf("+%d more", len(items)-i)))
 			break
 		}
 		mark := m.boardBar(cfg, it, style, now)
+		// The title is the human line; the key, age and what it asks
+		// go under it, most important first, so a narrow column cuts
+		// the tail and not the name.
 		name := it.Title
-		if it.Kind == "pr" || it.Kind == "ticket" {
-			name = it.Key
-			if it.Count == 0 && it.Title != "" && it.Title != it.Key {
-				name += " " + it.Title
-			}
-		}
 		if it.Count > 0 {
 			name = it.Key + th["dim"].Render(fmt.Sprintf(" ×%d", it.Count))
 		}
@@ -203,8 +204,11 @@ func (m *model) boardColumn(cfg *uiCfg, items []attention.Item, style lipgloss.S
 		}
 		first := mark + " " + nameStyle.Render(line(name, max(room, 8))) + status
 		out = append(out, first)
-		detail := it.Detail + " · " + shortAge(now.Sub(it.Since))
-		out = append(out, strings.Repeat(" ", 9)+th["dim"].Render(line(detail, max(width-9, 8))))
+		detail := shortAge(now.Sub(it.Since)) + " · " + it.Detail
+		if it.Count == 0 && it.Title != it.Key {
+			detail = attention.ShortKey(it.Key) + " · " + detail
+		}
+		out = append(out, "  "+th["dim"].Render(line(detail, max(width-2, 8))))
 	}
 	return out
 }

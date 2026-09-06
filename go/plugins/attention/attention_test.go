@@ -58,7 +58,7 @@ func TestBoardPlacesByTurn(t *testing.T) {
 	if b.Me[1].Detail != "review required" {
 		t.Fatalf("ask: %q", b.Me[1].Detail)
 	}
-	if len(b.Motion) != 1 || b.Motion[0].Key != "bough#66" || b.Motion[0].Session != "8f3a1234-abcd" || b.Motion[0].Detail != "1 review thread · session 8f3a" {
+	if len(b.Motion) != 1 || b.Motion[0].Key != "bough#66" || b.Motion[0].Session != "8f3a1234-abcd" || b.Motion[0].Detail != "session 8f3a · 1 review thread" {
 		t.Fatalf("in motion: %+v", b.Motion)
 	}
 	if len(b.Others) != 2 || b.Others[0].Key != "mathlib4#42788" || b.Others[0].Detail != "next: ?" || b.Others[1].Key != "nas#46" || b.Others[1].Detail != "awaits Bradley" {
@@ -72,10 +72,20 @@ func TestBoardPlacesByTurn(t *testing.T) {
 func TestAge(t *testing.T) {
 	now := time.Now()
 	for d, want := range map[time.Duration]int{
-		10 * time.Minute: 0, time.Hour: 1, 24 * time.Hour: 5, 7 * 24 * time.Hour: 8, 30 * 24 * time.Hour: 8,
+		10 * time.Minute: 0, time.Hour: 1, 24 * time.Hour: 4, 7 * 24 * time.Hour: 6, 30 * 24 * time.Hour: 8, 90 * 24 * time.Hour: 8,
 	} {
 		if got := Age(now.Add(-d), now); got != want {
 			t.Errorf("Age(%v) = %d, want %d", d, got, want)
+		}
+	}
+}
+
+func TestShortKey(t *testing.T) {
+	for in, want := range map[string]string{
+		"uni-network-evaluation-scheduler#7362": "unes#7362", "bough#64": "bough#64", "NME-1664": "NME-1664", "uni-gitops-state-aws-prod#13322": "ugsap#13322",
+	} {
+		if got := ShortKey(in); got != want {
+			t.Errorf("ShortKey(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

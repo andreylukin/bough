@@ -38,7 +38,7 @@ func sample() attention.Board {
 			{Key: "orb#142", Kind: "pr", Title: "alert backtesting", Status: "open", Detail: "review required", Since: now.Add(-3 * time.Hour)},
 		},
 		Motion: []attention.Item{
-			{Key: "bough#66", Kind: "pr", Title: "fix thing", Status: "ci failing", Detail: "1 review thread · session 8f3a", Since: now.Add(-14 * time.Minute), Session: "8f3a1234-abcd"},
+			{Key: "bough#66", Kind: "pr", Title: "fix thing", Status: "ci failing", Detail: "session 8f3a · 1 review thread", Since: now.Add(-14 * time.Minute), Session: "8f3a1234-abcd"},
 		},
 		Others: []attention.Item{
 			{Key: "nas#46", Kind: "pr", Title: "fix sharding", Status: "ci green", Detail: "awaits Bradley", Since: now.Add(-2 * 24 * time.Hour)},
@@ -56,9 +56,9 @@ func TestBoardRowsWide(t *testing.T) {
 	plain := ansi.Strip(strings.Join(rows, "\n"))
 	for _, want := range []string{
 		"current work", "collected", "NEEDS ME 2", "IN MOTION 1", "WAITING ON OTHERS 1",
-		"bough · deps ×12 ✕", "review required · 3d", "orb#142 alert backtesting",
-		"bough#66 fix thing", "1 review thread · session 8f3a · 14m",
-		"nas#46 fix sharding ✓", "awaits Bradley · 2d",
+		"bough · deps ×12 ✕", "3d · review required", "alert backtesting", "orb#142 · 3h · review required",
+		"fix thing ✕", "bough#66 · 14m · session 8f3a",
+		"fix sharding ✓", "nas#46 · 2d · awaits Bradley",
 	} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("board lacks %q:\n%s", want, plain)
@@ -69,7 +69,7 @@ func TestBoardRowsWide(t *testing.T) {
 		t.Errorf("stack repeats its count:\n%s", plain)
 	}
 	// A row with a session shows the spinner, not an age bar.
-	if strings.Contains(plain, "▮ bough#66") || strings.Contains(plain, "▯ bough#66") {
+	if strings.Contains(plain, "▮ fix thing") || strings.Contains(plain, "▯ fix thing") {
 		t.Errorf("in-motion row carries a bar:\n%s", plain)
 	}
 	// Every row fits the width; the frame gives the board its rows.

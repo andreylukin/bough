@@ -102,7 +102,7 @@ func (s *Service) Board() Board {
 		if l, ok := inMotion(e); ok {
 			it.Session = l.Session
 			it.Since = l.Since
-			it.Detail = l.What + " · session " + short(l.Session, 4)
+			it.Detail = "session " + short(l.Session, 4) + " · " + l.What
 			b.Motion = append(b.Motion, it)
 			return
 		}
@@ -252,15 +252,30 @@ func short(s string, n int) string {
 }
 
 // Age is the fill of an item's bar: 0..8 cells on a log scale, one at
-// an hour, four at a day, eight at a week. The oldest debt is the
-// brightest thing on screen without reading a date.
+// an hour, three at a day, six at a week, eight at a month. The oldest
+// debt is the brightest thing on screen without reading a date.
 func Age(since, now time.Time) int {
 	h := now.Sub(since).Hours()
 	if h < 1 {
 		return 0
 	}
-	cells := 1 + 7*math.Log(h)/math.Log(168)
+	cells := 1 + 7*math.Log(h)/math.Log(24*30)
 	return max(0, min(8, int(cells+0.5)))
+}
+
+// ShortKey is a key that fits a column: a long repo name becomes its
+// initials (uni-network-evaluation-scheduler#7362 → unes#7362); ticket
+// keys and short repos stay as they are.
+func ShortKey(key string) string {
+	repo, n, ok := strings.Cut(key, "#")
+	if !ok || len(repo) <= 14 {
+		return key
+	}
+	var b strings.Builder
+	for _, part := range strings.FieldsFunc(repo, func(r rune) bool { return r == '-' || r == '_' || r == '.' }) {
+		b.WriteByte(part[0])
+	}
+	return b.String() + "#" + n
 }
 
 // ---------- plugin ----------
