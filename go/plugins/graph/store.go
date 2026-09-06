@@ -74,13 +74,58 @@ CREATE TABLE IF NOT EXISTS embeddings (
 );
 `
 
+// linkColumns are the entity columns added after the first schema: the
+// link truth. url is the canonical link, status the source's current
+// state, summary one line about it, updated_at the source's own clock.
+// ALTER TABLE has no IF NOT EXISTS, so Open adds what is missing.
+var linkColumns = []string{
+	"url TEXT NOT NULL DEFAULT ''",
+	"status TEXT NOT NULL DEFAULT ''",
+	"summary TEXT NOT NULL DEFAULT ''",
+	"updated_at INTEGER NOT NULL DEFAULT 0",
+}
+
+func migrate(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(entities)`)
+	if err != nil {
+		return err
+	}
+	have := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		have[name] = true
+	}
+	rows.Close()
+	for _, col := range linkColumns {
+		name, _, _ := strings.Cut(col, " ")
+		if have[name] {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE entities ADD COLUMN ` + col); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Entity is one node.
 type Entity struct {
-	ID    int64  `json:"id"`
-	Kind  string `json:"kind"`
-	Key   string `json:"key"`
-	Title string `json:"title,omitempty"`
-	Attrs string `json:"attrs,omitempty"`
+	ID        int64  `json:"id"`
+	Kind      string `json:"kind"`
+	Key       string `json:"key"`
+	Title     string `json:"title,omitempty"`
+	Attrs     string `json:"attrs,omitempty"`
+	URL       string `json:"url,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Summary   string `json:"summary,omitempty"`
+	UpdatedAt int64  `json:"updated_at,omitempty"`
 }
 
 // Edge is one claim: src -rel-> dst, with its two time windows.
@@ -122,6 +167,10 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1) // one writer, and the FTS/graph tables move together
 	if _, err := db.Exec(Schema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("graph schema: %w", err)
+	}
+	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("graph schema: %w", err)
 	}
@@ -174,8 +223,8 @@ func (s *Store) Upsert(kind, key, title, attrs string) (Entity, error) {
 // Get fetches an entity by (kind, key).
 func (s *Store) Get(kind, key string) (Entity, error) {
 	var e Entity
-	err := s.db.QueryRow(`SELECT id, kind, key, title, attrs FROM entities WHERE kind=? AND key=?`, kind, key).
-		Scan(&e.ID, &e.Kind, &e.Key, &e.Title, &e.Attrs)
+	err := s.db.QueryRow(`SELECT id, kind, key, title, attrs, url, status, summary, updated_at FROM entities WHERE kind=? AND key=?`, kind, key).
+		Scan(&e.ID, &e.Kind, &e.Key, &e.Title, &e.Attrs, &e.URL, &e.Status, &e.Summary, &e.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Entity{}, fmt.Errorf("graph: no %s %q", kind, key)
 	}
@@ -184,8 +233,8 @@ func (s *Store) Get(kind, key string) (Entity, error) {
 
 func (s *Store) byID(id int64) (Entity, error) {
 	var e Entity
-	err := s.db.QueryRow(`SELECT id, kind, key, title, attrs FROM entities WHERE id=?`, id).
-		Scan(&e.ID, &e.Kind, &e.Key, &e.Title, &e.Attrs)
+	err := s.db.QueryRow(`SELECT id, kind, key, title, attrs, url, status, summary, updated_at FROM entities WHERE id=?`, id).
+		Scan(&e.ID, &e.Kind, &e.Key, &e.Title, &e.Attrs, &e.URL, &e.Status, &e.Summary, &e.UpdatedAt)
 	return e, err
 }
 
@@ -194,6 +243,75 @@ func (s *Store) byID(id int64) (Entity, error) {
 func (s *Store) Alias(entityID int64, source, foreignID, url string) error {
 	_, err := s.db.Exec(`INSERT OR REPLACE INTO aliases(entity_id, source, foreign_id, url) VALUES(?,?,?,?)`,
 		entityID, source, foreignID, nullable(url))
+	return err
+}
+
+// Link is the link truth of an entity: where it lives, what state it
+// is in, one line about it, and the source's own timestamp. Empty
+// fields keep what is stored, so a collector that knows only the url
+// does not blank a summary another one wrote.
+type Link struct {
+	URL       string
+	Status    string
+	Summary   string
+	UpdatedAt int64
+}
+
+// SetLink records an entity's link truth and mirrors the summary into
+// FTS so search finds it by what it is about, not only by key.
+func (s *Store) SetLink(e Entity, l Link) (Entity, error) {
+	_, err := s.db.Exec(`UPDATE entities SET
+		  url = CASE WHEN ? = '' THEN url ELSE ? END,
+		  status = CASE WHEN ? = '' THEN status ELSE ? END,
+		  summary = CASE WHEN ? = '' THEN summary ELSE ? END,
+		  updated_at = CASE WHEN ? = 0 THEN updated_at ELSE ? END
+		WHERE id = ?`,
+		l.URL, l.URL, l.Status, l.Status, l.Summary, l.Summary, l.UpdatedAt, l.UpdatedAt, e.ID)
+	if err != nil {
+		return Entity{}, err
+	}
+	e, err = s.byID(e.ID)
+	if err != nil {
+		return Entity{}, err
+	}
+	return e, s.index("entity", e.ID, e.Kind+" "+e.Key+" "+e.Title+" "+e.Summary)
+}
+
+// SetState records e -has_state-> state:<status>, closing the previous
+// state's window when it differs, so Timeline shows every transition
+// and the status column shows the current one. at is the source's
+// clock for the change (0: now).
+func (s *Store) SetState(e Entity, status string, episode int64, author string, at int64) error {
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status == "" {
+		return nil
+	}
+	if at == 0 {
+		at = s.unix()
+	}
+	open, err := s.Neighbors(e, 1, "has_state", 0)
+	if err != nil {
+		return err
+	}
+	for _, o := range open {
+		if o.Src.ID != e.ID {
+			continue
+		}
+		if o.Dst.Key == status {
+			return nil // unchanged
+		}
+		if _, err := s.db.Exec(`UPDATE edges SET valid_to=? WHERE id=? AND valid_to IS NULL`, at, o.ID); err != nil {
+			return err
+		}
+	}
+	st, err := s.Upsert("state", status, status, "")
+	if err != nil {
+		return err
+	}
+	if _, err := s.Assert(e, "has_state", st, episode, author, AssertOpts{ValidFrom: at, ObservedAt: at}); err != nil {
+		return err
+	}
+	_, err = s.SetLink(e, Link{Status: status})
 	return err
 }
 
@@ -211,6 +329,9 @@ type AssertOpts struct {
 func (s *Store) Assert(src Entity, rel string, dst Entity, episode int64, author string, o AssertOpts) (Edge, error) {
 	if rel == "" || author == "" || episode == 0 {
 		return Edge{}, errors.New("graph: an edge needs rel, author and an episode")
+	}
+	if err := checkRel(rel); err != nil {
+		return Edge{}, err
 	}
 	var id int64
 	err := s.db.QueryRow(`SELECT id FROM edges WHERE src=? AND rel=? AND dst=? AND valid_to IS NULL`, src.ID, rel, dst.ID).Scan(&id)
@@ -282,7 +403,8 @@ func (s *Store) edge(id int64) (Edge, error) {
 }
 
 const edgeSelect = `SELECT e.id, e.rel, e.valid_from, e.valid_to, e.observed_at, e.recorded_at, e.episode_id, e.author, e.weight, e.claim,
-  a.id, a.kind, a.key, a.title, a.attrs, b.id, b.kind, b.key, b.title, b.attrs
+  a.id, a.kind, a.key, a.title, a.attrs, a.url, a.status, a.summary, a.updated_at,
+  b.id, b.kind, b.key, b.title, b.attrs, b.url, b.status, b.summary, b.updated_at
   FROM edges e JOIN entities a ON a.id=e.src JOIN entities b ON b.id=e.dst`
 
 func scanEdges(rows *sql.Rows) ([]Edge, error) {
@@ -291,8 +413,8 @@ func scanEdges(rows *sql.Rows) ([]Edge, error) {
 		var e Edge
 		var vt sql.NullInt64
 		if err := rows.Scan(&e.ID, &e.Rel, &e.ValidFrom, &vt, &e.ObservedAt, &e.RecordedAt, &e.EpisodeID, &e.Author, &e.Weight, &e.Claim,
-			&e.Src.ID, &e.Src.Kind, &e.Src.Key, &e.Src.Title, &e.Src.Attrs,
-			&e.Dst.ID, &e.Dst.Kind, &e.Dst.Key, &e.Dst.Title, &e.Dst.Attrs); err != nil {
+			&e.Src.ID, &e.Src.Kind, &e.Src.Key, &e.Src.Title, &e.Src.Attrs, &e.Src.URL, &e.Src.Status, &e.Src.Summary, &e.Src.UpdatedAt,
+			&e.Dst.ID, &e.Dst.Kind, &e.Dst.Key, &e.Dst.Title, &e.Dst.Attrs, &e.Dst.URL, &e.Dst.Status, &e.Dst.Summary, &e.Dst.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if vt.Valid {
@@ -528,9 +650,9 @@ func (s *Store) Stats() (Stats, error) {
 
 // Entities lists entities of a kind (all kinds when kind == ""), by key.
 func (s *Store) Entities(kind string) ([]Entity, error) {
-	q, args := `SELECT id, kind, key, title, attrs FROM entities ORDER BY kind, key`, []any{}
+	q, args := `SELECT id, kind, key, title, attrs, url, status, summary, updated_at FROM entities ORDER BY kind, key`, []any{}
 	if kind != "" {
-		q, args = `SELECT id, kind, key, title, attrs FROM entities WHERE kind=? ORDER BY key`, []any{kind}
+		q, args = `SELECT id, kind, key, title, attrs, url, status, summary, updated_at FROM entities WHERE kind=? ORDER BY key`, []any{kind}
 	}
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
@@ -540,7 +662,7 @@ func (s *Store) Entities(kind string) ([]Entity, error) {
 	var out []Entity
 	for rows.Next() {
 		var e Entity
-		if err := rows.Scan(&e.ID, &e.Kind, &e.Key, &e.Title, &e.Attrs); err != nil {
+		if err := rows.Scan(&e.ID, &e.Kind, &e.Key, &e.Title, &e.Attrs, &e.URL, &e.Status, &e.Summary, &e.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, e)

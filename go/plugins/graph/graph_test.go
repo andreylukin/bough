@@ -370,3 +370,82 @@ func TestBackfillTimestampsAreSeconds(t *testing.T) {
 		t.Fatal("a 2026 timestamp still lands in the future")
 	}
 }
+
+func TestVocabularyIsClosed(t *testing.T) {
+	st := openTemp(t)
+	ep, _ := st.Episode("test", "t")
+	a, _ := st.Upsert("concept", "a", "", "")
+	b, _ := st.Upsert("concept", "b", "", "")
+	if _, err := st.Assert(a, "depends_on", b, ep, "session", AssertOpts{}); err == nil {
+		t.Fatal("an unlisted rel must be refused at the store")
+	}
+	for in, want := range map[string]string{"Requires": "requires", "depends on": "requires", "supersedes": "replaces", "lives_in": "relates"} {
+		got, _ := NormalizeRel(in)
+		if got != want {
+			t.Errorf("NormalizeRel(%q) = %q, want %q", in, got, want)
+		}
+	}
+	svc := &Service{Store: st, episode: ep}
+	e, err := svc.AssertAs("cheap", "concept:a", "lives_in", "concept:b", "a is under b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Rel != "relates" || e.Author != "cheap" || !strings.HasPrefix(e.Claim, "(lives_in)") {
+		t.Fatalf("free verb folds to relates and keeps the wording, signed cheap: %+v", e)
+	}
+}
+
+func TestSetStateAndWorld(t *testing.T) {
+	st := openTemp(t)
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	st.now = func() time.Time { return now }
+	ep, _ := st.Episode("collector:github", "t")
+	me, _ := st.Upsert("person", "andrey@example.com", "Andrey", "")
+	bradley, _ := st.Upsert("person", "bradley@example.com", "Bradley", "")
+	pr, _ := st.Upsert("pr", "uni-nas-event-log#46", "fix sharding", "")
+	pr, _ = st.SetLink(pr, Link{URL: "https://github.com/x/uni-nas-event-log/pull/46", Summary: "2 unresolved Devin threads", UpdatedAt: now.Unix()})
+	if err := st.SetState(pr, "open", ep, "collector", now.Unix()); err != nil {
+		t.Fatal(err)
+	}
+	st.Assert(me, "authored", pr, ep, "collector", AssertOpts{})
+	st.Assert(pr, "awaits", bradley, ep, "collector", AssertOpts{})
+	other, _ := st.Upsert("pr", "uni-orb#142", "alert backtesting", "")
+	st.Assert(other, "awaits", me, ep, "collector", AssertOpts{})
+
+	w, err := st.WorldOf(me)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := w.Render()
+	for _, want := range []string{"Waiting on me:", "pr:uni-orb#142", "Mine, open:", "pr:uni-nas-event-log#46", "[open]", "awaits Bradley", "pull/46", "Devin threads", "collected 2026-09-06"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("world lacks %q:\n%s", want, out)
+		}
+	}
+
+	// Merged: the state edge closes, a new one opens, and the PR leaves the world.
+	later := now.Add(time.Hour)
+	if err := st.SetState(pr, "merged", ep, "collector", later.Unix()); err != nil {
+		t.Fatal(err)
+	}
+	tl, _ := st.Timeline(pr)
+	var states []string
+	for _, e := range tl {
+		if e.Rel == "has_state" {
+			states = append(states, e.Dst.Key)
+		}
+	}
+	if len(states) != 2 {
+		t.Fatalf("timeline states: %v", states)
+	}
+	w, _ = st.WorldOf(me)
+	if len(w.Mine) != 0 {
+		t.Fatalf("a merged PR is not open: %+v", w.Mine)
+	}
+	if err := st.SetState(pr, "merged", ep, "collector", 0); err != nil {
+		t.Fatal(err)
+	}
+	if tl, _ = st.Timeline(pr); len(tl) != 4 {
+		t.Fatalf("an unchanged state adds nothing: %d edges", len(tl))
+	}
+}

@@ -51,7 +51,7 @@ Answer with at most %d lines, each exactly:
 subject | relation | object | evidence
 
 subject and object are kind:key, kinds: repo, file, package, tool, person, task, decision, service. Use the real paths and names from the turn.
-relation is a short verb phrase (lives_in, requires, prefers, replaces, blocked_by, decided, causes).
+relation is one of: relates, requires, replaces, blocked_by, decided, authored, implements, documents.
 evidence is one sentence in plain words, quoting the number or path that makes it true.
 
 If nothing in this turn is worth remembering, answer with exactly: NOTHING
@@ -67,7 +67,7 @@ type History interface {
 // Graph is the slice of the "graph" service we write through; absent,
 // facts go to a file.
 type Graph interface {
-	AssertRef(src, rel, dst, evidence string) (graph.Edge, error)
+	AssertAs(author, src, rel, dst, evidence string) (graph.Edge, error)
 }
 
 // Memory is the plugin's state: the services, the cap, and the triples
@@ -262,7 +262,10 @@ func (m *Memory) harvest() {
 // save writes one fact to the graph, or to the memory file without it.
 func (m *Memory) save(f Fact) error {
 	if m.graph != nil {
-		if _, err := m.graph.AssertRef(f.Src, f.Rel, f.Dst, f.Evidence); err != nil {
+		// Signed "cheap": a small model's inference, never to be read
+		// as something a source stated. The graph folds an unlisted
+		// relation to "relates" and keeps the verb in the claim.
+		if _, err := m.graph.AssertAs("cheap", f.Src, f.Rel, f.Dst, f.Evidence); err != nil {
 			return fmt.Errorf("graph: %w", err)
 		}
 		return nil

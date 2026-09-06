@@ -25,7 +25,10 @@ import (
 	"github.com/andreylukin/bough/kernel"
 )
 
-const promptSectionName = "memory"
+const (
+	promptSectionName = "memory"
+	worldSectionName  = "world"
+)
 
 // codemode is the slice of the codemode service the plugin uses.
 type codemode interface {
@@ -48,11 +51,12 @@ type Config struct {
 	Embed   bool   // embed titles/claims when a key is in the environment (default true)
 	Hops    int    // neighborhood radius for the prompt section (default 1)
 	MaxRows int    // prompt section cap (default 40)
+	Me      string // my email: the person the world section is about (default: git user.email)
 }
 
 func parseConfig(cfg map[string]any) (Config, error) {
 	home, _ := os.UserHomeDir()
-	c := Config{Path: filepath.Join(home, ".bough", "graph.db"), Embed: true, Hops: 1, MaxRows: 40}
+	c := Config{Path: filepath.Join(home, ".bough", "graph.db"), Embed: true, Hops: 1, MaxRows: 40, Me: gitEmail()}
 	for k, v := range cfg {
 		switch k {
 		case "path":
@@ -79,6 +83,12 @@ func parseConfig(cfg map[string]any) (Config, error) {
 				return c, fmt.Errorf("graph: max_rows must be >= 1")
 			}
 			c.MaxRows = n
+		case "me":
+			s, ok := v.(string)
+			if !ok || !strings.Contains(s, "@") {
+				return c, fmt.Errorf("graph: me must be an email")
+			}
+			c.Me = strings.ToLower(s)
 		default:
 			return c, fmt.Errorf("graph: unknown config key %q", k)
 		}
@@ -104,6 +114,7 @@ func toInt(v any) (int, bool) {
 // Service is the "graph" service other plugins (and tests) use.
 type Service struct {
 	Store   *Store
+	Me      string // my email; "" when unknown
 	session Entity // this session's entity; zero when history is absent
 	episode int64  // this session's episode, what the model's asserts cite
 }
@@ -133,7 +144,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if c.Embed {
 		st.SetEmbedder(EmbedderFromEnv())
 	}
-	svc := &Service{Store: st}
+	svc := &Service{Store: st, Me: c.Me}
 
 	// This session: an entity, an episode for what the model asserts, and
 	// the deterministic touches edges (repo, branch → ticket).
@@ -159,12 +170,13 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	// Passive injection: the workspace's neighborhood, once per mount.
 	if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
 		s.Set(promptSectionName, svc.PromptSection(ws, c.Hops, c.MaxRows))
-		ctx.Effect(func() { s.Set(promptSectionName, "") })
+		s.Set(worldSectionName, svc.WorldSection())
+		ctx.Effect(func() { s.Set(promptSectionName, ""); s.Set(worldSectionName, "") })
 	}
 	// The verbs, as tools.graph.* in the model's runtime.
 	if cm, err := kernel.Get[codemode](ctx, "codemode"); err == nil {
 		if d, ok := any(cm).(interface{ Describe(name, line string) }); ok {
-			d.Describe("graph", `tools.graph.search(q, n) / .neighbors(ref, hops, rel) / .timeline(ref) / .resolve(ref) / .assert(src, rel, dst, evidence) / .invalidate(edge, reason): the memory graph.`)
+			d.Describe("graph", `tools.graph.search(q, n) / .neighbors(ref, hops, rel) / .timeline(ref) / .resolve(ref) / .assert(src, rel, dst, evidence) / .invalidate(edge, reason): the memory graph. rels: ` + strings.Join(RelNames(), " ") + `.`)
 		}
 		if err := cm.WithVM(func(vm *goja.Runtime, tools *goja.Object) error {
 			return tools.Set("graph", svc.jsObject(vm))
@@ -209,6 +221,37 @@ func gitBranch(dir string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func gitEmail() string {
+	out, err := exec.Command("git", "config", "--get", "user.email").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(string(out)))
+}
+
+// World is the external world around me, empty when I am unknown to
+// the graph (no collector has run).
+func (s *Service) World() (World, error) {
+	if s.Me == "" {
+		return World{}, errors.New("graph: no `me` (config me: <email>, or git user.email)")
+	}
+	me, err := s.Store.Get("person", s.Me)
+	if err != nil {
+		return World{}, err
+	}
+	return s.Store.WorldOf(me)
+}
+
+// WorldSection is the world as a prompt section: open things with
+// their links, or nothing.
+func (s *Service) WorldSection() string {
+	w, err := s.World()
+	if err != nil || w.Empty() {
+		return ""
+	}
+	return "## world\nWhat the collectors last saw around " + s.Me + ". Quote these links; tools.graph.timeline(key) shows what changed.\n" + w.Render()
 }
 
 // recordWorkspace links this session to the repo it runs in and to the
@@ -333,8 +376,22 @@ func (s *Service) resolveRef(ref string) (Entity, error) {
 // "kind:key" pairs; unknown entities are created with the key as title.
 // The edge cites this session's episode and is signed "session".
 func (s *Service) AssertRef(src, rel, dst, evidence string) (Edge, error) {
+	return s.AssertAs("session", src, rel, dst, evidence)
+}
+
+// AssertAs is AssertRef signed by author: "session" for what the agent
+// states, "cheap" for what a small model inferred after the turn. A
+// rel outside the vocabulary folds to "relates" and the verb used is
+// kept in the claim, so nothing the model said is lost.
+func (s *Service) AssertAs(author, src, rel, dst, evidence string) (Edge, error) {
 	if s.episode == 0 {
 		return Edge{}, errors.New("graph: no session episode to cite")
+	}
+	if norm, ok := NormalizeRel(rel); !ok {
+		evidence = "(" + rel + ") " + evidence
+		rel = norm
+	} else {
+		rel = norm
 	}
 	a, err := s.entityFor(src)
 	if err != nil {
@@ -344,7 +401,7 @@ func (s *Service) AssertRef(src, rel, dst, evidence string) (Edge, error) {
 	if err != nil {
 		return Edge{}, err
 	}
-	return s.Store.Assert(a, rel, b, s.episode, "session", AssertOpts{Claim: evidence})
+	return s.Store.Assert(a, rel, b, s.episode, author, AssertOpts{Claim: evidence})
 }
 
 // entityFor accepts "kind:key" or a parseable reference, creating the
@@ -434,14 +491,14 @@ func plain(v any) any {
 func (plugin) Commands() []kernel.Command {
 	return []kernel.Command{{
 		Name:    "graph",
-		Usage:   "stats | backfill [--no-embed] | search <q> | neighbors <ref> [hops] | timeline <ref> | resolve <ref>",
-		Summary: "the memory graph: counts, backfill from bough.db + history, and the read verbs",
+		Usage:   "stats | status | backfill [--no-embed] | search <q> | neighbors <ref> [hops] | timeline <ref> | resolve <ref>",
+		Summary: "the memory graph: counts, the world around me, backfill, and the read verbs",
 		Run:     runCLI,
 	}}
 }
 
 func runCLI(cfg map[string]any, args []string) error {
-	const usage = "usage: bough graph stats | backfill [--no-embed] | search <q> | neighbors <ref> [hops] | timeline <ref> | resolve <ref>"
+	const usage = "usage: bough graph stats | status | backfill [--no-embed] | search <q> | neighbors <ref> [hops] | timeline <ref> | resolve <ref>"
 	if len(args) == 0 {
 		return errors.New(usage)
 	}
@@ -460,7 +517,7 @@ func runCLI(cfg map[string]any, args []string) error {
 	if c.Embed {
 		st.SetEmbedder(EmbedderFromEnv())
 	}
-	svc := &Service{Store: st}
+	svc := &Service{Store: st, Me: c.Me}
 	home, _ := os.UserHomeDir()
 	out := func(v any) error {
 		b, err := json.MarshalIndent(v, "", "  ")
@@ -482,6 +539,17 @@ func runCLI(cfg map[string]any, args []string) error {
 		} else {
 			fmt.Printf("embed    %s\n", st.embed.Model())
 		}
+		return nil
+	case "status":
+		w, err := svc.World()
+		if err != nil {
+			return err
+		}
+		if w.Empty() {
+			fmt.Printf("nothing open around %s (run bough collect)\n", c.Me)
+			return nil
+		}
+		fmt.Println(w.Render())
 		return nil
 	case "backfill":
 		// Every entity and edge write embeds when a key is present:

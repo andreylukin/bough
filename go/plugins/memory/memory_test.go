@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andreylukin/bough/plugins/graph"
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
 )
@@ -236,4 +237,24 @@ type failLLM struct{}
 func (failLLM) Complete(context.Context, string, []llm.Message) (string, error) {
 	return "", errors.New("llm-anthropic: POST \"https://api.anthropic.com/v1/messages\": 401 Unauthorized\n" +
 		`{"type":"error","error":{"type":"authentication_error","message":"API key is invalid."}}`)
+}
+
+type stubGraph struct{ author, rel string }
+
+func (g *stubGraph) AssertAs(author, src, rel, dst, evidence string) (graph.Edge, error) {
+	g.author, g.rel = author, rel
+	return graph.Edge{}, nil
+}
+
+// What a small model inferred is signed "cheap", never "session": a
+// later reader must be able to tell an inference from an observation.
+func TestHarvestSignsFactsCheap(t *testing.T) {
+	l := &stubLLM{reply: "file:golden_test.go | requires | tool:stale-golden | the gate went red"}
+	m, _ := newMem(t, l)
+	g := &stubGraph{}
+	m.graph = g
+	m.harvest()
+	if g.author != "cheap" || g.rel != "requires" {
+		t.Fatalf("author %q rel %q", g.author, g.rel)
+	}
 }
