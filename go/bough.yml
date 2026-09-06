@@ -131,13 +131,13 @@
 #     service: llm-small
 #     model: z-ai/glm-5.3-flash
 
-# Two-tier memory for long sessions. Once the projection grows past
-# `budget` characters, old tool outputs collapse to one-line placeholders
-# the model can bring back with <focus seq=N>. With an llm-local (else
-# llm-small) row, a navigator on it writes the index lines and picks the
-# outputs each turn is about; without one, placeholders carry the
-# output's first line and no model is called. History on disk is never
-# touched. Before loop: the loop reads the "projection" service at mount.
+# Long sessions: once the projection grows past `budget` characters, old
+# tool outputs collapse to one-line placeholders the model can bring back
+# with <focus seq=N>. With an llm-small row, a navigator on it writes the
+# index lines and picks the outputs each turn is about; without one,
+# placeholders carry the output's first line and no model is called.
+# History on disk is never touched. Before loop: the loop reads the
+# "projection" service at mount.
 - id: memory-tier
   plugin: memory-tier
   # config:
@@ -145,7 +145,6 @@
   #   keep_whole: 6        # newest outputs always shown in full
   #   top_k: 6             # outputs the navigator may bring back per turn
   #   pick_timeout_seconds: 10
-  #   memory_url: http://127.0.0.1:8765   # the local memory model, see memory/README.md
 
 - id: loop
   plugin: loop

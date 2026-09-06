@@ -2,15 +2,8 @@ package memtier
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"slices"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
@@ -153,124 +146,5 @@ func TestParseIndex(t *testing.T) {
 	m := ParseIndex("#3: ls of repo, 12 files\n#9:  bq query, 312 rows\nnoise\n#x: bad")
 	if m[3] != "ls of repo, 12 files" || m[9] != "bq query, 312 rows" || len(m) != 2 {
 		t.Fatalf("got %v", m)
-	}
-}
-
-// fakeMemoryd records what it was given to index and answers recall,
-// note and search from those chunks by substring.
-func fakeMemoryd(t *testing.T) (*httptest.Server, *[]map[string]any) {
-	t.Helper()
-	var fed []map[string]any
-	var mu sync.Mutex
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		mu.Lock()
-		defer mu.Unlock()
-		enc := json.NewEncoder(w)
-		switch r.URL.Path {
-		case "/index":
-			fed = append(fed, req)
-			_ = enc.Encode(map[string]any{"line": "line for " + fmt.Sprint(req["seq"])})
-		case "/search":
-			q, _ := req["query"].(string)
-			var hits []map[string]any
-			for _, c := range fed {
-				if strings.Contains(c["text"].(string), q) {
-					hits = append(hits, map[string]any{"session": c["session"], "seq": c["seq"], "kind": c["kind"], "line": "l"})
-				}
-			}
-			_ = enc.Encode(map[string]any{"hits": hits})
-		case "/recall":
-			q, _ := req["question"].(string)
-			for _, c := range fed {
-				if strings.Contains(c["text"].(string), q) {
-					_ = enc.Encode(map[string]any{"answer": "V-" + q, "seq": c["seq"], "session": c["session"], "quote": q, "verified": true})
-					return
-				}
-			}
-			_ = enc.Encode(map[string]any{"answer": nil, "verified": false, "raw": "guess"})
-		case "/note":
-			q, _ := req["request"].(string)
-			if strings.Contains(q, "nothing-here") {
-				_ = enc.Encode(map[string]any{"facts": []any{}})
-				return
-			}
-			_ = enc.Encode(map[string]any{"facts": []map[string]any{{"seq": 3, "session": "s1", "quote": "output a", "fact": "output a was printed"}}})
-		case "/consolidate":
-			fed = append(fed, map[string]any{"session": "ledger", "seq": float64(0), "kind": "ledger", "text": fmt.Sprintf("consolidated %v-%v", req["from_seq"], req["to_seq"])})
-			_ = enc.Encode(map[string]any{"records": 1})
-		}
-	}))
-	t.Cleanup(srv.Close)
-	return srv, &fed
-}
-
-type memHist struct{ es []history.Entry }
-
-func (m memHist) Entries() []history.Entry { return m.es }
-
-func TestFeederNoteRecallPick(t *testing.T) {
-	srv, fed := fakeMemoryd(t)
-	c := newMemoryClient(srv.URL, "s1")
-	es := session(3, 100) // seqs 1..8: input, (assistant, result)x3, input
-	f := &feeder{c: c, hist: memHist{es}, ctx: t.Context(), fail: func(err error) { t.Error(err) }}
-	f.TurnDone(7)
-	f.Wait(5 * time.Second)
-	if len(*fed) != 9 || (*fed)[0]["kind"] != "user" || (*fed)[2]["kind"] != "tool output" {
-		t.Fatalf("fed %d entries: %v", len(*fed), *fed)
-	}
-	if last := (*fed)[8]; last["kind"] != "ledger" || !strings.Contains(last["text"].(string), "consolidated 1-7") {
-		t.Fatalf("turn not consolidated after feeding: %v", last)
-	}
-
-	tr := New(nil)
-	tr.mem = c
-	got := tr.Project(es)
-	last := got[len(got)-1].Content
-	if !strings.Contains(last, "[memory, from the local model") || !strings.Contains(last, "output a was printed (from #3") {
-		t.Fatalf("note missing from the request: %q", last)
-	}
-	tr.Project(es)
-	if n := len(tr.notes); n != 1 {
-		t.Fatalf("note must be asked once per turn, got %d", n)
-	}
-	es2 := append(slices.Clone(es), history.Entry{Seq: 99, Kind: "input", Data: map[string]any{"text": "nothing-here please"}})
-	if got = tr.Project(es2); strings.Contains(got[len(got)-1].Content, "[memory") {
-		t.Fatal("an empty note must leave the request untouched")
-	}
-	if a, err := tr.recall("output b"); err != nil || !strings.HasPrefix(a, "V-output b") || !strings.Contains(a, "verified in #5") {
-		t.Fatalf("recall: %q %v", a, err)
-	}
-	if a, _ := tr.recall("absent"); !strings.HasPrefix(a, "not in memory") || !strings.Contains(a, "guess") {
-		t.Fatalf("unverified recall must say so: %q", a)
-	}
-	// The pick comes from the index: a prompt naming "output a" brings
-	// seq 3 back even though it is the oldest.
-	tr.budget = 100
-	tr.keepWhole = 1
-	es3 := append(slices.Clone(es), history.Entry{Seq: 100, Kind: "input", Data: map[string]any{"text": "output a"}})
-	for _, m := range tr.Project(es3) {
-		if strings.Contains(m.Content, "[#3 hidden") {
-			t.Fatal("index pick should have kept #3 in full")
-		}
-	}
-}
-
-func TestRecallOutputIsNotEvidence(t *testing.T) {
-	srv, fed := fakeMemoryd(t)
-	c := newMemoryClient(srv.URL, "s1")
-	es := []history.Entry{
-		{Seq: 1, Kind: "input", Data: map[string]any{"text": "ask memory"}},
-		{Seq: 2, Kind: "code", Data: map[string]any{"text": "console.log(tools.recall('x'))"}},
-		{Seq: 3, Kind: "result", Data: map[string]any{"text": "V-x (verified in #9)"}},
-		{Seq: 4, Kind: "code", Data: map[string]any{"text": "console.log(tools.bash('ls'))"}},
-		{Seq: 5, Kind: "result", Data: map[string]any{"text": "a.txt"}},
-	}
-	f := &feeder{c: c, hist: memHist{es}, ctx: t.Context(), fail: func(err error) { t.Error(err) }}
-	f.Kick()
-	f.Wait(5 * time.Second)
-	if (*fed)[2]["kind"] != "recall" || (*fed)[4]["kind"] != "tool output" {
-		t.Fatalf("recall result must be tagged, bash result not: %v %v", (*fed)[2]["kind"], (*fed)[4]["kind"])
 	}
 }
