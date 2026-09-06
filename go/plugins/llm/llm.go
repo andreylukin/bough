@@ -85,6 +85,22 @@ func Small(ctx *kernel.Context) (LLM, bool) {
 	return l, false
 }
 
+// LocalKey is the service key of a model that runs on this machine:
+// the memory tier's navigator, which reads every tool output and must
+// not cost what the conversation costs. A row publishes under it with
+// {service: llm-local}.
+const LocalKey = "llm-local"
+
+// Local returns the local model, falling back to the small one and
+// then the main one, plus whether a real llm-local row provided it.
+func Local(ctx *kernel.Context) (LLM, bool) {
+	if l, err := kernel.Get[LLM](ctx, LocalKey); err == nil {
+		return l, true
+	}
+	l, _ := Small(ctx)
+	return l, false
+}
+
 // Name is a provider's model id, "" when it does not say.
 func Name(l LLM) string {
 	if m, ok := l.(Modeler); ok {
