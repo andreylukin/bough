@@ -23,22 +23,31 @@ const jobStripMax = 3
 // jobLister is the "job-notices" service's live half.
 type jobLister interface{ Running() []tools.Running }
 
+// rowLister is the "pr-watch" service: rows about pull requests being
+// worked by any session of this repo.
+type rowLister interface{ Rows() []string }
+
 // jobRows renders the strip, one row per running job, newest last.
 // Empty (and zero height) when nothing is running.
 func (m *model) jobRows(cfg *uiCfg) []string {
+	th := cfg.theme
+	var out []string
+	if cfg.prs != nil {
+		for _, r := range cfg.prs.Rows() {
+			out = append(out, th["accent"].Render(m.spin.View())+" "+th["dim"].Render(line(r, max(m.width-4, 12))))
+		}
+	}
 	if cfg.jobs == nil {
-		return nil
+		return out
 	}
 	live := cfg.jobs.Running()
 	if len(live) == 0 {
-		return nil
+		return out
 	}
-	th := cfg.theme
 	shown := live
 	if len(shown) > jobStripMax {
 		shown = shown[:jobStripMax]
 	}
-	out := make([]string, 0, len(shown)+1)
 	for _, r := range shown {
 		mark := th["accent"].Render(m.spin.View())
 		label := fmt.Sprintf("job %d", r.ID)

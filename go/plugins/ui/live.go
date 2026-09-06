@@ -87,6 +87,8 @@ type uiCfg struct {
 	// jobs is the background-job service, for the strip under the
 	// composer; nil when the tools row is absent.
 	jobs jobLister
+	// prs is the pr-watch service, for the same strip.
+	prs rowLister
 	// past is this directory's prompts from earlier sessions, newest
 	// first, for the composer's Up arrow. A func because reading them
 	// is file work: the composer calls it once, on the first recall.
@@ -260,6 +262,9 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 	if j, err := kernel.Get[jobLister](ctx, "job-notices"); err == nil {
 		cfg.jobs = j
+	}
+	if p, err := kernel.Get[rowLister](ctx, "pr-watch"); err == nil {
+		cfg.prs = p
 	} else if smallRowConfigured(ctx) {
 		// The row is there but the service is not: either the row is
 		// missing `service: llm-small` (so it published under "llm"

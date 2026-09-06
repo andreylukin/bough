@@ -149,7 +149,46 @@ type Workers struct {
 	maxSteps  int
 	spawns    int  // spawns this parent turn; reset on the loop's "done"
 	inChild   bool // a child run is active: no nested spawns
+	bg        int  // background children mid-step: their blocks may not spawn
 	nextID    int  // worker numbering, monotonic per session
+}
+
+// Background runs a child outside any turn: a plugin's own job (a PR
+// watcher answering review comments) rather than the model's
+// delegation. It lives under ctx, not a turn, so esc does not kill it
+// and it does not spend the turn's spawn budget; it still cannot spawn
+// (depth one), and its steps show in the transcript as sub:* like any
+// child's. Provided as the "spawn-background" service.
+func (w *Workers) Background(ctx context.Context, task string, shape map[string]any) (any, error) {
+	w.mu.Lock()
+	w.nextID++
+	id := w.nextID
+	w.mu.Unlock()
+	run := func(code string) (string, error) {
+		w.mu.Lock()
+		w.bg++
+		w.mu.Unlock()
+		defer func() {
+			w.mu.Lock()
+			w.bg--
+			w.mu.Unlock()
+		}()
+		return w.runBlock(ctx, id, code)
+	}
+	var sch schema.Schema
+	if len(shape) > 0 {
+		sch = schema.Schema(shape)
+	}
+	reply, err := w.runChild(ctx, task, id, run, false, sch)
+	if err != nil {
+		return "", err
+	}
+	if len(sch) > 0 {
+		if v, issues := sch.ValidateJSON(reply); len(issues) == 0 {
+			return v, nil
+		}
+	}
+	return reply, nil
 }
 
 // spawn is tools.spawn(task) -> final reply. A returned error becomes a
@@ -159,6 +198,13 @@ func (w *Workers) spawn(task string, shape ...map[string]any) (any, error) {
 	if w.inChild {
 		w.mu.Unlock()
 		return "", fmt.Errorf("workers: subagent depth 1 only")
+	}
+	if w.bg > 0 {
+		// Blocks serialize, so this is a background child's own step
+		// asking (refused: depth one) or, rarely, a parent block that
+		// queued behind one; the message covers both.
+		w.mu.Unlock()
+		return "", fmt.Errorf("workers: a background job's subagent is mid-step and cannot spawn; if you are the main agent, retry in a moment")
 	}
 	if w.spawns >= w.maxSpawns {
 		w.mu.Unlock()
@@ -622,6 +668,7 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 
 	cm.RegisterTool("spawn", w.spawn)
 	cm.RegisterTool("spawnAll", w.spawnAll)
+	kctx.Provide("spawn-background", w.Background)
 	if d, ok := cm.(interface{ Describe(name, line string) }); ok {
 		d.Describe("spawn", `tools.spawn(task) -> string: run ONE bounded child agent (same tools, fresh context, no nested spawns) and get its report.`)
 		d.Describe("spawnAll", `tools.spawnAll([task, …]) -> [report, …]: run several children AT ONCE; N tasks take about as long as the slowest.`)
