@@ -41,8 +41,8 @@ func (r *Run) Linear(server string) Report {
 // linearIssue is the part of an issue the graph keeps.
 type linearIssue struct {
 	ID, Identifier, Title, URL, State, Description, Branch, UpdatedAt string
-	Assignee                                                  struct{ ID, Name, Email string }
-	Links                                                     []string // attachment / PR urls
+	Assignee                                                          struct{ ID, Name, Email string }
+	Links                                                             []string // attachment / PR urls
 }
 
 // linearIssues reads list_issues' reply: a JSON array, or an object
