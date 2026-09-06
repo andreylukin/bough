@@ -39,21 +39,25 @@ func (s *Store) WorldOf(me Entity) (World, error) {
 	if err != nil {
 		return w, err
 	}
+	// Two passes: what awaits me first, so a thing of mine that also
+	// awaits me lands under "waiting on me", the list that matters.
 	seen := map[int64]bool{}
 	for _, e := range edges {
-		if e.Author == "collector" && e.ObservedAt > w.Fresh {
-			w.Fresh = e.ObservedAt
+		if e.Author == "collector" && e.RecordedAt > w.Fresh {
+			w.Fresh = e.RecordedAt
 		}
-		switch {
-		case e.Rel == "awaits" && e.Dst.ID == me.ID && IsOpen(e.Src) && !seen[e.Src.ID]:
+		if e.Rel == "awaits" && e.Dst.ID == me.ID && IsOpen(e.Src) && !seen[e.Src.ID] {
 			seen[e.Src.ID] = true
 			w.AwaitsMe = append(w.AwaitsMe, e.Src)
-		case (e.Rel == "authored" || e.Rel == "assigned") && e.Src.ID == me.ID && IsOpen(e.Dst) && !seen[e.Dst.ID]:
+		}
+	}
+	for _, e := range edges {
+		if (e.Rel == "authored" || e.Rel == "assigned") && e.Src.ID == me.ID && IsOpen(e.Dst) && !seen[e.Dst.ID] {
 			seen[e.Dst.ID] = true
 			w.Mine = append(w.Mine, e.Dst)
 		}
 	}
-	for _, m := range w.Mine {
+	for _, m := range slices.Concat(w.AwaitsMe, w.Mine) {
 		out, err := s.Neighbors(m, 1, "awaits", 0)
 		if err != nil {
 			return w, err
@@ -108,27 +112,31 @@ func (w World) Render() string {
 	if len(w.AwaitsMe) > 0 {
 		b.WriteString("Waiting on me:\n")
 		for _, e := range w.AwaitsMe {
-			line(e, "")
+			line(e, w.awaitsTail(e))
 		}
 	}
 	if len(w.Mine) > 0 {
 		b.WriteString("Mine, open:\n")
 		for _, e := range w.Mine {
-			var who []string
-			for _, p := range w.Awaiting[e.ID] {
-				who = append(who, personLabel(p))
-			}
-			tail := ""
-			if len(who) > 0 {
-				tail = "awaits " + strings.Join(who, ", ")
-			}
-			line(e, tail)
+			line(e, w.awaitsTail(e))
 		}
 	}
 	if w.Fresh > 0 {
 		fmt.Fprintf(&b, "(collected %s)\n", time.Unix(w.Fresh, 0).Format("2006-01-02 15:04"))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// awaitsTail names the others a thing waits on ("awaits Bradley").
+func (w World) awaitsTail(e Entity) string {
+	var who []string
+	for _, p := range w.Awaiting[e.ID] {
+		who = append(who, personLabel(p))
+	}
+	if len(who) == 0 {
+		return ""
+	}
+	return "awaits " + strings.Join(who, ", ")
 }
 
 func personLabel(p Entity) string {

@@ -614,3 +614,24 @@ func argsFor(schema any, query string) map[string]any {
 	}
 	return map[string]any{key: query}
 }
+
+// Call runs one tool on a configured server for another plugin (the
+// collectors): the same config sources as `bough mcp call`, one
+// session per call. args is a JSON object or the free-form text
+// `bough mcp call` accepts.
+func Call(server, tool, args string) (string, error) {
+	servers, err := configuredServers(nil)
+	if err != nil {
+		return "", err
+	}
+	sc, ok := servers[server]
+	if !ok {
+		return "", fmt.Errorf("no MCP server %q configured", server)
+	}
+	session, err := connect(sc)
+	if err != nil {
+		return "", fmt.Errorf("%s: connect: %w", server, err)
+	}
+	defer session.Close()
+	return callOn(session, tool, args)
+}

@@ -170,6 +170,22 @@
 # that blocks on the VM would stall the settle pass behind the first turn.
 - id: graph
   plugin: graph
+  # config:
+  #   me: you@example.com  # whose world `bough graph status` shows (default git user.email)
+
+# The graph's ingest from the external world: `bough collect` pulls my
+# PRs (gh), tickets (Linear MCP), threads (Slack MCP) and pages (Notion
+# MCP) with their links and states; `bough collect install` runs it
+# every 10 minutes under launchd. Sources whose server is not
+# configured report "off" and are skipped.
+- id: collect
+  plugin: collect
+  # config:
+  #   every: 10m
+  #   linear: linear-server   # MCP server names; "" turns a source off
+  #   slack: slack
+  #   notion: notion
+  #   queries: ["in:#nm-echo-private after:2026-09-01"]  # extra Slack searches
 
 # After every turn a small model writes down what is worth remembering
 # (a decision and its reason, where something lives, a proven dead end)

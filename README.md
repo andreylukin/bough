@@ -42,7 +42,7 @@ There is no telemetry, no crash reporting, and no call home. `bough
 - **Everything is a plugin** — `bough.yml` is a list of rows `{id, plugin, config}`. Rows mount when their service deps are provided, remount when a dep changes, and reconcile live when the file is saved. `bough rows` prints the state table.
 - **Sessions are an append-only log** — every turn appends to a JSONL file under `~/.bough/history/`; model context is projected from the log each step, so resume, provider swaps mid-conversation, and inspection all come for free (`-c`, `-r`, `bough log`, `ctrl+o`). Past a size budget the projection collapses old tool outputs to one-line placeholders the model can bring back with `<focus seq=N>`; with an `llm-small` (or `llm-local`) row, a navigator on that model writes each output's index line and pre-selects the outputs a prompt is about. Nothing is summarised away — the log keeps every byte (the `memory-tier` row).
 - **Claude Code parity where it matters** — subagents as one live card per spawn, an interactive `/todo` list, `tools.ask` questions with clickable options, `!cmd` shell lines, `@file` attachments, a fuzzy `/` palette, hooks, skills, and `AGENTS.md`/`CLAUDE.md` context files.
-- **Long-term memory** — a bi-temporal property graph in SQLite (`~/.bough/graph.db`). Nothing is deleted; contradictions close a validity window. See [go/docs/graph-memory.md](go/docs/graph-memory.md).
+- **Long-term memory** — a bi-temporal property graph in SQLite (`~/.bough/graph.db`). Nothing is deleted; contradictions close a validity window. `bough collect` pulls my PRs (gh), tickets (Linear), threads (Slack) and pages (Notion) into it with their links and states, and `bough graph status` (also a prompt section) lists what awaits me and what of mine is open. See [go/docs/graph-memory.md](go/docs/graph-memory.md).
 - **Cost in the status bar** — every provider's token tally is priced (OpenRouter passes its own price through; Anthropic and OpenAI use a built-in table). `/cost` says where the number came from.
 - **Three UIs, one model** — the native TUI (bubbletea), the same UI in a browser (`bough web`), and `--headless` for pipes and scripts.
 
@@ -147,7 +147,8 @@ bough.provider("parrot", (sys, msgs) => "...");             // a full LLM provid
 | `bough sessions` / `bough log [file]` | list sessions, pretty-print a history |
 | `bough mcp list \| tools \| search \| status \| call` | MCP servers and their tools, from the CLI |
 | `bough sync-mcp` | adopt Claude Code's MCP OAuth grants by keychain reference |
-| `bough graph stats \| backfill \| search \| neighbors \| timeline` | the memory graph |
+| `bough graph stats \| status \| backfill \| search \| neighbors \| timeline` | the memory graph; `status` is the world around me |
+| `bough collect [github\|linear\|slack\|notion] \| install \| uninstall` | pull my external world into the graph; `install` runs it every 10 min under launchd |
 | `bough update` / `bough restart` | build the newest commit on `main` and replace this binary — pulling your checkout if you have one, else from a clone under `~/.bough/src`; bounce the web session |
 
 `bough --help` has the full list; `--dump-config` mounts the tree, prints it, and exits.
@@ -242,7 +243,7 @@ todo list and a pull request against any of it is welcome.
 |---|---|
 | `go/kernel/` | services, events, effects, the loader, row lifecycle. The only non-plugin code besides the launcher |
 | `go/cmd/bough/` | the launcher: flags, config discovery, hot reload, subcommands |
-| `go/plugins/` | llm, codemode, loop, tools, workers, ui, history, graph, memory, mcp, hooks, skills, prompts, todo, ask, connect, cost, commands, initjs, contextmd, scratch, theme, title, activity — and `example`, the worked plugin from [docs/PLUGINS.md](go/docs/PLUGINS.md) |
+| `go/plugins/` | llm, codemode, loop, tools, workers, ui, history, graph, collect, memory, mcp, hooks, skills, prompts, todo, ask, connect, cost, commands, initjs, contextmd, scratch, theme, title, activity — and `example`, the worked plugin from [docs/PLUGINS.md](go/docs/PLUGINS.md) |
 | `go/e2e/`, `go/internal/` | headless and PTY end-to-end suites, shared LLM stubs, the real-terminal suite |
 | `go/docs/` | `PLUGINS.md` (writing a plugin), `INIT.md` (the init.js API), `graph-memory.md` (the memory graph design) |
 | `bench/harbor/` | Terminal-Bench 4.0 via Harbor on Modal |

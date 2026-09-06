@@ -114,23 +114,50 @@ Canonical keys are deterministic, one per kind:
 
 ### Relations
 
-Initial vocabulary, from what the data actually contains:
+The vocabulary is closed (`plugins/graph/rels.go`): `Assert` refuses a rel
+that is not listed, so `neighbors(key, rel)` can filter on it. A model's
+free verb folds to `relates` with the verb kept in the claim.
 
-| rel         | src → dst                          |
-|-------------|------------------------------------|
-| `implements`| pr → ticket                        |
-| `reviews`   | person → pr                        |
-| `authored`  | person → pr \| ticket \| notion_page |
-| `discusses` | slack_thread → pr \| ticket \| concept |
-| `documents` | notion_page → concept \| repo      |
-| `touches`   | session → repo \| pr \| ticket     |
-| `cites`     | concept → command \| url           |
-| `relates`   | concept → concept                  |
+| rel             | src → dst                                  | written by |
+|-----------------|--------------------------------------------|------------|
+| `ran`           | session → command                          | bough      |
+| `touches`       | session → repo \| ticket \| pr             | bough      |
+| `ran_on`        | session → model                            | bough      |
+| `branched_from` | session → session                          | bough      |
+| `cites`         | concept → command \| url                   | bough      |
+| `implements`    | pr → ticket                                | collector  |
+| `authored`      | person → pr \| ticket \| notion_page \| slack_thread | collector |
+| `assigned`      | person → ticket                            | collector  |
+| `reviews`       | person → pr                                | collector  |
+| `discusses`     | slack_thread \| notion_page → pr \| ticket \| concept | collector |
+| `documents`     | notion_page → concept \| repo              | collector  |
+| `mentions`      | slack_thread \| pr → person                | collector  |
+| `awaits`        | pr \| ticket \| slack_thread → person       | collector  |
+| `has_state`     | pr \| ticket → state                       | collector  |
+| `relates` `requires` `replaces` `blocked_by` `decided` | any → any | model (`cheap` / `session`) |
 
-`cites` absorbs `section_citations`. New rels are added when a collector
-produces them, not speculatively.
+`awaits` and `has_state` are what "the current status of the external
+world" is made of: `has_state` closes and reopens as a PR moves from
+open to merged, so `timeline` is the change log; `awaits` names who must
+act next, so the world around a person is one hop.
+
+### Link truth
+
+Entities carry `url`, `status`, `summary`, `updated_at` (added by
+migration at `Open`): the canonical link, the source's current state,
+one line about it, and the source's own clock. `aliases` holds the
+source ids (Slack user id, GitHub login, Linear uuid) so one person is
+one node.
 
 ## Ingest
+
+`bough collect` (plugins/collect) is the ingest: GitHub via `gh`, Linear,
+Slack and Notion via the MCP servers `bough mcp` already reaches. Every
+write cites a `collector` episode and is signed `collector`. `bough
+collect install` runs it every 10 minutes under launchd — a GUI agent,
+because the MCP tokens live in the login keychain, which is locked to an
+ssh session. `bough graph status` and the `## world` prompt section
+render what it found around `me`.
 
 Sync-then-resolve. Collectors write raw records with cursor watermarks (the
 `collect-{github,linear,slack}.db` watermark tables are already this pattern);

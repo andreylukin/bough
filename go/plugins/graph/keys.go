@@ -58,6 +58,21 @@ func PRs(text string) []string {
 	return out
 }
 
+// PRLinks is PRs restricted to full GitHub URLs: what free text (Slack,
+// ticket bodies) can be trusted on, where "C#12" is not a pull request.
+func PRLinks(text string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range prURLRe.FindAllStringSubmatch(text, -1) {
+		k := m[2] + "#" + m[3]
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // RepoKey normalizes a git origin (ssh or https, with or without .git)
 // to "host/owner/name". A non-URL (a bare path) comes back trimmed,
 // which is what command_history.repo held for path-scoped workspaces.
@@ -131,4 +146,20 @@ func PRNumber(key string) (repo string, n int, ok bool) {
 	}
 	n, err := strconv.Atoi(after)
 	return before, n, err == nil
+}
+
+// FirstSentence is the first line or sentence of a body, capped, for a
+// summary column.
+func FirstSentence(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexAny(s, "\n"); i >= 0 {
+		s = s[:i]
+	}
+	if i := strings.Index(s, ". "); i > 20 {
+		s = s[:i+1]
+	}
+	if len(s) > n {
+		s = s[:n] + "…"
+	}
+	return strings.TrimSpace(s)
 }

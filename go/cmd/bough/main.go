@@ -22,6 +22,7 @@ import (
 	_ "github.com/andreylukin/bough/plugins/activity"
 	_ "github.com/andreylukin/bough/plugins/ask"
 	_ "github.com/andreylukin/bough/plugins/codemode"
+	_ "github.com/andreylukin/bough/plugins/collect"
 	_ "github.com/andreylukin/bough/plugins/commands"
 	_ "github.com/andreylukin/bough/plugins/connect"
 	_ "github.com/andreylukin/bough/plugins/contextmd"

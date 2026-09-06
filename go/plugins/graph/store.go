@@ -246,6 +246,13 @@ func (s *Store) Alias(entityID int64, source, foreignID, url string) error {
 	return err
 }
 
+// AliasOwner finds the entity a source id was aliased to.
+func (s *Store) AliasOwner(source, foreignID string) (int64, error) {
+	var id int64
+	err := s.db.QueryRow(`SELECT entity_id FROM aliases WHERE source=? AND foreign_id=?`, source, foreignID).Scan(&id)
+	return id, err
+}
+
 // Link is the link truth of an entity: where it lives, what state it
 // is in, one line about it, and the source's own timestamp. Empty
 // fields keep what is stored, so a collector that knows only the url
@@ -327,19 +334,27 @@ type AssertOpts struct {
 // author. An identical open edge (same src, rel, dst) is returned as is:
 // asserting a fact twice is not two facts.
 func (s *Store) Assert(src Entity, rel string, dst Entity, episode int64, author string, o AssertOpts) (Edge, error) {
+	e, _, err := s.AssertNew(src, rel, dst, episode, author, o)
+	return e, err
+}
+
+// AssertNew is Assert that also says whether it wrote a row (false: the
+// open edge already existed), which is what a collector counts.
+func (s *Store) AssertNew(src Entity, rel string, dst Entity, episode int64, author string, o AssertOpts) (Edge, bool, error) {
 	if rel == "" || author == "" || episode == 0 {
-		return Edge{}, errors.New("graph: an edge needs rel, author and an episode")
+		return Edge{}, false, errors.New("graph: an edge needs rel, author and an episode")
 	}
 	if err := checkRel(rel); err != nil {
-		return Edge{}, err
+		return Edge{}, false, err
 	}
 	var id int64
 	err := s.db.QueryRow(`SELECT id FROM edges WHERE src=? AND rel=? AND dst=? AND valid_to IS NULL`, src.ID, rel, dst.ID).Scan(&id)
 	if err == nil {
-		return s.edge(id)
+		e, err := s.edge(id)
+		return e, false, err
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		return Edge{}, err
+		return Edge{}, false, err
 	}
 	now := s.unix()
 	if o.ValidFrom == 0 {
@@ -355,7 +370,7 @@ func (s *Store) Assert(src Entity, rel string, dst Entity, episode int64, author
 		VALUES(?,?,?,?,NULL,?,?,?,?,?,?)`,
 		src.ID, rel, dst.ID, o.ValidFrom, o.ObservedAt, now, episode, author, o.Weight, o.Claim)
 	if err != nil {
-		return Edge{}, err
+		return Edge{}, false, err
 	}
 	id, _ = res.LastInsertId()
 	text := o.Claim
@@ -363,9 +378,10 @@ func (s *Store) Assert(src Entity, rel string, dst Entity, episode int64, author
 		text = src.Title + " " + rel + " " + dst.Title
 	}
 	if err := s.index("edge", id, text); err != nil {
-		return Edge{}, err
+		return Edge{}, false, err
 	}
-	return s.edge(id)
+	e, err := s.edge(id)
+	return e, true, err
 }
 
 // Invalidate closes an edge's validity window as of now (or at, when
