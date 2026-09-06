@@ -1,0 +1,118 @@
+package ui
+
+import (
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	ansi "github.com/charmbracelet/x/ansi"
+
+	"github.com/andreylukin/bough/plugins/attention"
+	"github.com/andreylukin/bough/plugins/commands"
+)
+
+type fakeBoard struct {
+	b      attention.Board
+	sticky bool
+}
+
+func (f fakeBoard) Board() attention.Board { return f.b }
+func (f fakeBoard) Sticky() bool           { return f.sticky }
+
+func boardModel(t *testing.T, width int, src boardSource) model {
+	t.Helper()
+	var cfg atomic.Pointer[uiCfg]
+	c := newCfg(defaultTheme(), defaultKeymap(), "bough", nil)
+	c.board = src
+	cfg.Store(c)
+	return newModel(width, 30, func(string) {}, nil, &cfg)
+}
+
+func sample() attention.Board {
+	now := time.Now()
+	return attention.Board{
+		Collected: now.Add(-2 * time.Hour),
+		Me: []attention.Item{
+			{Key: "bough · deps", Kind: "pr", Title: "bough · dependency updates", Status: "ci failing ×12", Detail: "review required", Since: now.Add(-3 * 24 * time.Hour), Count: 12},
+			{Key: "orb#142", Kind: "pr", Title: "alert backtesting", Status: "open", Detail: "review required", Since: now.Add(-3 * time.Hour)},
+		},
+		Motion: []attention.Item{
+			{Key: "bough#66", Kind: "pr", Title: "fix thing", Status: "ci failing", Detail: "1 review thread · session 8f3a", Since: now.Add(-14 * time.Minute), Session: "8f3a1234-abcd"},
+		},
+		Others: []attention.Item{
+			{Key: "nas#46", Kind: "pr", Title: "fix sharding", Status: "ci green", Detail: "awaits Bradley", Since: now.Add(-2 * 24 * time.Hour)},
+		},
+	}
+}
+
+func TestBoardRowsWide(t *testing.T) {
+	m := boardModel(t, 150, fakeBoard{b: sample(), sticky: true})
+	if !m.board.on {
+		t.Fatal("sticky: the board starts on")
+	}
+	m.takeBoard(sample())
+	rows := m.boardRows(m.cfg.Load())
+	plain := ansi.Strip(strings.Join(rows, "\n"))
+	for _, want := range []string{
+		"current work", "collected", "NEEDS ME 2", "IN MOTION 1", "WAITING ON OTHERS 1",
+		"bough · deps ×12 ✕", "review required · 3d", "orb#142 alert backtesting",
+		"bough#66 fix thing", "1 review thread · session 8f3a · 14m",
+		"nas#46 fix sharding ✓", "awaits Bradley · 2d",
+	} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("board lacks %q:\n%s", want, plain)
+		}
+	}
+	// The stack's failing count equals its size, so it is not repeated.
+	if strings.Contains(plain, "✕ ×12") {
+		t.Errorf("stack repeats its count:\n%s", plain)
+	}
+	// A row with a session shows the spinner, not an age bar.
+	if strings.Contains(plain, "▮ bough#66") || strings.Contains(plain, "▯ bough#66") {
+		t.Errorf("in-motion row carries a bar:\n%s", plain)
+	}
+	// Every row fits the width; the frame gives the board its rows.
+	for _, r := range rows {
+		if w := ansi.StringWidth(r); w > 150 {
+			t.Errorf("row over width (%d): %q", w, ansi.Strip(r))
+		}
+	}
+	if !strings.Contains(ansi.Strip(m.frame()), "NEEDS ME") {
+		t.Error("frame does not show the board")
+	}
+	if !m.boardMotion() {
+		t.Error("a session on a row keeps the spinner ticking")
+	}
+}
+
+func TestBoardNarrowAndToggle(t *testing.T) {
+	m := boardModel(t, 80, fakeBoard{b: sample()})
+	if m.board.on {
+		t.Fatal("not sticky: the board starts off")
+	}
+	m.perform(commands.ActionBoard)
+	m.takeBoard(sample())
+	plain := ansi.Strip(strings.Join(m.boardRows(m.cfg.Load()), "\n"))
+	if !strings.Contains(plain, "NEEDS ME 2") || strings.Contains(plain, "IN MOTION 1") || !strings.Contains(plain, "in motion 1 · waiting on others 1") {
+		t.Errorf("narrow: one column plus counts:\n%s", plain)
+	}
+	m.perform(commands.ActionBoard)
+	if m.board.on || len(m.boardRows(m.cfg.Load())) != 0 {
+		t.Error("/current-work again hides the board")
+	}
+}
+
+func TestBoardMarksChanges(t *testing.T) {
+	m := boardModel(t, 150, fakeBoard{b: sample(), sticky: true})
+	b := sample()
+	m.takeBoard(b)
+	if len(m.board.changed) != 0 {
+		t.Fatal("the first read changes nothing")
+	}
+	b.Me[1].Status = "ci failing"
+	m.takeBoard(b)
+	if !m.board.changed["orb#142"] || m.board.changed["nas#46"] {
+		t.Fatalf("changed: %v", m.board.changed)
+	}
+}

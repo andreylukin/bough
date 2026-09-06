@@ -81,11 +81,28 @@ type Watcher struct {
 	// cloneMu serialises clone/fetch per repo within the session.
 	cloneMu sync.Mutex
 
-	mu     sync.Mutex
-	failed bool
-	logs   map[string]*jobLog // this session's jobs, by PR key
-	errs   []string           // recent errors, newest last
-	active int                // PRs being worked by any session, refreshed every few seconds
+	mu      sync.Mutex
+	failed  bool
+	logs    map[string]*jobLog // this session's jobs, by PR key
+	errs    []string           // recent errors, newest last
+	active  int                // PRs being worked by any session, refreshed every few seconds
+	working []Working          // the same PRs, for the attention board
+}
+
+// Working is one PR a session is working right now.
+type Working struct {
+	Key     string // owner/name#n
+	Session string
+	Since   time.Time
+	What    string
+}
+
+// Working lists the PRs being worked by any session, oldest first.
+// Cached like Active.
+func (w *Watcher) Working() []Working {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return slices.Clone(w.working)
 }
 
 // Active is the status bar's number: PRs being worked right now by any
@@ -101,14 +118,16 @@ func (w *Watcher) refreshActive() {
 	if err != nil {
 		return
 	}
-	n := 0
-	for _, ps := range st.PRs {
+	var live []Working
+	for key, ps := range st.PRs {
 		if ps.Lock != nil && time.Since(ps.Lock.Since) < lockStale {
-			n++
+			live = append(live, Working{Key: key, Session: ps.Lock.Session, Since: ps.Lock.Since, What: ps.Lock.What})
 		}
 	}
+	slices.SortFunc(live, func(a, b Working) int { return a.Since.Compare(b.Since) })
 	w.mu.Lock()
-	w.active = n
+	w.active = len(live)
+	w.working = live
 	w.mu.Unlock()
 }
 

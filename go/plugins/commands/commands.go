@@ -73,7 +73,8 @@ const (
 	ActionExpand     UIAction = "expand"
 	ActionQuit       UIAction = "quit"
 	ActionOpenPicker UIAction = "open-picker"
-	ActionKeys       UIAction = "keys" // /keys: the UI prints its live keymap
+	ActionKeys       UIAction = "keys"         // /keys: the UI prints its live keymap
+	ActionBoard      UIAction = "current-work" // /current-work: the UI toggles the attention board
 )
 
 // submitPrefix marks a UIAction that submits text to the loop as if

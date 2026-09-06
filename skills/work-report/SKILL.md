@@ -1,9 +1,9 @@
 ---
-name: current-work
-description: What I am working on right now, from the memory graph — open PRs, tickets, threads, what awaits me, what changed, and what bough remembers about each. Invoke as /current-work.
+name: work-report
+description: What I am working on right now, from the memory graph — open PRs, tickets, threads, what awaits me, what changed, and what bough remembers about each. Invoke as /work-report (the /current-work board is the live view of the same graph).
 ---
 
-# current-work
+# work-report
 
 Tell me where my work stands, from what bough has collected and remembered.
 Read the graph; do not go to GitHub, Linear, Slack or Notion yourself — the

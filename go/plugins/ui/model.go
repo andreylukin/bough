@@ -116,6 +116,7 @@ type model struct {
 	activity   string         // what the agent is doing now (activity plugin); "" when idle
 	pred       predictState   // the small model's guess at the rest of the draft (predict.go)
 	todoHidden bool           // the todo strip dismissed for now (todo_toggle)
+	board      boardState     // the attention board at the top (board.go)
 	sessRows   sessList       // mid-session picker list (see session.go); nil = launch picker
 	welcome    bool           // fresh-session orientation text (see welcomeView)
 	unfolded   map[int]int    // fold lead id -> end index of its run, shown as rows (see fold.go)
@@ -151,6 +152,9 @@ func newModel(width, height int, send func(string), events <-chan Event, cfg *at
 	m := model{vp: vp, overlay: ov, input: ti, spin: sp, send: send, events: events, cfg: cfg,
 		focusID: -1, ovExpanded: map[int64]bool{}, mdCache: map[string]string{}, comp: composerState{recall: -1}}
 	m.resize(width, height)
+	if b := cfg.Load().board; b != nil && b.Sticky() {
+		m.board.on = true
+	}
 	if cfg.Load().picker {
 		m.picking = true // replay happens after the pick (leavePicker)
 	} else {
@@ -691,7 +695,11 @@ func (m model) waitEvent() tea.Cmd {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.waitEvent(), tea.RequestBackgroundColor)
+	cmds := []tea.Cmd{m.waitEvent(), tea.RequestBackgroundColor}
+	if m.board.on {
+		cmds = append(cmds, m.loadBoard(m.cfg.Load()), m.spin.Tick)
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -700,11 +708,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resize(msg.Width, msg.Height)
 		return m, nil
 
+	case boardMsg:
+		m.takeBoard(msg.b)
+		if m.board.on {
+			return m, boardTick()
+		}
+		return m, nil
+
+	case boardTickMsg:
+		if !m.board.on {
+			return m, nil
+		}
+		return m, m.loadBoard(m.cfg.Load())
+
 	case spinner.TickMsg:
-		// The spinner drives two things: the running turn, and the
-		// background-job strip (which outlives the turn). Either keeps
-		// it ticking.
-		if !m.running && len(m.jobRows(m.cfg.Load())) == 0 {
+		// The spinner drives three things: the running turn, the
+		// background-job strip (which outlives the turn), and a board
+		// row with a session on it. Any keeps it ticking.
+		if !m.running && len(m.jobRows(m.cfg.Load())) == 0 && !m.boardMotion() {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -1482,6 +1503,9 @@ func (m model) frame() string {
 		body = overlayBottom(body, lines)
 	}
 	out := body
+	if rows := m.boardRows(cfg); len(rows) > 0 {
+		out = strings.Join(rows, "\n") + "\n" + body
+	}
 	// The todo list sits directly above the composer, always, while
 	// there is one: a plan you have to press a key to see is a plan
 	// you forget the agent is working from. Its rows come out of the

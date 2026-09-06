@@ -89,6 +89,8 @@ type uiCfg struct {
 	jobs jobLister
 	// prs is the pr-watch service, for the status bar's count.
 	prs bgCounter
+	// board is the attention service, for the board at the top.
+	board boardSource
 	// past is this directory's prompts from earlier sessions, newest
 	// first, for the composer's Up arrow. A func because reading them
 	// is file work: the composer calls it once, on the first recall.
@@ -273,6 +275,9 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 	if p, err := kernel.Get[bgCounter](ctx, "pr-watch"); err == nil {
 		cfg.prs = p
+	}
+	if b, err := kernel.Get[boardSource](ctx, "attention"); err == nil {
+		cfg.board = b
 	}
 	// A provider that cannot run says so now, not after the user has
 	// typed a prompt and waited. Without this the TUI opens on a clean

@@ -233,6 +233,15 @@
 # Colors: a bundled palette by name (forest, forest_light, ansi,
 # tokyonight, catppuccin_mocha, gruvbox, nord, dracula); /theme lists
 # and switches live. init.js `ui.theme` tokens overlay the palette.
+# The attention board: what awaits you, what a session is working now,
+# what of yours waits on others — from the graph, three columns by whose
+# turn it is, pinned at the top of the screen. /current-work toggles it;
+# sticky: true pins it from the first frame of every session.
+- id: attention
+  plugin: attention
+  config:
+    sticky: false
+
 - id: theme
   plugin: theme
   config:

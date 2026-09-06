@@ -360,6 +360,12 @@ func (m *model) perform(act commands.UIAction) tea.Cmd {
 		m.openPicker()
 	case commands.ActionKeys:
 		m.showKeys()
+	case commands.ActionBoard:
+		m.board.on = !m.board.on
+		m.layoutComposer()
+		if m.board.on {
+			return tea.Batch(m.loadBoard(m.cfg.Load()), m.spin.Tick)
+		}
 	default:
 		m.blocks = append(m.blocks, block{id: m.nextID, kind: "error",
 			text: fmt.Sprintf("unknown ui action %q", string(act))})
