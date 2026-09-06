@@ -85,6 +85,31 @@ type Watcher struct {
 	failed bool
 	logs   map[string]*jobLog // this session's jobs, by PR key
 	errs   []string           // recent errors, newest last
+	active int                // PRs being worked by any session, refreshed every few seconds
+}
+
+// Active is the status bar's number: PRs being worked right now by any
+// session. Cached; the shared file is read on a timer, not per frame.
+func (w *Watcher) Active() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.active
+}
+
+func (w *Watcher) refreshActive() {
+	st, err := w.state.load()
+	if err != nil {
+		return
+	}
+	n := 0
+	for _, ps := range st.PRs {
+		if ps.Lock != nil && time.Since(ps.Lock.Since) < lockStale {
+			n++
+		}
+	}
+	w.mu.Lock()
+	w.active = n
+	w.mu.Unlock()
 }
 
 // jobLog is one job's steps, kept for /background; nothing about a
@@ -412,6 +437,7 @@ func (w *Watcher) handle(pr PR, work Work) {
 	if !locked {
 		return
 	}
+	w.refreshActive()
 	defer func() {
 		_ = w.state.update(func(st *state) error {
 			if ps := st.PRs[key]; ps != nil && ps.Lock != nil && ps.Lock.Session == w.session {
@@ -419,6 +445,7 @@ func (w *Watcher) handle(pr PR, work Work) {
 			}
 			return nil
 		})
+		w.refreshActive()
 	}()
 	w.logLine(key, fmt.Sprintf("start · %s — %s", pr.Title, what))
 	mk := w.worktreeFn
@@ -582,6 +609,19 @@ func (w *Watcher) loop() {
 			return
 		case <-t.C:
 			w.poll()
+		}
+	}
+}
+
+// watchActive keeps the status bar's count current across sessions.
+func (w *Watcher) watchActive() {
+	w.refreshActive()
+	for {
+		select {
+		case <-w.ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+			w.refreshActive()
 		}
 	}
 }
@@ -758,6 +798,7 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	w.ctx = ctx
 	kctx.Effect(cancel)
 	kctx.Provide("pr-watch", w)
+	go w.watchActive()
 	if reg, err := kernel.Get[*commands.Registry](kctx, "commands"); err == nil {
 		show := func(string) (string, error) { return w.Background(), nil }
 		for _, name := range []string{"background", "prs"} {

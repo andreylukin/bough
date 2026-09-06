@@ -70,12 +70,14 @@ func (m *model) statusBar(cfg *uiCfg) string {
 			return strings.Join(slices.DeleteFunc(parts, func(s string) bool { return s == "" }), " · ")
 		}
 		think := thinkChip(cfg)
+		bg := bgChip(cfg)
 		cands = slices.Compact([]string{
-			join(tokens, cost, ctx, think, mdl),
-			join(cost, ctx, think, mdl),
-			join(cost, ctx, mdl),
-			join(cost, ctx),
-			join(cost),
+			join(bg, tokens, cost, ctx, think, mdl),
+			join(bg, cost, ctx, think, mdl),
+			join(bg, cost, ctx, mdl),
+			join(bg, cost, ctx),
+			join(bg, cost),
+			join(bg),
 		})
 	}
 	if m.flash == "" {
@@ -178,4 +180,18 @@ func (m *model) elapsed() string {
 		return fmt.Sprintf("%ds", int(d.Seconds()))
 	}
 	return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
+}
+
+// bgChip is the bright count of background agents working PRs right
+// now, across every session; "" when there are none. /background has
+// the detail.
+func bgChip(cfg *uiCfg) string {
+	if cfg.prs == nil {
+		return ""
+	}
+	n := cfg.prs.Active()
+	if n == 0 {
+		return ""
+	}
+	return cfg.theme["accent"].Bold(true).Render(fmt.Sprintf("● %d background", n))
 }

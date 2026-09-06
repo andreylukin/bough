@@ -87,8 +87,8 @@ type uiCfg struct {
 	// jobs is the background-job service, for the strip under the
 	// composer; nil when the tools row is absent.
 	jobs jobLister
-	// prs is the pr-watch service, for the same strip.
-	prs rowLister
+	// prs is the pr-watch service, for the status bar's count.
+	prs bgCounter
 	// past is this directory's prompts from earlier sessions, newest
 	// first, for the composer's Up arrow. A func because reading them
 	// is file work: the composer calls it once, on the first recall.
@@ -271,7 +271,7 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	if j, err := kernel.Get[jobLister](ctx, "job-notices"); err == nil {
 		cfg.jobs = j
 	}
-	if p, err := kernel.Get[rowLister](ctx, "pr-watch"); err == nil {
+	if p, err := kernel.Get[bgCounter](ctx, "pr-watch"); err == nil {
 		cfg.prs = p
 	}
 	// A provider that cannot run says so now, not after the user has
