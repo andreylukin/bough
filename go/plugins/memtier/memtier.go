@@ -24,6 +24,7 @@ package memtier
 import (
 	"context"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -83,6 +84,7 @@ type Tier struct {
 	// Apply would remount the row (and the loop with it, since it
 	// re-provides "projection") the moment that service appeared.
 	nav         func() llm.LLM
+	mem         *memoryClient // the local memory model; nil without memory_url
 	budget      int
 	keepWhole   int
 	topK        int
@@ -93,6 +95,7 @@ type Tier struct {
 	mu     sync.Mutex
 	index  map[int64]string  // seq -> index line (navigator-written)
 	picked map[int64][]int64 // input seq -> seqs the navigator chose
+	notes  map[int64]string  // input seq -> the memory's note for that turn
 	busy   bool
 	failed bool
 }
@@ -103,7 +106,7 @@ func New(nav func() llm.LLM) *Tier {
 	return &Tier{
 		nav: nav, budget: defaultBudget, keepWhole: defaultKeepWhole, topK: defaultTopK,
 		pickTimeout: defaultPickTimeout, ctx: context.Background(),
-		index: map[int64]string{}, picked: map[int64][]int64{},
+		index: map[int64]string{}, picked: map[int64][]int64{}, notes: map[int64]string{},
 	}
 }
 
@@ -129,6 +132,17 @@ func (t *Tier) Project(entries []history.Entry) []llm.Message {
 			reply.WriteByte('\n')
 		}
 	}
+	prompt := ""
+	for _, e := range entries {
+		if e.Seq == inputSeq {
+			prompt, _ = e.Data["text"].(string)
+		}
+	}
+	// The memory's answer to the new request rides on the request
+	// itself, at the end of the prefix, so it costs the cache nothing.
+	if n := t.note(inputSeq, prompt); n != "" {
+		entries = withText(entries, inputSeq, prompt+"\n\n[memory, from the local model; verify before relying on a value]\n"+n)
+	}
 	if total <= t.budget || len(results) <= t.keepWhole {
 		return loop.DefaultProject(entries)
 	}
@@ -146,12 +160,6 @@ func (t *Tier) Project(entries []history.Entry) []llm.Message {
 	for _, i := range results[:len(results)-t.keepWhole] {
 		if !keep[entries[i].Seq] {
 			cands = append(cands, entries[i])
-		}
-	}
-	prompt := ""
-	for _, e := range entries {
-		if e.Seq == inputSeq {
-			prompt, _ = e.Data["text"].(string)
 		}
 	}
 	for _, s := range t.pick(inputSeq, prompt, cands) {
@@ -178,19 +186,30 @@ func (t *Tier) Project(entries []history.Entry) []llm.Message {
 	if kernel.Verbose {
 		kernel.Logf("memory-tier: hiding %d of %d outputs (%d -> %d chars)\n", len(hide), len(results), total, spent)
 	}
-	out := slices.Clone(entries)
-	for i, e := range out {
+	out := entries
+	for _, e := range entries {
 		if hide[e.Seq] {
 			text, _ := e.Data["text"].(string)
-			d := make(map[string]any, len(e.Data))
-			for k, v := range e.Data {
-				d[k] = v
-			}
-			d["text"] = t.placeholder(e.Seq, text)
-			out[i].Data = d
+			out = withText(out, e.Seq, t.placeholder(e.Seq, text))
 		}
 	}
 	return loop.DefaultProject(out)
+}
+
+// withText is entries with one entry's text replaced, copying so the
+// history's own slice and maps are never written.
+func withText(entries []history.Entry, seq int64, text string) []history.Entry {
+	out := slices.Clone(entries)
+	for i, e := range out {
+		if e.Seq != seq {
+			continue
+		}
+		d := make(map[string]any, len(e.Data))
+		maps.Copy(d, e.Data)
+		d["text"] = text
+		out[i].Data = d
+	}
+	return out
 }
 
 // placeholder is the one line a hidden output projects to.
@@ -256,7 +275,13 @@ func (t *Tier) pick(inputSeq int64, prompt string, cands []history.Entry) []int6
 	return seqs
 }
 
+// navigator is the model that writes index lines and picks: the local
+// memory when configured (it already holds every output), else the
+// small model.
 func (t *Tier) navigator() llm.LLM {
+	if t.mem != nil {
+		return t.mem
+	}
 	if t.nav == nil {
 		return nil
 	}
@@ -274,7 +299,7 @@ func (t *Tier) placeholderLine(seq int64, text string) string {
 
 const pickPrompt = `You are the memory navigator for a coding agent. You are given the user's latest request and a list of older tool outputs that are currently hidden from the agent, one per line as "#SEQ (size): summary". Reply with the SEQ numbers of the outputs the agent will need to answer this request, most important first, comma-separated, and nothing else. Reply "none" if none are needed. Prefer few.`
 
-const indexPrompt = `You write one-line index entries for tool outputs in a coding agent's history. For each output below, reply with exactly one line: "#SEQ: summary". The summary is at most 120 characters, names what the output is (which command, file, or query) and the facts in it that a later step could need (counts, paths, errors, key values). No other text.`
+const indexPrompt = `You write one-line index entries for tool outputs in a coding agent's history. For each output listed below (by #SEQ, with its text when given), reply with exactly one line: "#SEQ: summary". The summary is at most 120 characters, names what the output is (which command, file, or query) and the facts in it that a later step could need (counts, paths, errors, key values). No other text.`
 
 // Index summarises outputs that have no index line yet. Called off
 // the turn's goroutine; one run at a time, the rest skipped.
@@ -306,6 +331,11 @@ func (t *Tier) Index(entries []history.Entry) {
 	for batch := range slices.Chunk(todo, indexBatch) {
 		var b strings.Builder
 		for _, e := range batch {
+			if t.mem != nil {
+				// The memory already holds the output; name it.
+				fmt.Fprintf(&b, "#%d\n", e.Seq)
+				continue
+			}
 			text, _ := e.Data["text"].(string)
 			if len(text) > indexInput {
 				text = text[:indexInput/2] + "\n…\n" + text[len(text)-indexInput/2:]
@@ -391,7 +421,12 @@ func init() {
 }
 
 func (plugin) Name() string     { return "memory-tier" }
-func (plugin) Inject() []string { return []string{"llm", "history"} }
+func (plugin) Inject() []string { return []string{"llm", "history", "codemode"} }
+
+// Codemode is the slice of the codemode service that registers a tool.
+type Codemode interface {
+	RegisterTool(name string, fn any)
+}
 
 func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	// An init.js that called bough.project owns the projection
@@ -412,7 +447,16 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		}
 		return nil
 	})
+	memoryURL := ""
 	for k, v := range cfg {
+		if k == "memory_url" {
+			u, ok := v.(string)
+			if !ok {
+				return fmt.Errorf("memory-tier: memory_url must be a string, got %v", v)
+			}
+			memoryURL = u
+			continue
+		}
 		n, err := toInt(v)
 		if err != nil || n < 0 {
 			return fmt.Errorf("memory-tier: %s must be a non-negative integer, got %v", k, v)
@@ -443,12 +487,68 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 			go t.Index(h.Entries())
 		}
 	})
+	if memoryURL != "" {
+		if err := t.attachMemory(kctx, memoryURL, h); err != nil {
+			return err
+		}
+	}
 	// The placeholder explains the focus protocol itself, so nothing
 	// here touches the loop's prompt sections: this row mounts BEFORE
 	// the loop (which reads "projection" at mount), and asking for a
 	// loop service from here would remount both rows once the loop
 	// appeared.
 	kctx.Provide("projection", t)
+	return nil
+}
+
+// attachMemory wires the local memory: load its state for this
+// session, feed every history entry into it as it lands, save at the
+// end of each turn, and register tools.recall.
+func (t *Tier) attachMemory(kctx *kernel.Context, url string, h loop.History) error {
+	cm, err := kernel.Get[Codemode](kctx, "codemode")
+	if err != nil {
+		return fmt.Errorf("memory-tier: memory_url needs the codemode service")
+	}
+	t.mem = newMemoryClient(url, sessionName(h.Path()))
+	f := &feeder{c: t.mem, hist: h, ctx: t.ctx, fail: t.reportOnce}
+	go func() {
+		ctx, cancel := context.WithTimeout(t.ctx, 2*time.Minute)
+		defer cancel()
+		if seq, err := t.mem.Load(ctx); err != nil {
+			t.reportOnce(err)
+			return
+		} else if seq > 0 {
+			f.mu.Lock()
+			f.seq = seq
+			f.mu.Unlock()
+			t.emit("memory", fmt.Sprintf("memory: resumed local state through #%d", seq))
+		}
+		f.Kick()
+	}()
+	kctx.On("loop/event", func(p any) {
+		ev, ok := p.(loop.Event)
+		if !ok {
+			return
+		}
+		switch ev.Kind {
+		case "result", "assistant", "input":
+			f.Kick()
+		case "done":
+			f.Kick()
+			go func() {
+				f.Wait(5 * time.Minute)
+				ctx, cancel := context.WithTimeout(t.ctx, 2*time.Minute)
+				defer cancel()
+				if err := t.mem.Save(ctx); err != nil {
+					t.reportOnce(err)
+				}
+			}()
+		}
+	})
+	cm.RegisterTool("recall", t.recall)
+	if d, ok := cm.(interface{ Describe(name, line string) }); ok {
+		d.Describe("recall", `tools.recall(question) -> string: ask the local memory model, which has read this whole session including hidden outputs; cheap, answers in a second, verify values it gives you.`)
+	}
 	return nil
 }
 

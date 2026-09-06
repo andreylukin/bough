@@ -145,6 +145,7 @@
   #   keep_whole: 6        # newest outputs always shown in full
   #   top_k: 6             # outputs the navigator may bring back per turn
   #   pick_timeout_seconds: 10
+  #   memory_url: http://127.0.0.1:8765   # the local memory model, see memory/README.md
 
 - id: loop
   plugin: loop

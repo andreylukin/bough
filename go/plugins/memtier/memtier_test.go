@@ -2,8 +2,15 @@ package memtier
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
@@ -146,5 +153,77 @@ func TestParseIndex(t *testing.T) {
 	m := ParseIndex("#3: ls of repo, 12 files\n#9:  bq query, 312 rows\nnoise\n#x: bad")
 	if m[3] != "ls of repo, 12 files" || m[9] != "bq query, 312 rows" || len(m) != 2 {
 		t.Fatalf("got %v", m)
+	}
+}
+
+// fakeMemoryd is a memoryd that records what it was fed and answers
+// every question with the seqs it has seen.
+func fakeMemoryd(t *testing.T) (*httptest.Server, *[]string) {
+	t.Helper()
+	var fed []string
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.URL.Path {
+		case "/ingest":
+			fed = append(fed, req["text"].(string))
+			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": len(fed)})
+		case "/ask":
+			q, _ := req["question"].(string)
+			if strings.Contains(q, "nothing-here") {
+				_ = json.NewEncoder(w).Encode(map[string]any{"answer": "nothing relevant"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"answer": fmt.Sprintf("fed %d entries; q=%q", len(fed), q[:min(20, len(q))])})
+		case "/save":
+			_ = json.NewEncoder(w).Encode(map[string]any{"saved": true})
+		case "/load":
+			_ = json.NewEncoder(w).Encode(map[string]any{"loaded": true, "seq": 2})
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &fed
+}
+
+type memHist struct{ es []history.Entry }
+
+func (m memHist) Entries() []history.Entry { return m.es }
+
+func TestFeederAndNote(t *testing.T) {
+	srv, fed := fakeMemoryd(t)
+	c := newMemoryClient(srv.URL, "s1")
+	seq, err := c.Load(t.Context())
+	if err != nil || seq != 2 {
+		t.Fatalf("load: %v %d", err, seq)
+	}
+	es := session(3, 100) // seqs 1..8; the fake says 1..2 are already in
+	f := &feeder{c: c, hist: memHist{es}, ctx: t.Context(), fail: func(err error) { t.Error(err) }, seq: seq}
+	f.Kick()
+	f.Wait(5 * time.Second)
+	if len(*fed) != 6 || !strings.HasPrefix((*fed)[0], "\n[#3 tool output]") {
+		t.Fatalf("fed %d entries, first %q", len(*fed), (*fed)[0])
+	}
+
+	tr := New(nil)
+	tr.mem = c
+	got := tr.Project(es)
+	last := got[len(got)-1].Content
+	if !strings.Contains(last, "[memory, from the local model") || !strings.Contains(last, "fed 6 entries") {
+		t.Fatalf("note missing from the request: %q", last)
+	}
+	tr.Project(es)
+	if n := len(tr.notes); n != 1 {
+		t.Fatalf("note must be asked once per turn, got %d", n)
+	}
+	es2 := append(slices.Clone(es), history.Entry{Seq: 99, Kind: "input", Data: map[string]any{"text": "nothing-here please"}})
+	got = tr.Project(es2)
+	if strings.Contains(got[len(got)-1].Content, "[memory") {
+		t.Fatal("a 'nothing relevant' answer must leave the request untouched")
+	}
+	if a, err := tr.recall("what?"); err != nil || !strings.HasPrefix(a, "fed 6") {
+		t.Fatalf("recall: %q %v", a, err)
 	}
 }
