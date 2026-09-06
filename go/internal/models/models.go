@@ -39,8 +39,12 @@ var snapshot []byte
 const URL = "https://models.dev/api.json"
 
 // maxAge is how stale a cached catalogue may get before a background
-// refresh is started. Prices move on the scale of months.
-const maxAge = 7 * 24 * time.Hour
+// refresh is started. Prices move on the scale of months, but MODELS
+// arrive weekly and a week-old cache does not list the one someone is
+// asking for by name — openai/gpt-6-astra was on models.dev and absent
+// here for exactly that reason. Refresh returns it on demand when
+// even a day is too long.
+const maxAge = 24 * time.Hour
 
 // cacheVersion is the shape of ~/.bough/models.json. A cache written
 // by an older bough is missing whatever fields were added since — the
@@ -260,14 +264,24 @@ func refresh() {
 	loaded = merge(loaded, c)
 	out := loaded
 	mu.Unlock()
-	if p := cachePath(); p != "" {
-		if b, err := json.Marshal(cacheFile{Version: cacheVersion, Catalogue: out}); err == nil {
-			_ = os.MkdirAll(filepath.Dir(p), 0o755)
-			tmp := p + ".tmp"
-			if os.WriteFile(tmp, b, 0o644) == nil {
-				_ = os.Rename(tmp, p)
-			}
-		}
+	writeCache(out)
+}
+
+// writeCache stores the catalogue, atomically. Failure is silent: the
+// in-memory copy already answered.
+func writeCache(out Catalogue) {
+	p := cachePath()
+	if p == "" {
+		return
+	}
+	b, err := json.Marshal(cacheFile{Version: cacheVersion, Catalogue: out})
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(p), 0o755)
+	tmp := p + ".tmp"
+	if os.WriteFile(tmp, b, 0o644) == nil {
+		_ = os.Rename(tmp, p)
 	}
 }
 
@@ -395,4 +409,68 @@ func Trim(b []byte) (Catalogue, error) {
 		}
 	}
 	return out, nil
+}
+
+// Refresh refetches the catalogue now and reports how many models each
+// provider ended up with. Load's refresh is a background job on a
+// timer; this is the one to call when a model is missing and the
+// answer "wait until tomorrow" is not one.
+func Refresh() (Catalogue, error) {
+	c, err := fetch(context.Background(), URL)
+	if err != nil {
+		return nil, err
+	}
+	if len(c) == 0 {
+		return nil, errors.New("models: the catalogue came back empty")
+	}
+	mu.Lock()
+	loaded = merge(loaded, c)
+	out := loaded
+	mu.Unlock()
+	writeCache(out)
+	return out, nil
+}
+
+// Search returns every model whose id contains q, case-insensitively,
+// as "provider/id" pairs sorted by provider then id. A catalogue of 359
+// OpenRouter models is not something to read; it is something to search.
+func Search(q string) []Match {
+	q = strings.ToLower(strings.TrimSpace(q))
+	var out []Match
+	for prov, ms := range Load() {
+		for id, m := range ms {
+			if q == "" || strings.Contains(strings.ToLower(id), q) {
+				out = append(out, Match{Provider: prov, ID: id, Model: m})
+			}
+		}
+	}
+	sort.Slice(out, func(a, b int) bool {
+		if out[a].Provider != out[b].Provider {
+			return out[a].Provider < out[b].Provider
+		}
+		// Newest first within a provider, undated last.
+		if out[a].Release != out[b].Release {
+			return out[a].Release > out[b].Release
+		}
+		return out[a].ID < out[b].ID
+	})
+	return out
+}
+
+// Match is one search hit.
+type Match struct {
+	Provider string // models.dev provider id ("openrouter")
+	ID       string // the model id to pass to /model
+	Model
+}
+
+// Plugin is the llm-* plugin name for a models.dev provider id, the
+// inverse of Provider; "" when bough has no plugin for it.
+func Plugin(provider string) string {
+	for _, p := range []string{"llm-anthropic", "llm-openai", "llm-openrouter", "llm-cerebras"} {
+		if Provider(p) == provider {
+			return p
+		}
+	}
+	return ""
 }

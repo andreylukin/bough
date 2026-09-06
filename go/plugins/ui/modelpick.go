@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"fmt"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -19,17 +20,45 @@ type modelPicker struct {
 	pick    int
 	target  string // "" the agent's model, "small" the cheap one
 	current string
-	rows    []string
+	// all is every model of every registered provider; rows is what
+	// query leaves of it. OpenRouter alone has 361, so the pane is a
+	// search box with a list under it, not a list you scroll.
+	all   []string
+	rows  []string
+	query string
+}
+
+// filter narrows all by the query (case-insensitive substring, every
+// word must match) and puts the cursor on the current row when it
+// survives, else at the top.
+func (p *modelPicker) filter() {
+	words := strings.Fields(strings.ToLower(p.query))
+	p.rows = p.rows[:0]
+	for _, r := range p.all {
+		low := strings.ToLower(r)
+		ok := true
+		for _, w := range words {
+			if !strings.Contains(low, w) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			p.rows = append(p.rows, r)
+		}
+	}
+	p.pick = 0
+	for i, r := range p.rows {
+		if r == p.current {
+			p.pick = i
+		}
+	}
 }
 
 // openModelPicker shows the picker, cursor on the current choice.
 func (m *model) openModelPicker(target, current string, rows []string) {
-	m.mp = modelPicker{open: true, target: target, current: current, rows: rows}
-	for i, r := range rows {
-		if r == current {
-			m.mp.pick = i
-		}
-	}
+	m.mp = modelPicker{open: true, target: target, current: current, all: rows}
+	m.mp.filter() // puts the cursor on the current row
 	m.syncPalette()
 }
 
@@ -72,6 +101,27 @@ func (m model) handleModelPickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.dispatch(strings.TrimSpace("/model " + next))
 	case "esc":
 		m.mp = modelPicker{}
+	case "backspace":
+		if q := []rune(m.mp.query); len(q) > 0 {
+			m.mp.query = string(q[:len(q)-1])
+			m.mp.filter()
+		}
+	case "ctrl+u":
+		m.mp.query = ""
+		m.mp.filter()
+	case "space":
+		// bubbletea names this key rather than reporting the rune, so
+		// the branch below would drop it and "openrouter astra" would
+		// filter as one word.
+		m.mp.query += " "
+		m.mp.filter()
+	default:
+		// Anything else that is a single character types into the
+		// query. 361 OpenRouter models is not a list to scroll.
+		if r := []rune(key); len(r) == 1 {
+			m.mp.query += key
+			m.mp.filter()
+		}
 	}
 	return m, nil
 }
@@ -84,14 +134,34 @@ func (m *model) modelPickerView(cfg *uiCfg) string {
 	if m.mp.target == "small" {
 		what = "· pick the small model (session names, memory, status line, autocomplete)"
 	}
+	// The search box. Every provider's whole catalogue is behind it,
+	// so the count says how much the query left.
+	count := fmt.Sprintf("%d of %d", len(m.mp.rows), len(m.mp.all))
+	query := m.mp.query
+	if query == "" {
+		query = th["dim"].Render("type to search")
+	}
 	lines := []string{
 		th["accent"].Render("bough") + " " + th["dim"].Render(what),
 		"",
+		th["accent"].Render("search ") + query + th["dim"].Render("  "+count),
+		"",
 	}
 	if len(m.mp.rows) == 0 {
-		lines = append(lines, th["dim"].Render("  (no providers)"))
+		lines = append(lines, th["dim"].Render("  nothing matches — backspace to widen, esc to leave"))
 	}
-	for i, r := range m.mp.rows {
+	// A window around the cursor: the unfiltered list is every model of
+	// every provider, which does not fit and should not have to.
+	room := max(m.height-7, 3)
+	first := 0
+	if len(m.mp.rows) > room && m.mp.pick >= room {
+		first = min(m.mp.pick-room+1, len(m.mp.rows)-room)
+	}
+	if first > 0 {
+		lines = append(lines, th["dim"].Render(fmt.Sprintf("  ↑ %d more above", first)))
+	}
+	for i := first; i < len(m.mp.rows) && i-first < room; i++ {
+		r := m.mp.rows[i]
 		marker, st := "  ", th["result"]
 		if i == m.mp.pick {
 			marker, st = "▸ ", th["focus"]
@@ -102,7 +172,10 @@ func (m *model) modelPickerView(cfg *uiCfg) string {
 		}
 		lines = append(lines, st.Render(row))
 	}
-	hints := th["dim"].Render("↑/↓ select · enter switch · esc back")
+	if rest := len(m.mp.rows) - first - room; rest > 0 {
+		lines = append(lines, th["dim"].Render(fmt.Sprintf("  ↓ %d more below", rest)))
+	}
+	hints := th["dim"].Render("type to search · ↑/↓ select · enter switch · esc back")
 	for len(lines) < m.height-1 {
 		lines = append(lines, "")
 	}

@@ -104,7 +104,7 @@ func describeRow(r kernel.Row) string {
 	return s
 }
 
-const modelUsage = "usage: /model [small] | /model list | /model [small] <provider> [model] | /model [small] <model>"
+const modelUsage = "usage: /model [small] | /model list | /model search <query> | /model refresh | /model [small] <provider> [model] | /model [small] <model>"
 
 // pickerModels caps what one provider contributes to the picker: the
 // catalogue has 359 OpenRouter models and a list that long is not a
@@ -112,11 +112,17 @@ const modelUsage = "usage: /model [small] | /model list | /model [small] <provid
 // reaching for; any id still works as an argument.
 const pickerModels = 12
 
+// allModels asks suggestModels for the whole catalogue.
+const allModels = -1
+
 // suggestModels is a provider's models, newest first, from the model
 // catalogue (models.dev, refreshed weekly, embedded snapshot offline).
 // n <= 0 is the picker's cap.
 func suggestModels(plugin string, n int) []string {
-	if n <= 0 {
+	switch {
+	case n == allModels:
+		return models.List(plugin, 0) // 0 is "no cap" to the catalogue
+	case n <= 0:
 		n = pickerModels
 	}
 	return models.List(plugin, n)
@@ -132,7 +138,10 @@ func modelChoices(row kernel.Row, provs []string) (current string, choices []str
 		current += " " + m
 	}
 	for _, p := range provs {
-		list := suggestModels(p, 0)
+		// EVERY model, not the picker's dozen: the pane searches now,
+		// and a list that stops at twelve is why a model that exists
+		// looked like one bough did not have.
+		list := suggestModels(p, allModels)
 		if len(list) == 0 {
 			choices = append(choices, p)
 			continue
@@ -154,6 +163,12 @@ func showModel(row kernel.Row, small string, provs []string) string {
 	fmt.Fprintf(&b, "model: %s\nsmall: %s\nproviders: %s\n", describeRow(row), small, strings.Join(provs, ", "))
 	if list := suggestModels(row.Plugin, 6); len(list) > 0 {
 		fmt.Fprintf(&b, "try: %s\n", strings.Join(list, ", "))
+		// Say how much is NOT shown. A provider with 361 models and a
+		// list of six looks like the catalogue, and someone asking for
+		// one by name concluded bough did not have it.
+		if all := len(models.List(row.Plugin, 0)); all > len(list) {
+			fmt.Fprintf(&b, "%s has %d models in all — /model search <query> finds any of them\n", row.Plugin, all)
+		}
 	}
 	b.WriteString(modelUsage)
 	return b.String()
@@ -173,6 +188,16 @@ func runModel(ctx *kernel.Context, args string) (string, error) {
 	target := ""
 	if len(fields) > 0 && fields[0] == "small" {
 		target, fields = "small", fields[1:]
+	}
+	// "/model search <query>" looks across EVERY provider's whole
+	// catalogue, not the dozen the picker shows.
+	if len(fields) > 0 && (fields[0] == "search" || fields[0] == "find") {
+		return searchModels(strings.Join(fields[1:], " "))
+	}
+	// "/model refresh" refetches models.dev now. The background refresh
+	// is on a timer, and a model released today is not on it yet.
+	if len(fields) == 1 && fields[0] == "refresh" {
+		return refreshModels()
 	}
 	if len(fields) == 1 && fields[0] == "list" {
 		row, err := llmRow(ctx)
@@ -249,4 +274,63 @@ func runModel(ctx *kernel.Context, args string) (string, error) {
 		label = "small model: "
 	}
 	return label + describeRow(now), nil
+}
+
+// searchHits caps what one search prints: a query matching two hundred
+// models is a query to narrow, not a list to read.
+const searchHits = 40
+
+// searchModels lists every model whose id contains the query, across
+// every provider bough has a plugin for, with the line to run.
+func searchModels(query string) (string, error) {
+	if strings.TrimSpace(query) == "" {
+		return "", fmt.Errorf("usage: /model search <query>")
+	}
+	var hits []models.Match
+	for _, m := range models.Search(query) {
+		if models.Plugin(m.Provider) != "" { // skip providers with no plugin
+			hits = append(hits, m)
+		}
+	}
+	if len(hits) == 0 {
+		return fmt.Sprintf("no model matches %q.\nThe catalogue refreshes daily; /model refresh fetches it now.", query), nil
+	}
+	var b strings.Builder
+	shown := hits
+	if len(shown) > searchHits {
+		shown = shown[:searchHits]
+	}
+	for _, m := range shown {
+		fmt.Fprintf(&b, "  %-14s %-42s %s\n", models.Plugin(m.Provider), m.ID, priceOf(m.Model))
+	}
+	if len(hits) > len(shown) {
+		fmt.Fprintf(&b, "\n… and %d more; narrow the query.\n", len(hits)-len(shown))
+	}
+	fmt.Fprintf(&b, "\nswitch with: /model <provider> <model>")
+	return b.String(), nil
+}
+
+// priceOf is a one-line price, "" when the catalogue has none.
+func priceOf(m models.Model) string {
+	if m.Input == 0 && m.Output == 0 {
+		return ""
+	}
+	return fmt.Sprintf("$%g/$%g per Mtok", m.Input, m.Output)
+}
+
+// refreshModels refetches models.dev and reports the counts.
+func refreshModels() (string, error) {
+	c, err := models.Refresh()
+	if err != nil {
+		return "", fmt.Errorf("model: refresh: %w", err)
+	}
+	var b strings.Builder
+	b.WriteString("refreshed the model catalogue from models.dev\n")
+	for _, p := range llmProviders() {
+		if n := len(models.List(p, 0)); n > 0 {
+			fmt.Fprintf(&b, "  %-16s %d models\n", p, n)
+		}
+	}
+	_ = c
+	return strings.TrimRight(b.String(), "\n"), nil
 }

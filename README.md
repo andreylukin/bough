@@ -110,6 +110,7 @@ Type a task. The model's programs render as collapsed one-line headers (`▸ Ran
 | Input | What it does |
 |---|---|
 | `/` | fuzzy palette over every command (`/init`, `/connect`, `/model`, `/sessions`, `/export`, `/todo`, `/cost`, `/keys`, …); `tab` completes, `enter` runs |
+| `/model` | every model of every provider, searchable — type to filter, `enter` switches; `/model refresh` refetches the catalogue |
 | `!cmd` | run a shell command directly, output boxed in the transcript, never sent to the model |
 | `@path` | attach a file; a picker opens as you type |
 | `ctrl+c` | cancel the running turn (kills the process group); press again to quit |
