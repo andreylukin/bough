@@ -259,12 +259,6 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 	if s, err := kernel.Get[llm.LLM](ctx, llm.SmallKey); err == nil {
 		cfg.small = s
-	}
-	if j, err := kernel.Get[jobLister](ctx, "job-notices"); err == nil {
-		cfg.jobs = j
-	}
-	if p, err := kernel.Get[rowLister](ctx, "pr-watch"); err == nil {
-		cfg.prs = p
 	} else if smallRowConfigured(ctx) {
 		// The row is there but the service is not: either the row is
 		// missing `service: llm-small` (so it published under "llm"
@@ -273,6 +267,12 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 		// kernel's warning goes to stderr, which under `bough web` is
 		// a log file nobody reads.
 		cfg.notice = strings.TrimSpace(cfg.notice + "\nan llm-small row is configured but provides no llm-small service: add `service: llm-small` to its config, or run `bough update` if this binary predates it")
+	}
+	if j, err := kernel.Get[jobLister](ctx, "job-notices"); err == nil {
+		cfg.jobs = j
+	}
+	if p, err := kernel.Get[rowLister](ctx, "pr-watch"); err == nil {
+		cfg.prs = p
 	}
 	// A provider that cannot run says so now, not after the user has
 	// typed a prompt and waited. Without this the TUI opens on a clean
