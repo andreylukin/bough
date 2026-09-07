@@ -219,7 +219,7 @@ func TestTreeListsAndForks(t *testing.T) {
 			fork = s
 		}
 	}
-	if fork.ID == "" || fork.Entries != 3 || fork.Title != "first question" {
+	if fork.ID == "" || fork.Entries != 3 || fork.Title != "first question" || fork.ForkedFrom != "orig" || fork.AtSeq != 2 {
 		t.Fatalf("fork info = %+v", fork)
 	}
 	f, err := history.OpenExisting(fork.Path)
@@ -237,5 +237,30 @@ func TestTreeListsAndForks(t *testing.T) {
 	}
 	if _, err := reg.Run("tree", "x"); err == nil || !strings.Contains(err.Error(), "usage") {
 		t.Fatalf("/tree x = %v", err)
+	}
+
+	// "/tree <seq> <session>" forks a sibling file, not the current one:
+	// the fork's fork points at the fork.
+	_, err = reg.Run("tree", "2 "+id)
+	act, ok = errors.AsType[commands.UIAction](err)
+	if !ok {
+		t.Fatalf("/tree 2 %s = %v, want a UIAction", id, err)
+	}
+	id2, _ := commands.ResumeID(act)
+	infos, _ = history.List(dir)
+	var again history.SessionInfo
+	for _, s := range infos {
+		if s.ID == id2 {
+			again = s
+		}
+	}
+	if again.ForkedFrom != id || again.AtSeq != 2 {
+		t.Fatalf("second fork info = %+v, want forked from %s", again, id)
+	}
+	if _, err := reg.Run("tree", "2 nope"); err == nil || !strings.Contains(err.Error(), "fork") {
+		t.Fatalf("/tree 2 nope = %v", err)
+	}
+	if _, err := reg.Run("tree", "2 ../x"); err == nil || !strings.Contains(err.Error(), "not a session id") {
+		t.Fatalf("/tree 2 ../x = %v", err)
 	}
 }

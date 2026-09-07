@@ -5,6 +5,7 @@ package ui
 // the transcript, which you could read but not use.
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,7 +18,7 @@ func TestRewindOpensOnCurrent(t *testing.T) {
 	d := rewindDrv(t, "one", "two", "three")
 	d.press(keyEsc())
 	d.press(keyEsc())
-	if got, want := d.m.rw.pick, len(d.m.rw.rows); got != want {
+	if got, want := d.m.rw.pick, len(d.m.rw.rows)-1; got != want {
 		t.Fatalf("cursor at %d, want %d ((current))", got, want)
 	}
 	if !strings.Contains(d.plain(), "❯ (current)") {
@@ -256,5 +257,181 @@ func TestRewindLeavesTheComposerAloneWhenNothingChanges(t *testing.T) {
 		if got := d.m.input.Value(); got != "" {
 			t.Errorf("%s should not fill the composer, got %q", key, got)
 		}
+	}
+}
+
+// treeDrv builds a family of real session files in a temp dir: a root
+// with the given prompts, forked at fork turns (1-based index into
+// prompts) into sessions that go on with their own prompts. The
+// mounted session is the one named cur ("root", or a fork's name).
+// Fork names sort after "root" and in the order given, like UUIDv7s.
+func treeDrv(t *testing.T, cur string, root []string, forks ...treeFork) *drv {
+	t.Helper()
+	dir := t.TempDir()
+	write := func(name string, entries []history.Entry) {
+		st, err := history.Open(filepath.Join(dir, name+".jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			st.Append(e.Kind, e.Data)
+		}
+		if err := st.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	turnsOf := func(prompts []string) []history.Entry {
+		var es []history.Entry
+		for _, p := range prompts {
+			es = append(es,
+				history.Entry{Kind: "input", Data: map[string]any{"text": p}},
+				history.Entry{Kind: "done", Data: map[string]any{"files": []string{"a.go"}}})
+		}
+		return es
+	}
+	write("root", append([]history.Entry{{Kind: "meta", Data: map[string]any{"cwd": dir}}}, turnsOf(root)...))
+	for _, f := range forks {
+		// A fork's input seq: meta is 1, turn i's input is 2i.
+		src := filepath.Join(dir, f.from+".jsonl")
+		if err := history.Fork(src, int64(2*f.at), filepath.Join(dir, f.name+".jsonl")); err != nil {
+			t.Fatal(err)
+		}
+		st, err := history.OpenExisting(filepath.Join(dir, f.name+".jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range turnsOf(f.prompts) {
+			st.Append(e.Kind, e.Data)
+		}
+		st.Close()
+	}
+	entries, err := history.Read(filepath.Join(dir, cur+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := cfgWith(t, nil, nil, fakeHist{path: filepath.Join(dir, cur+".jsonl"), entries: entries})
+	cfg.cmds = reg(t, "tree", "new", "sessions")
+	return newDrv(t, 100, 30, cfg)
+}
+
+type treeFork struct {
+	name, from string
+	at         int      // the turn (1-based, in from's prompts) it forks at
+	prompts    []string // its own turns
+}
+
+// The tree shows every branch of the family, not just this file: the
+// root's turns, and a fork's own turns hanging off the turn it left at.
+func TestRewindShowsTheWholeFamily(t *testing.T) {
+	t.Parallel()
+	d := treeDrv(t, "root", []string{"one", "two", "three"},
+		treeFork{name: "s1", from: "root", at: 1, prompts: []string{"alt two"}})
+	d.press(keyEsc())
+	d.press(keyEsc())
+	p := d.plain()
+	for _, want := range []string{"one", "├─", "alt two", "└─", "two", "three", "(current)", "(continue)"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("missing %q:\n%s", want, p)
+		}
+	}
+	// The fork hangs off "one" and the trunk reads on below it.
+	if strings.Index(p, "alt two") < strings.Index(p, "one") || strings.Index(p, "alt two") > strings.Index(p, "two") {
+		t.Errorf("the fork should sit between the turn it left at and the trunk's next turn:\n%s", p)
+	}
+	// The current path is marked, the side branch is not.
+	if !strings.Contains(p, "• three") || strings.Contains(p, "• alt two") {
+		t.Errorf("only the current path carries the marker:\n%s", p)
+	}
+}
+
+// From inside a fork, the origin's turns are the trunk and this
+// session is the marked branch; the fork's copied ancestors appear
+// once, as the origin's rows.
+func TestRewindFromAForkShowsTheOrigin(t *testing.T) {
+	t.Parallel()
+	d := treeDrv(t, "s1", []string{"one", "two"},
+		treeFork{name: "s1", from: "root", at: 1, prompts: []string{"alt two"}})
+	d.press(keyEsc())
+	d.press(keyEsc())
+	p := d.plain()
+	if strings.Count(p, "one") != 1 {
+		t.Errorf("the shared turn should appear once:\n%s", p)
+	}
+	if !strings.Contains(p, "• one") || !strings.Contains(p, "• alt two") || strings.Contains(p, "• two") {
+		t.Errorf("the marker follows this session's path back to the root:\n%s", p)
+	}
+	if !strings.Contains(p, "❯ │  • (current)") {
+		t.Errorf("the cursor opens on this branch's tip:\n%s", p)
+	}
+}
+
+// Enter on another branch's turn forks THAT session before the turn,
+// naming it, and the prompt lands in the composer.
+func TestRewindEnterOnASiblingForksIt(t *testing.T) {
+	t.Parallel()
+	d := treeDrv(t, "root", []string{"one", "two"},
+		treeFork{name: "s1", from: "root", at: 1, prompts: []string{"alt two", "alt three"}})
+	d.press(keyEsc())
+	d.press(keyEsc())
+	// rows: one, ├─ alt two, │ alt three, │ (continue), └─ two, (current)
+	for range 3 { // two, (continue), alt three
+		d.press(keyUp())
+	}
+	if !strings.Contains(d.plain(), "❯") || !strings.Contains(d.plain(), "alt three") {
+		t.Fatalf("setup:\n%s", d.plain())
+	}
+	d.press(keyEnter())
+	p := d.plain()
+	if !strings.Contains(p, "/tree ") || !strings.Contains(p, " s1") {
+		t.Errorf("should fork s1 before \"alt three\":\n%s", p)
+	}
+	if got := d.m.input.Value(); got != "alt three" {
+		t.Errorf("composer should hold the prompt rewound past, got %q", got)
+	}
+}
+
+// Enter on another branch's "(continue)" resumes that session as it
+// is: switching branches, not forking.
+func TestRewindContinueSwitchesBranch(t *testing.T) {
+	t.Parallel()
+	d := treeDrv(t, "root", []string{"one", "two"},
+		treeFork{name: "s1", from: "root", at: 1, prompts: []string{"alt two"}})
+	d.press(keyEsc())
+	d.press(keyEsc())
+	d.press(keyUp()) // two
+	d.press(keyUp()) // (continue) of s1
+	if !strings.Contains(d.plain(), "❯ │    (continue)") {
+		t.Fatalf("setup:\n%s", d.plain())
+	}
+	d.press(keyEnter())
+	p := d.plain()
+	if !strings.Contains(p, "/sessions s1") {
+		t.Errorf("(continue) should resume s1:\n%s", p)
+	}
+	if strings.Contains(p, "/tree") {
+		t.Errorf("(continue) must not fork:\n%s", p)
+	}
+	if got := d.m.input.Value(); got != "" {
+		t.Errorf("switching branches leaves the composer alone, got %q", got)
+	}
+}
+
+// A fork with no turns of its own is not a branch anyone can see into;
+// it stays out of the tree unless it is the current session.
+func TestRewindHidesEmptyForks(t *testing.T) {
+	t.Parallel()
+	d := treeDrv(t, "root", []string{"one", "two"},
+		treeFork{name: "s1", from: "root", at: 1})
+	d.press(keyEsc())
+	d.press(keyEsc())
+	if p := d.plain(); strings.Contains(p, "├─") {
+		t.Errorf("an empty fork should not show:\n%s", p)
+	}
+	d = treeDrv(t, "s1", []string{"one", "two"},
+		treeFork{name: "s1", from: "root", at: 1})
+	d.press(keyEsc())
+	d.press(keyEsc())
+	if p := d.plain(); !strings.Contains(p, "├─ • (current)") {
+		t.Errorf("the current session shows even when it has no turns yet:\n%s", p)
 	}
 }

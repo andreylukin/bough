@@ -140,6 +140,12 @@ type SessionInfo struct {
 	Entries int       // parseable entry count
 	Title   string    // first input entry's text, first line
 	Cwd     string    // working directory from the "meta" entry; "" for old files
+	// ForkedFrom and AtSeq are the fork origin from the "meta" entry
+	// (see Fork): the id of the session this one was forked from and
+	// the turn it was forked at. "" and 0 for a session that is not a
+	// fork.
+	ForkedFrom string
+	AtSeq      int64
 }
 
 // List scans dir for session JSONL files, newest first (mtime, then
@@ -163,7 +169,8 @@ func List(dir string) ([]SessionInfo, error) {
 			fmt.Fprintf(os.Stderr, "bough: history: skipping %s: %v\n", p, err)
 			continue
 		}
-		title, cwd := "", ""
+		title, cwd, from := "", "", ""
+		var atSeq int64
 		for _, e := range entries {
 			// A "title" entry is a name the session was given (the
 			// session-title plugin); it wins over the opening line.
@@ -175,6 +182,13 @@ func List(dir string) ([]SessionInfo, error) {
 			}
 			if e.Kind == "meta" && cwd == "" {
 				cwd, _ = e.Data["cwd"].(string)
+				if src, _ := e.Data["forked_from"].(string); src != "" {
+					from = strings.TrimSuffix(filepath.Base(src), ".jsonl")
+					// at_seq round-trips through JSON as a float64.
+					if n, ok := e.Data["at_seq"].(float64); ok {
+						atSeq = int64(n)
+					}
+				}
 			}
 			if e.Kind == "input" && title == "" {
 				title = Prompt(e)
@@ -190,6 +204,9 @@ func List(dir string) ([]SessionInfo, error) {
 			Entries: len(entries),
 			Title:   title,
 			Cwd:     cwd,
+
+			ForkedFrom: from,
+			AtSeq:      atSeq,
 		})
 	}
 	slices.SortFunc(infos, func(a, b SessionInfo) int {
