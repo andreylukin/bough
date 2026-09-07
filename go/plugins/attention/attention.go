@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/andreylukin/bough/kernel"
@@ -79,19 +80,19 @@ type Service struct {
 	hub          *hub   // chats as URLs; nil without a history service
 	briefs       *briefs
 	Now          func() time.Time
+
+	// memo: the last board and when it was built; the page, its
+	// briefs and its headline all ask within the same second.
+	memoMu sync.Mutex
+	memo   Board
+	memoAt time.Time
 }
+
+// boardTTL is how long a built board serves repeat callers.
+const boardTTL = 3 * time.Second
 
 // History is the seam for this session's file.
 type History interface{ Path() string }
-
-// collectedAt is the last collector run, from the graph.
-func (s *Service) collectedAt() time.Time {
-	w, err := s.graph.World()
-	if err != nil || w.Fresh == 0 {
-		return time.Time{}
-	}
-	return time.Unix(w.Fresh, 0)
-}
 
 // Sticky is the row's flag: pin the board from the first frame.
 func (s *Service) Sticky() bool { return s.sticky }
@@ -222,6 +223,22 @@ func (s *Service) Detail(kind, key string) []Line {
 // neighbourhood), but a file read, so the ui calls it on a timer.
 func (s *Service) Board() Board {
 	now := s.Now()
+	s.memoMu.Lock()
+	if !s.memoAt.IsZero() && now.Sub(s.memoAt) < boardTTL {
+		b := s.memo
+		s.memoMu.Unlock()
+		return b
+	}
+	s.memoMu.Unlock()
+	b := s.build(now)
+	s.memoMu.Lock()
+	s.memo, s.memoAt = b, now
+	s.memoMu.Unlock()
+	return b
+}
+
+// build is Board without the memo.
+func (s *Service) build(now time.Time) Board {
 	var b Board
 	w, err := s.graph.World()
 	if err != nil {

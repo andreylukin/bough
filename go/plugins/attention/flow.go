@@ -105,7 +105,7 @@ func (s *Service) Flow(days int) Flow {
 			if col == "others" && stageNow(it, col) == StageBlocked {
 				g = "blocked"
 			}
-			row := s.row(it, g, from, now)
+			row := s.row(it, g, from, now, b.Collected)
 			groups[g].Rows = append(groups[g].Rows, row)
 		}
 	}
@@ -148,7 +148,7 @@ func stageNow(it Item, col string) string {
 }
 
 // row builds one item's track from its timeline.
-func (s *Service) row(it Item, col string, from, now time.Time) Row {
+func (s *Service) row(it Item, col string, from, now, collected time.Time) Row {
 	r := Row{Item: it, Subject: Subject{Key: it.Key, Title: it.Title, URL: it.URL}}
 	if it.Count > 0 {
 		// A stack: one segment in its stage, no history worth drawing.
@@ -381,8 +381,8 @@ func (s *Service) row(it Item, col string, from, now time.Time) Row {
 			}
 		}
 	}
-	if s.collectEvery > 0 && !s.collectedAt().IsZero() {
-		if t := s.collectedAt().Add(s.collectEvery); t.After(now) {
+	if s.collectEvery > 0 && !collected.IsZero() {
+		if t := collected.Add(s.collectEvery); t.After(now) {
 			r.Next = append(r.Next, Next{At: t, Text: "collect"})
 		}
 	}
