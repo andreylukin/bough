@@ -20,9 +20,9 @@ const retryAttempts = 3
 // rateLimitAttempts and rateLimitDelays are the budget for a provider
 // that says come back later: a bench trial that dies on one of these
 // is a wasted trial, so wait it out.
-const rateLimitAttempts = 8
+const rateLimitAttempts = 15
 
-var rateLimitDelays = []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 30 * time.Second, 60 * time.Second}
+var rateLimitDelays = []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 30 * time.Second, 60 * time.Second, 90 * time.Second, 120 * time.Second}
 
 // malformedAttempts is the budget for a provider rejecting the model's
 // own reply as a malformed function call (Gemini): each attempt is an
