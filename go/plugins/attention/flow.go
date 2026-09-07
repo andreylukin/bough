@@ -331,7 +331,7 @@ func (s *Service) row(it Item, col string, from, now time.Time) Row {
 	emit(now.Unix())
 	// The board's column is the present truth for the tail: a PR the
 	// board says waits on others is in review whatever the sweep saw.
-	if n := len(r.Segments); n > 0 && (col == "others" || col == "me") && r.Segments[n-1].Stage == StageBuilding {
+	if n := len(r.Segments); n > 0 && (col == "others" || col == "me") && r.Segments[n-1].Stage == StageBuilding && it.Status != "draft" {
 		r.Segments[n-1].Stage = StageReview
 	}
 	if len(r.Segments) == 0 {
