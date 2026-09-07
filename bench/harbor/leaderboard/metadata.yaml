@@ -1,0 +1,10 @@
+# Terminal-Bench leaderboard submission metadata for bough.
+# harbor leaderboard submit -l <board slug> -j <job uuid> -m bench/harbor/leaderboard/metadata.yaml
+agent_url: https://github.com/andreylukin/bough
+agent_display_name: "bough"
+agent_org_display_name: "Andrey Lukin"
+models:
+  - model_name: google/gemini-3.8-flash
+    model_provider: openrouter
+    model_display_name: "Gemini 3.8 Flash"
+    model_org_display_name: "Google"

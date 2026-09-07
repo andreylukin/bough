@@ -32,9 +32,9 @@ func (p *openrouterPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error 
 	}
 	effort, _ := cfg["effort"].(string) // "" = the provider's default
 	switch effort {
-	case "", "low", "medium", "high", "xhigh":
+	case "", "off", "low", "medium", "high", "xhigh":
 	default:
-		return fmt.Errorf("llm-openrouter: effort must be low, medium, high or xhigh, got %q", effort)
+		return fmt.Errorf("llm-openrouter: effort must be off, low, medium, high or xhigh, got %q", effort)
 	}
 	ctx.Provide(serviceKey(cfg), &openrouterLLM{model: model, effort: effort})
 	return nil
@@ -148,52 +148,74 @@ func (o *openrouterLLM) call(ctx context.Context, system string, messages []Mess
 		return "", err
 	}
 
-	var msgs []orRequestMessage
-	if system != "" {
-		// cache_control on the system prompt as text parts: the same
-		// marker llm-anthropic sends natively. Anthropic models behind
-		// OpenRouter cache nothing without it; providers that cache
-		// automatically ignore or translate it.
-		msgs = append(msgs, orRequestMessage{Role: "system", Content: []orPart{{
-			Type:         "text",
-			Text:         system,
-			CacheControl: &orCacheControl{Type: "ephemeral"},
-		}}})
-	}
-	for _, m := range messages {
-		role := m.Role
-		if role != "assistant" {
-			role = "user"
+	// build marshals the request; nudge, when set, is one more user
+	// line appended for a retry after a malformed-call failure.
+	build := func(nudge string) ([]byte, error) {
+		var msgs []orRequestMessage
+		if system != "" {
+			// cache_control on the system prompt as text parts: the same
+			// marker llm-anthropic sends natively. Anthropic models behind
+			// OpenRouter cache nothing without it; providers that cache
+			// automatically ignore or translate it.
+			msgs = append(msgs, orRequestMessage{Role: "system", Content: []orPart{{
+				Type:         "text",
+				Text:         system,
+				CacheControl: &orCacheControl{Type: "ephemeral"},
+			}}})
 		}
-		msgs = append(msgs, orRequestMessage{Role: role, Content: m.Content})
+		for _, m := range messages {
+			role := m.Role
+			if role != "assistant" {
+				role = "user"
+			}
+			msgs = append(msgs, orRequestMessage{Role: role, Content: m.Content})
+		}
+		if nudge != "" {
+			msgs = append(msgs, orRequestMessage{Role: "user", Content: nudge})
+		}
+		payload := map[string]any{
+			"model":    o.model,
+			"messages": msgs,
+			"usage":    map[string]any{"include": true},
+			"stream":   onDelta != nil,
+			// bough is code-mode: the reply is a code fence, never a
+			// native tool call. Gemini still tries one now and then and
+			// Google ends the stream with MALFORMED_FUNCTION_CALL; "none"
+			// maps to its function-calling mode NONE.
+			"tool_choice": "none",
+		}
+		switch effort := o.Effort(); effort {
+		case "":
+		case "off":
+			payload["reasoning"] = map[string]any{"exclude": true, "enabled": false}
+		default:
+			payload["reasoning"] = map[string]any{"effort": effort}
+		}
+		return json.Marshal(payload)
 	}
-
-	payload := map[string]any{
-		"model":    o.model,
-		"messages": msgs,
-		"usage":    map[string]any{"include": true},
-		"stream":   onDelta != nil,
-	}
-	switch effort := o.Effort(); effort {
-	case "":
-	case "off":
-		payload["reasoning"] = map[string]any{"exclude": true, "enabled": false}
-	default:
-		payload["reasoning"] = map[string]any{"effort": effort}
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("llm-openrouter: %w", err)
-	}
+	var lastErr error
 
 	endpoint := o.endpoint
 	if endpoint == "" {
 		endpoint = "https://openrouter.ai/api/v1/chat/completions"
 	}
+	if e := os.Getenv("OPENROUTER_ENDPOINT"); e != "" {
+		endpoint = e // a logging proxy, when debugging what a provider does with a request
+	}
 	// A stream that has already delivered deltas is never retried (the
 	// caller has seen partial text); everything before the first delta is.
 	delivered := false
 	return withRetries(ctx, func() (string, bool, error) {
+		nudge := ""
+		if lastErr != nil && strings.Contains(lastErr.Error(), "MALFORMED_FUNCTION_CALL") {
+			// The same request would likely fail the same way: tell the
+			// model what happened and what shape the reply must take.
+			nudge = malformedNudge
+		}
+		body, err := build(nudge)
+		if err != nil {
+			return "", false, fmt.Errorf("llm-openrouter: %w", err)
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 		if err != nil {
 			return "", false, fmt.Errorf("llm-openrouter: %w", err)
@@ -211,6 +233,7 @@ func (o *openrouterLLM) call(ctx context.Context, system string, messages []Mess
 		}
 		if onDelta != nil {
 			out, err := o.readStream(guardStalls(resp.Body, stallTimeout), func(d string) { delivered = true; onDelta(d) }, onThink)
+			lastErr = err
 			return out, err != nil && !delivered && retryableErr(err), err
 		}
 		data, err := io.ReadAll(resp.Body)
@@ -220,6 +243,10 @@ func (o *openrouterLLM) call(ctx context.Context, system string, messages []Mess
 		return o.parse(data)
 	})
 }
+
+// malformedNudge is appended to a retry after Google rejected the
+// model's reply as a malformed function call.
+const malformedNudge = "(Your previous reply was rejected by the provider as a malformed function call. There are no native functions here: reply in plain text, and put any code in a single ```js fence.)"
 
 // parse reads a non-streaming completion body: the reply text, usage.
 func (o *openrouterLLM) parse(data []byte) (string, bool, error) {

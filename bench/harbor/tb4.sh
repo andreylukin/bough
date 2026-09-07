@@ -5,7 +5,8 @@
 #   bench/harbor/tb4.sh run <job> <k> task [task…]  # k trials per task, Luna via OpenRouter
 #   bench/harbor/tb4.sh sum <job> [<job>…]          # per-trial table + pass rates
 #
-# Env: MODEL (default openrouter/openai/gpt-5.6-luna), SMALL (llm-small; default = MODEL), TIMEOUT (agent seconds, default 5400),
+# Env: MODEL (default openrouter/openai/gpt-5.6-luna), SMALL (llm-small; default = MODEL), EFFORT (reasoning effort),
+#      TIMEOUT (agent seconds, default 5400),
 #      CONC (default 4), CONFIG (an arm: a bough.yml instead of the adapter's default),
 #      BIN (an arm binary; `build` writes to it, default dist/bough-go-linux-amd64).
 set -euo pipefail
@@ -30,10 +31,11 @@ case "${1:-}" in
     set -a; . "$HOME/.bough/env"; set +a
     ak=(--ak "binary=$BIN" --ak "timeout=$TIMEOUT")
     [ -n "${SMALL:-}" ] && ak+=(--ak "small=$SMALL")
+    [ -n "${EFFORT:-}" ] && ak+=(--ak "effort=$EFFORT")
     [ -n "${CONFIG:-}" ] && ak+=(--ak "config=$CONFIG")
     mkdir -p "$JOBS"
     PYTHONPATH="$ROOT/bench/harbor" harbor run -d terminal-bench/terminal-bench@4.0.0 --env modal \
-      --agent bough_go_agent:BoughGo --model "$MODEL" "${ak[@]}" "${inc[@]}" \
+      --agent bough_go_agent:BoughGo --model "$MODEL" "${ak[@]}" ${inc[@]+"${inc[@]}"} \
       -k "$k" --n-concurrent "$CONC" --jobs-dir "$JOBS" --job-name "$job"
     ;;
   sum)

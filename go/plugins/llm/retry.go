@@ -17,6 +17,12 @@ import (
 
 const retryAttempts = 3
 
+// malformedAttempts is the budget for a provider rejecting the model's
+// own reply as a malformed function call (Gemini): each attempt is an
+// independent draw that fails perhaps half the time, and the failed
+// attempt cost only the thinking, so it is worth six.
+const malformedAttempts = 6
+
 // retryDelays is a var so tests can shorten it.
 var retryDelays = []time.Duration{time.Second, 3 * time.Second}
 
@@ -58,13 +64,17 @@ func retryable(err error) bool {
 func withRetries[T any](ctx context.Context, do func() (T, bool, error)) (T, error) {
 	var zero T
 	var last error
-	for i := 0; i < retryAttempts; i++ {
+	attempts := retryAttempts
+	for i := 0; i < attempts; i++ {
 		v, retry, err := do()
 		if err == nil {
 			return v, nil
 		}
 		last = err
-		if !retry || i == retryAttempts-1 {
+		if strings.Contains(err.Error(), "MALFORMED_FUNCTION_CALL") {
+			attempts = malformedAttempts
+		}
+		if !retry || i == attempts-1 {
 			return zero, err
 		}
 		d := retryDelays[min(i, len(retryDelays)-1)]
