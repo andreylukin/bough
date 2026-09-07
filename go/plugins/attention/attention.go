@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -21,6 +22,7 @@ import (
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/graph"
+	"github.com/andreylukin/bough/plugins/llm"
 	"github.com/andreylukin/bough/plugins/prwatch"
 )
 
@@ -75,6 +77,7 @@ type Service struct {
 	sticky       bool
 	web          string // host:port of the board page; "" = none
 	hub          *hub   // chats as URLs; nil without a history service
+	briefs       *briefs
 	Now          func() time.Time
 }
 
@@ -503,6 +506,11 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 			return ""
 		}
 		kctx.Effect(s.hub.stop)
+	}
+	if small, err := kernel.Get[llm.LLM](kctx, llm.SmallKey); err == nil {
+		if home, err := os.UserHomeDir(); err == nil {
+			s.briefs = newBriefs(filepath.Join(home, ".bough", "attention", "briefs.json"), small)
+		}
 	}
 	if s.web != "" {
 		s.serveWeb(s.web)

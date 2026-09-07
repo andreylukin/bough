@@ -31,6 +31,8 @@ header .chats{margin-left:14px}
 aside dd a{color:var(--aqua);text-decoration:none}aside dd a:hover{text-decoration:underline}
 aside .act{margin-top:14px}
 main{display:grid;grid-template-columns:1fr 330px;min-height:calc(100% - 44px)}
+body.present main{grid-template-columns:1fr}
+body.present aside{display:none}
 #flow{padding:12px 16px;min-width:0;overflow-x:auto}
 .grid{display:grid;grid-template-columns:170px minmax(240px,1fr) 250px 96px;gap:0 8px;align-items:stretch}
 .h{color:var(--dim);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;padding:2px 6px 6px}
@@ -63,7 +65,22 @@ main{display:grid;grid-template-columns:1fr 330px;min-height:calc(100% - 44px)}
 .st{margin-left:6px;font-weight:600}.st.bad{color:var(--red)}.st.ok{color:var(--aqua)}
 .nxt{border-top:1px solid var(--bg3);padding:6px;font-size:10.5px;color:var(--purple)}
 .nxt div{border:1px dashed var(--purple);border-radius:3px;padding:1px 5px;margin-bottom:3px;white-space:nowrap}
-.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:11px;color:var(--dim);margin:14px 0 0 6px}
+#strip{padding:8px 20px 6px;border-bottom:1px solid var(--border);background:var(--bg2)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:11px;color:var(--dim)}
+.legend .dim{color:var(--dim)}
+#headline{margin-top:6px;font-size:13.5px;color:var(--fg);min-height:0}
+#headline .counts{color:var(--dim)}
+#headline .pend{color:var(--dim);font-style:italic}
+body.present .k .raw{display:none}
+body.present .lbl .key{display:none}
+.card .brief{color:var(--fg);font-size:12px;margin-top:2px;display:none;padding-right:30px}
+body.present .card .brief{display:block}
+body.present .card .k{display:none}
+body.present .card .t{padding-right:44px}
+body.present .grid{grid-template-columns:200px minmax(240px,1fr) 320px}
+body.present .nxt,body.present .grid>.h:nth-child(4){display:none}
+#presentBtn.on{color:var(--fg);border-color:var(--amber)}
+main{transition:none}
 .legend i{display:inline-block;width:14px;height:8px;border-radius:2px;vertical-align:middle;margin-right:5px}
 aside{padding:14px 18px;position:sticky;top:44px;align-self:start;max-height:calc(100vh - 44px);overflow:auto;border-left:1px solid var(--border)}
 aside .empty{color:var(--dim)}
@@ -77,17 +94,25 @@ aside dd{margin:0;word-break:break-word}
 </style>
 </head>
 <body>
-<header><h1>current work</h1><span class="meta" id="meta">reading the graph…</span><span class="zoom"><button data-d="1">1d</button><button data-d="7" class="on">7d</button><button data-d="30">30d</button></span><span class="chats"><a class="btn new" href="/s/new" target="_blank">+ new chat</a><button class="btn" id="chatsBtn">chats ▾</button></span></header>
+<header><h1>current work</h1><span class="meta" id="meta">reading the graph…</span><span class="zoom"><button data-d="1">1d</button><button data-d="7" class="on">7d</button><button data-d="30">30d</button></span><span class="chats"><button class="btn" id="presentBtn" title="plain words and one-line briefs, for showing someone else">present</button><a class="btn new" href="/s/new" target="_blank">+ new chat</a><button class="btn" id="chatsBtn">chats ▾</button></span></header>
+<div id="strip"><div class="legend"><span><i style="background:var(--border)"></i>queued</span><span><i style="background:var(--blue)"></i>building</span><span><i style="background:var(--amber)"></i>in review</span><span><i style="background:var(--red)"></i>blocked</span><span><i style="background:repeating-linear-gradient(90deg,var(--aqua) 0 6px,#5f9c86 6px 9px)"></i>an agent is on it</span><span><i style="background:var(--green)"></i>shipping</span><span class="dim">· amber marks are moments the work came back to me</span></div><div id="headline"></div></div>
 <div id="chats" hidden><div class="chatsHead">recent chats <span class="dim">· a dot means it is open now</span></div><div id="chatList"></div></div>
 <main>
-  <section id="flow"><div class="grid" id="grid"></div>
-  <div class="legend"><span><i style="background:var(--border)"></i>queued</span><span><i style="background:var(--blue)"></i>building</span><span><i style="background:var(--amber)"></i>in review</span><span><i style="background:var(--red)"></i>blocked</span><span><i style="background:repeating-linear-gradient(90deg,var(--aqua) 0 6px,#5f9c86 6px 9px)"></i>agent on it</span><span><i style="background:var(--green)"></i>shipping</span><span>· amber marks put the ball in your court</span></div></section>
+  <section id="flow"><div class="grid" id="grid"></div></section>
   <aside id="aside"><div class="empty">hover a card for what the graph knows about it</div></aside>
 </main>
 <script>
 const $=s=>document.querySelector(s);
 const FRAMES=["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
-let days=7, facts={}, first=true, hovered=null, detailCache={}, spinTick=0;
+let days=7, facts={}, first=true, hovered=null, detailCache={}, spinTick=0, present=false, briefCache={};
+try{ present=localStorage.getItem('present')==='1'; }catch(e){}
+document.body.classList.toggle('present',present);
+const GROUP={me:['needs me','needs my action'],motion:['in motion','my agents are working on it'],blocked:['blocked','blocked'],others:['waiting on others','waiting on other people']};
+function words(t){ if(!present) return t; return (t||'')
+  .replace(/^next: \?$/,'no one lined up next').replace(/^review required$/,'needs a review').replace(/ci failing/g,'checks failing').replace(/ci green/g,'checks passing')
+  .replace(/^session [0-9a-f]{4} · /,'an agent is handling: ').replace(/^awaits /,'waiting on ').replace(/^→ you$/,'came back to me').replace(/^→ /,'handed to ').replace(/^pr-watch$/,'agent').replace(/^\+(\d+) /,'+$1 ').replace(/ threads?$/,' review threads'); }
+$('#presentBtn').addEventListener('click',()=>{ present=!present; try{localStorage.setItem('present',present?'1':'0');}catch(e){} document.body.classList.toggle('present',present); $('#presentBtn').classList.toggle('on',present); load(); });
+$('#presentBtn').classList.toggle('on',present);
 setInterval(()=>{spinTick=(spinTick+1)%FRAMES.length;document.querySelectorAll('.spin').forEach(e=>e.textContent=FRAMES[spinTick])},100);
 document.querySelectorAll('.zoom button').forEach(b=>b.addEventListener('click',()=>{days=+b.dataset.d;document.querySelectorAll('.zoom button').forEach(x=>x.classList.toggle('on',x===b));load();}));
 $('#chatsBtn').addEventListener('click',async()=>{ const p=$('#chats'); if(!p.hidden){p.hidden=true;return;} p.hidden=false; await loadChats(); });
@@ -105,10 +130,11 @@ function card(it, now, colKey){
   const ms=now-new Date(it.Since).getTime();
   const key=it.Key, f=it.Status+'|'+it.Detail+'|'+it.Session, changed=!first&&facts[key]!==undefined&&facts[key]!==f; facts[key]=f;
   let st=''; if(/^ci failing/.test(it.Status)){const n=it.Status.replace('ci failing','').trim(); st='<span class="st bad">✕'+(n&&n!=='×'+it.Count?' '+n:'')+'</span>';} else if(it.Status==='ci green') st='<span class="st ok">✓</span>';
-  const name=it.Count?esc(it.Key)+' <span style="color:var(--dim)">×'+it.Count+'</span>':(it.URL?'<a href="'+esc(it.URL)+'" target="_blank" rel="noopener">'+esc(it.Title)+'</a>':esc(it.Title));
+  const name=it.Count?esc(present?it.Title:it.Key)+' <span style="color:var(--dim)">×'+it.Count+'</span>':(it.URL?'<a href="'+esc(it.URL)+'" target="_blank" rel="noopener">'+esc(it.Title)+'</a>':esc(it.Title));
   const chip=it.Session?'<span class="chip spin">⠋</span>':'';
   const d=document.createElement('div'); d.className='card '+colKey+(changed?' changed':'')+(key===hovered?' hovered':''); d.dataset.key=key;
-  d.innerHTML='<div class="t">'+name+st+'</div>'+chip+'<div class="k">'+(it.Count?'':shortKey(key)+' · ')+esc(it.Detail)+'</div><span class="age">'+age(ms)+'</span>';
+  d.innerHTML='<div class="t">'+name+st+'</div>'+chip+'<div class="k">'+(it.Count?'':shortKey(key)+' · ')+esc(words(it.Detail))+'</div><div class="brief"></div><span class="age">'+age(ms)+'</span>';
+  if(present) brief(it, d.querySelector('.brief'));
   d.addEventListener('mouseenter',()=>hover(it));
   d.addEventListener('click',e=>{ if(e.target.tagName==='A') return; if(it.URL) window.open(it.URL,'_blank','noopener'); });
   return d;
@@ -121,7 +147,7 @@ function track(row, from, now){
   // marks: cluster those within 3% of the previous
   let lastX=-10, cluster=null, n=0;
   (row.marks||[]).forEach(m=>{ const px=x(m.at); if(px-lastX<3&&cluster){ n++; cluster.textContent='+'+n+' '+cluster.dataset.first; cluster.title+='\n'+m.text+(m.claim?': '+m.claim:''); return; }
-    const e=document.createElement('div'); e.className='mk '+m.kind; e.style.left=Math.min(px,94)+'%'; if(m.url){ e.innerHTML='<a href="'+esc(m.url)+'" target="_blank">'+esc(m.text)+'</a>'; } else e.textContent=m.text; e.dataset.first=m.text; e.title=new Date(m.at).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})+' · '+m.text+(m.claim?': '+m.claim:''); d.appendChild(e); lastX=px; cluster=e; n=0; });
+    const e=document.createElement('div'); e.className='mk '+m.kind; e.style.left=Math.min(px,94)+'%'; const mt=words(m.text); if(m.url){ e.innerHTML='<a href="'+esc(m.url)+'" target="_blank">'+esc(mt)+'</a>'; } else e.textContent=mt; e.dataset.first=mt; e.title=new Date(m.at).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})+' · '+m.text+(m.claim?': '+m.claim:''); d.appendChild(e); lastX=px; cluster=e; n=0; });
   return d;
 }
 
@@ -134,13 +160,14 @@ function render(f){
   g.append(lbl('subject'), ax, lbl('now'), lbl('next'));
   const grid=`repeating-linear-gradient(90deg,transparent 0 calc(100%/${ticks} - 1px),var(--bg3) calc(100%/${ticks} - 1px) calc(100%/${ticks}))`;
   (f.groups||[]).forEach(gr=>{
-    const h=document.createElement('div'); h.className='grp '+gr.key; h.textContent=gr.label+' · '+gr.rows.length; g.appendChild(h);
+    const h=document.createElement('div'); h.className='grp '+gr.key; h.textContent=(GROUP[gr.key]?GROUP[gr.key][present?1:0]:gr.label)+' · '+gr.rows.length; g.appendChild(h);
     let lastSubj=null;
     gr.rows.forEach(r=>{
       const l=document.createElement('div'); l.className='lbl';
       const same=lastSubj===r.subject.key; lastSubj=r.subject.key;
       const sk=shortKey(r.subject.key); const title=r.subject.url?'<a href="'+esc(r.subject.url)+'" target="_blank" rel="noopener" title="'+esc(r.subject.key)+'">'+esc(sk)+'</a>':esc(sk);
-      l.innerHTML=same?'<small>↳ '+esc(shortKey(r.item.Key))+'</small>':title+'<small>'+esc(r.subject.title!==r.subject.key?r.subject.title:'')+'</small>';
+      if(present){ const t=esc(r.subject.title!==r.subject.key?r.subject.title:r.subject.key); l.innerHTML=same?'<small>↳ '+esc(r.item.Title)+'</small>':(r.subject.url?'<a href="'+esc(r.subject.url)+'" target="_blank" rel="noopener">'+t+'</a>':t); l.style.fontWeight='500'; }
+      else l.innerHTML=same?'<small>↳ '+esc(shortKey(r.item.Key))+'</small>':title+'<small>'+esc(r.subject.title!==r.subject.key?r.subject.title:'')+'</small>';
       const t=track(r, from, now); t.style.setProperty('--grid', grid);
       const nc=document.createElement('div'); nc.className='nowc'; nc.appendChild(card(r.item, now, gr.key));
       const nx=document.createElement('div'); nx.className='nxt'; (r.next||[]).forEach(n=>{const e=document.createElement('div'); e.textContent=n.text.replace('pr-watch poll','poll')+' '+fmtNext(new Date(n.at)-now); e.title=n.text; nx.appendChild(e);});
@@ -165,6 +192,23 @@ async function hover(it){
   a.innerHTML=head+dl(rows.concat(body))+chatAbout(it);
 }
 function chatAbout(it){ const draft='About '+it.Kind+':'+it.Key+(it.Title&&it.Title!==it.Key?' “'+it.Title+'”':'')+(it.URL?' '+it.URL:'')+' — '; return '<div class="act"><a class="btn new" href="/s/new?draft='+encodeURIComponent(draft)+'" target="_blank">+ chat about this</a></div>'; }
+async function brief(it, el){
+  const c=briefCache[it.Key]; if(c&&c.text){ el.textContent=c.text; return; }
+  if(c&&c.at&&Date.now()-c.at<4000){ el.innerHTML='<span class="pend">writing…</span>'; return; }
+  briefCache[it.Key]={at:Date.now()};
+  try{ const r=await fetch('/api/brief?kind='+encodeURIComponent(it.Kind)+'&key='+encodeURIComponent(it.Key)); const b=await r.json();
+    if(b.text){ briefCache[it.Key]={text:b.text}; el.textContent=b.text; } else if(!b.available){ briefCache[it.Key]={text:''}; el.textContent=''; } else { el.innerHTML='<span class="pend">writing…</span>'; }
+  }catch(e){}
+}
+function countsLine(f){ const n=k=>{const g=(f.groups||[]).find(x=>x.key===k); return g?g.rows.length:0;}; const me=n('me'),mo=n('motion'),bl=n('blocked'),ot=n('others');
+  return present?`${me} need${me===1?'s':''} my action · ${mo} being worked by my agents · ${bl} blocked · ${ot} waiting on other people`:`${me} need me · ${mo} in motion · ${bl} blocked · ${ot} waiting on others`; }
+let headlineAt=0;
+async function headline(f){ const h=$('#headline'); const counts='<span class="counts">'+countsLine(f)+'</span>';
+  if(!present){ h.innerHTML=counts; return; }
+  if(Date.now()-headlineAt<4000&&h.dataset.text){ h.innerHTML=esc(h.dataset.text)+' <br>'+counts; return; }
+  headlineAt=Date.now();
+  try{ const r=await fetch('/api/headline'); const b=await r.json(); if(b.text){ h.dataset.text=b.text; h.innerHTML=esc(b.text)+' <br>'+counts; } else if(!b.available){ h.innerHTML=counts; } else { h.innerHTML='<span class="pend">summarising…</span> <br>'+counts; } }catch(e){ h.innerHTML=counts; }
+}
 function dl(rows){return '<dl>'+rows.map(([k,v])=>'<dt>'+esc(k)+'</dt><dd>'+v+'</dd>').join('')+'</dl>';}
 
 async function load(){
@@ -174,7 +218,7 @@ async function load(){
     const col=f.collected&&!f.collected.startsWith('0001')?new Date(f.collected):null; let meta=col?'collected '+col.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'never collected';
     if(col&&now-col.getTime()>864e5) meta+=' <span class="stale">STALE</span>';
     $('#meta').innerHTML=meta+' · refreshes every 5 s';
-    render(f);
+    render(f); headline(f);
   }catch(e){ $('#meta').textContent='bough is not reachable: '+e; }
 }
 load(); setInterval(load,5000);

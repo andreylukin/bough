@@ -64,6 +64,17 @@ func (s *Service) serveWeb(addr string) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(s.Flow(days))
 	})
+	mux.HandleFunc("/api/brief", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		text, pending := s.Brief(q.Get("kind"), q.Get("key"))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"text": text, "pending": pending, "available": s.briefs != nil})
+	})
+	mux.HandleFunc("/api/headline", func(w http.ResponseWriter, r *http.Request) {
+		text, pending := s.Headline()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"text": text, "pending": pending, "available": s.briefs != nil})
+	})
 	mux.HandleFunc("/api/detail", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		lines := s.Detail(q.Get("kind"), q.Get("key"))
