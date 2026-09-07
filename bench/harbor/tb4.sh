@@ -7,6 +7,9 @@
 #
 # Env: MODEL (default openrouter/openai/gpt-5.6-luna), SMALL (llm-small; default = MODEL), EFFORT (reasoning effort),
 #      MAXCOST (USD per trial; the loop asks for a final answer past it),
+#      JSTOOL=1 (declare the native js(code) function), PROMPT / GUIDANCE (files: the base
+#      system prompt / the bench guidance text — the evolve loop's components),
+#      DATASET (default terminal-bench/terminal-bench@4.0.0; `terminal-bench@2.0` is the evolve loop's train set),
 #      TIMEOUT (agent seconds, default 5400),
 #      CONC (default 4), CONFIG (an arm: a bough.yml instead of the adapter's default),
 #      BIN (an arm binary; `build` writes to it, default dist/bough-go-linux-amd64).
@@ -14,6 +17,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 JOBS=${JOBS:-$HOME/.cache/bough-tbench/jobs}
 MODEL=${MODEL:-openrouter/openai/gpt-5.6-luna}
+DATASET=${DATASET:-terminal-bench/terminal-bench@4.0.0}   # train set: terminal-bench@2.0 (no org prefix)
 TIMEOUT=${TIMEOUT:-5400}
 CONC=${CONC:-4}
 BIN=${BIN:-$ROOT/bench/harbor/dist/bough-go-linux-amd64}
@@ -28,15 +32,20 @@ case "${1:-}" in
   run)
     job=$2; k=$3; shift 3
     inc=()
-    for t in "$@"; do inc+=(-i "terminal-bench/$t"); done
+    # TB 4.0 task names are namespaced (terminal-bench/<task>); 2.0's are bare.
+    ns=""; case "$DATASET" in *@4*) ns="terminal-bench/";; esac
+    for t in "$@"; do case "$t" in */*) inc+=(-i "$t");; *) inc+=(-i "$ns$t");; esac; done
     set -a; . "$HOME/.bough/env"; set +a
     ak=(--ak "binary=$BIN" --ak "timeout=$TIMEOUT")
     [ -n "${SMALL:-}" ] && ak+=(--ak "small=$SMALL")
     [ -n "${EFFORT:-}" ] && ak+=(--ak "effort=$EFFORT")
     [ -n "${MAXCOST:-}" ] && ak+=(--ak "max_cost=$MAXCOST")
+    [ -n "${JSTOOL:-}" ] && ak+=(--ak "js_tool=$JSTOOL")
+    [ -n "${PROMPT:-}" ] && ak+=(--ak "prompt=$PROMPT")
+    [ -n "${GUIDANCE:-}" ] && ak+=(--ak "guidance=$GUIDANCE")
     [ -n "${CONFIG:-}" ] && ak+=(--ak "config=$CONFIG")
     mkdir -p "$JOBS"
-    PYTHONPATH="$ROOT/bench/harbor" harbor run -d terminal-bench/terminal-bench@4.0.0 --env modal \
+    PYTHONPATH="$ROOT/bench/harbor" harbor run -d "$DATASET" --env modal \
       --agent bough_go_agent:BoughGo --model "$MODEL" "${ak[@]}" ${inc[@]+"${inc[@]}"} \
       -k "$k" --n-concurrent "$CONC" --jobs-dir "$JOBS" --job-name "$job"
     ;;

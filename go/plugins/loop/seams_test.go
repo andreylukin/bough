@@ -767,3 +767,21 @@ func TestThinkingStreamedRecordedNotFedBack(t *testing.T) {
 		}
 	}
 }
+
+// A harness experiment carries its own prompt text in config
+// (system_prompt, task_guidance as a string) instead of a rebuilt
+// binary: the base is replaced, the guidance appended verbatim.
+func TestPromptTextFromConfig(t *testing.T) {
+	llm := &recordLLM{}
+	r := buildRunnerWith(t, llm, nil)
+	r.base = "You are ARM-7. Write js fences."
+	r.guidance = "Grep for markers first."
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "hi", collect(&kinds, &texts))
+	if !strings.Contains(llm.system, "You are ARM-7.") || strings.Contains(llm.system, "You are bough, a coding agent") {
+		t.Fatalf("system_prompt did not replace the base:\n%s", llm.system)
+	}
+	if !strings.Contains(llm.system, "\n\nGrep for markers first.") || strings.Contains(llm.system, "Be thorough over broad briefs") {
+		t.Fatalf("string task_guidance not appended verbatim:\n%s", llm.system)
+	}
+}

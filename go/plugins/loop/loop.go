@@ -694,6 +694,7 @@ type runner struct {
 	snapMu     sync.Mutex
 	snapSystem string
 	guidance   string // the benchmark brief, when task_guidance is set
+	base       string // system_prompt from config; "" = SystemPrompt
 	cp         Checkpointer
 	secs       *Sections
 	hasAsk     bool // an "ask-answers" service is mounted: document tools.ask
@@ -899,6 +900,9 @@ func (r *runner) Context() string {
 	r.snapMu.Unlock()
 	if base == "" {
 		base = SystemPrompt // no turn yet: what the next one will use
+		if r.base != "" {
+			base = r.base
+		}
 	}
 	parts := r.systemParts(base)
 
@@ -1359,6 +1363,9 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	if !r.started {
 		r.started = true
 		r.system = SystemPrompt
+		if r.base != "" {
+			r.system = r.base
+		}
 		if r.guidance != "" {
 			r.system += "\n\n" + r.guidance
 		}
@@ -1740,18 +1747,33 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	if c, ok := code.(cataloguer); ok {
 		r.cat = c.Catalogue
 	}
+	// system_prompt: the whole base prompt as text, replacing SystemPrompt
+	// (a harness experiment carries its own prompt in its config instead
+	// of a rebuilt binary). task_guidance: true appends TaskGuidance; any
+	// other non-empty string is appended as the guidance text itself.
+	if v, ok := cfg["system_prompt"]; ok {
+		s, ok := v.(string)
+		if !ok || strings.TrimSpace(s) == "" {
+			return fmt.Errorf("loop: system_prompt must be a non-empty string")
+		}
+		r.base = s
+	}
 	if v, ok := cfg["task_guidance"]; ok {
-		on, ok := v.(bool)
-		if !ok {
-			if s, isStr := v.(string); isStr {
-				on, ok = s == "true", s == "true" || s == "false"
+		switch t := v.(type) {
+		case bool:
+			if t {
+				r.guidance = TaskGuidance
 			}
-		}
-		if !ok {
-			return fmt.Errorf("loop: task_guidance must be a bool, got %v", v)
-		}
-		if on {
-			r.guidance = TaskGuidance
+		case string:
+			switch strings.TrimSpace(t) {
+			case "true":
+				r.guidance = TaskGuidance
+			case "false", "":
+			default:
+				r.guidance = t
+			}
+		default:
+			return fmt.Errorf("loop: task_guidance must be a bool or the guidance text, got %v", v)
 		}
 	}
 	r.stopRetries = defaultStopRetries

@@ -52,7 +52,7 @@ _CONFIG = """\
 - id: llm
   plugin: {plugin}
   config:
-    model: {model}{effort}
+    model: {model}{effort}{js_tool}
 - id: llm-small
   plugin: {small_plugin}
   config:
@@ -73,14 +73,21 @@ _CONFIG = """\
 - id: loop
   plugin: loop
   config:
-    max_steps: 300{max_cost}
+    max_steps: 300{max_cost}{system_prompt}
     # The graded-task brief (find a defect in every module, keep every
     # public interface, hidden checks call the original API). It is
-    # bench-only: the daily-driver prompt must not carry it.
-    task_guidance: true
+    # bench-only: the daily-driver prompt must not carry it. A file
+    # (--ak guidance=) replaces the built-in text.
+    task_guidance: {task_guidance}
 - id: ui
   plugin: ui
 """
+
+
+def _block(text: str) -> str:
+    """A YAML literal block scalar, indented under a 4-space config key."""
+    lines = text.rstrip("\n").splitlines() or [""]
+    return "|\n" + "\n".join("      " + l if l.strip() else "" for l in lines)
 
 
 def _provider(model: str) -> tuple[str, str]:
@@ -110,6 +117,9 @@ class BoughGo(BaseInstalledAgent):
         small: str | None = None,
         effort: str | None = None,
         max_cost: str | None = None,
+        js_tool: str | None = None,
+        prompt: str | None = None,
+        guidance: str | None = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -121,6 +131,12 @@ class BoughGo(BaseInstalledAgent):
         self._effort = effort
         # A per-trial spend cap in USD (loop max_cost_usd); unset = steps only.
         self._max_cost = max_cost
+        # js_tool=true declares the native js(code) function (default: google/ models only).
+        self._js_tool = js_tool
+        # Harness components as files: the whole base system prompt, and the bench guidance
+        # appended to it. An evolve loop edits these; the binary stays.
+        self._prompt = Path(prompt).expanduser() if prompt else None
+        self._guidance = Path(guidance).expanduser() if guidance else None
         # An ARM: a whole config tree instead of the default one (prompt/plugin experiments).
         self._config = Path(config).expanduser() if config else None
         if not self._binary or not self._binary.is_file():
@@ -130,6 +146,9 @@ class BoughGo(BaseInstalledAgent):
             )
         if self._config and not self._config.is_file():
             raise ValueError(f"--ak config: no such file: {self._config}")
+        for name, f in (("prompt", self._prompt), ("guidance", self._guidance)):
+            if f and not f.is_file():
+                raise ValueError(f"--ak {name}: no such file: {f}")
 
     @staticmethod
     @override
@@ -172,7 +191,13 @@ class BoughGo(BaseInstalledAgent):
             small_plugin, small_model = _provider(self._small or self.model_name or "openrouter/openai/gpt-5.6-luna")
             effort = f"\n    effort: {self._effort}" if self._effort else ""
             max_cost = f"\n    max_cost_usd: {self._max_cost}" if self._max_cost else ""
-            text = _CONFIG.format(plugin=plugin, model=model, small_plugin=small_plugin, small_model=small_model, effort=effort, max_cost=max_cost)
+            js_tool = f"\n    js_tool: {str(self._js_tool).lower() in ('1', 'true', 'yes')}".lower() if self._js_tool else ""
+            system_prompt = "\n    system_prompt: " + _block(self._prompt.read_text()) if self._prompt else ""
+            task_guidance = _block(self._guidance.read_text()) if self._guidance else "true"
+            text = _CONFIG.format(
+                plugin=plugin, model=model, small_plugin=small_plugin, small_model=small_model,
+                effort=effort, max_cost=max_cost, js_tool=js_tool, system_prompt=system_prompt, task_guidance=task_guidance,
+            )
         local = self.logs_dir / "bough.yml"
         local.parent.mkdir(parents=True, exist_ok=True)
         local.write_text(text)
