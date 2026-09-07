@@ -200,7 +200,7 @@ func TestBoardHoverClickAndOffset(t *testing.T) {
 	mm, _ = m.Update(hoverMsg{key: "orb#142", lines: fakeBoard{}.Detail("pr", "orb#142")})
 	m = mm.(model)
 	plainFrame := ansi.Strip(m.frame())
-	for _, want := range []string{"asks    2 unresolved review threads (you)", "who     devin-ai-integration commented Sep 1", "for     NME-1664 Add nas-event-log to prod [code_review]"} {
+	for _, want := range []string{"asks     2 unresolved review threads (you)", "who      devin-ai-integration commented Sep 1", "for      NME-1664 Add nas-event-log to prod [code_review]"} {
 		if !strings.Contains(plainFrame, want) {
 			t.Errorf("detail missing %q:\n%s", want, plainFrame)
 		}

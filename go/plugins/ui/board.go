@@ -58,11 +58,22 @@ type boardState struct {
 	on      bool
 	loaded  bool
 	b       attention.Board
-	facts   map[string]string           // key -> status+detail at the last read
-	changed map[string]bool             // keys whose facts changed at the last read
-	hover   string                      // key of the item under the mouse ("" = none)
-	detail  map[string][]attention.Line // fetched details by key
+	facts   map[string]string      // key -> status+detail at the last read
+	changed map[string]bool        // keys whose facts changed at the last read
+	hover   string                 // key of the item under the mouse ("" = none)
+	detail  map[string]boardDetail // fetched details by key
 }
+
+// boardDetail is one fetched detail and when it was asked for.
+type boardDetail struct {
+	lines []attention.Line
+	at    time.Time
+	done  bool
+}
+
+// detailStale is how long a fetched detail serves before a hover
+// asks the graph again.
+const detailStale = 30 * time.Second
 
 // boardColumns is the board's columns at the current width: three
 // when it fits, NEEDS ME alone when it does not.
@@ -129,13 +140,16 @@ func (m *model) boardMouse(cfg *uiCfg, msg tea.Msg) (bool, tea.Cmd) {
 		return true, nil
 	}
 	var cmds []tea.Cmd
-	if m.board.hover != it.Key {
-		m.board.hover = it.Key
-		if _, have := m.board.detail[it.Key]; !have && it.Count == 0 {
-			// The graph's neighbourhood, off the ui goroutine.
-			src, kind, key := cfg.board, it.Kind, it.Key
-			cmds = append(cmds, func() tea.Msg { return hoverMsg{key, src.Detail(kind, key)} })
+	m.board.hover = it.Key
+	if d, have := m.board.detail[it.Key]; it.Count == 0 && (!have || (d.done && time.Since(d.at) > detailStale)) {
+		// The graph's neighbourhood, off the ui goroutine; once per
+		// hover, again after it has aged.
+		if m.board.detail == nil {
+			m.board.detail = map[string]boardDetail{}
 		}
+		m.board.detail[it.Key] = boardDetail{at: time.Now()}
+		src, kind, key := cfg.board, it.Kind, it.Key
+		cmds = append(cmds, func() tea.Msg { return hoverMsg{key, src.Detail(kind, key)} })
 	}
 	if click && it.URL != "" {
 		url := it.URL
@@ -147,9 +161,9 @@ func (m *model) boardMouse(cfg *uiCfg, msg tea.Msg) (bool, tea.Cmd) {
 // takeHover stores a fetched detail.
 func (m *model) takeHover(h hoverMsg) {
 	if m.board.detail == nil {
-		m.board.detail = map[string][]attention.Line{}
+		m.board.detail = map[string]boardDetail{}
 	}
-	m.board.detail[h.key] = h.lines
+	m.board.detail[h.key] = boardDetail{lines: h.lines, at: time.Now(), done: true}
 }
 
 // openURL hands a link to the desktop.
@@ -207,7 +221,7 @@ func (m *model) hoverRows(cfg *uiCfg) []string {
 	}
 	lines := []string{th["focus"].Render(head) + strings.Repeat(" ", gap) + tail}
 	row := func(label, text string) {
-		lines = append(lines, "   "+th["dim"].Render(fmt.Sprintf("%-8s", label))+line(text, max(w-12, 8)))
+		lines = append(lines, "   "+th["dim"].Render(fmt.Sprintf("%-9s", label))+line(text, max(w-13, 8)))
 	}
 	if it.Summary != "" {
 		row("source", it.Summary)
@@ -219,11 +233,11 @@ func (m *model) hoverRows(cfg *uiCfg) []string {
 		}
 		row(map[bool]string{true: "stack", false: ""}[i == 0], mem)
 	}
-	detail, fetched := m.board.detail[it.Key]
-	for _, l := range detail {
+	d := m.board.detail[it.Key]
+	for _, l := range d.lines {
 		row(l.Label, l.Text)
 	}
-	if !fetched && it.Count == 0 {
+	if !d.done && it.Count == 0 {
 		row("", th["dim"].Render("reading the graph…"))
 	}
 	return lines
@@ -266,7 +280,6 @@ func (m *model) takeBoard(b attention.Board) {
 		}
 	}
 	m.board.b, m.board.facts, m.board.changed, m.board.loaded = b, facts, changed, true
-	m.board.detail = nil
 	m.layoutComposer()
 }
 

@@ -136,8 +136,11 @@ func (s *Service) Detail(kind, key string) []Line {
 			links = append(links, t)
 		case ed.Rel == "touches" && ed.Src.Kind == "session":
 			t := day(ed.ValidFrom)
-			if ed.Src.Title != "" {
-				t += " “" + ed.Src.Title + "”"
+			if title := strings.TrimPrefix(ed.Src.Title, "exec: "); title != "" {
+				if r := []rune(title); len(r) > 40 {
+					title = string(r[:40]) + "…"
+				}
+				t += " “" + title + "”"
 			}
 			sessions = append(sessions, t)
 		}
