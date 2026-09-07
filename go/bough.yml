@@ -33,6 +33,15 @@
 # prices its own responses; OpenAI and Anthropic tallies are priced from
 # a built-in table (first-party $/Mtok) that `prices:` overrides, e.g.
 #   config: {prices: {gpt-5-mini: {input: 0.25, output: 2}}}
+# History mounts before cost: cost sums the done entries on file when it
+# mounts (a resumed session's tally), and a miss here would remount cost,
+# re-provide "usage", and reload the loop row under a turn already running
+# (headless submits its prompt the moment the ui row is up).
+- id: history
+  plugin: history
+  # config:
+  #   file: /path/to/session.jsonl  # resume that exact session (what -c/-r set)
+
 - id: cost
   plugin: cost
 
@@ -65,11 +74,6 @@
 # Optional loop seams. The loop resolves these at mount time, so their
 # rows sit above the loop row (within a mount pass, row order is the
 # tie-breaker).
-
-- id: history
-  plugin: history
-  # config:
-  #   file: /path/to/session.jsonl  # resume that exact session (what -c/-r set)
 
 - id: hooks
   plugin: hooks-js

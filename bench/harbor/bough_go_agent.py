@@ -58,6 +58,8 @@ _CONFIG = """\
   config:
     service: llm-small
     model: {small_model}
+- id: history
+  plugin: history
 - id: cost
   plugin: cost
 - id: codemode
@@ -66,8 +68,6 @@ _CONFIG = """\
   plugin: commands
 - id: tools
   plugin: tools-basic
-- id: history
-  plugin: history
 - id: todo
   plugin: todo
 - id: loop
