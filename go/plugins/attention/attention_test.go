@@ -1,7 +1,11 @@
 package attention
 
 import (
+	"io"
+	"net"
+	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,5 +144,53 @@ func TestDetail(t *testing.T) {
 	}
 	if got["sessions"] != "Sep 1 “Deploy the event log”" || got["for"] != "unes#7490 Route demand through Pulsar [open]" {
 		t.Errorf("ticket detail: %v", got)
+	}
+}
+
+func TestWebEndpoints(t *testing.T) {
+	st, err := graph.Open(filepath.Join(t.TempDir(), "graph.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ep, _ := st.Episode("collector", "t")
+	me, _ := st.Upsert("person", "andrey@example.com", "Andrey", "")
+	pr, _ := st.Upsert("pr", "orb#142", "alert backtesting", "")
+	pr, _ = st.SetLink(pr, graph.Link{URL: "https://github.com/x/orb/pull/142", Summary: "review required", UpdatedAt: time.Now().Unix()})
+	_ = st.SetState(pr, "open", ep, "collector", time.Now().Unix())
+	st.Assert(pr, "awaits", me, ep, "collector", graph.AssertOpts{Claim: "1 thread"})
+
+	s := &Service{graph: &graph.Service{Store: st, Me: "andrey@example.com"}, Now: time.Now, web: "127.0.0.1:0"}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	webAddr = "" // the process singleton, reset for the test
+	s.web = addr
+	s.serveWeb(addr)
+	get := func(path string) string {
+		r, err := http.Get("http://" + addr + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Body.Close()
+		b, _ := io.ReadAll(r.Body)
+		return string(b)
+	}
+	if page := get("/"); !strings.Contains(page, "<title>current work</title>") || !strings.Contains(page, "/api/board") {
+		t.Fatalf("page: %.200s", page)
+	}
+	board := get("/api/board")
+	if !strings.Contains(board, `"orb#142"`) || !strings.Contains(board, `"now"`) || !strings.Contains(board, `"review required"`) {
+		t.Fatalf("board: %s", board)
+	}
+	detail := get("/api/detail?kind=pr&key=orb%23142")
+	if !strings.Contains(detail, `"Label":"asks"`) || !strings.Contains(detail, "1 thread (you)") {
+		t.Fatalf("detail: %s", detail)
+	}
+	if got := s.URL(); got != "http://"+addr {
+		t.Fatalf("URL = %q", got)
 	}
 }

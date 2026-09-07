@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>current work</title>
+<style>
+:root{--bg:#2d353b;--bg2:#343f44;--bg3:#3d484d;--fg:#d3c6aa;--dim:#859289;--border:#56635f;--green:#a7c080;--aqua:#83c092;--amber:#dbbc7f;--red:#e67e80;--blue:#7fbbb3;--purple:#d699b6}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 ui-monospace,"JetBrains Mono","SF Mono",Menlo,monospace}
+header{display:flex;align-items:baseline;gap:18px;padding:12px 20px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:2}
+header h1{font-size:15px;font-weight:600;margin:0;letter-spacing:.02em}
+header .meta{color:var(--dim)}
+header .stale{color:var(--red);font-weight:600}
+main{display:grid;grid-template-columns:1fr 1fr 1fr 380px;gap:0;min-height:calc(100% - 46px)}
+.col{padding:14px 16px;border-right:1px solid var(--border);min-width:0}
+.col h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 10px;font-weight:600}
+.col h2 .n{color:var(--dim);font-weight:400;margin-left:6px}
+.me h2{color:var(--amber)}.motion h2{color:var(--aqua)}.others h2{color:var(--dim)}
+.item{display:grid;grid-template-columns:78px 1fr;gap:0 10px;padding:6px 6px;margin:0 -6px;border-radius:4px;cursor:pointer;transition:background .15s}
+.item:hover,.item.hovered{background:var(--bg3)}
+.item.changed .title{color:var(--amber)}
+.item .bar{font-size:13px;letter-spacing:1px;white-space:nowrap;line-height:1.5}
+.me .bar .on{color:var(--amber)}.motion .bar .on{color:var(--aqua)}.others .bar .on{color:var(--dim)}
+.bar .off{color:var(--border)}
+.spin{display:inline-block;color:var(--aqua);animation:spin 1s steps(10) infinite}
+@keyframes spin{0%{content:"⠋"}}
+.title{overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;text-wrap:balance}
+.title a{color:inherit;text-decoration:none}
+.title a:hover{text-decoration:underline}
+.sub{grid-column:2;color:var(--dim);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st{margin-left:6px;font-weight:600}.st.bad{color:var(--red)}.st.ok{color:var(--aqua)}
+.stack{color:var(--dim)}
+.members{grid-column:2;margin:4px 0 2px;padding-left:2px;color:var(--dim);font-size:12.5px;display:none}
+.item.open .members{display:block}
+.members div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.more{color:var(--dim);padding:4px 0}
+aside{padding:14px 18px;position:sticky;top:46px;align-self:start;max-height:calc(100vh - 46px);overflow:auto}
+aside .empty{color:var(--dim)}
+aside h3{margin:0 0 4px;font-size:14px;font-weight:600;color:var(--amber);text-wrap:balance}
+aside h3 a{color:inherit;text-decoration:none}
+aside .facts{color:var(--dim);margin-bottom:12px}
+aside dl{margin:0;display:grid;grid-template-columns:76px 1fr;gap:6px 10px}
+aside dt{color:var(--dim);text-transform:lowercase}
+aside dd{margin:0;word-break:break-word}
+aside .src{white-space:pre-wrap;color:var(--fg)}
+.err{padding:20px;color:var(--dim)}
+@media (max-width:1100px){main{grid-template-columns:1fr 1fr 1fr}aside{grid-column:1/-1;position:static;max-height:none;border-top:1px solid var(--border)}}
+</style>
+</head>
+<body>
+<header><h1>current work</h1><span class="meta" id="meta">reading the graph…</span></header>
+<main>
+  <section class="col me"><h2>Needs me<span class="n" id="n-me"></span></h2><div id="me"></div></section>
+  <section class="col motion"><h2>In motion<span class="n" id="n-motion"></span></h2><div id="motion"></div></section>
+  <section class="col others"><h2>Waiting on others<span class="n" id="n-others"></span></h2><div id="others"></div></section>
+  <aside id="aside"><div class="empty">hover a row for what the graph knows about it</div></aside>
+</main>
+<script>
+const $=s=>document.querySelector(s);
+const FRAMES=["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+let facts={}, first=true, hovered=null, detailCache={}, spinTick=0;
+setInterval(()=>{spinTick=(spinTick+1)%FRAMES.length;document.querySelectorAll('.spin').forEach(e=>e.textContent=FRAMES[spinTick])},100);
+
+function age(ms){const h=ms/36e5; if(h<1) return Math.max(0,Math.floor(ms/6e4))+'m'; if(h<48) return Math.floor(h)+'h'; const d=h/24; if(d<21) return Math.floor(d)+'d'; return Math.floor(d/7)+'w';}
+function cells(ms){const h=ms/36e5; if(h<1) return 0; return Math.max(0,Math.min(8,Math.round(1+7*Math.log(h)/Math.log(720))));}
+function bar(n){return '<span class="on">'+'▮'.repeat(n)+'</span><span class="off">'+'▯'.repeat(8-n)+'</span>';}
+function shortKey(k){const i=k.indexOf('#'); if(i<0||i<=14) return k; return k.slice(0,i).split(/[-_.]/).map(p=>p[0]).join('')+k.slice(i);}
+function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+function render(col, items, now){
+  const el=$('#'+col); el.innerHTML='';
+  items.forEach(it=>{
+    const since=new Date(it.Since).getTime(), ms=now-since;
+    const key=it.Key, f=it.Status+'|'+it.Detail+'|'+it.Session, changed=!first&&facts[key]!==undefined&&facts[key]!==f;
+    facts[key]=f;
+    let st=''; if(/^ci failing/.test(it.Status)){const n=it.Status.replace('ci failing','').trim(); st='<span class="st bad">✕'+(n&&n!=='×'+it.Count?' '+n:'')+'</span>';} else if(it.Status==='ci green') st='<span class="st ok">✓</span>';
+    const mark=it.Session?'<span class="spin">⠋</span>':bar(cells(ms));
+    const name=it.Count?esc(it.Key)+' <span class="stack">×'+it.Count+'</span>':(it.URL?'<a href="'+esc(it.URL)+'" target="_blank" rel="noopener">'+esc(it.Title)+'</a>':esc(it.Title));
+    const sub=(it.Count?'':shortKey(key)+' · ')+age(ms)+' · '+esc(it.Detail);
+    const d=document.createElement('div'); d.className='item'+(changed?' changed':'')+(key===hovered?' hovered':''); d.dataset.key=key; d.dataset.kind=it.Kind;
+    d.innerHTML='<div class="bar">'+mark+'</div><div class="title">'+name+st+'</div><div class="sub">'+sub+'</div>'+(it.Members?'<div class="members">'+it.Members.map(m=>'<div>'+esc(m)+'</div>').join('')+'</div>':'');
+    d.addEventListener('mouseenter',()=>hover(it));
+    d.addEventListener('click',e=>{ if(e.target.tagName==='A') return; if(it.Count){d.classList.toggle('open');return;} if(it.URL) window.open(it.URL,'_blank','noopener'); });
+    el.appendChild(d);
+  });
+  $('#n-'+col).textContent=items.length;
+}
+
+async function hover(it){
+  hovered=it.Key; document.querySelectorAll('.item').forEach(e=>e.classList.toggle('hovered',e.dataset.key===it.Key));
+  const a=$('#aside'); const since=new Date(it.Since).getTime();
+  const head='<h3>'+(it.URL?'<a href="'+esc(it.URL)+'" target="_blank" rel="noopener">'+esc(it.Title)+'</a>':esc(it.Title))+'</h3><div class="facts">'+esc(it.Key)+' · '+esc(it.Kind)+(it.Status?' · '+esc(it.Status):'')+' · '+age(Date.now()-since)+'</div>';
+  let rows=[]; if(it.Summary) rows.push(['source','<span class="src">'+esc(it.Summary)+'</span>']);
+  if(it.Members) rows.push(['stack',it.Members.map(esc).join('<br>')]);
+  if(it.Count){ a.innerHTML=head+dl(rows); return; }
+  a.innerHTML=head+dl(rows.concat([['','<span class="empty">reading the graph…</span>']]));
+  let lines=detailCache[it.Key]; const stale=!lines||Date.now()-lines.at>30000;
+  if(stale){ try{ const r=await fetch('/api/detail?kind='+encodeURIComponent(it.Kind)+'&key='+encodeURIComponent(it.Key)); lines={lines:await r.json()||[],at:Date.now()}; detailCache[it.Key]=lines; }catch(e){ lines={lines:[],at:Date.now()}; } }
+  if(hovered!==it.Key) return;
+  a.innerHTML=head+dl(rows.concat(lines.lines.map(l=>[l.Label,esc(l.Text)])));
+}
+function dl(rows){return '<dl>'+rows.map(([k,v])=>'<dt>'+esc(k)+'</dt><dd>'+v+'</dd>').join('')+'</dl>';}
+
+async function load(){
+  try{
+    const r=await fetch('/api/board'); const b=await r.json(); const now=new Date(b.now).getTime();
+    if(b.Err&&!(b.Me||b.Motion||b.Others)){ $('#meta').textContent=b.Err; return; }
+    const col=b.Collected?new Date(b.Collected):null; let meta=col?'collected '+col.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'never collected';
+    if(col&&now-col.getTime()>864e5) meta+=' <span class="stale">STALE</span>';
+    $('#meta').innerHTML=meta+' · refreshes every 5 s';
+    render('me',b.Me||[],now); render('motion',b.Motion||[],now); render('others',b.Others||[],now);
+    first=false;
+  }catch(e){ $('#meta').textContent='bough is not reachable: '+e; }
+}
+load(); setInterval(load,5000);
+</script>
+</body>
+</html>

@@ -66,6 +66,7 @@ type Service struct {
 	locks  func() []working
 	recent func(key string) (prwatch.Recent, bool)
 	sticky bool
+	web    string // host:port of the board page; "" = none
 	Now    func() time.Time
 }
 
@@ -413,6 +414,8 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 			default:
 				return fmt.Errorf("attention: sticky must be true or false, got %v", v)
 			}
+		case "web":
+			s.web, _ = v.(string)
 		default:
 			return fmt.Errorf("attention: unknown config key %q", k)
 		}
@@ -426,10 +429,22 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		s.locks = l.Working
 		s.recent = l.Recent
 	}
+	if s.web != "" {
+		s.serveWeb(s.web)
+	}
 	kctx.Provide("attention", s)
 	if reg, err := kernel.Get[*commands.Registry](kctx, "commands"); err == nil {
-		info := commands.CommandInfo{Name: "current-work", Summary: "toggle the attention board: what awaits you, what is in motion, what waits on others"}
-		if err := reg.Register(info, func(string) (string, error) { return "", commands.ActionBoard }); err == nil {
+		info := commands.CommandInfo{Name: "current-work", Usage: "[tui]", Summary: "the attention board: what awaits you, what is in motion, what waits on others — opens the web page when the row has a web address, else the board in the terminal"}
+		run := func(args string) (string, error) {
+			if url := s.URL(); url != "" && args != "tui" {
+				if err := openBrowser(url); err != nil {
+					return "current work: " + url, nil
+				}
+				return "opened " + url, nil
+			}
+			return "", commands.ActionBoard
+		}
+		if err := reg.Register(info, run); err == nil {
 			kctx.Effect(func() { reg.Unregister("current-work") })
 		}
 	}

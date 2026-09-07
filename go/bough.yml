@@ -235,12 +235,16 @@
 # and switches live. init.js `ui.theme` tokens overlay the palette.
 # The attention board: what awaits you, what a session is working now,
 # what of yours waits on others — from the graph, three columns by whose
-# turn it is, pinned at the top of the screen. /current-work toggles it;
-# sticky: true pins it from the first frame of every session.
+# turn it is. With `web: localhost:7683` the row serves it as a page
+# (rows link to GitHub/Linear, hovering shows the graph's neighbourhood)
+# and /current-work opens it in the browser; without, /current-work pins
+# the board at the top of the terminal, and sticky: true pins it from
+# the first frame of every session.
 - id: attention
   plugin: attention
   config:
     sticky: false
+    # web: localhost:7683
 
 - id: theme
   plugin: theme
