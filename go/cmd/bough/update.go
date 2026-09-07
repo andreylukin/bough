@@ -349,7 +349,23 @@ func writeWebPidfile(addr string) func() {
 		fmt.Fprintln(os.Stderr, "bough: web pidfile:", err)
 		return nil
 	}
+	return writeWebPidfileIn(home, addr)
+}
+
+// writeWebPidfileIn is writeWebPidfile under home. A pidfile naming a
+// live process that is not us is left alone: a second `bough --web`
+// on a taken address used to overwrite it before failing to bind, and
+// its exit then left the file naming a dead pid while the first
+// session served on — so `bough restart` said nothing was running
+// and the old binary kept going.
+func writeWebPidfileIn(home, addr string) func() {
 	pf := webPidfile(home)
+	if b, err := os.ReadFile(pf); err == nil {
+		if pid, _, _, _, _, perr := parsePidfile(string(b)); perr == nil && pid != os.Getpid() && alive(pid) {
+			fmt.Fprintf(os.Stderr, "bough: a web session is already running (pid %d); leaving its pidfile alone\n", pid)
+			return nil
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(pf), 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "bough: web pidfile:", err)
 		return nil

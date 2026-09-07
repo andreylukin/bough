@@ -195,3 +195,38 @@ func TestRestartWebMalformedPidfile(t *testing.T) {
 		t.Fatalf("malformed pidfile not removed: %v", err)
 	}
 }
+
+// A second web session must not take over the pidfile of a live one:
+// it is the one that will fail to bind, and its exit would otherwise
+// leave the file naming a dead pid while the first serves on.
+func TestWebPidfileKeepsALiveOwner(t *testing.T) {
+	home := t.TempDir()
+	pf := webPidfile(home)
+	touch(t, pf)
+	// Our own pid stands in for a live other session's; the guard
+	// compares against os.Getpid, so use the parent instead.
+	live := os.Getppid()
+	if err := os.WriteFile(pf, []byte(strconv.Itoa(live)+" localhost:7681\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rm := writeWebPidfileIn(home, "localhost:7681"); rm != nil {
+		t.Fatal("a live owner's pidfile was taken over")
+	}
+	b, _ := os.ReadFile(pf)
+	if !strings.HasPrefix(string(b), strconv.Itoa(live)+" ") {
+		t.Fatalf("pidfile rewritten: %q", b)
+	}
+	// A dead owner is replaced.
+	if err := os.WriteFile(pf, []byte(strconv.Itoa(deadPid(t))+" localhost:7681\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rm := writeWebPidfileIn(home, "localhost:7681")
+	if rm == nil {
+		t.Fatal("a dead owner's pidfile should be replaced")
+	}
+	b, _ = os.ReadFile(pf)
+	if !strings.HasPrefix(string(b), strconv.Itoa(os.Getpid())+" ") {
+		t.Fatalf("pidfile not ours: %q", b)
+	}
+	rm()
+}
