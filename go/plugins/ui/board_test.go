@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 	ansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/andreylukin/bough/plugins/attention"
@@ -115,4 +117,43 @@ func TestBoardMarksChanges(t *testing.T) {
 	if !m.board.changed["orb#142"] || m.board.changed["nas#46"] {
 		t.Fatalf("changed: %v", m.board.changed)
 	}
+}
+
+// The spinner chain has stopped by the time the first read arrives
+// (nothing was running); a read with an in-motion row restarts it.
+func TestBoardReadWakesSpinner(t *testing.T) {
+	m := boardModel(t, 150, fakeBoard{b: sample(), sticky: true})
+	mm, cmd := m.Update(boardMsg{sample()})
+	m = mm.(model)
+	if cmd == nil {
+		t.Fatal("a read with motion returns commands")
+	}
+	// Run the batch: one of its messages must be the spinner's tick.
+	msgs := drain(cmd)
+	found := false
+	for _, x := range msgs {
+		if _, ok := x.(spinner.TickMsg); ok {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no spinner tick among %T", msgs)
+	}
+}
+
+// drain runs a command (batches included) and collects its messages.
+func drain(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	var out []tea.Msg
+	switch msg := cmd().(type) {
+	case tea.BatchMsg:
+		for _, c := range msg {
+			out = append(out, drain(c)...)
+		}
+	default:
+		out = append(out, msg)
+	}
+	return out
 }

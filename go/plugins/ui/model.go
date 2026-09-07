@@ -709,11 +709,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case boardMsg:
+		// A read that brings the first in-motion row restarts the
+		// spinner: its chain stopped when nothing needed it.
+		wake := !m.boardMotion() && !m.running && len(m.jobRows(m.cfg.Load())) == 0
 		m.takeBoard(msg.b)
-		if m.board.on {
-			return m, boardTick()
+		if !m.board.on {
+			return m, nil
 		}
-		return m, nil
+		if wake && m.boardMotion() {
+			return m, tea.Batch(boardTick(), m.spin.Tick)
+		}
+		return m, boardTick()
 
 	case boardTickMsg:
 		if !m.board.on {
