@@ -43,6 +43,9 @@ type Message = llm.Message
 // LLM is the "llm" service seam.
 type LLM = llm.LLM
 
+// UsageReporter is the cost seam: the cost row, else the llm itself.
+type UsageReporter = llm.UsageReporter
+
 // Codemode is the "codemode" service seam.
 type Codemode interface {
 	RegisterTool(name string, fn any)
@@ -647,6 +650,11 @@ type runner struct {
 	llm      LLM
 	code     Codemode
 	maxSteps int // model steps per turn; 0 = defaultMaxSteps
+	// maxCost ends the turn once the session's priced spend passes it
+	// (USD; 0 = no cap). A bench trial that grinds a hard task for 300
+	// steps re-sends a growing context every step; the cap is the bill.
+	maxCost float64
+	usage   func() float64 // the priced cost so far; nil without a cost row
 	// keepWhole is how many recent tool outputs the projection shows in
 	// full (trim.go); 0 disables trimming.
 	keepWhole int
@@ -1324,6 +1332,11 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	nudges := 0         // push-backs spent asking for a stop block
 	lastFailed := false // the previous block errored: a stop on it is unverified
 	for step := 0; step < maxSteps; step++ {
+		if r.maxCost > 0 && r.usage != nil && r.usage() >= r.maxCost {
+			note("system", fmt.Sprintf("cost budget spent ($%.2f of $%.2f); asking for a final answer", r.usage(), r.maxCost), nil)
+			maxSteps = step
+			break
+		}
 		r.landSteers(ctx, emit, false) // a steer sent during the last block joins the context now
 		r.landJobs(emit)               // a background job that finished during the last block reports now
 		sys := system
@@ -1535,6 +1548,21 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 }
 
 // toInt reads a yaml int, float, or --set string.
+// toFloat reads a number from yaml (float64/int) or --set (string).
+func toFloat(v any) (float64, error) {
+	switch n := v.(type) {
+	case float64:
+		return n, nil
+	case int:
+		return float64(n), nil
+	case int64:
+		return float64(n), nil
+	case string:
+		return strconv.ParseFloat(n, 64)
+	}
+	return 0, fmt.Errorf("not a number: %v", v)
+}
+
 func toInt(v any) (int, error) {
 	switch n := v.(type) {
 	case int:
@@ -1668,6 +1696,18 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 			return fmt.Errorf("loop: max_steps must be a positive integer, got %v", v)
 		}
 		r.maxSteps = n
+	}
+	if v, ok := cfg["max_cost_usd"]; ok {
+		f, err := toFloat(v)
+		if err != nil || f <= 0 {
+			return fmt.Errorf("loop: max_cost_usd must be a positive number, got %v", v)
+		}
+		r.maxCost = f
+		if u, err := kernel.Get[UsageReporter](kctx, "usage"); err == nil {
+			r.usage = func() float64 { return u.Usage().Cost }
+		} else if u, err := kernel.Get[UsageReporter](kctx, "llm"); err == nil {
+			r.usage = func() float64 { return u.Usage().Cost }
+		}
 	}
 	// keep_whole_results: how many recent tool outputs the model is
 	// shown in full. 0 turns trimming off, for anyone who would rather

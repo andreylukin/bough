@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -36,7 +37,11 @@ func (p *openrouterPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error 
 	default:
 		return fmt.Errorf("llm-openrouter: effort must be off, low, medium, high or xhigh, got %q", effort)
 	}
-	ctx.Provide(serviceKey(cfg), &openrouterLLM{model: model, effort: effort})
+	jsTool := strings.HasPrefix(model, "google/")
+	if v, ok := cfg["js_tool"].(bool); ok {
+		jsTool = v
+	}
+	ctx.Provide(serviceKey(cfg), &openrouterLLM{model: model, effort: effort, jsTool: jsTool})
 	return nil
 }
 
@@ -44,6 +49,12 @@ type openrouterLLM struct {
 	model    string
 	effort   string // reasoning effort sent as {"reasoning": {"effort": …}}; "" omits it
 	endpoint string // tests point this at a local server; "" = OpenRouter
+	// jsTool declares one native function, js(code), and turns the
+	// model's call into the ```js fence the loop reads. Gemini plans a
+	// function call in its thinking and, with no function to call,
+	// emits one Google rejects (MALFORMED_FUNCTION_CALL); a declared
+	// function makes that the happy path. On for google/ models.
+	jsTool bool
 
 	once sync.Once
 	key  string
@@ -65,8 +76,14 @@ func (o *openrouterLLM) Usage() Usage {
 }
 
 type orMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	ToolCalls []struct {
+		Function struct {
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+		} `json:"function"`
+	} `json:"tool_calls"`
 }
 
 // orRequestMessage is an outgoing message. Content is the usual
@@ -184,6 +201,10 @@ func (o *openrouterLLM) call(ctx context.Context, system string, messages []Mess
 			// maps to its function-calling mode NONE.
 			"tool_choice": "none",
 		}
+		if o.jsTool {
+			payload["tools"] = []any{jsToolDecl}
+			payload["tool_choice"] = "auto"
+		}
 		switch effort := o.Effort(); effort {
 		case "":
 		case "off":
@@ -244,6 +265,42 @@ func (o *openrouterLLM) call(ctx context.Context, system string, messages []Mess
 	})
 }
 
+func sortedKeys(m map[int]string) []int {
+	keys := make([]int, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	return keys
+}
+
+// jsToolDecl is the one function a jsTool model may call. The loop
+// runs the code exactly as it runs a ```js fence.
+var jsToolDecl = map[string]any{
+	"type": "function",
+	"function": map[string]any{
+		"name":        "js",
+		"description": "Run JavaScript in the sandbox described in the system prompt (the tools.* API). Equivalent to writing the code in a ```js fence; use either.",
+		"parameters": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"code": map[string]any{"type": "string", "description": "the JavaScript to run"}},
+			"required":   []string{"code"},
+		},
+	},
+}
+
+// jsFence renders a js tool call's arguments as the fence the loop
+// reads; "" when the arguments carry no code.
+func jsFence(args string) string {
+	var a struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal([]byte(args), &a); err != nil || strings.TrimSpace(a.Code) == "" {
+		return ""
+	}
+	return "\n```js\n" + strings.TrimRight(a.Code, "\n") + "\n```\n"
+}
+
 // malformedNudge is appended to a retry after Google rejected the
 // model's reply as a malformed function call.
 const malformedNudge = "(Your previous reply was rejected by the provider as a malformed function call. There are no native functions here: reply in plain text, and put any code in a single ```js fence.)"
@@ -277,7 +334,12 @@ func (o *openrouterLLM) parse(data []byte) (string, bool, error) {
 	if u := parsed.Usage; u != nil {
 		o.addUsage(u.PromptTokens, u.CompletionTokens, u.Cost, u.PromptTokensDetails)
 	}
-	return parsed.Choices[0].Message.Content, false, nil
+	msg := parsed.Choices[0].Message
+	text := msg.Content
+	for _, tc := range msg.ToolCalls {
+		text += jsFence(tc.Function.Arguments)
+	}
+	return text, false, nil
 }
 
 // orPromptTokensDetails is OpenRouter's cache counters, counted
@@ -309,6 +371,7 @@ func (o *openrouterLLM) addUsage(in, out int, cost float64, d *orPromptTokensDet
 // surfaces as the call's error, with whatever text already arrived
 // discarded by the caller.
 func (o *openrouterLLM) readStream(body io.Reader, onDelta, onThink func(string)) (string, error) {
+	calls := map[int]string{} // native js tool calls by index, arguments so far
 	var out strings.Builder
 	truncated := false
 	sc := bufio.NewScanner(body)
@@ -325,7 +388,14 @@ func (o *openrouterLLM) readStream(body io.Reader, onDelta, onThink func(string)
 		var chunk struct {
 			Choices []struct {
 				Delta struct {
-					Content string `json:"content"`
+					Content   string `json:"content"`
+					ToolCalls []struct {
+						Index    int `json:"index"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
 					// OpenRouter normalises reasoning to "reasoning";
 					// providers proxied raw (deepseek, glm) send
 					// "reasoning_content". Take whichever arrives.
@@ -368,6 +438,11 @@ func (o *openrouterLLM) readStream(body io.Reader, onDelta, onThink func(string)
 				out.WriteString(c.Delta.Content)
 				onDelta(c.Delta.Content)
 			}
+			for _, tc := range c.Delta.ToolCalls {
+				// Arguments stream in pieces; keep them by index and
+				// render the fence when the stream ends.
+				calls[tc.Index] += tc.Function.Arguments
+			}
 			// A stream that stops for a reason other than the model
 			// finishing (provider "error", "content_filter") would
 			// otherwise come back as a silent empty reply.
@@ -391,6 +466,15 @@ func (o *openrouterLLM) readStream(body io.Reader, onDelta, onThink func(string)
 				return "", fmt.Errorf("llm-openrouter: provider error mid-stream: %s", strings.TrimSpace(detail))
 			case fr != "" && fr != "stop" && fr != "tool_calls":
 				return "", fmt.Errorf("llm-openrouter: stream ended: %s", fr)
+			}
+			if fr := c.FinishReason; fr == "stop" || fr == "tool_calls" {
+				for _, i := range sortedKeys(calls) {
+					if f := jsFence(calls[i]); f != "" {
+						out.WriteString(f)
+						onDelta(f)
+					}
+				}
+				calls = map[int]string{}
 			}
 		}
 		if u := chunk.Usage; u != nil {

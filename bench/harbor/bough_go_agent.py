@@ -73,7 +73,7 @@ _CONFIG = """\
 - id: loop
   plugin: loop
   config:
-    max_steps: 300
+    max_steps: 300{max_cost}
     # The graded-task brief (find a defect in every module, keep every
     # public interface, hidden checks call the original API). It is
     # bench-only: the daily-driver prompt must not carry it.
@@ -109,6 +109,7 @@ class BoughGo(BaseInstalledAgent):
         config: str | None = None,
         small: str | None = None,
         effort: str | None = None,
+        max_cost: str | None = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -118,6 +119,8 @@ class BoughGo(BaseInstalledAgent):
         self._small = small
         # Reasoning effort for the main model (off|low|medium|high|xhigh); the provider's default when unset.
         self._effort = effort
+        # A per-trial spend cap in USD (loop max_cost_usd); unset = steps only.
+        self._max_cost = max_cost
         # An ARM: a whole config tree instead of the default one (prompt/plugin experiments).
         self._config = Path(config).expanduser() if config else None
         if not self._binary or not self._binary.is_file():
@@ -168,7 +171,8 @@ class BoughGo(BaseInstalledAgent):
             plugin, model = _provider(self.model_name or "openrouter/openai/gpt-5.6-luna")
             small_plugin, small_model = _provider(self._small or self.model_name or "openrouter/openai/gpt-5.6-luna")
             effort = f"\n    effort: {self._effort}" if self._effort else ""
-            text = _CONFIG.format(plugin=plugin, model=model, small_plugin=small_plugin, small_model=small_model, effort=effort)
+            max_cost = f"\n    max_cost_usd: {self._max_cost}" if self._max_cost else ""
+            text = _CONFIG.format(plugin=plugin, model=model, small_plugin=small_plugin, small_model=small_model, effort=effort, max_cost=max_cost)
         local = self.logs_dir / "bough.yml"
         local.parent.mkdir(parents=True, exist_ok=True)
         local.write_text(text)

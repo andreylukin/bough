@@ -6,6 +6,7 @@
 #   bench/harbor/tb4.sh sum <job> [<job>…]          # per-trial table + pass rates
 #
 # Env: MODEL (default openrouter/openai/gpt-5.6-luna), SMALL (llm-small; default = MODEL), EFFORT (reasoning effort),
+#      MAXCOST (USD per trial; the loop asks for a final answer past it),
 #      TIMEOUT (agent seconds, default 5400),
 #      CONC (default 4), CONFIG (an arm: a bough.yml instead of the adapter's default),
 #      BIN (an arm binary; `build` writes to it, default dist/bough-go-linux-amd64).
@@ -32,6 +33,7 @@ case "${1:-}" in
     ak=(--ak "binary=$BIN" --ak "timeout=$TIMEOUT")
     [ -n "${SMALL:-}" ] && ak+=(--ak "small=$SMALL")
     [ -n "${EFFORT:-}" ] && ak+=(--ak "effort=$EFFORT")
+    [ -n "${MAXCOST:-}" ] && ak+=(--ak "max_cost=$MAXCOST")
     [ -n "${CONFIG:-}" ] && ak+=(--ak "config=$CONFIG")
     mkdir -p "$JOBS"
     PYTHONPATH="$ROOT/bench/harbor" harbor run -d terminal-bench/terminal-bench@4.0.0 --env modal \
