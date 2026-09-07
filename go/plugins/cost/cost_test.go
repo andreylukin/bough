@@ -208,3 +208,20 @@ func TestCachedInputIsPricedAsCached(t *testing.T) {
 		t.Fatalf("cached share = %d%%, want 90", pct)
 	}
 }
+
+// A resumed session's bar carries on from what the file says it spent;
+// the live request size wins once there is one.
+func TestUsageCarriesTheBaseOn(t *testing.T) {
+	t.Parallel()
+	base := llm.Usage{InputTokens: 1000, OutputTokens: 100, CacheReadTokens: 900, LastInputTokens: 700, Cost: 0.25, Priced: true}
+	live := llm.Usage{InputTokens: 10, OutputTokens: 1, Cost: 0.01, Priced: true}
+	u := withBase(llm.Usage{}, base)
+	if u.InputTokens != 1000 || u.LastInputTokens != 700 || u.Cost != 0.25 || !u.Priced {
+		t.Fatalf("fresh mount = %+v", u)
+	}
+	live.LastInputTokens = 1200
+	u = withBase(live, base)
+	if u.InputTokens != 1010 || u.OutputTokens != 101 || u.CacheReadTokens != 900 || u.LastInputTokens != 1200 || u.Cost < 0.2599 || u.Cost > 0.2601 {
+		t.Fatalf("after a turn = %+v", u)
+	}
+}

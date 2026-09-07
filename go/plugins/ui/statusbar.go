@@ -5,9 +5,10 @@ package ui
 // the right, so the model never shows twice; on the right the flash
 // message, or the state — "waiting for you" while an
 // ask is pending, the inspector hint — else, when idle, the truth
-// about this session: "↑in ↓out · $cost · N% ctx · model" (each part
-// only when known: cost when priced, the context percentage when the
-// model's window is known, the model when the llm names one) — and
+// about this session: "↑in ↓out · $cost · N% ctx · ⚡ cache hot · model"
+// (each part only when known: cost when priced, the context percentage
+// when the model's window is known, the cache chip once the provider
+// reports cache tokens (cache.go), the model when the llm names one) — and
 // always "? keys" as the way in to the keymap. A narrow pane drops
 // parts from the left (tokens, then the model, then the context) until
 // the bar fits; it never wraps. The spinner shows only while a turn is
@@ -71,9 +72,11 @@ func (m *model) statusBar(cfg *uiCfg) string {
 		}
 		think := thinkChip(cfg)
 		bg := bgChip(cfg)
+		cache := m.cacheChip(cfg)
 		cands = slices.Compact([]string{
-			join(bg, tokens, cost, ctx, think, mdl),
-			join(bg, cost, ctx, think, mdl),
+			join(bg, tokens, cost, ctx, cache, think, mdl),
+			join(bg, cost, ctx, cache, think, mdl),
+			join(bg, cost, ctx, cache, mdl),
 			join(bg, cost, ctx, mdl),
 			join(bg, cost, ctx),
 			join(bg, cost),

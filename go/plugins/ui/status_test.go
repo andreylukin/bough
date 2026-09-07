@@ -3,8 +3,10 @@ package ui
 // Status bar, spinner lifecycle, theme restyling, resize reflow.
 
 import (
+	"github.com/andreylukin/bough/plugins/history"
 	"strings"
 	"testing"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"pgregory.net/rapid"
@@ -467,4 +469,40 @@ func TestResizeTinyNoPanic(t *testing.T) {
 	d.event("code", "x")
 	d.event("done", "")
 	_ = d.view() // must not panic
+}
+
+// The cache chip: hot within the provider's window after the last
+// answer, cold after it, and absent for a provider that reports no
+// cache tokens. A resumed session counts from its last turn on file.
+func TestStatusBarCacheChip(t *testing.T) {
+	t.Parallel()
+	cached := fakeUsage{llm.Usage{InputTokens: 50_000, OutputTokens: 300, CacheReadTokens: 45_000, Cost: 0.1, Priced: true}}
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	mk := func(u fakeUsage, doneAt time.Time) *drv {
+		h := fakeHist{path: "/tmp/s.jsonl", entries: []history.Entry{
+			{Seq: 1, At: doneAt, Kind: "input", Data: map[string]any{"text": "hi"}},
+			{Seq: 2, At: doneAt, Kind: "assistant", Data: map[string]any{"text": "hello"}},
+			{Seq: 3, At: doneAt, Kind: "done", Data: map[string]any{"files": []string{}}},
+		}}
+		cfg := cfgWith(t, nil, nil, h)
+		cfg.usage = u
+		return newDrv(t, 120, 30, cfg)
+	}
+	if p := mk(cached, time.Now().Add(-time.Minute)).plain(); !strings.Contains(p, "⚡ cache hot") {
+		t.Errorf("resumed a minute after the last turn: hot\n%s", p)
+	}
+	if p := mk(cached, at).plain(); !strings.Contains(p, "❄ cache cold") {
+		t.Errorf("resumed long after the last turn: cold\n%s", p)
+	}
+	plain := fakeUsage{llm.Usage{InputTokens: 50_000, OutputTokens: 300, Cost: 0.1, Priced: true}}
+	if p := mk(plain, time.Now()).plain(); strings.Contains(p, "cache") {
+		t.Errorf("no cache tokens, no chip\n%s", p)
+	}
+	// A live turn ending makes it hot again.
+	d := mk(cached, at)
+	d.event("assistant", "again")
+	d.event("done", "")
+	if p := d.plain(); !strings.Contains(p, "⚡ cache hot") {
+		t.Errorf("a turn just ended: hot\n%s", p)
+	}
 }

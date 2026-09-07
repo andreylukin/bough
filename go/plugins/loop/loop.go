@@ -96,7 +96,8 @@ type contextParter interface {
 
 // TurnStats is the optional "turn-stats" service seam (tools-basic):
 // files written and the last bash exit code since the previous Take.
-// Stamped onto the "done" entry as data {"files": [...], "exit": n}
+// Stamped onto the "done" entry as data {"files": [...], "exit": n,
+// "usage": {...}}
 // ("exit" only when a bash call ran this turn).
 type TurnStats interface {
 	Take() (files []string, exit int, ran bool)
@@ -655,6 +656,11 @@ type runner struct {
 	// steps re-sends a growing context every step; the cap is the bill.
 	maxCost float64
 	usage   func() float64 // the priced cost so far; nil without a cost row
+	// report is the usage tally (the cost row's, else the llm's); each
+	// done entry carries the turn's share of it, so a resumed session
+	// can add up what it already spent. nil when nothing counts.
+	report   func() llm.Usage
+	reported llm.Usage // the tally at the last done
 	// keepWhole is how many recent tool outputs the projection shows in
 	// full (trim.go); 0 disables trimming.
 	keepWhole int
@@ -932,7 +938,73 @@ func (r *runner) doneData() map[string]any {
 	if ran {
 		data["exit"] = exit
 	}
+	if r.report != nil {
+		if u := UsageDelta(r.reported, r.report()); u != nil {
+			data["usage"] = u
+		}
+		r.reported = r.report()
+	}
 	return data
+}
+
+// UsageDelta is what a turn spent: the tally now less the tally at the
+// last done, as the done entry's "usage" data. nil when nothing moved
+// (a provider that does not count). last_in is the last request's
+// input size, not a delta: it is the context the next turn starts
+// from.
+func UsageDelta(prev, now llm.Usage) map[string]any {
+	d := map[string]any{
+		"in":          now.InputTokens - prev.InputTokens,
+		"out":         now.OutputTokens - prev.OutputTokens,
+		"cache_read":  now.CacheReadTokens - prev.CacheReadTokens,
+		"cache_write": now.CacheCreationTokens - prev.CacheCreationTokens,
+		"last_in":     now.LastInputTokens,
+	}
+	if now.InputTokens == prev.InputTokens && now.OutputTokens == prev.OutputTokens {
+		return nil
+	}
+	if now.Priced {
+		d["cost"] = now.Cost - prev.Cost
+	}
+	return d
+}
+
+// SumUsage adds up the "usage" data of the done entries: the tally a
+// resumed session inherits. LastInputTokens is the last turn's.
+func SumUsage(entries []history.Entry) llm.Usage {
+	var u llm.Usage
+	for _, e := range entries {
+		if e.Kind != "done" {
+			continue
+		}
+		d, ok := e.Data["usage"].(map[string]any)
+		if !ok {
+			continue
+		}
+		u.InputTokens += intOf(d["in"])
+		u.OutputTokens += intOf(d["out"])
+		u.CacheReadTokens += intOf(d["cache_read"])
+		u.CacheCreationTokens += intOf(d["cache_write"])
+		u.LastInputTokens = intOf(d["last_in"])
+		if c, ok := d["cost"].(float64); ok {
+			u.Cost += c
+			u.Priced = true
+		}
+	}
+	return u
+}
+
+// intOf reads a count that may have round-tripped through JSON.
+func intOf(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	}
+	return 0
 }
 
 // fire runs a hook event if a hooks service is present. A Fire error
@@ -1697,16 +1769,22 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		}
 		r.maxSteps = n
 	}
+	if u, err := kernel.Get[UsageReporter](kctx, "usage"); err == nil {
+		r.report = u.Usage
+	} else if u, err := kernel.Get[UsageReporter](kctx, "llm"); err == nil {
+		r.report = u.Usage
+	}
+	if r.report != nil {
+		r.reported = r.report() // what earlier turns (or mounts) spent is theirs
+	}
 	if v, ok := cfg["max_cost_usd"]; ok {
 		f, err := toFloat(v)
 		if err != nil || f <= 0 {
 			return fmt.Errorf("loop: max_cost_usd must be a positive number, got %v", v)
 		}
 		r.maxCost = f
-		if u, err := kernel.Get[UsageReporter](kctx, "usage"); err == nil {
-			r.usage = func() float64 { return u.Usage().Cost }
-		} else if u, err := kernel.Get[UsageReporter](kctx, "llm"); err == nil {
-			r.usage = func() float64 { return u.Usage().Cost }
+		if r.report != nil {
+			r.usage = func() float64 { return r.report().Cost }
 		}
 	}
 	// keep_whole_results: how many recent tool outputs the model is

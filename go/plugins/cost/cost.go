@@ -18,7 +18,9 @@ import (
 
 	"github.com/andreylukin/bough/internal/models"
 	"github.com/andreylukin/bough/kernel"
+	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
+	"github.com/andreylukin/bough/plugins/loop"
 )
 
 // Price is USD per million tokens.
@@ -160,12 +162,18 @@ func (p Price) Cost(in, out int) float64 {
 	return float64(in)*p.Input/1e6 + float64(out)*p.Output/1e6
 }
 
-// Service is the "usage" provider: the llm's tally, priced.
+// Service is the "usage" provider: the llm's tally, priced, on top of
+// what the session spent before this mount (base).
 type Service struct {
 	rep    llm.UsageReporter
 	model  func() string
 	plugin func() string // the llm row's plugin, for the catalogue
 	table  Table
+	// base is what earlier mounts of this session spent — the done
+	// entries on file when the row mounted — so a resumed session
+	// (or one whose llm row /model swapped) carries its tally on
+	// instead of starting from zero.
+	base llm.Usage
 }
 
 // llmPlugin is the llm row's plugin name, "" when the service was
@@ -197,18 +205,37 @@ func (s *Service) lookup() (models.Model, string, bool) {
 	return models.Model{}, "", false
 }
 
-// Usage implements llm.UsageReporter.
+// Usage implements llm.UsageReporter: this mount's tally, priced, plus
+// the base.
 func (s *Service) Usage() llm.Usage {
 	u := s.rep.Usage()
-	if u.Priced {
-		return u
+	if !u.Priced {
+		if m, _, ok := s.lookup(); ok {
+			// Tiered rates by input size (gpt-5.6-sol doubles above 272k),
+			// and the prompt cache priced as a cache: a cached read is a
+			// tenth of the input rate, so billing it as fresh input would
+			// hide the saving caching exists for.
+			u.Cost = m.CostCached(u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheCreationTokens)
+			u.Priced = true
+		}
 	}
-	if m, _, ok := s.lookup(); ok {
-		// Tiered rates by input size (gpt-5.6-sol doubles above 272k),
-		// and the prompt cache priced as a cache: a cached read is a
-		// tenth of the input rate, so billing it as fresh input would
-		// hide the saving caching exists for.
-		u.Cost = m.CostCached(u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheCreationTokens)
+	return withBase(u, s.base)
+}
+
+// withBase adds what the session spent before this mount to the live
+// tally. The last request's input size is the live one once there has
+// been a request; before that it is the last turn's on file, so the
+// context percentage shows what the next turn starts from.
+func withBase(u, base llm.Usage) llm.Usage {
+	u.InputTokens += base.InputTokens
+	u.OutputTokens += base.OutputTokens
+	u.CacheReadTokens += base.CacheReadTokens
+	u.CacheCreationTokens += base.CacheCreationTokens
+	if u.LastInputTokens == 0 {
+		u.LastInputTokens = base.LastInputTokens
+	}
+	if base.Priced {
+		u.Cost += base.Cost
 		u.Priced = true
 	}
 	return u
@@ -319,6 +346,10 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		}
 		return ""
 	}
-	ctx.Provide("usage", &Service{rep: rep, model: model, plugin: plugin, table: table})
+	svc := &Service{rep: rep, model: model, plugin: plugin, table: table}
+	if h, err := kernel.Get[interface{ Entries() []history.Entry }](ctx, "history"); err == nil {
+		svc.base = loop.SumUsage(h.Entries())
+	}
+	ctx.Provide("usage", svc)
 	return nil
 }

@@ -9,6 +9,7 @@ package ui
 import (
 	"cmp"
 	"github.com/charmbracelet/x/ansi"
+	"time"
 
 	"fmt"
 	"os"
@@ -83,6 +84,14 @@ func (m *model) replay() {
 			}
 		default:
 			m.addEvent(Event{Kind: e.Kind, Text: text, Data: e.Data})
+		}
+	}
+	// The cache window counts from the last turn on file, not from the
+	// replay (whose done events stamped "now" on the way through).
+	m.lastRequest = time.Time{}
+	for _, e := range entries {
+		if e.Kind == "done" {
+			m.lastRequest = e.At
 		}
 	}
 	m.expireAsks()                 // an ask with no answer entry replays as expired
@@ -267,7 +276,8 @@ func (m model) handlePickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.pick >= len(rows) { // sessions swapped under us (hot reload)
 			m.pick = 0
 		}
-		return m.leavePicker(rows[m.pick].ID), nil
+		next := m.leavePicker(rows[m.pick].ID)
+		return next, next.cacheTick() // the resumed session's cache window
 	case "esc":
 		return m.leavePicker(""), nil
 	}

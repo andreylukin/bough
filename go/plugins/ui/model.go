@@ -93,49 +93,50 @@ type model struct {
 	send    func(string)
 	cfg     *atomic.Pointer[uiCfg]
 
-	blocks     []block
-	nextID     int
-	focusID    int  // block-cursor identity; -1 when nothing focused
-	focusFold  bool // the cursor is on the open-fold header above focusID, not the block
-	ranges     []lineRange
-	width      int
-	height     int
-	running    bool           // a turn is in flight (input sent, no done/error yet)
-	turnStart  time.Time      // when the in-flight turn started (status bar elapsed)
-	inspecting bool           // history overlay open
-	diving     int            // spawn card id whose child transcript the overlay shows (0 = history)
-	ovRanges   []lineRange    // overlay line span -> entry index
-	ovExpanded map[int64]bool // entry seq -> inline JSON shown
-	ovEntries  []int64        // entry index -> seq, for ovRanges lookups
-	picking    bool           // session picker shown instead of the chat view
-	pick       int            // picker cursor index into cfg.sessions
-	mp         modelPicker    // "/model" picker (see modelpick.go)
-	rw         rewindPicker   // double-esc rewind menu (see rewind.go)
-	todoText   string         // latest todo list text (the todo plugin's event)
-	title      string         // the session's name (session-title plugin); "" until named
-	activity   string         // what the agent is doing now (activity plugin); "" when idle
-	pred       predictState   // the small model's guess at the rest of the draft (predict.go)
-	todoHidden bool           // the todo strip dismissed for now (todo_toggle)
-	board      boardState     // the attention board at the top (board.go)
-	sessRows   sessList       // mid-session picker list (see session.go); nil = launch picker
-	welcome    bool           // fresh-session orientation text (see welcomeView)
-	unfolded   map[int]int    // fold lead id -> end index of its run, shown as rows (see fold.go)
-	pendingAsk string         // ask id the composer routes answers to; "" = none
-	pal        palette        // "/" command palette (see palette.go)
-	at         palette        // "@" file picker (see atfiles.go)
-	atFiles    []string       // the picker's file list, read when it opens
-	flash      string
-	trailing   string        // assistant prose after an executed fence, emitted after its result
-	newBelow   bool          // blocks arrived while scrolled up (status cue)
-	sel        selection     // mouse drag selection (see select.go)
-	lines      []string      // rendered content lines, for the selection
-	stop       stopState     // quit-key arming (see stop.go)
-	leader     bool          // the leader key was pressed: the next key is a chord (see actions.go)
-	comp       composerState // prompt recall (see composer.go)
-	tab        tabState      // Tab path-completion cycling (see pathcomplete.go)
-	md         *glamour.TermRenderer
-	mdCache    map[string]string // assistant markdown render cache (cleared on resize)
-	bgLight    bool              // terminal background is light (tea.BackgroundColorMsg)
+	blocks      []block
+	nextID      int
+	focusID     int  // block-cursor identity; -1 when nothing focused
+	focusFold   bool // the cursor is on the open-fold header above focusID, not the block
+	ranges      []lineRange
+	width       int
+	height      int
+	running     bool           // a turn is in flight (input sent, no done/error yet)
+	turnStart   time.Time      // when the in-flight turn started (status bar elapsed)
+	lastRequest time.Time      // when the model last answered (cache chip, cache.go)
+	inspecting  bool           // history overlay open
+	diving      int            // spawn card id whose child transcript the overlay shows (0 = history)
+	ovRanges    []lineRange    // overlay line span -> entry index
+	ovExpanded  map[int64]bool // entry seq -> inline JSON shown
+	ovEntries   []int64        // entry index -> seq, for ovRanges lookups
+	picking     bool           // session picker shown instead of the chat view
+	pick        int            // picker cursor index into cfg.sessions
+	mp          modelPicker    // "/model" picker (see modelpick.go)
+	rw          rewindPicker   // double-esc rewind menu (see rewind.go)
+	todoText    string         // latest todo list text (the todo plugin's event)
+	title       string         // the session's name (session-title plugin); "" until named
+	activity    string         // what the agent is doing now (activity plugin); "" when idle
+	pred        predictState   // the small model's guess at the rest of the draft (predict.go)
+	todoHidden  bool           // the todo strip dismissed for now (todo_toggle)
+	board       boardState     // the attention board at the top (board.go)
+	sessRows    sessList       // mid-session picker list (see session.go); nil = launch picker
+	welcome     bool           // fresh-session orientation text (see welcomeView)
+	unfolded    map[int]int    // fold lead id -> end index of its run, shown as rows (see fold.go)
+	pendingAsk  string         // ask id the composer routes answers to; "" = none
+	pal         palette        // "/" command palette (see palette.go)
+	at          palette        // "@" file picker (see atfiles.go)
+	atFiles     []string       // the picker's file list, read when it opens
+	flash       string
+	trailing    string        // assistant prose after an executed fence, emitted after its result
+	newBelow    bool          // blocks arrived while scrolled up (status cue)
+	sel         selection     // mouse drag selection (see select.go)
+	lines       []string      // rendered content lines, for the selection
+	stop        stopState     // quit-key arming (see stop.go)
+	leader      bool          // the leader key was pressed: the next key is a chord (see actions.go)
+	comp        composerState // prompt recall (see composer.go)
+	tab         tabState      // Tab path-completion cycling (see pathcomplete.go)
+	md          *glamour.TermRenderer
+	mdCache     map[string]string // assistant markdown render cache (cleared on resize)
+	bgLight     bool              // terminal background is light (tea.BackgroundColorMsg)
 }
 
 func newModel(width, height int, send func(string), events <-chan Event, cfg *atomic.Pointer[uiCfg]) model {
@@ -712,7 +713,7 @@ func (m model) waitEvent() tea.Cmd {
 }
 
 func (m model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.waitEvent(), tea.RequestBackgroundColor}
+	cmds := []tea.Cmd{m.waitEvent(), tea.RequestBackgroundColor, m.cacheTick()}
 	if m.board.on {
 		cmds = append(cmds, m.loadBoard(m.cfg.Load()), m.spin.Tick)
 	}
@@ -769,7 +770,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case eventMsg:
 		m.addEvent(Event(msg))
+		if Event(msg).Kind == "done" {
+			return m, tea.Batch(m.waitEvent(), m.cacheTick())
+		}
 		return m, m.waitEvent()
+
+	case cacheTickMsg:
+		return m, nil // the bar re-reads the clock on every draw
 
 	case predictTickMsg:
 		return m, m.startPredict(m.cfg.Load(), msg.draft)
@@ -872,6 +879,7 @@ func (m *model) addEvent(ev Event) {
 	switch ev.Kind {
 	case "done":
 		m.running = false
+		m.lastRequest = time.Now()
 		m.expireAsks() // a turn never ends with a live ask
 		if m.flash == "cancelling…" {
 			m.flash = "" // the cancel landed: the transcript says so, the bar goes back to its chips
