@@ -14,7 +14,7 @@ import (
 	"github.com/andreylukin/bough/plugins/graph"
 )
 
-const prFields = "number,title,url,state,isDraft,updatedAt,author,headRefName,body,reviewRequests,reviews,reviewDecision,statusCheckRollup,mergedAt,closedAt"
+const prFields = "number,title,url,state,isDraft,createdAt,updatedAt,author,headRefName,body,reviewRequests,reviews,reviewDecision,statusCheckRollup,mergedAt,closedAt"
 
 type ghPR struct {
 	Number         int    `json:"number"`
@@ -22,6 +22,7 @@ type ghPR struct {
 	URL            string `json:"url"`
 	State          string `json:"state"`
 	IsDraft        bool   `json:"isDraft"`
+	CreatedAt      string `json:"createdAt"`
 	UpdatedAt      string `json:"updatedAt"`
 	MergedAt       string `json:"mergedAt"`
 	ClosedAt       string `json:"closedAt"`
@@ -36,8 +37,9 @@ type ghPR struct {
 		Name  string `json:"name"` // a team
 	} `json:"reviewRequests"`
 	Reviews []struct {
-		State  string `json:"state"`
-		Author struct {
+		State       string `json:"state"`
+		SubmittedAt string `json:"submittedAt"`
+		Author      struct {
 			Login string `json:"login"`
 		} `json:"author"`
 	} `json:"reviews"`
@@ -117,16 +119,42 @@ func (r *Run) recordPR(url string, pr ghPR, unresolved int, myLogin string) (ent
 		return 0, 0, nil
 	}
 	at := when(pr.UpdatedAt)
+	// Each fact at the source's own time: the PR existed from
+	// createdAt, was merged at mergedAt, reviews at submittedAt. The
+	// first pass over an old PR then draws a real history, not one
+	// step at the day it was first collected.
+	born := when(pr.CreatedAt)
+	if born == 0 {
+		born = at
+	}
 	e, err := r.pr(key, pr.Title, url)
 	if err != nil {
 		return 0, 0, err
 	}
 	ents++
 	st := status(pr.State)
+	stateAt := born
 	if st == "open" && pr.IsDraft {
 		st = "draft"
 	}
-	if err := r.St.SetState(e, st, r.Ep, "collector", at); err != nil {
+	switch st {
+	case "merged":
+		if t := when(pr.MergedAt); t > 0 {
+			stateAt = t
+		}
+	case "closed":
+		if t := when(pr.ClosedAt); t > 0 {
+			stateAt = t
+		}
+	case "open":
+		// A draft that became ready changed at updatedAt; a PR opened
+		// ready has been open since birth. Only a prior draft state
+		// tells them apart, and SetState keeps the earlier window.
+		if cur, _ := r.St.Get("pr", key); cur.Status == "draft" {
+			stateAt = at
+		}
+	}
+	if err := r.St.SetState(e, st, r.Ep, "collector", stateAt); err != nil {
 		return ents, edges, err
 	}
 	if _, err := r.St.SetLink(e, graph.Link{Summary: prSummary(pr, unresolved), UpdatedAt: at}); err != nil {
@@ -142,7 +170,7 @@ func (r *Run) recordPR(url string, pr ghPR, unresolved int, myLogin string) (ent
 	if err != nil {
 		return ents, edges, err
 	}
-	if err := count(r.assert(author, "authored", e, at, "")); err != nil {
+	if err := count(r.assert(author, "authored", e, born, "")); err != nil {
 		return ents, edges, err
 	}
 	for _, t := range graph.Tickets(pr.HeadRefName + " " + pr.Title + " " + pr.Body) {
@@ -150,7 +178,7 @@ func (r *Run) recordPR(url string, pr ghPR, unresolved int, myLogin string) (ent
 		if err != nil {
 			return ents, edges, err
 		}
-		if err := count(r.assert(e, "implements", te, at, "")); err != nil {
+		if err := count(r.assert(e, "implements", te, born, "")); err != nil {
 			return ents, edges, err
 		}
 	}
@@ -186,7 +214,11 @@ func (r *Run) recordPR(url string, pr ghPR, unresolved int, myLogin string) (ent
 		if err != nil {
 			return ents, edges, err
 		}
-		if err := count(r.assert(p, "reviews", e, at, strings.ToLower(rv.State))); err != nil {
+		rvAt := when(rv.SubmittedAt)
+		if rvAt == 0 {
+			rvAt = at
+		}
+		if err := count(r.assert(p, "reviews", e, rvAt, strings.ToLower(rv.State))); err != nil {
 			return ents, edges, err
 		}
 		if rv.State == "CHANGES_REQUESTED" {
@@ -198,7 +230,7 @@ func (r *Run) recordPR(url string, pr ghPR, unresolved int, myLogin string) (ent
 		if unresolved > 0 {
 			claim = fmt.Sprintf("%d unresolved review threads", unresolved)
 		}
-		if err := count(r.assert(e, "awaits", author, at, claim)); err != nil {
+		if err := count(r.reassert(e, "awaits", author, at, claim)); err != nil {
 			return ents, edges, err
 		}
 		awaited[author.Key] = true

@@ -171,8 +171,30 @@ func (r *Run) assert(src graph.Entity, rel string, dst graph.Entity, at int64, c
 	if at == 0 {
 		at = r.Now
 	}
-	_, created, err := r.St.AssertNew(src, rel, dst, r.Ep, "collector", graph.AssertOpts{ValidFrom: at, ObservedAt: at, Claim: claim})
+	e, created, err := r.St.AssertNew(src, rel, dst, r.Ep, "collector", graph.AssertOpts{ValidFrom: at, ObservedAt: at, Claim: claim})
+	if err == nil && !created && at < e.ValidFrom {
+		// A truer, earlier time than the first pass knew.
+		err = r.St.Backdate(e.ID, at)
+	}
 	return created, err
+}
+
+// reassert is assert for a claim that changes over time (how many
+// threads await the author): a different claim closes the old window
+// at `at` and opens a new one, so the timeline shows the change.
+func (r *Run) reassert(src graph.Entity, rel string, dst graph.Entity, at int64, claim string) (bool, error) {
+	open, err := r.St.Neighbors(src, 1, rel, 0)
+	if err != nil {
+		return false, err
+	}
+	for _, o := range open {
+		if o.Src.ID == src.ID && o.Dst.ID == dst.ID && o.Claim != claim {
+			if err := r.St.Invalidate(o.ID, "updated: "+claim, "collector", at); err != nil {
+				return false, err
+			}
+		}
+	}
+	return r.assert(src, rel, dst, at, claim)
 }
 
 // person resolves a person by email when known, else by a source

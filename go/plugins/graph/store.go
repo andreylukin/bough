@@ -341,7 +341,11 @@ func (s *Store) SetState(e Entity, status string, episode int64, author string, 
 		}
 		if o.Dst.Key == status {
 			// Unchanged; still make sure the column agrees (a write that
-			// died between the edge and the column left it empty).
+			// died between the edge and the column left it empty), and
+			// take an earlier start when the source now says so.
+			if err := s.Backdate(o.ID, at); err != nil {
+				return err
+			}
 			_, err := s.SetLink(e, Link{Status: status})
 			return err
 		}
@@ -374,6 +378,17 @@ type AssertOpts struct {
 func (s *Store) Assert(src Entity, rel string, dst Entity, episode int64, author string, o AssertOpts) (Edge, error) {
 	e, _, err := s.AssertNew(src, rel, dst, episode, author, o)
 	return e, err
+}
+
+// Backdate moves an open edge's valid_from earlier when a source
+// later tells the true time (a PR's createdAt after a first pass that
+// only knew updatedAt). Never moves it later.
+func (s *Store) Backdate(id, validFrom int64) error {
+	if validFrom <= 0 {
+		return nil
+	}
+	_, err := s.db.Exec(`UPDATE edges SET valid_from=? WHERE id=? AND valid_from>?`, validFrom, id, validFrom)
+	return err
 }
 
 // AssertNew is Assert that also says whether it wrote a row (false: the

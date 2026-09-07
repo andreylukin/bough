@@ -239,3 +239,81 @@ func TestHelpers(t *testing.T) {
 		t.Errorf("%+v %v", c, err)
 	}
 }
+
+// Each fact lands at the source's own time, so a first pass over an
+// old PR draws its real history; a changed awaits claim opens a new
+// window; a later pass backdates an edge the first one stamped late.
+func TestGithubSourceTimes(t *testing.T) {
+	r := newRun(t)
+	view := map[string]any{
+		"number": 7, "title": "route demand", "url": "https://github.com/asi/orb/pull/7",
+		"state": "OPEN", "isDraft": false, "createdAt": "2026-08-20T09:00:00Z", "updatedAt": "2026-09-05T10:00:00Z", "headRefName": "andrey/route",
+		"author":  map[string]any{"login": "andreylukin"},
+		"reviews": []any{map[string]any{"state": "COMMENTED", "submittedAt": "2026-08-28T12:00:00Z", "author": map[string]any{"login": "hubert"}}},
+		"reviewRequests": []any{}, "reviewDecision": "REVIEW_REQUIRED", "statusCheckRollup": []any{},
+	}
+	threads := "4\n"
+	r.gh = func(args ...string) ([]byte, error) {
+		switch {
+		case args[0] == "api" && args[1] == "user":
+			return []byte("andreylukin\n"), nil
+		case args[0] == "search" && strings.HasPrefix(args[2], "--author"):
+			return []byte(`[{"url":"https://github.com/asi/orb/pull/7"}]`), nil
+		case args[0] == "search":
+			return []byte(`[]`), nil
+		case args[0] == "pr":
+			b, _ := json.Marshal(view)
+			return b, nil
+		case args[0] == "api" && args[1] == "graphql":
+			return []byte(threads), nil
+		}
+		t.Fatalf("unexpected gh %v", args)
+		return nil, nil
+	}
+	if rep := r.Github(); rep.Err != nil {
+		t.Fatal(rep.Err)
+	}
+	pr, _ := r.St.Get("pr", "orb#7")
+	at := func(rel, dstKey string) (from int64, to *int64, claim string) {
+		tl, _ := r.St.Timeline(pr)
+		for _, e := range tl {
+			if e.Rel == rel && (dstKey == "" || e.Dst.Key == dstKey || e.Src.Key == dstKey) && e.ValidTo == nil {
+				return e.ValidFrom, e.ValidTo, e.Claim
+			}
+		}
+		return 0, nil, ""
+	}
+	born := int64(1787216400) // 2026-08-20T09:00:00Z
+	if f, _, _ := at("has_state", "open"); f != born {
+		t.Errorf("open since createdAt: %d", f)
+	}
+	if f, _, _ := at("authored", ""); f != born {
+		t.Errorf("authored at createdAt: %d", f)
+	}
+	if f, _, _ := at("reviews", ""); f != 1787918400 {
+		t.Errorf("review at submittedAt: %d", f)
+	}
+	if _, _, c := at("awaits", ""); c != "4 unresolved review threads" {
+		t.Errorf("awaits claim: %q", c)
+	}
+	// Two threads resolved: the old window closes, a new claim opens.
+	threads = "2\n"
+	view["updatedAt"] = "2026-09-06T10:00:00Z"
+	if rep := r.Github(); rep.Err != nil {
+		t.Fatal(rep.Err)
+	}
+	tl, _ := r.St.Timeline(pr)
+	var closed, open int
+	for _, e := range tl {
+		if e.Rel == "awaits" {
+			if e.ValidTo != nil {
+				closed++
+			} else if e.Claim == "2 unresolved review threads" {
+				open++
+			}
+		}
+	}
+	if closed != 1 || open != 1 {
+		t.Fatalf("awaits windows: closed %d open %d", closed, open)
+	}
+}

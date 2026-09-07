@@ -170,7 +170,7 @@ function render(f){
       else l.innerHTML=same?'<small>↳ '+esc(shortKey(r.item.Key))+'</small>':title+'<small>'+esc(r.subject.title!==r.subject.key?r.subject.title:'')+'</small>';
       const t=track(r, from, now); t.style.setProperty('--grid', grid);
       const nc=document.createElement('div'); nc.className='nowc'; nc.appendChild(card(r.item, now, gr.key));
-      const nx=document.createElement('div'); nx.className='nxt'; (r.next||[]).forEach(n=>{const e=document.createElement('div'); e.textContent=n.text.replace('pr-watch poll','poll')+' '+fmtNext(new Date(n.at)-now); e.title=n.text; nx.appendChild(e);});
+      const nx=document.createElement('div'); nx.className='nxt'; (r.next||[]).forEach(n=>{const e=document.createElement('div'); e.textContent=n.text+(n.text.startsWith('agent:')?'':' '+fmtNext(new Date(n.at)-now)); e.title=n.text; nx.appendChild(e);});
       g.append(l,t,nc,nx);
     });
   });
@@ -217,7 +217,8 @@ async function load(){
     if(f.err&&!(f.groups&&f.groups.length)){ $('#meta').textContent=f.err; return; }
     const col=f.collected&&!f.collected.startsWith('0001')?new Date(f.collected):null; let meta=col?'collected '+col.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'never collected';
     if(col&&now-col.getTime()>864e5) meta+=' <span class="stale">STALE</span>';
-    $('#meta').innerHTML=meta+' · refreshes every 5 s';
+    (f.next||[]).forEach(n=>{ meta+=' · '+esc(n.text)+' in '+fmtNext(new Date(n.at)-now); });
+    $('#meta').innerHTML=meta;
     render(f); headline(f);
   }catch(e){ $('#meta').textContent='bough is not reachable: '+e; }
 }

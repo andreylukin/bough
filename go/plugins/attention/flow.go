@@ -78,6 +78,7 @@ type Flow struct {
 	From      time.Time `json:"from"`
 	Now       time.Time `json:"now"`
 	Collected time.Time `json:"collected"`
+	Next      []Next    `json:"next,omitempty"` // board-wide: the collector, the agent's poll
 	Err       string    `json:"err,omitempty"`
 }
 
@@ -90,6 +91,16 @@ func (s *Service) Flow(days int) Flow {
 	from := now.Add(-time.Duration(days) * 24 * time.Hour)
 	b := s.Board()
 	f := Flow{From: from, Now: now, Collected: b.Collected, Err: b.Err}
+	if s.collectEvery > 0 && !b.Collected.IsZero() {
+		if t := b.Collected.Add(s.collectEvery); t.After(now) {
+			f.Next = append(f.Next, Next{At: t, Text: "next collect"})
+		}
+	}
+	if s.nextPoll != nil {
+		if t := s.nextPoll(); !t.IsZero() && t.After(now) {
+			f.Next = append(f.Next, Next{At: t, Text: "agent checks GitHub"})
+		}
+	}
 	if b.Empty() {
 		return f
 	}
@@ -373,22 +384,22 @@ func (s *Service) row(it Item, col string, from, now, collected time.Time) Row {
 		}
 	}
 	slices.SortFunc(r.Marks, func(a, b Mark) int { return a.At.Compare(b.At) })
-	// Next: what will touch it.
-	if it.Session != "" || it.Kind == "pr" {
-		if s.nextPoll != nil {
-			if t := s.nextPoll(); !t.IsZero() && t.After(now) {
-				r.Next = append(r.Next, Next{At: t, Text: "pr-watch poll"})
-			}
-		}
-	}
-	if s.collectEvery > 0 && !collected.IsZero() {
-		if t := collected.Add(s.collectEvery); t.After(now) {
-			r.Next = append(r.Next, Next{At: t, Text: "collect"})
+	// Next: only what is specific to this row. The collector and the
+	// agent's poll are the board's, in the header.
+	if it.Session != "" && s.nextPoll != nil {
+		if t := s.nextPoll(); !t.IsZero() && t.After(now) {
+			r.Next = append(r.Next, Next{At: t, Text: "agent reports"})
 		}
 	}
 	if strings.HasPrefix(it.Detail, "awaits ") && now.Sub(it.Since) > 14*24*time.Hour {
 		r.Next = append(r.Next, Next{At: now, Text: "nudge?"})
 	}
+	if s.recent != nil {
+		if rc, ok := s.recent(it.Key); ok && strings.HasPrefix(strings.ToLower(rc.Summary), "blocked") {
+			r.Next = append(r.Next, Next{At: rc.At, Text: "agent: " + rc.Summary})
+		}
+	}
+	_ = collected
 	return r
 }
 

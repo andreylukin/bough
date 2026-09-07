@@ -41,6 +41,7 @@ func (r *Run) Linear(server string) Report {
 // linearIssue is the part of an issue the graph keeps.
 type linearIssue struct {
 	ID, Identifier, Title, URL, State, Description, Branch, UpdatedAt string
+	CreatedAt, StartedAt, CompletedAt                                 string
 	Assignee                                                          struct{ ID, Name, Email string }
 	Links                                                             []string // attachment / PR urls
 }
@@ -92,6 +93,9 @@ func linearIssues(text string) []linearIssue {
 			Description: str(m, "description"),
 			Branch:      str(m, "gitBranchName"),
 			UpdatedAt:   str(m, "updatedAt", "updated_at"),
+			CreatedAt:   str(m, "createdAt", "created_at"),
+			StartedAt:   str(m, "startedAt", "started_at"),
+			CompletedAt: str(m, "completedAt", "completed_at"),
 		}
 		if id := str(m, "id"); is.Identifier == "" && len(graph.Tickets(id)) == 1 {
 			is.Identifier = id
@@ -126,6 +130,26 @@ func linearIssues(text string) []linearIssue {
 
 func (r *Run) recordIssue(is linearIssue) (ents, edges int, err error) {
 	at := when(is.UpdatedAt)
+	// The state's own clock when Linear gives one: created for the
+	// backlog, started for in-progress, completed for done; updatedAt
+	// otherwise (a review state, say).
+	born := when(is.CreatedAt)
+	if born == 0 {
+		born = at
+	}
+	stateAt := at
+	switch st := status(is.State); {
+	case st == "done" || st == "canceled" || st == "cancelled" || st == "released":
+		if t := when(is.CompletedAt); t > 0 {
+			stateAt = t
+		}
+	case st == "in progress" || st == "in_progress" || st == "started":
+		if t := when(is.StartedAt); t > 0 {
+			stateAt = t
+		}
+	case st == "todo" || st == "backlog" || st == "triage" || st == "":
+		stateAt = born
+	}
 	e, err := r.St.Upsert("ticket", is.Identifier, is.Title, "")
 	if err != nil {
 		return 0, 0, err
@@ -138,7 +162,7 @@ func (r *Run) recordIssue(is linearIssue) (ents, edges int, err error) {
 	if _, err := r.St.SetLink(e, graph.Link{URL: is.URL, Summary: summary, UpdatedAt: at}); err != nil {
 		return ents, edges, err
 	}
-	if err := r.St.SetState(e, status(is.State), r.Ep, "collector", at); err != nil {
+	if err := r.St.SetState(e, status(is.State), r.Ep, "collector", stateAt); err != nil {
 		return ents, edges, err
 	}
 	count := func(ok bool, err error) error {
@@ -152,7 +176,7 @@ func (r *Run) recordIssue(is linearIssue) (ents, edges int, err error) {
 	if is.Assignee.ID != "" {
 		_ = r.St.Alias(r.Me.ID, "linear", is.Assignee.ID, "")
 	}
-	if err := count(r.assert(r.Me, "assigned", e, at, "")); err != nil {
+	if err := count(r.assert(r.Me, "assigned", e, born, "")); err != nil {
 		return ents, edges, err
 	}
 	for _, p := range graph.PRLinks(is.Description + " " + is.Branch + " " + strings.Join(is.Links, " ")) {
