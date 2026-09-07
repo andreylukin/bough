@@ -87,8 +87,6 @@ type uiCfg struct {
 	// jobs is the background-job service, for the strip under the
 	// composer; nil when the tools row is absent.
 	jobs jobLister
-	// prs is the pr-watch service, for the status bar's count.
-	prs bgCounter
 	// board is the attention service, for the board at the top.
 	board boardSource
 	// past is this directory's prompts from earlier sessions, newest
@@ -273,9 +271,6 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 	if j, err := kernel.Get[jobLister](ctx, "job-notices"); err == nil {
 		cfg.jobs = j
-	}
-	if p, err := kernel.Get[bgCounter](ctx, "pr-watch"); err == nil {
-		cfg.prs = p
 	}
 	if b, err := kernel.Get[boardSource](ctx, "attention"); err == nil {
 		cfg.board = b

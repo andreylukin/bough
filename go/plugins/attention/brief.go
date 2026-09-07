@@ -24,7 +24,7 @@ import (
 
 const briefPrompt = `You write one-sentence status lines about a software engineer's work, for their manager to read.
 Rules: one sentence, at most 28 words, plain English, third person (the engineer is named in the facts), no ids, no keys, no markdown.
-Say "checks" rather than "CI", "review" rather than "PR review", "automated agent" for pr-watch or a session.
+Say "checks" rather than "CI", "review" rather than "PR review", "automated agent" for a session.
 Say what the work is for, where it stands, and what or who it waits on. Present tense. Reply with the sentence only.`
 
 const headlinePrompt = `You summarise a software engineer's current work for their manager in one sentence of at most 30 words.
@@ -123,7 +123,7 @@ func (s *Service) Brief(kind, key string) (string, bool) {
 	b := s.Board()
 	var it Item
 	found := false
-	for _, col := range [][]Item{b.Me, b.Motion, b.Others} {
+	for _, col := range [][]Item{b.Me, b.Others} {
 		for _, x := range col {
 			if x.Key == key {
 				it, found = x, true
@@ -176,7 +176,6 @@ func (s *Service) Headline() (string, bool) {
 		}
 	}
 	add("needs the engineer", b.Me)
-	add("an automated agent is working on it", b.Motion)
 	add("waiting on other people", b.Others)
 	input := "engineer: " + s.myName() + "\n" + strings.Join(lines, "\n")
 	return s.briefs.get("headline", hashOf(input), headlinePrompt, input)
@@ -202,11 +201,6 @@ func columnOf(b Board, key string) string {
 	for _, it := range b.Me {
 		if it.Key == key {
 			return "needs me"
-		}
-	}
-	for _, it := range b.Motion {
-		if it.Key == key {
-			return "an agent is working on it"
 		}
 	}
 	return "waiting on others"

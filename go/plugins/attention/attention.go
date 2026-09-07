@@ -1,7 +1,6 @@
 // Package attention is the attention board: the work around me, from
-// the memory graph, as three columns by whose turn it is. NEEDS ME is
-// what awaits me; IN MOTION is what a session is working right now
-// (pr-watch locks); WAITING ON OTHERS is mine, open, in someone else's
+// the memory graph, as two columns by whose turn it is. NEEDS ME is
+// what awaits me; WAITING ON OTHERS is mine, open, in someone else's
 // hands. The ui draws it; this row only decides what goes where.
 //
 // Row config: sticky: true pins the board at the top of every session
@@ -24,7 +23,6 @@ import (
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/graph"
 	"github.com/andreylukin/bough/plugins/llm"
-	"github.com/andreylukin/bough/plugins/prwatch"
 )
 
 // Item is one row of the board.
@@ -36,7 +34,6 @@ type Item struct {
 	Detail  string // the second line: what it asks, of whom, since when
 	URL     string
 	Since   time.Time // when this party's turn began (the source's clock)
-	Session string    // IN MOTION: the session working it ("" elsewhere)
 	Count   int       // a stack of Count similar items folded into one row (0 = single)
 	Summary string    // the source's one line about it
 	Members []string  // a stack's rows: key and title each
@@ -45,33 +42,17 @@ type Item struct {
 // Board is the world by whose turn it is.
 type Board struct {
 	Me        []Item // awaits me
-	Motion    []Item // a session is on it
 	Others    []Item // mine, awaiting someone else (or nobody recorded)
 	Collected time.Time
 	Err       string // why the board is empty, when it is
 }
 
 // Empty reports a board with nothing to show.
-func (b Board) Empty() bool { return len(b.Me)+len(b.Motion)+len(b.Others) == 0 }
-
-// lockLister is the pr-watch seam: what any session is working now,
-// and what it last did to a PR.
-type lockLister interface {
-	Working() []prwatch.Working
-	Recent(key string) (prwatch.Recent, bool)
-	NextPoll() time.Time
-}
-
-// working is one pr-watch lock.
-type working = prwatch.Working
+func (b Board) Empty() bool { return len(b.Me)+len(b.Others) == 0 }
 
 // Service builds boards.
 type Service struct {
-	graph  *graph.Service
-	locks  func() []working
-	recent func(key string) (prwatch.Recent, bool)
-	// nextPoll is pr-watch's next look at GitHub; nil without the row.
-	nextPoll func() time.Time
+	graph *graph.Service
 	// collectEvery is the collector's launchd cadence when installed
 	// (zero otherwise); collectedAt is the last run.
 	collectEvery time.Duration
@@ -119,7 +100,7 @@ func sessionURL(key string) string {
 
 // Detail is what the graph knows about one item beyond its row: what
 // it asks, its state, who is on it, what it is for, which sessions
-// worked it, what pr-watch last did. Lines are omitted when empty.
+// worked it. Lines are omitted when empty.
 func (s *Service) Detail(kind, key string) []Line {
 	e, err := s.graph.Store.Get(kind, key)
 	if err != nil {
@@ -211,11 +192,6 @@ func (s *Service) Detail(kind, key string) []Line {
 			}
 		}
 	}
-	if s.recent != nil {
-		if r, ok := s.recent(key); ok {
-			out = append(out, Line{Label: "pr-watch", Text: r.Summary + " · " + day(r.At.Unix())})
-		}
-	}
 	return out
 }
 
@@ -248,20 +224,6 @@ func (s *Service) build(now time.Time) Board {
 	if w.Fresh > 0 {
 		b.Collected = time.Unix(w.Fresh, 0)
 	}
-	var locks []working
-	if s.locks != nil {
-		locks = s.locks()
-	}
-	inMotion := func(e graph.Entity) (working, bool) {
-		for _, l := range locks {
-			// Lock keys are owner/name#n; graph keys are name#n.
-			_, short, _ := strings.Cut(l.Key, "/")
-			if short == e.Key || l.Key == e.Key {
-				return l, true
-			}
-		}
-		return working{}, false
-	}
 	seen := map[string]bool{}
 	place := func(e graph.Entity, tail string) {
 		if seen[e.Key] {
@@ -269,13 +231,6 @@ func (s *Service) build(now time.Time) Board {
 		}
 		seen[e.Key] = true
 		it := item(e, now)
-		if l, ok := inMotion(e); ok {
-			it.Session = l.Session
-			it.Since = l.Since
-			it.Detail = "session " + short(l.Session, 4) + " · " + l.What
-			b.Motion = append(b.Motion, it)
-			return
-		}
 		it.Detail = tail
 		if _, awaited := awaitedBy(w, e); awaited {
 			b.Me = append(b.Me, it)
@@ -493,11 +448,6 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		return errors.New("attention: needs the graph row")
 	}
 	s.graph = g
-	if l, err := kernel.Get[lockLister](kctx, "pr-watch"); err == nil {
-		s.locks = l.Working
-		s.recent = l.Recent
-		s.nextPoll = l.NextPoll
-	}
 	if every, ok := cfg["collect_every"].(string); ok {
 		if d, err := time.ParseDuration(every); err == nil {
 			s.collectEvery = d
@@ -534,7 +484,7 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	}
 	kctx.Provide("attention", s)
 	if reg, err := kernel.Get[*commands.Registry](kctx, "commands"); err == nil {
-		info := commands.CommandInfo{Name: "current-work", Usage: "[tui]", Summary: "the attention board: what awaits you, what is in motion, what waits on others — opens the web page when the row has a web address, else the board in the terminal"}
+		info := commands.CommandInfo{Name: "current-work", Usage: "[tui]", Summary: "the attention board: what awaits you, what waits on others — opens the web page when the row has a web address, else the board in the terminal"}
 		run := func(args string) (string, error) {
 			if url := s.URL(); url != "" && args != "tui" {
 				if err := openBrowser(url); err != nil {

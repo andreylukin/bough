@@ -21,17 +21,15 @@ const (
 	StageQueued   = "queued"    // a ticket or page with no PR yet
 	StageBuilding = "building"  // a PR being written, or a ticket in progress
 	StageReview   = "in review" // review requested, threads open, awaiting someone
-	StageBlocked  = "blocked"   // CI failing with nobody on it, or a pr-watch blocker
+	StageBlocked  = "blocked"   // CI failing with nobody on it
 	StageShipping = "shipping"  // approved or merged within the last day
 )
 
-// Segment is one stretch of a row's track in one stage. Agent is set
-// while a session or pr-watch job held the item during it.
+// Segment is one stretch of a row's track in one stage.
 type Segment struct {
 	From  time.Time `json:"from"`
 	To    time.Time `json:"to"`
 	Stage string    `json:"stage"`
-	Agent bool      `json:"agent,omitempty"`
 }
 
 // Mark is one graph edge on the track.
@@ -96,17 +94,11 @@ func (s *Service) Flow(days int) Flow {
 			f.Next = append(f.Next, Next{At: t, Text: "next collect"})
 		}
 	}
-	if s.nextPoll != nil {
-		if t := s.nextPoll(); !t.IsZero() && t.After(now) {
-			f.Next = append(f.Next, Next{At: t, Text: "agent checks GitHub"})
-		}
-	}
 	if b.Empty() {
 		return f
 	}
 	groups := map[string]*Group{
 		"me":      {Key: "me", Label: "needs me"},
-		"motion":  {Key: "motion", Label: "in motion"},
 		"blocked": {Key: "blocked", Label: "blocked"},
 		"others":  {Key: "others", Label: "waiting on others"},
 	}
@@ -121,9 +113,8 @@ func (s *Service) Flow(days int) Flow {
 		}
 	}
 	place("me", b.Me)
-	place("motion", b.Motion)
 	place("others", b.Others)
-	for _, k := range []string{"me", "motion", "blocked", "others"} {
+	for _, k := range []string{"me", "blocked", "others"} {
 		g := groups[k]
 		if len(g.Rows) == 0 {
 			continue
@@ -143,8 +134,6 @@ func (s *Service) Flow(days int) Flow {
 // stageNow is the item's current stage from its facts.
 func stageNow(it Item, col string) string {
 	switch {
-	case it.Session != "":
-		return StageBuilding
 	case strings.HasPrefix(it.Status, "ci failing") && col != "me" && it.Count == 0:
 		return StageBlocked
 	case it.Kind == "ticket" && (it.Status == "todo" || it.Status == "backlog" || it.Status == "triage" || it.Status == ""):
@@ -349,10 +338,10 @@ func (s *Service) row(it Item, col string, from, now, collected time.Time) Row {
 	if len(r.Segments) == 0 {
 		r.Segments = []Segment{{From: from, To: now, Stage: stageNow(it, "")}}
 	}
-	// The present overrides the sweep's last word: CI and pr-watch are
-	// facts the timeline does not carry.
+	// The present overrides the sweep's last word: CI is a fact the
+	// timeline does not carry.
 	last := &r.Segments[len(r.Segments)-1]
-	if st := stageNow(it, ""); st == StageBlocked || st == StageBuilding && it.Session != "" {
+	if st := stageNow(it, ""); st == StageBlocked {
 		if st == StageBlocked && last.Stage != StageBlocked {
 			// Blocked since the item last changed, at the earliest inside the window.
 			cut := maxTime(from, it.Since)
@@ -365,39 +354,11 @@ func (s *Service) row(it Item, col string, from, now, collected time.Time) Row {
 			}
 		}
 	}
-	if it.Session != "" {
-		// The agent overlay: from when the lock was taken to now.
-		cut := maxTime(from, it.Since)
-		last = &r.Segments[len(r.Segments)-1]
-		if cut.After(last.From) && cut.Before(last.To) {
-			tail := Segment{From: cut, To: last.To, Stage: last.Stage, Agent: true}
-			last.To = cut
-			r.Segments = append(r.Segments, tail)
-		} else {
-			last.Agent = true
-		}
-	}
-	// pr-watch history as agent marks.
-	if s.recent != nil {
-		if rc, ok := s.recent(it.Key); ok && rc.At.After(from) {
-			r.Marks = append(r.Marks, Mark{At: rc.At, Kind: "agent", Text: "pr-watch", Claim: rc.Summary})
-		}
-	}
 	slices.SortFunc(r.Marks, func(a, b Mark) int { return a.At.Compare(b.At) })
 	// Next: only what is specific to this row. The collector and the
 	// agent's poll are the board's, in the header.
-	if it.Session != "" && s.nextPoll != nil {
-		if t := s.nextPoll(); !t.IsZero() && t.After(now) {
-			r.Next = append(r.Next, Next{At: t, Text: "agent reports"})
-		}
-	}
 	if strings.HasPrefix(it.Detail, "awaits ") && now.Sub(it.Since) > 14*24*time.Hour {
 		r.Next = append(r.Next, Next{At: now, Text: "nudge?"})
-	}
-	if s.recent != nil {
-		if rc, ok := s.recent(it.Key); ok && strings.HasPrefix(strings.ToLower(rc.Summary), "blocked") {
-			r.Next = append(r.Next, Next{At: rc.At, Text: "agent: " + rc.Summary})
-		}
 	}
 	_ = collected
 	return r

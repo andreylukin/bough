@@ -75,11 +75,11 @@ type boardDetail struct {
 // asks the graph again.
 const detailStale = 30 * time.Second
 
-// boardColumns is the board's columns at the current width: three
-// when it fits, NEEDS ME alone when it does not.
+// boardColumns is the board's columns at the current width: both
+// when they fit, NEEDS ME alone when they do not.
 func (m *model) boardColumns() [][]attention.Item {
 	b := m.board.b
-	cols := [][]attention.Item{b.Me, b.Motion, b.Others}
+	cols := [][]attention.Item{b.Me, b.Others}
 	if max(m.width, 20) < boardMinW {
 		return cols[:1]
 	}
@@ -270,9 +270,9 @@ func boardTick() tea.Cmd {
 func (m *model) takeBoard(b attention.Board) {
 	facts := map[string]string{}
 	changed := map[string]bool{}
-	for _, col := range [][]attention.Item{b.Me, b.Motion, b.Others} {
+	for _, col := range [][]attention.Item{b.Me, b.Others} {
 		for _, it := range col {
-			f := it.Status + "|" + it.Detail + "|" + it.Session
+			f := it.Status + "|" + it.Detail
 			facts[it.Key] = f
 			if m.board.loaded && m.board.facts[it.Key] != f {
 				changed[it.Key] = true
@@ -282,9 +282,6 @@ func (m *model) takeBoard(b attention.Board) {
 	m.board.b, m.board.facts, m.board.changed, m.board.loaded = b, facts, changed, true
 	m.layoutComposer()
 }
-
-// boardMotion reports rows with a live session: they keep the spinner ticking.
-func (m *model) boardMotion() bool { return m.board.on && len(m.board.b.Motion) > 0 }
 
 // boardRows is the board as screen rows, nothing when it is off, not
 // yet read, or the screen is owned by a picker.
@@ -329,12 +326,11 @@ func (m *model) boardRows(cfg *uiCfg) []string {
 	}
 	cols := []col{
 		{"NEEDS ME", th["focus"], b.Me},
-		{"IN MOTION", th["accent"], b.Motion},
 		{"WAITING ON OTHERS", th["dim"], b.Others},
 	}
 	if len(m.boardColumns()) == 1 {
 		cols = cols[:1]
-		// One column: motion and others fold into the count line below.
+		// One column: others fold into the count line below.
 	}
 	cw := (w - 1) / len(cols)
 	var rendered [][]string
@@ -346,7 +342,7 @@ func (m *model) boardRows(cfg *uiCfg) []string {
 		height = max(height, len(lines))
 	}
 	if len(cols) == 1 {
-		rendered[0] = append(rendered[0], th["dim"].Render(fmt.Sprintf("in motion %d · waiting on others %d", len(b.Motion), len(b.Others))))
+		rendered[0] = append(rendered[0], th["dim"].Render(fmt.Sprintf("waiting on others %d", len(b.Others))))
 		height = len(rendered[0])
 	}
 	for r := 0; r < height; r++ {
@@ -421,13 +417,10 @@ func (m *model) boardColumn(cfg *uiCfg, items []attention.Item, style lipgloss.S
 	return out
 }
 
-// boardBar is the row's leading mark: the spinner for a session on
-// it, else the eight-cell age bar in the column's colour.
+// boardBar is the row's leading mark: the eight-cell age bar in the
+// column's colour.
 func (m *model) boardBar(cfg *uiCfg, it attention.Item, style lipgloss.Style, now time.Time) string {
 	th := cfg.theme
-	if it.Session != "" {
-		return th["accent"].Render(m.spin.View()) + strings.Repeat(" ", 7)
-	}
 	n := attention.Age(it.Since, now)
 	return style.Render(strings.Repeat("▮", n)) + th["dim"].Render(strings.Repeat("▯", 8-n))
 }

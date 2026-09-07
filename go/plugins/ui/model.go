@@ -728,15 +728,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case boardMsg:
-		// A read that brings the first in-motion row restarts the
-		// spinner: its chain stopped when nothing needed it.
-		wake := !m.boardMotion() && !m.running && len(m.jobRows(m.cfg.Load())) == 0
 		m.takeBoard(msg.b)
 		if !m.board.on {
 			return m, nil
-		}
-		if wake && m.boardMotion() {
-			return m, tea.Batch(boardTick(), m.spin.Tick)
 		}
 		return m, boardTick()
 
@@ -751,10 +745,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.loadBoard(m.cfg.Load())
 
 	case spinner.TickMsg:
-		// The spinner drives three things: the running turn, the
-		// background-job strip (which outlives the turn), and a board
-		// row with a session on it. Any keeps it ticking.
-		if !m.running && len(m.jobRows(m.cfg.Load())) == 0 && !m.boardMotion() {
+		// The spinner drives two things: the running turn and the
+		// background-job strip (which outlives the turn). Either keeps
+		// it ticking.
+		if !m.running && len(m.jobRows(m.cfg.Load())) == 0 {
 			return m, nil
 		}
 		var cmd tea.Cmd

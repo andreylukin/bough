@@ -23,10 +23,6 @@ const jobStripMax = 3
 // jobLister is the "job-notices" service's live half.
 type jobLister interface{ Running() []tools.Running }
 
-// bgCounter is the "pr-watch" service's status-bar half: how many PRs
-// are being worked right now by any session. The detail is /background.
-type bgCounter interface{ Active() int }
-
 // jobRows renders the strip, one row per running job, newest last.
 // Empty (and zero height) when nothing is running.
 func (m *model) jobRows(cfg *uiCfg) []string {

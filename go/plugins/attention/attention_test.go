@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/andreylukin/bough/plugins/graph"
-	"github.com/andreylukin/bough/plugins/prwatch"
 )
 
 func TestBoardPlacesByTurn(t *testing.T) {
@@ -50,9 +49,6 @@ func TestBoardPlacesByTurn(t *testing.T) {
 	st.Assert(me, "authored", lone, ep, "collector", graph.AssertOpts{})
 
 	s := &Service{graph: &graph.Service{Store: st, Me: "andrey@example.com"}, Now: func() time.Time { return now }}
-	s.locks = func() []working {
-		return []prwatch.Working{{Key: "andreylukin/bough#66", Session: "8f3a1234-abcd", Since: now.Add(-14 * time.Minute), What: "1 review thread"}}
-	}
 	b := s.Board()
 	if b.Err != "" {
 		t.Fatal(b.Err)
@@ -64,10 +60,7 @@ func TestBoardPlacesByTurn(t *testing.T) {
 	if b.Me[1].Detail != "review required" {
 		t.Fatalf("ask: %q", b.Me[1].Detail)
 	}
-	if len(b.Motion) != 1 || b.Motion[0].Key != "bough#66" || b.Motion[0].Session != "8f3a1234-abcd" || b.Motion[0].Detail != "session 8f3a · 1 review thread" {
-		t.Fatalf("in motion: %+v", b.Motion)
-	}
-	if len(b.Others) != 2 || b.Others[0].Key != "mathlib4#42788" || b.Others[0].Detail != "next: ?" || b.Others[1].Key != "nas#46" || b.Others[1].Detail != "awaits Bradley" {
+	if len(b.Others) != 3 || b.Others[0].Key != "mathlib4#42788" || b.Others[0].Detail != "next: ?" || b.Others[1].Key != "nas#46" || b.Others[1].Detail != "awaits Bradley" || b.Others[2].Key != "bough#66" {
 		t.Fatalf("others: %+v", b.Others)
 	}
 	if b.Collected.IsZero() {
@@ -122,9 +115,6 @@ func TestDetail(t *testing.T) {
 	st.Assert(sess, "touches", tk, ep, "session", opts)
 
 	s := &Service{graph: &graph.Service{Store: st, Me: "andrey@example.com"}, Now: func() time.Time { return now }}
-	s.recent = func(key string) (prwatch.Recent, bool) {
-		return prwatch.Recent{Key: "o/unes#7490", Summary: "replied to 2 threads, pushed", At: now.Add(-time.Hour)}, key == "unes#7490"
-	}
 	got := map[string]string{}
 	for _, l := range s.Detail("pr", "unes#7490") {
 		got[l.Label] = l.Text
@@ -134,7 +124,6 @@ func TestDetail(t *testing.T) {
 		"state":    "open since Sep 1",
 		"who":      "you opened Sep 1 · devin-ai-integration commented Sep 1",
 		"for":      "NME-1664 Add nas-event-log to prod [code_review]",
-		"pr-watch": "replied to 2 threads, pushed · Sep 6",
 	} {
 		if got[label] != want {
 			t.Errorf("%s = %q, want %q (all: %v)", label, got[label], want, got)

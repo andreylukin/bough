@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	ansi "github.com/charmbracelet/x/ansi"
 
@@ -42,10 +41,8 @@ func sample() attention.Board {
 			{Key: "bough · deps", Kind: "pr", Title: "bough · dependency updates", Status: "ci failing ×12", Detail: "review required", Since: now.Add(-3 * 24 * time.Hour), Count: 12},
 			{Key: "orb#142", Kind: "pr", Title: "alert backtesting", Status: "open", Detail: "review required", Since: now.Add(-3 * time.Hour), URL: "https://github.com/x/orb#142", Summary: "review required, branch feat/x"},
 		},
-		Motion: []attention.Item{
-			{Key: "bough#66", Kind: "pr", Title: "fix thing", Status: "ci failing", Detail: "session 8f3a · 1 review thread", Since: now.Add(-14 * time.Minute), Session: "8f3a1234-abcd", URL: "https://github.com/x/bough#66"},
-		},
 		Others: []attention.Item{
+			{Key: "bough#66", Kind: "pr", Title: "fix thing", Status: "ci failing", Detail: "awaits Sam", Since: now.Add(-14 * time.Minute), URL: "https://github.com/x/bough#66"},
 			{Key: "nas#46", Kind: "pr", Title: "fix sharding", Status: "ci green", Detail: "awaits Bradley", Since: now.Add(-2 * 24 * time.Hour)},
 		},
 	}
@@ -60,9 +57,9 @@ func TestBoardRowsWide(t *testing.T) {
 	rows := m.boardRows(m.cfg.Load())
 	plain := ansi.Strip(strings.Join(rows, "\n"))
 	for _, want := range []string{
-		"current work", "collected", "NEEDS ME 2", "IN MOTION 1", "WAITING ON OTHERS 1",
+		"current work", "collected", "NEEDS ME 2", "WAITING ON OTHERS 2",
 		"bough · deps ×12 ✕", "3d · review required", "alert backtesting", "orb#142 · 3h · review required",
-		"fix thing ✕", "bough#66 · 14m · session 8f3a",
+		"fix thing ✕", "bough#66 · 14m · awaits Sam",
 		"fix sharding ✓", "nas#46 · 2d · awaits Bradley",
 	} {
 		if !strings.Contains(plain, want) {
@@ -73,10 +70,6 @@ func TestBoardRowsWide(t *testing.T) {
 	if strings.Contains(plain, "✕ ×12") {
 		t.Errorf("stack repeats its count:\n%s", plain)
 	}
-	// A row with a session shows the spinner, not an age bar.
-	if strings.Contains(plain, "▮ fix thing") || strings.Contains(plain, "▯ fix thing") {
-		t.Errorf("in-motion row carries a bar:\n%s", plain)
-	}
 	// Every row fits the width; the frame gives the board its rows.
 	for _, r := range rows {
 		if w := ansi.StringWidth(r); w > 150 {
@@ -85,9 +78,6 @@ func TestBoardRowsWide(t *testing.T) {
 	}
 	if !strings.Contains(ansi.Strip(m.frame()), "NEEDS ME") {
 		t.Error("frame does not show the board")
-	}
-	if !m.boardMotion() {
-		t.Error("a session on a row keeps the spinner ticking")
 	}
 }
 
@@ -99,7 +89,7 @@ func TestBoardNarrowAndToggle(t *testing.T) {
 	m.perform(commands.ActionBoard)
 	m.takeBoard(sample())
 	plain := ansi.Strip(strings.Join(m.boardRows(m.cfg.Load()), "\n"))
-	if !strings.Contains(plain, "NEEDS ME 2") || strings.Contains(plain, "IN MOTION 1") || !strings.Contains(plain, "in motion 1 · waiting on others 1") {
+	if !strings.Contains(plain, "NEEDS ME 2") || strings.Contains(plain, "WAITING ON OTHERS") || !strings.Contains(plain, "waiting on others 2") {
 		t.Errorf("narrow: one column plus counts:\n%s", plain)
 	}
 	m.perform(commands.ActionBoard)
@@ -122,45 +112,6 @@ func TestBoardMarksChanges(t *testing.T) {
 	}
 }
 
-// The spinner chain has stopped by the time the first read arrives
-// (nothing was running); a read with an in-motion row restarts it.
-func TestBoardReadWakesSpinner(t *testing.T) {
-	m := boardModel(t, 150, fakeBoard{b: sample(), sticky: true})
-	mm, cmd := m.Update(boardMsg{sample()})
-	m = mm.(model)
-	if cmd == nil {
-		t.Fatal("a read with motion returns commands")
-	}
-	// Run the batch: one of its messages must be the spinner's tick.
-	msgs := drain(cmd)
-	found := false
-	for _, x := range msgs {
-		if _, ok := x.(spinner.TickMsg); ok {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("no spinner tick among %T", msgs)
-	}
-}
-
-// drain runs a command (batches included) and collects its messages.
-func drain(cmd tea.Cmd) []tea.Msg {
-	if cmd == nil {
-		return nil
-	}
-	var out []tea.Msg
-	switch msg := cmd().(type) {
-	case tea.BatchMsg:
-		for _, c := range msg {
-			out = append(out, drain(c)...)
-		}
-	default:
-		out = append(out, msg)
-	}
-	return out
-}
-
 func TestBoardHoverClickAndOffset(t *testing.T) {
 	m := boardModel(t, 150, fakeBoard{b: sample(), sticky: true})
 	m.takeBoard(sample())
@@ -169,18 +120,18 @@ func TestBoardHoverClickAndOffset(t *testing.T) {
 	if h < 4 {
 		t.Fatalf("board height %d", h)
 	}
-	// Row 2 is the first item of each column; column width is 49.
+	// Row 2 is the first item of each column; two columns split 150.
 	if it, ok := m.boardItemAt(cfg, 5, 2); !ok || it.Key != "bough · deps" {
 		t.Fatalf("item at (5,2): %+v %v", it, ok)
 	}
-	if it, ok := m.boardItemAt(cfg, 60, 3); !ok || it.Key != "bough#66" {
-		t.Fatalf("item at (60,3): %+v %v", it, ok)
+	if it, ok := m.boardItemAt(cfg, 90, 3); !ok || it.Key != "bough#66" {
+		t.Fatalf("item at (90,3): %+v %v", it, ok)
 	}
 	if it, ok := m.boardItemAt(cfg, 5, 4); !ok || it.Key != "orb#142" {
 		t.Fatalf("item at (5,4): %+v %v", it, ok)
 	}
-	if _, ok := m.boardItemAt(cfg, 60, 4); ok {
-		t.Fatal("no second item in motion")
+	if it, ok := m.boardItemAt(cfg, 90, 4); !ok || it.Key != "nas#46" {
+		t.Fatalf("item at (90,4): %+v %v", it, ok)
 	}
 	// Motion over a row hovers it: the name is underlined and a detail
 	// box with the link covers the transcript's top rows.
