@@ -100,6 +100,7 @@ type uiCfg struct {
 	mdStyle  string         // "dark"/"light" glamour override; "" = detect
 	notice   string         // launcher "notice" service: a first-row warning (stale binary)
 	collapse string         // "all" | "large" | "none": which code/result blocks start collapsed
+	draft    string         // text the composer opens with (a link that starts a chat about something)
 
 	// "/" command seam: with no commands service, "/" is plain text
 	// and the palette never opens. hlog records dispatches to history
@@ -315,6 +316,9 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 			return nil, fmt.Errorf("ui: collapse must be \"all\", \"large\" or \"none\", got %v", v)
 		}
 		cfg.collapse = s
+	}
+	if v, has := rowCfg["draft"]; has {
+		cfg.draft, _ = v.(string)
 	}
 	return cfg, nil
 }

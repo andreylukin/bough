@@ -341,6 +341,9 @@ var webConfig = "(embedded)"
 const capNewSession = "new-session"
 
 func writeWebPidfile(addr string) func() {
+	if os.Getenv("BOUGH_WEB_CHILD") != "" {
+		return nil // a session the board's hub started beside the main one
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "bough: web pidfile:", err)

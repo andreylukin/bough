@@ -155,6 +155,11 @@ func newModel(width, height int, send func(string), events <-chan Event, cfg *at
 	if b := cfg.Load().board; b != nil && b.Sticky() {
 		m.board.on = true
 	}
+	if d := cfg.Load().draft; d != "" {
+		// The composer opens with the text; the person finishes it.
+		m.input.SetValue(d)
+		m.input.CursorEnd()
+	}
 	if cfg.Load().picker {
 		m.picking = true // replay happens after the pick (leavePicker)
 	} else {

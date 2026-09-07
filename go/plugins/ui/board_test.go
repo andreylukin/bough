@@ -234,3 +234,14 @@ func TestBoardHoverClickAndOffset(t *testing.T) {
 		t.Error("the board needs motion events")
 	}
 }
+
+func TestDraftOpensInComposer(t *testing.T) {
+	var cfg atomic.Pointer[uiCfg]
+	c := newCfg(defaultTheme(), defaultKeymap(), "bough", nil)
+	c.draft = "About pr:bough#64 — "
+	cfg.Store(c)
+	m := newModel(100, 30, func(string) {}, nil, &cfg)
+	if got := m.input.Value(); got != "About pr:bough#64 — " {
+		t.Fatalf("composer = %q", got)
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -73,8 +74,12 @@ type Service struct {
 	collectEvery time.Duration
 	sticky       bool
 	web          string // host:port of the board page; "" = none
+	hub          *hub   // chats as URLs; nil without a history service
 	Now          func() time.Time
 }
+
+// History is the seam for this session's file.
+type History interface{ Path() string }
 
 // collectedAt is the last collector run, from the graph.
 func (s *Service) collectedAt() time.Time {
@@ -88,8 +93,25 @@ func (s *Service) collectedAt() time.Time {
 // Sticky is the row's flag: pin the board from the first frame.
 func (s *Service) Sticky() bool { return s.sticky }
 
-// Line is one labelled line of an item's detail.
-type Line struct{ Label, Text string }
+// Line is one labelled line of an item's detail. Links are the parts
+// of Text that lead somewhere (a session's chat).
+type Line struct {
+	Label string `json:"Label"`
+	Text  string `json:"Text"`
+	Links []Ref  `json:"Links,omitempty"`
+}
+
+// Ref is a linked part of a line.
+type Ref struct {
+	Text string `json:"text"`
+	URL  string `json:"url"`
+}
+
+// sessionURL is the chat for a session entity key ("old:<id>" for
+// backfilled sessions, "<id>" for new ones).
+func sessionURL(key string) string {
+	return "/s/" + strings.TrimPrefix(key, "old:")
+}
 
 // Detail is what the graph knows about one item beyond its row: what
 // it asks, its state, who is on it, what it is for, which sessions
@@ -119,6 +141,7 @@ func (s *Service) Detail(kind, key string) []Line {
 	}
 	verbs := map[string]string{"authored": "opened", "assigned": "assigned", "reviews": "reviewed"}
 	var asks, people, links, sessions, state []string
+	var sessionRefs []Ref
 	for _, ed := range edges {
 		switch {
 		case ed.Rel == "awaits" && ed.Src.ID == e.ID:
@@ -159,6 +182,7 @@ func (s *Service) Detail(kind, key string) []Line {
 				t += " “" + title + "”"
 			}
 			sessions = append(sessions, t)
+			sessionRefs = append(sessionRefs, Ref{Text: t, URL: sessionURL(ed.Src.Key)})
 		}
 	}
 	var out []Line
@@ -176,6 +200,13 @@ func (s *Service) Detail(kind, key string) []Line {
 	add("who", people, 4)
 	add("for", links, 3)
 	add("sessions", sessions, 3)
+	if len(sessionRefs) > 0 {
+		for i := range out {
+			if out[i].Label == "sessions" {
+				out[i].Links = sessionRefs[:min(3, len(sessionRefs))]
+			}
+		}
+	}
 	if s.recent != nil {
 		if r, ok := s.recent(key); ok {
 			out = append(out, Line{Label: "pr-watch", Text: r.Summary + " · " + day(r.At.Unix())})
@@ -451,6 +482,19 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		if d, err := time.ParseDuration(every); err == nil {
 			s.collectEvery = d
 		}
+	}
+	if h, err := kernel.Get[History](kctx, "history"); err == nil {
+		dir := filepath.Dir(h.Path())
+		mainURL := ""
+		if mode, err := kernel.Get[string](kctx, "ui-mode"); err == nil {
+			if addr, ok := strings.CutPrefix(mode, "web:"); ok {
+				mainURL = "http://" + addr + "/"
+			}
+		}
+		s.hub = newHub(mainURL, func() string {
+			return strings.TrimSuffix(filepath.Base(h.Path()), filepath.Ext(h.Path()))
+		}, dir)
+		kctx.Effect(s.hub.stop)
 	}
 	if s.web != "" {
 		s.serveWeb(s.web)

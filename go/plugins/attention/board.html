@@ -15,6 +15,21 @@ header .meta{color:var(--dim);flex:1}
 header .stale{color:var(--red);font-weight:600}
 header .zoom button{background:transparent;color:var(--dim);border:1px solid var(--border);border-radius:3px;padding:2px 8px;font:inherit;cursor:pointer;margin-left:4px}
 header .zoom button.on{color:var(--fg);border-color:var(--amber)}
+header .chats{margin-left:14px}
+.btn{background:transparent;color:var(--fg);border:1px solid var(--border);border-radius:3px;padding:2px 10px;font:inherit;cursor:pointer;text-decoration:none;margin-left:6px}
+.btn.new{color:var(--aqua);border-color:var(--aqua)}
+#chats{position:fixed;top:44px;right:16px;width:460px;max-height:70vh;overflow:auto;background:var(--bg2);border:1px solid var(--border);border-radius:4px;z-index:5;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.chatsHead{padding:8px 12px;border-bottom:1px solid var(--border);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--fg)}
+.chatsHead .dim{color:var(--dim);text-transform:none;letter-spacing:0}
+.chat{display:grid;grid-template-columns:14px 1fr 60px;gap:8px;padding:6px 12px;border-bottom:1px solid var(--bg3);text-decoration:none;color:var(--fg);align-items:baseline}
+.chat:hover{background:var(--bg3)}
+.chat .dot{color:var(--aqua)}.chat .dot.main{color:var(--amber)}
+.chat .t{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.chat .t small{display:block;color:var(--dim);font-size:11px}
+.chat .when{color:var(--dim);font-size:11px;text-align:right}
+.mk a{color:inherit;text-decoration:none}
+aside dd a{color:var(--aqua);text-decoration:none}aside dd a:hover{text-decoration:underline}
+aside .act{margin-top:14px}
 main{display:grid;grid-template-columns:1fr 330px;min-height:calc(100% - 44px)}
 #flow{padding:12px 16px;min-width:0;overflow-x:auto}
 .grid{display:grid;grid-template-columns:170px minmax(240px,1fr) 250px 96px;gap:0 8px;align-items:stretch}
@@ -62,7 +77,8 @@ aside dd{margin:0;word-break:break-word}
 </style>
 </head>
 <body>
-<header><h1>current work</h1><span class="meta" id="meta">reading the graph…</span><span class="zoom"><button data-d="1">1d</button><button data-d="7" class="on">7d</button><button data-d="30">30d</button></span></header>
+<header><h1>current work</h1><span class="meta" id="meta">reading the graph…</span><span class="zoom"><button data-d="1">1d</button><button data-d="7" class="on">7d</button><button data-d="30">30d</button></span><span class="chats"><a class="btn new" href="/s/new" target="_blank">+ new chat</a><button class="btn" id="chatsBtn">chats ▾</button></span></header>
+<div id="chats" hidden><div class="chatsHead">recent chats <span class="dim">· a dot means it is open now</span></div><div id="chatList"></div></div>
 <main>
   <section id="flow"><div class="grid" id="grid"></div>
   <div class="legend"><span><i style="background:var(--border)"></i>queued</span><span><i style="background:var(--blue)"></i>building</span><span><i style="background:var(--amber)"></i>in review</span><span><i style="background:var(--red)"></i>blocked</span><span><i style="background:repeating-linear-gradient(90deg,var(--aqua) 0 6px,#5f9c86 6px 9px)"></i>agent on it</span><span><i style="background:var(--green)"></i>shipping</span><span>· amber marks put the ball in your court</span></div></section>
@@ -74,6 +90,11 @@ const FRAMES=["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
 let days=7, facts={}, first=true, hovered=null, detailCache={}, spinTick=0;
 setInterval(()=>{spinTick=(spinTick+1)%FRAMES.length;document.querySelectorAll('.spin').forEach(e=>e.textContent=FRAMES[spinTick])},100);
 document.querySelectorAll('.zoom button').forEach(b=>b.addEventListener('click',()=>{days=+b.dataset.d;document.querySelectorAll('.zoom button').forEach(x=>x.classList.toggle('on',x===b));load();}));
+$('#chatsBtn').addEventListener('click',async()=>{ const p=$('#chats'); if(!p.hidden){p.hidden=true;return;} p.hidden=false; await loadChats(); });
+document.addEventListener('click',e=>{ if(!e.target.closest('#chats')&&!e.target.closest('#chatsBtn')) $('#chats').hidden=true; });
+async function loadChats(){ try{ const r=await fetch('/sessions'); const list=await r.json()||[]; const now=Date.now();
+  $('#chatList').innerHTML=list.map(s=>'<a class="chat" href="'+esc(s.url)+'" target="_blank"><span class="dot '+esc(s.live||'')+'">'+(s.live?'●':'')+'</span><span class="t">'+esc(s.title)+(s.cwd?'<small>'+esc(s.cwd.replace(/^\/Users\/[^/]+/,'~'))+'</small>':'')+'</span><span class="when">'+age(now-new Date(s.at).getTime())+'</span></a>').join('')||'<div class="chat">no chats yet</div>'; }catch(e){ $('#chatList').textContent='could not list chats: '+e; } }
+setInterval(()=>{ if(!$('#chats').hidden) loadChats(); },5000);
 
 function age(ms){const h=ms/36e5; if(h<1) return Math.max(0,Math.floor(ms/6e4))+'m'; if(h<48) return Math.floor(h)+'h'; const d=h/24; if(d<21) return Math.floor(d)+'d'; return Math.floor(d/7)+'w';}
 function shortKey(k){const i=k.indexOf('#'); if(i<0||i<=14) return k; return k.slice(0,i).split(/[-_.]/).map(p=>p[0]).join('')+k.slice(i);}
@@ -100,7 +121,7 @@ function track(row, from, now){
   // marks: cluster those within 3% of the previous
   let lastX=-10, cluster=null, n=0;
   (row.marks||[]).forEach(m=>{ const px=x(m.at); if(px-lastX<3&&cluster){ n++; cluster.textContent='+'+n+' '+cluster.dataset.first; cluster.title+='\n'+m.text+(m.claim?': '+m.claim:''); return; }
-    const e=document.createElement('div'); e.className='mk '+m.kind; e.style.left=Math.min(px,94)+'%'; e.textContent=m.text; e.dataset.first=m.text; e.title=new Date(m.at).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})+' · '+m.text+(m.claim?': '+m.claim:''); d.appendChild(e); lastX=px; cluster=e; n=0; });
+    const e=document.createElement('div'); e.className='mk '+m.kind; e.style.left=Math.min(px,94)+'%'; if(m.url){ e.innerHTML='<a href="'+esc(m.url)+'" target="_blank">'+esc(m.text)+'</a>'; } else e.textContent=m.text; e.dataset.first=m.text; e.title=new Date(m.at).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})+' · '+m.text+(m.claim?': '+m.claim:''); d.appendChild(e); lastX=px; cluster=e; n=0; });
   return d;
 }
 
@@ -135,13 +156,15 @@ async function hover(it){
   const head='<h3>'+(it.URL?'<a href="'+esc(it.URL)+'" target="_blank" rel="noopener">'+esc(it.Title)+'</a>':esc(it.Title))+'</h3><div class="facts">'+esc(it.Key)+' · '+esc(it.Kind)+(it.Status?' · '+esc(it.Status):'')+' · '+age(Date.now()-since)+'</div>';
   let rows=[]; if(it.Summary) rows.push(['source',esc(it.Summary)]);
   if(it.Members) rows.push(['stack',it.Members.map(esc).join('<br>')]);
-  if(it.Count){ a.innerHTML=head+dl(rows); return; }
+  if(it.Count){ a.innerHTML=head+dl(rows)+chatAbout(it); return; }
   a.innerHTML=head+dl(rows.concat([['','<span class="empty">reading the graph…</span>']]));
   let lines=detailCache[it.Key]; const stale=!lines||Date.now()-lines.at>30000;
   if(stale){ try{ const r=await fetch('/api/detail?kind='+encodeURIComponent(it.Kind)+'&key='+encodeURIComponent(it.Key)); lines={lines:await r.json()||[],at:Date.now()}; detailCache[it.Key]=lines; }catch(e){ lines={lines:[],at:Date.now()}; } }
   if(hovered!==it.Key) return;
-  a.innerHTML=head+dl(rows.concat(lines.lines.map(l=>[l.Label,esc(l.Text)])));
+  const body=lines.lines.map(l=>[l.Label, l.Links&&l.Links.length? l.Links.map(x=>'<a href="'+esc(x.url)+'" target="_blank">'+esc(x.text)+'</a>').join(' · ')+(l.Text.includes('· +')?' · '+esc(l.Text.split('· +').pop().replace(/^/,'+')):'') : esc(l.Text)]);
+  a.innerHTML=head+dl(rows.concat(body))+chatAbout(it);
 }
+function chatAbout(it){ const draft='About '+it.Kind+':'+it.Key+(it.Title&&it.Title!==it.Key?' “'+it.Title+'”':'')+(it.URL?' '+it.URL:'')+' — '; return '<div class="act"><a class="btn new" href="/s/new?draft='+encodeURIComponent(draft)+'" target="_blank">+ chat about this</a></div>'; }
 function dl(rows){return '<dl>'+rows.map(([k,v])=>'<dt>'+esc(k)+'</dt><dd>'+v+'</dd>').join('')+'</dl>';}
 
 async function load(){

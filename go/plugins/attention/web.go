@@ -70,6 +70,9 @@ func (s *Service) serveWeb(addr string) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(lines)
 	})
+	if s.hub != nil {
+		s.hub.routes(mux)
+	}
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {

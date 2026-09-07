@@ -40,6 +40,7 @@ type Mark struct {
 	Kind  string    `json:"kind"` // me (ball to you), agent, bot, other
 	Text  string    `json:"text"`
 	Claim string    `json:"claim,omitempty"`
+	URL   string    `json:"url,omitempty"` // a session mark opens its chat
 }
 
 // Next is something scheduled to touch the row without the person.
@@ -228,7 +229,7 @@ func (s *Service) row(it Item, col string, from, now time.Time) Row {
 			if ed.Src.Kind != "session" {
 				continue
 			}
-			m.Kind, m.Text = "agent", "session"
+			m.Kind, m.Text, m.URL = "agent", "session", sessionURL(ed.Src.Key)
 			if t := strings.TrimPrefix(ed.Src.Title, "exec: "); t != "" {
 				if rn := []rune(t); len(rn) > 28 {
 					t = string(rn[:28]) + "…"

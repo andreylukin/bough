@@ -1,9 +1,11 @@
 package attention
 
 import (
+	"context"
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -255,5 +257,23 @@ func TestFlowStages(t *testing.T) {
 	}
 	if r.Marks[2].Claim != "Bradley asked why" {
 		t.Errorf("claim on the mark: %+v", r.Marks[2])
+	}
+}
+
+func TestHubSessionsAndMain(t *testing.T) {
+	dir := t.TempDir()
+	for _, f := range []string{"01a0aaaa-1.jsonl", "01a0bbbb-2.jsonl"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte(`{"seq":1,"kind":"input","data":{"text":"hello from `+f+`"}}`+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := newHub("http://localhost:7681/", func() string { return "01a0bbbb-2" }, dir)
+	rows := h.sessions(10)
+	if len(rows) != 2 || rows[0].ID != "01a0bbbb-2" || rows[0].Live != "main" || rows[1].Live != "" || rows[1].URL != "/s/01a0aaaa-1" {
+		t.Fatalf("sessions: %+v", rows)
+	}
+	url, err := h.attach(context.Background(), "01a0bbbb-2", false, "", "")
+	if err != nil || url != "http://localhost:7681/" {
+		t.Fatalf("main attach: %q %v", url, err)
 	}
 }
