@@ -17,7 +17,7 @@ header .zoom button{background:transparent;color:var(--dim);border:1px solid var
 header .zoom button.on{color:var(--fg);border-color:var(--amber)}
 main{display:grid;grid-template-columns:1fr 330px;min-height:calc(100% - 44px)}
 #flow{padding:12px 16px;min-width:0;overflow-x:auto}
-.grid{display:grid;grid-template-columns:170px minmax(240px,1fr) 250px 110px;gap:0 8px;align-items:stretch}
+.grid{display:grid;grid-template-columns:170px minmax(240px,1fr) 250px 96px;gap:0 8px;align-items:stretch}
 .h{color:var(--dim);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;padding:2px 6px 6px}
 .axis{display:grid;color:var(--dim);font-size:10px;padding:0 0 4px;position:relative}
 .axis span{overflow:hidden;white-space:nowrap}
@@ -100,7 +100,7 @@ function track(row, from, now){
   // marks: cluster those within 3% of the previous
   let lastX=-10, cluster=null, n=0;
   (row.marks||[]).forEach(m=>{ const px=x(m.at); if(px-lastX<3&&cluster){ n++; cluster.textContent='+'+n+' '+cluster.dataset.first; cluster.title+='\n'+m.text+(m.claim?': '+m.claim:''); return; }
-    const e=document.createElement('div'); e.className='mk '+m.kind; e.style.left=px+'%'; e.textContent=m.text; e.dataset.first=m.text; e.title=new Date(m.at).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})+' · '+m.text+(m.claim?': '+m.claim:''); d.appendChild(e); lastX=px; cluster=e; n=0; });
+    const e=document.createElement('div'); e.className='mk '+m.kind; e.style.left=Math.min(px,94)+'%'; e.textContent=m.text; e.dataset.first=m.text; e.title=new Date(m.at).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})+' · '+m.text+(m.claim?': '+m.claim:''); d.appendChild(e); lastX=px; cluster=e; n=0; });
   return d;
 }
 
@@ -118,11 +118,11 @@ function render(f){
     gr.rows.forEach(r=>{
       const l=document.createElement('div'); l.className='lbl';
       const same=lastSubj===r.subject.key; lastSubj=r.subject.key;
-      const title=r.subject.url?'<a href="'+esc(r.subject.url)+'" target="_blank" rel="noopener">'+esc(r.subject.key)+'</a>':esc(r.subject.key);
+      const sk=shortKey(r.subject.key); const title=r.subject.url?'<a href="'+esc(r.subject.url)+'" target="_blank" rel="noopener" title="'+esc(r.subject.key)+'">'+esc(sk)+'</a>':esc(sk);
       l.innerHTML=same?'<small>↳ '+esc(shortKey(r.item.Key))+'</small>':title+'<small>'+esc(r.subject.title!==r.subject.key?r.subject.title:'')+'</small>';
       const t=track(r, from, now); t.style.setProperty('--grid', grid);
       const nc=document.createElement('div'); nc.className='nowc'; nc.appendChild(card(r.item, now, gr.key));
-      const nx=document.createElement('div'); nx.className='nxt'; (r.next||[]).forEach(n=>{const e=document.createElement('div'); e.textContent=n.text+' '+fmtNext(new Date(n.at)-now); nx.appendChild(e);});
+      const nx=document.createElement('div'); nx.className='nxt'; (r.next||[]).forEach(n=>{const e=document.createElement('div'); e.textContent=n.text.replace('pr-watch poll','poll')+' '+fmtNext(new Date(n.at)-now); e.title=n.text; nx.appendChild(e);});
       g.append(l,t,nc,nx);
     });
   });
