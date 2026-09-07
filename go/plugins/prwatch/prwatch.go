@@ -193,13 +193,15 @@ func (w *Watcher) logLine(key, line string) {
 // prState is what the watcher remembers about one PR across polls and
 // sessions.
 type prState struct {
-	Seen   []string  `json:"seen,omitempty"`    // comment ids already answered or judged
-	CIHead string    `json:"ci_head,omitempty"` // head sha whose CI was last attempted
-	Lock   *lock     `json:"lock,omitempty"`    // who is working it now
-	Last   string    `json:"last,omitempty"`    // the last job's summary
-	LastAt time.Time `json:"last_at,omitzero"`
-	Title  string    `json:"title,omitempty"`
-	URL    string    `json:"url,omitempty"`
+	Seen     []string       `json:"seen,omitempty"`     // comment ids already answered or judged
+	Attempts map[string]int `json:"attempts,omitempty"` // jobs started per comment id, until seen
+	Blocked  string         `json:"blocked,omitempty"`  // why the last job could not act; cleared by a new head or comment
+	CIHead   string         `json:"ci_head,omitempty"`  // head sha whose CI was last attempted
+	Lock     *lock          `json:"lock,omitempty"`     // who is working it now
+	Last     string         `json:"last,omitempty"`     // the last job's summary
+	LastAt   time.Time      `json:"last_at,omitzero"`
+	Title    string         `json:"title,omitempty"`
+	URL      string         `json:"url,omitempty"`
 }
 
 type lock struct {
@@ -293,16 +295,40 @@ type Work struct {
 	CIStuck  bool      // no check finished and the head is old enough that it should have
 }
 
+// ids is every comment id in the work: threads' last comments and
+// conversation comments.
+func (w Work) ids() []string {
+	var out []string
+	for _, t := range w.Threads {
+		out = append(out, t.Comments[len(t.Comments)-1].ID)
+	}
+	for _, c := range w.Comments {
+		out = append(out, c.ID)
+	}
+	return out
+}
+
 // Empty reports nothing to do.
 func (w Work) Empty() bool {
 	return len(w.Threads) == 0 && len(w.Comments) == 0 && len(w.CI) == 0 && !w.CIStuck
 }
+
+// maxAttempts is how many jobs may start on one comment before the
+// watcher stops asking.
+const maxAttempts = 2
 
 // judge decides what a PR needs given what was already handled.
 func judge(pr PR, me string, bots []string, ps *prState, now time.Time) Work {
 	seen := map[string]bool{}
 	for _, id := range ps.Seen {
 		seen[id] = true
+	}
+	// A comment two jobs have started on and not marked is one the
+	// child cannot deal with: asking a third time would only spend.
+	for id, n := range ps.Attempts {
+		if n >= maxAttempts {
+			seen[id] = true
+		}
 	}
 	var w Work
 	for _, t := range pr.Threads {
@@ -350,11 +376,13 @@ var reportShape = map[string]any{
 	"type": "object",
 	"properties": map[string]any{
 		"handled":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "comment ids (review comment database ids or conversation comment node ids) that were replied to"},
+		"noted":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "comment ids you read and judged to need no reply (informational, already addressed, a bot's status)"},
+		"blocked":  map[string]any{"type": "string", "description": "when you could not act on the CI failure or a comment for a reason outside this PR (depends on another PR, no access, needs the author): one sentence; empty otherwise"},
 		"resolved": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "review thread ids that were resolved"},
 		"pushed":   map[string]any{"type": "boolean", "description": "whether a commit was pushed to the PR branch"},
 		"summary":  map[string]any{"type": "string", "description": "one or two sentences for the human"},
 	},
-	"required": []any{"handled", "resolved", "pushed", "summary"},
+	"required": []any{"handled", "noted", "resolved", "pushed", "summary"},
 }
 
 // task writes the subagent's brief: the facts the watcher saw, the
@@ -408,7 +436,7 @@ func (w *Watcher) task(pr PR, work Work, wt string) string {
 	if work.CIStuck {
 		b.WriteString("CI appears STUCK: checks exist but none has finished in over 30 minutes.\n\n")
 	}
-	b.WriteString("When done, report the JSON object described by the schema: handled (comment ids you replied to), resolved (thread ids you resolved), pushed, summary.")
+	b.WriteString("When done, report the JSON object described by the schema: handled (comment ids you replied to), noted (comment ids you read and decided need no reply), resolved (thread ids you resolved), pushed, blocked (one sentence when something outside this PR stops you: another PR it depends on, missing access, a question only the author can answer), summary. Every comment id in the brief belongs in handled or noted; the watcher asks again about any it does not see.")
 	return b.String()
 }
 
@@ -506,6 +534,20 @@ func (w *Watcher) handle(pr PR, work Work) {
 		return
 	}
 	defer remove()
+	_ = w.state.update(func(st *state) error {
+		ps := st.PRs[key]
+		if ps == nil {
+			ps = &prState{}
+			st.PRs[key] = ps
+		}
+		if ps.Attempts == nil {
+			ps.Attempts = map[string]int{}
+		}
+		for _, id := range work.ids() {
+			ps.Attempts[id]++
+		}
+		return nil
+	})
 	v, err := w.spawn(w.ctx, w.task(pr, work, wt), reportShape, func(kind, text string) {
 		if kind == "start" {
 			return // the brief; the start line above says what the job is
@@ -520,6 +562,8 @@ func (w *Watcher) handle(pr PR, work Work) {
 	rep, _ := v.(map[string]any)
 	summary, _ := rep["summary"].(string)
 	handled := strs(rep["handled"])
+	noted := strs(rep["noted"])
+	blocked, _ := rep["blocked"].(string)
 	pushed, _ := rep["pushed"].(bool)
 	if len(rep) == 0 {
 		// The child did not follow the schema: keep its prose, mark
@@ -539,17 +583,14 @@ func (w *Watcher) handle(pr PR, work Work) {
 		// answer comes back next poll. CI counts as attempted for this
 		// head whether or not the fix worked: a second try on the same
 		// head would only repeat itself.
-		for _, t := range work.Threads {
-			last := t.Comments[len(t.Comments)-1]
-			if slices.Contains(handled, last.ID) {
-				ps.Seen = append(ps.Seen, last.ID)
+		done := slices.Concat(handled, noted)
+		for _, id := range work.ids() {
+			if slices.Contains(done, id) {
+				ps.Seen = append(ps.Seen, id)
+				delete(ps.Attempts, id)
 			}
 		}
-		for _, c := range work.Comments {
-			if slices.Contains(handled, c.ID) {
-				ps.Seen = append(ps.Seen, c.ID)
-			}
-		}
+		ps.Blocked = strings.TrimSpace(blocked)
 		if len(work.CI) > 0 || work.CIStuck {
 			ps.CIHead = pr.HeadSHA
 		}
@@ -743,6 +784,8 @@ func (w *Watcher) Rows() []string {
 				who = "session " + ps.Lock.Session[:min(8, len(ps.Lock.Session))]
 			}
 			rows = append(rows, fmt.Sprintf("pr %s %s · %s · %s · %s", key, oneLine(ps.Title, 40), ps.Lock.What, who, shortDur(ps.Lock.Since)))
+		} else if ps.Blocked != "" {
+			rows = append(rows, fmt.Sprintf("pr %s blocked · %s", key, oneLine(ps.Blocked, 90)))
 		} else if !ps.LastAt.IsZero() && time.Since(ps.LastAt) < showDone {
 			rows = append(rows, fmt.Sprintf("pr %s done %s ago · %s", key, shortDur(ps.LastAt), oneLine(ps.Last, 70)))
 		}
@@ -768,6 +811,55 @@ func shortDur(since time.Time) string {
 		return fmt.Sprintf("%dm", int(d.Minutes()))
 	}
 	return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
+}
+
+// releaseMine drops the locks this session holds.
+func (w *Watcher) releaseMine() {
+	_ = w.state.update(func(st *state) error {
+		for _, ps := range st.PRs {
+			if ps.Lock != nil && ps.Lock.Session == w.session {
+				ps.Lock = nil
+			}
+		}
+		return nil
+	})
+}
+
+// pruneWorktrees removes worktrees no live lock accounts for: a job
+// killed by a restart leaves its checkout behind, and seven of them
+// were found for one PR.
+func (w *Watcher) pruneWorktrees() {
+	st, err := w.state.load()
+	if err != nil {
+		return
+	}
+	live := map[string]bool{}
+	for key, ps := range st.PRs {
+		if ps.Lock != nil && time.Since(ps.Lock.Since) < lockStale {
+			// wt/<owner>_<name>/pr-<n>-<session8>
+			repo, n, _ := strings.Cut(key, "#")
+			live[strings.ReplaceAll(repo, "/", "_")+"/pr-"+n+"-"+ps.Lock.Session[:min(8, len(ps.Lock.Session))]] = true
+		}
+	}
+	root := filepath.Join(w.home, "wt")
+	repos, _ := os.ReadDir(root)
+	for _, r := range repos {
+		if !r.IsDir() {
+			continue
+		}
+		wts, _ := os.ReadDir(filepath.Join(root, r.Name()))
+		clone := filepath.Join(w.home, "repos", r.Name())
+		for _, d := range wts {
+			if !d.IsDir() || live[r.Name()+"/"+d.Name()] {
+				continue
+			}
+			path := filepath.Join(root, r.Name(), d.Name())
+			if _, err := runCmd(w.ctx, clone, "git", "worktree", "remove", "--force", path); err != nil {
+				_ = os.RemoveAll(path)
+			}
+		}
+		_, _ = runCmd(w.ctx, clone, "git", "worktree", "prune")
+	}
 }
 
 // ---------- plugin ----------
@@ -844,7 +936,14 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	w.ctx = ctx
-	kctx.Effect(cancel)
+	kctx.Effect(func() {
+		// A restart kills the job: give the PR back rather than
+		// leave it locked for 45 minutes, and drop the half-edited
+		// worktree.
+		cancel()
+		w.releaseMine()
+	})
+	go w.pruneWorktrees()
 	kctx.Provide("pr-watch", w)
 	go w.watchActive()
 	if reg, err := kernel.Get[*commands.Registry](kctx, "commands"); err == nil {

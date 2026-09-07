@@ -3,7 +3,10 @@ package prwatch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -71,6 +74,10 @@ func TestJudge(t *testing.T) {
 	if w3 := judge(pr, "andreylukin", defaultBots, &prState{Seen: []string{"101", "105", "C2"}, CIHead: "abc123abc123"}, time.Now()); len(w3.CI) != 1 {
 		t.Fatal("a new head must reopen CI")
 	}
+	// Two jobs started on a comment without marking it: stop asking.
+	if w5 := judge(pr, "andreylukin", defaultBots, &prState{Attempts: map[string]int{"101": 2, "105": 1, "C2": 2}}, time.Now()); len(w5.Threads) != 1 || w5.Threads[0].ID != "T4" || len(w5.Comments) != 0 {
+		t.Fatalf("attempted-out comments must not come back: %+v", w5)
+	}
 	// Stuck: only pending checks on a head older than 30 minutes.
 	pr.Checks = []Check{{Name: "ci-go", State: "QUEUED"}}
 	if w4 := judge(pr, "andreylukin", defaultBots, &prState{}, time.Now()); !w4.CIStuck {
@@ -108,7 +115,7 @@ func TestStateLockAndRows(t *testing.T) {
 	w.spawn = func(_ context.Context, task string, _ map[string]any, sink func(string, string)) (any, error) {
 		spawned = task
 		sink("code", "tools.bash('go test ./...')")
-		return map[string]any{"handled": []any{"101", "C2"}, "resolved": []any{"T1"}, "pushed": true, "summary": "fixed the nil check"}, nil
+		return map[string]any{"handled": []any{"101"}, "noted": []any{"C2"}, "resolved": []any{"T1"}, "pushed": true, "summary": "fixed the nil check", "blocked": "T4 asks about a design the author must decide"}, nil
 	}
 	// Another session holds the lock: handle must do nothing.
 	_ = sf.update(func(st *state) error {
@@ -138,12 +145,16 @@ func TestStateLockAndRows(t *testing.T) {
 	st, _ := sf.load()
 	ps := st.PRs["andreylukin/bough#12"]
 	b, _ := json.Marshal(ps)
-	if ps.Lock != nil || ps.CIHead != pr.HeadSHA || !strings.Contains(string(b), `"101"`) || !strings.Contains(string(b), `"C2"`) || strings.Contains(string(b), `"105"`) {
-		t.Fatalf("after the job: lock released, CI head recorded, handled ids seen (not the unanswered one): %s", b)
+	if ps.Lock != nil || ps.CIHead != pr.HeadSHA || !strings.Contains(string(b), `"101"`) || !strings.Contains(string(b), `"C2"`) || slices.Contains(ps.Seen, "105") {
+		t.Fatalf("after the job: lock released, CI head recorded, handled and noted ids seen (not the unanswered one): %s", b)
+	}
+	// The unanswered comment counts one attempt; the seen ones none.
+	if ps.Attempts["105"] != 1 || ps.Attempts["101"] != 0 || ps.Blocked != "T4 asks about a design the author must decide" {
+		t.Fatalf("attempts/blocked: %+v", ps)
 	}
 	rows = w.Rows()
-	if len(rows) != 1 || !strings.Contains(rows[0], "done") || !strings.Contains(rows[0], "fixed the nil check") {
-		t.Fatalf("rows should show the result: %v", rows)
+	if len(rows) != 1 || !strings.Contains(rows[0], "blocked") || !strings.Contains(rows[0], "author must decide") {
+		t.Fatalf("rows should show the blocker: %v", rows)
 	}
 	bg := w.Background()
 	for _, want := range []string{"andreylukin/bough#12 · finished", "code · tools.bash('go test ./...')", "done (pushed) · fixed the nil check"} {
@@ -151,4 +162,52 @@ func TestStateLockAndRows(t *testing.T) {
 			t.Fatalf("/background missing %q:\n%s", want, bg)
 		}
 	}
+}
+
+func TestPruneWorktrees(t *testing.T) {
+	home := t.TempDir()
+	sf := &stateFile{path: filepath.Join(home, "state.json")}
+	w := &Watcher{state: sf, home: home, session: "sess-live-1234", ctx: context.Background()}
+	clone := filepath.Join(home, "repos", "o_r")
+	if err := runGitInit(clone); err != nil {
+		t.Skip("git unavailable:", err)
+	}
+	mk := func(name string) string {
+		p := filepath.Join(home, "wt", "o_r", name)
+		if _, err := runCmd(context.Background(), clone, "git", "worktree", "add", "--detach", p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	live := mk("pr-7-sess-liv")
+	dead := mk("pr-7-sess-dea")
+	_ = sf.update(func(st *state) error {
+		st.PRs["o/r#7"] = &prState{Lock: &lock{Session: "sess-live-1234", Since: time.Now()}}
+		return nil
+	})
+	w.pruneWorktrees()
+	if _, err := os.Stat(live); err != nil {
+		t.Error("the live job's worktree must stay")
+	}
+	if _, err := os.Stat(dead); err == nil {
+		t.Error("the dead job's worktree must go")
+	}
+	// Shutdown gives the PR back.
+	w.releaseMine()
+	st, _ := sf.load()
+	if st.PRs["o/r#7"].Lock != nil {
+		t.Error("releaseMine must drop this session's lock")
+	}
+}
+
+func runGitInit(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"}} {
+		if out, err := runCmd(context.Background(), dir, "git", args...); err != nil {
+			return fmt.Errorf("%v: %s", err, out)
+		}
+	}
+	return nil
 }
