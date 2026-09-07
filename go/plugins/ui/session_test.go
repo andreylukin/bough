@@ -6,6 +6,7 @@ package ui
 // picker).
 
 import (
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -297,5 +298,53 @@ func TestReplayShowsTheTypedPromptNotTheSkill(t *testing.T) {
 	}
 	if got := d.m.prompts(); len(got) != 1 || got[0] != "please frobnicate" {
 		t.Errorf("recall should offer the typed line, got %v", got)
+	}
+}
+
+// The picker nests forks under the session they came from, in the
+// order they were taken, to any depth; a family sits where its first
+// member did in the incoming (newest-first) order; an orphan fork is a
+// root.
+func TestSessionTreeNestsForks(t *testing.T) {
+	t.Parallel()
+	infos := []history.SessionInfo{
+		{ID: "b2", ForkedFrom: "a", AtSeq: 4},        // newest: a fork of a
+		{ID: "z"},                                    // unrelated
+		{ID: "a"},                                    // the root
+		{ID: "b1", ForkedFrom: "a", AtSeq: 2},        // an earlier fork of a
+		{ID: "c", ForkedFrom: "b1", AtSeq: 6},        // a fork of the fork
+		{ID: "orphan", ForkedFrom: "gone", AtSeq: 1}, // origin not listed
+	}
+	rows := sessionTree(infos)
+	var got []string
+	for _, r := range rows {
+		got = append(got, r.prefix+r.ID)
+	}
+	want := []string{"a", "├─ b1", "│  └─ c", "└─ b2", "z", "orphan"}
+	if !slices.Equal(got, want) {
+		t.Errorf("tree =\n  %s\nwant\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
+	}
+}
+
+// The picker draws the connectors, and enter still resumes the row
+// under the cursor — a nested one included.
+func TestPickerShowsForkTree(t *testing.T) {
+	t.Parallel()
+	var chosen string
+	cfg := cfgWith(t, nil, nil, nil)
+	cfg.picker = true
+	cfg.sessions = []history.SessionInfo{
+		{ID: "a", Title: "root work"},
+		{ID: "b", ForkedFrom: "a", AtSeq: 2, Title: "a side branch"},
+	}
+	cfg.choose = func(id string) { chosen = id }
+	d := newDrv(t, 100, 30, cfg)
+	if p := d.plain(); !strings.Contains(p, "└─ ") || strings.Index(p, "root work") > strings.Index(p, "a side branch") {
+		t.Fatalf("the fork should hang under its origin:\n%s", p)
+	}
+	d.press(keyDown())
+	d.press(keyEnter())
+	if chosen != "b" {
+		t.Errorf("enter on the nested row resumes it, chose %q", chosen)
 	}
 }

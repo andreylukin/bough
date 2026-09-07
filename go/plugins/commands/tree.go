@@ -7,10 +7,8 @@ package commands
 // wrote). /undo puts exactly those files back to the checkpoint and
 // records an "undo" entry, so the next /undo walks one turn further
 // back. /tree lists turns; "/tree <seq>" forks the session at one into
-// a new file and resumes it through the session-choose seam, and
-// "/tree <seq> <session>" forks another session (a sibling branch the
-// ui's rewind tree shows) at one of its turns. Like /model, the
-// services are resolved lazily at Run time.
+// a new file and resumes it through the session-choose seam. Like
+// /model, the services are resolved lazily at Run time.
 
 import (
 	"fmt"
@@ -109,7 +107,7 @@ func registerTree(r *Registry, ctx *kernel.Context) error {
 		return err
 	}
 	return r.Register(
-		CommandInfo{Name: "tree", Usage: "[seq [session]]", Summary: "list the turns, or fork the session at one"},
+		CommandInfo{Name: "tree", Usage: "[seq]", Summary: "list the turns, or fork the session at one"},
 		func(args string) (string, error) { return runTree(ctx, args) },
 	)
 }
@@ -197,22 +195,13 @@ func runTree(ctx *kernel.Context, args string) (string, error) {
 		b.WriteString("fork at a turn: /tree <seq>")
 		return b.String(), nil
 	}
-	seqArg, other, _ := strings.Cut(args, " ")
-	seq, err := strconv.ParseInt(seqArg, 10, 64)
+	seq, err := strconv.ParseInt(args, 10, 64)
 	if err != nil {
-		return "", fmt.Errorf("usage: /tree [seq [session]]")
+		return "", fmt.Errorf("usage: /tree [seq]")
 	}
 	src := h.Path()
 	if src == "" {
 		return "", fmt.Errorf("tree: this session has no history file to fork")
-	}
-	if other = strings.TrimSpace(other); other != "" {
-		// Another session's file lives next to this one; its id is a
-		// file name, so a path separator in it is not an id.
-		if strings.ContainsAny(other, `/\`) {
-			return "", fmt.Errorf("tree: %q is not a session id", other)
-		}
-		src = filepath.Join(filepath.Dir(src), strings.TrimSuffix(other, ".jsonl")+".jsonl")
 	}
 	// A fork gets its own session id, with the forked-at seq kept in
 	// the name so a listing shows where it came from.

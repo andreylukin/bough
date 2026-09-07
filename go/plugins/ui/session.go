@@ -7,11 +7,13 @@ package ui
 // the list is re-read from the history directory.
 
 import (
+	"cmp"
 	"github.com/charmbracelet/x/ansi"
 
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -145,13 +147,84 @@ func (m *model) listSessions() sessList {
 	return append(rows, history.PreferCwd(infos, cwd)...)
 }
 
-// pickerRows is the list the picker shows: its own mid-session list,
-// else the launcher-provided one.
-func (m *model) pickerRows(cfg *uiCfg) []history.SessionInfo {
+// sessRow is one picker row: a session, and the tree connectors that
+// place it under the session it was forked from.
+type sessRow struct {
+	history.SessionInfo
+	prefix string
+}
+
+// pickerRows is the list the picker shows — its own mid-session list,
+// else the launcher-provided one — laid out as a tree (sessionTree).
+func (m *model) pickerRows(cfg *uiCfg) []sessRow {
 	if m.sessRows != nil {
-		return m.sessRows
+		return sessionTree(m.sessRows)
 	}
-	return cfg.sessions
+	return sessionTree(cfg.sessions)
+}
+
+// sessionTree nests each fork under the session it was forked from
+// (SessionInfo.ForkedFrom), pi's /tree over bough's one-file-per-
+// branch sessions: a session's forks hang under it with ├─ └─ │
+// connectors, in the order they were taken (ids are UUIDv7s, so id
+// order), to any depth. A family lands where its first member did in
+// the incoming order, so a recently active branch keeps its old root
+// near the top and this directory's sessions still come first. A fork
+// whose origin is not listed is a root like any other.
+func sessionTree(infos []history.SessionInfo) []sessRow {
+	kids := map[string][]history.SessionInfo{}
+	byID := map[string]bool{}
+	for _, s := range infos {
+		byID[s.ID] = true
+	}
+	for _, s := range infos {
+		if s.ForkedFrom != "" && byID[s.ForkedFrom] && s.ForkedFrom != s.ID {
+			kids[s.ForkedFrom] = append(kids[s.ForkedFrom], s)
+		}
+	}
+	for id := range kids {
+		slices.SortFunc(kids[id], func(a, b history.SessionInfo) int { return cmp.Compare(a.ID, b.ID) })
+	}
+	rootOf := func(s history.SessionInfo) string {
+		seen := map[string]bool{}
+		for s.ForkedFrom != "" && byID[s.ForkedFrom] && !seen[s.ID] {
+			seen[s.ID] = true
+			for _, t := range infos {
+				if t.ID == s.ForkedFrom {
+					s = t
+					break
+				}
+			}
+		}
+		return s.ID
+	}
+	var rows []sessRow
+	var walk func(s history.SessionInfo, prefix, gutter string)
+	walk = func(s history.SessionInfo, prefix, gutter string) {
+		rows = append(rows, sessRow{s, prefix})
+		for i, k := range kids[s.ID] {
+			conn, down := "├─ ", "│  "
+			if i == len(kids[s.ID])-1 {
+				conn, down = "└─ ", "   "
+			}
+			walk(k, gutter+conn, gutter+down)
+		}
+	}
+	placed := map[string]bool{}
+	for _, s := range infos {
+		root := rootOf(s)
+		if placed[root] {
+			continue
+		}
+		placed[root] = true
+		for _, r := range infos {
+			if r.ID == root {
+				walk(r, "", "")
+				break
+			}
+		}
+	}
+	return rows
 }
 
 // currentID is the mounted session's id ("" without history).
@@ -275,8 +348,8 @@ func (m *model) pickerView(cfg *uiCfg) string {
 		if i == m.pick {
 			marker, st = "▸ ", th["focus"]
 		}
-		row := fmt.Sprintf("%s%s  %3d entries  %s",
-			marker, s.ModTime.Local().Format("2006-01-02 15:04"), s.Entries, truncateCols(s.Title, pickerTitleWidth))
+		row := fmt.Sprintf("%s%s%s  %3d entries  %s",
+			marker, s.prefix, s.ModTime.Local().Format("2006-01-02 15:04"), s.Entries, truncateCols(s.Title, pickerTitleWidth))
 		if s.ID == cur {
 			row += " (current)"
 		}
