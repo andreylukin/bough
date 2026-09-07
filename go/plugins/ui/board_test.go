@@ -184,10 +184,13 @@ func TestBoardHoverClickAndOffset(t *testing.T) {
 	}
 	// Motion over a row hovers it: the name is underlined and a detail
 	// box with the link covers the transcript's top rows.
-	mm, _ := m.Update(tea.MouseMotionMsg{X: 5, Y: 4})
+	mm, fetch := m.Update(tea.MouseMotionMsg{X: 5, Y: 4})
 	m = mm.(model)
 	if m.board.hover != "orb#142" {
 		t.Fatalf("hover = %q", m.board.hover)
+	}
+	if fetch == nil {
+		t.Fatal("hovering a row must fetch its detail")
 	}
 	frame := m.frame()
 	if !strings.Contains(ansi.Strip(frame), "▸ alert backtesting") || !strings.Contains(frame, "https://github.com/x/orb#142") || !strings.Contains(ansi.Strip(frame), "reading the graph") {

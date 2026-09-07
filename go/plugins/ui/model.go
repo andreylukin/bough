@@ -800,16 +800,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMotionMsg:
 		cfg := m.cfg.Load()
-		if took, _ := m.boardMouse(cfg, msg); took {
-			return m, nil
+		if took, cmd := m.boardMouse(cfg, msg); took {
+			return m, cmd // the hover's detail fetch
 		}
 		m.dragSelect(shiftMouse(msg.Mouse(), m.boardHeight(cfg)))
 		return m, nil // never the composer's business
 
 	case tea.MouseReleaseMsg:
 		cfg := m.cfg.Load()
-		if took, _ := m.boardMouse(cfg, msg); took {
-			return m, nil
+		if took, cmd := m.boardMouse(cfg, msg); took {
+			return m, cmd
 		}
 		return m, m.releaseSelect(shiftMouse(msg.Mouse(), m.boardHeight(cfg)))
 
