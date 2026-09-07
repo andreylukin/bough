@@ -53,6 +53,11 @@ _CONFIG = """\
   plugin: {plugin}
   config:
     model: {model}
+- id: llm-small
+  plugin: {small_plugin}
+  config:
+    service: llm-small
+    model: {small_model}
 - id: cost
   plugin: cost
 - id: codemode
@@ -102,11 +107,14 @@ class BoughGo(BaseInstalledAgent):
         binary: str | None = None,
         timeout: int = 5400,
         config: str | None = None,
+        small: str | None = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self._binary = Path(binary).expanduser() if binary else None
         self._timeout = int(timeout)
+        # The cheap model (llm-small), in Harbor's --model syntax; the main model when unset.
+        self._small = small
         # An ARM: a whole config tree instead of the default one (prompt/plugin experiments).
         self._config = Path(config).expanduser() if config else None
         if not self._binary or not self._binary.is_file():
@@ -155,7 +163,8 @@ class BoughGo(BaseInstalledAgent):
             text = self._config.read_text()
         else:
             plugin, model = _provider(self.model_name or "openrouter/openai/gpt-5.6-luna")
-            text = _CONFIG.format(plugin=plugin, model=model)
+            small_plugin, small_model = _provider(self._small or self.model_name or "openrouter/openai/gpt-5.6-luna")
+            text = _CONFIG.format(plugin=plugin, model=model, small_plugin=small_plugin, small_model=small_model)
         local = self.logs_dir / "bough.yml"
         local.parent.mkdir(parents=True, exist_ok=True)
         local.write_text(text)

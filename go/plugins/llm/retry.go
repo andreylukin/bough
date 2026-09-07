@@ -26,7 +26,7 @@ func retryableErr(err error) bool {
 		return false
 	}
 	s := err.Error()
-	for _, m := range []string{"bad record MAC", "connection reset", "EOF", "broken pipe", "no such host", "timeout", "TLS handshake", "connection refused"} {
+	for _, m := range []string{"bad record MAC", "connection reset", "EOF", "broken pipe", "no such host", "timeout", "TLS handshake", "connection refused", "provider error mid-stream"} {
 		if strings.Contains(s, m) {
 			return true
 		}

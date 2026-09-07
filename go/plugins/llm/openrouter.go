@@ -305,7 +305,15 @@ func (o *openrouterLLM) readStream(body io.Reader, onDelta, onThink func(string)
 					Reasoning        string `json:"reasoning"`
 					ReasoningContent string `json:"reasoning_content"`
 				} `json:"delta"`
-				FinishReason string `json:"finish_reason"`
+				FinishReason       string `json:"finish_reason"`
+				NativeFinishReason string `json:"native_finish_reason"`
+				// OpenRouter puts a provider's mid-stream failure here
+				// (Google overloaded, a safety stop) with finish_reason
+				// "error"; the message is the only clue.
+				Error *struct {
+					Message string `json:"message"`
+					Code    any    `json:"code"`
+				} `json:"error"`
 			} `json:"choices"`
 			Error *struct {
 				Message string `json:"message"`
@@ -342,6 +350,18 @@ func (o *openrouterLLM) readStream(body io.Reader, onDelta, onThink func(string)
 				// and worth keeping, but it is not an answer, so it is
 				// marked rather than returned as if complete.
 				truncated = true
+			case fr == "error":
+				// A provider failure, not an answer: say what the
+				// provider said, and let the caller retry the request
+				// when nothing of the reply was delivered yet.
+				detail := c.NativeFinishReason
+				if c.Error != nil && c.Error.Message != "" {
+					detail = c.Error.Message
+					if c.Error.Code != nil {
+						detail = fmt.Sprintf("%v %s", c.Error.Code, detail)
+					}
+				}
+				return "", fmt.Errorf("llm-openrouter: provider error mid-stream: %s", strings.TrimSpace(detail))
 			case fr != "" && fr != "stop" && fr != "tool_calls":
 				return "", fmt.Errorf("llm-openrouter: stream ended: %s", fr)
 			}
