@@ -179,7 +179,7 @@ func TestWebEndpoints(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		return string(b)
 	}
-	if page := get("/"); !strings.Contains(page, "<title>current work</title>") || !strings.Contains(page, "/api/board") {
+	if page := get("/"); !strings.Contains(page, "<title>current work</title>") || !strings.Contains(page, "/api/flow") {
 		t.Fatalf("page: %.200s", page)
 	}
 	board := get("/api/board")
@@ -192,5 +192,68 @@ func TestWebEndpoints(t *testing.T) {
 	}
 	if got := s.URL(); got != "http://"+addr {
 		t.Fatalf("URL = %q", got)
+	}
+}
+
+func TestFlowStages(t *testing.T) {
+	st, err := graph.Open(filepath.Join(t.TempDir(), "graph.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	day := func(n int) int64 { return now.Add(-time.Duration(n) * 24 * time.Hour).Unix() }
+	ep, _ := st.Episode("collector", "t")
+	me, _ := st.Upsert("person", "andrey@example.com", "Andrey", "")
+	bradley, _ := st.Upsert("person", "bradley@example.com", "Bradley", "")
+	tk, _ := st.Upsert("ticket", "LIN-482", "rollout plan", "")
+	pr, _ := st.Upsert("pr", "bough#61", "rollout doc", "")
+	pr, _ = st.SetLink(pr, graph.Link{URL: "https://github.com/x/bough/pull/61", Summary: "review required, branch doc", UpdatedAt: day(2)})
+	// Opened 5 days ago (building), review requested of Bradley 3 days ago,
+	// Bradley answered and it came back to me 2 days ago.
+	if err := st.SetState(pr, "open", ep, "collector", day(5)); err != nil {
+		t.Fatal(err)
+	}
+	st.Assert(me, "authored", pr, ep, "collector", graph.AssertOpts{ValidFrom: day(5)})
+	st.Assert(pr, "implements", tk, ep, "collector", graph.AssertOpts{ValidFrom: day(5)})
+	e1, _ := st.Assert(pr, "awaits", bradley, ep, "collector", graph.AssertOpts{ValidFrom: day(3)})
+	if err := st.Invalidate(e1.ID, "answered", "collector", day(2)); err != nil {
+		t.Fatal(err)
+	}
+	st.Assert(pr, "awaits", me, ep, "collector", graph.AssertOpts{ValidFrom: day(2), Claim: "Bradley asked why"})
+
+	s := &Service{graph: &graph.Service{Store: st, Me: "andrey@example.com"}, Now: func() time.Time { return now }}
+	f := s.Flow(7)
+	if len(f.Groups) != 1 || f.Groups[0].Key != "me" || len(f.Groups[0].Rows) != 1 {
+		t.Fatalf("groups: %+v", f.Groups)
+	}
+	r := f.Groups[0].Rows[0]
+	if r.Subject.Key != "LIN-482" || r.Subject.Title != "rollout plan" {
+		t.Fatalf("subject: %+v", r.Subject)
+	}
+	var stages []string
+	for _, sg := range r.Segments {
+		stages = append(stages, sg.Stage)
+	}
+	// queued (before it existed) → building → in review (Bradley) → in review (me): the
+	// two review windows merge into one segment.
+	if strings.Join(stages, ",") != "queued,building,in review" {
+		t.Fatalf("stages: %v (%+v)", stages, r.Segments)
+	}
+	if got := r.Segments[1].From.Unix(); got != day(5) {
+		t.Errorf("building starts at open: %v", r.Segments[1].From)
+	}
+	if got := r.Segments[2].From.Unix(); got != day(3) {
+		t.Errorf("review starts at the first awaits: %v", r.Segments[2].From)
+	}
+	var marks []string
+	for _, m := range r.Marks {
+		marks = append(marks, m.Kind+":"+m.Text)
+	}
+	if strings.Join(marks, " | ") != "other:you opened | other:→ Bradley | me:→ you" {
+		t.Fatalf("marks: %v", marks)
+	}
+	if r.Marks[2].Claim != "Bradley asked why" {
+		t.Errorf("claim on the mark: %+v", r.Marks[2])
 	}
 }

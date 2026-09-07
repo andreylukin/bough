@@ -55,6 +55,7 @@ func (b Board) Empty() bool { return len(b.Me)+len(b.Motion)+len(b.Others) == 0 
 type lockLister interface {
 	Working() []prwatch.Working
 	Recent(key string) (prwatch.Recent, bool)
+	NextPoll() time.Time
 }
 
 // working is one pr-watch lock.
@@ -65,9 +66,23 @@ type Service struct {
 	graph  *graph.Service
 	locks  func() []working
 	recent func(key string) (prwatch.Recent, bool)
-	sticky bool
-	web    string // host:port of the board page; "" = none
-	Now    func() time.Time
+	// nextPoll is pr-watch's next look at GitHub; nil without the row.
+	nextPoll func() time.Time
+	// collectEvery is the collector's launchd cadence when installed
+	// (zero otherwise); collectedAt is the last run.
+	collectEvery time.Duration
+	sticky       bool
+	web          string // host:port of the board page; "" = none
+	Now          func() time.Time
+}
+
+// collectedAt is the last collector run, from the graph.
+func (s *Service) collectedAt() time.Time {
+	w, err := s.graph.World()
+	if err != nil || w.Fresh == 0 {
+		return time.Time{}
+	}
+	return time.Unix(w.Fresh, 0)
 }
 
 // Sticky is the row's flag: pin the board from the first frame.
@@ -416,6 +431,8 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 			}
 		case "web":
 			s.web, _ = v.(string)
+		case "collect_every":
+			// Handled after the loop; the collector's cadence for the "next" column.
 		default:
 			return fmt.Errorf("attention: unknown config key %q", k)
 		}
@@ -428,6 +445,12 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	if l, err := kernel.Get[lockLister](kctx, "pr-watch"); err == nil {
 		s.locks = l.Working
 		s.recent = l.Recent
+		s.nextPoll = l.NextPoll
+	}
+	if every, ok := cfg["collect_every"].(string); ok {
+		if d, err := time.ParseDuration(every); err == nil {
+			s.collectEvery = d
+		}
 	}
 	if s.web != "" {
 		s.serveWeb(s.web)

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -57,6 +58,11 @@ func (s *Service) serveWeb(addr string) {
 			Board
 			Now time.Time `json:"now"`
 		}{b, time.Now()})
+	})
+	mux.HandleFunc("/api/flow", func(w http.ResponseWriter, r *http.Request) {
+		days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(s.Flow(days))
 	})
 	mux.HandleFunc("/api/detail", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()

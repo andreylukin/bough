@@ -88,6 +88,15 @@ type Watcher struct {
 	active  int                // PRs being worked by any session, refreshed every few seconds
 	working []Working          // the same PRs, for the attention board
 	recent  map[string]Recent  // last finished job per PR, for the board's hover
+	next    time.Time          // when the next poll fires
+}
+
+// NextPoll is when the watcher next looks at GitHub; zero before the
+// first poll.
+func (w *Watcher) NextPoll() time.Time {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.next
 }
 
 // Recent is the last pr-watch job on a PR.
@@ -689,6 +698,12 @@ func (w *Watcher) poll() {
 }
 
 func (w *Watcher) loop() {
+	arm := func() {
+		w.mu.Lock()
+		w.next = time.Now().Add(w.cfg.Interval)
+		w.mu.Unlock()
+	}
+	arm()
 	w.poll()
 	t := time.NewTicker(w.cfg.Interval)
 	defer t.Stop()
@@ -697,6 +712,7 @@ func (w *Watcher) loop() {
 		case <-w.ctx.Done():
 			return
 		case <-t.C:
+			arm()
 			w.poll()
 		}
 	}
