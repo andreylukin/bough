@@ -17,6 +17,13 @@ import (
 
 const retryAttempts = 3
 
+// rateLimitAttempts and rateLimitDelays are the budget for a provider
+// that says come back later: a bench trial that dies on one of these
+// is a wasted trial, so wait it out.
+const rateLimitAttempts = 8
+
+var rateLimitDelays = []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 30 * time.Second, 60 * time.Second}
+
 // malformedAttempts is the budget for a provider rejecting the model's
 // own reply as a malformed function call (Gemini): each attempt is an
 // independent draw that fails perhaps half the time, and the failed
@@ -32,7 +39,7 @@ func retryableErr(err error) bool {
 		return false
 	}
 	s := err.Error()
-	for _, m := range []string{"bad record MAC", "connection reset", "EOF", "broken pipe", "no such host", "timeout", "TLS handshake", "connection refused", "provider error mid-stream"} {
+	for _, m := range []string{"bad record MAC", "connection reset", "EOF", "broken pipe", "no such host", "timeout", "TLS handshake", "connection refused", "provider error mid-stream", "rate-limited", "rate limited", "overloaded", "temporarily"} {
 		if strings.Contains(s, m) {
 			return true
 		}
@@ -71,13 +78,18 @@ func withRetries[T any](ctx context.Context, do func() (T, bool, error)) (T, err
 			return v, nil
 		}
 		last = err
-		if strings.Contains(err.Error(), "MALFORMED_FUNCTION_CALL") {
+		delays := retryDelays
+		switch msg := err.Error(); {
+		case strings.Contains(msg, "MALFORMED_FUNCTION_CALL"):
 			attempts = malformedAttempts
+		case strings.Contains(msg, "rate-limited") || strings.Contains(msg, "rate limited") || strings.Contains(msg, "overloaded"):
+			attempts = rateLimitAttempts
+			delays = rateLimitDelays
 		}
 		if !retry || i == attempts-1 {
 			return zero, err
 		}
-		d := retryDelays[min(i, len(retryDelays)-1)]
+		d := delays[min(i, len(delays)-1)]
 		select {
 		case <-time.After(d):
 		case <-ctx.Done():
