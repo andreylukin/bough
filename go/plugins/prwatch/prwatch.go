@@ -87,6 +87,30 @@ type Watcher struct {
 	errs    []string           // recent errors, newest last
 	active  int                // PRs being worked by any session, refreshed every few seconds
 	working []Working          // the same PRs, for the attention board
+	recent  map[string]Recent  // last finished job per PR, for the board's hover
+}
+
+// Recent is the last pr-watch job on a PR.
+type Recent struct {
+	Key     string // owner/name#n
+	Summary string
+	At      time.Time
+}
+
+// Recent is the last finished job for a PR key (owner/name#n or
+// name#n), if any. Cached like Active.
+func (w *Watcher) Recent(key string) (Recent, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if r, ok := w.recent[key]; ok {
+		return r, true
+	}
+	for k, r := range w.recent {
+		if _, short, _ := strings.Cut(k, "/"); short == key {
+			return r, true
+		}
+	}
+	return Recent{}, false
 }
 
 // Working is one PR a session is working right now.
@@ -119,15 +143,20 @@ func (w *Watcher) refreshActive() {
 		return
 	}
 	var live []Working
+	recent := map[string]Recent{}
 	for key, ps := range st.PRs {
 		if ps.Lock != nil && time.Since(ps.Lock.Since) < lockStale {
 			live = append(live, Working{Key: key, Session: ps.Lock.Session, Since: ps.Lock.Since, What: ps.Lock.What})
+		}
+		if ps.Last != "" {
+			recent[key] = Recent{Key: key, Summary: ps.Last, At: ps.LastAt}
 		}
 	}
 	slices.SortFunc(live, func(a, b Working) int { return a.Since.Compare(b.Since) })
 	w.mu.Lock()
 	w.active = len(live)
 	w.working = live
+	w.recent = recent
 	w.mu.Unlock()
 }
 

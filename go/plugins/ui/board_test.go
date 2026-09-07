@@ -21,6 +21,9 @@ type fakeBoard struct {
 
 func (f fakeBoard) Board() attention.Board { return f.b }
 func (f fakeBoard) Sticky() bool           { return f.sticky }
+func (f fakeBoard) Detail(kind, key string) []attention.Line {
+	return []attention.Line{{Label: "asks", Text: "2 unresolved review threads (you)"}, {Label: "who", Text: "devin-ai-integration commented Sep 1"}, {Label: "for", Text: "NME-1664 Add nas-event-log to prod [code_review]"}}
+}
 
 func boardModel(t *testing.T, width int, src boardSource) model {
 	t.Helper()
@@ -187,8 +190,20 @@ func TestBoardHoverClickAndOffset(t *testing.T) {
 		t.Fatalf("hover = %q", m.board.hover)
 	}
 	frame := m.frame()
-	if !strings.Contains(ansi.Strip(frame), "▸ alert backtesting") || !strings.Contains(frame, "https://github.com/x/orb#142") {
+	if !strings.Contains(ansi.Strip(frame), "▸ alert backtesting") || !strings.Contains(frame, "https://github.com/x/orb#142") || !strings.Contains(ansi.Strip(frame), "reading the graph") {
 		t.Errorf("hover box missing:\n%s", ansi.Strip(frame))
+	}
+	// The detail arrives and replaces the placeholder.
+	mm, _ = m.Update(hoverMsg{key: "orb#142", lines: fakeBoard{}.Detail("pr", "orb#142")})
+	m = mm.(model)
+	plainFrame := ansi.Strip(m.frame())
+	for _, want := range []string{"asks    2 unresolved review threads (you)", "who     devin-ai-integration commented Sep 1", "for     NME-1664 Add nas-event-log to prod [code_review]"} {
+		if !strings.Contains(plainFrame, want) {
+			t.Errorf("detail missing %q:\n%s", want, plainFrame)
+		}
+	}
+	if strings.Contains(plainFrame, "reading the graph") {
+		t.Error("placeholder outlived the detail")
 	}
 	// The name row carries a real terminal link.
 	if !strings.Contains(frame, "\x1b]8;;https://github.com/x/orb#142") {

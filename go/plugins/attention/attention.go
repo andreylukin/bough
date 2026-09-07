@@ -50,8 +50,12 @@ type Board struct {
 // Empty reports a board with nothing to show.
 func (b Board) Empty() bool { return len(b.Me)+len(b.Motion)+len(b.Others) == 0 }
 
-// lockLister is the pr-watch seam: what any session is working now.
-type lockLister interface{ Working() []prwatch.Working }
+// lockLister is the pr-watch seam: what any session is working now,
+// and what it last did to a PR.
+type lockLister interface {
+	Working() []prwatch.Working
+	Recent(key string) (prwatch.Recent, bool)
+}
 
 // working is one pr-watch lock.
 type working = prwatch.Working
@@ -60,12 +64,106 @@ type working = prwatch.Working
 type Service struct {
 	graph  *graph.Service
 	locks  func() []working
+	recent func(key string) (prwatch.Recent, bool)
 	sticky bool
 	Now    func() time.Time
 }
 
 // Sticky is the row's flag: pin the board from the first frame.
 func (s *Service) Sticky() bool { return s.sticky }
+
+// Line is one labelled line of an item's detail.
+type Line struct{ Label, Text string }
+
+// Detail is what the graph knows about one item beyond its row: what
+// it asks, its state, who is on it, what it is for, which sessions
+// worked it, what pr-watch last did. Lines are omitted when empty.
+func (s *Service) Detail(kind, key string) []Line {
+	e, err := s.graph.Store.Get(kind, key)
+	if err != nil {
+		return nil
+	}
+	edges, err := s.graph.Store.Neighbors(e, 1, "", 0)
+	if err != nil {
+		return nil
+	}
+	slices.SortFunc(edges, func(a, b graph.Edge) int { return int(b.ValidFrom - a.ValidFrom) })
+	day := func(at int64) string {
+		if at == 0 {
+			return ""
+		}
+		return time.Unix(at, 0).Format("Jan 2")
+	}
+	who := func(p graph.Entity) string {
+		if p.Key == s.graph.Me {
+			return "you"
+		}
+		name := strings.TrimPrefix(first(p.Title, p.Key), "github:")
+		return strings.TrimSuffix(name, "[bot]")
+	}
+	verbs := map[string]string{"authored": "opened", "assigned": "assigned", "reviews": "reviewed"}
+	var asks, people, links, sessions, state []string
+	for _, ed := range edges {
+		switch {
+		case ed.Rel == "awaits" && ed.Src.ID == e.ID:
+			t := who(ed.Dst)
+			if ed.Claim != "" {
+				t = ed.Claim + " (" + t + ")"
+			}
+			asks = append(asks, t)
+		case ed.Rel == "has_state" && ed.Src.ID == e.ID:
+			if ed.ValidTo == nil {
+				state = append(state, ed.Dst.Key+" since "+day(ed.ValidFrom))
+			}
+		case ed.Rel == "authored" || ed.Rel == "assigned" || ed.Rel == "reviews":
+			verb := verbs[ed.Rel]
+			if ed.Claim != "" {
+				verb = ed.Claim
+			}
+			people = append(people, who(ed.Src)+" "+verb+" "+day(ed.ValidFrom))
+		case ed.Rel == "implements" || ed.Rel == "discusses" || ed.Rel == "documents":
+			other := ed.Dst
+			if other.ID == e.ID {
+				other = ed.Src
+			}
+			t := other.Key
+			if other.Title != "" && other.Title != other.Key {
+				t += " " + other.Title
+			}
+			if other.Status != "" {
+				t += " [" + other.Status + "]"
+			}
+			links = append(links, t)
+		case ed.Rel == "touches" && ed.Src.Kind == "session":
+			t := day(ed.ValidFrom)
+			if ed.Src.Title != "" {
+				t += " “" + ed.Src.Title + "”"
+			}
+			sessions = append(sessions, t)
+		}
+	}
+	var out []Line
+	add := func(label string, parts []string, cap int) {
+		if len(parts) == 0 {
+			return
+		}
+		if len(parts) > cap {
+			parts = append(parts[:cap:cap], fmt.Sprintf("+%d", len(parts)-cap))
+		}
+		out = append(out, Line{Label: label, Text: strings.Join(parts, " · ")})
+	}
+	add("asks", asks, 3)
+	add("state", state, 2)
+	add("who", people, 4)
+	add("for", links, 3)
+	add("sessions", sessions, 3)
+	if s.recent != nil {
+		if r, ok := s.recent(key); ok {
+			out = append(out, Line{Label: "pr-watch", Text: r.Summary + " · " + day(r.At.Unix())})
+		}
+	}
+	return out
+}
 
 // Board is the current board. Reads the graph; cheap (one person's
 // neighbourhood), but a file read, so the ui calls it on a timer.
@@ -323,6 +421,7 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	s.graph = g
 	if l, err := kernel.Get[lockLister](kctx, "pr-watch"); err == nil {
 		s.locks = l.Working
+		s.recent = l.Recent
 	}
 	kctx.Provide("attention", s)
 	if reg, err := kernel.Get[*commands.Registry](kctx, "commands"); err == nil {

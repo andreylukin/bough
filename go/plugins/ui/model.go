@@ -721,6 +721,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, boardTick()
 
+	case hoverMsg:
+		m.takeHover(msg)
+		return m, nil
+
 	case boardTickMsg:
 		if !m.board.on {
 			return m, nil

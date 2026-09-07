@@ -28,6 +28,13 @@ import (
 type boardSource interface {
 	Board() attention.Board
 	Sticky() bool
+	Detail(kind, key string) []attention.Line
+}
+
+// hoverMsg is a fetched detail for the hovered item.
+type hoverMsg struct {
+	key   string
+	lines []attention.Line
 }
 
 // boardMsg is a fresh board read.
@@ -51,9 +58,10 @@ type boardState struct {
 	on      bool
 	loaded  bool
 	b       attention.Board
-	facts   map[string]string // key -> status+detail at the last read
-	changed map[string]bool   // keys whose facts changed at the last read
-	hover   string            // key of the item under the mouse ("" = none)
+	facts   map[string]string           // key -> status+detail at the last read
+	changed map[string]bool             // keys whose facts changed at the last read
+	hover   string                      // key of the item under the mouse ("" = none)
+	detail  map[string][]attention.Line // fetched details by key
 }
 
 // boardColumns is the board's columns at the current width: three
@@ -120,12 +128,28 @@ func (m *model) boardMouse(cfg *uiCfg, msg tea.Msg) (bool, tea.Cmd) {
 		m.board.hover = ""
 		return true, nil
 	}
-	m.board.hover = it.Key
+	var cmds []tea.Cmd
+	if m.board.hover != it.Key {
+		m.board.hover = it.Key
+		if _, have := m.board.detail[it.Key]; !have && it.Count == 0 {
+			// The graph's neighbourhood, off the ui goroutine.
+			src, kind, key := cfg.board, it.Kind, it.Key
+			cmds = append(cmds, func() tea.Msg { return hoverMsg{key, src.Detail(kind, key)} })
+		}
+	}
 	if click && it.URL != "" {
 		url := it.URL
-		return true, func() tea.Msg { openURL(url); return nil }
+		cmds = append(cmds, func() tea.Msg { openURL(url); return nil })
 	}
-	return true, nil
+	return true, tea.Batch(cmds...)
+}
+
+// takeHover stores a fetched detail.
+func (m *model) takeHover(h hoverMsg) {
+	if m.board.detail == nil {
+		m.board.detail = map[string][]attention.Line{}
+	}
+	m.board.detail[h.key] = h.lines
 }
 
 // openURL hands a link to the desktop.
@@ -165,26 +189,42 @@ func (m *model) hoverRows(cfg *uiCfg) []string {
 	}
 	th := cfg.theme
 	w := max(m.width, 20)
-	var lines []string
-	lines = append(lines, th["focus"].Render(" ▸ "+line(it.Title, w-4)))
-	facts := []string{it.Key, it.Kind}
+	head := " ▸ " + it.Title
+	tail := it.Key
 	if it.Status != "" {
-		facts = append(facts, it.Status)
+		tail += " · " + it.Status
 	}
-	facts = append(facts, it.Detail, shortAge(time.Since(it.Since)))
-	lines = append(lines, "   "+th["dim"].Render(line(strings.Join(facts, " · "), w-4)))
+	tail += " · " + shortAge(time.Since(it.Since))
+	if it.URL != "" {
+		tail = th["accent"].Hyperlink(it.URL).Render(tail)
+	} else {
+		tail = th["dim"].Render(tail)
+	}
+	gap := w - lipgloss.Width(head) - lipgloss.Width(tail) - 1
+	if gap < 2 {
+		head = line(head, max(w-lipgloss.Width(tail)-3, 10))
+		gap = 2
+	}
+	lines := []string{th["focus"].Render(head) + strings.Repeat(" ", gap) + tail}
+	row := func(label, text string) {
+		lines = append(lines, "   "+th["dim"].Render(fmt.Sprintf("%-8s", label))+line(text, max(w-12, 8)))
+	}
 	if it.Summary != "" {
-		lines = append(lines, "   "+line(it.Summary, w-4))
+		row("source", it.Summary)
 	}
 	for i, mem := range it.Members {
 		if i == 6 {
-			lines = append(lines, "   "+th["dim"].Render(fmt.Sprintf("+%d more", len(it.Members)-i)))
+			row("", fmt.Sprintf("+%d more", len(it.Members)-i))
 			break
 		}
-		lines = append(lines, "   "+th["dim"].Render(line(mem, w-4)))
+		row(map[bool]string{true: "stack", false: ""}[i == 0], mem)
 	}
-	if it.URL != "" {
-		lines = append(lines, "   "+th["accent"].Hyperlink(it.URL).Render(line(it.URL, w-4)))
+	detail, fetched := m.board.detail[it.Key]
+	for _, l := range detail {
+		row(l.Label, l.Text)
+	}
+	if !fetched && it.Count == 0 {
+		row("", th["dim"].Render("reading the graph…"))
 	}
 	return lines
 }
@@ -226,6 +266,7 @@ func (m *model) takeBoard(b attention.Board) {
 		}
 	}
 	m.board.b, m.board.facts, m.board.changed, m.board.loaded = b, facts, changed, true
+	m.board.detail = nil
 	m.layoutComposer()
 }
 

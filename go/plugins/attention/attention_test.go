@@ -89,3 +89,56 @@ func TestShortKey(t *testing.T) {
 		}
 	}
 }
+
+func TestDetail(t *testing.T) {
+	st, err := graph.Open(filepath.Join(t.TempDir(), "graph.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	at := now.Add(-5 * 24 * time.Hour).Unix()
+	ep, _ := st.Episode("collector", "t")
+	me, _ := st.Upsert("person", "andrey@example.com", "Andrey", "")
+	devin, _ := st.Upsert("person", "github:devin-ai-integration[bot]", "", "")
+	pr, _ := st.Upsert("pr", "unes#7490", "Route demand through Pulsar", "")
+	if err := st.SetState(pr, "open", ep, "collector", at); err != nil {
+		t.Fatal(err)
+	}
+	tk, _ := st.Upsert("ticket", "NME-1664", "Add nas-event-log to prod", "")
+	_ = st.SetState(tk, "code_review", ep, "collector", at)
+	sess, _ := st.Upsert("session", "old:abc", "Deploy the event log", "")
+	opts := graph.AssertOpts{ValidFrom: at}
+	st.Assert(me, "authored", pr, ep, "collector", opts)
+	st.Assert(devin, "reviews", pr, ep, "collector", graph.AssertOpts{ValidFrom: at, Claim: "commented"})
+	st.Assert(pr, "awaits", me, ep, "collector", graph.AssertOpts{ValidFrom: at, Claim: "4 unresolved review threads"})
+	st.Assert(pr, "implements", tk, ep, "collector", opts)
+	st.Assert(sess, "touches", tk, ep, "session", opts)
+
+	s := &Service{graph: &graph.Service{Store: st, Me: "andrey@example.com"}, Now: func() time.Time { return now }}
+	s.recent = func(key string) (prwatch.Recent, bool) {
+		return prwatch.Recent{Key: "o/unes#7490", Summary: "replied to 2 threads, pushed", At: now.Add(-time.Hour)}, key == "unes#7490"
+	}
+	got := map[string]string{}
+	for _, l := range s.Detail("pr", "unes#7490") {
+		got[l.Label] = l.Text
+	}
+	for label, want := range map[string]string{
+		"asks":     "4 unresolved review threads (you)",
+		"state":    "open since Sep 1",
+		"who":      "you opened Sep 1 · devin-ai-integration commented Sep 1",
+		"for":      "NME-1664 Add nas-event-log to prod [code_review]",
+		"pr-watch": "replied to 2 threads, pushed · Sep 6",
+	} {
+		if got[label] != want {
+			t.Errorf("%s = %q, want %q (all: %v)", label, got[label], want, got)
+		}
+	}
+	got = map[string]string{}
+	for _, l := range s.Detail("ticket", "NME-1664") {
+		got[l.Label] = l.Text
+	}
+	if got["sessions"] != "Sep 1 “Deploy the event log”" || got["for"] != "unes#7490 Route demand through Pulsar [open]" {
+		t.Errorf("ticket detail: %v", got)
+	}
+}
