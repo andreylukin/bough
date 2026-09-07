@@ -40,6 +40,7 @@ type hub struct {
 	histDir  string
 	bin      string
 	next     int
+	titleOf  func(id string) string // a title the history file lacks (the graph's)
 }
 
 func newHub(mainURL string, mainID func() string, histDir string) *hub {
@@ -82,7 +83,11 @@ func (h *hub) sessions(limit int) []sessionRow {
 		if in.Entries == 0 && live[in.ID] == "" {
 			continue
 		}
-		out = append(out, sessionRow{ID: in.ID, Title: first(in.Title, "(untitled)"), Cwd: in.Cwd, At: in.ModTime, Live: live[in.ID], URL: "/s/" + in.ID})
+		title := in.Title
+		if title == "" && h.titleOf != nil {
+			title = h.titleOf(in.ID)
+		}
+		out = append(out, sessionRow{ID: in.ID, Title: first(title, "(untitled)"), Cwd: in.Cwd, At: in.ModTime, Live: live[in.ID], URL: "/s/" + in.ID})
 		if limit > 0 && len(out) >= limit {
 			break
 		}

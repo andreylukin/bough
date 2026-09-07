@@ -494,6 +494,14 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		s.hub = newHub(mainURL, func() string {
 			return strings.TrimSuffix(filepath.Base(h.Path()), filepath.Ext(h.Path()))
 		}, dir)
+		s.hub.titleOf = func(id string) string {
+			for _, key := range []string{id, "old:" + id} {
+				if e, err := s.graph.Store.Get("session", key); err == nil && e.Title != "" {
+					return strings.TrimPrefix(e.Title, "exec: ")
+				}
+			}
+			return ""
+		}
 		kctx.Effect(s.hub.stop)
 	}
 	if s.web != "" {
