@@ -13,6 +13,8 @@ package ui
 
 import (
 	"fmt"
+	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -51,6 +53,150 @@ type boardState struct {
 	b       attention.Board
 	facts   map[string]string // key -> status+detail at the last read
 	changed map[string]bool   // keys whose facts changed at the last read
+	hover   string            // key of the item under the mouse ("" = none)
+}
+
+// boardColumns is the board's columns at the current width: three
+// when it fits, NEEDS ME alone when it does not.
+func (m *model) boardColumns() [][]attention.Item {
+	b := m.board.b
+	cols := [][]attention.Item{b.Me, b.Motion, b.Others}
+	if max(m.width, 20) < boardMinW {
+		return cols[:1]
+	}
+	return cols
+}
+
+// boardHeight is how many screen rows the board takes right now.
+func (m *model) boardHeight(cfg *uiCfg) int { return len(m.boardRows(cfg)) }
+
+// boardItemAt is the item drawn at screen position (x, y): the rows
+// are header, column titles, then two per item, so the geometry is
+// the same arithmetic that laid them out.
+func (m *model) boardItemAt(cfg *uiCfg, x, y int) (attention.Item, bool) {
+	if !m.board.on || !m.board.loaded || m.board.b.Empty() {
+		return attention.Item{}, false
+	}
+	cols := m.boardColumns()
+	cw := (max(m.width, 20) - 1) / len(cols)
+	col := (x - 1) / max(cw, 1)
+	row := y - 2 // header and titles
+	if x < 1 || row < 0 || col < 0 || col >= len(cols) {
+		return attention.Item{}, false
+	}
+	i := row / 2
+	if i >= m.boardMax() || i >= len(cols[col]) {
+		return attention.Item{}, false
+	}
+	return cols[col][i], true
+}
+
+// boardMouse routes a mouse event that lands on the board: a click
+// opens the item's link, motion hovers it. Reports whether the event
+// was the board's.
+func (m *model) boardMouse(cfg *uiCfg, msg tea.Msg) (bool, tea.Cmd) {
+	h := m.boardHeight(cfg)
+	if h == 0 {
+		return false, nil
+	}
+	var mouse tea.Mouse
+	click := false
+	switch e := msg.(type) {
+	case tea.MouseClickMsg:
+		mouse, click = tea.Mouse(e), e.Button == tea.MouseLeft
+	case tea.MouseMotionMsg:
+		mouse = tea.Mouse(e)
+	case tea.MouseReleaseMsg:
+		mouse = tea.Mouse(e)
+	default:
+		return false, nil
+	}
+	if mouse.Y >= h {
+		m.board.hover = ""
+		return false, nil
+	}
+	it, ok := m.boardItemAt(cfg, mouse.X, mouse.Y)
+	if !ok {
+		m.board.hover = ""
+		return true, nil
+	}
+	m.board.hover = it.Key
+	if click && it.URL != "" {
+		url := it.URL
+		return true, func() tea.Msg { openURL(url); return nil }
+	}
+	return true, nil
+}
+
+// openURL hands a link to the desktop.
+func openURL(url string) {
+	cmd := "xdg-open"
+	if runtime.GOOS == "darwin" {
+		cmd = "open"
+	}
+	_ = exec.Command(cmd, url).Start()
+}
+
+// shiftMouse moves a mouse event up by the board's rows, so the code
+// below the board keeps its own coordinates.
+func shiftMouse(e tea.Mouse, h int) tea.Mouse {
+	e.Y -= h
+	return e
+}
+
+// hoverRows is the detail box for the hovered item, drawn over the
+// transcript's top rows so nothing reflows: title, key and facts,
+// the source's line, the link, a stack's members.
+func (m *model) hoverRows(cfg *uiCfg) []string {
+	if m.board.hover == "" {
+		return nil
+	}
+	var it attention.Item
+	found := false
+	for _, col := range m.boardColumns() {
+		for _, x := range col {
+			if x.Key == m.board.hover {
+				it, found = x, true
+			}
+		}
+	}
+	if !found {
+		return nil
+	}
+	th := cfg.theme
+	w := max(m.width, 20)
+	var lines []string
+	lines = append(lines, th["focus"].Render(" ▸ "+line(it.Title, w-4)))
+	facts := []string{it.Key, it.Kind}
+	if it.Status != "" {
+		facts = append(facts, it.Status)
+	}
+	facts = append(facts, it.Detail, shortAge(time.Since(it.Since)))
+	lines = append(lines, "   "+th["dim"].Render(line(strings.Join(facts, " · "), w-4)))
+	if it.Summary != "" {
+		lines = append(lines, "   "+line(it.Summary, w-4))
+	}
+	for i, mem := range it.Members {
+		if i == 6 {
+			lines = append(lines, "   "+th["dim"].Render(fmt.Sprintf("+%d more", len(it.Members)-i)))
+			break
+		}
+		lines = append(lines, "   "+th["dim"].Render(line(mem, w-4)))
+	}
+	if it.URL != "" {
+		lines = append(lines, "   "+th["accent"].Hyperlink(it.URL).Render(line(it.URL, w-4)))
+	}
+	return lines
+}
+
+// overlayTop replaces the top rows of body with lines (when they fit).
+func overlayTop(body string, lines []string) string {
+	bl := strings.Split(body, "\n")
+	if k := len(lines); len(bl) >= k {
+		copy(bl[:k], lines)
+		body = strings.Join(bl, "\n")
+	}
+	return body
 }
 
 // loadBoard reads the board off the ui goroutine.
@@ -132,7 +278,7 @@ func (m *model) boardRows(cfg *uiCfg) []string {
 		{"IN MOTION", th["accent"], b.Motion},
 		{"WAITING ON OTHERS", th["dim"], b.Others},
 	}
-	if w < boardMinW {
+	if len(m.boardColumns()) == 1 {
 		cols = cols[:1]
 		// One column: motion and others fold into the count line below.
 	}
@@ -201,6 +347,14 @@ func (m *model) boardColumn(cfg *uiCfg, items []attention.Item, style lipgloss.S
 		nameStyle := lipgloss.NewStyle()
 		if m.board.changed[it.Key] {
 			nameStyle = th["focus"]
+		}
+		if it.Key == m.board.hover {
+			nameStyle = nameStyle.Underline(true)
+		}
+		if it.URL != "" {
+			// A real terminal link: cmd-click opens it in the browser
+			// even where bough's own click handling is off.
+			nameStyle = nameStyle.Hyperlink(it.URL)
 		}
 		first := mark + " " + nameStyle.Render(line(name, max(room, 8))) + status
 		out = append(out, first)

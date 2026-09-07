@@ -786,14 +786,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.leader {
 			m.leader, m.flash = false, "" // a click is not a chord: the pending leader lapses
 		}
-		return m, m.handleClick(msg.Mouse())
+		// The board sits above the transcript: its rows take the
+		// event, or the event moves up past them.
+		cfg := m.cfg.Load()
+		if took, cmd := m.boardMouse(cfg, msg); took {
+			return m, cmd
+		}
+		return m, m.handleClick(shiftMouse(msg.Mouse(), m.boardHeight(cfg)))
 
 	case tea.MouseMotionMsg:
-		m.dragSelect(msg.Mouse())
+		cfg := m.cfg.Load()
+		if took, _ := m.boardMouse(cfg, msg); took {
+			return m, nil
+		}
+		m.dragSelect(shiftMouse(msg.Mouse(), m.boardHeight(cfg)))
 		return m, nil // never the composer's business
 
 	case tea.MouseReleaseMsg:
-		return m, m.releaseSelect(msg.Mouse())
+		cfg := m.cfg.Load()
+		if took, _ := m.boardMouse(cfg, msg); took {
+			return m, nil
+		}
+		return m, m.releaseSelect(shiftMouse(msg.Mouse(), m.boardHeight(cfg)))
 
 	case tea.PasteMsg:
 		m.stop.armedAt = time.Time{} // a paste is typing: it disarms quit like any key
@@ -1478,6 +1492,9 @@ func (m model) View() tea.View {
 	v := tea.NewView(safeView(m.frame))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion // clicks toggle blocks; wheel scrolls
+	if m.board.on {
+		v.MouseMode = tea.MouseModeAllMotion // the board shows detail on hover
+	}
 	return v
 }
 
@@ -1510,6 +1527,9 @@ func (m model) frame() string {
 	}
 	out := body
 	if rows := m.boardRows(cfg); len(rows) > 0 {
+		if hover := m.hoverRows(cfg); len(hover) > 0 && !m.inspecting {
+			body = overlayTop(body, hover)
+		}
 		out = strings.Join(rows, "\n") + "\n" + body
 	}
 	// The todo list sits directly above the composer, always, while

@@ -34,6 +34,8 @@ type Item struct {
 	Since   time.Time // when this party's turn began (the source's clock)
 	Session string    // IN MOTION: the session working it ("" elsewhere)
 	Count   int       // a stack of Count similar items folded into one row (0 = single)
+	Summary string    // the source's one line about it
+	Members []string  // a stack's rows: key and title each
 }
 
 // Board is the world by whose turn it is.
@@ -153,7 +155,7 @@ func awaitedBy(w graph.World, e graph.Entity) (graph.Entity, bool) {
 // item is the entity as a row: title trimmed, the CI/review facts of
 // the summary kept as status.
 func item(e graph.Entity, now time.Time) Item {
-	it := Item{Key: e.Key, Kind: e.Kind, Title: first(e.Title, e.Key), URL: e.URL, Status: e.Status}
+	it := Item{Key: e.Key, Kind: e.Kind, Title: first(e.Title, e.Key), URL: e.URL, Status: e.Status, Summary: e.Summary}
 	if e.UpdatedAt > 0 {
 		it.Since = time.Unix(e.UpdatedAt, 0)
 	} else {
@@ -207,9 +209,12 @@ func stack(items []Item) []Item {
 		head.Title = repo + " · dependency updates"
 		head.Count = len(idx)
 		head.URL = ""
+		head.Summary = ""
+		head.Members = nil
 		failing := 0
 		for _, i := range idx {
 			drop[i] = true
+			head.Members = append(head.Members, items[i].Key+" "+items[i].Title)
 			if items[i].Status == "ci failing" {
 				failing++
 			}

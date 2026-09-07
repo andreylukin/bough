@@ -37,10 +37,10 @@ func sample() attention.Board {
 		Collected: now.Add(-2 * time.Hour),
 		Me: []attention.Item{
 			{Key: "bough · deps", Kind: "pr", Title: "bough · dependency updates", Status: "ci failing ×12", Detail: "review required", Since: now.Add(-3 * 24 * time.Hour), Count: 12},
-			{Key: "orb#142", Kind: "pr", Title: "alert backtesting", Status: "open", Detail: "review required", Since: now.Add(-3 * time.Hour)},
+			{Key: "orb#142", Kind: "pr", Title: "alert backtesting", Status: "open", Detail: "review required", Since: now.Add(-3 * time.Hour), URL: "https://github.com/x/orb#142", Summary: "review required, branch feat/x"},
 		},
 		Motion: []attention.Item{
-			{Key: "bough#66", Kind: "pr", Title: "fix thing", Status: "ci failing", Detail: "session 8f3a · 1 review thread", Since: now.Add(-14 * time.Minute), Session: "8f3a1234-abcd"},
+			{Key: "bough#66", Kind: "pr", Title: "fix thing", Status: "ci failing", Detail: "session 8f3a · 1 review thread", Since: now.Add(-14 * time.Minute), Session: "8f3a1234-abcd", URL: "https://github.com/x/bough#66"},
 		},
 		Others: []attention.Item{
 			{Key: "nas#46", Kind: "pr", Title: "fix sharding", Status: "ci green", Detail: "awaits Bradley", Since: now.Add(-2 * 24 * time.Hour)},
@@ -156,4 +156,63 @@ func drain(cmd tea.Cmd) []tea.Msg {
 		out = append(out, msg)
 	}
 	return out
+}
+
+func TestBoardHoverClickAndOffset(t *testing.T) {
+	m := boardModel(t, 150, fakeBoard{b: sample(), sticky: true})
+	m.takeBoard(sample())
+	cfg := m.cfg.Load()
+	h := m.boardHeight(cfg)
+	if h < 4 {
+		t.Fatalf("board height %d", h)
+	}
+	// Row 2 is the first item of each column; column width is 49.
+	if it, ok := m.boardItemAt(cfg, 5, 2); !ok || it.Key != "bough · deps" {
+		t.Fatalf("item at (5,2): %+v %v", it, ok)
+	}
+	if it, ok := m.boardItemAt(cfg, 60, 3); !ok || it.Key != "bough#66" {
+		t.Fatalf("item at (60,3): %+v %v", it, ok)
+	}
+	if it, ok := m.boardItemAt(cfg, 5, 4); !ok || it.Key != "orb#142" {
+		t.Fatalf("item at (5,4): %+v %v", it, ok)
+	}
+	if _, ok := m.boardItemAt(cfg, 60, 4); ok {
+		t.Fatal("no second item in motion")
+	}
+	// Motion over a row hovers it: the name is underlined and a detail
+	// box with the link covers the transcript's top rows.
+	mm, _ := m.Update(tea.MouseMotionMsg{X: 5, Y: 4})
+	m = mm.(model)
+	if m.board.hover != "orb#142" {
+		t.Fatalf("hover = %q", m.board.hover)
+	}
+	frame := m.frame()
+	if !strings.Contains(ansi.Strip(frame), "▸ alert backtesting") || !strings.Contains(frame, "https://github.com/x/orb#142") {
+		t.Errorf("hover box missing:\n%s", ansi.Strip(frame))
+	}
+	// The name row carries a real terminal link.
+	if !strings.Contains(frame, "\x1b]8;;https://github.com/x/orb#142") {
+		t.Error("no OSC 8 link on the row")
+	}
+	// Motion below the board clears the hover.
+	mm, _ = m.Update(tea.MouseMotionMsg{X: 5, Y: h + 3})
+	m = mm.(model)
+	if m.board.hover != "" {
+		t.Fatal("hover survives leaving the board")
+	}
+	// A click on a row returns the open command; on the deps stack (no URL) nothing.
+	if _, cmd := m.Update(tea.MouseClickMsg{X: 5, Y: 4, Button: tea.MouseLeft}); cmd == nil {
+		t.Error("click on a linked row does nothing")
+	}
+	if _, cmd := m.Update(tea.MouseClickMsg{X: 5, Y: 2, Button: tea.MouseLeft}); cmd != nil {
+		t.Error("click on a stack opens something")
+	}
+	// A click on the status bar still opens the picker: its row is
+	// the viewport's height below the board, not from the top.
+	if got := shiftMouse(tea.Mouse{Y: h + m.vp.Height()}, h).Y; got != m.vp.Height() {
+		t.Errorf("shifted y = %d, want %d", got, m.vp.Height())
+	}
+	if m.View().MouseMode != tea.MouseModeAllMotion {
+		t.Error("the board needs motion events")
+	}
 }
