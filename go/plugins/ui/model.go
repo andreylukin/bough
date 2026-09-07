@@ -103,6 +103,7 @@ type model struct {
 	running     bool           // a turn is in flight (input sent, no done/error yet)
 	turnStart   time.Time      // when the in-flight turn started (status bar elapsed)
 	lastRequest time.Time      // when the model last answered (cache chip, cache.go)
+	lastEnd     string         // how the last turn ended: "done", "cancelled", "" (tabtitle.go)
 	inspecting  bool           // history overlay open
 	diving      int            // spawn card id whose child transcript the overlay shows (0 = history)
 	ovRanges    []lineRange    // overlay line span -> entry index
@@ -880,6 +881,9 @@ func (m *model) addEvent(ev Event) {
 	case "done":
 		m.running = false
 		m.lastRequest = time.Now()
+		if m.lastEnd != "cancelled" {
+			m.lastEnd = "done" // the cancelled marker came first when it did
+		}
 		m.expireAsks() // a turn never ends with a live ask
 		if m.flash == "cancelling…" {
 			m.flash = "" // the cancel landed: the transcript says so, the bar goes back to its chips
@@ -987,6 +991,9 @@ func (m *model) addEvent(ev Event) {
 		m.blocks = append(m.blocks, block{id: id, kind: "system", text: ev.Text,
 			collapsed: m.closedByDefault(ev.Text)})
 	default: // assistant, anything future
+		if ev.Kind == "cancelled" {
+			m.lastEnd = "cancelled" // the done that follows keeps it (tabtitle.go)
+		}
 		// A loop-event system note is detail; command output (slash.go)
 		// is what the user asked for and stays open.
 		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: ev.Text,
@@ -1446,6 +1453,7 @@ func (m *model) submit(line string) tea.Cmd {
 		m.turnStart = time.Now()
 	}
 	m.running = true
+	m.lastEnd = ""
 	send := m.send
 	return tea.Batch(
 		func() tea.Msg { send(line); return nil },
@@ -1519,6 +1527,7 @@ func (m *model) refreshOverlay() {
 
 func (m model) View() tea.View {
 	v := tea.NewView(safeView(m.frame))
+	v.WindowTitle = m.tabTitle() // the renderer sends it only when it changes
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion // clicks toggle blocks; wheel scrolls
 	if m.board.on {
