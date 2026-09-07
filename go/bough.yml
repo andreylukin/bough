@@ -229,8 +229,10 @@
 
 # One cheap call per session names it, so `bough sessions` and the
 # picker read as a list of jobs instead of opening sentences.
-# Inside a cmux terminal (macOS), the sidebar tab takes the session's
-# title as soon as it has one. Elsewhere the row does nothing.
+# Inside a cmux terminal (macOS), the sidebar row takes the session's
+# title as its name, the prompt in flight as its description, and a
+# "bough" pill saying running / needs an answer / done / stopped.
+# Elsewhere the row does nothing.
 - id: cmux
   plugin: cmux
   # config:
