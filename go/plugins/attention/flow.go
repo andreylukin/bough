@@ -269,6 +269,10 @@ func (s *Service) row(it Item, col string, from, now time.Time) Row {
 			return StageReview
 		case it.Kind == "pr" && state == "open" && everReviewed:
 			return StageReview
+		case state == "draft":
+			return StageBuilding
+		case state == "" && it.Kind == "pr":
+			return "" // not born yet: nothing to draw
 		case it.Kind == "ticket":
 			switch state {
 			case "in progress", "in_progress", "started":
@@ -299,6 +303,10 @@ func (s *Service) row(it Item, col string, from, now time.Time) Row {
 			return
 		}
 		st := stageAt()
+		if st == "" {
+			cur = to
+			return
+		}
 		if n := len(r.Segments); n > 0 && r.Segments[n-1].Stage == st {
 			r.Segments[n-1].To = time.Unix(to, 0)
 		} else {

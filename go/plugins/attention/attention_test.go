@@ -235,16 +235,16 @@ func TestFlowStages(t *testing.T) {
 	for _, sg := range r.Segments {
 		stages = append(stages, sg.Stage)
 	}
-	// queued (before it existed) → building → in review (Bradley) → in review (me): the
-	// two review windows merge into one segment.
-	if strings.Join(stages, ",") != "queued,building,in review" {
+	// Nothing before it existed, then building → in review (Bradley) →
+	// in review (me): the two review windows merge into one segment.
+	if strings.Join(stages, ",") != "building,in review" {
 		t.Fatalf("stages: %v (%+v)", stages, r.Segments)
 	}
-	if got := r.Segments[1].From.Unix(); got != day(5) {
-		t.Errorf("building starts at open: %v", r.Segments[1].From)
+	if got := r.Segments[0].From.Unix(); got != day(5) {
+		t.Errorf("building starts at open: %v", r.Segments[0].From)
 	}
-	if got := r.Segments[2].From.Unix(); got != day(3) {
-		t.Errorf("review starts at the first awaits: %v", r.Segments[2].From)
+	if got := r.Segments[1].From.Unix(); got != day(3) {
+		t.Errorf("review starts at the first awaits: %v", r.Segments[1].From)
 	}
 	var marks []string
 	for _, m := range r.Marks {
