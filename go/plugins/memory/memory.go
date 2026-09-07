@@ -6,6 +6,11 @@
 // agent's own model or its attention: the extraction runs after the
 // turn is over, on the cheap "llm-small" service (see llm.Small), and
 // its result is announced so the user can see what was remembered.
+// Facts are plain sentences under four kinds (preference, decision,
+// location, dead-end), not graph triples: a small model writes a
+// sentence right far more often than a schema, and a sentence is what
+// the agent can act on when it reads it back. The row also owns the
+// prompt rule that tells the agent when to search memory at all.
 //
 // Facts land in the graph plugin when it is mounted (the bi-temporal
 // store, so a later contradiction supersedes rather than overwrites);
@@ -19,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -45,26 +51,47 @@ const digestBytes = 12 * 1024
 // the dump. Facts are verified against the full output afterwards.
 const resultHead = 600
 
-// Prompt is the extraction brief. It asks for pipe-separated triples
-// rather than JSON: a small model gets one line per fact right far more
-// often than it gets a nested object right.
-const Prompt = `You read one finished turn of a coding session and write down ONLY what is worth remembering later.
+// Prompt is the extraction brief. It asks for one plain sentence per
+// fact, pipe-separated from its kind and evidence, rather than graph
+// triples or JSON: a small model gets a sentence right far more often
+// than it gets a schema right, and a sentence is what a later reader
+// (the agent, or the user in the transcript) can actually use.
+const Prompt = `You read one finished turn of a coding session and write down ONLY what is worth remembering in a LATER session.
 
-Worth remembering: a decision and its reason, a constraint or preference the user stated, where something lives in the code, a non-obvious fact established by running something, a dead end proven not to work.
+Worth remembering: a preference or constraint the user stated and why, a decision and its reason, where something non-obvious lives in the code, a dead end proven not to work and why.
 
-NOT worth remembering: what the user asked, what the agent did, anything a later reader could get by reading the code or git log, anything that is only true during this turn, pleasantries, plans.
+NOT worth remembering: what the user asked, what the agent did, anything a later reader could get by reading the code or git log, anything that is only true during this turn, test results, pleasantries, plans.
 
 Answer with at most %d lines, each exactly:
-subject | relation | object | evidence
+kind | fact | evidence
 
-subject and object are kind:key, kinds: repo, file, package, tool, person, task, decision, service. Use the real paths and names from the turn.
-relation is one of: relates, requires, replaces, blocked_by, decided, authored, implements, documents.
-evidence is #N followed by a colon and a short verbatim quote from the entry marked [#N] in the turn that makes the fact true, e.g. #12: billing_project: uni-analytics-prod
+kind is one of: preference, decision, location, dead-end.
+fact is ONE plain sentence, specific enough to be useful with no other context: name the real paths, flags, names and the reason. Write "the user" for the user.
+evidence is #N followed by a colon and a short verbatim quote from the entry marked [#N] in the turn that makes the fact true, e.g. #12: never use git stash here
 
 If nothing in this turn is worth remembering, answer with exactly: NOTHING
 
 The turn:
 `
+
+// Kinds is the closed set of fact kinds; a line with any other kind is
+// the model wandering and is dropped.
+var Kinds = []string{"preference", "decision", "location", "dead-end"}
+
+// Rule is the prompt section that tells the agent what memory is and
+// when to consult it. It is present from the first turn, whether or
+// not the graph has anything about this workspace yet: without it the
+// agent only ever searched memory when told to.
+const Rule = `Memory — facts from earlier sessions (the user's preferences, decisions and their reasons, where things live, dead ends) are kept across sessions; the ones about this workspace are listed under "## memory" when there are any. %s Search it BEFORE answering about a past decision or an earlier session, when the user refers to something as already settled ("as before", "like last time", "we decided", "you know"), and when starting in an unfamiliar part of the code. After every turn a small model records on its own what was worth remembering, so you need not; %s`
+
+// RuleGraph and RuleFile are the halves of Rule that name where memory
+// is: the graph verbs when the graph row is mounted, the file otherwise.
+const (
+	RuleGraph     = `tools.graph.search(q) finds more, including facts from other workspaces.`
+	RuleGraphSave = `call tools.graph.assert only when the user asks you to remember something, quoting their words as the evidence.`
+	RuleFile      = `tools.bash("grep -i <word> %s") finds more.`
+	RuleFileSave  = `when the user asks you to remember something, append one line to that file.`
+)
 
 // History is the seam we read the turn from. Path names the session
 // file, which is the session half of an evidence reference.
@@ -93,6 +120,7 @@ type Memory struct {
 	hist     History
 	session  string // the session file's base name, cited in evidence
 	graph    Graph
+	subject  string // the entity facts hang off: repo:<key>, else the session
 	file     string
 	maxFacts int
 	emit     func(kind, text string)
@@ -104,23 +132,45 @@ type Memory struct {
 	failed  bool // the extraction error has been reported once
 }
 
-// Fact is one extracted triple. Seq and Quote are the evidence taken
-// apart: the history entry it cites and the words it quotes from it.
+// Fact is one extracted sentence with its kind. Seq and Quote are the
+// evidence taken apart: the history entry it cites and the words it
+// quotes from it.
 type Fact struct {
-	Src, Rel, Dst, Evidence string
-	Seq                     int64
-	Quote                   string
+	Kind, Text, Evidence string
+	Seq                  int64
+	Quote                string
 }
 
-// Line renders a fact the way the memory file and the ui show it.
+// Line renders a fact the way the ui shows it: the sentence, under
+// its kind. The evidence is in the store for tools.evidence, not in
+// the receipt.
 func (f Fact) Line() string {
-	return fmt.Sprintf("%s %s %s — %s", f.Src, f.Rel, f.Dst, f.Evidence)
+	return f.Kind + ": " + f.Text
 }
 
-// key is the triple a fact is deduplicated on; the evidence wording may
+// key is what a fact is deduplicated on; the evidence wording may
 // differ between turns without making it a new fact.
 func (f Fact) key() string {
-	return strings.ToLower(f.Src + "|" + f.Rel + "|" + f.Dst)
+	return f.Kind + "|" + squash(f.Text)
+}
+
+// slug is the fact's entity key in the graph: its kind and the first
+// words of the sentence, so two facts of one kind are two edges (the
+// store folds an identical src/rel/dst into one) and a key stays
+// readable in `bough graph neighbors`.
+func (f Fact) slug() string {
+	words := strings.Fields(strings.ToLower(f.Text))
+	if len(words) > 8 {
+		words = words[:8]
+	}
+	s := strings.Join(words, "-")
+	s = strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '.' || r == '/' || r == '_' {
+			return r
+		}
+		return -1
+	}, s)
+	return f.Kind + "/" + strings.Trim(s, "-")
 }
 
 var evidenceRe = regexp.MustCompile(`^#(\d+)\s*[:\-–—]\s*(.+)$`)
@@ -161,8 +211,9 @@ func squash(s string) string {
 }
 
 // ParseFacts reads the model's answer. Anything that is not a
-// four-field line is dropped rather than guessed at: a small model that
-// wandered off the format has nothing worth saving in that line.
+// three-field line with a known kind is dropped rather than guessed
+// at: a small model that wandered off the format has nothing worth
+// saving in that line.
 func ParseFacts(reply string, max int) []Fact {
 	if answer, ok := loop.StopAnswer(reply); ok {
 		reply = answer
@@ -174,26 +225,21 @@ func ParseFacts(reply string, max int) []Fact {
 			continue
 		}
 		parts := strings.Split(line, "|")
-		if len(parts) != 4 {
+		if len(parts) != 3 {
 			continue
 		}
 		f := Fact{
-			Src:      strings.TrimSpace(parts[0]),
-			Rel:      strings.TrimSpace(parts[1]),
-			Dst:      strings.TrimSpace(parts[2]),
-			Evidence: strings.TrimSpace(parts[3]),
+			Kind:     strings.ToLower(strings.TrimSpace(parts[0])),
+			Text:     strings.TrimSpace(parts[1]),
+			Evidence: strings.TrimSpace(parts[2]),
 		}
-		if f.Src == "" || f.Rel == "" || f.Dst == "" || f.Evidence == "" {
+		f.Kind = strings.ReplaceAll(strings.ReplaceAll(f.Kind, " ", "-"), "_", "-")
+		if f.Text == "" || f.Evidence == "" || !slices.Contains(Kinds, f.Kind) {
 			continue
 		}
 		if m := evidenceRe.FindStringSubmatch(f.Evidence); m != nil {
 			f.Seq, _ = strconv.ParseInt(m[1], 10, 64)
 			f.Quote = strings.TrimSpace(m[2])
-		}
-		// A relation with spaces is fine; a subject without a kind is
-		// not — it would create a junk entity.
-		if !strings.Contains(f.Src, ":") || !strings.Contains(f.Dst, ":") {
-			continue
 		}
 		if out = append(out, f); len(out) == max {
 			break
@@ -340,23 +386,32 @@ func (m *Memory) harvest() {
 	if len(saved) == 0 {
 		return // a turn that established nothing is not worth a row
 	}
-	head := fmt.Sprintf("remembered %d fact(s)", len(saved))
+	// The receipt leads with the facts themselves; the header line is
+	// what a collapsed row shows, so it is the first fact, not a count.
+	var tail []string
 	if dropped > 0 {
-		head += fmt.Sprintf(", dropped %d whose quote was not in the turn", dropped)
+		tail = append(tail, fmt.Sprintf("dropped %d whose quote was not in the turn", dropped))
 	}
 	if !m.small {
-		head += " (no llm-small row: used the agent's model)"
+		tail = append(tail, "no llm-small row: used the agent's model")
 	}
-	m.emit("memory", head+"\n"+strings.Join(saved, "\n"))
+	text := strings.Join(saved, "\n")
+	if len(tail) > 0 {
+		text += "\n(" + strings.Join(tail, "; ") + ")"
+	}
+	m.emit("memory", text)
 }
 
 // save writes one fact to the graph, or to the memory file without it.
 func (m *Memory) save(f Fact) error {
 	if m.graph != nil {
+		// An edge from the workspace to a memory entity, whose claim
+		// is the sentence: the graph's prompt section prints claims,
+		// so the fact comes back in later sessions as it was written.
 		// Signed "cheap": a small model's inference, never to be read
-		// as something a source stated. The graph folds an unlisted
-		// relation to "relates" and keeps the verb in the claim.
-		if _, err := m.graph.AssertAs("cheap", f.Src, f.Rel, f.Dst, f.Evidence); err != nil {
+		// as something a source stated.
+		claim := f.Line() + " — " + f.Evidence
+		if _, err := m.graph.AssertAs("cheap", m.subject, "relates", "memory:"+f.slug(), claim); err != nil {
 			return fmt.Errorf("graph: %w", err)
 		}
 		return nil
@@ -366,7 +421,7 @@ func (m *Memory) save(f Fact) error {
 		return err
 	}
 	defer fh.Close()
-	_, err = fmt.Fprintf(fh, "- %s\n", f.Line())
+	_, err = fmt.Fprintf(fh, "- %s — %s\n", f.Line(), f.Evidence)
 	return err
 }
 
@@ -405,6 +460,14 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	if g, err := kernel.Get[Graph](kctx, "graph"); err == nil {
 		m.graph = g
 	}
+	// Facts hang off the workspace's repo, which is what the graph's
+	// prompt section seeds from; outside a checkout, off the session.
+	cwd, _ := os.Getwd()
+	if ws := graph.Workspace(cwd); ws.Repo != "" {
+		m.subject = "repo:" + ws.Repo
+	} else {
+		m.subject = "session:" + m.session
+	}
 	if f, ok := cfg["file"].(string); ok && f != "" {
 		m.file = f
 	} else {
@@ -436,8 +499,25 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 			d.Describe("evidence", `tools.evidence("session#seq") -> string: the full text of the history entry a graph edge's evidence cites, verbatim; "#seq" alone means this session.`)
 		}
 	}
+	// The rule that says what memory is and when to look in it.
+	if s, err := kernel.Get[sections](kctx, "prompt-sections"); err == nil {
+		s.Set("memory-rule", m.rule())
+		kctx.Effect(func() { s.Set("memory-rule", "") })
+	}
 	kctx.Provide("auto-memory", m)
 	return nil
+}
+
+// sections is the loop's prompt-sections registry.
+type sections interface{ Set(name, text string) }
+
+// rule is the prompt section for this mount: the graph's verbs when
+// the graph row is present, the file otherwise.
+func (m *Memory) rule() string {
+	if m.graph != nil {
+		return fmt.Sprintf(Rule, RuleGraph, RuleGraphSave)
+	}
+	return fmt.Sprintf(Rule, fmt.Sprintf(RuleFile, m.file), RuleFileSave)
 }
 
 // sessionName is the session half of an evidence reference: the

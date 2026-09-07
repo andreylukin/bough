@@ -16,30 +16,36 @@ import (
 	"github.com/andreylukin/bough/plugins/llm"
 )
 
-// Only a well-formed four-field line becomes a fact. A small model that
-// wandered off the format has nothing worth saving in that line, and a
-// guess would put junk in the graph forever.
+// Only a well-formed three-field line with a known kind becomes a
+// fact. A small model that wandered off the format has nothing worth
+// saving in that line, and a guess would put junk in the graph forever.
 func TestParseFacts(t *testing.T) {
-	reply := `file:go/plugins/loop/loop.go | holds | tool:system-prompt | the base prompt is a const there
-- decision:one-block-per-reply | replaces | decision:run-every-fence | one glm reply carried 138 blocks
+	reply := `location | the base system prompt is a const in go/plugins/loop/loop.go | #4: SystemPrompt is the base
+- Decision | the loop runs only the first code block of a reply because one glm reply carried 138 blocks | #9: first-block-only
 this line is prose, not a fact
-too | few | fields
-no-kind | lives_in | file:x.go | subject has no kind
-service:llm-small | used_by | tool:auto-memory | the extraction runs on it
-repo:bough | prefers | person:andrey | a fourth fact, over the cap`
+too | few
+fact | the kind is not one of the four | #2: x
+Dead end | running every fence of a reply was tried and abandoned | #9: 138 blocks
+preference | a fourth fact, over the cap | #1: cap`
 
 	got := ParseFacts(reply, 3)
 	if len(got) != 3 {
 		t.Fatalf("got %d facts, want 3 (the cap):\n%+v", len(got), got)
 	}
-	if got[0].Src != "file:go/plugins/loop/loop.go" || got[0].Rel != "holds" {
+	if got[0].Kind != "location" || !strings.HasPrefix(got[0].Text, "the base system prompt") || got[0].Seq != 4 {
 		t.Fatalf("first fact = %+v", got[0])
 	}
-	if got[1].Src != "decision:one-block-per-reply" {
-		t.Fatalf("a list bullet must not survive into the subject: %+v", got[1])
+	if got[1].Kind != "decision" {
+		t.Fatalf("a list bullet and case must not survive into the kind: %+v", got[1])
 	}
-	if got[2].Src != "service:llm-small" {
-		t.Fatalf("malformed lines were not skipped: %+v", got)
+	if got[2].Kind != "dead-end" {
+		t.Fatalf("malformed lines were not skipped, or 'Dead end' not folded: %+v", got)
+	}
+	if got[0].Line() != "location: the base system prompt is a const in go/plugins/loop/loop.go" {
+		t.Fatalf("receipt line = %q", got[0].Line())
+	}
+	if got[0].slug() != "location/the-base-system-prompt-is-a-const-in" {
+		t.Fatalf("slug = %q", got[0].slug())
 	}
 	if n := len(ParseFacts("NOTHING", 3)); n != 0 {
 		t.Fatalf("NOTHING yielded %d facts", n)
@@ -110,7 +116,7 @@ func newMem(t *testing.T, l llm.LLM) (*Memory, string) {
 // A harvest writes each fact once: the same turn twice (or the same
 // fact re-derived later) does not stack duplicates.
 func TestHarvestWritesAndDedupes(t *testing.T) {
-	l := &stubLLM{reply: "file:golden_test.go | holds | tool:stale-golden | the gate went red on a stale golden file"}
+	l := &stubLLM{reply: "dead-end | the gate went red on a stale-golden file, not a real failure | the gate went red on a stale golden file"}
 	m, file := newMem(t, l)
 
 	m.harvest()
@@ -240,23 +246,46 @@ func (failLLM) Complete(context.Context, string, []llm.Message) (string, error) 
 		`{"type":"error","error":{"type":"authentication_error","message":"API key is invalid."}}`)
 }
 
-type stubGraph struct{ author, rel string }
+type stubGraph struct{ author, src, rel, dst, claim string }
 
 func (g *stubGraph) AssertAs(author, src, rel, dst, evidence string) (graph.Edge, error) {
-	g.author, g.rel = author, rel
+	g.author, g.src, g.rel, g.dst, g.claim = author, src, rel, dst, evidence
 	return graph.Edge{}, nil
 }
 
 // What a small model inferred is signed "cheap", never "session": a
 // later reader must be able to tell an inference from an observation.
+// The fact hangs off the workspace, as a memory entity whose claim is
+// the sentence with its kind, so the graph's prompt section prints it
+// back as written.
 func TestHarvestSignsFactsCheap(t *testing.T) {
-	l := &stubLLM{reply: "file:golden_test.go | requires | tool:stale-golden | the gate went red"}
+	l := &stubLLM{reply: "preference | the user wants gate failures grepped for ^FAIL, never tailed | the gate went red"}
 	m, _ := newMem(t, l)
 	g := &stubGraph{}
 	m.graph = g
+	m.subject = "repo:github.com/x/y"
 	m.harvest()
-	if g.author != "cheap" || g.rel != "requires" {
-		t.Fatalf("author %q rel %q", g.author, g.rel)
+	if g.author != "cheap" || g.rel != "relates" || g.src != "repo:github.com/x/y" {
+		t.Fatalf("author %q rel %q src %q", g.author, g.rel, g.src)
+	}
+	if !strings.HasPrefix(g.dst, "memory:preference/the-user-wants") {
+		t.Fatalf("dst = %q", g.dst)
+	}
+	if !strings.HasPrefix(g.claim, "preference: the user wants gate failures grepped for ^FAIL, never tailed — ") {
+		t.Fatalf("claim = %q", g.claim)
+	}
+}
+
+// The receipt is the facts themselves, sentence first: a collapsed
+// row shows the first fact, not a count.
+func TestHarvestReceiptLeadsWithTheFact(t *testing.T) {
+	l := &stubLLM{reply: "decision | the golden file is regenerated, not hand-edited, because it is derived | a stale golden file"}
+	m, _ := newMem(t, l)
+	var texts []string
+	m.emit = func(kind, text string) { texts = append(texts, kind+": "+text) }
+	m.harvest()
+	if len(texts) != 1 || !strings.HasPrefix(texts[0], "memory: decision: the golden file is regenerated") {
+		t.Fatalf("receipt = %v", texts)
 	}
 }
 
@@ -265,7 +294,7 @@ func TestVerifyAndEvidenceRef(t *testing.T) {
 		{Seq: 3, Kind: "input", Data: map[string]any{"text": "what did bq return"}},
 		{Seq: 5, Kind: "result", Data: map[string]any{"text": "row_count: 312\nbilling_project: uni-analytics-prod\n"}},
 	}
-	facts := ParseFacts("service:bq | relates | repo:x | #5: billing_project: uni-analytics-prod\nfile:a | relates | file:b | #3: row_count:  312\nfile:c | relates | file:d | #5: owner: nobody\nfile:e | relates | file:f | plain words, no seq", 4)
+	facts := ParseFacts("location | bq bills to uni-analytics-prod | #5: billing_project: uni-analytics-prod\nlocation | the table has 312 rows | #3: row_count:  312\nlocation | nobody owns it | #5: owner: nobody\nlocation | plain evidence | plain words, no seq", 4)
 	if len(facts) != 4 || facts[0].Seq != 5 || facts[0].Quote != "billing_project: uni-analytics-prod" {
 		t.Fatalf("parse: %+v", facts)
 	}

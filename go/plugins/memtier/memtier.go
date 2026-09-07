@@ -98,6 +98,7 @@ type Tier struct {
 	picked map[int64][]int64 // input seq -> seqs the navigator chose
 	busy   bool
 	failed bool
+	told   bool // the user has been told, once, that outputs are hiding
 }
 
 // New returns a projector with the given navigator source (nil, or
@@ -180,6 +181,16 @@ func (t *Tier) Project(entries []history.Entry) []llm.Message {
 	}
 	if kernel.Verbose {
 		kernel.Logf("memory-tier: hiding %d of %d outputs (%d -> %d chars)\n", len(hide), len(results), total, spent)
+	}
+	// Said once, the first time it happens: this is context-window
+	// management, not memory, and without a word the later "restored
+	// #12" receipts read as the transcript losing things.
+	t.mu.Lock()
+	first := !t.told
+	t.told = true
+	t.mu.Unlock()
+	if first && t.emit != nil {
+		t.emit("context", fmt.Sprintf("context past %dk chars: %d older tool outputs now show the model as one-line placeholders; the newest %d stay in full, and any hidden one comes back when the model asks for it or a request needs it. Nothing is deleted from the transcript.", t.budget/1000, len(hide), t.keepWhole))
 	}
 	out := entries
 	for _, e := range entries {
@@ -268,7 +279,7 @@ func (t *Tier) pick(inputSeq int64, prompt string, cands []history.Entry) []int6
 		for i, s := range seqs {
 			parts[i] = "#" + strconv.FormatInt(s, 10)
 		}
-		t.emit("memory", "memory-tier: brought back "+strings.Join(parts, ", ")+" for this turn")
+		t.emit("context", "restored hidden tool outputs "+strings.Join(parts, ", ")+" for this turn")
 	}
 	return seqs
 }
@@ -389,7 +400,7 @@ func (t *Tier) reportOnce(err error) {
 	t.failed = true
 	t.mu.Unlock()
 	if first && t.emit != nil {
-		t.emit("memory", "memory-tier: navigator failed — "+firstLine(err.Error()))
+		t.emit("context", "memory-tier: navigator failed — "+firstLine(err.Error()))
 	}
 }
 

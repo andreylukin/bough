@@ -205,10 +205,12 @@
   #   queries: ["in:#nm-echo-private after:2026-09-01"]  # extra Slack searches
 
 # After every turn a small model writes down what is worth remembering
-# (a decision and its reason, where something lives, a proven dead end)
-# and asserts it into the graph — or appends to ~/.bough/memory.md when
-# the graph row is absent. Runs off the turn, on llm-small when a row
-# provides it. config: {max_facts: 3, file: ~/.bough/memory.md}
+# as plain sentences (a preference and why, a decision and its reason,
+# where something lives, a proven dead end) and asserts them into the
+# graph — or appends to ~/.bough/memory.md when the graph row is absent.
+# Each shows in the transcript as a ◆ remembered row. The row also adds
+# the prompt rule that says when to search memory. Runs off the turn, on
+# llm-small when a row provides it. config: {max_facts: 3, file: ~/.bough/memory.md}
 - id: auto-memory
   plugin: auto-memory
 

@@ -412,8 +412,10 @@ func (m *model) header(b *block, th theme) string {
 		if b.live {
 			tag = "thinking…" // still arriving; the count grows as it does
 		}
-	case "error", "system", "todo", "job", "context", "memory":
+	case "error", "system", "todo", "job", "context":
 		tag = b.kind
+	case "memory":
+		tag = "◆ remembered"
 	}
 	if b.label != "" {
 		tag = b.label
@@ -595,12 +597,22 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 		// the system block below reads as its answer.
 		return "\n" + th["dim"].Render("❯ "+b.text)
 	case "memory":
-		// What was written down after the turn. Dim and closed: it is
-		// a receipt, not the work.
+		// What was written down after the turn, for later sessions.
+		// A receipt, not the work, so it is dim; but it is the one
+		// thing here the user did not watch happen, so each fact
+		// carries the ◆ mark that says "this was remembered".
 		if b.collapsed {
 			return m.header(b, th)
 		}
-		return th["system"].Width(max(m.width, 10)).Render(b.text)
+		var lines []string
+		for _, l := range strings.Split(b.text, "\n") {
+			if l == "" || strings.HasPrefix(l, "(") || strings.HasPrefix(l, "memory:") {
+				lines = append(lines, th["system"].Render(l))
+				continue
+			}
+			lines = append(lines, th["accent"].Render("◆ ")+th["system"].Render(l))
+		}
+		return lipgloss.NewStyle().Width(max(m.width, 10)).Render(strings.Join(lines, "\n"))
 	case "context":
 		// Text the model was given that the user never typed: an
 		// AGENTS.md, a skill a word in the message matched, a hook's
