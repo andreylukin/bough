@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>artifact</title>
+<style>
+:root {
+  --paper: #faf9f5; --ink: #1c1b18; --muted: #6b675e; --faint: #a39f94;
+  --rule: #e6e2d8; --border: #cfcabc; --card: #ffffff; --code: #f1efe8;
+  --accent: #3b6d3a; --info: #2f5f9e; --good: #2f7a3e; --warn: #a8690b; --bad: #b3352b;
+  --c1: #3b6d3a; --c2: #c6733a; --c3: #2f5f9e; --c4: #9c4a8e; --c5: #b39b1f; --c6: #5c8f9f; --c7: #8b6d4a; --c8: #b3352b;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #15161a; --ink: #e8e6df; --muted: #a09c92; --faint: #6b675e;
+    --rule: #2a2c33; --border: #3d404a; --card: #1c1e24; --code: #1f2127;
+    --accent: #8fc98a; --info: #8fb4f0; --good: #7fcf8b; --warn: #e0a84a; --bad: #ef7b6f;
+    --c1: #8fc98a; --c2: #f0a06a; --c3: #8fb4f0; --c4: #d19ac8; --c5: #e0cf5a; --c6: #8ec7d8; --c7: #c7a483; --c8: #ef7b6f;
+  }
+}
+* { box-sizing: border-box; }
+html { background: var(--paper); color: var(--ink); }
+body { margin: 0; font: 16px/1.55 var(--serif); -webkit-font-smoothing: antialiased; }
+main { max-width: 1040px; margin: 0 auto; padding: 48px 28px 80px; }
+.eyebrow { font: 600 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+header { border-bottom: 2px solid var(--ink); padding-bottom: 18px; margin-bottom: 36px; }
+header h1 { font: 700 34px/1.15 var(--serif); letter-spacing: -.01em; margin: 10px 0 6px; }
+header p { margin: 0; color: var(--muted); font-size: 17px; }
+.stack > * + * { margin-top: 26px; }
+p { max-width: 72ch; margin: 0; }
+p + p { margin-top: .8em; }
+a { color: var(--info); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+strong { font-weight: 700; } em { font-style: italic; }
+code { font: 13.5px var(--mono); background: var(--code); padding: 1px 5px; border-radius: 3px; }
+h2 { font: 700 22px/1.25 var(--serif); margin: 0; }
+h2 .eyebrow { display: block; margin-bottom: 6px; }
+ul, ol { max-width: 72ch; margin: 0; padding-left: 1.4em; } li { margin: .25em 0; }
+.md ul { margin-top: .5em; }
+/* stats */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; }
+.stat { background: var(--card); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px 12px; }
+.stat .v { font: 600 30px/1.1 var(--sans); letter-spacing: -.02em; margin: 6px 0 4px; font-variant-numeric: tabular-nums; }
+.stat .d { font: 13px var(--mono); color: var(--muted); }
+.stat .tone-good { color: var(--good); } .stat .tone-warn { color: var(--warn); } .stat .tone-bad { color: var(--bad); } .stat .tone-info { color: var(--info); }
+/* table */
+.tablewrap { overflow-x: auto; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+table { border-collapse: collapse; width: 100%; font: 14.5px/1.4 var(--sans); }
+th { text-align: left; font: 600 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); padding: 10px 11px; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; white-space: nowrap; }
+th[data-dir]::after { content: " ↑"; } th[data-dir="desc"]::after { content: " ↓"; }
+td { padding: 9px 11px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+th.right, td.right { text-align: right; } th.center, td.center { text-align: center; }
+caption { caption-side: bottom; text-align: left; padding: 8px 0 0; font: 13px var(--sans); color: var(--muted); }
+/* chart */
+.chart { background: var(--card); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 10px 6px; }
+.chart .t { padding: 0 8px 4px; font: 600 14px var(--sans); }
+.chart .c { width: 100%; height: 320px; }
+/* kv */
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 22px; max-width: 72ch; margin: 0; font-size: 15px; }
+dt { font: 600 11px/1.9 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); } dd { margin: 0; }
+/* callout */
+.callout { border-left: 3px solid var(--info); background: var(--card); padding: 12px 16px; border-radius: 0 6px 6px 0; max-width: 78ch; }
+.callout .eyebrow { margin-bottom: 4px; }
+.callout.good { border-color: var(--good); } .callout.warn { border-color: var(--warn); } .callout.bad { border-color: var(--bad); }
+.callout.good .eyebrow { color: var(--good); } .callout.warn .eyebrow { color: var(--warn); } .callout.bad .eyebrow { color: var(--bad); } .callout.info .eyebrow { color: var(--info); }
+/* code */
+pre { background: var(--code); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; overflow-x: auto; margin: 0; font: 13px/1.5 var(--mono); }
+pre code { background: none; padding: 0; font-size: inherit; }
+.codehead { font: 600 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); margin-bottom: 6px; }
+/* timeline */
+.timeline { list-style: none; padding: 0; margin: 0; max-width: 78ch; border-left: 2px solid var(--rule); }
+.timeline li { position: relative; padding: 0 0 16px 22px; margin: 0; }
+.timeline li::before { content: ""; position: absolute; left: -6px; top: 7px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+.timeline li.good::before { background: var(--good); } .timeline li.warn::before { background: var(--warn); } .timeline li.bad::before { background: var(--bad); } .timeline li.info::before { background: var(--info); }
+.timeline .when { font: 600 12px var(--mono); color: var(--muted); display: block; margin-bottom: 2px; }
+/* grid & section */
+.grid { display: grid; gap: 18px; } .grid.c2 { grid-template-columns: repeat(2, 1fr); } .grid.c3 { grid-template-columns: repeat(3, 1fr); } .grid.c4 { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 720px) { .grid { grid-template-columns: 1fr !important; } main { padding: 28px 18px 60px; } header h1 { font-size: 28px; } }
+section { border-top: 1px solid var(--rule); padding-top: 22px; }
+section > h2 { margin-bottom: 16px; }
+details > summary { cursor: pointer; list-style: none; } details > summary::-webkit-details-marker { display: none; }
+details > summary h2::before { content: "▸ "; color: var(--faint); } details[open] > summary h2::before { content: "▾ "; }
+details .stack { margin-top: 22px; }
+footer { margin-top: 64px; padding-top: 14px; border-top: 1px solid var(--rule); font: 12px var(--mono); color: var(--faint); display: flex; gap: 18px; flex-wrap: wrap; }
+footer a { color: inherit; }
+@media print { main { padding: 0; } .chart, .stat, .callout, pre { break-inside: avoid; } footer { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow" id="eyebrow">artifact</div>
+    <h1 id="title"></h1>
+    <p id="subtitle" hidden></p>
+  </header>
+  <div class="stack" id="body"></div>
+  <footer>
+    <span>AI-generated — verify before relying on it</span>
+    <span id="when"></span>
+    <a href="?raw" id="raw">spec</a>
+    <a href="/artifacts/">all artifacts</a>
+  </footer>
+</main>
+<script>
+const SPEC = /*SPEC*/null;
+const el = (tag, attrs = {}, ...kids) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k === 'class') e.className = v; else if (k === 'html') e.innerHTML = v; else e.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null) e.append(k.nodeType ? k : document.createTextNode(String(k)));
+  return e;
+};
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const inline = s => esc(s)
+  .replace(/`([^`]+)`/g, '<code>$1</code>')
+  .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  .replace(/(^|[\s(])[_*]([^_*]+)[_*]/g, '$1<em>$2</em>')
+  .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" rel="noopener">$1</a>');
+function markdown(md) {
+  const wrap = el('div', {class: 'md'});
+  let list = null, para = [];
+  const flush = () => { if (para.length) { wrap.append(el('p', {html: inline(para.join(' '))})); para = []; } };
+  for (const raw of String(md).split('\n')) {
+    const line = raw.trim();
+    const m = line.match(/^([-*]|\d+\.)\s+(.*)/);
+    if (m) {
+      flush();
+      const ordered = /\d/.test(m[1]);
+      if (!list || list.tagName !== (ordered ? 'OL' : 'UL')) { list = el(ordered ? 'ol' : 'ul'); wrap.append(list); }
+      list.append(el('li', {html: inline(m[2])}));
+    } else if (line === '') { flush(); list = null; }
+    else { list = null; para.push(line); }
+  }
+  flush();
+  return wrap;
+}
+const isNum = v => typeof v === 'number' || (typeof v === 'string' && v.trim() !== '' && !isNaN(Number(v.replace(/[,%$\s]/g, ''))));
+const numOf = v => typeof v === 'number' ? v : Number(String(v).replace(/[,%$\s]/g, ''));
+const fmt = v => typeof v === 'number' ? (Number.isInteger(v) ? v.toLocaleString() : v.toLocaleString(undefined, {maximumFractionDigits: 2})) : v;
+const palette = () => ['--c1','--c2','--c3','--c4','--c5','--c6','--c7','--c8'].map(v => getComputedStyle(document.documentElement).getPropertyValue(v).trim());
+const cssVar = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+const render = {
+  text: b => markdown(b.md),
+  heading: b => el('h2', {}, b.text),
+  list: b => el(b.ordered ? 'ol' : 'ul', {}, b.items.map(i => el('li', {html: inline(i)}))),
+  stats: b => el('div', {class: 'stats'}, b.items.map(i => el('div', {class: 'stat'},
+    el('div', {class: 'eyebrow'}, i.label),
+    el('div', {class: 'v'}, fmt(i.value)),
+    i.delta != null ? el('div', {class: 'd ' + (i.tone ? 'tone-' + i.tone : '')}, i.delta) : null))),
+  kv: b => el('dl', {}, b.items.flatMap(i => [el('dt', {}, i.key), el('dd', {html: inline(i.value)})])),
+  callout: b => el('div', {class: 'callout ' + (b.tone || 'info')},
+    el('div', {class: 'eyebrow'}, b.title || b.tone || 'note'), markdown(b.text)),
+  code: b => el('div', {}, b.lang ? el('div', {class: 'codehead'}, b.lang) : null, el('pre', {}, el('code', {}, b.text))),
+  timeline: b => el('ol', {class: 'timeline'}, b.items.map(i => el('li', {class: i.tone || ''}, el('span', {class: 'when'}, i.when), el('span', {html: inline(i.what)})))),
+  grid: b => el('div', {class: 'grid c' + (b.columns || 2)}, b.blocks.map(block)),
+  section: b => {
+    const body = el('div', {class: 'stack'}, b.blocks.map(block));
+    if (b.collapsed) return el('details', {}, el('summary', {}, el('h2', {}, b.title)), body);
+    return el('section', {}, el('h2', {}, b.title), body);
+  },
+  table: b => {
+    const numCol = b.columns.map((_, c) => b.rows.length > 0 && b.rows.every(r => r[c] == null || r[c] === '' || isNum(r[c])));
+    const cls = c => (b.align && b.align[c]) || (numCol[c] ? 'num' : '');
+    const tbody = el('tbody');
+    const draw = rows => { tbody.replaceChildren(...rows.map(r => el('tr', {}, r.map((v, c) => el('td', {class: cls(c), html: inline(fmt(v ?? ''))}))))); };
+    const heads = b.columns.map((h, c) => {
+      const th = el('th', {class: cls(c)}, h);
+      th.onclick = () => {
+        const dir = th.dataset.dir === 'asc' ? 'desc' : 'asc';
+        heads.forEach(x => delete x.dataset.dir); th.dataset.dir = dir;
+        const rows = [...b.rows].sort((a, z) => {
+          const x = a[c], y = z[c];
+          const r = numCol[c] ? numOf(x || 0) - numOf(y || 0) : String(x ?? '').localeCompare(String(y ?? ''));
+          return dir === 'asc' ? r : -r;
+        });
+        draw(rows);
+      };
+      return th;
+    });
+    draw(b.rows);
+    const t = el('table', {}, el('thead', {}, el('tr', {}, heads)), tbody);
+    if (b.caption) t.append(el('caption', {}, b.caption));
+    return el('div', {class: 'tablewrap'}, t);
+  },
+  chart: b => {
+    const box = el('div', {class: 'chart'}, b.title ? el('div', {class: 't'}, b.title) : null);
+    const c = el('div', {class: 'c'});
+    box.append(c);
+    withECharts(() => {
+      const colors = palette();
+      const ink = cssVar('--ink'), muted = cssVar('--muted'), rule = cssVar('--rule');
+      const text = {color: ink, fontFamily: cssVar('--sans')};
+      const unit = b.unit ? v => fmt(v) + ' ' + b.unit : fmt;
+      let opt;
+      const grid = {left: 12, right: 18, top: b.series.length > 1 ? 40 : 18, bottom: 8, containLabel: true};
+      const legend = b.series.length > 1 ? {top: 0, textStyle: text, icon: 'circle'} : undefined;
+      if (b.kind === 'pie') {
+        opt = {series: [{type: 'pie', radius: ['38%', '68%'], data: b.x.map((n, i) => ({name: n, value: b.series[0].values[i]})),
+          label: {color: ink, formatter: p => `${p.name}  ${p.percent}%`}, itemStyle: {borderColor: cssVar('--card'), borderWidth: 2}}]};
+      } else if (b.kind === 'scatter') {
+        opt = {grid, legend, xAxis: {type: 'value', axisLabel: text, splitLine: {lineStyle: {color: rule}}}, yAxis: {type: 'value', axisLabel: text, splitLine: {lineStyle: {color: rule}}},
+          series: b.series.map(s => ({type: 'scatter', name: s.name, data: s.values, symbolSize: 9}))};
+      } else {
+        const type = b.kind === 'line' || b.kind === 'area' ? 'line' : 'bar';
+        opt = {grid, legend,
+          xAxis: {type: 'category', data: b.x, axisLabel: text, axisLine: {lineStyle: {color: rule}}, axisTick: {show: false}},
+          yAxis: {type: 'value', name: b.unit && b.unit.length > 3 ? b.unit : undefined, nameTextStyle: {color: muted, align: 'left'}, axisLabel: {...text, formatter: v => b.unit && b.unit.length > 3 ? fmt(v) : unit(v)}, splitLine: {lineStyle: {color: rule}}},
+          series: b.series.map(s => ({type, name: s.name, data: s.values, stack: b.stacked ? 'all' : undefined, smooth: false,
+            areaStyle: b.kind === 'area' ? {opacity: .18} : undefined, symbol: 'circle', symbolSize: 6, lineStyle: {width: 2},
+            barMaxWidth: 46, itemStyle: {borderRadius: type === 'bar' ? [3, 3, 0, 0] : 0}}))};
+      }
+      opt.color = colors;
+      opt.textStyle = text;
+      opt.tooltip = {trigger: b.kind === 'pie' || b.kind === 'scatter' ? 'item' : 'axis', valueFormatter: unit, backgroundColor: cssVar('--card'), borderColor: rule, textStyle: {color: ink}};
+      opt.animationDuration = 400;
+      const chart = echarts.init(c, null, {renderer: 'svg'});
+      chart.setOption(opt);
+      new ResizeObserver(() => chart.resize()).observe(c);
+    });
+    return box;
+  },
+};
+let echartsLoad = null;
+function withECharts(fn) {
+  if (window.echarts) return fn();
+  if (!echartsLoad) echartsLoad = new Promise(res => { const s = document.createElement('script'); s.src = '/artifacts/_lib/echarts.min.js'; s.onload = res; document.head.append(s); });
+  echartsLoad.then(fn);
+}
+function block(b) {
+  const r = render[b.type];
+  try { return r ? r(b) : el('div', {class: 'callout bad'}, 'unknown block: ' + b.type); }
+  catch (e) { return el('div', {class: 'callout bad'}, el('div', {class: 'eyebrow'}, b.type), String(e)); }
+}
+(function main() {
+  if (!SPEC) return;
+  document.title = SPEC.title;
+  document.getElementById('title').textContent = SPEC.title;
+  if (SPEC.subtitle) { const s = document.getElementById('subtitle'); s.textContent = SPEC.subtitle; s.hidden = false; }
+  document.getElementById('body').replaceChildren(...SPEC.blocks.map(block));
+  if (SPEC.published) document.getElementById('when').textContent = new Date(SPEC.published).toLocaleString();
+  document.getElementById('raw').href = location.pathname + '.json';
+})();
+</script>
+</body>
+</html>

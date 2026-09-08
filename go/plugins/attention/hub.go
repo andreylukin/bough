@@ -240,13 +240,13 @@ func (h *hub) freePort() (int, error) {
 	return 0, fmt.Errorf("no free port in 7700-7900")
 }
 
-// routes mounts the hub on mux.
-func (h *hub) routes(mux *http.ServeMux) {
-	mux.HandleFunc("/sessions", func(w http.ResponseWriter, r *http.Request) {
+// routes mounts the hub's endpoints through hf.
+func (h *hub) routes(hf func(string, http.HandlerFunc)) {
+	hf("/sessions", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(h.sessions(40))
 	})
-	mux.HandleFunc("/s/", func(w http.ResponseWriter, r *http.Request) {
+	hf("/s/", func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/s/")
 		q := r.URL.Query()
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)

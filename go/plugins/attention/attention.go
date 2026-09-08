@@ -23,6 +23,7 @@ import (
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/graph"
 	"github.com/andreylukin/bough/plugins/llm"
+	"github.com/andreylukin/bough/plugins/web"
 )
 
 // Item is one row of the board.
@@ -57,8 +58,9 @@ type Service struct {
 	// (zero otherwise); collectedAt is the last run.
 	collectEvery time.Duration
 	sticky       bool
-	web          string // host:port of the board page; "" = none
-	hub          *hub   // chats as URLs; nil without a history service
+	web          string       // host:port of the board page; "" = none
+	shared       *web.Service // the shared page server the board is mounted on, when there is one
+	hub          *hub         // chats as URLs; nil without a history service
 	briefs       *briefs
 	Now          func() time.Time
 
@@ -436,7 +438,15 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 				return fmt.Errorf("attention: sticky must be true or false, got %v", v)
 			}
 		case "web":
-			s.web, _ = v.(string)
+			// An address, or true: on the shared web row when there is one.
+			switch b := v.(type) {
+			case bool:
+				if b {
+					s.web = "true"
+				}
+			case string:
+				s.web = b
+			}
 		case "collect_every":
 			// Handled after the loop; the collector's cadence for the "next" column.
 		default:
@@ -480,7 +490,19 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		}
 	}
 	if s.web != "" {
-		s.serveWeb(s.web)
+		if w, err := kernel.Get[*web.Service](kctx, "web"); err == nil {
+			s.shared = w
+			s.mount(w.Handle)
+			kctx.Effect(func() {
+				for _, p := range patterns {
+					w.Unhandle(p)
+				}
+			})
+		} else if s.web == "true" {
+			return errors.New("attention: web: true needs the web row")
+		} else {
+			s.serveWeb(s.web)
+		}
 	}
 	kctx.Provide("attention", s)
 	if reg, err := kernel.Get[*commands.Registry](kctx, "commands"); err == nil {

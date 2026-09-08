@@ -236,9 +236,29 @@
 # Colors: a bundled palette by name (forest, forest_light, ansi,
 # tokyonight, catppuccin_mocha, gruvbox, nord, dracula); /theme lists
 # and switches live. init.js `ui.theme` tokens overlay the palette.
+# The local page server: one address where rows with a page to show
+# mount it — the attention board with `web: true`, and every artifact
+# an agent publishes. The first bough process binds it; later ones
+# find it taken and point at the same pages (they are read from disk).
+- id: web
+  plugin: web
+  # config:
+  #   addr: localhost:7683
+
+# Artifacts: pages the agent publishes for you to read in the browser
+# (a comparison, a report, a dashboard) — tools.artifact(name, spec)
+# returns the URL and opens it once; /artifacts lists this session's.
+# The model writes a small JSON spec (title + typed blocks: text, stats,
+# table, chart, ...); a bundled viewer owns the look. Stored under
+# ~/.bough/artifacts/<session>/.
+- id: artifacts
+  plugin: artifacts
+  # config:
+  #   open: false          # do not open the browser on first publish
+
 # The attention board: what awaits you, what a session is working now,
 # what of yours waits on others — from the graph, three columns by whose
-# turn it is. With `web: localhost:7683` the row serves it as a page
+# turn it is. With `web: true` the web row serves it as a page
 # (rows link to GitHub/Linear, hovering shows the graph's neighbourhood)
 # and /current-work opens it in the browser; without, /current-work pins
 # the board at the top of the terminal, and sticky: true pins it from
@@ -247,7 +267,7 @@
   plugin: attention
   config:
     sticky: false
-    # web: localhost:7683
+    # web: true            # serve the board on the web row's address
 
 - id: theme
   plugin: theme

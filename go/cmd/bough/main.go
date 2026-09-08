@@ -20,6 +20,7 @@ import (
 	"github.com/andreylukin/bough/internal/schema"
 	"github.com/andreylukin/bough/kernel"
 	_ "github.com/andreylukin/bough/plugins/activity"
+	_ "github.com/andreylukin/bough/plugins/artifacts"
 	_ "github.com/andreylukin/bough/plugins/ask"
 	_ "github.com/andreylukin/bough/plugins/attention"
 	_ "github.com/andreylukin/bough/plugins/cmux"
@@ -49,6 +50,7 @@ import (
 	_ "github.com/andreylukin/bough/plugins/todo"
 	_ "github.com/andreylukin/bough/plugins/tools"
 	"github.com/andreylukin/bough/plugins/ui"
+	_ "github.com/andreylukin/bough/plugins/web"
 	_ "github.com/andreylukin/bough/plugins/workers"
 )
 

@@ -43,47 +43,7 @@ func (s *Service) serveWeb(addr string) {
 	}
 	webAddr = addr
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(boardHTML)
-	})
-	mux.HandleFunc("/api/board", func(w http.ResponseWriter, r *http.Request) {
-		b := s.Board()
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(struct {
-			Board
-			Now time.Time `json:"now"`
-		}{b, time.Now()})
-	})
-	mux.HandleFunc("/api/flow", func(w http.ResponseWriter, r *http.Request) {
-		days, _ := strconv.Atoi(r.URL.Query().Get("days"))
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(s.Flow(days))
-	})
-	mux.HandleFunc("/api/brief", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		text, pending := s.Brief(q.Get("kind"), q.Get("key"))
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"text": text, "pending": pending, "available": s.briefs != nil})
-	})
-	mux.HandleFunc("/api/headline", func(w http.ResponseWriter, r *http.Request) {
-		text, pending := s.Headline()
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"text": text, "pending": pending, "available": s.briefs != nil})
-	})
-	mux.HandleFunc("/api/detail", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		lines := s.Detail(q.Get("kind"), q.Get("key"))
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(lines)
-	})
-	if s.hub != nil {
-		s.hub.routes(mux)
-	}
+	s.mount(mux.Handle)
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -92,9 +52,62 @@ func (s *Service) serveWeb(addr string) {
 	}()
 }
 
+// patterns is every route the board mounts, for the shared server's
+// unmount on remount.
+var patterns = []string{"/", "/api/board", "/api/flow", "/api/brief", "/api/headline", "/api/detail", "/sessions", "/s/"}
+
+// mount registers the board's routes through handle.
+func (s *Service) mount(handle func(string, http.Handler)) {
+	hf := func(p string, f http.HandlerFunc) { handle(p, f) }
+	hf("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(boardHTML)
+	})
+	hf("/api/board", func(w http.ResponseWriter, r *http.Request) {
+		b := s.Board()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(struct {
+			Board
+			Now time.Time `json:"now"`
+		}{b, time.Now()})
+	})
+	hf("/api/flow", func(w http.ResponseWriter, r *http.Request) {
+		days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(s.Flow(days))
+	})
+	hf("/api/brief", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		text, pending := s.Brief(q.Get("kind"), q.Get("key"))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"text": text, "pending": pending, "available": s.briefs != nil})
+	})
+	hf("/api/headline", func(w http.ResponseWriter, r *http.Request) {
+		text, pending := s.Headline()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"text": text, "pending": pending, "available": s.briefs != nil})
+	})
+	hf("/api/detail", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		lines := s.Detail(q.Get("kind"), q.Get("key"))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(lines)
+	})
+	if s.hub != nil {
+		s.hub.routes(hf)
+	}
+}
+
 // URL is where the page is served, "" when this process serves none
 // and the row has no web address.
 func (s *Service) URL() string {
+	if s.shared != nil {
+		return s.shared.URL()
+	}
 	if s.web == "" {
 		return ""
 	}
