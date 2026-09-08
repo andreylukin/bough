@@ -262,12 +262,14 @@
   # config:
   #   addr: localhost:7683
 
-# Artifacts: pages the agent publishes for you to read in the browser
-# (a comparison, a report, a dashboard) — tools.artifact(name, spec)
-# returns the URL and opens it once; /artifacts lists this session's.
-# The model writes a small JSON spec (title + typed blocks: text, stats,
-# table, chart, ...); a bundled viewer owns the look. Stored under
-# ~/.bough/artifacts/<session>/.
+# Artifacts: pages the agent publishes for you to read and act on in
+# the browser (a comparison, a report, a dashboard, a form) —
+# tools.artifact(name, code) returns the URL and opens it once;
+# /artifacts lists this session's. code is OpenUI Lang
+# (thesysdev/openui): one `name = Component(...)` per line, drawn by
+# the vendored OpenUI bundle. Buttons, forms and the note box reach
+# the agent as notices; so do the renderer's errors, which it fixes
+# with tools.artifactPatch. Stored under ~/.bough/artifacts/<session>/.
 - id: artifacts
   plugin: artifacts
   # config:

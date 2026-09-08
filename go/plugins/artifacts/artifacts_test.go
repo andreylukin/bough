@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"path/filepath"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,280 +12,209 @@ import (
 	"github.com/andreylukin/bough/plugins/web"
 )
 
-func sample() map[string]any {
-	return map[string]any{
-		"title":    "DB comparison",
-		"subtitle": "three candidates, one weekend",
-		"blocks": []any{
-			"Postgres **wins** on operations; see the table.",
-			map[string]any{"type": "stats", "items": []any{
-				map[string]any{"label": "p99 read", "value": "4 ms", "delta": "-30%", "tone": "good"},
-			}},
-			map[string]any{"type": "table", "columns": []any{"db", "qps"}, "rows": []any{[]any{"pg", 1200.0}, []any{"sqlite", 900.0}}},
-			map[string]any{"type": "chart", "kind": "bar", "x": []any{"pg", "sqlite"}, "series": []any{map[string]any{"name": "qps", "values": []any{1200.0, 900.0}}}},
-			map[string]any{"type": "section", "title": "Notes", "blocks": []any{"nested shorthand"}},
-		},
-	}
-}
+const sample = `root = Card([head, tbl, ask])
+head = CardHeader("DB comparison", "three candidates")
+tbl = Table([Col("engine", ["SQLite", "DuckDB"]), Col("p99 ms", [1.8, 14.2], "number")])
+ask = Buttons([Button("Keep SQLite"), Button("Try DuckDB")])
+`
 
 func newStore(t *testing.T) *Store {
 	t.Helper()
-	return &Store{root: t.TempDir(), session: "s1", web: web.New("127.0.0.1:0"), opened: map[string]bool{}, seen: map[string]int{}}
+	return &Store{root: t.TempDir(), session: "s1", web: web.New("127.0.0.1:0"), opened: map[string]bool{}, seen: map[string]int{}, errSeen: map[string]string{}}
 }
 
-// A good spec is stored, served as a page and as raw JSON, and listed.
-func TestPublishServesPageAndSpec(t *testing.T) {
+func get(t *testing.T, u string) (int, string) {
+	t.Helper()
+	r, err := http.Get(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Body.Close()
+	b, _ := io.ReadAll(r.Body)
+	return r.StatusCode, string(b)
+}
+
+// A program is stored, served as a page hosting the bundle and as
+// its source, and listed.
+func TestPublishServesPageAndSource(t *testing.T) {
 	s := newStore(t)
 	s.web.Handle("/artifacts/", s)
 	defer s.web.Unhandle("/artifacts/")
 	opened := ""
 	s.open = func(u string) error { opened = u; return nil }
-	url, err := s.Publish("DB Comparison", sample())
+	url, err := s.Publish("DB Comparison", sample)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := s.web.URL() + "/artifacts/s1/db-comparison"; url != want || opened != want {
 		t.Fatalf("url %q opened %q", url, opened)
 	}
-	get := func(u string) (int, string) {
-		r, err := http.Get(u)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer r.Body.Close()
-		b, _ := io.ReadAll(r.Body)
-		return r.StatusCode, string(b)
-	}
-	if code, page := get(url); code != 200 || !strings.Contains(page, `"DB comparison"`) || !strings.Contains(page, "const SPEC = {") {
+	code, page := get(t, url)
+	if code != 200 || !strings.Contains(page, `const PAGE = {`) || !strings.Contains(page, `openui-bundle.min.js`) || !strings.Contains(page, `CardHeader(\"DB comparison\"`) {
 		t.Fatalf("page %d: %.300s", code, page)
 	}
-	if _, raw := get(url + ".json"); !strings.Contains(raw, `"type": "text"`) || !strings.Contains(raw, `"md": "nested shorthand"`) {
-		t.Fatalf("raw spec should have expanded shorthand: %s", raw)
+	if _, src := get(t, url+".ui"); src != sample {
+		t.Fatalf("source: %q", src)
 	}
-	if _, js := get(s.web.URL() + "/artifacts/_lib/echarts.min.js"); !strings.Contains(js, "echarts") {
-		t.Fatal("lib not served")
+	if _, js := get(t, s.web.URL()+"/artifacts/_lib/openui-bundle.min.js"); !strings.Contains(js, "__OpenUI") {
+		t.Fatal("bundle not served")
 	}
-	if _, idx := get(s.web.URL() + "/artifacts/"); !strings.Contains(idx, "/artifacts/s1/db-comparison") {
+	if _, css := get(t, s.web.URL()+"/artifacts/_lib/openui-styles.css"); !strings.Contains(css, "openui") {
+		t.Fatal("styles not served")
+	}
+	if _, idx := get(t, s.web.URL()+"/artifacts/"); !strings.Contains(idx, "/artifacts/s1/db-comparison") {
 		t.Fatalf("index: %s", idx)
 	}
-	if code, _ := get(s.web.URL() + "/artifacts/s1/nope"); code != 404 {
+	if code, _ := get(t, s.web.URL()+"/artifacts/s1/nope"); code != 404 {
 		t.Fatalf("missing page = %d", code)
 	}
-	if code, _ := get(s.web.URL() + "/artifacts/../../etc/passwd"); code != 404 {
+	if code, _ := get(t, s.web.URL()+"/artifacts/../../etc/passwd"); code != 404 {
 		t.Fatalf("traversal = %d", code)
 	}
-	// Republishing keeps the URL and does not reopen the browser.
+	// Republishing keeps the URL, bumps the version, and does not
+	// reopen the browser.
 	opened = ""
-	if again, _ := s.Publish("db-comparison", sample()); again != url || opened != "" {
+	if again, _ := s.Publish("db-comparison", sample); again != url || opened != "" {
 		t.Fatalf("republish: %q opened %q", again, opened)
 	}
-	if l := s.List(); !strings.Contains(l, "DB comparison  "+url) {
+	if m := readMeta(metaPath(s.codePath("db-comparison"))); m.Version != 2 {
+		t.Fatalf("version = %d", m.Version)
+	}
+	if l := s.List(); !strings.Contains(l, "db-comparison (v2)  "+url) {
 		t.Fatalf("list: %s", l)
 	}
-	if _, err := s.Publish("../x", sample()); err == nil {
+	if _, err := s.Publish("../x", sample); err == nil {
 		t.Fatal("bad name accepted")
 	}
-	if fi, err := filepath.Glob(filepath.Join(s.root, "s1", "*.json")); err != nil || len(fi) != 1 {
-		t.Fatalf("files: %v %v", fi, err)
+	if g, _ := s.Guide(); !strings.Contains(g, "## Component Signatures") || strings.Contains(g, "ENTIRE response") {
+		t.Fatalf("guide: %.200s", g)
 	}
 }
 
-// A bad spec comes back as every problem at once, addressed by block.
-func TestNormalizeReportsEveryProblem(t *testing.T) {
-	_, err := Normalize(map[string]any{
-		"blocks": []any{
-			map[string]any{"type": "tabel"},
-			map[string]any{"type": "table", "columns": []any{"a", "b"}, "rows": []any{[]any{1.0}}, "colour": "red"},
-			map[string]any{"type": "chart", "kind": "donut", "series": []any{map[string]any{"values": []any{1.0, 2.0}}}},
-			map[string]any{"type": "callout", "text": "x", "tone": "loud"},
-			map[string]any{"type": "grid", "columns": 7.0, "blocks": []any{map[string]any{"type": "stats", "items": []any{map[string]any{"label": "a"}}}}},
-			42.0,
-		},
-	})
-	if err == nil {
-		t.Fatal("accepted")
-	}
-	for _, want := range []string{
-		"title: required",
-		`blocks[0]: unknown type "tabel" (types: callout, chart, checklist, code, decision, diagram, diff, filter, form, grid, heading, image, kv, list, section, stats, table, tabs, text, timeline)`,
-		"blocks[1] (table): unknown field colour",
-		"blocks[1] (table): rows[0] has 1 cells, 2 columns",
-		"blocks[2] (chart): kind must be one of bar|line|area|pie|scatter",
-		"blocks[2] (chart): x is required",
-		"blocks[3] (callout): tone must be one of info|good|warn|bad",
-		"blocks[4] (grid): columns must be 2, 3 or 4",
-		"blocks[4] (grid).blocks[0] (stats): items[0]: missing value",
-		"blocks[5]: a block is an object with a type, or a string",
+// The publish check catches what the browser would refuse anyway,
+// with the fix in the message.
+func TestCheckRefusesTheObvious(t *testing.T) {
+	for _, c := range []struct{ code, want string }{
+		{"", "no statements"},
+		{"just prose about databases", "no statements"},
+		{"head = CardHeader(\"x\")\n", "no root"},
+		{"root = Card([a])\na = TextContent(\"1\")\na = TextContent(\"2\")\n", `defines "a" twice`},
+		{"```\nroot = Card([])\n```", "markdown fence"},
 	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("missing %q in:\n%s", want, err)
+		err := check(c.code)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: %v (want %q)", c.code, err, c.want)
 		}
 	}
-	if _, err := Normalize("nope"); err == nil || !strings.Contains(err.Error(), "must be an object") {
-		t.Fatalf("string spec: %v", err)
-	}
-}
-
-// The viewer inlines the spec without letting it close the script tag.
-func TestRenderEscapesScriptClose(t *testing.T) {
-	page := render([]byte(`{"title":"</script><b>x"}`))
-	if strings.Contains(page, `"</script>`) || !strings.Contains(page, `<\/script>`) {
-		t.Fatalf("page: %.200s", page[strings.Index(page, "const SPEC"):])
-	}
-}
-
-// Lenient shapes are accepted and canonicalised: object rows, a y:
-// shorthand, columns derived from the rows.
-func TestLenientShapes(t *testing.T) {
-	page, err := Normalize(map[string]any{"title": "t", "blocks": []any{
-		map[string]any{"type": "table", "rows": []any{map[string]any{"db": "pg", "qps": 1.0}, map[string]any{"db": "lite", "qps": 2.0}}},
-		map[string]any{"type": "chart", "kind": "bar", "x": []any{"a", "b"}, "y": []any{1.0, 2.0}},
-	}})
-	if err != nil {
+	if err := check(sample); err != nil {
 		t.Fatal(err)
 	}
-	blocks := page["blocks"].([]any)
-	tbl := blocks[0].(map[string]any)
-	if cols := tbl["columns"].([]any); len(cols) != 2 || cols[0] != "db" || tbl["rows"].([]any)[1].([]any)[1] != 2.0 {
-		t.Fatalf("table: %v", tbl)
-	}
-	if series := blocks[1].(map[string]any)["series"].([]any); len(series) != 1 || series[0].(map[string]any)["values"].([]any)[1] != 2.0 {
-		t.Fatalf("chart: %v", blocks[1])
-	}
 }
 
-// Bound blocks are checked against the data set's columns.
-func TestDataBinding(t *testing.T) {
-	spec := func(blocks ...any) map[string]any {
-		return map[string]any{"title": "t", "data": map[string]any{"sales": []any{
-			map[string]any{"region": "eu", "q": "Q1", "amount": 10.0},
-			map[string]any{"region": "us", "q": "Q1", "amount": 12.0},
-		}}, "blocks": blocks}
+// A patch replaces same-named statements, adds new ones, removes with
+// null, and keeps everything else verbatim.
+func TestMergeIsStatementByStatement(t *testing.T) {
+	patch := "tbl = Table([Col(\"engine\", [\"SQLite\"])])\nnote = Callout(\"info\", \"Chosen\", \"SQLite stays\")\nroot = Card([head, tbl, note])\nask = null\n"
+	got := merge(sample, patch)
+	want := "root = Card([head, tbl, note])\nhead = CardHeader(\"DB comparison\", \"three candidates\")\ntbl = Table([Col(\"engine\", [\"SQLite\"])])\nnote = Callout(\"info\", \"Chosen\", \"SQLite stays\")\n"
+	if got != want {
+		t.Fatalf("merge:\n%s\nwant:\n%s", got, want)
 	}
-	if _, err := Normalize(spec(
-		map[string]any{"type": "filter", "from": "sales", "by": []any{"region"}},
-		map[string]any{"type": "table", "from": "sales"},
-		map[string]any{"type": "chart", "kind": "bar", "from": "sales", "x": "q", "y": "amount"},
-	)); err != nil {
-		t.Fatal(err)
+	// Multi-line statements travel whole.
+	multi := "root = Card([a])\na = Table([\n  Col(\"x\", [1])\n])\n"
+	if out := merge(multi, "b = TextContent(\"hi\")\nroot = Card([a, b])\n"); !strings.Contains(out, "a = Table([\n  Col(\"x\", [1])\n])") || !strings.HasPrefix(out, "root = Card([a, b])") {
+		t.Fatalf("multi: %q", out)
 	}
-	_, err := Normalize(spec(
-		map[string]any{"type": "table", "from": "sale"},
-		map[string]any{"type": "chart", "kind": "bar", "from": "sales", "x": "quarter", "series": []any{"amount"}},
-		map[string]any{"type": "decision", "id": "go", "question": "ship?", "options": []any{"yes"}},
-		map[string]any{"type": "decision", "id": "go", "question": "again?", "options": []any{"a", "b"}},
-		map[string]any{"type": "form", "id": "f", "fields": []any{map[string]any{"name": "env", "type": "select"}}},
-	))
-	if err == nil {
-		t.Fatal("accepted")
-	}
-	for _, want := range []string{
-		`blocks[0] (table): from: no data set "sale" (data has: sales)`,
-		`blocks[1] (chart): x: "quarter" is not a column of sales (columns: amount, q, region)`,
-		"blocks[2] (decision): options needs at least 2 entries",
-		`blocks[3] (decision): id "go" is used twice`,
-		"blocks[4] (form): fields[0]: a select needs options",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("missing %q in:\n%s", want, err)
-		}
-	}
-}
-
-// A patch changes the stored page in place, is validated whole, and
-// bumps the version the open page reloads on.
-func TestPatch(t *testing.T) {
 	s := newStore(t)
-	if _, err := s.Publish("p", sample()); err != nil {
+	if _, err := s.Publish("p", sample); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Patch("p", []any{
-		map[string]any{"op": "set", "path": "blocks[2].rows", "value": []any{[]any{"pg", 1.0}}},
-		map[string]any{"op": "append", "path": "blocks", "value": map[string]any{"type": "callout", "text": "new"}},
-		map[string]any{"op": "remove", "path": "blocks[0]"},
-		map[string]any{"op": "set", "path": "subtitle", "value": "v2"},
-	}); err != nil {
+	if _, err := s.Patch("p", "root = null\n"); err == nil || !strings.Contains(err.Error(), "no root") {
+		t.Fatalf("removing root: %v", err)
+	}
+	if _, err := s.Patch("p", "   \n"); err == nil || !strings.Contains(err.Error(), "no statements") {
+		t.Fatalf("empty patch: %v", err)
+	}
+	if _, err := s.Patch("p", patch); err != nil {
 		t.Fatal(err)
 	}
-	page, _ := s.load("p")
-	blocks := page["blocks"].([]any)
-	if page["version"] != 2.0 || page["subtitle"] != "v2" || len(blocks) != 5 || blocks[len(blocks)-1].(map[string]any)["text"] != "new" || blocks[0].(map[string]any)["type"] != "stats" {
-		t.Fatalf("page: %v", page)
+	b, _ := os.ReadFile(s.codePath("p"))
+	if string(b) != want {
+		t.Fatalf("stored: %s", b)
 	}
-	// A bad patch is refused and leaves the page as it was.
-	_, err := s.Patch("p", []any{map[string]any{"op": "set", "path": "blocks[1].rows", "value": []any{[]any{"only-one-cell"}}}})
-	if err == nil || !strings.Contains(err.Error(), "rows[0] has 1 cells, 2 columns") {
-		t.Fatalf("bad patch: %v", err)
+	if m := readMeta(metaPath(s.codePath("p"))); m.Version != 2 {
+		t.Fatalf("version = %d", m.Version)
 	}
-	if again, _ := s.load("p"); again["version"] != 2.0 {
-		t.Fatal("bad patch changed the page")
-	}
-	if _, err := s.Patch("p", []any{map[string]any{"op": "set", "path": "blocks[9]", "value": 1.0}}); err == nil || !strings.Contains(err.Error(), "out of range") {
-		t.Fatalf("range: %v", err)
-	}
-	if _, err := s.Patch("nope", []any{}); err == nil || !strings.Contains(err.Error(), "not published") {
+	if _, err := s.Patch("nope", "x = 1"); err == nil || !strings.Contains(err.Error(), "not published") {
 		t.Fatalf("unknown: %v", err)
 	}
 }
 
-// Answers posted by the page are stored, read back by the tool, and
-// become notices for the agent; the events stream reports a republish.
-func TestAnswersRoundTrip(t *testing.T) {
+// Actions and notes posted by the page are stored, read back by the
+// tool, and become notices; the renderer's errors become a notice
+// once per report; the events stream reports a republish.
+func TestPageTalksBack(t *testing.T) {
 	s := newStore(t)
 	s.web.Handle("/artifacts/", s)
 	defer s.web.Unhandle("/artifacts/")
 	var notices []string
 	s.notify = func(t string) { notices = append(notices, t) }
-	url, err := s.Publish("plan", map[string]any{"title": "Plan", "blocks": []any{
-		map[string]any{"type": "decision", "id": "go", "question": "ship?", "options": []any{"yes", "no"}},
-	}})
+	url, err := s.Publish("plan", sample)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := s.Answers("plan"); got != "no answers yet on plan" {
 		t.Fatalf("empty: %q", got)
 	}
-	postJSON := func(body string) int {
-		r, err := http.Post(url+"/answers", "application/json", strings.NewReader(body))
+	postJSON := func(path, body string) int {
+		r, err := http.Post(url+path, "application/json", strings.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}
 		r.Body.Close()
 		return r.StatusCode
 	}
-	if code := postJSON(`{"kind":"decision","id":"go","value":{"choice":"yes","reason":"tests green"}}`); code != 200 {
-		t.Fatalf("post = %d", code)
+	if code := postJSON("/answers", `{"kind":"state","state":{"window":"tomorrow"}}`); code != 200 {
+		t.Fatalf("state = %d", code)
 	}
-	if code := postJSON(`{"kind":"note","value":"also bump the version"}`); code != 200 {
+	if code := postJSON("/answers", `{"kind":"action","value":{"type":"continue_conversation","message":"Keep SQLite","formState":{"window":"tomorrow"}},"state":{"window":"tomorrow"}}`); code != 200 {
+		t.Fatalf("action = %d", code)
+	}
+	if code := postJSON("/answers", `{"kind":"note","value":"also bump the version"}`); code != 200 {
 		t.Fatalf("note = %d", code)
 	}
-	if code := postJSON(`{"kind":"note","value":"  "}`); code != 400 {
+	if code := postJSON("/answers", `{"kind":"note","value":"  "}`); code != 400 {
 		t.Fatalf("empty note = %d", code)
 	}
-	r, _ := http.Get(url + "/answers")
-	b, _ := io.ReadAll(r.Body)
-	r.Body.Close()
-	if !strings.Contains(string(b), `"choice":"yes"`) || !strings.Contains(string(b), "bump the version") {
-		t.Fatalf("answers: %s", b)
+	if code := postJSON("/errors", `{"version":1,"errors":[{"source":"parser","code":"unknown-component","statementId":"tbl","message":"Unknown component \"Tabel\"","hint":"Available components: Table, Col"}]}`); code != 200 {
+		t.Fatalf("errors = %d", code)
 	}
-	// The watcher notices the two entries: publishing registered the
-	// page, so nothing posted since counts as history.
-	stop := make(chan struct{})
-	done := make(chan struct{})
-	go func() { s.watchAnswers(stop); close(done) }()
-	deadline := time.Now().Add(5 * time.Second)
-	for len(notices) < 2 && time.Now().Before(deadline) {
-		time.Sleep(50 * time.Millisecond)
+	s.sweep()
+	s.sweep() // the same report again is not news
+	if len(notices) != 3 {
+		t.Fatalf("notices: %q", notices)
 	}
-	close(stop)
-	<-done
-	if len(notices) != 2 || !strings.Contains(notices[0], `[artifact plan] decision go = {"choice":"yes","reason":"tests green"}`) || !strings.Contains(notices[1], "the user wrote: also bump") {
-		t.Fatalf("notices: %v", notices)
+	if !strings.Contains(notices[0], `[artifact plan] the user pressed "Keep SQLite" with {"window":"tomorrow"}`) ||
+		!strings.Contains(notices[1], "the user wrote: also bump") ||
+		!strings.Contains(notices[2], "[artifact plan] the page has 1 error(s) (version 1)") || !strings.Contains(notices[2], `tbl: Unknown component "Tabel" — Available components: Table, Col`) {
+		t.Fatalf("notices: %q", notices)
 	}
-	if got, _ := s.Answers("plan"); !strings.Contains(got, `"choice": "yes"`) {
+	// A clean report after a fix says nothing; a new complaint does.
+	postJSON("/errors", `{"version":2,"errors":[]}`)
+	s.sweep()
+	postJSON("/errors", `{"version":2,"errors":[{"message":"still wrong"}]}`)
+	s.sweep()
+	if len(notices) != 4 || !strings.Contains(notices[3], "still wrong") {
+		t.Fatalf("notices: %q", notices)
+	}
+	if got, _ := s.Answers("plan"); !strings.Contains(got, `"window": "tomorrow"`) || !strings.Contains(got, `"message": "Keep SQLite"`) || !strings.Contains(got, "bump the version") {
 		t.Fatalf("tool: %s", got)
 	}
-	// Events: a republish shows up as an update line.
+	_, es := get(t, url+"/errors")
+	if !strings.Contains(es, "still wrong") {
+		t.Fatalf("errors GET: %s", es)
+	}
+	// Events: a patch shows up as an update line.
 	req, _ := http.NewRequest("GET", url+"/events", nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -294,8 +223,8 @@ func TestAnswersRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	time.Sleep(1100 * time.Millisecond) // past the first tick, mtime resolution
-	if _, err := s.Publish("plan", map[string]any{"title": "Plan v2", "blocks": []any{"x"}}); err != nil {
+	time.Sleep(1100 * time.Millisecond)
+	if _, err := s.Patch("plan", "head = CardHeader(\"v2\")\n"); err != nil {
 		t.Fatal(err)
 	}
 	buf := make([]byte, 256)
@@ -309,5 +238,13 @@ func TestAnswersRoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(got, "event: update") {
 		t.Fatalf("events: %q", got)
+	}
+}
+
+// The viewer inlines the program without letting it close the script tag.
+func TestRenderEscapesScriptClose(t *testing.T) {
+	page := render("x", "root = Card([t])\nt = TextContent(\"</script><b>x\")\n", meta{Version: 1})
+	if strings.Contains(page, "</script><b>") {
+		t.Fatalf("page: %.200s", page[strings.Index(page, "const PAGE"):])
 	}
 }
