@@ -174,6 +174,29 @@ type Service struct {
 	// (or one whose llm row /model swapped) carries its tally on
 	// instead of starting from zero.
 	base llm.Usage
+	// start is the llm's tally when this row mounted. The llm row's
+	// count is per process, not per session: switching sessions
+	// remounts this row but not the llm, so without subtracting it the
+	// previous session's spend would show up in (and double-count
+	// against) the one just resumed.
+	start llm.Usage
+}
+
+// since is the tally as of now less the tally at mount. Pure.
+func since(now, start llm.Usage) llm.Usage {
+	now.InputTokens -= start.InputTokens
+	now.OutputTokens -= start.OutputTokens
+	now.CacheReadTokens -= start.CacheReadTokens
+	now.CacheCreationTokens -= start.CacheCreationTokens
+	if now.Priced && start.Priced {
+		now.Cost -= start.Cost
+	}
+	if now.InputTokens == 0 && now.OutputTokens == 0 {
+		// Nothing spent yet this mount: the last request on record is
+		// the previous session's, not this one's.
+		now.LastInputTokens = 0
+	}
+	return now
 }
 
 // llmPlugin is the llm row's plugin name, "" when the service was
@@ -208,7 +231,7 @@ func (s *Service) lookup() (models.Model, string, bool) {
 // Usage implements llm.UsageReporter: this mount's tally, priced, plus
 // the base.
 func (s *Service) Usage() llm.Usage {
-	u := s.rep.Usage()
+	u := since(s.rep.Usage(), s.start)
 	if !u.Priced {
 		if m, _, ok := s.lookup(); ok {
 			// Tiered rates by input size (gpt-5.6-sol doubles above 272k),
@@ -346,7 +369,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		}
 		return ""
 	}
-	svc := &Service{rep: rep, model: model, plugin: plugin, table: table}
+	svc := &Service{rep: rep, model: model, plugin: plugin, table: table, start: rep.Usage()}
 	if h, err := kernel.Get[interface{ Entries() []history.Entry }](ctx, "history"); err == nil {
 		svc.base = loop.SumUsage(h.Entries())
 	}

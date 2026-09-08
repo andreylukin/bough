@@ -304,6 +304,7 @@ func (m model) leavePicker(id string) model {
 		m.blocks = nil
 		m.focusID = -1
 		m.welcome = false
+		m.title = "" // the replay sets the new session's, if it has one
 	}
 	m.replay()
 	return m

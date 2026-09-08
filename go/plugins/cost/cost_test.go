@@ -133,7 +133,11 @@ func TestParsePrices(t *testing.T) {
 
 func TestMountProvidesUsageOverTheLLM(t *testing.T) {
 	ctx := kernel.NewContext()
-	ctx.Provide("llm", &stubLLM{u: llm.Usage{InputTokens: 2_000_000}, model: "claude-sonnet-5"})
+	// The llm has already counted 500k when this row mounts: that is a
+	// previous session's spend (the llm row is per process, this row is
+	// per session), so only what comes after counts here.
+	l := &stubLLM{u: llm.Usage{InputTokens: 500_000}, model: "claude-sonnet-5"}
+	ctx.Provide("llm", l)
 	if err := (plugin{}).Apply(ctx, map[string]any{"prices": map[string]any{}}); err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +145,11 @@ func TestMountProvidesUsageOverTheLLM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u := rep.Usage(); !u.Priced || u.Cost != 4 {
+	if u := rep.Usage(); u.InputTokens != 0 || u.Cost != 0 {
+		t.Fatalf("spend before the mount is not this session's: %+v", u)
+	}
+	l.u.InputTokens += 2_000_000
+	if u := rep.Usage(); !u.Priced || u.Cost != 4 || u.InputTokens != 2_000_000 {
 		t.Fatalf("sonnet 5 at $2/Mtok over 2M in: %+v", u)
 	}
 	if err := (plugin{}).Apply(kernel.NewContext(), map[string]any{"nope": 1}); err == nil {
@@ -223,5 +231,20 @@ func TestUsageCarriesTheBaseOn(t *testing.T) {
 	u = withBase(live, base)
 	if u.InputTokens != 1010 || u.OutputTokens != 101 || u.CacheReadTokens != 900 || u.LastInputTokens != 1200 || u.Cost < 0.2599 || u.Cost > 0.2601 {
 		t.Fatalf("after a turn = %+v", u)
+	}
+}
+
+// The llm counts per process; a session's tally is what came after
+// this row mounted, so switching sessions never shows (or charges) the
+// previous one's spend.
+func TestSinceSubtractsTheMountTally(t *testing.T) {
+	start := llm.Usage{InputTokens: 100, OutputTokens: 10, CacheReadTokens: 50, Cost: 1, Priced: true, LastInputTokens: 90}
+	if u := since(start, start); u.InputTokens != 0 || u.Cost != 0 || u.LastInputTokens != 0 {
+		t.Fatalf("nothing spent yet: %+v", u)
+	}
+	now := start
+	now.InputTokens, now.OutputTokens, now.CacheReadTokens, now.Cost, now.LastInputTokens = 160, 25, 80, 1.5, 55
+	if u := since(now, start); u.InputTokens != 60 || u.OutputTokens != 15 || u.CacheReadTokens != 30 || u.Cost != 0.5 || u.LastInputTokens != 55 {
+		t.Fatalf("since: %+v", u)
 	}
 }

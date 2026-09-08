@@ -175,6 +175,7 @@ func TestPickerEscMidSessionKeepsTranscript(t *testing.T) {
 
 func TestPickerEnterMidSessionSwapsAndReplays(t *testing.T) {
 	d, chosen := midSession(t)
+	d.m.title = "the current session's title" // a title event landed earlier
 	d.dispatchLine("/sessions")
 	d.press(keyDown())
 	d.press(keyDown()) // "other"
@@ -193,6 +194,11 @@ func TestPickerEnterMidSessionSwapsAndReplays(t *testing.T) {
 	}
 	if !strings.Contains(p, "resumed other · 3 entries") {
 		t.Errorf("resumed row missing after swap:\n%s", p)
+	}
+	// The other session has no title of its own: the bar must not keep
+	// showing the one we left.
+	if d.m.title != "" {
+		t.Fatalf("title carried over the swap: %q", d.m.title)
 	}
 }
 
