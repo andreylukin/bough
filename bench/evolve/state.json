@@ -1,0 +1,20 @@
+{
+ "best": {
+  "tag": "base-0907-2000",
+  "train": 0.55,
+  "val": 0.6,
+  "train_job": "/Users/andrey/.cache/bough-tbench/jobs/screen-xhigh",
+  "val_job": "/Users/andrey/.cache/bough-tbench/jobs/ev-base-0907-2000-val",
+  "commit": "cf2854f6"
+ },
+ "log": [
+  {
+   "iter": 0,
+   "tag": "base-0907-2000",
+   "kept": true,
+   "train": 0.55,
+   "val": 0.6,
+   "note": "baseline"
+  }
+ ]
+}
