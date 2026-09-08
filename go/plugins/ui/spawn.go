@@ -9,6 +9,7 @@ package ui
 
 import (
 	"fmt"
+	xansi "github.com/charmbracelet/x/ansi"
 	"strings"
 	"time"
 
@@ -327,7 +328,8 @@ func (m *model) subTranscript(b *block, cfg *uiCfg) string {
 	th := cfg.theme
 	s := b.sub
 	var sb strings.Builder
-	sb.WriteString(th["accent"].Render(fmt.Sprintf("subagent %d", s.worker)) + " " + th["dim"].Render("· "+line(b.label, 200)) + "\n")
+	// One row: the task is long, the pane is not.
+	sb.WriteString(xansi.Truncate(th["accent"].Render(fmt.Sprintf("subagent %d", s.worker))+" "+th["dim"].Render("· "+line(b.label, 200)), max(m.width, 10), "…") + "\n")
 	for _, ev := range s.log {
 		tmp := block{id: -1, kind: ev.Kind, text: ev.Text}
 		if ev.Kind == "result" {

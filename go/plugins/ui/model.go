@@ -222,19 +222,19 @@ func (m *model) refresh() {
 		// The block renders own their content; the transcript owns the
 		// space between them: nothing between blocks of the same voice,
 		// one rule where the voice changes.
-		part := strings.Trim(squeezeBlanks(m.render(&m.blocks[i], cfg)), "\n")
+		part := m.fit(strings.Trim(squeezeBlanks(m.render(&m.blocks[i], cfg)), "\n"))
 		voice := voiceOf(m.blocks[i].kind)
 		var header string
 		if r, ok := next[i]; ok {
 			if r.open {
 				// An open run keeps its row as a header above its
 				// blocks: the way back to one line.
-				header = m.renderFold(r, cfg.theme)
+				header = m.fit(m.renderFold(r, cfg.theme))
 			} else {
 				// A folded run draws as one row owned by its lead block,
 				// so a click or the block cursor lands on the fold, not
 				// on a step the reader cannot see.
-				part = m.renderFold(r, cfg.theme)
+				part = m.fit(m.renderFold(r, cfg.theme))
 				skipTo = r.to
 			}
 		}
@@ -691,15 +691,28 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 	}
 }
 
-// box renders text in a rounded border.
+// box renders text in a rounded border. The text is hard-wrapped to
+// the box first: lipgloss only breaks at spaces, so one long unbroken
+// run (a rule of dashes, a URL, a hash) would widen the box past the
+// pane and hand the whole transcript a sideways scroll.
 func (m *model) box(text string, content, border lipgloss.Style) string {
 	w := max(m.width-4, 10)
+	text = xansi.Hardwrap(strings.TrimRight(text, "\n"), w-2, true)
 	return content.
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(border.GetForeground()).
 		Padding(0, 1).
 		Width(w).
-		Render(strings.TrimRight(text, "\n"))
+		Render(text)
+}
+
+// fit is the last line of defence against a sideways-scrolling pane:
+// whatever a render produced, no line leaves wider than the pane.
+func (m *model) fit(s string) string {
+	if m.width < 2 {
+		return s
+	}
+	return xansi.Hardwrap(s, m.width, true)
 }
 
 // waitEvent blocks for the next loop event.
@@ -1473,7 +1486,7 @@ func (m *model) refreshOverlay() {
 		for i := range m.blocks {
 			if b := &m.blocks[i]; b.id == m.diving && b.sub != nil {
 				off := m.overlay.YOffset()
-				m.overlay.SetContent(m.subTranscript(b, cfg))
+				m.overlay.SetContent(m.fit(m.subTranscript(b, cfg)))
 				m.overlay.SetYOffset(off)
 				return
 			}
@@ -1515,7 +1528,7 @@ func (m *model) refreshOverlay() {
 		sb.WriteString(th["dim"].Render("(no entries yet)"))
 	}
 	off := m.overlay.YOffset()
-	m.overlay.SetContent(sb.String())
+	m.overlay.SetContent(m.fit(sb.String()))
 	m.overlay.SetYOffset(off)
 }
 
