@@ -1,0 +1,30 @@
+  30/30 Mean: 0.633 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 0:47:59 0:00:00
+terminal-bench • bough-go • openai/gpt-5.6-luna
+┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━┓
+┃ Trials ┃ Exceptions ┃  Mean ┃ Pass@2 ┃
+┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━┩
+│     28 │          8 │ 0.633 │  0.667 │
+└────────┴────────────┴───────┴────────┘
+
+┏━━━━━━━━┳━━━━━━━┓
+┃ Reward ┃ Count ┃
+┡━━━━━━━━╇━━━━━━━┩
+│ 1.0    │    19 │
+│ 0.0    │     9 │
+└────────┴───────┘
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┓
+┃ Exception                 ┃ Count ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━┩
+│ NonZeroAgentExitCodeError │     2 │
+│ AgentTimeoutError         │     6 │
+└───────────────────────────┴───────┘
+
+Job Info
+Total runtime: 47m 59s
+Results written to 
+/Users/andrey/.cache/bough-tbench/jobs/ev-i1-0907-2051-val/result.json
+Inspect results by running `harbor view /Users/andrey/.cache/bough-tbench/jobs`
+Share results by running `harbor upload 
+/Users/andrey/.cache/bough-tbench/jobs/ev-i1-0907-2051-val`
+

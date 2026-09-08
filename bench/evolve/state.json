@@ -1,11 +1,11 @@
 {
  "best": {
-  "tag": "base-0907-2000",
-  "train": 0.55,
-  "val": 0.6,
-  "train_job": "/Users/andrey/.cache/bough-tbench/jobs/screen-xhigh",
-  "val_job": "/Users/andrey/.cache/bough-tbench/jobs/ev-base-0907-2000-val",
-  "commit": "cf2854f6"
+  "tag": "i1-0907-2051",
+  "train": 0.7,
+  "val": 0.6333333333333333,
+  "train_job": "/Users/andrey/.cache/bough-tbench/jobs/ev-i1-0907-2051-train",
+  "val_job": "/Users/andrey/.cache/bough-tbench/jobs/ev-i1-0907-2051-val",
+  "commit": "71e22986"
  },
  "log": [
   {
@@ -15,6 +15,155 @@
    "train": 0.55,
    "val": 0.6,
    "note": "baseline"
+  },
+  {
+   "iter": 1,
+   "tag": "i1-0907-2051",
+   "component": "prompt.md",
+   "rationale": "Eleven of the eighteen failures are AgentTimeoutError with zero recorded steps and cost: the run wedged on a long or interactive foreground command (a build, a training run, an emulator, a download) and never came back to the model. The fix is a concrete procedure for long work rather than a policy: give every command an explicit time limit, push anything that can outlast a couple of minutes into a background job and poll it, and starve interactive prompts of stdin so nothing waits on a keypress. This keeps the loop turning on exactly the compile/train/emulate tasks that timed out, and costs nothing on the short tasks that already pass.",
+   "predicted": {
+    "to_pass": [
+     "gcode-to-text",
+     "make-mips-interpreter",
+     "schemelike-metacircular-eval",
+     "path-tracing",
+     "path-tracing-reverse"
+    ],
+    "to_fail": []
+   },
+   "train": 0.7,
+   "best_train": 0.55,
+   "flipped": {
+    "up": [
+     "make-mips-interpreter",
+     "path-tracing-reverse",
+     "protein-assembly",
+     "pypi-server",
+     "schemelike-metacircular-eval",
+     "sqlite-db-truncate"
+    ],
+    "down": [
+     "crack-7z-hash"
+    ]
+   },
+   "val": 0.6333333333333333,
+   "best_val": 0.6,
+   "kept": true
+  },
+  {
+   "iter": 2,
+   "tag": "i2-0907-2246",
+   "component": "prompt.md",
+   "rationale": "Timeouts still dominate the losses and several arrive with 'steps None, $0.00' \u2014 meaning the very first foreground command wedged and the whole hour was spent blocked before any step was recorded (crack-7z-hash and make-mips-interpreter time out on one run but pass the other at a few cents, gcode-to-text wedges on both runs of a trivial task). The i1 edit told the model to background long work but left the foreground time limit as a soft example ('e.g. 2m'), so the model can still pass a huge or open-ended limit on a command that then eats the session. The fix makes the cap a hard, concrete rule: the second argument is mandatory and must never exceed 2 minutes for a foreground call, and anything that could plausibly outlast that goes to the background even when you are unsure \u2014 an unknown-duration command is treated as long by default. This keeps the loop turning on the compile/crack/emulate tasks that intermittently wedge, and costs nothing on short tasks that already finish well under the cap.",
+   "predicted": {
+    "to_pass": [
+     "gcode-to-text",
+     "crack-7z-hash",
+     "make-mips-interpreter"
+    ],
+    "to_fail": []
+   },
+   "train": 0.575,
+   "best_train": 0.7,
+   "flipped": {
+    "up": [
+     "caffe-cifar-10"
+    ],
+    "down": [
+     "crack-7z-hash",
+     "make-mips-interpreter",
+     "path-tracing-reverse",
+     "protein-assembly",
+     "sparql-university"
+    ]
+   },
+   "kept": false
+  },
+  {
+   "iter": 3,
+   "tag": "i3-0908-0019",
+   "component": "guidance.md",
+   "rationale": "Two of the standing losses end 'claimed' with real steps and no timeout, yet fail the most basic tests: sam-cell-seg fails test_run_script and test_csv_output_exists (the deliverable never actually produced its output file), and the failing path-tracing run fails test_image_compiles and test_runs_and_produces_output (claimed done without compiling or running). The model edits source and reasons about correctness but stops before executing the deliverable end-to-end on the real input, so a script that crashes or emits nothing, or a program that never compiles, is reported as finished. The fix is a concrete final-verification procedure: run the exact deliverable the brief names to completion, confirm the output artifact exists, and inspect its structure (types, shapes, row/column counts, that lists are flat not nested) against the brief before claiming. This attacks the 'claimed but never ran' pattern generally without pressuring the timeout-bound tasks, so it should flip sam-cell-seg and the failing path-tracing run while risking nothing that already passes.",
+   "predicted": {
+    "to_pass": [
+     "sam-cell-seg",
+     "path-tracing"
+    ],
+    "to_fail": []
+   },
+   "train": 0.6,
+   "best_train": 0.7,
+   "flipped": {
+    "up": [
+     "make-mips-interpreter",
+     "path-tracing"
+    ],
+    "down": [
+     "build-pmars",
+     "feal-linear-cryptanalysis",
+     "path-tracing-reverse",
+     "protein-assembly",
+     "schemelike-metacircular-eval"
+    ]
+   },
+   "kept": false
+  },
+  {
+   "iter": 4,
+   "tag": "i4-0908-0150",
+   "component": "prompt.md",
+   "rationale": "The remaining losses are dominated by AgentTimeoutError with 'steps None, $0.00' \u2014 the very first foreground command wedged and the whole hour drained before a single step was recorded. gcode-to-text is the tell: a trivial task (write a hello file) that times out on BOTH runs at zero cost, which only happens when first contact drops into a pager or an interpreter/REPL that blocks on stdin so the poll never returns. i2's blunt 2m cap over-corrected and regressed passing tasks, so this edit is narrow: extend the existing interactive-programs rule to also kill pagers and never launch an interpreter/debugger/unknown binary without feeding it `< /dev/null`, plus a recovery step (a command that returns nothing while still alive is waiting on input \u2014 kill and rerun non-interactively). This turns the loop over on step one without pressuring the genuinely long compile/train tasks.",
+   "predicted": {
+    "to_pass": [
+     "gcode-to-text",
+     "make-mips-interpreter"
+    ],
+    "to_fail": []
+   },
+   "train": 0.6,
+   "best_train": 0.7,
+   "flipped": {
+    "up": [
+     "caffe-cifar-10",
+     "crack-7z-hash",
+     "path-tracing"
+    ],
+    "down": [
+     "large-scale-text-editing",
+     "llm-inference-batching-scheduler",
+     "make-mips-interpreter",
+     "path-tracing-reverse",
+     "protein-assembly",
+     "pypi-server",
+     "schemelike-metacircular-eval"
+    ]
+   },
+   "kept": false
+  },
+  {
+   "iter": 5,
+   "tag": "i5-0908-0246",
+   "component": "guidance.md",
+   "rationale": "The one reproducible non-timeout loss is sam-cell-seg (0/2, real steps, ends 'claimed'): it fails test_run_script and test_csv_output_exists, meaning the model edited source and reasoned about correctness but never executed the named deliverable to completion, so a script that crashes or emits nothing was reported as done. The failing path-tracing run shows the same shape (claimed without compiling/running). The fix is one concrete final step, not a policy: run the exact command the brief names once on the real input, then confirm the output artifact exists and is non-empty before claiming; a crash or empty output means not done. I keep this to a single tight sentence appended to the existing brief to avoid the dilution that sank the verbose i3 attempt, and it does not pressure the genuinely long compile/train tasks.",
+   "predicted": {
+    "to_pass": [
+     "sam-cell-seg",
+     "path-tracing"
+    ],
+    "to_fail": []
+   },
+   "train": 0.525,
+   "best_train": 0.7,
+   "flipped": {
+    "up": [],
+    "down": [
+     "feal-linear-cryptanalysis",
+     "make-mips-interpreter",
+     "protein-assembly",
+     "schemelike-metacircular-eval"
+    ]
+   },
+   "kept": false
   }
  ]
 }
