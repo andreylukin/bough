@@ -180,6 +180,10 @@ func (j *Jobs) Take() []string {
 // a job that finishes while the agent is idle still starts a turn.
 func (j *Jobs) Wake() <-chan struct{} { return j.wake }
 
+// Notify queues a notice from another row (an artifact answered in the
+// browser) so it lands like a finished job's and wakes an idle agent.
+func (j *Jobs) Notify(text string) { j.notify(text) }
+
 func (j *Jobs) notify(text string) {
 	j.mu.Lock()
 	j.pending = append(j.pending, text)
