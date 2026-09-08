@@ -117,6 +117,28 @@ Every plugin here does this. It keeps plugins from depending on each
 other's packages, and it documents exactly how much of a service you
 rely on.
 
+## Reading the session
+
+The `session` row provides one place for what is true about the running
+session, so a plugin does not have to know which row holds which fact:
+
+```go
+type sessioner interface{ Info() session.Info }
+
+if s, err := kernel.Get[sessioner](ctx, "session"); err == nil {
+	i := s.Info() // call when you need it, not at Apply: it is live
+	// i.ID, i.Title, i.Model, i.Provider, i.Cwd, i.Started, i.Turns
+	// i.Usage.In / .Out / .CacheRead / .CacheWrite / .LastIn / .Cost / .Priced
+	// i.ContextLimit, i.ContextPct
+}
+```
+
+`Info()` resolves at call time from history, the llm row, the cost row
+and the session-title row, so it follows a `/model` swap and a resumed
+session, and it never blocks a mount: every field is a zero value when
+its row is absent or nothing has happened yet. init.js reads the same
+facts as `bough.session()` (see INIT.md).
+
 ## Adding a tool the model can call
 
 `RegisterTool(name, fn)` puts `tools.<name>` in the code-mode VM. The

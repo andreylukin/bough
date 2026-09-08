@@ -54,6 +54,13 @@
 - id: commands
   plugin: commands
 
+# What is true about this session, for plugins: id, title, model and
+# provider, tokens and cost, context fill, turn count. Go rows Get the
+# "session" service and call Info(); init.js reads bough.session().
+# Resolved when asked, so it follows /model and a resumed session.
+- id: session
+  plugin: session
+
 # User configuration in JS: runs ~/.bough/init.js then ./.bough/init.js
 # (both optional) with a global `bough` API; may provide theme, keymap,
 # llm, cognition, projection. See docs/INIT.md.

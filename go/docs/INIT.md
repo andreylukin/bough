@@ -151,6 +151,38 @@ line starting with `!` runs directly as `sh -c`): its line and output
 are recorded as `command`/`system` entries, model-invisible under the
 default projection.
 
+### bough.session()
+
+Returns what is true about the session right now, for a tool or a
+command to read:
+
+```js
+{
+  id: "01a0…",                 // the history file's name
+  title: "Fix the flaky test", // once the session-title row has named it
+  model: "anthropic/claude-sonnet-5",
+  provider: "llm-openrouter",  // the llm row's plugin
+  cwd: "/Users/you/repo",
+  started: "2026-09-08T14:02:11Z",
+  turns: 4,                    // completed turns
+  context_limit: 200000,       // tokens, when the model is known
+  context_pct: 12.5,           // of it, what the next turn starts with
+  usage: { in, out, cache_read, cache_write, last_in, cost, priced }
+}
+```
+
+```js
+bough.command("budget", "", "spend so far", function () {
+  var s = bough.session()
+  return "$" + s.usage.cost.toFixed(3) + " over " + s.turns + " turns on " + s.model
+})
+```
+
+Live, like `bough.tool`: each call reads the rows as they are, so it
+follows `/model` and a resumed session. Zero values (empty strings, 0,
+`priced: false`) mean unknown — no such row, or nothing spent yet.
+Throws when no `session` row is mounted.
+
 ### bough.provider(name, fn)
 
 Registers a JS LLM provider: `fn(system, messages) -> string`, where

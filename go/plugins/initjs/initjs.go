@@ -33,6 +33,9 @@ type vmHost interface {
 	Call(fn goja.Callable, args ...any) (any, error)
 }
 
+// sessionInfo is the session row's seam: the session as a plain map.
+type sessionInfo interface{ Map() map[string]any }
+
 // themeTokens and keymapActions are the closed vocabularies of the
 // "theme" and "keymap" service contracts; anything else is a typo.
 var themeTokens = set("user", "assistant", "code", "result", "error", "accent", "dim", "border", "status")
@@ -67,7 +70,7 @@ type state struct {
 // stops the init file and surfaces as an Apply error. cm is used to
 // call JS command fns later, under the VM mutex; reg is the "commands"
 // registry bough.command registers into.
-func install(vm *goja.Runtime, tools *goja.Object, st *state, cm vmHost, reg *commands.Registry) {
+func install(vm *goja.Runtime, tools *goja.Object, st *state, cm vmHost, reg *commands.Registry, ctx *kernel.Context) {
 	throw := func(format string, a ...any) {
 		panic(vm.ToValue(fmt.Sprintf(format, a...)))
 	}
@@ -190,6 +193,18 @@ func install(vm *goja.Runtime, tools *goja.Object, st *state, cm vmHost, reg *co
 	b.Set("cognition", func(call goja.FunctionCall) goja.Value {
 		st.cogFn = takeCog(call)
 		return goja.Undefined()
+	})
+	b.Set("session", func(call goja.FunctionCall) goja.Value {
+		// Live, like bough.tool: a tool or command reads the session as
+		// it is when called, not as it was at init.
+		if ctx == nil {
+			throw("bough.session: no kernel")
+		}
+		svc, err := kernel.Get[sessionInfo](ctx, "session")
+		if err != nil {
+			throw("bough.session: no session row mounted")
+		}
+		return vm.ToValue(svc.Map())
 	})
 	takeProj := oneFn("bough.project")
 	b.Set("project", func(call goja.FunctionCall) goja.Value {
@@ -506,7 +521,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	files = append(files, filepath.Join(".bough", "init.js"))
 
 	err = cm.WithVM(func(vm *goja.Runtime, tools *goja.Object) error {
-		install(vm, tools, st, cm, reg)
+		install(vm, tools, st, cm, reg, ctx)
 		for _, path := range files {
 			body, err := os.ReadFile(path)
 			if err != nil {

@@ -45,6 +45,7 @@ import (
 	_ "github.com/andreylukin/bough/plugins/recipes"
 	_ "github.com/andreylukin/bough/plugins/rules"
 	_ "github.com/andreylukin/bough/plugins/scratch"
+	_ "github.com/andreylukin/bough/plugins/session"
 	_ "github.com/andreylukin/bough/plugins/skills"
 	_ "github.com/andreylukin/bough/plugins/theme"
 	_ "github.com/andreylukin/bough/plugins/title"

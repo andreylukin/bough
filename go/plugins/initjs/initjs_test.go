@@ -333,3 +333,28 @@ bough.command("dup", "", "", function(){return ""})`)
 		t.Fatalf("duplicate command error = %v", err)
 	}
 }
+
+// bough.session() reads the session row live from a tool or command.
+func TestJSSessionReadsTheSessionRow(t *testing.T) {
+	ctx, _, err := apply(t, "", `bough.command("whoami", "", "session facts", function () {
+		var s = bough.session(); return s.model + " " + s.usage.in + " " + s.turns
+	})`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, _ := kernel.Get[*commands.Registry](ctx, "commands")
+	if _, err := reg.Run("whoami", ""); err == nil || !strings.Contains(err.Error(), "no session row") {
+		t.Fatalf("without a session row: %v", err)
+	}
+	ctx.Provide("session", fakeSession{})
+	out, err := reg.Run("whoami", "")
+	if err != nil || out != "gpt-x 42 3" {
+		t.Fatalf("out %q err %v", out, err)
+	}
+}
+
+type fakeSession struct{}
+
+func (fakeSession) Map() map[string]any {
+	return map[string]any{"model": "gpt-x", "turns": 3, "usage": map[string]any{"in": 42}}
+}
