@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/andreylukin/bough/kernel"
 )
@@ -18,10 +19,51 @@ import (
 // on every Preamble call; missing files are skipped.
 type SystemContext struct {
 	paths []string
+
+	mu      sync.Mutex
+	sources []source
+	nextID  int
+}
+
+type source struct {
+	id int
+	fn func() []string
 }
 
 // New returns a SystemContext reading the given paths in order.
 func New(paths ...string) *SystemContext { return &SystemContext{paths: paths} }
+
+// AddSource registers a function that names more files to read after
+// the fixed paths — the rules row's unscoped rule files, found fresh
+// each turn. Returns a function that removes it again.
+func (s *SystemContext) AddSource(fn func() []string) func() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nextID++
+	id := s.nextID
+	s.sources = append(s.sources, source{id, fn})
+	return func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		for i, src := range s.sources {
+			if src.id == id {
+				s.sources = append(s.sources[:i:i], s.sources[i+1:]...)
+				return
+			}
+		}
+	}
+}
+
+// all is the fixed paths followed by every source's, in order.
+func (s *SystemContext) all() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := append([]string(nil), s.paths...)
+	for _, src := range s.sources {
+		out = append(out, src.fn()...)
+	}
+	return out
+}
 
 // Part is one file's contribution after de-duplication: Text is what
 // actually goes into the prompt, Dropped counts the sections already
@@ -42,7 +84,7 @@ type Part struct {
 func (s *SystemContext) Parts() []Part {
 	seen := map[string]string{} // section key -> the file that said it
 	var parts []Part
-	for _, p := range s.paths {
+	for _, p := range s.all() {
 		body, err := os.ReadFile(p)
 		if err != nil {
 			continue // missing file is fine
@@ -122,7 +164,7 @@ func (s *SystemContext) Preamble() string {
 // includes — for the startup header.
 func (s *SystemContext) Loaded() []string {
 	var out []string
-	for _, p := range s.paths {
+	for _, p := range s.all() {
 		if _, err := os.Stat(p); err == nil {
 			out = append(out, p)
 		}

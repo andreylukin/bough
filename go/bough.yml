@@ -84,6 +84,16 @@
 - id: context-md
   plugin: context-md
 
+# Rules you already keep for Claude Code and Codex, honoured here —
+# from home (~/.claude/rules, ~/.codex/rules) and from the project
+# (./.claude/rules, ./.codex/rules), like hooks. Claude rules (.md):
+# unscoped ones join the AGENTS.md preamble; ones with `paths:` are
+# shown when a code block touches a matching file. Codex rules
+# (prefix_rule in .rules): forbidden refuses the shell command with
+# the justification, prompt asks you first. /rules lists them.
+- id: rules
+  plugin: rules
+
 - id: mcp
   plugin: mcp
   # config:

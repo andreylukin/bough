@@ -84,6 +84,12 @@ func (a *Asker) ask(question string, options ...string) (string, error) {
 	}
 }
 
+// Ask is ask for other rows: a question the harness itself has to put
+// to the user (a Codex rule that says "prompt" before a command).
+func (a *Asker) Ask(question string, options ...string) (string, error) {
+	return a.ask(question, options...)
+}
+
 // Answer resolves the pending ask id with text: the history gets an
 // "ask/answer" entry and the blocked tool call returns text. An
 // unknown (or already-resolved/timed-out) id is an error.

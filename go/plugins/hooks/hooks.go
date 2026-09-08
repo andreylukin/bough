@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/andreylukin/bough/kernel"
 )
@@ -25,6 +26,39 @@ type runHooker interface {
 // Service implements the "hooks" service (loop.Hooks).
 type Service struct {
 	code runHooker
+
+	mu   sync.Mutex
+	gohs map[string][]goHook // in-process hooks by event
+}
+
+// goHook is a hook written in Go by another row (the rules row's
+// scoped rules, say). It runs before the .js files for its event and
+// merges the same way. A nil result is "nothing to say".
+type goHook struct {
+	name string
+	fn   func(payload map[string]any) map[string]any
+}
+
+// Add registers an in-process hook for event; the returned function
+// removes it (a row calls it from its Effect).
+func (s *Service) Add(event, name string, fn func(payload map[string]any) map[string]any) func() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.gohs == nil {
+		s.gohs = map[string][]goHook{}
+	}
+	s.gohs[event] = append(s.gohs[event], goHook{name, fn})
+	return func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		hs := s.gohs[event]
+		for i, h := range hs {
+			if h.name == name {
+				s.gohs[event] = append(hs[:i:i], hs[i+1:]...)
+				return
+			}
+		}
+	}
 }
 
 // Fire runs every hook file for event, in base-name order, project
@@ -34,6 +68,31 @@ type Service struct {
 // No hook files, or none returning anything, is a nil result.
 func (s *Service) Fire(ctx context.Context, event string, payload map[string]any) (map[string]any, error) {
 	var merged map[string]any
+	s.mu.Lock()
+	gohs := append([]goHook(nil), s.gohs[event]...)
+	s.mu.Unlock()
+	for _, h := range gohs {
+		res := h.fn(payload)
+		if res == nil {
+			continue
+		}
+		if merged == nil {
+			merged = map[string]any{}
+		}
+		maps.Copy(merged, res)
+		if _, ok := res["block"]; ok {
+			return merged, nil
+		}
+		if _, ok := res["deny"]; ok {
+			return merged, nil
+		}
+		// A later hook sees what an earlier one rewrote.
+		for k, v := range res {
+			if _, ok := payload[k]; ok {
+				payload[k] = v
+			}
+		}
+	}
 	for _, path := range hookFiles(event) {
 		body, err := os.ReadFile(path)
 		if err != nil {

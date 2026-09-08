@@ -61,6 +61,16 @@ type Stats struct {
 	// viewed THIS turn, so a re-read that found nothing new can say so
 	// (see view). Cleared by Take, like the rest of the turn's tally.
 	read map[string]string
+	// policy, when set, is asked before every bash command; its error
+	// is the refusal the model sees (the rules row's Codex rules).
+	policy func(cmd string) error
+}
+
+// SetPolicy installs (or, with nil, removes) the command policy.
+func (s *Stats) SetPolicy(fn func(cmd string) error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.policy = fn
 }
 
 // Take returns the files written and the last bash exit code (ran is
@@ -149,6 +159,14 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 // becomes a background job that outlives the turn, and an optional
 // third argument is a regexp to watch its output for.
 func (s *Stats) bash(cmd string, opts ...any) (string, error) {
+	s.mu.Lock()
+	policy := s.policy
+	s.mu.Unlock()
+	if policy != nil {
+		if err := policy(cmd); err != nil {
+			return "", err
+		}
+	}
 	if len(opts) > 0 && opts[0] != nil {
 		limit, err := jobLimit(opts[0])
 		if err != nil {

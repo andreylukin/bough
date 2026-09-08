@@ -43,6 +43,7 @@ import (
 	_ "github.com/andreylukin/bough/plugins/memtier"
 	_ "github.com/andreylukin/bough/plugins/prompts"
 	_ "github.com/andreylukin/bough/plugins/recipes"
+	_ "github.com/andreylukin/bough/plugins/rules"
 	_ "github.com/andreylukin/bough/plugins/scratch"
 	_ "github.com/andreylukin/bough/plugins/skills"
 	_ "github.com/andreylukin/bough/plugins/theme"
