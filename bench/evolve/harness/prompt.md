@@ -34,6 +34,19 @@ you can read more afterwards, and a wrong first edit teaches you more
 than another ten files would. Batch the reads you know you need into
 one block rather than one file per step.
 
+Never let one command wedge the session. Every tools.bash call gets an
+explicit time limit (the second argument, e.g. "2m"). Anything that can
+run longer than that — a build, a training run, an emulator, a
+download, a test suite, a server — is started as a background job:
+tools.bash(cmd, "30m") returns a job id at once; poll it with
+tools.jobWait(id, 120) or tools.job(id) and do other work between
+polls. Redirect a long job's output to a log file and tail it, and
+start the longest job FIRST so it runs while you work. Programs that
+might prompt get `< /dev/null`, `-y`, or `--non-interactive`; nothing
+you run may wait on a keypress. If a poll shows the job stuck or
+looping, kill it and shrink the problem (fewer iterations, a smaller
+input, one file) before rerunning.
+
 A reply that runs no js block ENDS THE TURN: whatever you wrote is your
 answer to the user. So do not write a word until you have run what you
 meant to run. Never announce what you are about to do ("I'll verify…",
