@@ -98,6 +98,18 @@ const resumePrefix = "resume:"
 // ResumeAction is the UIAction that resumes the session id.
 func ResumeAction(id string) UIAction { return UIAction(resumePrefix + id) }
 
+// voicePrefix marks a UIAction that sets voice dictation: the
+// payload is the mode ("hold", "tap", "off", or "" to toggle).
+const voicePrefix = "voice:"
+
+// VoiceAction is the UIAction that sets the dictation mode.
+func VoiceAction(mode string) UIAction { return UIAction(voicePrefix + mode) }
+
+// VoiceMode reports whether a is a voice action and its mode.
+func VoiceMode(a UIAction) (string, bool) {
+	return strings.CutPrefix(string(a), voicePrefix)
+}
+
 // ResumeID reports whether a is a resume action and the session id.
 func ResumeID(a UIAction) (string, bool) {
 	return strings.CutPrefix(string(a), resumePrefix)
@@ -219,6 +231,14 @@ func registerBuiltins(r *Registry, ctx *kernel.Context) error {
 			return helpText(r), nil
 		}},
 		{CommandInfo{Name: "keys", Usage: "", Summary: "show the keybindings"}, uiAction(ActionKeys)},
+		{CommandInfo{Name: "voice", Usage: "[hold|tap|off]", Summary: "voice dictation: hold space to speak (needs a provider with a transcription endpoint)"}, func(args string) (string, error) {
+			mode := strings.TrimSpace(args)
+			switch mode {
+			case "", "hold", "tap", "off":
+				return "", VoiceAction(mode)
+			}
+			return "", fmt.Errorf("voice: unknown mode %q (hold, tap, off)", mode)
+		}},
 		{CommandInfo{Name: "sessions", Usage: "[id]", Summary: "pick a session to resume"}, func(args string) (string, error) {
 			if id := strings.TrimSpace(args); id != "" {
 				return "", ResumeAction(strings.TrimSuffix(id, ".jsonl"))

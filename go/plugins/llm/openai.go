@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"strings"
@@ -137,6 +138,52 @@ func (o *openaiLLM) init() error {
 
 // Ready reports whether this provider is configured (see llm.Ready).
 func (o *openaiLLM) Ready() error { return o.init() }
+
+// transcribeModel is the speech-to-text model: the cheapest of the
+// gpt-4o transcription family, which beats whisper-1 on code words.
+const transcribeModel = "gpt-4o-mini-transcribe"
+
+// Transcribe implements Transcriber over /v1/audio/transcriptions.
+func (o *openaiLLM) Transcribe(ctx context.Context, wav []byte, lang string) (string, error) {
+	if err := o.init(); err != nil {
+		return "", err
+	}
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("file", "speech.wav")
+	if err != nil {
+		return "", fmt.Errorf("llm-openai: %w", err)
+	}
+	fw.Write(wav)
+	mw.WriteField("model", transcribeModel)
+	mw.WriteField("response_format", "json")
+	if lang != "" {
+		mw.WriteField("language", lang)
+	}
+	mw.Close()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.base+"/v1/audio/transcriptions", &body)
+	if err != nil {
+		return "", fmt.Errorf("llm-openai: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+o.key)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("llm-openai: transcribe: %w", err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", openaiErr(resp.StatusCode, transcribeModel, data)
+	}
+	var out struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return "", fmt.Errorf("llm-openai: transcribe: %w", err)
+	}
+	return strings.TrimSpace(out.Text), nil
+}
 
 func (o *openaiLLM) call(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
 	if err := o.init(); err != nil {

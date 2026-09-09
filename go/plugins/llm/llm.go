@@ -47,6 +47,14 @@ type Efforter interface {
 	SetEffort(level string) error
 }
 
+// Transcriber is the optional seam for speech-to-text: a provider
+// with an audio transcription endpoint (OpenAI's /v1/audio/
+// transcriptions; Anthropic, OpenRouter and Cerebras have none) turns
+// a WAV recording into text. lang is a BCP 47 code, "" = detect.
+type Transcriber interface {
+	Transcribe(ctx context.Context, wav []byte, lang string) (string, error)
+}
+
 // Efforts are the levels Efforter accepts, weakest first; "off" asks
 // the provider for no reasoning at all and "" restores its default.
 var Efforts = []string{"off", "low", "medium", "high", "xhigh"}

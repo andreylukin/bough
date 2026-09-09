@@ -80,6 +80,11 @@ type uiCfg struct {
 	usage   llm.UsageReporter // the "usage" (cost row) or llm service; nil when neither reports
 	modeler llm.Modeler       // the llm service when it names its model; nil otherwise
 	effort  llm.Efforter      // the llm service when its thinking level can be changed; nil otherwise
+	// voice is the llm service when it can transcribe speech (voice.go);
+	// nil otherwise, and /voice says which provider is in the llm row.
+	voice     llm.Transcriber
+	llmPlugin string // the llm row's plugin name, for that message
+	voiceMode string // the row's "voice": "hold" | "tap" | "" (off until /voice)
 	// small is the "llm-small" service and ONLY that: the status-line
 	// label and the composer's guess are worth a cheap model's time,
 	// never the agent's own (in money or in latency).
@@ -258,6 +263,14 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	if e, err := kernel.Get[llm.Efforter](ctx, "llm"); err == nil {
 		cfg.effort = e
 	}
+	if t, err := kernel.Get[llm.Transcriber](ctx, "llm"); err == nil {
+		cfg.voice = t
+	}
+	for _, r := range ctx.Desired() {
+		if r.ID == "llm" {
+			cfg.llmPlugin = r.Plugin
+		}
+	}
 	if s, err := kernel.Get[llm.LLM](ctx, llm.SmallKey); err == nil {
 		cfg.small = s
 	} else if smallRowConfigured(ctx) {
@@ -314,6 +327,15 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 	if v, has := rowCfg["draft"]; has {
 		cfg.draft, _ = v.(string)
+	}
+	if v, has := rowCfg["voice"]; has {
+		s, ok := v.(string)
+		if !ok || (s != "hold" && s != "tap" && s != "off") {
+			return nil, fmt.Errorf("ui: voice must be \"hold\", \"tap\" or \"off\", got %v", v)
+		}
+		if s != "off" {
+			cfg.voiceMode = s
+		}
 	}
 	return cfg, nil
 }

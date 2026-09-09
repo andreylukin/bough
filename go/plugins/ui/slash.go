@@ -342,6 +342,9 @@ func (m *model) perform(act commands.UIAction) tea.Cmd {
 		m.openModelPicker(target, cur, rows)
 		return nil
 	}
+	if mode, ok := commands.VoiceMode(act); ok {
+		return m.setVoice(mode, m.cfg.Load())
+	}
 	switch act {
 	case commands.ActionClear:
 		// The visible transcript only; history is untouched. The
@@ -395,6 +398,7 @@ func keysText(cfg *uiCfg) string {
 		[2]string{"esc", "close the palette · decline a pending ask"},
 		[2]string{"tab", "on a path: complete it, again to cycle · in the palette: complete"},
 		[2]string{"ctrl+v", "an image on the clipboard: save it under ~/.bough/attachments as @path"},
+		[2]string{"space", "after /voice: hold to dictate at the cursor (tap mode: tap on an empty composer, tap again to send)"},
 		[2]string{"?", "on an empty composer: this list (/keys)"},
 	)
 	chords := chordRows(cfg)

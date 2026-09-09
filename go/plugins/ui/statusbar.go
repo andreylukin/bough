@@ -72,9 +72,13 @@ func (m *model) statusBar(cfg *uiCfg) string {
 		}
 		think := thinkChip(cfg)
 		cache := m.cacheChip(cfg)
+		mic := ""
+		if m.v.mode != "" {
+			mic = "🎤 space"
+		}
 		cands = slices.Compact([]string{
-			join(tokens, cost, ctx, cache, think, mdl),
-			join(cost, ctx, cache, think, mdl),
+			join(tokens, cost, ctx, cache, think, mdl, mic),
+			join(cost, ctx, cache, think, mdl, mic),
 			join(cost, ctx, cache, mdl),
 			join(cost, ctx, mdl),
 			join(cost, ctx),

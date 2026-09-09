@@ -127,6 +127,7 @@ type model struct {
 	at          palette        // "@" file picker (see atfiles.go)
 	atFiles     []string       // the picker's file list, read when it opens
 	flash       string
+	v           voiceState // voice dictation (voice.go)
 	trailing    string        // assistant prose after an executed fence, emitted after its result
 	newBelow    bool          // blocks arrived while scrolled up (status cue)
 	sel         selection     // mouse drag selection (see select.go)
@@ -161,6 +162,9 @@ func newModel(width, height int, send func(string), events <-chan Event, cfg *at
 		// The composer opens with the text; the person finishes it.
 		m.input.SetValue(d)
 		m.input.CursorEnd()
+	}
+	if c := cfg.Load(); c.voiceMode != "" && c.voice != nil && recorderTool() != "" {
+		m.v.mode = c.voiceMode
 	}
 	if cfg.Load().picker {
 		m.picking = true // replay happens after the pick (leavePicker)
@@ -849,6 +853,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.finishCopy(msg)
 		return m, nil
 
+	case voiceMsg:
+		return m.finishVoice(msg)
+
+	case voiceTickMsg:
+		return m, m.voiceTicked(m.cfg.Load())
+
+	case tea.KeyReleaseMsg:
+		return m, m.voiceRelease(msg, m.cfg.Load())
+
 	case tea.PasteMsg:
 		m.stop.armedAt = time.Time{} // a paste is typing: it disarms quit like any key
 		m.stop.escAt = time.Time{}
@@ -1357,6 +1370,9 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if handled, cmd := m.stopKey(key, cfg); handled {
 		return m, cmd
 	}
+	if handled, cmd := m.voiceKey(key, msg, cfg); handled {
+		return m, cmd
+	}
 	// ctrl+v probes the clipboard for an image first (imagepaste.go);
 	// a text clipboard replays the key into the textarea. A keymap
 	// binding on ctrl+v takes it instead.
@@ -1544,6 +1560,9 @@ func (m model) View() tea.View {
 	v.WindowTitle = m.tabTitle() // the renderer sends it only when it changes
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion // clicks toggle blocks; wheel scrolls
+	// Key release events make hold-to-talk end on the release rather
+	// than on the repeats stopping; asked for only while voice is on.
+	v.KeyboardEnhancements = tea.KeyboardEnhancements{ReportEventTypes: m.v.mode != ""}
 	if m.board.on {
 		v.MouseMode = tea.MouseModeAllMotion // the board shows detail on hover
 	}

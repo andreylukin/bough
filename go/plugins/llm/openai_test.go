@@ -1,7 +1,11 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -101,4 +105,35 @@ func TestOpenaiUsageCache(t *testing.T) {
 	if u.InputTokens != 100 || u.CacheReadTokens != 90 {
 		t.Fatalf("usage = %+v, want InputTokens 100, CacheReadTokens 90", u)
 	}
+}
+
+// Transcribe posts the WAV as multipart to /v1/audio/transcriptions
+// and returns the text field.
+func TestOpenaiTranscribe(t *testing.T) {
+	var gotModel, gotName string
+	var gotWav []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/audio/transcriptions" || r.Header.Get("Authorization") != "Bearer k" {
+			http.Error(w, r.URL.Path, 400)
+			return
+		}
+		r.ParseMultipartForm(1 << 20)
+		gotModel = r.FormValue("model")
+		f, hdr, _ := r.FormFile("file")
+		gotName = hdr.Filename
+		gotWav, _ = io.ReadAll(f)
+		w.Write([]byte(`{"text":"  fix the auth middleware \n"}`))
+	}))
+	defer srv.Close()
+	o := &openaiLLM{model: "gpt-5", base: srv.URL, key: "k"}
+	o.once.Do(func() {})
+	text, err := o.Transcribe(context.Background(), []byte("RIFFwav"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text != "fix the auth middleware" || gotModel != transcribeModel || gotName != "speech.wav" || string(gotWav) != "RIFFwav" {
+		t.Fatalf("text=%q model=%q name=%q wav=%q", text, gotModel, gotName, gotWav)
+	}
+	var tr Transcriber = o
+	_ = tr
 }

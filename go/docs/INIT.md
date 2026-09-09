@@ -103,6 +103,21 @@ setting: it is the ui row's config in `bough.yml` — `collapse: all`
 lines), or `none` (everything starts expanded). Any other value is a
 boot error.
 
+#### Voice
+
+`/voice [hold|tap|off]` turns on dictation, Claude Code's shape:
+Space is the push-to-talk key. Hold mode records while Space is held
+(a held key shows up as key repeat, so there is a short warmup; the
+warmup spaces are removed) and stops on release; tap mode starts on a
+Space in an empty composer, stops on the next Space, and sends a
+transcript of three or more words. The text lands at the cursor, so
+typing and speech mix. It needs a recorder on the PATH (sox's `rec`,
+`ffmpeg`, or `arecord`) and an llm row whose provider has a
+transcription endpoint — `llm-openai` (OPENAI_API_KEY,
+gpt-4o-mini-transcribe) today; Anthropic, OpenRouter and Cerebras
+have none, and /voice says so. `voice: hold` (or `tap`) on the ui
+row in `bough.yml` starts a session with it on.
+
 #### provider.default
 
 Names a provider registered with `bough.provider`. Naming an
