@@ -151,6 +151,7 @@ func defaultKeymap() map[string]string {
 		"chord:k": "keys",
 		"chord:q": "quit",
 		"chord:p": "palette",
+		"chord:y": "copy", // opencode's leader+y: yank the focused block / last reply
 	}
 }
 

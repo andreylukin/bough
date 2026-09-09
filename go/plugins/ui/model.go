@@ -845,9 +845,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.releaseSelect(shiftMouse(msg.Mouse(), m.boardHeight(cfg)))
 
+	case copiedMsg:
+		m.finishCopy(msg)
+		return m, nil
+
 	case tea.PasteMsg:
 		m.stop.armedAt = time.Time{} // a paste is typing: it disarms quit like any key
 		m.stop.escAt = time.Time{}
+		if took, cmd := m.handlePaste(msg); took {
+			return m, cmd
+		}
 	}
 
 	var cmds []tea.Cmd
@@ -1385,7 +1392,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.input.CursorEnd()
 			return m, nil
 		}
-		line := strings.TrimSpace(m.input.Value())
+		line := strings.TrimSpace(m.expandPastes(m.input.Value()))
 		if line == "" {
 			return m, nil
 		}

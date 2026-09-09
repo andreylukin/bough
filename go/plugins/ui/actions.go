@@ -33,6 +33,7 @@ var uiActions = []uiAction{
 	{"expand_all", "expand all blocks"},
 	{"todo_toggle", "pin/unpin the todo list"},
 	{"external_editor", "edit the draft in $VISUAL / $EDITOR"},
+	{"copy", "copy the focused block, else the last reply (raw markdown)"},
 	{"scroll_up", "scroll up"},
 	{"scroll_down", "scroll down"},
 	{"page_up", "page up"},
@@ -144,6 +145,8 @@ func (m *model) runAction(name, via string, cfg *uiCfg) tea.Cmd {
 			return nil
 		}
 		return m.openEditor()
+	case "copy":
+		return m.copyFocused()
 	case "history_inspect":
 		if m.inspecting {
 			m.inspecting, m.diving = false, 0

@@ -59,7 +59,8 @@ func TestPasteKeepsNewlines(t *testing.T) {
 func TestComposerHeightCaps(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
-	d.feed(tea.PasteMsg{Content: strings.Repeat("x\n", 30)})
+	// Eight lines is the tallest paste that stays inline (paste.go).
+	d.feed(tea.PasteMsg{Content: strings.Repeat("x\n", composerMaxLines)})
 	if d.m.input.Height() != composerMaxLines {
 		t.Errorf("composer height = %d, want cap %d", d.m.input.Height(), composerMaxLines)
 	}

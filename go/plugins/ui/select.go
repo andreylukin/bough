@@ -2,7 +2,7 @@ package ui
 
 // Mouse selection in the transcript: press-drag-release over the
 // viewport highlights the swept text (reverse video) and copies its
-// plain form to the clipboard via OSC 52. A plain click (no drag)
+// plain form to the clipboard (clipboard.go: OSC 52 plus the native tool). A plain click (no drag)
 // keeps its old meaning (toggle a block, pick an ask option); the next
 // press clears the highlight. Coordinates are content rows (viewport
 // offset applied) and cells, so the selection survives scrolling.
@@ -74,13 +74,8 @@ func (m *model) releaseSelect(mouse tea.Mouse) tea.Cmd {
 		m.refresh()
 		return nil
 	}
-	n := strings.Count(text, "\n") + 1
-	if n == 1 {
-		m.flash = "copied " + plural(len([]rune(text)), "char")
-	} else {
-		m.flash = "copied " + plural(n, "line")
-	}
-	return tea.SetClipboard(text)
+	m.flash = copyNote(text)
+	return copyText(text, m.flash)
 }
 
 func plural(n int, unit string) string {

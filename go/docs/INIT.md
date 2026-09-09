@@ -67,7 +67,10 @@ defaults. Actions:
 `history_inspect`, `block_next` (tab), `block_prev` (shift+tab),
 `collapse_toggle` (enter, on the focused block), `collapse_all`,
 `expand_all`, `clear_input`, `todo_toggle` (ctrl+t), `external_editor`
-(ctrl+g: edit the draft in `$VISUAL` / `$EDITOR`), `follow_up`
+(ctrl+g: edit the draft in `$VISUAL` / `$EDITOR`), `copy` (unbound
+by default; `ctrl+x y` chord: copy the focused block, else the last
+reply, as raw markdown — a mouse drag over the transcript copies the
+rendered text on release), `follow_up`
 (alt+enter: while a turn runs, queue the line for after it — plain
 enter steers the running turn instead)
 
@@ -79,7 +82,7 @@ is unbound.
 `leader` (default `ctrl+x`) starts a chord: the next key is looked up
 in `chords`, a `{key: action}` object. Defaults: `l` sessions, `c`
 collapse_all, `e` expand_all, `u` undo (`/undo` when a command
-provides it), `k` keys, `q` quit (arms like ctrl+c), `p` palette (the
+provides it), `k` keys, `q` quit (arms like ctrl+c), `y` copy, `p` palette (the
 `/` palette over the actions alone — esc, or a chosen row, gives the
 draft it displaced back). A chord may target any keymap action or
 `sessions`, `clear`, `keys`, `palette`, `undo`; an unknown action

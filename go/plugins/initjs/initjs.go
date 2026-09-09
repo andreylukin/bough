@@ -39,7 +39,7 @@ type sessionInfo interface{ Map() map[string]any }
 // themeTokens and keymapActions are the closed vocabularies of the
 // "theme" and "keymap" service contracts; anything else is a typo.
 var themeTokens = set("user", "assistant", "code", "result", "error", "accent", "dim", "border", "status")
-var keymapActions = set("quit", "scroll_up", "scroll_down", "page_up", "page_down", "history_inspect", "block_next", "block_prev", "collapse_toggle", "collapse_all", "expand_all", "clear_input", "todo_toggle", "external_editor", "follow_up", "leader")
+var keymapActions = set("quit", "scroll_up", "scroll_down", "page_up", "page_down", "history_inspect", "block_next", "block_prev", "collapse_toggle", "collapse_all", "expand_all", "clear_input", "todo_toggle", "external_editor", "copy", "follow_up", "leader")
 
 func set(keys ...string) map[string]bool {
 	m := make(map[string]bool, len(keys))

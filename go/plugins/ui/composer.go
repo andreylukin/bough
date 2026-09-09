@@ -38,6 +38,11 @@ type composerState struct {
 	// double-esc ("saves the draft to history so Up recalls it"): a
 	// draft is cheap to clear only if clearing it is undoable.
 	dropped []string
+	// pastes holds the full text behind each "[Pasted text #N ...]"
+	// placeholder in the draft (paste.go), N being 1-based index here.
+	// Kept for the session: a dropped or recalled draft still carries
+	// its tags.
+	pastes []string
 }
 
 // dropDraft remembers a draft esc is about to clear, so Up brings it

@@ -1,0 +1,140 @@
+package ui
+
+// Text pastes into the composer. Line endings are normalised (Windows
+// terminals send CR-only newlines in a bracketed paste). A paste that
+// is one path to an image on disk (Finder/Explorer drag-drop, quoted or
+// backslash-escaped, or a file:// URL) becomes the "@path " reference
+// ctrl+v's image paste inserts. A paste taller than the composer or
+// longer than pasteCollapseChars collapses to a "[Pasted text #N +L
+// lines]" placeholder, as Claude Code, Codex and opencode do, so the
+// composer stays usable; the placeholder expands to the full text on
+// submit, and deleting it drops the paste. Anything smaller lands as
+// typed text, editable in place.
+
+import (
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+)
+
+// pasteCollapseChars is Claude Code's threshold: past it a paste is a
+// placeholder even when it fits the composer's rows.
+const pasteCollapseChars = 800
+
+// pastePrefix opens every placeholder; the number after it is the
+// paste's index in comp.pastes.
+const pastePrefix = "[Pasted text #"
+
+// handlePaste routes one bracketed paste; it reports whether it was
+// consumed (false: the textarea inserts the content itself).
+func (m *model) handlePaste(msg tea.PasteMsg) (bool, tea.Cmd) {
+	if m.inspecting {
+		return false, nil
+	}
+	text := strings.ReplaceAll(msg.Content, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false, nil
+	}
+	if path := pastedImagePath(trimmed); path != "" {
+		m.input.InsertString("@" + path + " ")
+		m.syncPalette()
+		m.layoutComposer()
+		m.flash = "image attached by path: " + path + " · the model gets the path, not the pixels"
+		return true, nil
+	}
+	lines := strings.Count(trimmed, "\n") + 1
+	if lines <= composerMaxLines && len([]rune(trimmed)) <= pasteCollapseChars {
+		if text == msg.Content {
+			return false, nil
+		}
+		m.input.InsertString(text)
+		m.syncPalette()
+		m.layoutComposer()
+		return true, nil
+	}
+	m.comp.pastes = append(m.comp.pastes, text)
+	tag := fmt.Sprintf("%s%d", pastePrefix, len(m.comp.pastes))
+	if lines > 1 {
+		tag += " +" + plural(lines, "line") + "]"
+	} else {
+		tag += " " + plural(len([]rune(trimmed)), "char") + "]"
+	}
+	m.input.InsertString(tag)
+	m.syncPalette()
+	m.layoutComposer()
+	m.flash = "pasted " + plural(lines, "line") + " · expands when sent · delete the tag to drop it"
+	return true, nil
+}
+
+// pastedImagePath returns the on-disk image path a pasted line names,
+// "" when the paste is not a single existing image file.
+func pastedImagePath(s string) string {
+	if strings.Contains(s, "\n") {
+		return ""
+	}
+	s = strings.Trim(s, `"'`)
+	if strings.HasPrefix(s, "file://") {
+		u, err := url.Parse(s)
+		if err != nil {
+			return ""
+		}
+		s = u.Path
+	} else {
+		var b strings.Builder
+		for i := 0; i < len(s); i++ {
+			if s[i] == '\\' && i+1 < len(s) {
+				i++
+			}
+			b.WriteByte(s[i])
+		}
+		s = b.String()
+	}
+	switch strings.ToLower(filepath.Ext(s)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg":
+	default:
+		return ""
+	}
+	if st, err := os.Stat(s); err != nil || st.IsDir() {
+		return ""
+	}
+	return s
+}
+
+// expandPastes replaces every placeholder still in the draft with its
+// text. Placeholders the user deleted are simply not there to expand.
+func (m *model) expandPastes(draft string) string {
+	if len(m.comp.pastes) == 0 || !strings.Contains(draft, pastePrefix) {
+		return draft
+	}
+	var b strings.Builder
+	for {
+		i := strings.Index(draft, pastePrefix)
+		if i < 0 {
+			break
+		}
+		end := strings.IndexByte(draft[i:], ']')
+		if end < 0 {
+			break
+		}
+		tag := draft[i : i+end+1]
+		num, _, _ := strings.Cut(tag[len(pastePrefix):], " ")
+		num = strings.TrimSuffix(num, "]")
+		n, err := strconv.Atoi(num)
+		b.WriteString(draft[:i])
+		if err == nil && n >= 1 && n <= len(m.comp.pastes) {
+			b.WriteString(m.comp.pastes[n-1])
+		} else {
+			b.WriteString(tag)
+		}
+		draft = draft[i+end+1:]
+	}
+	b.WriteString(draft)
+	return b.String()
+}

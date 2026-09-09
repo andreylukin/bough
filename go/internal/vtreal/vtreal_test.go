@@ -375,7 +375,9 @@ func TestLongReplyKeepsComposerPinned(t *testing.T) {
 	a := start(t, 80, 20)
 	long := strings.Repeat("word ", 400)
 	a.term.Paste(long)
-	a.waitUntil(func(s string) bool { return strings.Count(s, "word") > 10 }, "paste in composer")
+	// A paste this long collapses to a placeholder (plugins/ui/paste.go)
+	// and expands to the full text on enter.
+	a.waitFor("[Pasted text #1 1999 chars]")
 	a.key(uv.KeyEnter, 0)
 	a.waitFor("echo: word")
 	s := a.settled()
