@@ -661,6 +661,10 @@ type runner struct {
 	// can add up what it already spent. nil when nothing counts.
 	report   func() llm.Usage
 	reported llm.Usage // the tally at the last done
+	// provider names the llm row's plugin ("anthropic", "openrouter",
+	// …) for the assistant entry's provenance; read at call time, as
+	// /model swaps the row mid-session. nil in a bare test runner.
+	provider func() string
 	// keepWhole is how many recent tool outputs the projection shows in
 	// full (trim.go); 0 disables trimming.
 	keepWhole int
@@ -714,6 +718,23 @@ func (r *runner) note(emit func(kind, text string), kind, text string, extra map
 	r.noteData = extra
 	emit(kind, text)
 	r.noteData = nil
+}
+
+// provenance is what produced an assistant message: the model id and
+// the provider it was called through, so a session record (and every
+// plugin reading it) can tell replies apart once /model has switched
+// mid-session. A key is left out when unknown.
+func (r *runner) provenance() map[string]any {
+	data := map[string]any{}
+	if m := llm.Name(r.llm); m != "" {
+		data["model"] = m
+	}
+	if r.provider != nil {
+		if p := r.provider(); p != "" {
+			data["provider"] = p
+		}
+	}
+	return data
 }
 
 // admit runs one user line through the user-prompt-submit hook (which
@@ -1470,7 +1491,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		if !stopped {
 			reply, dropped = firstBlockOnly(reply)
 		}
-		note("assistant", reply, nil)
+		note("assistant", reply, r.provenance())
 		blocks := jsBlock.FindAllStringSubmatch(reply, -1)
 		if len(blocks) == 0 {
 			// A steer sent while the model wrote this final reply
@@ -1620,7 +1641,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		return err
 	}
 	reply = strings.TrimSpace(jsBlock.ReplaceAllString(stripFakeBlocks(reply), ""))
-	note("assistant", reply, nil)
+	note("assistant", reply, r.provenance())
 	finish("", r.doneData())
 	r.fire(ctx, "stop", map[string]any{"input": input, "reply": reply}, emit)
 	return nil
@@ -1744,6 +1765,14 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		return err
 	}
 	r := &runner{llm: llm, code: code, hist: &memHistory{}, secs: &Sections{}}
+	r.provider = func() string {
+		for _, row := range kctx.Desired() {
+			if row.ID == "llm" {
+				return strings.TrimPrefix(row.Plugin, "llm-")
+			}
+		}
+		return ""
+	}
 	if c, ok := code.(cataloguer); ok {
 		r.cat = c.Catalogue
 	}

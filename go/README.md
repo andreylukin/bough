@@ -140,7 +140,9 @@ the LLM until it's done, and every step is emitted as a `loop/event`
 
 Conversation state lives in an append-only entry log, not in the loop.
 Every turn appends `input`, `assistant`, `code`, `result`, `error`,
-`done` entries; each step's model messages are projected from the log
+`done` entries (an `assistant` entry also carries the `model` and
+`provider` that wrote it, so a session that switched with `/model`
+stays legible); each step's model messages are projected from the log
 (`projection` service, or the built-in default). With the `history` row
 mounted the log is durable JSONL in `~/.bough/history/<uuidv7>.jsonl`
 — inspect it with `./bough log`, or Ctrl+O in the TUI — and the

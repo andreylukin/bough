@@ -862,3 +862,52 @@ func TestUnclosedStopFenceStillStops(t *testing.T) {
 		t.Fatal("a pending js block must not be skipped")
 	}
 }
+
+// namedLLM is a seqLLM that says which model it is (llm.Modeler).
+type namedLLM struct{ seqLLM }
+
+func (namedLLM) Model() string { return "claude-fable-5-1" }
+
+// Every assistant entry records which model wrote it and through which
+// provider, so a session that switched models mid-way stays legible
+// to whoever reads the JSONL (and to the plugins reading Entries()).
+func TestAssistantEntryRecordsModelAndProvider(t *testing.T) {
+	llm := &namedLLM{seqLLM{replies: []string{"```stop\nhi\n```"}}}
+	hist := &memHistory{}
+	r := &runner{llm: llm, code: &stubCode{}, hist: hist, secs: &Sections{}, stopRetries: 2}
+	r.provider = func() string { return "anthropic" }
+	if err := r.Run(context.Background(), "hello", func(string, string) {}); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range hist.Entries() {
+		if e.Kind != "assistant" {
+			continue
+		}
+		if e.Data["model"] != "claude-fable-5-1" || e.Data["provider"] != "anthropic" {
+			t.Fatalf("assistant entry data = %v, want model and provider", e.Data)
+		}
+		return
+	}
+	t.Fatal("no assistant entry")
+}
+
+// A bare runner (no provider seam, an llm that does not name itself)
+// records nothing rather than empty strings.
+func TestAssistantEntryOmitsUnknownProvenance(t *testing.T) {
+	hist := &memHistory{}
+	r := &runner{llm: &seqLLM{replies: []string{"```stop\nhi\n```"}}, code: &stubCode{}, hist: hist, secs: &Sections{}, stopRetries: 2}
+	if err := r.Run(context.Background(), "hello", func(string, string) {}); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range hist.Entries() {
+		if e.Kind != "assistant" {
+			continue
+		}
+		if _, has := e.Data["model"]; has {
+			t.Fatalf("model recorded for a nameless llm: %v", e.Data)
+		}
+		if _, has := e.Data["provider"]; has {
+			t.Fatalf("provider recorded without a seam: %v", e.Data)
+		}
+	}
+}
