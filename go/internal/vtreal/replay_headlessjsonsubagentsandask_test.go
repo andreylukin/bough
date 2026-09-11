@@ -194,9 +194,6 @@ func TestHeadlessJSONSubagentsAndAsk(t *testing.T) {
 
 	t.Run("UnansweredAskAtEOFFails", func(t *testing.T) {
 		t.Parallel()
-		if os.Getenv(headlessJSONSubagentsAndAskKnown) == "" {
-			t.Skip("known bug: stdin EOF with a pending tools.ask gives up after BOUGH_HEADLESS_IDLE and exits 0 with no [done] and no [error] (ui/headless.go drainHeadless); set " + headlessJSONSubagentsAndAskKnown + "=1 to run")
-		}
 		r := headlessJSONSubagentsAndAskRun(t, "", 5)
 		headlessJSONSubagentsAndAskNoEscapes(t, r)
 		if !strings.Contains(r.stdout, "[ask] Pick a color") {
