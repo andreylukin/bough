@@ -94,6 +94,11 @@ func (m *model) replay() {
 			m.lastRequest = e.At
 		}
 	}
+	// The pinned list comes from the todo service: its events only
+	// fire on a change, and the todo/* entries replay as no block.
+	if cfg.todo != nil && len(cfg.todo.List()) > 0 {
+		m.todoText = cfg.todo.Render()
+	}
 	m.expireAsks()                 // an ask with no answer entry replays as expired
 	m.running = false              // a replayed transcript is never mid-turn
 	m.welcome = len(m.blocks) == 0 // fresh session (0 entries): orient

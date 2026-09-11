@@ -47,8 +47,7 @@ func todoStart(t *testing.T, cols, rows int) *app {
 	return startCfg(t, cols, rows, yml)
 }
 
-// todoOpen types a /todo mutation and waits for the panel: the panel
-// tracks todo events, and nothing emits one until the list changes.
+// todoOpen types a /todo mutation and waits for the panel to show it.
 func todoOpen(a *app) {
 	a.t.Helper()
 	a.typeText("/todo add ship it")
@@ -136,15 +135,17 @@ func TestTodoEscKeepsPanel(t *testing.T) {
 	a.check("esc with the todo panel open")
 }
 
-// Until something mutates the list, a resumed session has no panel:
-// the panel is fed by todo events, and boot emits none.
-func TestTodoNoPanelBeforeMutation(t *testing.T) {
+// A resumed session pins its list at boot: the panel is read from the
+// todo service when the transcript replays, not only on a todo event.
+func TestTodoPanelOnResume(t *testing.T) {
 	t.Parallel()
 	a := todoStart(t, 100, 30)
-	if s := a.settled(); strings.Contains(s, todoHeader) {
-		t.Fatalf("the todo panel should not be pinned before a todo event:\n%s", s)
+	a.waitFor(todoHeader)
+	s := a.settled()
+	for _, want := range []string{"[ ] 1 cut the tag", "[x] 2 review the diff", "[ ] 3 write the notes"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("resumed todo panel is missing %q:\n%s", want, s)
+		}
 	}
-	a.key('t', uv.ModCtrl)
-	a.waitFor("no todo list yet")
-	a.check("ctrl+t with no todo list")
+	a.check("todo panel on resume")
 }

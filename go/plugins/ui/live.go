@@ -12,6 +12,7 @@ import (
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
+	"github.com/andreylukin/bough/plugins/todo"
 )
 
 // Live wiring shared by the tui and web modes across row remounts.
@@ -94,6 +95,10 @@ type uiCfg struct {
 	jobs jobLister
 	// board is the attention service, for the board at the top.
 	board boardSource
+	// todo is the todo service, read once when a session replays so a
+	// resumed list is pinned before anything changes it; nil when the
+	// todo row is absent.
+	todo *todo.Todos
 	// past is this directory's prompts from earlier sessions, newest
 	// first, for the composer's Up arrow. A func because reading them
 	// is file work: the composer calls it once, on the first recall.
@@ -287,6 +292,9 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 	if b, err := kernel.Get[boardSource](ctx, "attention"); err == nil {
 		cfg.board = b
+	}
+	if t, err := kernel.Get[*todo.Todos](ctx, "todo"); err == nil {
+		cfg.todo = t
 	}
 	// A provider that cannot run says so now, not after the user has
 	// typed a prompt and waited. Without this the TUI opens on a clean
