@@ -9,7 +9,6 @@ package vtreal
 // terminal runs (here: it renames the tab to PWNED).
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -93,14 +92,7 @@ func TestTabTitleOscWithControlChars(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	stop()
 
-	known := func(t *testing.T, bug string) {
-		if os.Getenv("BOUGH_KNOWN_TAB_TITLE_OSC_WITH_CONTROL_CHARS") == "" {
-			t.Skip("known bug (set BOUGH_KNOWN_TAB_TITLE_OSC_WITH_CONTROL_CHARS=1 to run): " + bug)
-		}
-	}
-
 	t.Run("osc payload sanitized", func(t *testing.T) {
-		known(t, "plugins/title Clean and plugins/ui tabTitle pass the model's ESC/BEL/U+202E raw into OSC 2")
 		all := titles()
 		for _, tt := range all {
 			if strings.Contains(tt, "PWNED") {
@@ -117,9 +109,13 @@ func TestTabTitleOscWithControlChars(t *testing.T) {
 	})
 
 	t.Run("status bar intact", func(t *testing.T) {
-		known(t, "plugins/ui statusbar renders m.title unsanitized; control bytes spill the bar onto an extra row")
 		ls := strings.Split(screen, "\n")
 		bar := ls[len(ls)-1]
+		for _, l := range ls { // the bar sits above the composer's row
+			if strings.Contains(l, "? keys") {
+				bar = l
+			}
+		}
 		if !strings.Contains(bar, "? keys") || !strings.Contains(bar, "Fix") {
 			t.Fatalf("status bar row broken: %q\n%s", bar, screen)
 		}

@@ -14,6 +14,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/history"
@@ -55,6 +58,15 @@ func Clean(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i] // a chatty model explains underneath; take the name
 	}
+	// The name lands in the terminal's OSC 2 title and the status bar:
+	// drop escape sequences whole, then any stray control or bidi rune.
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
+			return -1
+		}
+		return r
+	}, ansi.Strip(s))
+	s = strings.Join(strings.Fields(s), " ")
 	s = strings.Trim(s, ` "'*.`)
 	if len(s) > 60 {
 		s = strings.TrimSpace(s[:60]) + "…"

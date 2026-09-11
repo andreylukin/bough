@@ -14,11 +14,12 @@ import (
 // Clean takes the name out of whatever came back.
 func TestClean(t *testing.T) {
 	cases := map[string]string{
-		`Fix the flaky golden test`:                    "Fix the flaky golden test",
-		`"Fix the flaky golden test."`:                 "Fix the flaky golden test",
-		"**Fix the flaky golden test**":                "Fix the flaky golden test",
-		"Fix the flaky golden test\n\nThis names the…": "Fix the flaky golden test",
-		strings.Repeat("very long title ", 10):         strings.TrimSpace(strings.Repeat("very long title ", 10)[:60]) + "…",
+		`Fix the flaky golden test`:                             "Fix the flaky golden test",
+		"Fix \x1b]0;PWNED\x07 the\x1b[31m red\u202e flaky test": "Fix the red flaky test",
+		`"Fix the flaky golden test."`:                          "Fix the flaky golden test",
+		"**Fix the flaky golden test**":                         "Fix the flaky golden test",
+		"Fix the flaky golden test\n\nThis names the…":          "Fix the flaky golden test",
+		strings.Repeat("very long title ", 10):                  strings.TrimSpace(strings.Repeat("very long title ", 10)[:60]) + "…",
 	}
 	for in, want := range cases {
 		if got := Clean(in); got != want {
