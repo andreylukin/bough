@@ -100,7 +100,7 @@ func (m *model) layoutComposer() {
 	// The background-job strip sits under the composer and takes its
 	// rows from the transcript, like the status bar does.
 	cfg := m.cfg.Load()
-	n += len(m.jobRows(cfg)) + len(m.todoRows(cfg)) + len(m.boardRows(cfg))
+	n += len(m.jobRows(cfg)) + len(m.todoRows(cfg))
 	if h := m.height - 1 - n; h > 0 {
 		atBottom := m.vp.AtBottom()
 		m.vp.SetHeight(h)

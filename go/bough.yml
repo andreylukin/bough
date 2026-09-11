@@ -143,7 +143,7 @@
   #   timeout_minutes: 10  # unanswered asks error after this
 
 # A cheap model for the jobs that are not the conversation: naming a
-# session, extracting a fact worth remembering. Any llm-* plugin with
+# session, the status line. Any llm-* plugin with
 # {service: llm-small}; without this row those jobs use the agent's own
 # model.
 # - id: llm-small
@@ -151,21 +151,6 @@
 #   config:
 #     service: llm-small
 #     model: z-ai/glm-5.3-flash
-
-# Long sessions: once the projection grows past `budget` characters, old
-# tool outputs collapse to one-line placeholders the model can bring back
-# with <focus seq=N>. With an llm-small row, a navigator on it writes the
-# index lines and picks the outputs each turn is about; without one,
-# placeholders carry the output's first line and no model is called.
-# History on disk is never touched. Before loop: the loop reads the
-# "projection" service at mount.
-- id: memory-tier
-  plugin: memory-tier
-  # config:
-  #   budget: 100000       # characters before outputs start hiding
-  #   keep_whole: 6        # newest outputs always shown in full
-  #   top_k: 6             # outputs the navigator may bring back per turn
-  #   pick_timeout_seconds: 10
 
 #     days: 14              # only PRs updated this recently
 #     max_prs: 3            # per poll
@@ -184,44 +169,6 @@
   #                           # session is never touched. 0 disables it.
   #                           # Nothing is summarised and the history log
   #                           # is untouched either way.
-
-# Long-term memory: the graph core (docs/graph-memory.md). A bi-temporal
-# graph in ~/.bough/graph.db; this session and its repo/branch tickets are
-# recorded at mount, the workspace's neighborhood is a prompt section, and
-# the verbs are tools.graph.{search,neighbors,timeline,resolve,assert,
-# invalidate}. `bough graph backfill` seeds it from bough.db + history.
-# config: {path: ~/.bough/graph.db, embed: true, hops: 1, max_rows: 40}
-# After loop (its prompt-sections exist, so this row never remounts) and
-# before ui (which goes live and holds the codemode VM mid-turn): a mount
-# that blocks on the VM would stall the settle pass behind the first turn.
-- id: graph
-  plugin: graph
-  # config:
-  #   me: you@example.com  # whose world `bough graph status` shows (default git user.email)
-
-# The graph's ingest from the external world: `bough collect` pulls my
-# PRs (gh), tickets (Linear MCP), threads (Slack MCP) and pages (Notion
-# MCP) with their links and states; `bough collect install` runs it
-# every 10 minutes under launchd. Sources whose server is not
-# configured report "off" and are skipped.
-- id: collect
-  plugin: collect
-  # config:
-  #   every: 10m
-  #   linear: linear-server   # MCP server names; "" turns a source off
-  #   slack: slack
-  #   notion: notion
-  #   queries: ["in:#nm-echo-private after:2026-09-01"]  # extra Slack searches
-
-# After every turn a small model writes down what is worth remembering
-# as plain sentences (a preference and why, a decision and its reason,
-# where something lives, a proven dead end) and asserts them into the
-# graph — or appends to ~/.bough/memory.md when the graph row is absent.
-# Each shows in the transcript as a ◆ remembered row. The row also adds
-# the prompt rule that says when to search memory. Runs off the turn, on
-# llm-small when a row provides it. config: {max_facts: 3, file: ~/.bough/memory.md}
-- id: auto-memory
-  plugin: auto-memory
 
 # The agent's own directory: values that survive a code block, notes
 # that survive the context window, and somewhere to put a throwaway
@@ -254,8 +201,7 @@
 # tokyonight, catppuccin_mocha, gruvbox, nord, dracula); /theme lists
 # and switches live. init.js `ui.theme` tokens overlay the palette.
 # The local page server: one address where rows with a page to show
-# mount it — the attention board with `web: true`, and every artifact
-# an agent publishes. The first bough process binds it; later ones
+# mount it — every artifact an agent publishes. The first bough process binds it; later ones
 # find it taken and point at the same pages (they are read from disk).
 - id: web
   plugin: web
@@ -274,19 +220,6 @@
   plugin: artifacts
   # config:
   #   open: false          # do not open the browser on first publish
-
-# The attention board: what awaits you, what a session is working now,
-# what of yours waits on others — from the graph, three columns by whose
-# turn it is. With `web: true` the web row serves it as a page
-# (rows link to GitHub/Linear, hovering shows the graph's neighbourhood)
-# and /current-work opens it in the browser; without, /current-work pins
-# the board at the top of the terminal, and sticky: true pins it from
-# the first frame of every session.
-- id: attention
-  plugin: attention
-  config:
-    sticky: false
-    # web: true            # serve the board on the web row's address
 
 - id: theme
   plugin: theme

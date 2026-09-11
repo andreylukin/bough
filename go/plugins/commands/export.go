@@ -150,7 +150,7 @@ func writeEntry(b *strings.Builder, e history.Entry) {
 		b.WriteString(quoteBlock("⚠ "+text) + "\n\n")
 	case "command":
 		b.WriteString(quoteBlock("❯ "+text) + "\n\n")
-	case "system", "job", "memory", "context":
+	case "system", "job", "context":
 		if text != "" {
 			b.WriteString(quoteBlock(text) + "\n\n")
 		}

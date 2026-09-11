@@ -1,7 +1,7 @@
 # Writing a plugin
 
 Everything in bough except the kernel and the launcher is a plugin: the
-LLM providers, the loop, the tools, the TUI, memory, MCP, hooks, skills.
+LLM providers, the loop, the tools, the TUI, MCP, hooks, skills.
 Adding behaviour means adding a row, not changing the loop.
 
 This walks through [`plugins/example/example.go`](../plugins/example/example.go),
@@ -183,8 +183,8 @@ call, and `/context` shows a user exactly what you added.
 
 Mount order comes from dependencies, not from the file. Row order only
 breaks ties within a mount pass, which is why the optional loop seams
-sit above the `loop` row in the shipped `bough.yml` and why `graph` and
-`scratchpad` sit below it.
+sit above the `loop` row in the shipped `bough.yml` and why
+`scratchpad` sits below it.
 
 ## Testing
 

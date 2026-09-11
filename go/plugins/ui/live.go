@@ -93,8 +93,6 @@ type uiCfg struct {
 	// jobs is the background-job service, for the strip under the
 	// composer; nil when the tools row is absent.
 	jobs jobLister
-	// board is the attention service, for the board at the top.
-	board boardSource
 	// todo is the todo service, read once when a session replays so a
 	// resumed list is pinned before anything changes it; nil when the
 	// todo row is absent.
@@ -306,9 +304,6 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 	if j, err := kernel.Get[jobLister](ctx, "job-notices"); err == nil {
 		cfg.jobs = j
-	}
-	if b, err := kernel.Get[boardSource](ctx, "attention"); err == nil {
-		cfg.board = b
 	}
 	if t, err := kernel.Get[*todo.Todos](ctx, "todo"); err == nil {
 		cfg.todo = t

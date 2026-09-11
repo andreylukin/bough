@@ -1,7 +1,7 @@
 package vtreal
 
 // Surface "web-mode-offline": the web row on an ephemeral port with
-// the artifacts row and the attention board mounted on it, no network
+// the artifacts row mounted on it, no network
 // beyond loopback. The pages must answer during a replayed turn, the
 // port must be released when bough quits, a second boot must bind the
 // same port, and nothing the server logs may land on the TUI.
@@ -34,9 +34,7 @@ func webModeOfflinePort(t *testing.T) string {
 }
 
 func webModeOfflineConfig(tape, addr string) string {
-	// replayConfig disables attention; drop that stanza so the live
-	// one below does not clash on the id.
-	base := strings.Replace(replayConfig(tape), "- id: attention\n  plugin: attention\n  disabled: true\n", "", 1)
+	base := replayConfig(tape)
 	return base + fmt.Sprintf(`
 - id: web
   plugin: web
@@ -44,11 +42,6 @@ func webModeOfflineConfig(tape, addr string) string {
 - id: artifacts
   plugin: artifacts
   config: {open: false}
-- id: graph
-  plugin: graph
-- id: attention
-  plugin: attention
-  config: {web: true}
 `, addr)
 }
 
@@ -103,7 +96,7 @@ func TestWebModeOffline(t *testing.T) {
 	a := webModeOfflineBoot(t, tape, addr)
 	a.check("boot")
 
-	endpoints := []string{"/artifacts/", "/artifacts/rec/db-comparison", "/artifacts/rec/db-comparison.ui", "/api/board", "/"}
+	endpoints := []string{"/artifacts/", "/artifacts/rec/db-comparison", "/artifacts/rec/db-comparison.ui"}
 
 	t.Run("TestWebModeOfflineEndpointsDuringTurn", func(t *testing.T) {
 		a.typeText("publish a db comparison page")

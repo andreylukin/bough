@@ -19,20 +19,16 @@ import (
 	"github.com/andreylukin/bough"
 	"github.com/andreylukin/bough/internal/schema"
 	"github.com/andreylukin/bough/kernel"
-	"github.com/dop251/goja"
 	_ "github.com/andreylukin/bough/plugins/activity"
 	_ "github.com/andreylukin/bough/plugins/artifacts"
 	_ "github.com/andreylukin/bough/plugins/ask"
-	_ "github.com/andreylukin/bough/plugins/attention"
 	_ "github.com/andreylukin/bough/plugins/cmux"
 	_ "github.com/andreylukin/bough/plugins/codemode"
-	_ "github.com/andreylukin/bough/plugins/collect"
 	_ "github.com/andreylukin/bough/plugins/commands"
 	_ "github.com/andreylukin/bough/plugins/connect"
 	_ "github.com/andreylukin/bough/plugins/contextmd"
 	_ "github.com/andreylukin/bough/plugins/cost"
 	_ "github.com/andreylukin/bough/plugins/example"
-	_ "github.com/andreylukin/bough/plugins/graph"
 	"github.com/andreylukin/bough/plugins/history"
 	_ "github.com/andreylukin/bough/plugins/history"
 	_ "github.com/andreylukin/bough/plugins/hooks"
@@ -40,10 +36,7 @@ import (
 	_ "github.com/andreylukin/bough/plugins/llm"
 	_ "github.com/andreylukin/bough/plugins/loop"
 	_ "github.com/andreylukin/bough/plugins/mcp"
-	_ "github.com/andreylukin/bough/plugins/memory"
-	_ "github.com/andreylukin/bough/plugins/memtier"
 	_ "github.com/andreylukin/bough/plugins/prompts"
-	_ "github.com/andreylukin/bough/plugins/recipes"
 	_ "github.com/andreylukin/bough/plugins/replay"
 	_ "github.com/andreylukin/bough/plugins/rules"
 	_ "github.com/andreylukin/bough/plugins/scratch"
@@ -56,6 +49,7 @@ import (
 	"github.com/andreylukin/bough/plugins/ui"
 	_ "github.com/andreylukin/bough/plugins/web"
 	_ "github.com/andreylukin/bough/plugins/workers"
+	"github.com/dop251/goja"
 )
 
 // setFlags collects repeatable --set id.key=value overrides.
@@ -267,7 +261,7 @@ func versionString() string {
 
 func main() {
 	ui.RunCrashGuardIfAsked() // the tty crash-guard child (plugins/ui/crashguard.go)
-	loadEnvFile() // ~/.bough/env: API keys for launchd/fresh shells
+	loadEnvFile()             // ~/.bough/env: API keys for launchd/fresh shells
 	cmd, args, err := command(os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "bough:", err)

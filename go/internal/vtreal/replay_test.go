@@ -50,17 +50,8 @@ func replayConfig(tape string) string {
 - id: session-title
   plugin: session-title
   disabled: true
-- id: auto-memory
-  plugin: auto-memory
-  disabled: true
-- id: memory-tier
-  plugin: memory-tier
-  disabled: true
 - id: activity
   plugin: activity
-  disabled: true
-- id: attention
-  plugin: attention
   disabled: true
 `, tape, tape)
 }

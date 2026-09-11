@@ -117,9 +117,7 @@ func TestScratchDirPermissionsAndMissingHome(t *testing.T) {
 			scratchDirPermissionsAndMissingHomeHuge("ro-huge"),
 			scratchDirPermissionsAndMissingHomeProbe("ro-probe"),
 			"```stop\nro done.\n```")
-		// graph opens ~/.bough/graph.db at mount and refuses to boot
-		// on a read-only ~/.bough; it is not what this test is about.
-		yml := scratchDirLifecycleOnResumeConfig(tape) + "- id: graph\n  plugin: graph\n  disabled: true\n"
+		yml := scratchDirLifecycleOnResumeConfig(tape)
 		a := scratchDirPermissionsAndMissingHomeStart(t, home, yml)
 		a.typeText("make output")
 		a.key(uv.KeyEnter, 0)

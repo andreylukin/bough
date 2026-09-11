@@ -46,7 +46,7 @@ func TestIsOverflowIgnoresOtherFailures(t *testing.T) {
 // The help names the two ways forward and does not offer a third that
 // bough deliberately does not do.
 func TestOverflowHelpNamesTheWayOut(t *testing.T) {
-	for _, want := range []string{"/model", "/new", "memory graph"} {
+	for _, want := range []string{"/model", "/new", "AGENTS.md"} {
 		if !strings.Contains(OverflowHelp, want) {
 			t.Errorf("the help should mention %q", want)
 		}

@@ -80,7 +80,7 @@ func (m *model) closedByDefault(text string) bool {
 
 func (b *block) collapsible() bool {
 	switch b.kind {
-	case "code", "result", "thinking", "spawn", "error", "system", "todo", "job", "context", "memory":
+	case "code", "result", "thinking", "spawn", "error", "system", "todo", "job", "context":
 		return true
 	}
 	return false
@@ -136,7 +136,6 @@ type model struct {
 	activity    string         // what the agent is doing now (activity plugin); "" when idle
 	pred        predictState   // the small model's guess at the rest of the draft (predict.go)
 	todoHidden  bool           // the todo strip dismissed for now (todo_toggle)
-	board       boardState     // the attention board at the top (board.go)
 	sessRows    sessList       // mid-session picker list (see session.go); nil = launch picker
 	welcome     bool           // fresh-session orientation text (see welcomeView)
 	unfolded    map[int]int    // fold lead id -> id of its run's last block, shown as rows (see fold.go)
@@ -229,9 +228,6 @@ func newModel(width, height int, send func(string), events <-chan Event, cfg *at
 	m := model{vp: vp, overlay: ov, input: ti, spin: sp, send: send, events: events, cfg: cfg,
 		focusID: -1, ovExpanded: map[int64]bool{}, mdCache: map[string]string{}, parts: map[int]partEntry{}, comp: composerState{recall: -1}}
 	m.resize(width, height)
-	if b := cfg.Load().board; b != nil && b.Sticky() {
-		m.board.on = true
-	}
 	if d := cfg.Load().draft; d != "" {
 		// The composer opens with the text; the person finishes it.
 		m.input.SetValue(d)
@@ -528,8 +524,6 @@ func (m *model) header(b *block, th theme) string {
 		}
 	case "error", "system", "todo", "job", "context":
 		tag = b.kind
-	case "memory":
-		tag = "◆ remembered"
 	}
 	if b.label != "" {
 		tag = b.label
@@ -741,23 +735,6 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 		// The dispatched "/" line: a dim echo of what was typed, so
 		// the system block below reads as its answer.
 		return "\n" + th["dim"].Render("❯ "+b.text)
-	case "memory":
-		// What was written down after the turn, for later sessions.
-		// A receipt, not the work, so it is dim; but it is the one
-		// thing here the user did not watch happen, so each fact
-		// carries the ◆ mark that says "this was remembered".
-		if b.collapsed {
-			return m.header(b, th)
-		}
-		var lines []string
-		for _, l := range strings.Split(b.text, "\n") {
-			if l == "" || strings.HasPrefix(l, "(") || strings.HasPrefix(l, "memory:") {
-				lines = append(lines, th["system"].Render(l))
-				continue
-			}
-			lines = append(lines, th["accent"].Render("◆ ")+th["system"].Render(l))
-		}
-		return lipgloss.NewStyle().Width(max(m.width, 10)).Render(strings.Join(lines, "\n"))
 	case "context":
 		// Text the model was given that the user never typed: an
 		// AGENTS.md, a skill a word in the message matched, a hook's
@@ -889,9 +866,6 @@ func (m model) waitEvent() tea.Cmd {
 
 func (m model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.waitEvent(), tea.RequestBackgroundColor, m.cacheTick()}
-	if m.board.on {
-		cmds = append(cmds, m.loadBoard(m.cfg.Load()), m.spin.Tick)
-	}
 	return tea.Batch(cmds...)
 }
 
@@ -911,23 +885,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// inside the old region and stays torn. Reset the margins, then
 		// repaint the whole screen.
 		return m, tea.Sequence(tea.Raw("\x1b[r"), tea.ClearScreen)
-
-	case boardMsg:
-		m.takeBoard(msg.b)
-		if !m.board.on {
-			return m, nil
-		}
-		return m, boardTick()
-
-	case hoverMsg:
-		m.takeHover(msg)
-		return m, nil
-
-	case boardTickMsg:
-		if !m.board.on {
-			return m, nil
-		}
-		return m, m.loadBoard(m.cfg.Load())
 
 	case spinner.TickMsg:
 		// The spinner drives two things: the running turn and the
@@ -1025,28 +982,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.leader {
 			m.leader, m.flash = false, "" // a click is not a chord: the pending leader lapses
 		}
-		// The board sits above the transcript: its rows take the
-		// event, or the event moves up past them.
-		cfg := m.cfg.Load()
-		if took, cmd := m.boardMouse(cfg, msg); took {
-			return m, cmd
-		}
-		return m, m.handleClick(shiftMouse(msg.Mouse(), m.boardHeight(cfg)))
+		return m, m.handleClick(msg.Mouse())
 
 	case tea.MouseMotionMsg:
-		cfg := m.cfg.Load()
-		if took, cmd := m.boardMouse(cfg, msg); took {
-			return m, cmd // the hover's detail fetch
-		}
-		m.dragSelect(shiftMouse(msg.Mouse(), m.boardHeight(cfg)))
+		m.dragSelect(msg.Mouse())
 		return m, nil // never the composer's business
 
 	case tea.MouseReleaseMsg:
-		cfg := m.cfg.Load()
-		if took, cmd := m.boardMouse(cfg, msg); took {
-			return m, cmd
-		}
-		return m, m.releaseSelect(shiftMouse(msg.Mouse(), m.boardHeight(cfg)))
+		return m, m.releaseSelect(msg.Mouse())
 
 	case copiedMsg:
 		m.finishCopy(msg)
@@ -1278,7 +1221,7 @@ func (m *model) addEvent(ev Event) {
 		// A loop-event system note is detail; command output (slash.go)
 		// is what the user asked for and stays open.
 		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: ev.Text,
-			collapsed: (ev.Kind == "system" || ev.Kind == "job" || ev.Kind == "context" || ev.Kind == "memory") &&
+			collapsed: (ev.Kind == "system" || ev.Kind == "job" || ev.Kind == "context") &&
 				m.closedByDefault(ev.Text)})
 	}
 	if m.deferRefresh {
@@ -1880,9 +1823,6 @@ func (m model) View() tea.View {
 	// Key release events make hold-to-talk end on the release rather
 	// than on the repeats stopping; asked for only while voice is on.
 	v.KeyboardEnhancements = tea.KeyboardEnhancements{ReportEventTypes: m.v.mode != ""}
-	if m.board.on {
-		v.MouseMode = tea.MouseModeAllMotion // the board shows detail on hover
-	}
 	return v
 }
 
@@ -1916,12 +1856,6 @@ func (m model) frame() string {
 		body = overlayBottom(body, lines)
 	}
 	out := body
-	if rows := m.boardRows(cfg); len(rows) > 0 {
-		if hover := m.hoverRows(cfg); len(hover) > 0 && !m.inspecting {
-			body = overlayTop(body, hover)
-		}
-		out = strings.Join(rows, "\n") + "\n" + body
-	}
 	// The todo list sits directly above the composer, always, while
 	// there is one: a plan you have to press a key to see is a plan
 	// you forget the agent is working from. Its rows come out of the

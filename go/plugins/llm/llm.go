@@ -70,8 +70,8 @@ func ValidEffort(level string) bool {
 // serviceKey is the service a provider row publishes under: "llm" (the
 // agent's model) unless the row says otherwise. A second row with
 // {service: llm-small} gives the harness a cheap model for the jobs
-// that are not the conversation — naming a session, extracting a fact
-// worth remembering — the way opencode's small_model does.
+// that are not the conversation — naming a session, the status line —
+// the way opencode's small_model does.
 func serviceKey(cfg map[string]any) string {
 	if s, ok := cfg["service"].(string); ok && s != "" {
 		return s
@@ -231,9 +231,9 @@ func IsOverflow(err error) bool {
 
 // OverflowHelp is what to do about it. bough does not compact a
 // conversation behind your back, so the ways forward are a bigger
-// model or a fresh session — and the graph and auto-memory rows carry
-// what was worth keeping across that boundary.
-const OverflowHelp = "\n\nThis conversation no longer fits in the model's context window, and every further turn here would be larger still. Either:\n  /model   — switch to a model with a bigger window\n  /new     — start a fresh session (what was worth remembering is in the memory graph)\nbough never compacts a conversation without being asked, so nothing here has been dropped."
+// model or a fresh session; AGENTS.md, skills and hooks carry what is
+// worth keeping across that boundary.
+const OverflowHelp = "\n\nThis conversation no longer fits in the model's context window, and every further turn here would be larger still. Either:\n  /model   — switch to a model with a bigger window\n  /new     — start a fresh session (put what should carry over in AGENTS.md or a skill)\nbough never compacts a conversation without being asked, so nothing here has been dropped."
 
 // Ready is the optional seam a provider implements to answer, before
 // any turn is taken, whether it can run at all. A missing API key is

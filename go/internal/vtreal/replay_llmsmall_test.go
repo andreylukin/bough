@@ -2,7 +2,7 @@ package vtreal
 
 // A second model service on the tape: `service: llm-small` gives the
 // replay plugin a tape of its own, so the rows that call the cheap
-// model — session-title, the composer's autocomplete, auto-memory —
+// model — session-title and the composer's autocomplete —
 // can be ENABLED in a replay run without eating the agent's replies.
 // The two tapes have separate cursors, so each test asserts both
 // halves: what the small tape produced, and that the main tape is
@@ -47,17 +47,8 @@ func llmSmallConfig(main, small, extra string) string {
 - id: session-title
   plugin: session-title
   disabled: true
-- id: auto-memory
-  plugin: auto-memory
-  disabled: true
-- id: memory-tier
-  plugin: memory-tier
-  disabled: true
 - id: activity
   plugin: activity
-  disabled: true
-- id: attention
-  plugin: attention
   disabled: true
 %s`, main, main, small, extra)
 }
@@ -160,31 +151,4 @@ func TestLlmSmallSuggestion(t *testing.T) {
 		t.Fatalf("the main tape was consumed by the autocomplete:\n%s", s)
 	}
 	a.check("after the turn")
-}
-
-// auto-memory harvests the finished turn on the small tape and leaves
-// a ◆ remembered row; the main tape keeps its own place.
-func TestLlmSmallAutoMemory(t *testing.T) {
-	t.Parallel()
-	main, small := llmSmallTapes(t, "llmsmall-memory.jsonl")
-	a := startCfg(t, 100, 30, llmSmallConfig(main, small, `
-- id: auto-memory
-  plugin: auto-memory
-`))
-	a.check("boot")
-
-	llmSmallTurn(a, "list the files here", 1)
-	a.waitUntil(func(s string) bool {
-		return strings.Contains(s, "◆ location: the demo checkout lists its files with ls -la")
-	}, "the auto-memory receipt row (◆ with the fact off the small tape)")
-	if s := a.text(); strings.Contains(s, "no llm-small row") {
-		t.Fatalf("auto-memory used the agent's model, not the llm-small row:\n%s", s)
-	}
-	a.check("remembered")
-
-	llmSmallTurn(a, "and the tests", 2)
-	if s := a.settled(); !strings.Contains(s, "MAIN-TWO") {
-		t.Fatalf("the main tape was consumed by the harvest:\n%s", s)
-	}
-	a.check("second turn")
 }

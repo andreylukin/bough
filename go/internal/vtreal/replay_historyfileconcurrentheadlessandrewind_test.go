@@ -1,8 +1,7 @@
 package vtreal
 
 // A TUI session rewinds turn by turn while `bough --headless` runs
-// whole turns into the same $HOME: one history directory, one graph
-// sqlite database. Five rewinds, each raced against one headless run
+// whole turns into the same $HOME: one history directory. Five rewinds, each raced against one headless run
 // of a fixed tape (the headless runs are sequential among themselves).
 // Rewind must only move the TUI's own conversation: every headless
 // session file stays byte-identical, the TUI's original file keeps
@@ -22,7 +21,10 @@ import (
 
 	uv "github.com/charmbracelet/ultraviolet"
 
+	"bytes"
+	"context"
 	"github.com/andreylukin/bough/plugins/history"
+	"os/exec"
 )
 
 const historyFileConcurrentHeadlessAndRewindTurns = 6
@@ -75,11 +77,11 @@ func historyFileConcurrentHeadlessAndRewindSeed(t *testing.T, home string, n int
 	return p
 }
 
-// historyFileConcurrentHeadlessAndRewindConfig is a replay config with
-// the graph row and, when session is set, the history row pinned to it.
+// historyFileConcurrentHeadlessAndRewindConfig is a replay config with,
+// when session is set, the history row pinned to it.
 func historyFileConcurrentHeadlessAndRewindConfig(t *testing.T, tape, session string) string {
 	t.Helper()
-	yml := replayConfig(tape) + headlessConcurrentWithTUISameDBGraph
+	yml := replayConfig(tape)
 	if session == "" {
 		return yml
 	}
@@ -277,3 +279,39 @@ func TestHistoryFileConcurrentHeadlessAndRewind(t *testing.T) {
 		}
 	})
 }
+
+// headlessConcurrentWithTUISameDBRun runs `bough --headless` in home
+// with its own config file, so the TUI's bough.yml is never rewritten
+// (that would hot-reload the TUI).
+func headlessConcurrentWithTUISameDBRun(t *testing.T, home, tape, prompt string) headlessResult {
+	t.Helper()
+	cfg := filepath.Join(home, "headless.yml")
+	if err := os.WriteFile(cfg, []byte(replayConfig(tape)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "-config", cfg, "--headless")
+	cmd.Dir = home
+	cmd.Env = append(os.Environ(),
+		"HOME="+home, "TERM=xterm-256color", "COLORTERM=truecolor",
+		"NO_COLOR=", "BOUGH_VERBOSE=", "BOUGH_HEADLESS_IDLE=30",
+	)
+	cmd.Stdin = strings.NewReader(prompt + "\n")
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	runErr := cmd.Run()
+	res := headlessResult{stdout: out.String(), stderr: errb.String()}
+	if ee, ok := runErr.(*exec.ExitError); ok {
+		res.code = ee.ExitCode()
+	} else if runErr != nil {
+		t.Fatalf("running bough --headless: %v\n%s", runErr, res.screen())
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("bough --headless never exited:\n%s", res.screen())
+	}
+	return res
+}
+
+// headlessConcurrentWithTUISameDBWaitDone polls a session file until it
+// holds n done entries.

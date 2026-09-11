@@ -28,7 +28,7 @@ Everything below runs from `go/`. Go 1.27+.
 go build ./cmd/bough                 # ~2s warm
 go vet ./...                         # what CI gates on first
 go test -race -parallel 4 ./...      # ~3 min; plugins/ui alone is most of it
-go test -race ./plugins/recipes/     # one package, under a second
+go test -race ./plugins/todo/        # one package, under a second
 ```
 
 `-parallel 4`, not the default one-per-CPU: the teatest and PTY suites

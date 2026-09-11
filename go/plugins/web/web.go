@@ -1,6 +1,6 @@
 // Package web is the local page server: one address on this machine
-// where rows that have a page to show (the attention board, the
-// artifacts an agent publishes) mount their routes. One process binds
+// where rows that have a page to show (the artifacts an agent
+// publishes) mount their routes. One process binds
 // the address; the sessions started after it find the port taken and
 // stay quiet — the pages are the same for all of them, because every
 // row that mounts here reads its state from disk, not from the process.

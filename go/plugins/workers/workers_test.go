@@ -315,12 +315,12 @@ func TestChildGetsTheParentsToolPrompt(t *testing.T) {
 	l := &scriptLLM{script: []string{"done"}}
 	// In production the loop puts the generated tool catalogue in the
 	// sections, so the child is told the same tools as the parent.
-	w := &Workers{llm: l, code: &stubCode{}, secs: stubSections{text: "Available in the runtime:\n- tools.bash(cmd) -> string: run it\n- tools.patch(path, old, new) -> string: replace one occurrence\n\n## mcp\nbough mcp call graphiti/..."}, ctx: context.Background(), maxSteps: 2}
+	w := &Workers{llm: l, code: &stubCode{}, secs: stubSections{text: "Available in the runtime:\n- tools.bash(cmd) -> string: run it\n- tools.patch(path, old, new) -> string: replace one occurrence\n\n## mcp\nbough mcp call linear/..."}, ctx: context.Background(), maxSteps: 2}
 	w.emit = func(kind, text string, data map[string]any) {}
 	if _, err := w.runChild(context.Background(), "count files", 1, w.code.Run, false, nil); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"tools.bash(cmd)", "tools.patch(path, old, new)", "bough mcp call graphiti/", SubSystemPrompt} {
+	for _, want := range []string{"tools.bash(cmd)", "tools.patch(path, old, new)", "bough mcp call linear/", SubSystemPrompt} {
 		if !strings.Contains(l.seenSys, want) {
 			t.Fatalf("child system prompt lacks %q:\n%s", want, l.seenSys)
 		}

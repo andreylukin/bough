@@ -10,8 +10,7 @@ package vtreal
 //
 // Kinds not reachable through this seam: thinking (the replay model
 // is not a Thinker), job (no real background shell — codemode is
-// replayed), memory (the auto-memory row is off in replayConfig),
-// spawn (subagents never run from a tape). Those kinds are covered
+// replayed), spawn (subagents never run from a tape). Those kinds are covered
 // click-by-click in
 // plugins/ui/clicks_test.go against the in-process model.
 

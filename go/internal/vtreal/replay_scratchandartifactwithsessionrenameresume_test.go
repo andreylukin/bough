@@ -64,17 +64,8 @@ func scratchAndArtifactWithSessionRenameResumeConfig(tape, addr string, titled b
 - id: session-title
   plugin: session-title
   disabled: %v
-- id: auto-memory
-  plugin: auto-memory
-  disabled: true
-- id: memory-tier
-  plugin: memory-tier
-  disabled: true
 - id: activity
   plugin: activity
-  disabled: true
-- id: attention
-  plugin: attention
   disabled: true
 `, tape, addr, !titled)
 }
