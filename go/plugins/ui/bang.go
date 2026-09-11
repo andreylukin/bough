@@ -91,6 +91,20 @@ type bangRun struct {
 	id     int // the result block
 	buf    *bangBuf
 	cancel context.CancelFunc
+	exited chan struct{} // closed once the shell and its group are gone
+}
+
+// stopBang kills a still-running "!" command's process group and waits
+// (bounded) for it: quitting must not leave its tree running.
+func (m model) stopBang() {
+	if m.bang == nil {
+		return
+	}
+	m.bang.cancel()
+	select {
+	case <-m.bang.exited:
+	case <-time.After(3 * time.Second):
+	}
 }
 
 // bangDoneMsg delivers a finished "!" command's output to Update.
@@ -117,7 +131,7 @@ func (m *model) dispatchBang(line string) tea.Cmd {
 	m.nextID++
 	cmd := bangCmd(line)
 	ctx, cancel := context.WithCancel(context.Background())
-	run := &bangRun{id: m.nextID, buf: &bangBuf{}, cancel: cancel}
+	run := &bangRun{id: m.nextID, buf: &bangBuf{}, cancel: cancel, exited: make(chan struct{})}
 	m.bang = run
 	m.blocks = append(m.blocks, block{id: run.id, kind: "result", label: "! " + cmd, text: "…"})
 	m.nextID++
@@ -125,6 +139,7 @@ func (m *model) dispatchBang(line string) tea.Cmd {
 	m.vp.GotoBottom()
 	return tea.Batch(func() tea.Msg {
 		defer cancel()
+		defer close(run.exited)
 		return bangDoneMsg{line: line, out: runBangCtx(ctx, cmd, run.buf), run: run}
 	}, bangTickCmd(run))
 }

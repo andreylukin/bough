@@ -45,7 +45,10 @@ func runTUI() {
 			tuiMu.Unlock()
 			watchResume(p)
 			startCrashGuard()
-			_, err := p.Run()
+			fm, err := p.Run()
+			if fm, ok := fm.(model); ok {
+				fm.stopBang()
+			}
 			stopCrashGuard()
 			close(tuiDone)
 			if err != nil {

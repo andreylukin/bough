@@ -177,9 +177,6 @@ func TestMcpServerSlowStartupFirstTurn(t *testing.T) {
 	})
 
 	t.Run("QuitLeavesNoServer", func(t *testing.T) {
-		if os.Getenv(gate) == "" {
-			t.Skip("known bug: quitting bough orphans a running ! command — runBang (plugins/ui/bang.go) starts sh -c under context.Background with no process group, so exit never kills sh / bough mcp call / the MCP server; set " + gate + " to run")
-		}
 		t.Parallel()
 		a, marker := mcpServerSlowStartupFirstTurnStart(t)
 		mcpServerSlowStartupFirstTurnCall(a, marker)
