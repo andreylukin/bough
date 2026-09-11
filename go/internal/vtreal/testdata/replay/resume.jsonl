@@ -1,0 +1,10 @@
+{"seq":1,"at":"2026-09-10T11:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T11:00:01Z","kind":"input","data":{"text":"greet me"}}
+{"seq":3,"at":"2026-09-10T11:00:02Z","kind":"assistant","data":{"text":"```stop\nHello from turn one.\n```"}}
+{"seq":4,"at":"2026-09-10T11:00:02Z","kind":"done","data":{"text":""}}
+{"seq":5,"at":"2026-09-10T11:00:10Z","kind":"input","data":{"text":"count the files"}}
+{"seq":6,"at":"2026-09-10T11:00:11Z","kind":"assistant","data":{"text":"```js\nconsole.log(tools.bash(\"ls | wc -l\"))\n```"}}
+{"seq":7,"at":"2026-09-10T11:00:11Z","kind":"code","data":{"text":"console.log(tools.bash(\"ls | wc -l\"))\n"}}
+{"seq":8,"at":"2026-09-10T11:00:12Z","kind":"result","data":{"code":"console.log(tools.bash(\"ls | wc -l\"))\n","text":"       2\n"}}
+{"seq":9,"at":"2026-09-10T11:00:13Z","kind":"assistant","data":{"text":"```stop\nTwo files here.\n```"}}
+{"seq":10,"at":"2026-09-10T11:00:13Z","kind":"done","data":{"text":""}}
