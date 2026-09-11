@@ -120,7 +120,6 @@ func TestFilesViewFailures(t *testing.T) {
 		}
 	})
 	t.Run("binary file", func(t *testing.T) {
-		filesKnown(t, "view of a binary file returns raw NUL/control bytes numbered as text (tools.go readView: no binary check)")
 		p := filepath.Join(dir, "bin.o")
 		filesSeed(t, p, "\x7fELF\x00\x00\x01\x02\xff\xfe\x00tail")
 		out, err := readView(p)

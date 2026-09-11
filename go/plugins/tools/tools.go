@@ -5,6 +5,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -418,6 +419,11 @@ func readView(path string, rng ...int) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", withNeighbours(path, err)
+	}
+	// A NUL in the head marks a binary file (git's heuristic): numbering
+	// its bytes as lines only feeds the model garbage.
+	if bytes.IndexByte(data[:min(len(data), 8000)], 0) >= 0 {
+		return "", fmt.Errorf("view: %s is a binary file (%d bytes); inspect it with tools.bash (file, xxd, strings)", path, len(data))
 	}
 	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 	start, end := 1, len(lines)
