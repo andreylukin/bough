@@ -174,7 +174,7 @@ func TestConfigReloadRemovesRow(t *testing.T) {
 	})
 
 	t.Run("todo_betweenturns_panel_clears", func(t *testing.T) {
-		configreloadremovesrowKnown(t, "todo panel outlives its row: ui keeps todoText when cfg.todo is nil (plugins/ui/session.go)")
+		configreloadremovesrowKnown(t, "the ui drops the panel (plugins/ui todoRows), but the raw stderr reload line scrolls the alt screen and the stale panel paint survives the repaint (same bug as notice_repainted)")
 		t.Parallel()
 		a, yml := configreloadremovesrowStart(t)
 		todoOpen(a)

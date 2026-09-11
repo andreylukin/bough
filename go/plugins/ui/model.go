@@ -1909,6 +1909,9 @@ func (m *model) todoRows(cfg *uiCfg) []string {
 	if m.todoHidden || m.todoText == "" || m.inspecting || m.picking || m.mp.open {
 		return nil
 	}
+	if cfg.todo == nil {
+		return nil // the todo row is gone (hot reload): its panel goes with it
+	}
 	if len(m.overlayRows()) > 0 {
 		return nil // the palette is already sitting there
 	}

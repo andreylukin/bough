@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"github.com/andreylukin/bough/plugins/todo"
 	"strings"
 	"testing"
 	"time"
@@ -105,6 +106,9 @@ func TestShortDur(t *testing.T) {
 // the frame still fits the terminal.
 func TestTodoAndJobStripsCoexist(t *testing.T) {
 	m := withJobs(t, tools.Running{ID: 1, Cmd: "go test ./...", Since: 5 * time.Second})
+	cfg := m.cfg.Load()
+	cfg.todo = todo.NewTodos(&todoLog{}, nil)
+	m.cfg.Store(cfg)
 	m.resize(80, 24)
 	m.addEvent(Event{Kind: "todo", Text: "[ ] 1. wire the strip\n[ ] 2. test it"})
 	m.addEvent(Event{Kind: "assistant", Text: strings.Repeat("filler\n", 40)})

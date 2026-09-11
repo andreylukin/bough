@@ -43,3 +43,19 @@ func TestReplayClearsStaleTodoOnSwitch(t *testing.T) {
 		t.Fatalf("stale todo panel after switch: %q", m.todoText)
 	}
 }
+
+// A hot reload that removes the todo row remounts the ui with no todo
+// service; the panel goes with it (the model still holds the text).
+func TestTodoPanelGoesWithItsRow(t *testing.T) {
+	d := defaultDrv(t)
+	d.event("todo", "[ ] 1 ship it")
+	if !strings.Contains(d.plain(), "todo · ctrl+t hides") {
+		t.Fatalf("the todo panel should show:\n%s", d.plain())
+	}
+	cfg := *d.cfgp.Load()
+	cfg.todo = nil
+	d.cfgp.Store(&cfg)
+	if p := d.plain(); strings.Contains(p, "todo · ctrl+t hides") {
+		t.Fatalf("todo panel outlives its row:\n%s", p)
+	}
+}

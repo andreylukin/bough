@@ -6,6 +6,7 @@ package ui
 // the model directly for speed and determinism.
 
 import (
+	"github.com/andreylukin/bough/plugins/todo"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -53,7 +54,9 @@ func cfgWith(t *testing.T, themeOv, keymapOv map[string]string, hist historyView
 			t.Fatalf("keymap override: %v", err)
 		}
 	}
-	return newCfg(th, keys, "bough", hist)
+	cfg := newCfg(th, keys, "bough", hist)
+	cfg.todo = todo.NewTodos(&todoLog{}, nil) // the default tree mounts the todo row
+	return cfg
 }
 
 // drv drives one model instance.
