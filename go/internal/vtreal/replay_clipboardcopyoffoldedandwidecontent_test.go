@@ -172,8 +172,6 @@ func TestClipboardCopyOfFoldedAndWideContent(t *testing.T) {
 	// fold glyph.
 	t.Run("drag_folded_header", func(t *testing.T) {
 		t.Parallel()
-		clipboardCopyOfFoldedAndWideContentKnown(t, "a drag over a folded header copies the ▸ fold glyph "+
-			"(plugins/ui/select.go selectedText copies rendered rows)")
 		a, clip, row := clipboardCopyOfFoldedAndWideContentFolded(t)
 		copyDrag(a, 0, row, a.cols-1, row)
 		got := clipboardCopyOfFoldedAndWideContentRead(a, clip)

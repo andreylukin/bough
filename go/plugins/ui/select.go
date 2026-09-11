@@ -109,6 +109,9 @@ func (m *model) selectedText() string {
 		if r == r0 {
 			left = c0
 		}
+		if m.headerRow(r) && (strings.HasPrefix(plain, "▸ ") || strings.HasPrefix(plain, "▾ ")) {
+			left = max(left, 2) // the fold glyph is chrome, not content
+		}
 		if r == r1 {
 			right = min(right, c1)
 		}
@@ -151,6 +154,17 @@ func boxInterior(plain string) (lo, hi int, frame bool) {
 	}
 	ind := len(t) - len(body)
 	return ind + 2, ansi.StringWidth(t) - 2, false
+}
+
+// headerRow reports whether rendered row r is a disclosure header: a
+// fold row or the first row of a collapsible block.
+func (m *model) headerRow(r int) bool {
+	for _, lr := range m.ranges {
+		if r == lr.start && (lr.fold || m.blocks[lr.idx].collapsible()) {
+			return true
+		}
+	}
+	return false
 }
 
 // highlight applies reverse video to the selected span of each content
