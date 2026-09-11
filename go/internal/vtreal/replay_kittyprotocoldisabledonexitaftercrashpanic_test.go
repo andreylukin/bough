@@ -199,9 +199,6 @@ func TestKittyProtocolDisabledOnExitAfterCrashPanic(t *testing.T) {
 	})
 	t.Run("panic", func(t *testing.T) {
 		t.Parallel()
-		if os.Getenv("BOUGH_KNOWN_KITTY_PROTOCOL_DISABLED_ON_EXIT_AFTER_CRASH_PANIC") == "" {
-			t.Skip("known bug: crash guard restoreSeq (plugins/ui/crashguard.go) never pops the kitty keyboard protocol (CSI <u); set BOUGH_KNOWN_KITTY_PROTOCOL_DISABLED_ON_EXIT_AFTER_CRASH_PANIC=1 to run")
-		}
 		pb := buildPanicBin(t)
 		a, raw := kittyProtocolDisabledOnExitAfterCrashPanicStart(t, pb, "BOUGH_PANIC_AT=update")
 		a.term.SendMouse(uv.MouseWheelEvent{X: 5, Y: 3, Button: uv.MouseWheelUp})

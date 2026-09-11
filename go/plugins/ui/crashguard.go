@@ -24,8 +24,8 @@ import (
 const guardEnv = "BOUGH_TTY_GUARD"
 
 // Leave alt screen, mouse 1000/1002/1003/1006, bracketed paste, focus
-// events; show the cursor.
-const restoreSeq = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?1004l\x1b[?25h\x1b[?1049l"
+// events; pop the kitty keyboard flags; show the cursor.
+const restoreSeq = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?1004l\x1b[<u\x1b[?25h\x1b[?1049l"
 
 var guardW *os.File
 
