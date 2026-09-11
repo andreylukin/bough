@@ -129,6 +129,7 @@ type model struct {
 	welcome     bool           // fresh-session orientation text (see welcomeView)
 	unfolded    map[int]int    // fold lead id -> end index of its run, shown as rows (see fold.go)
 	pendingAsk  string         // ask id the composer routes answers to; "" = none
+	keysBlock   int            // id of the last "?"/keys block; esc drops it first while an ask is pending
 	pal         palette        // "/" command palette (see palette.go)
 	at          palette        // "@" file picker (see atfiles.go)
 	atFiles     []string       // the picker's file list, read when it opens
@@ -1446,6 +1447,17 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key == "esc" && m.inspecting && m.diving != 0 {
 		m.inspecting, m.diving = false, 0
 		m.syncPalette()
+		return m, nil
+	}
+
+	// Help shown over a pending ask closes first: esc drops the keymap
+	// block so the ask's options are back in view, still pending.
+	if key == "esc" && m.pendingAsk != "" && !m.inspecting && m.keysBlock != 0 &&
+		len(m.blocks) > 0 && m.blocks[len(m.blocks)-1].id == m.keysBlock {
+		m.blocks = m.blocks[:len(m.blocks)-1]
+		m.keysBlock = 0
+		m.refresh()
+		m.vp.GotoBottom()
 		return m, nil
 	}
 

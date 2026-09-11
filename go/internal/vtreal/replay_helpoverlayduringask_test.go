@@ -8,7 +8,6 @@ package vtreal
 // request); the replay plugin keeps no request log of its own.
 
 import (
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -54,9 +53,6 @@ func TestHelpOverlayDuringAsk(t *testing.T) {
 		}
 	})
 	t.Run("esc_closes_help_only_then_number_answers", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_HELP_OVERLAY_DURING_ASK") == "" {
-			t.Skip("known bug: \"?\" appends the keymap as a transcript block, not a dismissable overlay, so the first esc declines the pending ask (plugins/ui/model.go: pendingAsk owns esc; slash.go showKeys); set BOUGH_KNOWN_HELP_OVERLAY_DURING_ASK=1 to run")
-		}
 		t.Parallel()
 		a := askStart(t)
 		a.settled()

@@ -429,6 +429,7 @@ func (m *model) showKeys() {
 	text := keysText(cfg)
 	m.log(cfg, "system", text)
 	m.blocks = append(m.blocks, block{id: m.nextID, kind: "system", text: text})
+	m.keysBlock = m.nextID
 	m.nextID++
 	m.refresh()
 	m.vp.GotoBottom()
