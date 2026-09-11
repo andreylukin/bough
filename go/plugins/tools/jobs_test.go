@@ -240,3 +240,13 @@ func TestWaitAfterCancelLeavesNoJobRunning(t *testing.T) {
 		t.Fatalf("job still running right after cancel + wait: %+v", r)
 	}
 }
+
+// firstLine's 80-byte cut must not split a ZWJ grapheme or a rune.
+func TestFirstLineCutsAtGraphemeBoundary(t *testing.T) {
+	family := "👩‍👩‍👧‍👦"
+	cmd := strings.Repeat("x", 70) + family + " tail"
+	got := firstLine(cmd)
+	if want := strings.Repeat("x", 70) + "…"; got != want {
+		t.Errorf("firstLine = %q, want %q", got, want)
+	}
+}

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rivo/uniseg"
 )
 
 // A background job is a shell command that outlives the code block
@@ -118,7 +120,17 @@ func firstLine(s string) string {
 		s = strings.TrimSpace(s[:i]) + " …"
 	}
 	if len(s) > 80 {
-		s = s[:80] + "…"
+		// Cut at the last grapheme boundary within 80 bytes: a byte
+		// cut can land inside a rune or a ZWJ cluster.
+		n, g := 0, uniseg.NewGraphemes(s)
+		for g.Next() {
+			_, to := g.Positions()
+			if to > 80 {
+				break
+			}
+			n = to
+		}
+		s = s[:n] + "…"
 	}
 	return s
 }

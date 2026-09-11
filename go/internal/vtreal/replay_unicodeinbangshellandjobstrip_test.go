@@ -260,9 +260,6 @@ func TestUnicodeInBangShellAndJobStrip(t *testing.T) {
 
 	t.Run("JobStripZWJAtTruncationPoint", func(t *testing.T) {
 		t.Parallel()
-		if os.Getenv(unicodeinbangshellandjobstripKnown) == "" {
-			t.Skip("known bug: tools.firstLine (plugins/tools/jobs.go) cuts the job command at byte 80, splitting a ZWJ grapheme (strip shows \"👩\\u200d…\"); set " + unicodeinbangshellandjobstripKnown + "=1 to run")
-		}
 		// The family starts at byte 70: an 80-byte cut lands inside it.
 		pre := "sleep 20; : "
 		cmd := pre + strings.Repeat("x", 70-len(pre)) + unicodeinbangshellandjobstripFamily + " tail"
