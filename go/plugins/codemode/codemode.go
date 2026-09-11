@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,6 +38,8 @@ type CodeMode struct {
 	timer   *time.Timer     // innermost Run's interrupt timer; see Pause
 	scoped  goja.Callable   // (src) => eval(src): per-block function scope
 	runCtx  context.Context // the innermost RunCtx's context; Background between runs
+	// rejected holds this run's Promises rejected with no handler yet.
+	rejected []*goja.Promise
 
 	docsMu sync.Mutex
 	docs   []toolDoc // the prompt catalogue, in registration order
@@ -170,6 +173,13 @@ func New(timeout time.Duration) *CodeMode {
 	cm.vm.SetMaxCallStackSize(10000)
 	cm.tools = cm.vm.NewObject()
 	cm.vm.Set("tools", cm.tools)
+	cm.vm.SetPromiseRejectionTracker(func(p *goja.Promise, op goja.PromiseRejectionOperation) {
+		if op == goja.PromiseRejectionReject {
+			cm.rejected = append(cm.rejected, p)
+			return
+		}
+		cm.rejected = slices.DeleteFunc(cm.rejected, func(q *goja.Promise) bool { return q == p })
+	})
 
 	console := cm.vm.NewObject()
 	console.Set("log", func(call goja.FunctionCall) goja.Value {
@@ -270,6 +280,9 @@ func (cm *CodeMode) RunCtx(ctx context.Context, code string) (string, error) {
 		saved = cm.out.String()
 	}
 	cm.out.Reset()
+	prevRejected := cm.rejected
+	cm.rejected = nil
+	defer func() { cm.rejected = prevRejected }()
 
 	timer := time.AfterFunc(cm.timeout, func() {
 		cm.vm.Interrupt("codemode: timeout after " + cm.timeout.String())
@@ -301,15 +314,14 @@ func (cm *CodeMode) RunCtx(ctx context.Context, code string) (string, error) {
 	if err != nil {
 		return out, cleanErr(err)
 	}
-	// A returned Promise (an async tool) has settled by now — goja drains
-	// its job queue before RunString returns — so report its outcome.
-	if p, ok := exportPromise(v); ok {
-		switch p.State() {
-		case goja.PromiseStateRejected:
-			return out, errors.New("uncaught (in promise) " + p.Result().String())
-		case goja.PromiseStateFulfilled:
-			v = p.Result()
-		}
+	// Promises (async tools) have settled by now — goja drains its job
+	// queue before RunString returns. A rejection nobody handled is the
+	// block's error wherever it happened; a returned value is reported.
+	if len(cm.rejected) > 0 {
+		return out, errors.New("uncaught (in promise) " + cm.rejected[0].Result().String())
+	}
+	if p, ok := exportPromise(v); ok && p.State() == goja.PromiseStateFulfilled {
+		v = p.Result()
 	}
 	if v != nil && !goja.IsUndefined(v) {
 		// A Promise as the block's value: a rejection is the block's
