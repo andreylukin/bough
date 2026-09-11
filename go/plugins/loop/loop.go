@@ -1055,6 +1055,11 @@ func (r *runner) complete(ctx context.Context, sys string, emit func(kind, text 
 }
 
 func (r *runner) completeMsgs(ctx context.Context, sys string, msgs []Message, emit func(kind, text string)) (string, error) {
+	// A provider retry waits seconds (a rate limit, minutes): say so,
+	// or the turn looks hung.
+	ctx = llm.WithRetryNotice(ctx, func(_ error, attempt, attempts int, wait time.Duration) {
+		emit("system", fmt.Sprintf("provider hiccup — retrying in %s, attempt %d of %d", wait, attempt, attempts))
+	})
 	// A reasoning model's thinking is streamed to the ui as it arrives
 	// and recorded once at the end. It is NEVER fed back: DefaultProject
 	// ignores "thinking" entries, so the model re-reasons each step

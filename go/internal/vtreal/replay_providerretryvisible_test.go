@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -134,9 +133,6 @@ func TestProviderRetryVisible(t *testing.T) {
 	// The user waits seconds between attempts; something must say why.
 	t.Run("RetryNoticeShown", func(t *testing.T) {
 		t.Parallel()
-		if os.Getenv("BOUGH_KNOWN_PROVIDER_RETRY_VISIBLE") == "" {
-			t.Skip("known bug: llm.withRetries (plugins/llm/retry.go) retries silently — no notice reaches the TUI or history; set BOUGH_KNOWN_PROVIDER_RETRY_VISIBLE=1 to run")
-		}
 		srv, _ := providerRetryVisibleServer(t, http.StatusInternalServerError, http.StatusInternalServerError)
 		home, _ := costHome(t)
 		a := costStart(t, home, costConfig(srv.URL, ""))

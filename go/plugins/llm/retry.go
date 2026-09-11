@@ -65,6 +65,16 @@ func retryable(err error) bool {
 	return retryableErr(err)
 }
 
+type retryNoticeKey struct{}
+
+// WithRetryNotice returns ctx carrying fn, which withRetries calls
+// before it waits out a retryable failure: attempt is the try about to
+// run (2 = the first retry) of attempts, after wait. Without it a
+// retry is silent and the user stares at a stalled turn.
+func WithRetryNotice(ctx context.Context, fn func(err error, attempt, attempts int, wait time.Duration)) context.Context {
+	return context.WithValue(ctx, retryNoticeKey{}, fn)
+}
+
 // withRetries runs do up to retryAttempts times while it reports a
 // retryable failure (retry=true), sleeping retryDelays between tries and
 // honouring ctx. The last error is returned when every try failed.
@@ -90,6 +100,9 @@ func withRetries[T any](ctx context.Context, do func() (T, bool, error)) (T, err
 			return zero, err
 		}
 		d := delays[min(i, len(delays)-1)]
+		if fn, ok := ctx.Value(retryNoticeKey{}).(func(error, int, int, time.Duration)); ok {
+			fn(err, i+2, attempts, d)
+		}
 		select {
 		case <-time.After(d):
 		case <-ctx.Done():
