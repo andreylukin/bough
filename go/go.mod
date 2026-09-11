@@ -67,7 +67,7 @@ require (
 	// http3.Server value API that quic-go v0.59 turned into a pointer,
 	// and v0.7.0 is sip's latest. Bumping past v0.58.1 fails the build
 	// until sip catches up.
-	github.com/quic-go/quic-go v0.58.1 // indirect
+	github.com/quic-go/quic-go v0.59.1 // indirect
 	github.com/quic-go/webtransport-go v0.9.0 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
