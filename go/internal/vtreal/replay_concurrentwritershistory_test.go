@@ -113,9 +113,6 @@ func TestConcurrentWritersHistory(t *testing.T) {
 	}
 
 	t.Run("UniqueSeq", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_CONCURRENT_WRITERS_HISTORY") == "" {
-			t.Skip("known bug: two instances resuming one session both continue Seq from the max read at open (history.OpenExisting), so their entries reuse the same seq numbers; set BOUGH_KNOWN_CONCURRENT_WRITERS_HISTORY=1 to run")
-		}
 		seen := map[int64]bool{}
 		var dup []int64
 		for _, s := range seqs {

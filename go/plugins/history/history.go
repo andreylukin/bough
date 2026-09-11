@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -52,6 +53,8 @@ type Store struct {
 	path    string
 	entries []Entry
 	seq     int64
+	last    int64 // seq of this store's own latest entry: the next entry's parent
+	off     int64 // bytes of the file this store has seen (read or written)
 	closed  bool
 }
 
@@ -65,7 +68,12 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("history: %w", err)
 	}
-	return &Store{f: f, w: bufio.NewWriter(f), path: path}, nil
+	st, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("history: %w", err)
+	}
+	return &Store{f: f, w: bufio.NewWriter(f), path: path, off: st.Size()}, nil
 }
 
 // OpenExisting resumes an existing session JSONL: entries are loaded
@@ -82,13 +90,18 @@ func OpenExisting(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("history: resume: %w", err)
 	}
+	st, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("history: resume: %w", err)
+	}
 	var seq int64
 	for _, e := range entries {
 		if e.Seq > seq {
 			seq = e.Seq
 		}
 	}
-	return &Store{f: f, w: bufio.NewWriter(f), path: path, entries: entries, seq: seq}, nil
+	return &Store{f: f, w: bufio.NewWriter(f), path: path, entries: entries, seq: seq, last: seq, off: st.Size()}, nil
 }
 
 // readEntries parses a session JSONL, skipping corrupt lines with a
@@ -266,17 +279,51 @@ func LastPrompt(entries []Entry) string {
 func (s *Store) Append(kind string, data map[string]any) Entry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	e := Entry{Seq: s.seq + 1, At: time.Now(), Kind: kind, Data: data, Parent: s.seq}
+	// Another bough may have resumed this same file: under an
+	// exclusive lock, pick up the seqs it appended since we last looked
+	// so both writers never number two entries alike.
+	unlock := lockFile(s.f)
+	defer unlock()
+	s.catchUp()
+	e := Entry{Seq: s.seq + 1, At: time.Now(), Kind: kind, Data: data, Parent: s.last}
 	s.seq++
+	s.last = e.Seq
 	s.entries = append(s.entries, e)
 	line, err := json.Marshal(e)
 	if err == nil {
-		err = s.write(append(line, '\n'))
+		line = append(line, '\n')
+		if err = s.write(line); err == nil {
+			s.off += int64(len(line))
+		}
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bough: history append: %v\n", err)
 	}
 	return e
+}
+
+// catchUp raises seq past any entries other writers appended to the
+// file beyond the bytes this store has seen. Their entries are not
+// adopted: they belong to the other instance's branch.
+func (s *Store) catchUp() {
+	f, err := os.Open(s.path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || st.Size() <= s.off {
+		return
+	}
+	sc := bufio.NewScanner(io.NewSectionReader(f, s.off, st.Size()-s.off))
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		var e Entry
+		if json.Unmarshal(sc.Bytes(), &e) == nil && e.Seq > s.seq {
+			s.seq = e.Seq
+		}
+	}
+	s.off = st.Size()
 }
 
 // write puts one line on disk, reopening the file if the store has

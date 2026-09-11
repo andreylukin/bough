@@ -450,3 +450,32 @@ func TestTitleAndLastPromptSkipTheExpansion(t *testing.T) {
 		t.Errorf("a session's title should be the typed line, got %q", infos[0].Title)
 	}
 }
+
+// Two stores resumed on one file (two bough instances) must never
+// number two entries alike: each append continues past the other's.
+func TestTwoResumedStoresKeepSeqUnique(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Append("input", nil)
+	s.Close()
+	a, err := OpenExisting(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := OpenExisting(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a1, b1, a2 := a.Append("input", nil), b.Append("input", nil), a.Append("done", nil)
+	a.Close()
+	b.Close()
+	if a1.Seq != 2 || b1.Seq != 3 || a2.Seq != 4 {
+		t.Errorf("seqs a1=%d b1=%d a2=%d, want 2 3 4", a1.Seq, b1.Seq, a2.Seq)
+	}
+	if b1.Parent != 1 || a2.Parent != 2 {
+		t.Errorf("parents b1=%d a2=%d, want 1 (b's own branch) and 2", b1.Parent, a2.Parent)
+	}
+}
