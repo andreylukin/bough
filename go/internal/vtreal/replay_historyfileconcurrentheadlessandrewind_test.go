@@ -209,14 +209,15 @@ func TestHistoryFileConcurrentHeadlessAndRewind(t *testing.T) {
 	}
 
 	t.Run("RewindOnlyTouchesTUISession", func(t *testing.T) {
-		// The TUI's own file may log the rewind's /tree command; its
-		// turns must stay intact.
+		// The TUI's own file may log the rewind's /tree command and the
+		// /undo it runs first (undo + system entries, e541cd79); its turns
+		// must stay intact.
 		got, _ := os.ReadFile(orig)
 		if !strings.HasPrefix(string(got), string(origBytes)) {
 			t.Errorf("original TUI session turns changed by rewinds:\nwant prefix %s\ngot  %s", origBytes, got)
 		} else if extra, err := history.Read(orig); err == nil {
 			for _, e := range extra[2+3*n-1:] {
-				if e.Kind != "command" {
+				if e.Kind != "command" && e.Kind != "undo" && e.Kind != "system" {
 					t.Errorf("original TUI session gained a %q entry after rewinds: %+v", e.Kind, e)
 				}
 			}

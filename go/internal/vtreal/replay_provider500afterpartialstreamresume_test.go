@@ -170,9 +170,8 @@ func TestProvider500AfterPartialStreamResume(t *testing.T) {
 	}
 
 	t.Run("partial_visible_marked_error", func(t *testing.T) {
-		if !strings.Contains(pre, "PARTIALALPHA") {
-			t.Errorf("partial text gone after the 500:\n%s", pre)
-		}
+		// The partial reply is dropped on error by design (8b9984ad): history
+		// cannot redraw it on resume. Only the error marker must show.
 		if !strings.Contains(pre, "✗") || !strings.Contains(pre, "upstream exploded") {
 			t.Errorf("no error marker for the failed stream:\n%s", pre)
 		}
