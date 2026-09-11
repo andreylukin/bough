@@ -140,14 +140,10 @@ func TestProviderErrorMidToolBlock(t *testing.T) {
 		}
 	})
 
-	// Known bug: the ui drops the live streaming block only on an
-	// "assistant" event (model.go addEvent → dropLive); a call that
-	// fails mid-stream never sends one, so the finished turn keeps a
-	// blinking "▌" and "▸ writing code…" that a resume does not draw.
+	// A call that fails mid-stream never sends "assistant": the error
+	// must drop the live streaming block ("▌", "▸ writing code…"), as a
+	// resume does not draw it.
 	t.Run("live partial reply settles on error", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_PROVIDER_ERROR_MID_TOOL_BLOCK") == "" {
-			t.Skip("known bug: live assistant-delta block survives a provider error (ui addEvent never calls dropLive on error/done); set BOUGH_KNOWN_PROVIDER_ERROR_MID_TOOL_BLOCK=1 to run")
-		}
 		if strings.Contains(live, "▌") || strings.Contains(live, "writing code") {
 			t.Fatalf("finished turn still shows the live streaming block:\n%s", live)
 		}

@@ -1111,6 +1111,7 @@ func (m *model) addEvent(ev Event) {
 			m.lastEnd = "done" // the cancelled marker came first when it did
 		}
 		m.expireAsks() // a turn never ends with a live ask
+		m.dropLive()   // a call that failed mid-stream never sent its "assistant"
 		if m.flash == "cancelling…" {
 			m.flash = "" // the cancel landed: the transcript says so, the bar goes back to its chips
 		}
@@ -1120,7 +1121,10 @@ func (m *model) addEvent(ev Event) {
 		// the model, which usually carries on (the loop always closes a
 		// turn with "done", which is what stops the spinner and expires
 		// asks). Ending the turn here froze the spinner mid-run and
-		// hid the recovery that followed.
+		// hid the recovery that followed. A live streaming block still
+		// up here belongs to a call that failed mid-stream: it never
+		// gets its "assistant", and the history has no such reply.
+		m.dropLive()
 		m.blocks = append(m.blocks, block{id: id, kind: "error", text: errorText(ev.Text), collapsed: m.closedByDefault(errorText(ev.Text))})
 		m.flushTrailing()
 	case "ask":
