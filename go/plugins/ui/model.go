@@ -86,15 +86,16 @@ type lineRange struct {
 
 // model is the one transcript-plus-composer model used by tui and web.
 type model struct {
-	escHold []tea.KeyPressMsg // Esc held to tell a key from a split report (escresidue.go)
-	escGen  int
-	vp      viewport.Model
-	overlay viewport.Model
-	input   textarea.Model
-	spin    spinner.Model
-	events  <-chan Event
-	send    func(string)
-	cfg     *atomic.Pointer[uiCfg]
+	escHold  []tea.KeyPressMsg // Esc held to tell a key from a split report (escresidue.go)
+	escGen   int
+	escSince time.Time
+	vp       viewport.Model
+	overlay  viewport.Model
+	input    textarea.Model
+	spin     spinner.Model
+	events   <-chan Event
+	send     func(string)
+	cfg      *atomic.Pointer[uiCfg]
 
 	blocks      []block
 	nextID      int
@@ -894,6 +895,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case escHoldMsg:
 		if msg.gen != m.escGen || m.escHold == nil {
 			return m, nil
+		}
+		if time.Since(msg.at) > escLate && time.Since(m.escSince) < escHoldMax {
+			return m, m.escTimer()
 		}
 		return m, m.escRelease()
 

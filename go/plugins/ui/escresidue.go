@@ -16,7 +16,20 @@ import (
 
 const escHoldFor = 250 * time.Millisecond
 
-type escHoldMsg struct{ gen int }
+// escHoldMsg is the hold's expiry; at is when the tick fired.
+type escHoldMsg struct {
+	gen int
+	at  time.Time
+}
+
+// A tick delivered late means Update was stalled (a slow terminal blocks
+// rendering) and the report's next bytes may be queued behind it on
+// Bubble Tea's unbuffered channel: re-arm rather than release, up to
+// escHoldMax from the Esc.
+const (
+	escLate    = 20 * time.Millisecond
+	escHoldMax = time.Second
+)
 
 // isReportPrefix reports whether s (the keys after Esc) can still become
 // a mouse (SGR) or focus report, and whether it already is a whole one.
@@ -57,6 +70,7 @@ func (m *model) escFilter(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			return false, nil
 		}
 		m.escHold = []tea.KeyPressMsg{msg}
+		m.escSince = time.Now()
 		return true, m.escTimer()
 	}
 	m.escHold = append(m.escHold, msg)
@@ -83,7 +97,7 @@ func (m *model) escFilter(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 func (m *model) escTimer() tea.Cmd {
 	m.escGen++
 	gen := m.escGen
-	return tea.Tick(escHoldFor, func(time.Time) tea.Msg { return escHoldMsg{gen} })
+	return tea.Tick(escHoldFor, func(at time.Time) tea.Msg { return escHoldMsg{gen, at} })
 }
 
 // escRelease replays the held keys through handleKey, in order.

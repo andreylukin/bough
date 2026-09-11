@@ -84,7 +84,7 @@ func (d *drv) feed(msg tea.Msg) {
 	next, _ := d.m.Update(msg)
 	d.m = next.(model)
 	if d.m.escHold != nil { // a lone Esc: let its hold lapse now
-		next, _ = d.m.Update(escHoldMsg{d.m.escGen})
+		next, _ = d.m.Update(escHoldMsg{d.m.escGen, time.Now()})
 		d.m = next.(model)
 	}
 }
