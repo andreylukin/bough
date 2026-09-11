@@ -375,3 +375,34 @@ func TestStreamModelMarkdownPrefixes(t *testing.T) {
 		}
 	}
 }
+
+// A turn cancelled mid-reasoning never gets its final "thinking": the
+// next turn's reasoning must open its own block, not grow the old one.
+func TestStreamModelThinkingDoesNotCrossTurns(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.typeStr("go")
+	d.press(keyEnter())
+	d.event("thinking-delta", "old turn")
+	d.event("cancelled", "")
+	d.event("done", "")
+	d.typeStr("again")
+	d.press(keyEnter())
+	d.event("thinking-delta", "new turn")
+	d.event("thinking", "new turn")
+	lastUser, newAt := -1, -1
+	for i, b := range d.m.blocks {
+		if b.kind == "user" {
+			lastUser = i
+		}
+		if b.kind == "thinking" && b.live {
+			t.Fatalf("reasoning stayed live: %+v\n%s", b, d.plain())
+		}
+		if b.kind == "thinking" && b.text == "new turn" {
+			newAt = i
+		}
+	}
+	if newAt < lastUser {
+		t.Fatalf("new turn's reasoning landed in the old turn (at %d, user at %d)\n%s", newAt, lastUser, d.plain())
+	}
+}

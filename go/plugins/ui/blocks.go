@@ -483,6 +483,13 @@ func (m *model) finishTurn(id int, ev Event) {
 		e := int(v)
 		b.exit = &e
 	}
+	// Reasoning a cancel cut short never gets its final "thinking": settle
+	// it here, or the next turn's deltas would grow this turn's block.
+	for i := range m.blocks {
+		if m.blocks[i].kind == "thinking" {
+			m.blocks[i].live = false
+		}
+	}
 	m.blocks = append(m.blocks, b)
 	// A queued line starts now. (A steer never outlives its turn: the
 	// loop lands every accepted one — "steer" event — before the done.)
