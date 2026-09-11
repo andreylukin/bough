@@ -190,3 +190,16 @@ func TestModelPickerWindowsALongList(t *testing.T) {
 		t.Errorf("a list longer than the pane should say what is off it:\n%s", p)
 	}
 }
+
+// A paste while the picker is open is search text, not a hidden edit
+// to the composer draft.
+func TestModelPickerPasteSearches(t *testing.T) {
+	d := bigModelDrv(t)
+	d.feed(tea.PasteMsg{Content: "openrouter\nastra"})
+	if d.m.mp.query != "openrouter astra" {
+		t.Errorf("paste should become the search, got %q", d.m.mp.query)
+	}
+	if v := d.m.input.Value(); v != "" {
+		t.Errorf("paste leaked into the composer draft: %q", v)
+	}
+}

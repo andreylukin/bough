@@ -866,6 +866,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.PasteMsg:
 		m.stop.armedAt = time.Time{} // a paste is typing: it disarms quit like any key
 		m.stop.escAt = time.Time{}
+		if m.mp.open {
+			// The picker owns the keyboard; a paste is search text,
+			// not a hidden edit to the composer draft behind it.
+			m.mp.query += strings.Join(strings.Fields(msg.Content), " ")
+			m.mp.filter()
+			return m, nil
+		}
 		if took, cmd := m.handlePaste(msg); took {
 			return m, cmd
 		}

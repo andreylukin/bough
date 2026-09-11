@@ -60,7 +60,6 @@ func TestPickerPaste(t *testing.T) {
 
 	t.Run("Model", func(t *testing.T) {
 		t.Parallel()
-		pickerPasteKnown(t, "tea.PasteMsg bypasses the /model picker (plugins/ui/model.go Update PasteMsg -> handlePaste -> m.input): the search stays empty and foo/bar land in the hidden composer draft")
 		a := modelEffortStart(t)
 		base := a.modelEffortAssistants()
 		a.modelEffortOpenPicker()
