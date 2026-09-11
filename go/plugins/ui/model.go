@@ -152,6 +152,8 @@ type model struct {
 	newBelow    bool          // blocks arrived while scrolled up (status cue)
 	sel         selection     // mouse drag selection (see select.go)
 	lines       []string      // rendered content lines, for the selection
+	boxRows     []bool        // lines[i] is a box() row (border or rail), so a drag copies its interior only
+	boxN        int           // line count of the last box() render (renderPart reads it)
 	stop        stopState     // quit-key arming (see stop.go)
 	bang        *bangRun      // the running "!" command (esc cancels); nil = none
 	leader      bool          // the leader key was pressed: the next key is a chord (see actions.go)
@@ -173,6 +175,7 @@ type partEntry struct {
 	cfg     *uiCfg
 	focused bool
 	part    string
+	box     int // trailing lines of part drawn by box()
 }
 
 // sameBlock reports whether two block values render the same.
@@ -188,16 +191,20 @@ func sameBlock(a, b block) bool {
 // renderPart is render + fit, cached per block. Spawn cards (spinner,
 // clock) and streaming blocks change without their fields changing,
 // so they always render fresh.
-func (m *model) renderPart(b *block, cfg *uiCfg) string {
+// The second result is how many trailing lines box() drew (0 for none):
+// every box() caller ends its render with the box.
+func (m *model) renderPart(b *block, cfg *uiCfg) (string, int) {
 	cacheable := b.kind != "spawn" && !b.live
 	if e, ok := m.parts[b.id]; cacheable && ok && e.cfg == cfg && e.focused == m.focused(b) && sameBlock(e.b, *b) {
-		return e.part
+		return e.part, e.box
 	}
+	m.boxN = 0
 	part := m.fit(strings.Trim(squeezeBlanks(m.render(b, cfg)), "\n"))
+	box := min(m.boxN, strings.Count(part, "\n")+1)
 	if cacheable {
-		m.parts[b.id] = partEntry{b: *b, cfg: cfg, focused: m.focused(b), part: part}
+		m.parts[b.id] = partEntry{b: *b, cfg: cfg, focused: m.focused(b), part: part, box: box}
 	}
-	return part
+	return part, box
 }
 
 func newModel(width, height int, send func(string), events <-chan Event, cfg *atomic.Pointer[uiCfg]) model {
@@ -280,6 +287,7 @@ func (m *model) refresh() {
 	parts := make([]string, 0, 2*len(m.blocks))
 	m.ranges = m.ranges[:0]
 	start, prev := 0, ""
+	var boxAt [][2]int // box() line spans [from, to) in the joined lines
 	next := map[int]foldRun{}
 	for _, r := range m.runs() {
 		next[r.from] = r
@@ -293,7 +301,7 @@ func (m *model) refresh() {
 		// The block renders own their content; the transcript owns the
 		// space between them: nothing between blocks of the same voice,
 		// one rule where the voice changes.
-		part := m.renderPart(&m.blocks[i], cfg)
+		part, box := m.renderPart(&m.blocks[i], cfg)
 		voice := voiceOf(m.blocks[i].kind)
 		var header string
 		if r, ok := next[i]; ok {
@@ -305,7 +313,7 @@ func (m *model) refresh() {
 				// A folded run draws as one row owned by its lead block,
 				// so a click or the block cursor lands on the fold, not
 				// on a step the reader cannot see.
-				part = m.fit(m.renderFold(r, cfg.theme))
+				part, box = m.fit(m.renderFold(r, cfg.theme)), 0
 				skipTo = r.to
 			}
 		}
@@ -320,11 +328,20 @@ func (m *model) refresh() {
 		}
 		n := strings.Count(part, "\n") + 1
 		m.ranges = append(m.ranges, lineRange{start: start, end: start + n, idx: i})
+		if box > 0 {
+			boxAt = append(boxAt, [2]int{start + n - box, start + n})
+		}
 		start += n
 		parts = append(parts, part)
 		prev = voice
 	}
 	m.lines = strings.Split(strings.Join(parts, "\n"), "\n")
+	m.boxRows = make([]bool, len(m.lines))
+	for _, s := range boxAt {
+		for r := s[0]; r < s[1] && r < len(m.boxRows); r++ {
+			m.boxRows[r] = true
+		}
+	}
 	m.vp.SetContent(strings.Join(m.highlight(m.lines, cfg), "\n"))
 	if atBottom {
 		m.vp.GotoBottom()
@@ -800,12 +817,14 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 func (m *model) box(text string, content, border lipgloss.Style) string {
 	w := max(m.width-4, 10)
 	text = xansi.Hardwrap(strings.TrimRight(text, "\n"), w-4, true) // w less border and padding
-	return content.
+	out := content.
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(border.GetForeground()).
 		Padding(0, 1).
 		Width(w).
 		Render(text)
+	m.boxN = strings.Count(out, "\n") + 1
+	return out
 }
 
 // fit is the last line of defence against a sideways-scrolling pane:
