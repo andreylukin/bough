@@ -44,6 +44,7 @@ func sessionID(path string) string {
 // naming the session, its size and the last prompt, and lands on it.
 func (m *model) replay() {
 	cfg := m.cfg.Load()
+	m.sessID = m.currentID(cfg)
 	if len(m.blocks) > 0 {
 		return
 	}

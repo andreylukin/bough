@@ -86,22 +86,11 @@ func newSessionMidTurnBar(s string) string {
 	return ""
 }
 
-// newSessionMidTurnKnown skips while the known bug stands: /new swaps
-// the session (session-choose remounts history -> loop -> ui) without
-// cancelling the old loop's in-flight turn, so its later events land in
-// the new pane — spinner, reply text and usage chips.
-func newSessionMidTurnKnown(t *testing.T) {
-	if os.Getenv("BOUGH_KNOWN_NEWSESSIONMIDTURN") == "" {
-		t.Skip("known bug: /new mid-turn leaks the old stream (spinner, deltas, usage) into the new session; set BOUGH_KNOWN_NEWSESSIONMIDTURN=1 to run")
-	}
-}
-
 func TestNewSessionMidTurn(t *testing.T) {
 	t.Parallel()
 
 	t.Run("Replay", func(t *testing.T) {
 		t.Parallel()
-		newSessionMidTurnKnown(t)
 		// 40ms a word: ~200 words is ~8s of stream left after ALPHASTART.
 		a := startCfg(t, 100, 30, cancelConfig(cancelTape(t), 40))
 		a.typeText("start the long one")
@@ -160,7 +149,6 @@ func TestNewSessionMidTurn(t *testing.T) {
 
 	t.Run("CostChipsReset", func(t *testing.T) {
 		t.Parallel()
-		newSessionMidTurnKnown(t)
 		release := make(chan struct{})
 		var once sync.Once
 		var calls atomic.Int32

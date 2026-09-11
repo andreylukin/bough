@@ -121,6 +121,7 @@ type model struct {
 	srch        searchBar      // ctrl+s transcript search (see search.go)
 	todoText    string         // latest todo list text (the todo plugin's event)
 	title       string         // the session's name (session-title plugin); "" until named
+	sessID      string         // the session the pane last replayed
 	activity    string         // what the agent is doing now (activity plugin); "" when idle
 	pred        predictState   // the small model's guess at the rest of the draft (predict.go)
 	todoHidden  bool           // the todo strip dismissed for now (todo_toggle)

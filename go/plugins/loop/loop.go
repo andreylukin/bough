@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -1760,6 +1761,8 @@ type plugin struct{}
 type handoff struct {
 	turns   *turns
 	stopped <-chan struct{}
+	hist    History // the session the turn writes to
+	mute    func()  // silences its events for the ui
 }
 
 var handoffs sync.Map // *kernel.Context -> handoff
@@ -1935,10 +1938,21 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	// in flight over instead of cancelling it: it finishes on the llm
 	// it started with, this mount shares its cancel/steer and starts
 	// nothing until it has stopped.
+	// A remount onto another session (/new, /sessions mid-turn) is
+	// not a handover: the turn belongs to the session it started in, so
+	// it is cancelled there (its entry lands in the old file) and its
+	// last events are muted instead of reaching the new session's pane.
 	t := &turns{}
 	var prev <-chan struct{}
-	if h, ok := handoffs.LoadAndDelete(kctx); ok {
-		t, prev = h.(handoff).turns, h.(handoff).stopped
+	if v, ok := handoffs.LoadAndDelete(kctx); ok {
+		h := v.(handoff)
+		prev = h.stopped
+		if h.hist == r.hist {
+			t = h.turns
+		} else {
+			h.mute()
+			h.turns.Cancel()
+		}
 	}
 	kctx.Provide("cancel", t.Cancel)
 	r.steer = t.takeSteers
@@ -1946,6 +1960,7 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	stopped := make(chan struct{})
+	var muted atomic.Bool
 	go func() {
 		defer close(stopped)
 		if prev != nil {
@@ -1954,6 +1969,9 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		emit := func(kind, text string) {
 			// Live gets what replay gets: a noted entry's data
 			// (the done marker's files and exit) rides along.
+			if muted.Load() {
+				return
+			}
 			kctx.Emit("loop/event", Event{Kind: kind, Text: text, Data: r.noteData})
 		}
 		// A background job that finishes while the agent is idle has
@@ -1989,7 +2007,7 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	}()
 	kctx.Effect(func() {
 		if remounting(kctx) {
-			handoffs.Store(kctx, handoff{turns: t, stopped: stopped})
+			handoffs.Store(kctx, handoff{turns: t, stopped: stopped, hist: r.hist, mute: func() { muted.Store(true) }})
 			close(inputs)
 			return
 		}

@@ -352,6 +352,13 @@ func (m *model) perform(act commands.UIAction) tea.Cmd {
 		m.blocks = nil
 		m.focusID = -1
 		m.welcome = false
+		// /new swapped the session under the pane: show the fresh one
+		// as a /sessions swap does, not the old turn still "running".
+		if cfg := m.cfg.Load(); m.currentID(cfg) != m.sessID {
+			m.title = ""
+			m.replay()
+			m.welcome = false
+		}
 		m.refresh()
 	case commands.ActionCollapse:
 		m.noteSystem(collapseNote(true, m.setAllCollapsed(true)))
