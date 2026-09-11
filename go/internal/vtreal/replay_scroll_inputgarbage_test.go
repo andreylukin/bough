@@ -5,7 +5,6 @@ package vtreal
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -74,12 +73,8 @@ func TestScrollInputGarbageFocus(t *testing.T) {
 	inputGarbageRun(t, time.Millisecond, "\x1b[I\x1b[<64;10;5M\x1b[O\x1b[<65;10;5M")
 }
 
-// A gap longer than the esc timeout after each byte. Gated: a lone ESC
-// read as a key is arguably correct terminal-parser behaviour.
+// A gap longer than the esc timeout after each byte.
 func TestScrollInputGarbageSplitSlow(t *testing.T) {
-	if os.Getenv("BOUGH_KNOWN_SCROLL") == "" {
-		t.Skip("set BOUGH_KNOWN_SCROLL=1")
-	}
 	t.Parallel()
 	inputGarbageRun(t, 80*time.Millisecond, "")
 }

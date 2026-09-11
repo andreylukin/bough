@@ -83,6 +83,10 @@ func defaultDrv(t *testing.T) *drv {
 func (d *drv) feed(msg tea.Msg) {
 	next, _ := d.m.Update(msg)
 	d.m = next.(model)
+	if d.m.escHold != nil { // a lone Esc: let its hold lapse now
+		next, _ = d.m.Update(escHoldMsg{d.m.escGen})
+		d.m = next.(model)
+	}
 }
 
 // press runs a key through Update and executes the returned commands

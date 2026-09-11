@@ -86,6 +86,8 @@ type lineRange struct {
 
 // model is the one transcript-plus-composer model used by tui and web.
 type model struct {
+	escHold []tea.KeyPressMsg // Esc held to tell a key from a split report (escresidue.go)
+	escGen  int
 	vp      viewport.Model
 	overlay viewport.Model
 	input   textarea.Model
@@ -884,7 +886,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		if took, cmd := m.escFilter(msg); took {
+			return m, cmd
+		}
 		return m.handleKey(msg)
+
+	case escHoldMsg:
+		if msg.gen != m.escGen || m.escHold == nil {
+			return m, nil
+		}
+		return m, m.escRelease()
 
 	case tea.MouseClickMsg:
 		if m.leader {
