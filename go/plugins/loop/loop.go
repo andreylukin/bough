@@ -502,15 +502,24 @@ func Finish(reply string) (text string, stopped bool, dropped int) {
 			return strings.TrimSpace(stopFence.ReplaceAllString(reply, "$1")), true, 0
 		}
 	}
-	text, dropped = firstBlockOnly(reply)
-	// A stop block under the block that is about to run is an answer
-	// to output that does not exist yet. It cannot be honoured this
-	// round, and left in the record it reads as the model's verdict.
+	text, dropped = runnableOnly(reply)
+	return text, false, dropped
+}
+
+// runnableOnly is firstBlockOnly plus the stop-fence rule: a stop block
+// under the block that is about to run is an answer to output that does
+// not exist yet. It cannot be honoured this round, and left in the
+// record it reads as the model's verdict.
+func runnableOnly(reply string) (string, int) {
+	text, dropped := firstBlockOnly(reply)
+	if jsBlock.FindStringIndex(text) == nil {
+		return text, dropped
+	}
 	if loc := stopFence.FindStringIndex(text); loc != nil {
 		text = strings.TrimRight(text[:loc[0]], "\n") + "\n" + fmt.Sprintf(extraBlocks, 1)
 		dropped++
 	}
-	return text, false, dropped
+	return text, dropped
 }
 
 // StripFabrications is stripFakeSystem for other plugins: a subagent's
@@ -1494,7 +1503,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		}
 		dropped := 0
 		if !stopped {
-			reply, dropped = firstBlockOnly(reply)
+			reply, dropped = runnableOnly(reply)
 		}
 		note("assistant", reply, r.provenance())
 		blocks := jsBlock.FindAllStringSubmatch(reply, -1)
