@@ -75,7 +75,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		tape.Delay = time.Duration(ms * float64(time.Millisecond))
 	}
 	if p, _ := cfg["provide"].(string); p == "codemode" {
-		ctx.Provide("codemode", &Runtime{CodeMode: codemode.New(30 * time.Second), tape: tape})
+		ctx.Provide("codemode", &Runtime{CodeMode: codemode.New(codemode.StepTimeout()), tape: tape})
 		return nil
 	}
 	key := "llm"

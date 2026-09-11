@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"runtime"
 	"slices"
@@ -450,8 +451,17 @@ func (plugin) Name() string     { return "codemode" }
 func (plugin) Inject() []string { return nil }
 
 func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
-	ctx.Provide("codemode", New(30*time.Second))
+	ctx.Provide("codemode", New(StepTimeout()))
 	return nil
+}
+
+// StepTimeout is how long one block may run: 30s, or
+// $BOUGH_CODEMODE_TIMEOUT (a Go duration such as "2s") when set.
+func StepTimeout() time.Duration {
+	if d, err := time.ParseDuration(os.Getenv("BOUGH_CODEMODE_TIMEOUT")); err == nil && d > 0 {
+		return d
+	}
+	return 30 * time.Second
 }
 
 // display renders one console.log argument the way the model needs to

@@ -95,9 +95,6 @@ func TestCodemodeInfiniteLoopTimeoutEsc(t *testing.T) {
 // sees the error and its next block runs on the same runtime.
 func TestCodemodeInfiniteLoopTimeoutFires(t *testing.T) {
 	t.Run("small timeout env", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_CODEMODE_INFINITE_LOOP_TIMEOUT") == "" {
-			t.Skip("known bug: the codemode step timeout is hardcoded to 30s (plugins/codemode/codemode.go:397 New(30*time.Second)); no env or config shortens it; set BOUGH_KNOWN_CODEMODE_INFINITE_LOOP_TIMEOUT=1 to run")
-		}
 		t.Setenv("BOUGH_CODEMODE_TIMEOUT", "2s")
 		a := startCfg(t, 100, 30, codemodeInfiniteLoopTimeoutConfig(t))
 		codemodeInfiniteLoopTimeoutSpin(a)
