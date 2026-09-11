@@ -125,6 +125,7 @@ type model struct {
 	ovEntries   []int64        // entry index -> seq, for ovRanges lookups
 	picking     bool           // session picker shown instead of the chat view
 	pick        int            // picker cursor index into cfg.sessions
+	pickQuery   string         // session picker filter: typed text narrows rows by title
 	mp          modelPicker    // "/model" picker (see modelpick.go)
 	rw          rewindPicker   // double-esc rewind menu (see rewind.go)
 	srch        searchBar      // ctrl+s transcript search (see search.go)
@@ -1062,7 +1063,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.picking {
-			return m, nil // the session picker has no text field: drop it, don't fill the hidden draft
+			// The picker owns the keyboard: a paste is filter text,
+			// not a hidden edit to the composer draft behind it.
+			m.pickQuery += strings.Join(strings.Fields(sanitizeText(msg.Content)), " ")
+			m.pick = 0
+			return m, nil
 		}
 		if took, cmd := m.handlePaste(msg); took {
 			return m, cmd

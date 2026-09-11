@@ -170,9 +170,6 @@ func TestSessionPickerFilterUnicodeLarge(t *testing.T) {
 
 	t.Run("CJKFilterNoDroppedKeys", func(t *testing.T) {
 		t.Parallel()
-		if os.Getenv(sessionPickerFilterUnicodeLargeGate) == "" {
-			t.Skip("known bug: session picker has no filter — typed keys are ignored (plugins/ui/session.go handlePickerKey); set " + sessionPickerFilterUnicodeLargeGate + "=1")
-		}
 		a, ids, _ := sessionPickerFilterUnicodeLargeOpen(t, 120, 30)
 		const query = "東京の天気 #1"
 		for _, r := range query {

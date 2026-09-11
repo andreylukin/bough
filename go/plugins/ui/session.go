@@ -164,6 +164,7 @@ func resumedLine(h historyView) string {
 func (m *model) openPicker() {
 	m.picking = true
 	m.pick = 0
+	m.pickQuery = ""
 	m.sessRows = m.listSessions()
 	m.syncPalette()
 }
@@ -193,12 +194,19 @@ type sessRow struct {
 }
 
 // pickerRows is the list the picker shows — its own mid-session list,
-// else the launcher-provided one — laid out as a tree (sessionTree).
+// else the launcher-provided one — laid out as a tree (sessionTree),
+// narrowed to titles containing the typed query (case-insensitive).
 func (m *model) pickerRows(cfg *uiCfg) []sessRow {
+	infos := cfg.sessions
 	if m.sessRows != nil {
-		return sessionTree(m.sessRows)
+		infos = m.sessRows
 	}
-	return sessionTree(cfg.sessions)
+	rows := sessionTree(infos)
+	if m.pickQuery == "" {
+		return rows
+	}
+	q := strings.ToLower(m.pickQuery)
+	return slices.DeleteFunc(rows, func(r sessRow) bool { return !strings.Contains(strings.ToLower(r.Title), q) })
 }
 
 // sessionTree nests each fork under the session it was forked from
@@ -273,7 +281,8 @@ func (m *model) currentID(cfg *uiCfg) string {
 	return sessionID(cfg.hist.Path())
 }
 
-// handlePickerKey drives the session picker: up/down move, enter
+// handlePickerKey drives the session picker: typed text filters the
+// rows by title (backspace deletes), up/down move, enter
 // resumes the selected session, esc starts a fresh one (at launch) or
 // goes back to the chat (mid-session). The quit binding still works.
 // Without a "session-choose" callback the list is read-only (the view
@@ -309,6 +318,16 @@ func (m model) handlePickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return next, next.cacheTick() // the resumed session's cache window
 	case "esc":
 		return m.leavePicker(""), nil
+	case "backspace":
+		if r := []rune(m.pickQuery); len(r) > 0 {
+			m.pickQuery = string(r[:len(r)-1])
+			m.pick = 0
+		}
+	default:
+		if msg.Text != "" {
+			m.pickQuery += msg.Text
+			m.pick = 0
+		}
 	}
 	return m, nil
 }
@@ -322,6 +341,7 @@ func (m model) leavePicker(id string) model {
 	cfg := m.cfg.Load()
 	launch := m.sessRows == nil
 	m.picking = false
+	m.pickQuery = ""
 	m.sessRows = nil
 	if !launch && (id == "" || id == m.currentID(cfg)) {
 		return m
@@ -381,10 +401,15 @@ func (m *model) pickerView(cfg *uiCfg) string {
 		th["accent"].Render("bough") + " " + th["dim"].Render("· resume a session"),
 		"",
 	}
+	if m.pickQuery != "" {
+		lines = append(lines, th["accent"].Render("filter: ")+m.pickQuery, "")
+	}
 	if cfg.choose == nil {
 		lines = append(lines, th["error"].Render("✗ session-choose service missing — list is read-only"), "")
 	}
-	if len(rows) == 0 {
+	if len(rows) == 0 && m.pickQuery != "" {
+		lines = append(lines, th["dim"].Render("  (no matching sessions)"))
+	} else if len(rows) == 0 {
 		lines = append(lines, th["dim"].Render("  (no sessions)"))
 	}
 	cur := m.currentID(cfg)
@@ -406,9 +431,9 @@ func (m *model) pickerView(cfg *uiCfg) string {
 		}
 		lines = append(lines, st.Render(row))
 	}
-	hint := "↑/↓ select · enter resume · esc new session"
+	hint := "type to filter · ↑/↓ select · enter resume · esc new session"
 	if m.sessRows != nil {
-		hint = "↑/↓ select · enter resume · esc back"
+		hint = "type to filter · ↑/↓ select · enter resume · esc back"
 	}
 	hints := th["dim"].Render(hint)
 	for len(lines) < m.height-1 {
