@@ -145,9 +145,6 @@ func TestSubagentCancelLeavesNoWorktree(t *testing.T) {
 		}
 		// The screen: every card head says cancelled. Polled here, not
 		// with a.waitUntil, which would fail the parent test.
-		if os.Getenv("BOUGH_KNOWN_SUBAGENT_CANCEL_LEAVES_NO_WORKTREE") == "" {
-			t.Skip("known bug: plugins/ui/spawn.go renderSpawn has no \"cancelled\" case, so a cancelled child's card reads \"✗ error · context canceled\"; set BOUGH_KNOWN_SUBAGENT_CANCEL_LEAVES_NO_WORKTREE=1 to run")
-		}
 		var s string
 		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 			s = a.text()

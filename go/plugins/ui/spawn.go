@@ -73,7 +73,7 @@ func line(s string, n int) string {
 // subState is a spawn card's live state.
 type subState struct {
 	worker  int
-	status  string // "running", "ok", "failed", "error"
+	status  string // "running", "ok", "failed", "cancelled", "error"
 	calls   int
 	last    string // label of the last code event ("Ran: ls")
 	lastOut string // first line of the last result (the heartbeat under last)
@@ -198,6 +198,8 @@ func (m *model) renderSpawn(b *block, th theme) string {
 		mark, state = th["accent"].Render("✔"), "done"
 	case "failed":
 		mark, state = th["error"].Render("✗"), "reported failure"
+	case "cancelled":
+		mark, state = th["dim"].Render("✗"), "cancelled"
 	default:
 		mark, state = th["error"].Render("✗"), "error"
 	}
@@ -223,7 +225,7 @@ func (m *model) renderSpawn(b *block, th theme) string {
 	if b.collapsed && s.status == "running" && s.last != "" {
 		parts = append(parts, line(s.last, 40))
 	}
-	if s.status != "running" && s.status != "ok" && s.status != "failed" && s.errText != "" {
+	if s.status != "running" && s.status != "ok" && s.status != "failed" && s.status != "cancelled" && s.errText != "" {
 		parts = append(parts, line(s.errText, 80))
 	}
 	st := th["dim"]
