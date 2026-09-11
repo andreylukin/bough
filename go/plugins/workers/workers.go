@@ -544,6 +544,12 @@ func (w *Workers) runChildTo(ctx context.Context, task string, id int, run func(
 			if steps > 1 && !ranClean {
 				status = "failed"
 			}
+			// An empty report is no report: the parent would get a bare
+			// provenance line and read it as success.
+			if strings.TrimSpace(reply) == "" {
+				status = "failed"
+				reply = "(the subagent ended with an empty report — it produced nothing to hand back)"
+			}
 			note("done", "", map[string]any{"status": status, "steps": steps})
 			return reply, nil
 		}

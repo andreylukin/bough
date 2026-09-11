@@ -335,7 +335,6 @@ func TestSubagentsEnormousTask(t *testing.T) {
 }
 
 func TestSubagentsEmptyFinalReply(t *testing.T) {
-	subagentsKnownBug(t, "a child whose final reply is empty (or only an empty stop fence) is carded ok and returns an empty body (plugins/workers/workers.go runChildTo, the len(blocks)==0 branch) — the parent gets a bare provenance line and no hint the child produced nothing")
 	l := subagentsTape(map[string][]string{"t": {""}, "u": {"```stop\n```"}})
 	r := subagentsMount(t, 5*time.Second, nil, l)
 	for i, task := range []string{"t", "u"} {
