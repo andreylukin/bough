@@ -151,9 +151,14 @@ func (m *model) expandPastes(draft string) string {
 		if i < 0 {
 			break
 		}
-		end := strings.IndexByte(draft[i:], ']')
-		if end < 0 {
-			break
+		// A tag never holds "[", "]" or a newline: one whose "]" was
+		// deleted ends before the next of those and stays literal,
+		// rather than swallowing text up to a later "]".
+		end := strings.IndexAny(draft[i+1:], "[]\n") + 1
+		if end == 0 || draft[i+end] != ']' {
+			b.WriteString(draft[:i+len(pastePrefix)])
+			draft = draft[i+len(pastePrefix):]
+			continue
 		}
 		tag := draft[i : i+end+1]
 		num, _, _ := strings.Cut(tag[len(pastePrefix):], " ")

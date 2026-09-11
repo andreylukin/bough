@@ -51,7 +51,6 @@ func TestPasteBackspaceWholeTagDropsIt(t *testing.T) {
 // next "]" the user typed.
 func TestPastePartialTagDoesNotSwallowText(t *testing.T) {
 	t.Parallel()
-	pasteKnown(t, "paste.go:151 expandPastes takes the next ']' anywhere after a broken tag as its end: text between is eaten and the paste expands")
 	d := defaultDrv(t)
 	d.feed(tea.PasteMsg{Content: pasteBody("a", 20)})
 	d.feed(pasteBackspace()) // "[Pasted text #1 +20 lines"
