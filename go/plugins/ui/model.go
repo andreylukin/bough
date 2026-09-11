@@ -1078,6 +1078,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pick = 0
 			return m, nil
 		}
+		if m.pal.open {
+			// The draft is the palette's one-line filter: a paste joins
+			// it as one line, newlines as spaces and control bytes
+			// dropped (not ansi-stripped: that eats the byte after ESC).
+			clean := strings.Map(func(r rune) rune {
+				if unicode.IsControl(r) && !unicode.IsSpace(r) {
+					return -1
+				}
+				return r
+			}, msg.Content)
+			m.input.InsertString(strings.Join(strings.Fields(clean), " "))
+			m.syncPalette()
+			m.layoutComposer()
+			return m, nil
+		}
 		if took, cmd := m.handlePaste(msg); took {
 			return m, cmd
 		}

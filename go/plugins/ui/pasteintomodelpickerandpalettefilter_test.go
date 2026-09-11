@@ -87,7 +87,6 @@ func TestPasteIntoModelPickerAndPaletteFilter(t *testing.T) {
 			t.Errorf("esc: draft=%q sent=%v, want the displaced draft back", got, d.sent)
 		}
 		t.Run("Sanitized", func(t *testing.T) {
-			pasteIntoModelPickerAndPaletteFilterKnown(t, "action palette filter takes a multi-line paste verbatim (model.go PasteMsg -> handlePaste falls through to the textarea while pal.open)")
 			pasteIntoModelPickerAndPaletteFilterClean(t, "palette filter", filter)
 			if strings.Contains(frame, "\x1bbar") {
 				t.Errorf("raw ESC leaked into the frame")

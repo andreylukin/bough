@@ -69,7 +69,6 @@ func TestPasteIntoModelPickerAndPaletteFilter(t *testing.T) {
 			t.Fatalf("paste submitted a prompt:\n%s", s)
 		}
 		c := actionPaletteComposer(s)
-		rows := strings.Contains(s, "action · ")
 		a.key(uv.KeyEscape, 0)
 		a.waitUntil(func(s string) bool { return !strings.Contains(s, "action · ") && strings.Contains(s, "keep me") }, "palette to close")
 		s2 := a.settled()
@@ -77,11 +76,9 @@ func TestPasteIntoModelPickerAndPaletteFilter(t *testing.T) {
 			t.Errorf("esc did not give the draft back (composer %q):\n%s", got, s2)
 		}
 		t.Run("Sanitized", func(t *testing.T) {
-			pasteIntoModelPickerAndPaletteFilterKnown(t, "action palette filter takes a multi-line paste verbatim (model.go PasteMsg -> handlePaste falls through to the textarea while pal.open)")
-			if !rows {
-				t.Errorf("palette rows gone after the paste (the filter matches nothing):\n%s", s)
-			}
-			if !strings.Contains(c, "foo") || !strings.Contains(c, "bar") {
+			// "/expfoo bar" matches no action (as if typed), so no rows
+			// are expected: the paste must just join the filter's line.
+			if !strings.Contains(c, "/expfoo bar") {
 				t.Errorf("filter row is not the single sanitized line (composer %q):\n%s", c, s)
 			}
 		})
