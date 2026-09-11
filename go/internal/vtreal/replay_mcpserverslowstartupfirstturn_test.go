@@ -166,9 +166,6 @@ func TestMcpServerSlowStartupFirstTurn(t *testing.T) {
 	})
 
 	t.Run("EscCancelsBootingCall", func(t *testing.T) {
-		if os.Getenv(gate) == "" {
-			t.Skip("known bug: esc does not cancel a running ! command — runBang (plugins/ui/bang.go) runs under a 60s-timeout context nothing else cancels, so the booting MCP server runs on; set " + gate + " to run")
-		}
 		t.Parallel()
 		a, marker := mcpServerSlowStartupFirstTurnStart(t)
 		mcpServerSlowStartupFirstTurnCall(a, marker)
