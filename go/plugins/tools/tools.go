@@ -5,6 +5,7 @@
 package tools
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -416,33 +417,69 @@ func readView(path string, rng ...int) (string, error) {
 		abs, _ := filepath.Abs(path)
 		return "[Image: " + abs + "]", nil
 	}
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return "", withNeighbours(path, err)
 	}
-	// A NUL in the head marks a binary file (git's heuristic): numbering
-	// its bytes as lines only feeds the model garbage.
-	if bytes.IndexByte(data[:min(len(data), 8000)], 0) >= 0 {
-		return "", fmt.Errorf("view: %s is a binary file (%d bytes); inspect it with tools.bash (file, xxd, strings)", path, len(data))
+	defer f.Close()
+	r := bufio.NewReader(f)
+	// A NUL in the head marks a binary file (the usual VCS heuristic):
+	// numbering its bytes as lines only feeds the model garbage.
+	if head, _ := r.Peek(8000); bytes.IndexByte(head, 0) >= 0 {
+		var sz int64
+		if fi, err := f.Stat(); err == nil {
+			sz = fi.Size()
+		}
+		return "", fmt.Errorf("view: %s is a binary file (%d bytes); inspect it with tools.bash (file, xxd, strings)", path, sz)
 	}
-	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
-	start, end := 1, len(lines)
+	start, stop := 1, 0
 	if len(rng) > 0 && rng[0] > 0 {
 		start = rng[0]
 	}
-	if len(rng) > 1 && rng[1] > 0 && rng[1] < end {
-		end = rng[1]
+	if len(rng) > 1 && rng[1] > 0 {
+		stop = rng[1]
 	}
-	if start > len(lines) {
-		return "", fmt.Errorf("view: %s has %d lines, start %d is past the end", path, len(lines), start)
+	// Stream: only the requested lines are kept, and never more than
+	// viewCap bytes of them — a 50 MB log must not land in memory whole.
+	var lines []string
+	size, n, capped := 0, 0, false
+	for {
+		line, rerr := r.ReadString('\n')
+		if line == "" && rerr != nil {
+			break
+		}
+		n++
+		if n >= start && (stop == 0 || n <= stop) {
+			if size+len(line) > viewCap {
+				capped = true
+				break
+			}
+			size += len(line)
+			lines = append(lines, strings.TrimSuffix(line, "\n"))
+		}
+		if rerr != nil || (stop > 0 && n >= stop) {
+			break
+		}
 	}
-	width := len(strconv.Itoa(end))
+	if n == 0 {
+		n, lines = 1, []string{""} // an empty file is one empty line
+	}
+	if start > n {
+		return "", fmt.Errorf("view: %s has %d lines, start %d is past the end", path, n, start)
+	}
+	width := len(strconv.Itoa(start + len(lines) - 1))
 	var b strings.Builder
-	for n := start; n <= end; n++ {
-		fmt.Fprintf(&b, "%*d│%s\n", width, n, lines[n-1])
+	for i, l := range lines {
+		fmt.Fprintf(&b, "%*d│%s\n", width, start+i, l)
+	}
+	if capped {
+		fmt.Fprintf(&b, "[view stopped at %d KB after line %d; pass a range, e.g. view(path, %d, %d)]\n", viewCap>>10, start+len(lines)-1, start+len(lines), start+len(lines)+999)
 	}
 	return b.String(), nil
 }
+
+// viewCap bounds the bytes of file text one view returns.
+const viewCap = 256 << 10
 
 // withNeighbours turns a bare "no such file" into one that names the
 // files actually next to the guessed path: a model that invents

@@ -131,7 +131,6 @@ func TestFilesViewFailures(t *testing.T) {
 		if os.Getenv("BOUGH_TOOLS_FILES_SLOW") != "1" {
 			t.Skip("BOUGH_TOOLS_FILES_SLOW=1 writes a 50 MB file")
 		}
-		filesKnown(t, "view of a 50 MB file reads it whole and returns ~53 MB (tools.go readView: os.ReadFile, no size cap; only loop capOutput spills it after)")
 		p := filepath.Join(dir, "big")
 		filesSeed(t, p, strings.Repeat(strings.Repeat("x", 99)+"\n", 500_000))
 		out, err := readView(p)
