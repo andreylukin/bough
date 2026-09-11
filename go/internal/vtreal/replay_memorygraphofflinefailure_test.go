@@ -172,9 +172,6 @@ func TestMemoryGraphOfflineFailureMalformed(t *testing.T) {
 // turns answer, with the failure said at most once.
 func TestMemoryGraphOfflineFailureReadonly(t *testing.T) {
 	memoryGraphOfflineFailureSkipPOSIX(t)
-	if os.Getenv("BOUGH_KNOWN_MEMORY_GRAPH_OFFLINE_FAILURE") == "" {
-		t.Skip("known bug: a read-only graph.db aborts boot — graph.Open runs the schema DDL (plugins/graph/store.go Open → \"graph schema: attempt to write a readonly database\"), the graph row's Apply errors, and ctx.Mount in cmd/bough/main.go fails the whole startup; set BOUGH_KNOWN_MEMORY_GRAPH_OFFLINE_FAILURE=1 to run")
-	}
 	t.Parallel()
 	main := memoryGraphOfflineFailureMain(t, memoryGraphOfflineFailureTurns)
 	small := memoryGraphOfflineFailureSmall(t, memoryGraphOfflineFailureMalformed)

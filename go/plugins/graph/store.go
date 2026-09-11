@@ -13,7 +13,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -196,6 +198,20 @@ type Store struct {
 
 // Open opens (creating) the graph at path and applies the schema.
 func Open(path string) (*Store, error) {
+	// A graph file we cannot write (read-only file or directory) opens
+	// read-only: the schema DDL and migration would fail on it, and
+	// memory is optional — reads still work, writes error per call.
+	// immutable: no -wal/-shm can be created next to it.
+	if f, err := os.OpenFile(path, os.O_RDWR, 0); err != nil && errors.Is(err, fs.ErrPermission) {
+		db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&immutable=1")
+		if err != nil {
+			return nil, err
+		}
+		db.SetMaxOpenConns(1)
+		return &Store{db: db, now: time.Now}, nil
+	} else if err == nil {
+		f.Close()
+	}
 	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)")
 	if err != nil {
 		return nil, err
