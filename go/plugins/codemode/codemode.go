@@ -302,7 +302,23 @@ func (cm *CodeMode) RunCtx(ctx context.Context, code string) (string, error) {
 		return out, cleanErr(err)
 	}
 	if v != nil && !goja.IsUndefined(v) {
-		out += v.String()
+		// A Promise as the block's value: a rejection is the block's
+		// error, a fulfilment shows its result, never "[object Promise]".
+		if p, ok := v.Export().(*goja.Promise); ok {
+			switch p.State() {
+			case goja.PromiseStateRejected:
+				reason := display(p.Result())
+				if o, ok := p.Result().(*goja.Object); ok && o.ClassName() == "Error" {
+					reason = o.String() // an Error exports as {}
+				}
+				return out, fmt.Errorf("unhandled promise rejection: %s", reason)
+			case goja.PromiseStateFulfilled:
+				v = p.Result()
+			}
+		}
+		if v != nil && !goja.IsUndefined(v) {
+			out += display(v)
+		}
 	}
 	return out, nil
 }

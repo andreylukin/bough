@@ -176,7 +176,6 @@ func TestCodemodeRuntimeUnhandledRejection(t *testing.T) {
 	out, err = codemodeRuntimeRun(t, cm, `Promise.reject(new Error("rejected"))`, 5*time.Second)
 	t.Logf("rejected completion: out=%q err=%v", out, err)
 	if err == nil && !strings.Contains(out, "rejected") {
-		codemodeRuntimeKnown(t, "a block whose value is a rejected Promise reports \"[object Promise]\" with no error (codemode.go RunCtx: v.String())")
 		t.Errorf("rejection invisible: out=%q", out)
 	}
 }
@@ -270,7 +269,6 @@ func TestCodemodeRuntimeReturnValueNoLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	if out == "[object Object]" {
-		codemodeRuntimeKnown(t, "an object completion value renders as [object Object] (codemode.go RunCtx uses v.String(), not display())")
 		t.Errorf("object completion value unreadable: %q", out)
 	}
 }
