@@ -1,0 +1,13 @@
+{"seq":1,"at":"2026-09-10T11:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T11:00:01Z","kind":"input","data":{"text":"hello"}}
+{"seq":3,"at":"2026-09-10T11:00:02Z","kind":"assistant","data":{"text":"```stop\nHello there.\n```"}}
+{"seq":4,"at":"2026-09-10T11:00:02Z","kind":"done","data":{"text":""}}
+{"seq":5,"at":"2026-09-10T11:00:10Z","kind":"input","data":{"text":"/help"}}
+{"seq":6,"at":"2026-09-10T11:00:10Z","kind":"command","data":{"text":"/help"}}
+{"seq":7,"at":"2026-09-10T11:00:11Z","kind":"system","data":{"text":"commands\n  /help  list commands"}}
+{"seq":8,"at":"2026-09-10T11:00:20Z","kind":"input","data":{"text":"one more"}}
+{"seq":9,"at":"2026-09-10T11:00:21Z","kind":"assistant","data":{"text":"```js\nconsole.log(tools.bash(\"echo hi\"))\n```"}}
+{"seq":10,"at":"2026-09-10T11:00:21Z","kind":"code","data":{"text":"console.log(tools.bash(\"echo hi\"))\n"}}
+{"seq":11,"at":"2026-09-10T11:00:22Z","kind":"result","data":{"code":"console.log(tools.bash(\"echo hi\"))\n","text":"hi\n"}}
+{"seq":12,"at":"2026-09-10T11:00:23Z","kind":"assistant","data":{"text":"```stop\nSaid hi.\n```"}}
+{"seq":13,"at":"2026-09-10T11:00:23Z","kind":"done","data":{"text":""}}
