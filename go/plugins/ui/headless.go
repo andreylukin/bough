@@ -67,6 +67,13 @@ func ExitCode() int {
 	return 0
 }
 
+// Interrupted reports whether a headless turn is still in flight: an
+// interrupt now is a cancel, not the self-interrupt that follows stdin
+// EOF (that one drains every turn first). The launcher exits 130.
+func Interrupted() bool {
+	return hlPending.Load() > 0
+}
+
 // hlAskState is the pending tools.ask the next stdin line answers.
 type hlAskState struct {
 	id      string

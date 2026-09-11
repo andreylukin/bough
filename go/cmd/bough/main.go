@@ -460,13 +460,18 @@ func main() {
 	}()
 
 	// Block until interrupted, then unmount (effects run LIFO). Exit 1
-	// when a headless turn errored, else 0 (TUI /quit and ctrl+c too).
+	// when a headless turn errored, 130 when a signal cancelled one
+	// mid-turn, else 0 (TUI /quit and ctrl+c too).
 	<-sig
+	cancelled := ui.Interrupted()
 	stopWatch()
 	// The tui owns the terminal: hand it back before the unmount so a
 	// signal never exits with the alt screen and mouse still on.
 	ui.StopTUI()
 	ctx.Unmount()
+	if cancelled {
+		os.Exit(130)
+	}
 	os.Exit(ui.ExitCode())
 }
 

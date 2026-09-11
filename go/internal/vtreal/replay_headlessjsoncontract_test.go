@@ -286,7 +286,6 @@ func TestHeadlessJSONContract(t *testing.T) {
 			t.Errorf("nothing may run after SIGINT:\n%s", r.screen())
 		}
 		if r.code == 0 {
-			headlessJSONContractKnown(t, "SIGINT mid-turn in --headless exits 0, same as a clean run (cmd/bough/main.go: os.Exit(ui.ExitCode()) after <-sig)")
 			t.Errorf("SIGINT mid-turn exited 0, indistinguishable from success:\n%s", r.screen())
 		}
 	})
