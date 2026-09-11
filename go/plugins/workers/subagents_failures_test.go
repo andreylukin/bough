@@ -425,7 +425,6 @@ func TestSubagentsParentCancelledDuringSpawnAll(t *testing.T) {
 		t.Fatalf("finished sibling carded %q", st)
 	}
 	t.Run("hung children carded cancelled", func(t *testing.T) {
-		subagentsKnownBug(t, `children cancelled mid-llm-call are carded "error", not "cancelled" (plugins/workers/workers.go runChildTo llm-error branch ignores ctx.Err())`)
 		for id := 2; id <= 3; id++ {
 			if st, _ := r.done(id); st != "cancelled" {
 				t.Fatalf("worker %d done = %q, want cancelled", id, st)
