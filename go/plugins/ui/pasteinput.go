@@ -36,9 +36,15 @@ func (p *pasteInput) Read(b []byte) (int, error) {
 			}
 		}
 		chunk := b[:n]
-		if !p.openAfter(chunk) {
-			var err error
-			n, err = p.waitStart(b, n)
+		// Outside a paste, a read ending in a prefix of the paste-start
+		// sequence (a bare ESC included) waits briefly for the rest:
+		// ultraviolet would flush it as keys at its 50ms timeout and the
+		// paste body would arrive as keystrokes (its newline submits).
+		// Not held across reads, so a real Escape key costs at most
+		// startWait.
+		for n < len(b) && !p.openAfter(chunk) && tailPrefix(chunk, pasteStart) > 0 && waitReadable(p.Fd(), startWait) {
+			m, err := p.File.Read(b[n:])
+			n += m
 			chunk = b[:n]
 			if err != nil {
 				return n, err
@@ -57,58 +63,8 @@ func (p *pasteInput) Read(b []byte) (int, error) {
 	}
 }
 
-const (
-	// startWait bounds how long a split paste-start tail waits for the rest.
-	startWait = 100 * time.Millisecond
-	// escTimeout is ultraviolet's DefaultEscTimeout: how long it holds an
-	// incomplete sequence before flushing it as keys.
-	escTimeout = 50 * time.Millisecond
-)
-
-// waitStart: outside a paste, b[:n] ending in a proper prefix of the
-// paste-start sequence (a bare ESC included) waits up to startWait for
-// the rest, gluing reads while they keep spelling it. Otherwise
-// ultraviolet flushes the tail as keys at escTimeout and the paste body
-// arrives as keystrokes (its newline submits). Nothing is held across
-// reads. A bare ESC that sat alone past escTimeout (the rest never came,
-// or something else did) is what ultraviolet would have flushed as the
-// Escape key, so it goes on as CSI 27 u and is not glued to what follows
-// as alt+key.
-func (p *pasteInput) waitStart(b []byte, n int) (int, error) {
-	k := tailPrefix(b[:n], pasteStart)
-	if k == 0 {
-		return n, nil
-	}
-	at, t0, lone := n-k, time.Now(), k == 1
-	for n < len(b) {
-		left := startWait - time.Since(t0)
-		if left <= 0 || !waitReadable(p.Fd(), left) {
-			break
-		}
-		if n-at == 1 && time.Since(t0) < escTimeout {
-			lone = false // ultraviolet would still have been waiting too
-		}
-		m, err := p.File.Read(b[n:])
-		n += m
-		if err != nil {
-			return n, err
-		}
-		if bytes.HasPrefix(b[at:n], pasteStart) {
-			return n, nil
-		}
-		if !bytes.HasPrefix(pasteStart, b[at:n]) {
-			break
-		}
-	}
-	// "\x1b[201" after a lone ESC is a paste end ultraviolet is waiting
-	// for (it may have opened a paste this reader missed): pass it whole.
-	if !lone || n+4 > len(b) || n-at >= 5 && bytes.HasPrefix(b[at:n], pasteEnd[:5]) {
-		return n, nil
-	}
-	copy(b[at+5:], b[at+1:n])
-	copy(b[at+1:], "[27u")
-	return n + 4, nil
-}
+// startWait bounds how long a split paste-start tail waits for the rest.
+const startWait = 100 * time.Millisecond
 
 // openAfter reports whether a paste is open once chunk has been read.
 func (p *pasteInput) openAfter(chunk []byte) bool {
