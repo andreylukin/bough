@@ -356,6 +356,24 @@ from a built-in first-party $/Mtok table matched on the model id with its
 adds models; an unknown model shows tokens, never a guess. `/cost` says
 which of the three the number came from.
 
+## Wiki
+
+Two levels of record. `~/.bough/history/` is the append-only log of every
+session; `~/.bough/wiki/` is markdown pages compiled from it by the bundled
+`llm-wiki` skill — decisions and why, root causes, gotchas, where things
+live — each claim citing the history entry it came from as
+`` `<session>#<seq>` ``. Nothing from the wiki is put in a prompt: an agent
+reads it when asked (`/llm-wiki query …`) or greps it like any file.
+
+`bough wiki install` schedules `bough wiki run` every 5 minutes (launchd).
+A tick with nothing pending returns without calling a model; otherwise it
+ingests up to three sessions that have been quiet for 30 minutes, in a
+headless bough run from the wiki directory, and commits the wiki (its own
+git repo). `bough wiki pending` lists what is waiting, `bough wiki digest
+<session>` shows what the ingest reads, `bough wiki check` verifies every
+citation, link and index entry. The first run starts a baseline: history
+before it is not ingested unless `bough wiki run --all` backfills it.
+
 ## Skills
 
 Mention-triggered injection. Pools: `~/.claude/skills` and

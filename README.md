@@ -146,6 +146,7 @@ bough.provider("parrot", (sys, msgs) => "...");             // a full LLM provid
 | `bough rows` | the live row state table (`pending` / `active` / `failed` / `disabled`) |
 | `bough sessions` / `bough log [file]` | list sessions, pretty-print a history |
 | `bough mcp list \| tools \| search \| status \| call` | MCP servers and their tools, from the CLI |
+| `bough wiki pending \| digest \| check \| run \| install \| uninstall` | the LLM wiki compiled from session history (`~/.bough/wiki`); `install` checks every 5 minutes and ingests sessions quiet for 30 |
 | `bough sync-mcp` | adopt Claude Code's MCP OAuth grants by keychain reference |
 | `bough update` / `bough restart` | build the newest commit on `main` and replace this binary — pulling your checkout if you have one, else from a clone under `~/.bough/src`; bounce the web session |
 

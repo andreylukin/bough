@@ -48,6 +48,7 @@ import (
 	_ "github.com/andreylukin/bough/plugins/tools"
 	"github.com/andreylukin/bough/plugins/ui"
 	_ "github.com/andreylukin/bough/plugins/web"
+	_ "github.com/andreylukin/bough/plugins/wiki"
 	_ "github.com/andreylukin/bough/plugins/workers"
 	"github.com/dop251/goja"
 )
