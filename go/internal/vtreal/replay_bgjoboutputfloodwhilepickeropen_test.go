@@ -224,9 +224,6 @@ func TestBgjobOutputFloodWhilePickerOpen(t *testing.T) {
 	})
 
 	t.Run("spill file exists", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_BGJOBOUTPUTFLOODWHILEPICKEROPEN") == "" {
-			t.Skip("known bug: a background job's output is never spilled — plugins/tools/jobs.go keeps a bounded head+tail in memory and drops the middle (\"[N bytes cut]\"), so 50k lines leave no file; set BOUGH_KNOWN_BGJOBOUTPUTFLOODWHILEPICKEROPEN=1 to run")
-		}
 		if p := bgjobOutputFloodWhilePickerOpenSpills(a.home); len(p) == 0 {
 			t.Errorf("no file under $HOME holds the job's flood output")
 		}

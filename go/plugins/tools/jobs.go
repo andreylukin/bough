@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -52,8 +53,10 @@ type job struct {
 	mu      sync.Mutex
 	head    []byte
 	tail    []byte
-	cut     int  // bytes dropped between head and tail
-	matched bool // the until pattern already fired
+	cut     int      // bytes dropped between head and tail
+	spill   *os.File // the full output, opened when the tail first overflows
+	spillAt string   // its path; "-" when it could not be made
+	matched bool     // the until pattern already fired
 	done    bool
 	exit    int
 	err     string
@@ -74,10 +77,41 @@ func (j *job) write(p []byte) {
 		return
 	}
 	j.tail = append(j.tail, p...)
+	if j.spill != nil {
+		j.spill.Write(p)
+	}
 	if over := len(j.tail) - jobTail; over > 0 {
+		if j.spillAt == "" {
+			j.openSpill()
+		}
 		j.tail = j.tail[over:]
 		j.cut += over
 	}
+}
+
+// openSpill starts the job's full-output file — in $BOUGH_SCRATCH, or
+// ~/.bough/jobs without one — seeded with everything captured so far,
+// so the cut middle stays readable on disk.
+func (j *job) openSpill() {
+	j.spillAt = "-"
+	dir := os.Getenv("BOUGH_SCRATCH")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return
+		}
+		dir = filepath.Join(home, ".bough", "jobs")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	f, err := os.CreateTemp(dir, fmt.Sprintf("job-%d-*.log", j.id))
+	if err != nil {
+		return
+	}
+	f.Write(j.head)
+	f.Write(j.tail)
+	j.spill, j.spillAt = f, f.Name()
 }
 
 // output is everything kept, with the dropped middle marked.
@@ -85,7 +119,11 @@ func (j *job) output() string {
 	if j.cut == 0 {
 		return string(j.head) + string(j.tail)
 	}
-	return fmt.Sprintf("%s\n… [%d bytes cut] …\n%s", j.head, j.cut, j.tail)
+	full := ""
+	if j.spill != nil {
+		full = ", full output in " + j.spillAt
+	}
+	return fmt.Sprintf("%s\n… [%d bytes cut%s] …\n%s", j.head, j.cut, full, j.tail)
 }
 
 func (j *job) elapsed() time.Duration {
@@ -363,6 +401,9 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 		os.Remove(script)
 		b.mu.Lock()
 		b.done, b.ended = true, time.Now()
+		if b.spill != nil {
+			b.spill.Close()
+		}
 		switch {
 		case ctx.Err() == context.DeadlineExceeded:
 			b.err, b.exit = "killed after "+limit.String(), -1

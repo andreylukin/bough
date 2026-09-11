@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -193,6 +195,34 @@ func TestJobOutputKeepsBothEnds(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in the kept output", want)
 		}
+	}
+}
+
+// The middle a job's capture drops is not lost: the full output spills
+// to a file in $BOUGH_SCRATCH, and the cut marker names it.
+func TestJobOutputSpillsWhenCut(t *testing.T) {
+	t.Setenv("BOUGH_SCRATCH", t.TempDir())
+	s := newTestStats(t)
+	if _, err := s.bash("seq 1 200000", 60); err != nil {
+		t.Fatalf("bash: %v", err)
+	}
+	waitFor(t, "the job to finish", func() bool {
+		b := s.jobs.find(1)
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.done
+	})
+	out, _ := s.jobs.job(1)
+	m := regexp.MustCompile(`full output in (\S+)\]`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("cut marker names no spill file:\n%.300s", out)
+	}
+	b, err := os.ReadFile(m[1])
+	if err != nil {
+		t.Fatalf("spill: %v", err)
+	}
+	if n := strings.Count(string(b), "\n"); n != 200000 || !strings.Contains(string(b), "\n100000\n") {
+		t.Fatalf("spill holds %d lines, want all 200000", n)
 	}
 }
 
