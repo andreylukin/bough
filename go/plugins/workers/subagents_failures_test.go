@@ -287,7 +287,6 @@ func TestSubagentsChildCallsSpawnAll(t *testing.T) {
 }
 
 func TestSubagentsBackgroundChildCannotSpawnAll(t *testing.T) {
-	subagentsKnownBug(t, "spawnAll lacks spawn's w.bg>0 guard (plugins/workers/workers.go spawnAll): a background child's block can fan out children, breaking depth one")
 	l := subagentsTape(map[string][]string{
 		"bg":  {"```js\ntools.spawnAll(['sub'])\n```", "Status: ok\ndone"},
 		"sub": {"NESTED_RAN"},

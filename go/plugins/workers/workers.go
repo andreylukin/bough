@@ -344,6 +344,11 @@ func (w *Workers) spawnAll(tasks []string, shape ...map[string]any) ([]any, erro
 		w.mu.Unlock()
 		return nil, fmt.Errorf("workers: subagent depth 1 only")
 	}
+	if w.bg > 0 {
+		// Same guard as spawn: a background child's step cannot fan out.
+		w.mu.Unlock()
+		return nil, fmt.Errorf("workers: a background job's subagent is mid-step and cannot spawn; if you are the main agent, retry in a moment")
+	}
 	if w.spawns+len(tasks) > w.maxSpawns {
 		left := w.maxSpawns - w.spawns
 		w.mu.Unlock()
