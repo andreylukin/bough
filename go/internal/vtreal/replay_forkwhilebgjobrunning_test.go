@@ -153,9 +153,6 @@ func TestForkWhileBgjobRunning(t *testing.T) {
 	a.check("forked")
 
 	t.Run("strip not on the fork", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_FORKWHILEBGJOBRUNNING") == "" {
-			t.Skip("known bug: the job strip is process-wide (tools Jobs never remount), so a fork shows the original session's job; set BOUGH_KNOWN_FORKWHILEBGJOBRUNNING=1 to run")
-		}
 		time.Sleep(time.Second)
 		if s := a.settled(); forkwhilebgjobrunningStrip(s) {
 			t.Errorf("the fork shows the original session's job 1 in its strip:\n%s", s)
@@ -174,9 +171,6 @@ func TestForkWhileBgjobRunning(t *testing.T) {
 	time.Sleep(2 * time.Second) // a duplicate wake would land by now
 
 	t.Run("wake lands in the fork never", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_FORKWHILEBGJOBRUNNING") == "" {
-			t.Skip("known bug: a job's finished notice wakes whichever session is mounted (the remounted loop drains the process-wide job-notices), so it opens a turn in the fork; set BOUGH_KNOWN_FORKWHILEBGJOBRUNNING=1 to run")
-		}
 		if n := forkwhilebgjobrunningWakes(t, fork); n != 0 {
 			t.Errorf("the fork got %d wake turn(s) for a job it never started:\n%s", n, a.text())
 		}

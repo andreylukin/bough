@@ -131,6 +131,14 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if p, ok := reg.(pauser); ok {
 		st.jobs.pause = p.Pause
 	}
+	// Resolved at call time: /tree and /sessions remount history (and
+	// the loop) under this row, which never remounts.
+	st.jobs.owner = func() string {
+		if h, err := kernel.Get[interface{ Path() string }](ctx, "history"); err == nil {
+			return h.Path()
+		}
+		return ""
+	}
 	ctx.Provide("job-notices", st.jobs)
 	if d, ok := reg.(describer); ok {
 		for _, doc := range [][2]string{

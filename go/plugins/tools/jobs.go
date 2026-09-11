@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,7 @@ const maxJobLimit = 6 * time.Hour
 
 type job struct {
 	id      int
+	owner   string // the session file that started it
 	cmd     string
 	limit   time.Duration
 	until   *regexp.Regexp // optional: notify as soon as the output matches
@@ -130,11 +132,12 @@ type Jobs struct {
 	// runCtx is the running script's context (nil = none): esc cancels
 	// it, and a jobWait blocked in Go only notices through it.
 	runCtx func() context.Context
+	owner func() string // the mounted session's file; nil or "" = one session
 
 	mu      sync.Mutex
 	next    int
 	list    []*job
-	pending []string
+	pending []notice
 	wake    chan struct{} // buffered 1: a signal, not a queue
 
 	running sync.WaitGroup // one per job until its Wait returns
@@ -170,6 +173,19 @@ func (j *Jobs) wait(d time.Duration) {
 	}
 }
 
+// A notice belongs to the session that was mounted when its job
+// started: /tree or /sessions swap the session under a running job,
+// and its news must not wake (or show up in) a session that never
+// started it. It waits until its own session is mounted again.
+type notice struct{ owner, text string }
+
+func (j *Jobs) session() string {
+	if j.owner == nil {
+		return ""
+	}
+	return j.owner()
+}
+
 // Running is one live background job, for the strip the ui draws under
 // the composer: a job that outlives its turn is otherwise invisible
 // until it finishes.
@@ -185,10 +201,11 @@ func (j *Jobs) Running() []Running {
 	j.mu.Lock()
 	list := append([]*job(nil), j.list...)
 	j.mu.Unlock()
+	cur := j.session()
 	var out []Running
 	for _, b := range list {
 		b.mu.Lock()
-		if !b.done {
+		if !b.done && b.owner == cur {
 			r := Running{ID: b.id, Cmd: firstLine(b.cmd), Since: b.elapsed()}
 			if b.until != nil {
 				r.Watch = b.until.String()
@@ -200,26 +217,50 @@ func (j *Jobs) Running() []Running {
 	return out
 }
 
-// Take drains the queued notices (the loop's Notices seam).
+// Take drains the mounted session's queued notices (the loop's Notices
+// seam); another session's stay queued for it.
 func (j *Jobs) Take() []string {
+	cur := j.session()
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	p := j.pending
-	j.pending = nil
+	var p []string
+	keep := j.pending[:0]
+	for _, n := range j.pending {
+		if n.owner == cur {
+			p = append(p, n.text)
+		} else {
+			keep = append(keep, n)
+		}
+	}
+	j.pending = keep
 	return p
 }
 
 // Wake fires when a notice has been queued: the loop selects on it so
-// a job that finishes while the agent is idle still starts a turn.
-func (j *Jobs) Wake() <-chan struct{} { return j.wake }
+// a job that finishes while the agent is idle still starts a turn. A
+// loop mounting on a session with notices already waiting (resumed
+// after a fork took the wake) is woken at once.
+func (j *Jobs) Wake() <-chan struct{} {
+	cur := j.session()
+	j.mu.Lock()
+	waiting := slices.ContainsFunc(j.pending, func(n notice) bool { return n.owner == cur })
+	j.mu.Unlock()
+	if waiting {
+		select {
+		case j.wake <- struct{}{}:
+		default:
+		}
+	}
+	return j.wake
+}
 
 // Notify queues a notice from another row (an artifact answered in the
 // browser) so it lands like a finished job's and wakes an idle agent.
-func (j *Jobs) Notify(text string) { j.notify(text) }
+func (j *Jobs) Notify(text string) { j.notify(j.session(), text) }
 
-func (j *Jobs) notify(text string) {
+func (j *Jobs) notify(owner, text string) {
 	j.mu.Lock()
-	j.pending = append(j.pending, text)
+	j.pending = append(j.pending, notice{owner, text})
 	j.mu.Unlock()
 	select {
 	case j.wake <- struct{}{}:
@@ -283,9 +324,10 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 	c.Cancel = func() error { return killProcessGroup(c) }
 	c.WaitDelay = 2 * time.Second
 
+	owner := j.session()
 	j.mu.Lock()
 	j.next++
-	b := &job{id: j.next, cmd: cmd, limit: limit, until: re, started: time.Now(), cancel: cancel}
+	b := &job{id: j.next, owner: owner, cmd: cmd, limit: limit, until: re, started: time.Now(), cancel: cancel}
 	j.list = append(j.list, b)
 	j.mu.Unlock()
 
@@ -320,7 +362,7 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 		}
 		line, out := b.line(), b.output()
 		b.mu.Unlock()
-		j.notify(line + "\n" + tailLines(out, 40))
+		j.notify(b.owner, line+"\n"+tailLines(out, 40))
 	}()
 	return b, nil
 }
@@ -342,7 +384,7 @@ func (w *jobWriter) Write(p []byte) (int, error) {
 	}
 	w.b.mu.Unlock()
 	if fire != "" {
-		w.j.notify(fire)
+		w.j.notify(w.b.owner, fire)
 	}
 	return len(p), nil
 }
