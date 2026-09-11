@@ -1753,6 +1753,28 @@ func capOutput(s string, n int) string {
 
 type plugin struct{}
 
+// handoff is a disposed loop mount's turn still in flight, keyed by
+// the kernel context the next mount of the row will see.
+type handoff struct {
+	turns   *turns
+	stopped <-chan struct{}
+}
+
+var handoffs sync.Map // *kernel.Context -> handoff
+
+// remounting reports whether the loop row is being disposed only to
+// mount again (a dependency swap): Reconcile runs a row's disposers
+// while the row still counts as active; Unmount (shutdown) and a row
+// dropped from the config do not.
+func remounting(kctx *kernel.Context) bool {
+	for _, rs := range kctx.Rows() {
+		if rs.Plugin == "loop" && rs.State == kernel.StateActive {
+			return true
+		}
+	}
+	return false
+}
+
 func init() {
 	kernel.Register("loop", func() kernel.Plugin { return &plugin{} })
 }
@@ -1770,14 +1792,15 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		return err
 	}
 	r := &runner{llm: llm, code: code, hist: &memHistory{}, secs: &Sections{}}
-	r.provider = func() string {
-		for _, row := range kctx.Desired() {
-			if row.ID == "llm" {
-				return strings.TrimPrefix(row.Plugin, "llm-")
-			}
+	// The provider of the llm this mount holds: a turn handed over on a
+	// remount records the row it ran on, not the one swapped in.
+	var provider string
+	for _, row := range kctx.Desired() {
+		if row.ID == "llm" {
+			provider = strings.TrimPrefix(row.Plugin, "llm-")
 		}
-		return ""
 	}
+	r.provider = func() string { return provider }
 	if c, ok := code.(cataloguer); ok {
 		r.cat = c.Catalogue
 	}
@@ -1906,7 +1929,15 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	inputs := make(chan string, 8)
 	kctx.Provide("inputs", inputs)
 
+	// A remount mid-turn (/model swapping the llm row) hands the turn
+	// in flight over instead of cancelling it: it finishes on the llm
+	// it started with, this mount shares its cancel/steer and starts
+	// nothing until it has stopped.
 	t := &turns{}
+	var prev <-chan struct{}
+	if h, ok := handoffs.LoadAndDelete(kctx); ok {
+		t, prev = h.(handoff).turns, h.(handoff).stopped
+	}
 	kctx.Provide("cancel", t.Cancel)
 	r.steer = t.takeSteers
 	kctx.Provide("steer", t.Steer)
@@ -1915,6 +1946,9 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
+		if prev != nil {
+			<-prev
+		}
 		emit := func(kind, text string) {
 			// Live gets what replay gets: a noted entry's data
 			// (the done marker's files and exit) rides along.
@@ -1952,6 +1986,11 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		}
 	}()
 	kctx.Effect(func() {
+		if remounting(kctx) {
+			handoffs.Store(kctx, handoff{turns: t, stopped: stopped})
+			close(inputs)
+			return
+		}
 		cancel()
 		close(inputs)
 		// A turn in flight records its cancelled/done entry before

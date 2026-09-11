@@ -68,9 +68,6 @@ func (a *app) modelPickerMidTurnStatus() string {
 
 func TestModelPickerMidTurn(t *testing.T) {
 	t.Parallel()
-	if os.Getenv("BOUGH_KNOWN_MODEL_PICKER_MID_TURN") == "" {
-		t.Skip("known bug: /model mid-turn cancels the running turn (history: cancelled+done, no assistant entry) and the TUI spinner never stops; set BOUGH_KNOWN_MODEL_PICKER_MID_TURN=1 to run")
-	}
 	tape := modelPickerMidTurnTape(t)
 	cfg := strings.Replace(replayConfig(tape), "config: {file: "+fmt.Sprintf("%q", tape)+"}",
 		"config: {file: "+fmt.Sprintf("%q", tape)+", delay_ms: 150}", 1)
