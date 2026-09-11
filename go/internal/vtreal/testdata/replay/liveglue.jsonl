@@ -1,0 +1,10 @@
+{"seq":1,"at":"2026-09-10T11:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T11:00:01Z","kind":"input","data":{"text":"explain the layout"}}
+{"seq":3,"at":"2026-09-10T11:00:02Z","kind":"assistant","data":{"text":"The layout has three parts that matter here and each one is worth a sentence of its own so that this reply takes a while to stream word by word across the pane the way a real provider sends it.\n\n```stop\nThree parts.\n```"}}
+{"seq":4,"at":"2026-09-10T11:00:04Z","kind":"done","data":{"text":""}}
+{"seq":5,"at":"2026-09-10T11:00:10Z","kind":"input","data":{"text":"count the go files"}}
+{"seq":6,"at":"2026-09-10T11:00:11Z","kind":"assistant","data":{"text":"Let me look at the tree first and then count the files that end in go before I answer you properly.\n\n```js\nconsole.log(tools.bash(\"ls *.go | wc -l\"))\n```"}}
+{"seq":7,"at":"2026-09-10T11:00:11Z","kind":"code","data":{"text":"console.log(tools.bash(\"ls *.go | wc -l\"))\n"}}
+{"seq":8,"at":"2026-09-10T11:00:12Z","kind":"result","data":{"code":"console.log(tools.bash(\"ls *.go | wc -l\"))\n","text":"2\n"}}
+{"seq":9,"at":"2026-09-10T11:00:13Z","kind":"assistant","data":{"text":"There are two Go files in that directory and nothing else of interest to report about them right now.\n\n```stop\nTwo Go files.\n```"}}
+{"seq":10,"at":"2026-09-10T11:00:13Z","kind":"done","data":{"text":""}}
