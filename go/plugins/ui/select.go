@@ -112,6 +112,11 @@ func (m *model) selectedText() string {
 		if r == r1 {
 			right = min(right, c1)
 		}
+		if lo, hi, frame := boxInterior(plain); frame {
+			continue // a box's top or bottom border
+		} else if hi > lo {
+			left, right = max(left, lo), min(right, hi)
+		}
 		if left >= right {
 			out = append(out, "")
 			continue
@@ -119,6 +124,23 @@ func (m *model) selectedText() string {
 		out = append(out, strings.TrimRight(ansi.Cut(plain, left, right), " "))
 	}
 	return strings.TrimRight(strings.Join(out, "\n"), "\n")
+}
+
+// boxInterior reports the cells inside a box() row's rails and padding
+// (lo..hi, hi > lo), or frame for a top/bottom border row, so a drag
+// over an open box copies the text and not the border.
+func boxInterior(plain string) (lo, hi int, frame bool) {
+	t := strings.TrimRight(plain, " ")
+	body := strings.TrimLeft(t, " ")
+	ind := len(t) - len(body)
+	switch {
+	case strings.HasPrefix(body, "╭") && strings.HasSuffix(body, "╮"),
+		strings.HasPrefix(body, "╰") && strings.HasSuffix(body, "╯"):
+		return 0, 0, true
+	case len(body) > len("│") && strings.HasPrefix(body, "│") && strings.HasSuffix(body, "│"):
+		return ind + 2, ansi.StringWidth(t) - 2, false
+	}
+	return 0, 0, false
 }
 
 // highlight applies reverse video to the selected span of each content

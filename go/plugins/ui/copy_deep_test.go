@@ -90,7 +90,6 @@ func TestCopyDragOverFoldedHeaderTakesHeaderOnly(t *testing.T) {
 // Box borders are decoration: a drag over an open result must not copy
 // the │ rails or ╭─╮ lines.
 func TestCopyDragOverOpenBoxDropsBorders(t *testing.T) {
-	copyKnown(t, "selectedText copies rendered cells incl. box rails (select.go:108 ansi.Strip of m.lines)")
 	d := defaultDrv(t)
 	d.event("result", "line-one\nline-two\nline-three")
 	d.event("done", "")
