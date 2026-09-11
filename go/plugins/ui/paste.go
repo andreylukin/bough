@@ -75,6 +75,10 @@ func (m *model) handlePaste(msg tea.PasteMsg) (bool, tea.Cmd) {
 // attachImage inserts an "[Image #N]" placeholder for path; on submit
 // it becomes "[Image #N: path]", which the loop sends as pixels.
 func (m *model) attachImage(path string) {
+	if st, err := os.Stat(path); err == nil && st.Size() > llm.MaxImageBytes {
+		m.flash = fmt.Sprintf("image too large: %s is %d MB, over the %d MB limit · not attached", path, st.Size()>>20, llm.MaxImageBytes>>20)
+		return
+	}
 	m.comp.images = append(m.comp.images, path)
 	m.input.InsertString(fmt.Sprintf("[Image #%d] ", len(m.comp.images)))
 	m.syncPalette()

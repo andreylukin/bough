@@ -67,7 +67,6 @@ func TestImagePasteMissingAndHugeReal(t *testing.T) {
 		img := imagePasteMissingAndHugeFile(t, "huge.png", 50<<20)
 		a.term.Paste(img)
 		t.Run("size message", func(t *testing.T) {
-			imagePasteMissingAndHugeGate(t, "a 50MB image attaches silently (plugins/ui/paste.go attachImage has no size check; plugins/llm/image.go drops it past maxImageBytes)")
 			a.waitUntil(func(s string) bool {
 				return regexp.MustCompile(`(?i)too (large|big)|exceeds|downscal|resiz|limit`).MatchString(s)
 			}, "a size message")

@@ -23,9 +23,9 @@ func ImageRefs(text string) []string {
 	return paths
 }
 
-// maxImageBytes is Anthropic's per-image limit; larger files are
+// MaxImageBytes is Anthropic's per-image limit; larger files are
 // skipped rather than failing the whole request.
-const maxImageBytes = 5 << 20
+const MaxImageBytes = 5 << 20
 
 type image struct{ mime, data string }
 
@@ -57,7 +57,7 @@ func loadImages(paths []string) []image {
 			continue
 		}
 		data, err := os.ReadFile(p)
-		if err != nil || len(data) > maxImageBytes {
+		if err != nil || len(data) > MaxImageBytes {
 			continue
 		}
 		out = append(out, image{mime, base64.StdEncoding.EncodeToString(data)})

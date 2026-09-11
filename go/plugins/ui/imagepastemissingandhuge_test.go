@@ -99,7 +99,6 @@ func TestImagePasteMissingAndHugeDriver(t *testing.T) {
 	})
 
 	t.Run("huge file is rejected or downscaled with a message", func(t *testing.T) {
-		imagePasteMissingAndHugeGate(t, "a 50MB image attaches with \"image attached\" (plugins/ui/paste.go pastedImagePath/attachImage have no size check); llm.loadImages then drops it silently past maxImageBytes (plugins/llm/image.go)")
 		img := imagePasteMissingAndHugeFile(t, "huge.png", 50<<20)
 		d := defaultDrv(t)
 		d.feed(tea.PasteMsg{Content: img})
