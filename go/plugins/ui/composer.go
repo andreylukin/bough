@@ -43,6 +43,9 @@ type composerState struct {
 	// Kept for the session: a dropped or recalled draft still carries
 	// its tags.
 	pastes []string
+	// pasteTags holds the exact placeholder inserted for each paste; a
+	// tag the user edited no longer matches and is sent as typed.
+	pasteTags []string
 	// images holds the path behind each "[Image #N]" placeholder.
 	images []string
 }

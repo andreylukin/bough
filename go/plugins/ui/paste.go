@@ -65,6 +65,7 @@ func (m *model) handlePaste(msg tea.PasteMsg) (bool, tea.Cmd) {
 	} else {
 		tag += " " + plural(len([]rune(trimmed)), "char") + "]"
 	}
+	m.comp.pasteTags = append(m.comp.pasteTags, tag)
 	m.input.InsertString(tag)
 	m.syncPalette()
 	m.layoutComposer()
@@ -165,7 +166,7 @@ func (m *model) expandPastes(draft string) string {
 		num = strings.TrimSuffix(num, "]")
 		n, err := strconv.Atoi(num)
 		b.WriteString(draft[:i])
-		if err == nil && n >= 1 && n <= len(m.comp.pastes) {
+		if err == nil && n >= 1 && n <= len(m.comp.pastes) && tag == m.comp.pasteTags[n-1] {
 			b.WriteString(m.comp.pastes[n-1])
 		} else {
 			b.WriteString(tag)

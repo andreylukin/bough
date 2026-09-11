@@ -65,7 +65,6 @@ func TestPastePartialTagDoesNotSwallowText(t *testing.T) {
 // half-expanded.
 func TestPasteTypingInsideTagBreaksIt(t *testing.T) {
 	t.Parallel()
-	pasteKnown(t, "paste.go:158-164 expandPastes keys on the number alone: '[Pasted text #1 +20 lXines]' still expands and the typed X is silently dropped")
 	d := defaultDrv(t)
 	d.feed(tea.PasteMsg{Content: pasteBody("a", 20)})
 	for range 5 {
