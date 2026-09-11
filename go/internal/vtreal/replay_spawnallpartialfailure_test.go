@@ -211,9 +211,6 @@ func TestSpawnAllPartialFailureEsc(t *testing.T) {
 		t.Errorf("want 1 cancelled sub:done, got statuses %v", st)
 	}
 	t.Run("card_says_cancelled", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_SPAWNALL_PARTIAL_FAILURE") == "" {
-			t.Skip("known bug: a cancelled subagent card renders as \"error\" (plugins/ui/spawn.go renderSpawn has no \"cancelled\" case); set BOUGH_KNOWN_SPAWNALL_PARTIAL_FAILURE=1 to run")
-		}
 		if got := spawnallPartialFailureCount(s, "cancelled"); got != 1 {
 			t.Errorf("%d card(s) say cancelled, want 1 (distinct from the errored one):\n%s", got, s)
 		}
