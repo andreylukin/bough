@@ -181,6 +181,11 @@ func (s *Service) Policy(cmd string) error {
 			return fmt.Errorf("command not run: %w", err)
 		}
 		if a := strings.ToLower(strings.TrimSpace(answer)); a != "run" && a != "yes" && a != "y" {
+			// Anything but the refuse button is the user's words: pass
+			// them on so they reach the model.
+			if a != "" && a != "refuse" {
+				return fmt.Errorf("command refused by you (rule %s): %s", rule, strings.TrimSpace(answer))
+			}
 			return fmt.Errorf("command refused by you (rule %s)", rule)
 		}
 	}

@@ -158,6 +158,10 @@ func TestPolicy(t *testing.T) {
 	if err := s.Policy("gh pr view 1"); err == nil || !strings.Contains(err.Error(), "refused by you") || !strings.Contains(ask.asked, "gh pr view 1") {
 		t.Fatalf("prompt refused: %v / %q", err, ask.asked)
 	}
+	ask.answer = "no, write it to notes.txt instead"
+	if err := s.Policy("gh pr view 1"); err == nil || !strings.HasSuffix(err.Error(), ": no, write it to notes.txt instead") {
+		t.Fatalf("typed answer dropped: %v", err)
+	}
 	ask.answer = "run"
 	if err := s.Policy("gh pr view 1"); err != nil {
 		t.Fatalf("prompt allowed: %v", err)

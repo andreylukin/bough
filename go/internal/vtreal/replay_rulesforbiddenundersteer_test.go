@@ -117,9 +117,6 @@ func TestRulesForbiddenUnderSteerPromptGate(t *testing.T) {
 	// read off the history the context is built from: an entry carrying
 	// the steer text precedes the second reply.
 	t.Run("TestRulesForbiddenUnderSteerReachesModel", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_RULES_FORBIDDEN_UNDER_STEER") == "" {
-			t.Skip("known bug: a line typed at the rules prompt gate becomes the ask answer, and plugins/rules/rules.go (prompt case) replaces any non-run answer with a fixed refusal, so the text never reaches the model; set BOUGH_KNOWN_RULES_FORBIDDEN_UNDER_STEER=1 to run")
-		}
 		var seen []string
 		for _, e := range a.steerEntries() {
 			text, _ := e.Data["text"].(string)
