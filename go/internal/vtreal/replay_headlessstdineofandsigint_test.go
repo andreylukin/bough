@@ -186,16 +186,14 @@ func TestHeadlessStdinEOFAndSIGINT(t *testing.T) {
 	})
 
 	t.Run("StreamEndsOnTerminalEvent", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_HEADLESS_STDIN_EOF_AND_SIGINT") == "" {
-			t.Skip("known bug: SIGINT mid-turn in headless exits 130 with stdout ending on the last [code]/[assistant] line, no terminal [done]/[cancelled] event, though history records cancelled (set BOUGH_KNOWN_HEADLESS_STDIN_EOF_AND_SIGINT=1 to run)")
-		}
 		if r.stdout == "" || !strings.HasSuffix(r.stdout, "\n") {
 			t.Fatalf("stdout ends on a truncated line:\n%s", r.screen())
 		}
 		lines := strings.Split(strings.TrimRight(r.stdout, "\n"), "\n")
 		lastEv := ""
 		for _, l := range lines {
-			if m := headlessJSONContractEvent.FindStringSubmatch(l); m != nil {
+			// [usage] is [done]'s trailer, not an event of its own.
+			if m := headlessJSONContractEvent.FindStringSubmatch(l); m != nil && m[1] != "usage" {
 				lastEv = m[1]
 			}
 		}

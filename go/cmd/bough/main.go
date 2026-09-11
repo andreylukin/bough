@@ -476,6 +476,11 @@ func main() {
 	if cancel, err := kernel.Get[func()](ctx, "cancel"); err == nil {
 		cancel()
 	}
+	// The cancel unwinds the turn asynchronously: let its closing
+	// [cancelled]/[done] lines reach stdout before the ui row unmounts.
+	if cancelled {
+		ui.AwaitCancelled(3 * time.Second)
+	}
 	ctx.Unmount()
 	if cancelled {
 		os.Exit(130)

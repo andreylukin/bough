@@ -372,6 +372,20 @@ func drainHeadless() {
 	}
 }
 
+// AwaitCancelled waits (at most d) for a cancelled headless turn's
+// closing "[cancelled]"/"[done]" lines to print, so a SIGINT exit
+// never cuts the stream off before its terminal event.
+func AwaitCancelled(d time.Duration) {
+	deadline := time.After(d)
+	for hlPending.Load() > 0 {
+		select {
+		case <-hlTick:
+		case <-deadline:
+			return
+		}
+	}
+}
+
 // hlIdleTimeout is how long the drain waits between loop events before
 // it gives the turn up: BOUGH_HEADLESS_IDLE seconds, default 30 min. A
 // long model call or a long tool run produces no event while it runs,
