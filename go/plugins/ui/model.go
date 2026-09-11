@@ -1674,6 +1674,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if line == "" {
 			return m, nil
 		}
+		// The draft's pastes are spent: a later tag must not expand them.
+		m.comp.pastes = nil
 		// A submitted "/" line NEVER reaches the LLM: it dispatches
 		// through the commands service (absent service: plain text).
 		if strings.HasPrefix(line, "/") && cfg.cmds != nil {

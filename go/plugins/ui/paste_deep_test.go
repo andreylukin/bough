@@ -102,7 +102,6 @@ func TestPasteTwoTagsEditedAround(t *testing.T) {
 // to spell its tag (typed, or pasted from the transcript) is literal.
 func TestPasteSentTagDoesNotReexpand(t *testing.T) {
 	t.Parallel()
-	pasteKnown(t, "paste.go:61 comp.pastes is never cleared on submit (model.go:1531 only resets the textarea): a later '[Pasted text #1 ...]' expands the old paste")
 	d := defaultDrv(t)
 	d.feed(tea.PasteMsg{Content: pasteBody("s", 20)})
 	d.press(keyEnter())
