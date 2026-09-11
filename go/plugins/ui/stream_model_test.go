@@ -96,12 +96,7 @@ func (r *streamModelRun) frame(what string) {
 	}
 	for i, ln := range lines {
 		if !utf8.ValidString(ln) {
-			// Known bug: a delta cut inside a rune reaches the frame as
-			// a half rune (the thinking header preview shows raw text).
-			if streamModelKnown {
-				r.t.Fatalf("step %d (%s): line %d is not valid UTF-8 (a delta split a rune):\n%q", r.step, what, i, ln)
-			}
-			continue // its width/control checks are moot until the rune is whole
+			r.t.Fatalf("step %d (%s): line %d is not valid UTF-8 (a delta split a rune):\n%q", r.step, what, i, ln)
 		}
 		if w := ansi.StringWidth(ln); w > r.w {
 			r.t.Fatalf("step %d (%s): line %d is %d wide in %d:\n%q", r.step, what, i, w, r.w, ansi.Strip(ln))

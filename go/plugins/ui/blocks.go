@@ -232,8 +232,11 @@ func safeView(render func() string) (out string) {
 // reach the terminal as-is — hyperlinks, a title, even an OSC 52
 // clipboard write), a carriage return keeps only what a terminal
 // would show (the text after the last \r on the line), tabs become
-// spaces, other control characters are dropped.
+// spaces, other control characters are dropped. Invalid UTF-8 (a
+// delta cut inside a rune) is dropped too — the raw text keeps the
+// bytes, so the rune shows whole once the next delta lands.
 func sanitizeText(s string) string {
+	s = strings.ToValidUTF8(s, "")
 	if strings.IndexFunc(s, func(r rune) bool { return (r < 0x20 && r != '\n') || r == 0x7f }) < 0 {
 		return s
 	}
