@@ -248,6 +248,21 @@ func TestInjectPromptFalse(t *testing.T) {
 	}
 }
 
+// TestWriterLabelsSubagentItems: a subagent adds through the parent's
+// tools.todo, so Writer tags its items; the parent's stay unlabeled.
+func TestWriterLabelsSubagentItems(t *testing.T) {
+	td := NewTodos(&memLog{}, nil)
+	td.Add("parent a")
+	td.Writer("subagent 2")
+	td.Add("child item")
+	td.Writer("")
+	td.Add("parent b")
+	want := "[ ] 1 parent a\n[ ] 2 child item · subagent 2\n[ ] 3 parent b"
+	if got := td.Render(); got != want {
+		t.Fatalf("render:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 // TestMutationEmitsEvent checks every mutation emits a "todo"
 // loop/event carrying the rendered list.
 func TestMutationEmitsEvent(t *testing.T) {

@@ -34,6 +34,7 @@ type Item struct {
 	ID    int
 	Text  string
 	State string
+	Agent string // who added it: "" is the parent, else e.g. "subagent 2"
 }
 
 // History is the slice of the "history" service todos derive from.
@@ -74,6 +75,16 @@ type Todos struct {
 	hist     History
 	emit     func(rendered string) // nil = no events
 	hasTools bool                  // tools.todo registered (mentioned in the prompt section)
+	writer   string                // who is adding right now; "" = the parent (see Writer)
+}
+
+// Writer names who is writing: subagents run in the parent's VM, on
+// the parent's tools.todo, so without it a child's items are
+// indistinguishable from the parent's. Empty is the parent itself.
+func (t *Todos) Writer(who string) {
+	t.mu.Lock()
+	t.writer = who
+	t.mu.Unlock()
 }
 
 // NewTodos builds a list over hist. emit (may be nil) is called with
@@ -108,7 +119,8 @@ func (t *Todos) derive() (items []Item, next int) {
 				continue
 			}
 			text, _ := e.Data["text"].(string)
-			items = append(items, Item{ID: id, Text: text, State: "open"})
+			agent, _ := e.Data["agent"].(string)
+			items = append(items, Item{ID: id, Text: text, State: "open", Agent: agent})
 			if id >= next {
 				next = id + 1
 			}
@@ -152,6 +164,9 @@ func (t *Todos) Render() string {
 			box = "[x]"
 		}
 		fmt.Fprintf(&b, "%s %d %s", box, it.ID, oneLine(it.Text))
+		if it.Agent != "" {
+			fmt.Fprintf(&b, " · %s", it.Agent)
+		}
 	}
 	return b.String()
 }
@@ -173,7 +188,11 @@ func (t *Todos) Add(text string) (int, error) {
 	}
 	t.mu.Lock()
 	_, id := t.derive()
-	t.hist.Append("todo/add", map[string]any{"id": id, "text": text})
+	data := map[string]any{"id": id, "text": text}
+	if t.writer != "" {
+		data["agent"] = t.writer
+	}
+	t.hist.Append("todo/add", data)
 	t.mu.Unlock()
 	t.notify()
 	return id, nil

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 )
 
-const todoPanelConcurrentSubagentsUpdateGate = "BOUGH_KNOWN_TODO_PANEL_CONCURRENT_SUBAGENTS_UPDATE"
+var subagentLabel = regexp.MustCompile(` · subagent \d+`)
 
 func todoPanelConcurrentSubagentsUpdateTape(t *testing.T) string {
 	t.Helper()
@@ -96,7 +97,13 @@ func todoPanelConcurrentSubagentsUpdateAssert(t *testing.T, a *app, where string
 	t.Helper()
 	a.waitFor("5 parent c")
 	s := a.settled()
+	// Which child wins the race for "child item 1" is scheduling, so
+	// the subagent labels are checked for presence, then dropped.
 	got := strings.Join(todoPanelConcurrentUpdatesPanel(s), "\n")
+	if strings.Count(got, " · subagent ") != 2 {
+		t.Fatalf("%s: want the two child items labeled by subagent\nscreen:\n%s", where, s)
+	}
+	got = subagentLabel.ReplaceAllString(got, "")
 	want := strings.Join(todoPanelConcurrentSubagentsUpdateWant(), "\n")
 	if got != want {
 		t.Fatalf("%s: panel is not the final todo state\ngot:\n%s\nwant:\n%s\nscreen:\n%s", where, got, want, s)
@@ -183,9 +190,6 @@ func TestTodoPanelConcurrentSubagentsUpdate(t *testing.T) {
 	// subagent's items by agent.
 	t.Run("parent_only_or_labeled", func(t *testing.T) {
 		t.Parallel()
-		if os.Getenv(todoPanelConcurrentSubagentsUpdateGate) == "" {
-			t.Skip("known bug: subagents share the parent's tools.todo (same codemode VM); their items show in the parent's panel with no agent label — set " + todoPanelConcurrentSubagentsUpdateGate + "=1 to run")
-		}
 		a := todoPanelConcurrentSubagentsUpdateRun(t, 0)
 		a.waitFor("5 parent c")
 		s := a.settled()

@@ -145,6 +145,7 @@ type Workers struct {
 	ctx       context.Context                              // the plugin's: outlives any one turn
 	turn      func() context.Context                       // the running block's turn context
 	pad       scratchpad                                   // the shared scratchpad; nil when absent
+	todos     func() scratchpad                            // the shared todo list, looked up per block (its row may mount after this one); nil result when absent
 	maxSpawns int
 	maxSteps  int
 	spawns    int  // spawns this parent turn; reset on the loop's "done"
@@ -283,6 +284,12 @@ func (w *Workers) runBlock(ctx context.Context, id int, code string) (string, er
 	if w.pad != nil {
 		w.pad.Writer(fmt.Sprintf("subagent %d", id))
 		defer w.pad.Writer("")
+	}
+	if w.todos != nil {
+		if t := w.todos(); t != nil {
+			t.Writer(fmt.Sprintf("subagent %d", id))
+			defer t.Writer("")
+		}
 	}
 	if cr, ok := w.code.(ctxCodemode); ok {
 		return cr.RunCtx(ctx, code)
@@ -688,6 +695,12 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	}
 	if p, err := kernel.Get[scratchpad](kctx, "scratch"); err == nil {
 		w.pad = p
+	}
+	w.todos = func() scratchpad {
+		if t, err := kernel.Get[scratchpad](kctx, "todo"); err == nil {
+			return t
+		}
+		return nil
 	}
 	kctx.Effect(cancel)
 
