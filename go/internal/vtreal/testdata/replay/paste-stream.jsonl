@@ -1,0 +1,7 @@
+{"seq":1,"at":"2026-09-10T10:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T10:00:01Z","kind":"input","data":{"text":"stream please"}}
+{"seq":3,"at":"2026-09-10T10:00:02Z","kind":"assistant","data":{"text":"streamhead token00 token01 token02 token03 token04 token05 token06 token07 token08 token09 token10 token11 token12 token13 token14 token15 token16 token17 token18 token19 token20 token21 token22 token23 token24 token25 token26 token27 token28 token29 token30 token31 token32 token33 token34 token35 token36 token37 token38 token39 token40 token41 token42 token43 token44 token45 token46 token47 token48 token49 token50 token51 token52 token53 token54 token55 token56 token57 token58 token59 token60 token61 token62 token63 token64 token65 token66 token67 token68 token69 token70 token71 token72 token73 token74 token75 token76 token77 token78 token79\n```stop\nAll done streaming.\n```"}}
+{"seq":4,"at":"2026-09-10T10:00:20Z","kind":"done","data":{"text":""}}
+{"seq":5,"at":"2026-09-10T10:00:21Z","kind":"input","data":{"text":"and again"}}
+{"seq":6,"at":"2026-09-10T10:00:22Z","kind":"assistant","data":{"text":"```stop\nSecond turn done.\n```"}}
+{"seq":7,"at":"2026-09-10T10:00:23Z","kind":"done","data":{"text":""}}
