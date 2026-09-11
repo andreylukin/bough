@@ -61,9 +61,6 @@ func TestHistoryDBLockedOrReadonly(t *testing.T) {
 	t.Parallel()
 
 	t.Run("Locked", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_HISTORY_DB_LOCKED_OR_READONLY") == "" {
-			t.Skip("known bug: history lockFile blocks forever on LOCK_EX held by another process; the turn hangs with nothing on screen (plugins/history/lock_unix.go, Store.Append); set BOUGH_KNOWN_HISTORY_DB_LOCKED_OR_READONLY=1 to run")
-		}
 		t.Parallel()
 		tape, _ := filepath.Abs("testdata/replay/resume.jsonl")
 		next, _ := filepath.Abs("testdata/replay/resume-next.jsonl")
