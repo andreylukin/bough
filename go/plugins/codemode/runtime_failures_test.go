@@ -300,3 +300,18 @@ func TestCodemodeRuntimeLargeOutput(t *testing.T) {
 		t.Fatalf("large output truncated: len=%d", len(out))
 	}
 }
+
+// Values that export as {} must still read as themselves.
+func TestCodemodeRuntimeReturnValueSpecialObjects(t *testing.T) {
+	cm := codemodeRuntimeVM()
+	for code, want := range map[string]string{
+		`new Error("boom")`:     "Error: boom",
+		`new TypeError("te")`:   "TypeError: te",
+		`/x/g`:                  "/x/g",
+		`new Promise(() => {})`: "[object Promise]",
+	} {
+		if out, err := cm.Run(code); err != nil || out != want {
+			t.Errorf("%s => %q %v, want %q", code, out, err, want)
+		}
+	}
+}

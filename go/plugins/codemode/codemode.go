@@ -307,11 +307,7 @@ func (cm *CodeMode) RunCtx(ctx context.Context, code string) (string, error) {
 		if p, ok := v.Export().(*goja.Promise); ok {
 			switch p.State() {
 			case goja.PromiseStateRejected:
-				reason := display(p.Result())
-				if o, ok := p.Result().(*goja.Object); ok && o.ClassName() == "Error" {
-					reason = o.String() // an Error exports as {}
-				}
-				return out, fmt.Errorf("unhandled promise rejection: %s", reason)
+				return out, fmt.Errorf("unhandled promise rejection: %s", display(p.Result()))
 			case goja.PromiseStateFulfilled:
 				v = p.Result()
 			}
@@ -451,7 +447,16 @@ func display(v goja.Value) string {
 	if v == nil || goja.IsUndefined(v) || goja.IsNull(v) {
 		return v.String()
 	}
+	if o, ok := v.(*goja.Object); ok {
+		switch o.ClassName() {
+		case "Error", "RegExp", "Date", "Function":
+			return v.String() // these export as {} (or a quoted Go time)
+		}
+	}
 	exported := v.Export()
+	if _, ok := exported.(*goja.Promise); ok {
+		return v.String()
+	}
 	if b, ok := exported.([]byte); ok {
 		return string(b) // output read from a command, not a structure
 	}
