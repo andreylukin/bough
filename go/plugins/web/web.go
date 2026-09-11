@@ -36,6 +36,8 @@ type Service struct {
 	addr string // the address as bound (":0" resolved)
 	// served is true when this process holds the listener.
 	served bool
+	// peer is true when a same-build bough with our $HOME holds addr.
+	peer bool
 	// notice says why pages are not on the configured address ("" =
 	// they are, or a same-build peer serves them).
 	notice string
@@ -92,6 +94,10 @@ func (s *Service) URL() string {
 
 // Serving reports whether this process holds the listener.
 func (s *Service) Serving() bool { return s.served }
+
+// Reachable reports whether this process's URLs load: it serves them,
+// or a same-build bough with our $HOME holding the port does.
+func (s *Service) Reachable() bool { return s.served || s.peer }
 
 // Notice is a one-line user-facing warning when the pages moved off
 // the configured address; "" otherwise.
@@ -208,7 +214,9 @@ func New(addr string) *Service {
 	})
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		if why := probe(addr); why != "" {
+		if why := probe(addr); why == "" {
+			s.peer = true
+		} else {
 			host, _, _ := net.SplitHostPort(addr)
 			if l, err2 := net.Listen("tcp", net.JoinHostPort(host, "0")); err2 == nil {
 				ln, err = l, nil
