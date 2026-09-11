@@ -71,6 +71,18 @@ func (m *model) escFilter(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		}
 		m.escHold = []tea.KeyPressMsg{msg}
 		m.escSince = time.Now()
+		m.escApplied = false
+		if m.running {
+			// A running turn's Esc cancels now: by the release the turn
+			// may have moved on (a done while a hook is pending) and the
+			// cancel would be lost. The hold still eats report residue.
+			m.escApplied = true
+			var mm tea.Model
+			var c tea.Cmd
+			mm, c = m.handleKey(msg)
+			*m = mm.(model)
+			return true, tea.Batch(c, m.escTimer())
+		}
 		return true, m.escTimer()
 	}
 	m.escHold = append(m.escHold, msg)
@@ -103,6 +115,9 @@ func (m *model) escTimer() tea.Cmd {
 // escRelease replays the held keys through handleKey, in order.
 func (m *model) escRelease() tea.Cmd {
 	held := m.escHold
+	if m.escApplied {
+		held = held[1:]
+	}
 	m.escHold = nil
 	m.escGen++
 	var cmds []tea.Cmd
