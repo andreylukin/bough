@@ -244,9 +244,6 @@ func TestFoldPtyStepFoldCodeLed(t *testing.T) {
 	s := a.settled()
 	foldPtyFrame(a, "collapse_all")
 	if strings.Contains(s, "▾ 2 steps") {
-		if !foldPtyKnown() {
-			t.Skip(foldPtyBugCollapseAll + "; set BOUGH_KNOWN_FOLD_PTY=1 to run")
-		}
 		t.Fatalf("collapse_all left the step fold open:\n%s", s)
 	}
 }

@@ -1410,6 +1410,13 @@ func (m *model) setAllCollapsed(collapsed bool) int {
 			n++
 		}
 	}
+	// An open step fold is state of its own: collapsing everything
+	// closes it back to one row too.
+	if collapsed && len(m.unfolded) > 0 {
+		n += len(m.unfolded)
+		clear(m.unfolded)
+		m.focusFold = false
+	}
 	m.refresh()
 	return n
 }
