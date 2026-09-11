@@ -172,6 +172,9 @@ func (s *Store) Publish(name string, code string) (string, error) {
 		s.seen[n] = len(readAnswers(answersPath(s.codePath(n))).Log)
 	}
 	s.mu.Unlock()
+	if s.web != nil && !s.web.Serving() {
+		return url + "\nsaved, but the web server is not serving, so this URL will not load; tell the user it was not published", nil
+	}
 	if first && s.open != nil {
 		if err := s.open(url); err != nil {
 			// Still published: say so, so the user gets the URL.

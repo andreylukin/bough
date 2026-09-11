@@ -203,7 +203,6 @@ func TestArtifactsMemoryWebNotServing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	artifactsMemoryKnown(t, "artifacts.go Publish returns a bare URL when web.Serving() is false — the agent hands the user a dead link")
 	if !strings.Contains(url, "not serv") {
 		t.Fatalf("dead URL given as success: %q", url)
 	}
