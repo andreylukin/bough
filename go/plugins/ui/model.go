@@ -178,6 +178,9 @@ func newModel(width, height int, send func(string), events <-chan Event, cfg *at
 func (m *model) resize(w, h int) {
 	m.width = w
 	m.height = h
+	// Read before the height changes: a shrink turns the old bottom
+	// offset into a mid-transcript one, and refresh would keep it.
+	atBottom := m.vp.AtBottom()
 	if h > 2 {
 		m.vp.SetHeight(h - 2)
 		m.overlay.SetHeight(h - 2)
@@ -191,6 +194,9 @@ func (m *model) resize(w, h int) {
 	m.md = nil // re-wrap markdown at the new width
 	m.mdCache = map[string]string{}
 	m.refresh()
+	if atBottom {
+		m.vp.GotoBottom()
+	}
 	if m.inspecting {
 		m.refreshOverlay()
 	}

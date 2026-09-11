@@ -9,7 +9,6 @@ package ui
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 
@@ -141,12 +140,6 @@ func TestSubagentOverlayUnderLoad(t *testing.T) {
 
 	t.Run("esc returns to spawner at bottom", func(t *testing.T) {
 		d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
-		if os.Getenv("BOUGH_KNOWN_SUBAGENT_OVERLAY_UNDER_LOAD") == "" {
-			// Known bug: model.resize sets the viewport height before
-			// refresh reads AtBottom, so a grow (offset clamps) then a
-			// shrink leaves the transcript unpinned, overlay or not.
-			t.Skip("known bug: resize grow-then-shrink unpins the transcript from the bottom (model.resize); set BOUGH_KNOWN_SUBAGENT_OVERLAY_UNDER_LOAD=1 to run")
-		}
 		if d.m.inspecting || d.m.diving != 0 {
 			t.Fatalf("esc did not close the dive (inspecting=%v diving=%d)", d.m.inspecting, d.m.diving)
 		}
