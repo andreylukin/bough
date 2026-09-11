@@ -8,9 +8,6 @@ package vtreal
 // finished reply identical to a no-search golden run, and a composer
 // draft typed before search opened is intact.
 //
-// The Go UI has no search action yet (no ctrl+s binding, nothing in
-// plugins/ui), so the query/enter/next/esc run is
-// gated behind BOUGH_KNOWN_SEARCHDURINGSTREAM.
 
 import (
 	"encoding/json"
@@ -121,19 +118,19 @@ func TestSearchDuringStream(t *testing.T) {
 		t.FailNow()
 	}
 
-	// ctrl+s alone mid-stream must not disturb the stream or the draft.
+	// ctrl+s then esc mid-stream must not disturb the stream or the draft.
 	t.Run("ctrl_s_harmless", func(t *testing.T) {
 		t.Parallel()
-		a, s := searchDuringStreamRun(t, func(a *app) { a.key('s', uv.ModCtrl) })
+		a, s := searchDuringStreamRun(t, func(a *app) {
+			a.key('s', uv.ModCtrl)
+			a.key(uv.KeyEscape, 0)
+		})
 		searchDuringStreamAfter(t, a, s, golden)
 	})
 
 	// The full scenario: query for text not yet streamed, enter, next, esc.
 	t.Run("query_enter_next_esc", func(t *testing.T) {
 		t.Parallel()
-		if os.Getenv("BOUGH_KNOWN_SEARCHDURINGSTREAM") == "" {
-			t.Skip("known gap: the Go UI has no ^s transcript search; the query lands in the composer, enter sends it as a steer and esc cancels the turn (set BOUGH_KNOWN_SEARCHDURINGSTREAM=1 to run)")
-		}
 		var during string
 		a, s := searchDuringStreamRun(t, func(a *app) {
 			a.key('s', uv.ModCtrl)

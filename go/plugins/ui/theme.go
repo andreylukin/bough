@@ -138,6 +138,7 @@ func defaultKeymap() map[string]string {
 		"expand_all":      "",          // config-only: no default key
 		"clear_input":     "ctrl+l",
 		"todo_toggle":     "ctrl+t",    // pin the todo list above the composer
+		"search":          "ctrl+s",    // search the transcript
 		"external_editor": "ctrl+g",    // edit the draft in $VISUAL / $EDITOR
 		"follow_up":       "alt+enter", // mid-turn: queue the line for after the turn (enter steers it)
 

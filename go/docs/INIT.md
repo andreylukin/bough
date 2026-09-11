@@ -66,7 +66,9 @@ defaults. Actions:
 `quit`, `scroll_up`, `scroll_down`, `page_up`, `page_down`,
 `history_inspect`, `block_next` (tab), `block_prev` (shift+tab),
 `collapse_toggle` (enter, on the focused block), `collapse_all`,
-`expand_all`, `clear_input`, `todo_toggle` (ctrl+t), `external_editor`
+`expand_all`, `clear_input`, `todo_toggle` (ctrl+t), `search` (ctrl+s:
+search the transcript; enter/ctrl+n next, ctrl+p prev, esc closes),
+`external_editor`
 (ctrl+g: edit the draft in `$VISUAL` / `$EDITOR`), `copy` (unbound
 by default; `ctrl+x y` chord: copy the focused block, else the last
 reply, as raw markdown — a mouse drag over the transcript copies the

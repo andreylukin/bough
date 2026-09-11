@@ -118,6 +118,7 @@ type model struct {
 	pick        int            // picker cursor index into cfg.sessions
 	mp          modelPicker    // "/model" picker (see modelpick.go)
 	rw          rewindPicker   // double-esc rewind menu (see rewind.go)
+	srch        searchBar      // ctrl+s transcript search (see search.go)
 	todoText    string         // latest todo list text (the todo plugin's event)
 	title       string         // the session's name (session-title plugin); "" until named
 	activity    string         // what the agent is doing now (activity plugin); "" when idle
@@ -1397,6 +1398,9 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.rw.open {
 		return m.handleRewindKey(msg)
 	}
+	if m.srch.open {
+		return m.handleSearchKey(msg)
+	}
 	cfg := m.cfg.Load()
 	m.flash = ""
 	key := msg.String()
@@ -1712,7 +1716,11 @@ func (m model) frame() string {
 	if rows := m.todoRows(cfg); len(rows) > 0 {
 		out += "\n" + strings.Join(rows, "\n")
 	}
-	out += "\n" + m.statusBar(cfg) + "\n" + m.input.View()
+	bar := m.statusBar(cfg)
+	if m.srch.open {
+		bar = m.searchLine(cfg)
+	}
+	out += "\n" + bar + "\n" + m.input.View()
 	if strip := m.jobStrip(cfg); strip != "" {
 		out += "\n" + strip
 	}

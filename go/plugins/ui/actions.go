@@ -32,6 +32,7 @@ var uiActions = []uiAction{
 	{"collapse_all", "collapse all blocks"},
 	{"expand_all", "expand all blocks"},
 	{"todo_toggle", "pin/unpin the todo list"},
+	{"search", "search the transcript (enter/ctrl+n next, ctrl+p prev, esc closes)"},
 	{"external_editor", "edit the draft in $VISUAL / $EDITOR"},
 	{"copy", "copy the focused block, else the last reply (raw markdown)"},
 	{"scroll_up", "scroll up"},
@@ -132,6 +133,11 @@ func (m *model) runAction(name, via string, cfg *uiCfg) tea.Cmd {
 				m.toggleBlock(f[len(f)-1].idx)
 			}
 		}
+	case "search":
+		if m.inspecting {
+			return nil
+		}
+		m.srch = searchBar{open: true, at: -1}
 	case "todo_toggle":
 		if m.todoText == "" {
 			m.flash = "no todo list yet (/todo add <text>)"
