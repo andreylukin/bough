@@ -1,0 +1,7 @@
+{"seq":1,"at":"2026-09-10T10:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T10:00:01Z","kind":"input","data":{"text":"summarise the repo"}}
+{"seq":3,"at":"2026-09-10T10:00:02Z","kind":"assistant","data":{"text":"It is a Go module."}}
+{"seq":4,"at":"2026-09-10T10:00:03Z","kind":"done","data":{"files":[],"usage":{"in":52000,"out":300,"cache_read":0,"cache_write":48000,"last_in":52000}}}
+{"seq":5,"at":"2026-09-10T10:01:00Z","kind":"input","data":{"text":"and the tests?"}}
+{"seq":6,"at":"2026-09-10T10:01:01Z","kind":"assistant","data":{"text":"They live next to the code."}}
+{"seq":7,"at":"2026-09-10T10:01:02Z","kind":"done","data":{"files":[],"usage":{"in":53000,"out":200,"cache_read":48000,"cache_write":900,"last_in":53000}}}
