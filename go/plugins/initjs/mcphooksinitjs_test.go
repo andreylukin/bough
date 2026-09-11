@@ -74,7 +74,6 @@ func TestMcpHooksInitjsToolRejectedPromise(t *testing.T) {
 		{`tools.res()`, "ASYNC_OK"},
 	} {
 		t.Run(tc.code, func(t *testing.T) {
-			mcphooksinitjsKnown(t, "codemode.RunCtx (plugins/codemode/codemode.go:271-287) never settles a returned Promise: an async init.js tool yields \"[object Promise]\" and its rejection is swallowed with no error")
 			out, err := cm.Run(tc.code)
 			got := out
 			if err != nil {

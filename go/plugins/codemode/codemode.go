@@ -301,6 +301,16 @@ func (cm *CodeMode) RunCtx(ctx context.Context, code string) (string, error) {
 	if err != nil {
 		return out, cleanErr(err)
 	}
+	// A returned Promise (an async tool) has settled by now — goja drains
+	// its job queue before RunString returns — so report its outcome.
+	if p, ok := exportPromise(v); ok {
+		switch p.State() {
+		case goja.PromiseStateRejected:
+			return out, errors.New("uncaught (in promise) " + p.Result().String())
+		case goja.PromiseStateFulfilled:
+			v = p.Result()
+		}
+	}
 	if v != nil && !goja.IsUndefined(v) {
 		// A Promise as the block's value: a rejection is the block's
 		// error, a fulfilment shows its result, never "[object Promise]".
@@ -474,4 +484,12 @@ func display(v goja.Value) string {
 		return string(b)
 	}
 	return v.String()
+}
+
+func exportPromise(v goja.Value) (*goja.Promise, bool) {
+	if v == nil {
+		return nil, false
+	}
+	p, ok := v.Export().(*goja.Promise)
+	return p, ok
 }
