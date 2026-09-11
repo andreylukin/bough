@@ -378,6 +378,10 @@ func (m *Memory) harvest() {
 			continue
 		}
 		if err := m.save(f); err != nil {
+			// Unmark so a later harvest retries the fact.
+			m.mu.Lock()
+			delete(m.written, f.key())
+			m.mu.Unlock()
 			m.emit("memory", "memory: "+err.Error())
 			continue
 		}

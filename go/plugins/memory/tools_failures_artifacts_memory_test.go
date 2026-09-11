@@ -93,7 +93,6 @@ func TestMemoryArtifactsGraphLockedFactRetried(t *testing.T) {
 		t.Fatalf("locked graph not reported: %q", emitted)
 	}
 	m.harvest()
-	memoryArtifactsKnown(t, "memory.go harvest sets m.written[key] before save; a failed save (locked graph, unwritable file) dedups the fact away for the rest of the session")
 	if len(g.saved) != 1 {
 		t.Fatalf("fact lost after a failed write: saved=%q emitted=%q", g.saved, emitted)
 	}
