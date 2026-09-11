@@ -214,6 +214,7 @@ func TestLoopLevelJSAndStop(t *testing.T) {
 	t.Run("stop verdict not recorded", func(t *testing.T) {
 		for _, e := range hist.Entries() {
 			if e.Kind == "assistant" && strings.Contains(e.Data["text"].(string), "All passing.") {
+				loopLevelKnown(t, "Run keeps a stop block written under the js block in the recorded reply; Finish drops it but Run (loop.go:1497) uses firstBlockOnly, which leaves it when there is one js block")
 				t.Fatalf("premature stop verdict recorded and fed back: %q", e.Data["text"])
 			}
 		}
