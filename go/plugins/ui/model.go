@@ -149,6 +149,8 @@ type model struct {
 	atFiles     []string       // the picker's file list, read when it opens
 	atCapped    bool           // the unfiltered walk hit atMaxFiles: re-walk per query
 	atWalkQ     string         // the query atFiles was walked for
+	nd          palette        // "/new <dir>" dialog (see newdir.go)
+	ndDirs      []string       // the dialog's directory list, read when it opens
 	flash       string
 	v           voiceState    // voice dictation (voice.go)
 	trailing    string        // assistant prose after an executed fence, emitted after its result
@@ -1632,6 +1634,11 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	}
+	if m.nd.open && !m.inspecting {
+		if handled, cmd := m.newDirKey(pkey); handled {
+			return m, cmd
+		}
+	}
 
 	// esc closes a subagent dive (the history inspector keeps its own key).
 	if key == "esc" && m.inspecting && m.diving != 0 {
@@ -1900,6 +1907,8 @@ func (m model) frame() string {
 	body := m.vp.View()
 	if m.inspecting {
 		body = m.overlay.View()
+	} else if box := m.newDirBox(); len(box) > 0 {
+		body = overlayCenter(body, box, m.width)
 	} else if lines := m.overlayRows(); len(lines) > 0 {
 		// The "/" palette: an overlay over the transcript's bottom
 		// rows, directly above the composer — sized to its content,

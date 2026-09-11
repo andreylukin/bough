@@ -14,6 +14,7 @@ package commands
 import (
 	"cmp"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -245,12 +246,19 @@ func registerBuiltins(r *Registry, ctx *kernel.Context) error {
 			}
 			return "", ActionOpenPicker
 		}},
-		{CommandInfo{Name: "new", Usage: "", Summary: "start a fresh session, keeping the model and config"}, func(string) (string, error) {
+		{CommandInfo{Name: "new", Usage: "[dir]", Summary: "start a fresh session (in dir), keeping the model and config"}, func(args string) (string, error) {
 			// A new session is the picker's swap with an id nothing
 			// has written yet: history.Apply creates the file.
 			choose, err := kernel.Get[func(string)](ctx, "session-choose")
 			if err != nil {
 				return "", fmt.Errorf("new: this build cannot swap sessions (needs the bough launcher)")
+			}
+			if dir := strings.TrimSpace(args); dir != "" {
+				// The new file's meta records os.Getwd (history.Apply):
+				// moving there first is what puts the session in dir.
+				if err := os.Chdir(dir); err != nil {
+					return "", fmt.Errorf("new: %w", err)
+				}
 			}
 			choose(history.NewID())
 			return "", ActionClear

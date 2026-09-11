@@ -1,16 +1,16 @@
 package vtreal
 
-// Resize while choosing where a session runs. The Go ui has no
-// new-session dialog with fzf directory autocomplete (/new takes no
-// argument, commands.go), so the nearest real surface — the /sessions
-// picker, which lists each session's cwd — is resized 120x40 → 40x12
-// → 200x50 with a selection held; the dialog itself is a gated subtest.
+// Resize while choosing where a session runs: the /sessions picker,
+// which lists each session's cwd, and the "/new <dir>" dialog with
+// fzf directory autocomplete (plugins/ui/newdir.go) are each resized
+// 120x40 → 40x12 → 200x50 with a selection held.
 
 import (
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/andreylukin/bough/plugins/history"
@@ -101,9 +101,6 @@ func TestResizeDuringNewSessionDialogFzf(t *testing.T) {
 	})
 
 	t.Run("DialogFzfCentered", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_RESIZEDURINGNEWSESSIONDIALOGFZF") == "" {
-			t.Skip("known gap: no new-session dialog with fzf dir autocomplete — /new takes no directory (plugins/commands/commands.go \"new\", Usage \"\"); set BOUGH_KNOWN_RESIZEDURINGNEWSESSIONDIALOGFZF to run")
-		}
 		t.Parallel()
 		tm := startTmux(t, 120, 40)
 		home := resizeDuringNewSessionDialogFzfHome(tm)
@@ -126,6 +123,22 @@ func TestResizeDuringNewSessionDialogFzf(t *testing.T) {
 		}
 		if !strings.Contains(resizeDuringNewSessionDialogFzfSelected(tm.settled()), "proj-beta") {
 			t.Errorf("selection lost:\n%s", tm.screen())
+		}
+
+		// Enter starts the session in the picked directory.
+		tm.keys("Enter")
+		want := filepath.Join(home, "proj-beta")
+		for deadline := time.Now().Add(10 * time.Second); ; {
+			paths, _ := filepath.Glob(filepath.Join(home, ".bough", "history", "*.jsonl"))
+			for _, p := range paths {
+				if es, err := history.Read(p); err == nil && len(es) > 0 && es[0].Kind == "meta" && es[0].Data["cwd"] == want {
+					return
+				}
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("no session file with cwd %q after enter:\n%s", want, tm.screen())
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
 	})
 }

@@ -46,12 +46,13 @@ func (m *model) syncPalette() {
 	}
 	m.pal.open = open
 	m.syncAt() // the "@" picker follows the same draft
+	m.syncNewDir()
 }
 
 // paletteOpens says whether the palette shows for this draft.
 func (m *model) paletteOpens(draft string) bool {
 	return (m.cfg.Load().cmds != nil || m.pal.actionsOnly) && !m.inspecting && !m.picking && !m.mp.open &&
-		slashStart(draft) >= 0 && !m.pal.escaped
+		slashStart(draft) >= 0 && !m.pal.escaped && !strings.HasPrefix(draft, newDirPrefix)
 }
 
 // leaveActions ends the actions-only mode, putting back the draft

@@ -4,9 +4,8 @@ package vtreal
 // run's own $HOME/.bough/history, arrow+enter resumes, esc goes back,
 // and /new opens a fresh file whose meta records the working directory.
 //
-// Not covered: a new-session dialog with fzf-style directory
-// autocomplete. The Go ui has none — /new takes no directory and the
-// new file's cwd is always the process's — so that seam is missing.
+// The "/new <dir>" dialog with fzf-style directory autocomplete is
+// covered in replay_resizeduringnewsessiondialogfzf_test.go.
 
 import (
 	"encoding/json"
