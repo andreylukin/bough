@@ -39,14 +39,15 @@ func contextViewStart(t *testing.T) *app {
 	return a
 }
 
-// contextViewWheelUntil scrolls up until the screen contains substr.
-func contextViewWheelUntil(a *app, substr string) {
+// contextViewWheelUntil scrolls (paced: unpaced wheel events fill the
+// PTY pipe and block SendMouse) until the screen contains substr.
+func contextViewWheelUntil(a *app, b uv.MouseButton, substr string) {
 	a.t.Helper()
 	for range 300 {
 		if strings.Contains(a.text(), substr) {
 			return
 		}
-		a.term.SendMouse(uv.MouseWheelEvent{X: 5, Y: 3, Button: uv.MouseWheelUp})
+		a.term.SendMouse(uv.MouseWheelEvent{X: 5, Y: 3, Button: b})
 		time.Sleep(5 * time.Millisecond)
 	}
 	a.waitFor(substr) // fails with the screen
@@ -99,15 +100,13 @@ func TestContextViewSlashCommand(t *testing.T) {
 	a.check("/context printed")
 
 	t.Run("scrolls", func(t *testing.T) {
-		contextViewWheelUntil(a, contextViewMarker)
-		contextViewWheelUntil(a, "Everything the model is told before your message")
+		contextViewWheelUntil(a, uv.MouseWheelUp, contextViewMarker)
+		contextViewWheelUntil(a, uv.MouseWheelUp, "Everything the model is told before your message")
 		s := a.settled()
 		if !regexp.MustCompile(`## environment — \d+ lines?, \d+ chars`).MatchString(s) {
 			t.Errorf("top of /context lacks the sized environment section:\n%s", s)
 		}
-		for range 600 {
-			a.term.SendMouse(uv.MouseWheelEvent{X: 5, Y: 3, Button: uv.MouseWheelDown})
-		}
+		contextViewWheelUntil(a, uv.MouseWheelDown, "spawnAll")
 		a.check("scrolled back")
 	})
 
