@@ -389,8 +389,8 @@ func (m *model) pickerView(cfg *uiCfg) string {
 			row += " (current)"
 		}
 		row += "  " + shortDir(s.Cwd, cwd, home)
-		if r := []rune(row); len(r) > m.width-1 && m.width > 2 {
-			row = string(r[:m.width-2]) + "…"
+		if m.width > 2 {
+			row = ansi.Truncate(row, m.width-1, "…")
 		}
 		lines = append(lines, st.Render(row))
 	}
@@ -427,11 +427,8 @@ func shortDir(dir, cwd, home string) string {
 	return dir
 }
 
-// truncateCols caps s at n runes, first line only, with an ellipsis.
+// truncateCols caps s at n cells, first line only, with an ellipsis;
+// it cuts between graphemes, never inside a ZWJ sequence.
 func truncateCols(s string, n int) string {
-	s = strings.SplitN(s, "\n", 2)[0]
-	if r := []rune(s); len(r) > n {
-		return string(r[:n-1]) + "…"
-	}
-	return s
+	return ansi.Truncate(strings.SplitN(s, "\n", 2)[0], n, "…")
 }

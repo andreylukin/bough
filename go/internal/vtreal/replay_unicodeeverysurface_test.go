@@ -381,12 +381,9 @@ func TestUnicodeEverySurfaceTruncation(t *testing.T) {
 		unicodeEverySurfaceCheck(a, "card title cut at a ZWJ")
 	})
 
-	// session.go truncateCols(title, 60) keeps 59 runes: 57 + 👨 + ZWJ.
+	// session.go truncateCols(title, 60) once kept 59 runes: 57 + 👨 + ZWJ.
 	t.Run("SessionsPickerTitle", func(t *testing.T) {
 		t.Parallel()
-		if os.Getenv("BOUGH_KNOWN_UNICODE_EVERY_SURFACE") == "" {
-			t.Skip("known bug: plugins/ui/session.go truncateCols() cuts picker titles by rune count and splits ZWJ graphemes; set BOUGH_KNOWN_UNICODE_EVERY_SURFACE=1")
-		}
 		a := start(t, 160, 24)
 		newSessionSeed(t, a, "u-cut", "/elsewhere/cut", strings.Repeat("y", 57)+unicodeEverySurfaceZWJ+" tail")
 		newSessionOpenPicker(a)
