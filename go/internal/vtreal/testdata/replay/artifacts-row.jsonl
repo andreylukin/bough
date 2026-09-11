@@ -1,0 +1,10 @@
+{"seq":1,"at":"2026-09-10T10:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T10:00:01Z","kind":"input","data":{"text":"publish a db comparison page"}}
+{"seq":3,"at":"2026-09-10T10:00:02Z","kind":"assistant","data":{"text":"```js\nconsole.log(tools.artifact(\"db-comparison\", \"root = Card([title])\\ntitle = TextContent(\\\"Postgres vs SQLite\\\")\"))\n```"}}
+{"seq":4,"at":"2026-09-10T10:00:02Z","kind":"code","data":{"text":"console.log(tools.artifact(\"db-comparison\", \"root = Card([title])\\ntitle = TextContent(\\\"Postgres vs SQLite\\\")\"))\n"}}
+{"seq":5,"at":"2026-09-10T10:00:02Z","kind":"result","data":{"code":"console.log(tools.artifact(\"db-comparison\", \"root = Card([title])\\ntitle = TextContent(\\\"Postgres vs SQLite\\\")\"))\n","text":"http://localhost:7683/artifacts/rec/db-comparison\n"}}
+{"seq":6,"at":"2026-09-10T10:00:03Z","kind":"assistant","data":{"text":"```stop\nPublished: http://localhost:7683/artifacts/rec/db-comparison\n```"}}
+{"seq":7,"at":"2026-09-10T10:00:03Z","kind":"done","data":{"text":""}}
+{"seq":8,"at":"2026-09-10T10:00:10Z","kind":"input","data":{"text":"thanks"}}
+{"seq":9,"at":"2026-09-10T10:00:11Z","kind":"assistant","data":{"text":"```stop\nAny time.\n```"}}
+{"seq":10,"at":"2026-09-10T10:00:11Z","kind":"done","data":{"text":""}}
