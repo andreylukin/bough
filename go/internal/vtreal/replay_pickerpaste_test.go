@@ -86,7 +86,6 @@ func TestPickerPaste(t *testing.T) {
 
 	t.Run("Sessions", func(t *testing.T) {
 		t.Parallel()
-		pickerPasteKnown(t, "tea.PasteMsg bypasses the /sessions picker (plugins/ui/model.go Update PasteMsg -> handlePaste -> m.input): foo/bar land in the hidden composer draft")
 		a := modelEffortStart(t)
 		newSessionSeed(t, a, "seed-alpha", "/elsewhere/alpha", "alpha prompt")
 		base := a.modelEffortAssistants() // the seed has its own reply

@@ -873,6 +873,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mp.filter()
 			return m, nil
 		}
+		if m.picking {
+			return m, nil // the session picker has no text field: drop it, don't fill the hidden draft
+		}
 		if took, cmd := m.handlePaste(msg); took {
 			return m, cmd
 		}
