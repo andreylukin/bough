@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"syscall"
+	"time"
 
 	"github.com/charmbracelet/x/term"
 )
@@ -42,6 +43,8 @@ func RunCrashGuardIfAsked() {
 	tty := os.NewFile(3, "tty")
 	fd := tty.Fd()
 	st, _ := term.GetState(fd)
+	_, _ = os.Stdout.Write([]byte{1}) // cooked state saved: the tui may go raw
+	os.Stdout.Close()
 	var off int64
 	if fi, err := os.Stat(logPath); err == nil {
 		off = fi.Size()
@@ -90,13 +93,28 @@ func startCrashGuard() {
 	cmd.Env = append(os.Environ(), guardEnv+"="+logPath)
 	cmd.Stdin = r
 	cmd.ExtraFiles = []*os.File{os.Stdout}
-	guardSysProc(cmd)
-	if err := cmd.Start(); err != nil {
+	rr, rw, err := os.Pipe()
+	if err != nil {
 		r.Close()
 		w.Close()
 		return
 	}
+	cmd.Stdout = rw
+	guardSysProc(cmd)
+	if err := cmd.Start(); err != nil {
+		r.Close()
+		w.Close()
+		rr.Close()
+		rw.Close()
+		return
+	}
 	r.Close()
+	rw.Close()
+	// Wait until the guard saved the cooked tty, or it would restore raw.
+	_ = rr.SetReadDeadline(time.Now().Add(time.Second))
+	var b [1]byte
+	_, _ = rr.Read(b[:])
+	rr.Close()
 	go func() { _ = cmd.Wait() }()
 	guardW = w
 }
