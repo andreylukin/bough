@@ -95,9 +95,14 @@ func (m *model) replay() {
 		}
 	}
 	// The pinned list comes from the todo service: its events only
-	// fire on a change, and the todo/* entries replay as no block.
-	if cfg.todo != nil && len(cfg.todo.List()) > 0 {
-		m.todoText = cfg.todo.Render()
+	// fire on a change, and the todo/* entries replay as no block. An
+	// empty list clears it: a /sessions switch must not keep the last
+	// session's panel.
+	if cfg.todo != nil {
+		m.todoText = ""
+		if len(cfg.todo.List()) > 0 {
+			m.todoText = cfg.todo.Render()
+		}
 	}
 	m.expireAsks()                 // an ask with no answer entry replays as expired
 	m.running = false              // a replayed transcript is never mid-turn
