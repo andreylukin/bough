@@ -557,11 +557,11 @@ func DefaultProject(entries []history.Entry) []llm.Message {
 		text, _ := e.Data["text"].(string)
 		switch e.Kind {
 		case "input":
-			msgs = append(msgs, llm.Message{Role: "user", Content: text})
+			msgs = append(msgs, llm.Message{Role: "user", Content: text, Images: llm.ImageRefs(text)})
 		case "assistant":
 			msgs = append(msgs, llm.Message{Role: "assistant", Content: text})
 		case "result":
-			msgs = append(msgs, llm.Message{Role: "user", Content: toolOutputPrefix + text})
+			msgs = append(msgs, llm.Message{Role: "user", Content: toolOutputPrefix + text, Images: llm.ImageRefs(text)})
 		case "cancelled":
 			// The user interrupted the turn. Without this the killed
 			// request sits in context looking merely unfinished, and a

@@ -14,6 +14,9 @@ import (
 type Message struct {
 	Role    string // "user" or "assistant"
 	Content string
+	// Images are paths to images sent with a user message (see
+	// ImageRefs); providers without vision ignore them.
+	Images []string
 }
 
 // LLM is the "llm" service contract. Consumers do:

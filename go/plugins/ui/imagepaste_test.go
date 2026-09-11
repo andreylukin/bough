@@ -21,20 +21,21 @@ func TestImagePasteAttaches(t *testing.T) {
 	d := defaultDrv(t)
 	d.typeStr("what is this ")
 	d.press(keyCtrl('v'))
-	got := d.m.input.Value()
-	dir := filepath.Join(home, ".bough", "attachments")
-	if !strings.HasPrefix(got, "what is this @"+dir+"/") || !strings.HasSuffix(got, ".png ") {
-		t.Fatalf("draft = %q, want an @%s/<ts>.png reference", got, dir)
+	if got := d.m.input.Value(); got != "what is this [Image #1] " {
+		t.Fatalf("draft = %q, want an [Image #1] placeholder", got)
 	}
-	path := strings.TrimSuffix(strings.TrimPrefix(got, "what is this @"), " ")
+	dir := filepath.Join(home, ".bough", "attachments")
+	if len(d.m.comp.images) != 1 || !strings.HasPrefix(d.m.comp.images[0], dir+"/") {
+		t.Fatalf("images = %q, want one under %s", d.m.comp.images, dir)
+	}
+	path := d.m.comp.images[0]
 	data, err := os.ReadFile(path)
 	if err != nil || string(data) != string(png) {
 		t.Fatalf("attachment file: %v %q", err, data)
 	}
-	// The model cannot take pixels yet, so the flash must not claim
-	// the image was attached.
-	if !strings.Contains(d.m.flash, "image saved") || strings.Contains(d.m.flash, "attached") {
-		t.Errorf("flash = %q", d.m.flash)
+	// Sent, the placeholder carries the path the loop attaches.
+	if got := d.m.expandPastes(d.m.input.Value()); got != "what is this [Image #1: "+path+"] " {
+		t.Errorf("expanded = %q", got)
 	}
 }
 

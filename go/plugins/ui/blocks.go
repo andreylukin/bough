@@ -484,7 +484,7 @@ func (m *model) finishTurn(id int, ev Event) {
 // renderUser wraps the prompt to the pane width; a queued line says
 // so, and a steer says whether the loop has picked it up yet.
 func (m *model) renderUser(b *block, th theme) string {
-	text := "❯ " + b.text
+	text := "❯ " + imageTag.ReplaceAllString(b.text, "[Image $1]")
 	switch {
 	case b.queued:
 		text += " (queued)"

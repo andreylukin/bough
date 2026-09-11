@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/andreylukin/bough/kernel"
+	"github.com/andreylukin/bough/plugins/llm"
 )
 
 // bashTimeout is the tools.bash kill deadline (documented in the loop's
@@ -135,7 +136,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			{"job", `tools.job(id) -> string: one job's status and output so far.`},
 			{"jobWait", `tools.jobWait(id, [seconds]) -> string: block until a job exits.`},
 			{"jobKill", `tools.jobKill(id) -> string: stop a job.`},
-			{"view", `tools.view(path, [start, end]) -> string: a file's lines, numbered ("12│text"); optional 1-based inclusive range.`},
+			{"view", `tools.view(path, [start, end]) -> string: a file's lines, numbered ("12│text"); optional 1-based inclusive range. An image (png/jpg/gif/webp) is attached so you can see it.`},
 			{"write", `tools.write(path, content) -> string: create or overwrite a whole file (use this for new files and rewrites, never a shell heredoc).`},
 			{"patch", `tools.patch(path, old, new) -> string: replace ONE exact occurrence of old with new (copy old verbatim from view, enough lines to be unique).`},
 		} {
@@ -391,6 +392,14 @@ func readView(path string, rng ...int) (string, error) {
 			names = append(names, n)
 		}
 		return fmt.Sprintf("%s is a directory: %s", path, strings.Join(names, " ")), nil
+	}
+	// An image comes back as a marker the loop attaches as pixels.
+	if llm.ImageMIME(path) != "" {
+		if _, err := os.Stat(path); err != nil {
+			return "", withNeighbours(path, err)
+		}
+		abs, _ := filepath.Abs(path)
+		return "[Image: " + abs + "]", nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

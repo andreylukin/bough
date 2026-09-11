@@ -3,8 +3,8 @@ package ui
 // Text pastes into the composer. Line endings are normalised (Windows
 // terminals send CR-only newlines in a bracketed paste). A paste that
 // is one path to an image on disk (Finder/Explorer drag-drop, quoted or
-// backslash-escaped, or a file:// URL) becomes the "@path " reference
-// ctrl+v's image paste inserts. A paste taller than the composer or
+// backslash-escaped, or a file:// URL) becomes the "[Image #N]"
+// placeholder ctrl+v's image paste inserts. A paste taller than the composer or
 // longer than pasteCollapseChars collapses to a "[Pasted text #N +L
 // lines]" placeholder, as Claude Code, Codex and opencode do, so the
 // composer stays usable; the placeholder expands to the full text on
@@ -15,11 +15,13 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/andreylukin/bough/plugins/llm"
 )
 
 // pasteCollapseChars is Claude Code's threshold: past it a paste is a
@@ -43,10 +45,7 @@ func (m *model) handlePaste(msg tea.PasteMsg) (bool, tea.Cmd) {
 		return false, nil
 	}
 	if path := pastedImagePath(trimmed); path != "" {
-		m.input.InsertString("@" + path + " ")
-		m.syncPalette()
-		m.layoutComposer()
-		m.flash = "image attached by path: " + path + " · the model gets the path, not the pixels"
+		m.attachImage(path)
 		return true, nil
 	}
 	lines := strings.Count(trimmed, "\n") + 1
@@ -73,6 +72,20 @@ func (m *model) handlePaste(msg tea.PasteMsg) (bool, tea.Cmd) {
 	return true, nil
 }
 
+// attachImage inserts an "[Image #N]" placeholder for path; on submit
+// it becomes "[Image #N: path]", which the loop sends as pixels.
+func (m *model) attachImage(path string) {
+	m.comp.images = append(m.comp.images, path)
+	m.input.InsertString(fmt.Sprintf("[Image #%d] ", len(m.comp.images)))
+	m.syncPalette()
+	m.layoutComposer()
+	m.flash = "image attached: " + path + " · delete the tag to drop it"
+}
+
+// imageTag is a sent "[Image #N: path]" marker; the transcript shows
+// it as "[Image #N]".
+var imageTag = regexp.MustCompile(`\[Image (#\d+): [^\]\n]+\]`)
+
 // pastedImagePath returns the on-disk image path a pasted line names,
 // "" when the paste is not a single existing image file.
 func pastedImagePath(s string) string {
@@ -96,9 +109,7 @@ func pastedImagePath(s string) string {
 		}
 		s = b.String()
 	}
-	switch strings.ToLower(filepath.Ext(s)) {
-	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg":
-	default:
+	if llm.ImageMIME(s) == "" {
 		return ""
 	}
 	if st, err := os.Stat(s); err != nil || st.IsDir() {
@@ -110,6 +121,10 @@ func pastedImagePath(s string) string {
 // expandPastes replaces every placeholder still in the draft with its
 // text. Placeholders the user deleted are simply not there to expand.
 func (m *model) expandPastes(draft string) string {
+	for i, p := range m.comp.images {
+		tag := fmt.Sprintf("[Image #%d]", i+1)
+		draft = strings.ReplaceAll(draft, tag, tag[:len(tag)-1]+": "+p+"]")
+	}
 	if len(m.comp.pastes) == 0 || !strings.Contains(draft, pastePrefix) {
 		return draft
 	}

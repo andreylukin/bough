@@ -43,6 +43,8 @@ type composerState struct {
 	// Kept for the session: a dropped or recalled draft still carries
 	// its tags.
 	pastes []string
+	// images holds the path behind each "[Image #N]" placeholder.
+	images []string
 }
 
 // dropDraft remembers a draft esc is about to clear, so Up brings it

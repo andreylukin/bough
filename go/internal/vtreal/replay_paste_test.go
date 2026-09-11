@@ -138,8 +138,9 @@ func TestPasteManyLinesCollapsesAndExpands(t *testing.T) {
 	}
 }
 
-// A paste that is one path to an image on disk becomes the "@path"
-// reference, and that is what the model is given.
+// A paste that is one path to an image on disk becomes an "[Image #1]"
+// placeholder; the model is sent "[Image #1: path]" (the pixels ride
+// along), and the transcript shows only the placeholder.
 func TestPasteImagePathBecomesReference(t *testing.T) {
 	t.Parallel()
 	a := start(t, 200, 24)
@@ -148,15 +149,20 @@ func TestPasteImagePathBecomesReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.term.Paste(img)
-	a.waitFor("image attached by path")
-	if s := a.settled(); !strings.Contains(s, "shot.png") {
-		t.Fatalf("the image reference is not in the composer:\n%s", s)
+	a.waitFor("image attached")
+	if s := a.settled(); !strings.Contains(s, "[Image #1]") {
+		t.Fatalf("the image placeholder is not in the composer:\n%s", s)
 	}
 	a.key(uv.KeyEnter, 0)
 	e := pasteWaitEntry(a, "shot.png", "input")
 	got, _ := e.Data["text"].(string)
-	if strings.TrimSpace(got) != "@"+img {
-		t.Fatalf("sent %q, want %q:\n%s", got, "@"+img, a.text())
+	if want := "[Image #1: " + img + "]"; strings.TrimSpace(got) != want {
+		t.Fatalf("sent %q, want %q:\n%s", got, want, a.text())
+	}
+	// (The echo model repeats the raw text back; the user line is what
+	// must collapse.)
+	if s := a.settled(); !strings.Contains(s, "❯ [Image #1]") {
+		t.Fatalf("the user line does not read [Image #1]:\n%s", s)
 	}
 }
 
@@ -171,7 +177,7 @@ func TestPasteNonImagePathIsPlainText(t *testing.T) {
 	}
 	a.term.Paste(doc)
 	a.waitFor(doc)
-	if s := a.settled(); strings.Contains(s, "image attached by path") || strings.Contains(s, "@"+doc) {
+	if s := a.settled(); strings.Contains(s, "image attached") || strings.Contains(s, "[Image #") {
 		t.Fatalf("a .txt path was treated as an image:\n%s", s)
 	}
 }

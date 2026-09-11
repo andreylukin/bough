@@ -98,9 +98,8 @@ func (m *model) pasteKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 }
 
-// finishPaste inserts the "@path " reference (honestly labelled: the
-// image is saved, not attached), or hands a text clipboard's ctrl+v
-// to the textarea.
+// finishPaste inserts an "[Image #N]" placeholder for the saved
+// image, or hands a text clipboard's ctrl+v to the textarea.
 func (m *model) finishPaste(msg imagePasteMsg) tea.Cmd {
 	if msg.err != nil {
 		m.flash = "image paste: " + msg.err.Error()
@@ -110,9 +109,6 @@ func (m *model) finishPaste(msg imagePasteMsg) tea.Cmd {
 		_, cmd := m.editKey(msg.key)
 		return cmd
 	}
-	m.input.InsertString("@" + msg.path + " ")
-	m.syncPalette()
-	m.layoutComposer()
-	m.flash = "image saved: " + msg.path + " · the model gets the path, not the pixels"
+	m.attachImage(msg.path)
 	return nil
 }

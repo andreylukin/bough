@@ -276,7 +276,7 @@ func TestDefaultProject(t *testing.T) {
 		t.Fatalf("DefaultProject = %v, want %v", got, want)
 	}
 	for i := range want {
-		if got[i] != want[i] {
+		if got[i].Role != want[i].Role || got[i].Content != want[i].Content {
 			t.Fatalf("DefaultProject = %v, want %v", got, want)
 		}
 	}
@@ -339,7 +339,7 @@ func TestDefaultProjectBangCommands(t *testing.T) {
 		t.Fatalf("DefaultProject = %v, want %v", got, want)
 	}
 	for i := range want {
-		if got[i] != want[i] {
+		if got[i].Role != want[i].Role || got[i].Content != want[i].Content {
 			t.Fatalf("DefaultProject[%d] = %q, want %q", i, got[i], want[i])
 		}
 	}

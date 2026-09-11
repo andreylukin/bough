@@ -106,7 +106,11 @@ func (a *anthropicLLM) params(system string, messages []Message) anthropic.Messa
 		case "assistant":
 			params.Messages = append(params.Messages, anthropic.NewAssistantMessage(block))
 		default:
-			params.Messages = append(params.Messages, anthropic.NewUserMessage(block))
+			blocks := []anthropic.ContentBlockParamUnion{block}
+			for _, img := range loadImages(m.Images) {
+				blocks = append(blocks, anthropic.NewImageBlockBase64(img.mime, img.data))
+			}
+			params.Messages = append(params.Messages, anthropic.NewUserMessage(blocks...))
 		}
 	}
 	return params

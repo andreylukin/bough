@@ -87,7 +87,15 @@ func (o *openaiLLM) body(system string, messages []Message, stream bool) map[str
 		if m.Role == "assistant" {
 			role = "assistant"
 		}
-		input = append(input, map[string]any{"role": role, "content": m.Content})
+		var content any = m.Content
+		if imgs := loadImages(m.Images); role == "user" && len(imgs) > 0 {
+			parts := []map[string]any{{"type": "input_text", "text": m.Content}}
+			for _, img := range imgs {
+				parts = append(parts, map[string]any{"type": "input_image", "image_url": img.dataURL()})
+			}
+			content = parts
+		}
+		input = append(input, map[string]any{"role": role, "content": content})
 	}
 	b := map[string]any{
 		"model":  o.model,

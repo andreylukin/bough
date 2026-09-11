@@ -91,8 +91,8 @@ func TestPastedImagePathBecomesReference(t *testing.T) {
 	for _, in := range []string{img, `"` + img + `"`, strings.ReplaceAll(img, " ", `\ `), "file://" + strings.ReplaceAll(img, " ", "%20"), img + "\n"} {
 		d := defaultDrv(t)
 		d.feed(tea.PasteMsg{Content: in})
-		if got := d.m.input.Value(); got != "@"+img+" " {
-			t.Errorf("paste %q: draft = %q", in, got)
+		if got := d.m.input.Value(); got != "[Image #1] " || len(d.m.comp.images) != 1 || d.m.comp.images[0] != img {
+			t.Errorf("paste %q: draft = %q images = %q", in, got, d.m.comp.images)
 		}
 	}
 	// Not an image, or not on disk: plain text.

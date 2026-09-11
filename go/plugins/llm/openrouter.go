@@ -102,6 +102,11 @@ type orPart struct {
 	Type         string          `json:"type"`
 	Text         string          `json:"text,omitempty"`
 	CacheControl *orCacheControl `json:"cache_control,omitempty"`
+	ImageURL     *orImageURL     `json:"image_url,omitempty"`
+}
+
+type orImageURL struct {
+	URL string `json:"url"`
 }
 
 type orCacheControl struct {
@@ -185,7 +190,15 @@ func (o *openrouterLLM) call(ctx context.Context, system string, messages []Mess
 			if role != "assistant" {
 				role = "user"
 			}
-			msgs = append(msgs, orRequestMessage{Role: role, Content: m.Content})
+			var content any = m.Content
+			if imgs := loadImages(m.Images); role == "user" && len(imgs) > 0 {
+				parts := []orPart{{Type: "text", Text: m.Content}}
+				for _, img := range imgs {
+					parts = append(parts, orPart{Type: "image_url", ImageURL: &orImageURL{URL: img.dataURL()}})
+				}
+				content = parts
+			}
+			msgs = append(msgs, orRequestMessage{Role: role, Content: content})
 		}
 		if nudge != "" {
 			msgs = append(msgs, orRequestMessage{Role: "user", Content: nudge})
