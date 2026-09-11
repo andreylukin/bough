@@ -384,6 +384,15 @@ func TestStreamPtyRedrawTmux(t *testing.T) {
 		t.Parallel()
 		tm, h := streamPtyTmux(t, cols, rows, perfConfig(streamPtyHugeTape(t), 0))
 		streamPtyTmuxTurn(tm, h, 1, "HUGE5000")
+		// HUGE5000 shows on the live frame first; the final markdown
+		// render (indented) lands only once the spinner leaves. A
+		// snapshot before that is a live frame, not a stale one.
+		for deadline := time.Now().Add(30 * time.Second); liveGlueHasSpinner(tm.screen()); {
+			if time.Now().After(deadline) {
+				t.Fatalf("spinner never left:\n%s", tm.screen())
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
 		streamPtyRedraw(tm, cols, rows, "after 5000 lines")
 	})
 }
