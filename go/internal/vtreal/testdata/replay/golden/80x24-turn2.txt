@@ -1,0 +1,24 @@
+❯ list the files here
+────────────────────────────────────────────────────────────────────────────────
+▸ context (7 lines): context: 6 pieces, <N> chars in the system prompt (/con…
+▸ Ran: ls -la (1 line)
+▸ result (3 lines): total 8
+────────────────────────────────────────────────────────────────────────────────
+● bough
+  Two Go files: a.go and b.go.
+
+  Two Go files, a.go and b.go.
+────────────────────────────────────────
+❯ run the tests and show me a very long separator line
+────────────────────────────────────────────────────────────────────────────────
+▸ 2 steps · ran 2 commands
+✗ error: exit status 3
+that reply stopped straight after a failed block; asking again (1/2)
+────────────────────────────────────────────────────────────────────────────────
+● bough
+  Any time.
+────────────────────────────────────────
+
+
+ bough · replay                                                          ? keys
+> say something

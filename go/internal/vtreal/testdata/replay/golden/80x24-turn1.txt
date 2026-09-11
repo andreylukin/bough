@@ -1,0 +1,24 @@
+❯ list the files here
+────────────────────────────────────────────────────────────────────────────────
+▸ context (7 lines): context: 6 pieces, <N> chars in the system prompt (/con…
+▸ Ran: ls -la (1 line)
+▸ result (3 lines): total 8
+────────────────────────────────────────────────────────────────────────────────
+● bough
+  Two Go files: a.go and b.go.
+
+  Two Go files, a.go and b.go.
+────────────────────────────────────────
+
+
+
+
+
+
+
+
+
+
+
+ bough · replay                                                          ? keys
+> say something
