@@ -23,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/andreylukin/bough/plugins/history"
 )
@@ -168,10 +169,11 @@ func TestSessionTitleUnicodeAndRename(t *testing.T) {
 			t.Fatal("no title entry in the history file")
 		}
 		if !utf8.ValidString(got) || strings.ContainsRune(got, utf8.RuneError) {
-			sessionTitleUnicodeAndRenameGate(t, "title.Clean cuts at byte 60 (s[:60]) and splits a multi-byte rune; the history entry gets U+FFFD")
 			t.Fatalf("stored title is not clean UTF-8: %q", got)
 		}
-		if !strings.HasPrefix(raw, strings.TrimSpace(strings.TrimSuffix(got, "…"))) {
+		// Clean drops the embedded OSC and folds whitespace; compare to that.
+		plain := strings.Join(strings.Fields(ansi.Strip(raw)), " ")
+		if !strings.HasPrefix(plain, strings.TrimSpace(strings.TrimSuffix(got, "…"))) {
 			t.Fatalf("stored title %q is not a prefix of the model's %q", got, raw)
 		}
 	})

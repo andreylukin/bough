@@ -68,8 +68,8 @@ func Clean(s string) string {
 	}, ansi.Strip(s))
 	s = strings.Join(strings.Fields(s), " ")
 	s = strings.Trim(s, ` "'*.`)
-	if len(s) > 60 {
-		s = strings.TrimSpace(s[:60]) + "…"
+	if r := []rune(s); len(r) > 60 {
+		s = strings.TrimSpace(string(r[:60])) + "…" // runes: a byte cut splits one
 	}
 	return s
 }

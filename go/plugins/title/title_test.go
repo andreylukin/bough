@@ -20,6 +20,7 @@ func TestClean(t *testing.T) {
 		"**Fix the flaky golden test**":                         "Fix the flaky golden test",
 		"Fix the flaky golden test\n\nThis names the…":          "Fix the flaky golden test",
 		strings.Repeat("very long title ", 10):                  strings.TrimSpace(strings.Repeat("very long title ", 10)[:60]) + "…",
+		strings.Repeat("ש", 59) + "🚀 tail":                      strings.Repeat("ש", 59) + "🚀…",
 	}
 	for in, want := range cases {
 		if got := Clean(in); got != want {
