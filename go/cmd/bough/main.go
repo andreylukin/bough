@@ -445,7 +445,7 @@ func main() {
 		}
 	}
 
-	stopWatch, err := watchConfig(ctx, src, ov)
+	stopWatch, err := watchConfig(ctx, src, ov, mode == "headless")
 	if err != nil {
 		fatal(err)
 	}
@@ -479,7 +479,7 @@ func main() {
 // dir (editors replace files, so watching the file itself breaks),
 // 300ms debounce, then parse + overrides + Reconcile. One-line result
 // log either way; a bad candidate keeps the last good tree.
-func watchConfig(ctx *kernel.Context, src configSource, ov *overrides) (func(), error) {
+func watchConfig(ctx *kernel.Context, src configSource, ov *overrides, headless bool) (func(), error) {
 	if src.path == "" {
 		kernel.Logf("bough: embedded config has no file; hot reload disabled\n")
 		return func() {}, nil
@@ -509,7 +509,7 @@ func watchConfig(ctx *kernel.Context, src configSource, ov *overrides) (func(), 
 				pending = time.After(300 * time.Millisecond)
 			case <-pending:
 				pending = nil
-				reload(ctx, src, ov.all())
+				reload(ctx, src, ov.all(), headless)
 			case err, ok := <-w.Errors:
 				if !ok {
 					return
@@ -543,7 +543,7 @@ func runtimeSet(ctx *kernel.Context, src configSource, ov *overrides, sets ...st
 	return nil
 }
 
-func reload(ctx *kernel.Context, src configSource, sets setFlags) {
+func reload(ctx *kernel.Context, src configSource, sets setFlags, headless bool) {
 	rows, err := src.load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bough: reload: %v (keeping current tree)\n", err)
@@ -555,6 +555,12 @@ func reload(ctx *kernel.Context, src configSource, sets setFlags) {
 	}
 	if err := ctx.Reconcile(rows); err != nil {
 		fmt.Fprintf(os.Stderr, "bough: reload: %v\n", err)
+		return
+	}
+	// Headless has no TUI owning the terminal, so it says so on stderr;
+	// under the TUI a raw write would land over the composer.
+	if headless {
+		fmt.Fprintf(os.Stderr, "bough: reloaded %s\n", src.path)
 		return
 	}
 	kernel.Logf("bough: reloaded %s\n", src.path)
