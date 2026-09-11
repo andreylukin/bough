@@ -1061,7 +1061,14 @@ func (m *model) addEvent(ev Event) {
 		// The session's name belongs in the bar, not the transcript:
 		// it is what this conversation IS, not something that happened
 		// in it.
-		m.title = ev.Text
+		// One line, no escapes or bidi overrides: it lands in the
+		// status bar and in the OSC 2 tab title.
+		m.title = strings.Join(strings.Fields(strings.Map(func(r rune) rune {
+			if (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) || (r >= 0x80 && r < 0xa0) {
+				return -1
+			}
+			return r
+		}, sanitizeText(ev.Text))), " ")
 		m.refresh()
 		return
 	case "thinking-delta":

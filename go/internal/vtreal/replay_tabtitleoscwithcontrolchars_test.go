@@ -110,13 +110,13 @@ func TestTabTitleOscWithControlChars(t *testing.T) {
 
 	t.Run("status bar intact", func(t *testing.T) {
 		ls := strings.Split(screen, "\n")
-		bar := ls[len(ls)-1]
-		for _, l := range ls { // the bar sits above the composer's row
+		bar := ""
+		for _, l := range ls { // the bar sits just above the composer
 			if strings.Contains(l, "? keys") {
 				bar = l
 			}
 		}
-		if !strings.Contains(bar, "? keys") || !strings.Contains(bar, "Fix") {
+		if !strings.Contains(bar, "? keys") || !strings.Contains(bar, "Fix") || !strings.Contains(bar, "flaky test") {
 			t.Fatalf("status bar row broken: %q\n%s", bar, screen)
 		}
 		if b := tabTitleOscWithControlCharsBad(bar); b != "" {
