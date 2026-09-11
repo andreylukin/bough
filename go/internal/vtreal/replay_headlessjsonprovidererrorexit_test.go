@@ -4,7 +4,8 @@ package vtreal
 // recorded model-call error that ends the turn) under headless mode.
 // The run must end nonzero with the error on stderr, no terminal
 // escapes on either stream, and a well-formed stdout. The `--json`
-// variant asks for JSONL on stdout, which bough does not offer.
+// variant gets JSONL on stdout; the error is a {"kind":"error"} JSON
+// line on stderr (main's --json contract, 719af608).
 
 import (
 	"encoding/json"
@@ -107,23 +108,29 @@ func TestHeadlessJSONProviderErrorExit(t *testing.T) {
 
 	t.Run("JSONL", func(t *testing.T) {
 		t.Parallel()
-		if os.Getenv("BOUGH_KNOWN_HEADLESS_JSON_PROVIDER_ERROR_EXIT") == "" {
-			t.Skip("known bug: bough has no --json flag for headless mode (cmd/bough/main.go flags; plugins/ui/headless.go prints [kind] text) (set BOUGH_KNOWN_HEADLESS_JSON_PROVIDER_ERROR_EXIT=1 to run)")
-		}
 		r := headlessJSONProviderErrorExitRun(t, "--headless", "--json")
 		headlessJSONProviderErrorExitNoANSI(t, r)
 		if r.code == 0 {
 			t.Errorf("provider 500 exited 0:\n%s", r.screen())
 		}
 		lines := strings.Split(strings.TrimRight(r.stdout, "\n"), "\n")
-		var last map[string]any
+		sawErr := false
 		for i, l := range lines {
-			if err := json.Unmarshal([]byte(l), &last); err != nil {
+			var ev map[string]any
+			if err := json.Unmarshal([]byte(l), &ev); err != nil {
 				t.Fatalf("stdout line %d is not JSON (%v): %q\n%s", i+1, err, l, r.screen())
 			}
 		}
-		if typ, _ := last["type"].(string); typ != "error" {
-			t.Errorf("final event type = %q, want error:\n%s", typ, r.screen())
+		for _, l := range strings.Split(r.stderr, "\n") {
+			var ev map[string]any
+			if json.Unmarshal([]byte(l), &ev) == nil && ev["kind"] == "error" {
+				if s, _ := ev["text"].(string); strings.Contains(s, "provider-fixture-500") {
+					sawErr = true
+				}
+			}
+		}
+		if !sawErr {
+			t.Errorf("no error event carrying the provider failure:\n%s", r.screen())
 		}
 	})
 }
