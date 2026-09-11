@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -150,7 +151,47 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		s.Set("mcp", promptSection(servers, loadCatalog()))
 		ctx.Effect(func() { s.Set("mcp", "") })
 	}
+	// /connect shows server health next to the providers. Config is
+	// re-read per call: mcp.json may change while bough runs.
+	ctx.Provide("mcp-status", func() string {
+		servers, err := configuredServers(cfg)
+		if err != nil {
+			return err.Error()
+		}
+		return probe(servers)
+	})
 	return nil
+}
+
+// probe connects to every server at once and reports one line each:
+// ok with its tool count, off, or DOWN with the error.
+func probe(servers map[string]ServerConfig) string {
+	names := slices.Sorted(maps.Keys(servers))
+	lines := make([]string, len(names))
+	var wg sync.WaitGroup
+	for i, n := range names {
+		wg.Go(func() {
+			sc := servers[n]
+			if sc.Disabled {
+				lines[i] = fmt.Sprintf("  %-20s off   %s", n, sc.Note)
+				return
+			}
+			session, err := connect(sc)
+			if err != nil {
+				lines[i] = fmt.Sprintf("  %-20s DOWN  %v", n, err)
+				return
+			}
+			tools, err := listTools(session)
+			session.Close()
+			if err != nil {
+				lines[i] = fmt.Sprintf("  %-20s DOWN  list tools: %v", n, err)
+				return
+			}
+			lines[i] = fmt.Sprintf("  %-20s ok    %d tools", n, len(tools))
+		})
+	}
+	wg.Wait()
+	return strings.Join(lines, "\n")
 }
 
 // configuredServers merges every config source for the given row config.

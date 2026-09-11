@@ -58,6 +58,8 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	// Optional: without it /connect can still record a key, it just
 	// cannot switch the running session to it.
 	set, _ := kernel.Get[func(...string) error](ctx, "config-set")
+	// Optional too: MCP server health, from the mcp row.
+	mcp, _ := kernel.Get[func() string](ctx, "mcp-status")
 
 	path, _ := cfg["env_file"].(string)
 	if path == "" {
@@ -75,7 +77,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		Secret:  true,
 	}
 	if err := reg.Register(info, func(args string) (string, error) {
-		return run(path, set, args)
+		return run(path, set, mcp, args)
 	}); err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
@@ -85,12 +87,12 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 
 // run is /connect. No arguments lists what is set up; a provider alone
 // reports on it; a provider and a key records the key and switches.
-func run(envPath string, set func(...string) error, args string) (string, error) {
+func run(envPath string, set func(...string) error, mcp func() string, args string) (string, error) {
 	name, key, _ := strings.Cut(strings.TrimSpace(args), " ")
 	name, key = strings.ToLower(strings.TrimSpace(name)), unquote(strings.TrimSpace(key))
 
 	if name == "" {
-		return list(), nil
+		return list(mcp), nil
 	}
 	p, ok := providers[name]
 	if !ok {
@@ -137,7 +139,7 @@ func switchTo(set func(...string) error, p provider) error {
 }
 
 // list reports which providers have a key, without printing any.
-func list() string {
+func list(mcp func() string) string {
 	var b strings.Builder
 	b.WriteString("providers (a key in the environment or ~/.bough/env):\n")
 	for _, n := range names() {
@@ -147,6 +149,11 @@ func list() string {
 			state = "set"
 		}
 		fmt.Fprintf(&b, "  %-11s %-20s %s\n", n, p.env, state)
+	}
+	if mcp != nil {
+		if s := mcp(); s != "" {
+			b.WriteString("\nMCP servers (bough mcp status for details):\n" + s + "\n")
+		}
 	}
 	b.WriteString("\n/connect <provider> <key> records a key and switches to it.")
 	return b.String()

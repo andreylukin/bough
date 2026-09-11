@@ -153,9 +153,6 @@ func TestMcpServerCrashMidCall(t *testing.T) {
 	})
 
 	t.Run("ConnectShowsMcpDown", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_MCPSERVERCRASHMIDCALL") == "" {
-			t.Skip("known gap: /connect lists LLM providers only and has no MCP server status (plugins/connect/connect.go); set BOUGH_KNOWN_MCPSERVERCRASHMIDCALL=1 to run")
-		}
 		t.Parallel()
 		a := mcpServerCrashMidCallStart(t)
 		a.typeText("/connect")

@@ -25,7 +25,7 @@ func envFile(t *testing.T) string {
 func TestListShowsStateNotKeys(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", testKey)
 	t.Setenv("ANTHROPIC_API_KEY", "")
-	out, err := run(envFile(t), nil, "")
+	out, err := run(envFile(t), nil, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestWritesKeyAndSwitches(t *testing.T) {
 	var sets []string
 	set := func(kv ...string) error { sets = append(sets, kv...); return nil }
 
-	out, err := run(path, set, "openrouter "+testKey)
+	out, err := run(path, set, nil, "openrouter "+testKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestRewriteKeepsOtherKeys(t *testing.T) {
 	if err := os.WriteFile(path, []byte("ANTHROPIC_API_KEY=keep-me\nOPENROUTER_API_KEY=old\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := run(path, nil, "openrouter "+testKey); err != nil {
+	if _, err := run(path, nil, nil, "openrouter "+testKey); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(path)
@@ -106,14 +106,14 @@ func TestRewriteKeepsOtherKeys(t *testing.T) {
 }
 
 func TestUnknownProvider(t *testing.T) {
-	if _, err := run(envFile(t), nil, "hal9000 key"); err == nil {
+	if _, err := run(envFile(t), nil, nil, "hal9000 key"); err == nil {
 		t.Fatal("an unknown provider should be an error naming the real ones")
 	}
 }
 
 func TestProviderWithoutKeySaysWhatToRun(t *testing.T) {
 	t.Setenv("CEREBRAS_API_KEY", "")
-	out, err := run(envFile(t), nil, "cerebras")
+	out, err := run(envFile(t), nil, nil, "cerebras")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestStripsSurroundingQuotes(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "")
 	path := envFile(t)
 	for _, quoted := range []string{`"` + testKey + `"`, "'" + testKey + "'"} {
-		if _, err := run(path, nil, "openrouter "+quoted); err != nil {
+		if _, err := run(path, nil, nil, "openrouter "+quoted); err != nil {
 			t.Fatal(err)
 		}
 		if got := os.Getenv("OPENROUTER_API_KEY"); got != testKey {
