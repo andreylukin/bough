@@ -28,6 +28,14 @@ import (
 // eventMsg carries a loop event into the tea event loop.
 type eventMsg Event
 
+// eventsMsg is every loop event that was already queued when the
+// reader woke: a fast stream lands as one batch and one render, not
+// one full transcript render per delta (quadratic in reply length).
+type eventsMsg []Event
+
+// maxBatch caps one drain so a flood still yields to input and paint.
+const maxBatch = 1024
+
 // collapseAt: code and result blocks whose body is longer than this
 // many lines start collapsed (header line only).
 const collapseAt = 3
@@ -86,17 +94,18 @@ type lineRange struct {
 
 // model is the one transcript-plus-composer model used by tui and web.
 type model struct {
-	escHold    []tea.KeyPressMsg // Esc held to tell a key from a split report (escresidue.go)
-	escGen     int
-	escSince   time.Time
-	escApplied bool // the held Esc already ran (a running turn)
-	vp         viewport.Model
-	overlay    viewport.Model
-	input      textarea.Model
-	spin       spinner.Model
-	events     <-chan Event
-	send       func(string)
-	cfg        *atomic.Pointer[uiCfg]
+	escHold      []tea.KeyPressMsg // Esc held to tell a key from a split report (escresidue.go)
+	escGen       int
+	escSince     time.Time
+	escApplied   bool // the held Esc already ran (a running turn)
+	vp           viewport.Model
+	overlay      viewport.Model
+	input        textarea.Model
+	spin         spinner.Model
+	events       <-chan Event
+	deferRefresh bool // addEvent skips its render: more of the batch follows (eventsMsg)
+	send         func(string)
+	cfg          *atomic.Pointer[uiCfg]
 
 	blocks      []block
 	nextID      int
@@ -151,6 +160,7 @@ type model struct {
 	md          *glamour.TermRenderer
 	mdCache     map[string]string // assistant markdown render cache (cleared on resize)
 	parts       map[int]partEntry // per-block rendered part, by block id (cleared with mdCache)
+	liveHead    liveWrap          // the streaming reply's wrapped finished lines (render)
 	bgLight     bool              // terminal background is light (tea.BackgroundColorMsg)
 	sized       bool              // a real WindowSizeMsg arrived (newModel's size is a placeholder)
 }
@@ -606,6 +616,37 @@ var authErrRe = regexp.MustCompile(`(?i)\b40[13]\b|unauthorized|credentials|api[
 
 const authHint = "hint: check your provider credentials (ANTHROPIC_API_KEY / OPENROUTER_API_KEY), or swap the llm row — /model"
 
+// liveWrap caches the wrapped render of a live reply's finished lines.
+type liveWrap struct {
+	width     int
+	cfg       *uiCfg
+	head, out string
+}
+
+// wrapLive wraps streaming prose plus its cursor. Lines wrap on their
+// own, so the finished lines render once and only the last line is
+// wrapped per frame: re-wrapping the whole reply on every render made
+// a long stream quadratic and the screen trailed the turn by minutes.
+func (m *model) wrapLive(prose string, st lipgloss.Style, cfg *uiCfg) string {
+	i := strings.LastIndexByte(prose, '\n')
+	if i < 0 {
+		return st.Width(m.width).Render(prose + "▌")
+	}
+	head, tail := prose[:i], prose[i+1:]
+	c := &m.liveHead
+	switch {
+	case c.width == m.width && c.cfg == cfg && c.head == head:
+	case c.width == m.width && c.cfg == cfg && c.head != "" &&
+		strings.HasPrefix(head, c.head) && head[len(c.head)] == '\n':
+		// More finished lines: wrap only the new ones.
+		c.out += "\n" + st.Width(m.width).Render(head[len(c.head)+1:])
+		c.head = head
+	default:
+		*c = liveWrap{width: m.width, cfg: cfg, head: head, out: st.Width(m.width).Render(head)}
+	}
+	return c.out + "\n" + st.Width(m.width).Render(tail+"▌")
+}
+
 // render turns one semantic block into styled lines.
 func (m *model) render(b *block, cfg *uiCfg) string {
 	// Block text is stored raw (a copy must be the true output); the
@@ -632,7 +673,7 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 			prose, coding, thinking := liveView(b.text)
 			out := head
 			if prose != "" || !(coding || thinking) {
-				out += "\n" + th["assistant"].Width(m.width).Render(prose+"▌")
+				out += "\n" + m.wrapLive(prose, th["assistant"], cfg)
 			}
 			if thinking {
 				out += "\n" + th["dim"].Render("▸ thinking…")
@@ -783,7 +824,23 @@ func (m model) waitEvent() tea.Cmd {
 		if !ok {
 			return nil
 		}
-		return eventMsg(ev)
+		batch := []Event{ev}
+		for len(batch) < maxBatch {
+			select {
+			case ev, ok := <-m.events:
+				if !ok {
+					return eventsMsg(batch)
+				}
+				batch = append(batch, ev)
+				continue
+			default:
+			}
+			break
+		}
+		if len(batch) == 1 {
+			return eventMsg(ev)
+		}
+		return eventsMsg(batch)
 	}
 }
 
@@ -851,6 +908,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventMsg:
 		m.addEvent(Event(msg))
 		if Event(msg).Kind == "done" {
+			return m, tea.Batch(m.waitEvent(), m.cacheTick())
+		}
+		return m, m.waitEvent()
+
+	case eventsMsg:
+		done := false
+		for i, ev := range msg {
+			// A delta followed by more events skips its render: the
+			// last event of the batch renders the lot.
+			m.deferRefresh = i < len(msg)-1 && strings.HasSuffix(ev.Kind, "-delta")
+			m.addEvent(ev)
+			done = done || ev.Kind == "done"
+		}
+		m.deferRefresh = false
+		if done {
 			return m, tea.Batch(m.waitEvent(), m.cacheTick())
 		}
 		return m, m.waitEvent()
@@ -1127,6 +1199,9 @@ func (m *model) addEvent(ev Event) {
 		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: ev.Text,
 			collapsed: (ev.Kind == "system" || ev.Kind == "job" || ev.Kind == "context" || ev.Kind == "memory") &&
 				m.closedByDefault(ev.Text)})
+	}
+	if m.deferRefresh {
+		return
 	}
 	m.refresh() // pins to the bottom only when it already was there
 	if !m.vp.AtBottom() {

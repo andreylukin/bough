@@ -197,11 +197,6 @@ func TestStreamPtyStallThenEnd(t *testing.T) {
 // A 5000-line reply streamed with no delay: the last line must reach
 // the screen promptly once the turn is done.
 func TestStreamPtyHugeReply(t *testing.T) {
-	if os.Getenv("BOUGH_KNOWN_STREAM_PTY") != "1" {
-		t.Skip("known bug: a live reply re-renders in full on every delta (liveView + lipgloss wrap of the whole " +
-			"prose, plugins/ui/model.go:622-626, then refresh()), so 5000 lines paint at ~20 lines/s and the screen " +
-			"trails the finished turn by minutes; set BOUGH_KNOWN_STREAM_PTY=1 to run")
-	}
 	t.Parallel()
 	a := startCfg(t, 100, 30, perfConfig(streamPtyHugeTape(t), 0))
 	start := time.Now()
@@ -211,6 +206,12 @@ func TestStreamPtyHugeReply(t *testing.T) {
 	}
 	loopDone := time.Since(start)
 	shown, ok := perfWaitText(a, "HUGE5000", 180*time.Second)
+	// Caught up means the finished turn is on screen, not just the
+	// last live line: the spinner leaves once the final render lands.
+	for ok && shown < 180*time.Second && liveGlueHasSpinner(a.text()) {
+		time.Sleep(2 * time.Millisecond)
+		shown = time.Since(start) - loopDone
+	}
 	t.Logf("5000 lines: loop done after %v, last line on screen %v later", loopDone, shown)
 	if !ok {
 		t.Fatalf("last line never reached the screen:\n%s", a.text())
@@ -380,9 +381,6 @@ func TestStreamPtyRedrawTmux(t *testing.T) {
 		streamPtyRedraw(tm, cols, rows, "after js fence")
 	})
 	t.Run("huge_reply", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_STREAM_PTY") != "1" {
-			t.Skip("known bug: see TestStreamPtyHugeReply (5000-line live render is quadratic)")
-		}
 		t.Parallel()
 		tm, h := streamPtyTmux(t, cols, rows, perfConfig(streamPtyHugeTape(t), 0))
 		streamPtyTmuxTurn(tm, h, 1, "HUGE5000")
