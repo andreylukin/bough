@@ -1,0 +1,7 @@
+{"seq": 1, "at": "2026-09-11T10:00:00Z", "kind": "meta", "data": {"cwd": "/tmp/demo"}}
+{"seq": 2, "at": "2026-09-11T10:00:01Z", "kind": "input", "data": {"text": "paint something"}}
+{"seq": 3, "at": "2026-09-11T10:00:02Z", "kind": "assistant", "data": {"text": "w001 w002 w003 w004 w005 w006 w007 w008 w009 w010 w011 w012 w013 w014 w015 w016 w017 w018 w019 w020 w021 w022 w023 w024 w025 w026 w027 w028 w029 w030 w031 w032 w033 w034 w035 w036 w037 w038 w039 w040 w041 w042 w043 w044 w045 w046 w047 w048 w049 w050 w051 w052 w053 w054 w055 w056 w057 w058 w059 w060 MIDPOINT w061 w062 w063 w064 w065 w066 w067 w068 w069 w070 w071 w072 w073 w074 w075 w076 w077 w078 w079 w080 w081 w082 w083 w084 w085 w086 w087 w088 w089 w090 w091 w092 w093 w094 w095 w096 w097 w098 w099 w100 w101 w102 w103 w104 w105 w106 w107 w108 w109 w110 w111 w112 w113 w114 w115 w116 w117 w118 w119 w120 w121 w122 w123 w124 w125 w126 w127 w128 w129 w130 w131 w132 w133 w134 w135 w136 w137 w138 w139 w140 w141 w142 w143 w144 w145 w146 w147 w148 w149 w150 w151 w152 w153 w154 w155 w156 w157 w158 w159 w160\n\n```js\nconsole.log(\"swatch\")\n```"}}
+{"seq": 4, "at": "2026-09-11T10:00:02Z", "kind": "code", "data": {"text": "console.log(\"swatch\")\n"}}
+{"seq": 5, "at": "2026-09-11T10:00:02Z", "kind": "result", "data": {"code": "console.log(\"swatch\")\n", "text": "swatch\n"}}
+{"seq": 6, "at": "2026-09-11T10:00:03Z", "kind": "assistant", "data": {"text": "```stop\nPainted.\n```"}}
+{"seq": 7, "at": "2026-09-11T10:00:03Z", "kind": "done", "data": {"text": ""}}
