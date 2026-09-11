@@ -203,6 +203,7 @@ func (m *model) refold(i int) {
 			if m.blocks[j].collapsible() {
 				m.blocks[j].collapsed = true
 			}
+			delete(m.keepRow, m.blocks[j].id) // a hand-closed row must not split the fold
 		}
 	}
 	m.setFold(i, false)

@@ -253,6 +253,7 @@ func foldModelRun(rt *rapid.T, t *testing.T, maxSteps int) {
 				stale = os.Getenv("BOUGH_KNOWN_FOLD_MODEL") == ""
 			}
 			wasBottom := d.m.vp.AtBottom()
+			wasFold := d.m.focusFold // enter on an open fold's header refolds it, by design
 			before := strings.Join(d.m.lines, "\n")
 			beforeCol := map[int]bool{}
 			for _, b := range d.m.blocks {
@@ -292,18 +293,26 @@ func foldModelRun(rt *rapid.T, t *testing.T, maxSteps int) {
 				for _, r := range d.m.runs() {
 					joined = joined || !r.open && cur >= r.from && cur < r.to
 				}
-				joined = joined && !beforeCol[d.m.blocks[cur].id] && d.m.blocks[cur].collapsed
+				joined = joined && !wasFold && !beforeCol[d.m.blocks[cur].id] && d.m.blocks[cur].collapsed
 				d.feed(keyEnter())
 				if joined {
 					rt.Fatalf("collapsing block %d folded it into a run", d.m.blocks[cur].id)
 				}
+				refolded := false
 				for _, b := range d.m.blocks {
 					if b.collapsed != beforeCol[b.id] {
-						rt.Fatalf("toggle twice changed block %d collapsed %v -> %v", b.id, beforeCol[b.id], b.collapsed)
+						// Contract (refold): folding an open run back closes
+						// the rows opened inside it, and opening it again
+						// leaves them closed.
+						if wasFold && b.collapsed {
+							refolded = true
+						} else {
+							rt.Fatalf("toggle twice changed block %d collapsed %v -> %v", b.id, beforeCol[b.id], b.collapsed)
+						}
 					}
 					ref.collapsed[b.id] = b.collapsed
 				}
-				if after := strings.Join(d.m.lines, "\n"); !stale && stripANSI(after) != stripANSI(before) {
+				if after := strings.Join(d.m.lines, "\n"); !stale && !refolded && stripANSI(after) != stripANSI(before) {
 					rt.Fatalf("toggle twice changed the transcript:\n--- before\n%s\n--- after\n%s", stripANSI(before), stripANSI(after))
 				}
 				step = "toggle twice"
@@ -428,5 +437,20 @@ func TestFoldModelOpenFoldStaleExtent(t *testing.T) {
 	d.event("result", "ok")
 	if p := d.plain(); !strings.Contains(p, "▾ 3 steps") {
 		t.Fatalf("the open fold's header should count all three closed steps under it:\n%s", p)
+	}
+}
+
+// Folding an open run back gives one row again even when a row inside
+// it was closed by hand while it was open (keepRow must not split it).
+func TestFoldModelRefoldAfterHandClose(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	steps(d, 3)
+	d.m.unfold(0)
+	d.m.toggleBlock(2) // open a row inside the fold
+	d.m.toggleBlock(2) // ...and close it by hand
+	d.m.refold(0)
+	if r := d.m.foldRuns(); len(r) != 1 || r[0].from != 0 || r[0].to != len(d.m.blocks) {
+		t.Fatalf("refold should give one closed run over every step, got %+v:\n%s", r, d.plain())
 	}
 }
