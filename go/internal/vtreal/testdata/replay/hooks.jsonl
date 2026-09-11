@@ -1,0 +1,25 @@
+{"seq":1,"at":"2026-09-10T10:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T10:00:01Z","kind":"input","data":{"text":"try the denied block"}}
+{"seq":3,"at":"2026-09-10T10:00:02Z","kind":"assistant","data":{"text":"```js\nDENYME()\n```"}}
+{"seq":4,"at":"2026-09-10T10:00:02Z","kind":"code","data":{"text":"DENYME()\n"}}
+{"seq":5,"at":"2026-09-10T10:00:02Z","kind":"result","data":{"code":"DENYME()\n","text":"RECORDED_DENIED_OUTPUT"}}
+{"seq":6,"at":"2026-09-10T10:00:03Z","kind":"assistant","data":{"text":"```js\nconsole.log('b')\n```"}}
+{"seq":7,"at":"2026-09-10T10:00:03Z","kind":"code","data":{"text":"console.log('b')\n"}}
+{"seq":8,"at":"2026-09-10T10:00:03Z","kind":"result","data":{"code":"console.log('b')\n","text":"ALIGNED_B_OUTPUT"}}
+{"seq":9,"at":"2026-09-10T10:00:04Z","kind":"assistant","data":{"text":"```stop\nTurn one over.\n```"}}
+{"seq":10,"at":"2026-09-10T10:00:04Z","kind":"done","data":{"text":""}}
+{"seq":11,"at":"2026-09-10T10:00:10Z","kind":"input","data":{"text":"try the rewritten block"}}
+{"seq":12,"at":"2026-09-10T10:00:11Z","kind":"assistant","data":{"text":"```js\nREWRITE_ME()\n```"}}
+{"seq":13,"at":"2026-09-10T10:00:11Z","kind":"code","data":{"text":"REWRITE_ME()\n"}}
+{"seq":14,"at":"2026-09-10T10:00:11Z","kind":"result","data":{"code":"REWRITE_ME()\n","text":"RECORDED_REWRITE_OUTPUT"}}
+{"seq":15,"at":"2026-09-10T10:00:12Z","kind":"assistant","data":{"text":"```stop\nTurn two over.\n```"}}
+{"seq":16,"at":"2026-09-10T10:00:12Z","kind":"done","data":{"text":""}}
+{"seq":17,"at":"2026-09-10T10:00:20Z","kind":"input","data":{"text":"try the post result hook"}}
+{"seq":18,"at":"2026-09-10T10:00:21Z","kind":"assistant","data":{"text":"```js\nconsole.log('p')\n```"}}
+{"seq":19,"at":"2026-09-10T10:00:21Z","kind":"code","data":{"text":"console.log('p')\n"}}
+{"seq":20,"at":"2026-09-10T10:00:21Z","kind":"result","data":{"code":"console.log('p')\n","text":"POSTME raw output"}}
+{"seq":21,"at":"2026-09-10T10:00:22Z","kind":"assistant","data":{"text":"```stop\nTurn three over.\n```"}}
+{"seq":22,"at":"2026-09-10T10:00:22Z","kind":"done","data":{"text":""}}
+{"seq":23,"at":"2026-09-10T10:00:30Z","kind":"input","data":{"text":"thanks"}}
+{"seq":24,"at":"2026-09-10T10:00:31Z","kind":"assistant","data":{"text":"```stop\nTape still aligned.\n```"}}
+{"seq":25,"at":"2026-09-10T10:00:31Z","kind":"done","data":{"text":""}}
