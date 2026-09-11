@@ -512,14 +512,11 @@ func Finish(reply string) (text string, stopped bool, dropped int) {
 // record it reads as the model's verdict.
 func runnableOnly(reply string) (string, int) {
 	text, dropped := firstBlockOnly(reply)
-	js := jsBlock.FindStringIndex(text)
-	if js == nil {
+	if jsBlock.FindStringIndex(text) == nil {
 		return text, dropped
 	}
-	// Only a fence AFTER the block: one above it (an empty stop the
-	// loop declined) must not take the block down with it.
-	if loc := stopFence.FindStringIndex(text[js[1]:]); loc != nil {
-		text = strings.TrimRight(text[:js[1]+loc[0]], "\n") + "\n" + fmt.Sprintf(extraBlocks, 1)
+	if loc := stopFence.FindStringIndex(text); loc != nil {
+		text = strings.TrimRight(text[:loc[0]], "\n") + "\n" + fmt.Sprintf(extraBlocks, 1)
 		dropped++
 	}
 	return text, dropped
