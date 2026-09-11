@@ -158,6 +158,26 @@ func TestAskOptionClickAnswers(t *testing.T) {
 	}
 }
 
+func TestAskWrappedOptionClickAnswersItsOption(t *testing.T) {
+	t.Parallel()
+	d, fa := askDrv(t)
+	long := strings.TrimSpace(strings.Repeat("wrapping option words ", 30))
+	d.feed(eventMsg{Kind: "ask", Text: "fav?", ID: "ask-1", Options: []string{long, "blue"}})
+	var start int
+	for _, r := range d.m.ranges {
+		if d.m.blocks[r.idx].kind == "ask" {
+			start = r.start
+		}
+	}
+	// Line 2 of the part is option 1's continuation line, not option 2.
+	y := start + 2 - d.m.vp.YOffset()
+	d.feed(tea.MouseClickMsg{X: 0, Y: y, Button: tea.MouseLeft})
+	d.feed(tea.MouseReleaseMsg{X: 0, Y: y, Button: tea.MouseLeft})
+	if len(fa.texts) != 1 || fa.texts[0] != long {
+		t.Fatalf("clicking option 1's wrapped line should answer option 1: %v", fa.texts)
+	}
+}
+
 func TestAskAnswerErrorExpires(t *testing.T) {
 	t.Parallel()
 	d, fa := askDrv(t)

@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	xansi "github.com/charmbracelet/x/ansi"
 )
 
 // askPlaceholder replaces the composer placeholder while an ask is
@@ -19,8 +21,9 @@ import (
 const askPlaceholder = "type a number or your answer · esc to skip"
 
 // renderAsk renders one ask block: pending = accent question over
-// numbered option rows (hit-testing in handleClick relies on option i
-// sitting on line i of the part); resolved = the "❯? question →
+// numbered option rows word-wrapped to the pane with continuation
+// lines indented under the option text (b.optRows records which option
+// each line belongs to, for hit-testing in handleClick); resolved = the "❯? question →
 // answer" one-liner, with "(expired)" for an ask that never got one.
 func (m *model) renderAsk(b *block, th theme) string {
 	if b.answered {
@@ -29,9 +32,24 @@ func (m *model) renderAsk(b *block, th theme) string {
 	if b.expired {
 		return th["dim"].Render("❯? " + b.text + " → (expired)")
 	}
-	lines := []string{th["accent"].Render("? " + b.text)}
+	w := max(m.width, 10)
+	var lines []string
+	b.optRows = b.optRows[:0]
+	for _, l := range strings.Split(xansi.Wrap("? "+b.text, w, ""), "\n") {
+		lines = append(lines, th["accent"].Render(l))
+		b.optRows = append(b.optRows, -1)
+	}
 	for i, o := range b.options {
-		lines = append(lines, th["dim"].Render(fmt.Sprintf("  %d.", i+1))+" "+o)
+		num := fmt.Sprintf("  %d.", i+1)
+		pad := len(num) + 1
+		for j, l := range strings.Split(xansi.Wrap(o, max(w-pad, 1), ""), "\n") {
+			if j == 0 {
+				lines = append(lines, th["dim"].Render(num)+" "+l)
+			} else {
+				lines = append(lines, strings.Repeat(" ", pad)+l)
+			}
+			b.optRows = append(b.optRows, i)
+		}
 	}
 	return strings.Join(lines, "\n")
 }

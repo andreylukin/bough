@@ -9,7 +9,6 @@ package vtreal
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,9 +40,6 @@ func TestAskResizeMid(t *testing.T) {
 		// Options must wrap at word boundaries, not be sliced mid-word
 		// by the pane-width safety net.
 		t.Run(fmt.Sprintf("word_wrap_%d", cols), func(t *testing.T) {
-			if os.Getenv("BOUGH_KNOWN_ASK_RESIZE_MID") == "" {
-				t.Skip("known bug: renderAsk (plugins/ui/ask.go) emits unwrapped option rows and fit() Hardwraps them mid-word at narrow widths; set BOUGH_KNOWN_ASK_RESIZE_MID=1 to run")
-			}
 			for _, w := range askResizeMidEnds {
 				if !strings.Contains(s, w) {
 					t.Errorf("%s: option word %q sliced by the wrap:\n%s", where, w, s)

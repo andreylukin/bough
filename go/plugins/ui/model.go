@@ -51,6 +51,7 @@ type block struct {
 	// id, and how it resolved.
 	askID    string
 	options  []string
+	optRows  []int // pending render: option index per line, -1 = question
 	answer   string
 	answered bool
 	expired  bool // turn ended (or replay found no answer entry) unanswered
@@ -127,7 +128,7 @@ type model struct {
 	at          palette        // "@" file picker (see atfiles.go)
 	atFiles     []string       // the picker's file list, read when it opens
 	flash       string
-	v           voiceState // voice dictation (voice.go)
+	v           voiceState    // voice dictation (voice.go)
 	trailing    string        // assistant prose after an executed fence, emitted after its result
 	newBelow    bool          // blocks arrived while scrolled up (status cue)
 	sel         selection     // mouse drag selection (see select.go)
@@ -1129,9 +1130,9 @@ func (m *model) clickTranscript(y int) tea.Cmd {
 			}
 			b := &m.blocks[r.idx]
 			if b.kind == "ask" && b.askID == m.pendingAsk && !b.answered && !b.expired {
-				// Option rows sit directly under the question line.
-				if off := row - r.start; off >= 1 && off <= len(b.options) {
-					m.answerAsk(b, b.options[off-1])
+				// Wrapped option rows map back through optRows.
+				if off := row - r.start; off >= 0 && off < len(b.optRows) && b.optRows[off] >= 0 {
+					m.answerAsk(b, b.options[b.optRows[off]])
 				}
 				return nil
 			}
