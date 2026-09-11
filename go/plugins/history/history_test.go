@@ -233,6 +233,44 @@ func TestResumeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestResumeAfterTornLastLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	s.Append("input", map[string]any{"text": "one"})
+	s.Append("done", map[string]any{"text": ""})
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Tear the last line 10 bytes in, as a crash mid-write would.
+	cut := strings.LastIndexByte(string(raw[:len(raw)-1]), '\n') + 11
+	if err := os.WriteFile(path, raw[:cut], 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := OpenExisting(path)
+	if err != nil {
+		t.Fatalf("OpenExisting: %v", err)
+	}
+	e := r.Append("input", map[string]any{"text": "next"})
+	if err := r.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	got, err := readEntries(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[1].Data["text"] != "next" || got[1].Seq != e.Seq || e.Seq != 2 {
+		t.Fatalf("entries after resume = %+v (appended seq %d)", got, e.Seq)
+	}
+}
+
 func TestOpenExistingMissingFails(t *testing.T) {
 	if _, err := OpenExisting(filepath.Join(t.TempDir(), "nope.jsonl")); err == nil {
 		t.Fatal("OpenExisting on missing file: want error, got nil")

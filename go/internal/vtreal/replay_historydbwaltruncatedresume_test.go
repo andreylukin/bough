@@ -136,10 +136,6 @@ func TestHistoryDBWALTruncatedResume(t *testing.T) {
 	})
 
 	t.Run("new_turn_appends", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_HISTORY_DB_WAL_TRUNCATED_RESUME") == "" {
-			t.Skip("known bug: history.OpenExisting appends after a torn last line without a newline, " +
-				"so the first new entry fuses onto the fragment and is lost; set BOUGH_KNOWN_HISTORY_DB_WAL_TRUNCATED_RESUME=1 to run")
-		}
 		b.typeText("fourth question")
 		b.key(uv.KeyEnter, 0)
 		b.waitFor("Reply after the tear.")

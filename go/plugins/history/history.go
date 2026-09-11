@@ -100,11 +100,11 @@ func OpenExisting(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("history: resume %s: %w", path, err)
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("history: resume: %w", err)
 	}
-	st, err := f.Stat()
+	size, err := dropTornTail(f)
 	if err != nil {
 		f.Close()
 		return nil, fmt.Errorf("history: resume: %w", err)
@@ -115,7 +115,38 @@ func OpenExisting(path string) (*Store, error) {
 			seq = e.Seq
 		}
 	}
-	return &Store{f: f, w: bufio.NewWriter(f), path: path, entries: entries, seq: seq, last: seq, off: st.Size()}, nil
+	return &Store{f: f, w: bufio.NewWriter(f), path: path, entries: entries, seq: seq, last: seq, off: size}, nil
+}
+
+// dropTornTail truncates f back to just after its last newline, so a
+// line torn by a crash mid-write (already skipped by readEntries) does
+// not swallow the next appended entry. It returns the resulting size.
+func dropTornTail(f *os.File) (int64, error) {
+	st, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	end := st.Size()
+	buf := make([]byte, 4096)
+	for end > 0 {
+		n := int64(len(buf))
+		if n > end {
+			n = end
+		}
+		if _, err := f.ReadAt(buf[:n], end-n); err != nil {
+			return 0, err
+		}
+		if i := strings.LastIndexByte(string(buf[:n]), '\n'); i >= 0 {
+			end = end - n + int64(i) + 1
+			break
+		}
+		end -= n
+	}
+	if end == st.Size() {
+		return end, nil
+	}
+	fmt.Fprintf(os.Stderr, "bough: history: %s: dropping %d-byte torn last line\n", f.Name(), st.Size()-end)
+	return end, f.Truncate(end)
 }
 
 // readEntries parses a session JSONL, skipping corrupt lines with a
