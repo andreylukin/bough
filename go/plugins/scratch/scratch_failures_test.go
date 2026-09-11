@@ -139,9 +139,6 @@ func scratchFailAllWritesThrow(t *testing.T, cm *cmpkg.CodeMode) {
 // A failed save must not leave the value visible as if it were stored:
 // set() threw, so get() should not return it.
 func TestScratchFailuresFailedSetNotStored(t *testing.T) {
-	if os.Getenv("BOUGH_KNOWN_TOOLS_ASK_TODO_SCRATCH") != "1" {
-		t.Skip("known bug (set BOUGH_KNOWN_TOOLS_ASK_TODO_SCRATCH=1 to run): plugins/scratch/scratch.go:127 Set stores the value in memory before save(); when save fails set throws but get returns the value")
-	}
 	dir := filepath.Join(t.TempDir(), "pad")
 	if err := os.WriteFile(dir, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)

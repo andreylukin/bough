@@ -124,9 +124,19 @@ func (p *Pad) Set(name string, v any) (string, error) {
 		return "", fmt.Errorf("scratch.set %s: %s is too big for a value — write it to a file with scratch.file(name)", name, size(len(b)))
 	}
 	p.mu.Lock()
+	old, had := p.values[name]
 	p.values[name] = v
 	p.mu.Unlock()
 	if err := p.save(); err != nil {
+		// Not on disk, so not stored: a value only memory holds would
+		// vanish on resume while get() kept returning it.
+		p.mu.Lock()
+		if had {
+			p.values[name] = old
+		} else {
+			delete(p.values, name)
+		}
+		p.mu.Unlock()
 		return "", err
 	}
 	return fmt.Sprintf("scratch.set %s (%s)", name, size(len(b))), nil
