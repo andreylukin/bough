@@ -129,7 +129,7 @@ func TestRestoreExactlyTheListedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	restored, skipped, err := Restore(repo, tree, []string{"a.txt", "made.txt", outside})
+	restored, skipped, err := Restore(repo, tree, nil, []string{"a.txt", "made.txt", outside})
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestRestoreFromSubdirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sub, "f.txt"), []byte("changed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	restored, skipped, err := Restore(sub, tree, []string{"f.txt"})
+	restored, skipped, err := Restore(sub, tree, nil, []string{"f.txt"})
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestRestoreSkipsIgnoredAndSymlinks(t *testing.T) {
 	os.Remove(filepath.Join(repo, "link"))
 	write("link", "not a link\n")
 
-	restored, skipped, err := Restore(repo, tree, []string{".env", "link"})
+	restored, skipped, err := Restore(repo, tree, nil, []string{".env", "link"})
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
@@ -335,5 +335,41 @@ func TestForkCopiesAncestorsAndMarksMeta(t *testing.T) {
 	}
 	if err := Fork(src, 2, dst); err == nil {
 		t.Fatal("fork onto an existing file: want error")
+	}
+}
+
+// A file written again after the turn ended (a background job, say)
+// no longer matches the after-turn tree: Restore leaves it alone and
+// says why, rather than clobbering the later write.
+func TestRestoreSkipsFileChangedSinceTheTurn(t *testing.T) {
+	repo := newRepo(t)
+	tree, err := Snapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a.txt", "b.txt"} {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte("turn\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	after := map[string]string{}
+	for _, name := range []string{"a.txt", "b.txt"} {
+		after[name] = Sum(filepath.Join(repo, name))
+	}
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("job\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	restored, skipped, err := Restore(repo, tree, after, []string{"a.txt", "b.txt"})
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if strings.Join(restored, ",") != "b.txt" || len(skipped) != 1 || skipped[0] != (Skipped{"a.txt", "changed since the turn"}) {
+		t.Fatalf("restored %v skipped %v", restored, skipped)
+	}
+	if b, _ := os.ReadFile(filepath.Join(repo, "a.txt")); string(b) != "job\n" {
+		t.Fatalf("a.txt = %q, want the later write kept", b)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "b.txt")); !os.IsNotExist(err) {
+		t.Fatalf("b.txt should be deleted (absent from the checkpoint): %v", err)
 	}
 }

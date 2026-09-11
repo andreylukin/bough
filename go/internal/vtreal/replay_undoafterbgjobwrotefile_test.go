@@ -117,18 +117,21 @@ func TestUndoAfterBgJobWroteFile(t *testing.T) {
 		a.undoRun()
 		a.waitUntil(func(s string) bool { return strings.Count(s, "reverted ") > i }, "an undo reply")
 		out = a.settled()
-		if strings.Contains(out, "reverted 1 file from turn 2") {
+		if strings.Contains(out, "from turn 2") {
 			break
 		}
 	}
 	a.check("after /undo")
 
 	t.Run("TestUndoAfterBgJobListsOnlyTurnFiles", func(t *testing.T) {
-		if !strings.Contains(out, "reverted 1 file from turn 2") {
-			t.Fatalf("no undo of turn 2 listing exactly one file:\n%s", out)
+		if !strings.Contains(out, "from turn 2") {
+			t.Fatalf("no undo of turn 2:\n%s", out)
 		}
 		// Only the reply: the job's own command line names job.txt.
 		reply := out[strings.LastIndex(out, "reverted "):]
+		if !strings.Contains(reply, "a.txt") {
+			t.Errorf("undo of turn 2 did not list a.txt, the one file it wrote:\n%s", out)
+		}
 		if strings.Contains(reply, "job.txt") {
 			t.Errorf("undo listed job.txt, which only the background job wrote:\n%s", out)
 		}
@@ -147,9 +150,6 @@ func TestUndoAfterBgJobWroteFile(t *testing.T) {
 		}
 		if strings.Contains(out, "a.txt (") || strings.Contains(strings.ToLower(out), "changed since") {
 			return // clobbered, but the reply says so
-		}
-		if os.Getenv("BOUGH_KNOWN_UNDO_AFTER_BGJOB_WROTE_FILE") == "" {
-			t.Skip("known bug: /undo restores a.txt from the checkpoint over the background job's later write with no warning (plugins/commands/tree.go runUndo -> history.Restore never checks the file still holds the turn's content); set BOUGH_KNOWN_UNDO_AFTER_BGJOB_WROTE_FILE=1 to run")
 		}
 		t.Errorf("a.txt = %q: /undo silently clobbered the background job's later write (%q); reply:\n%s", got, "job\n", out)
 	})

@@ -35,6 +35,7 @@ type turn struct {
 	at         time.Time
 	text       string
 	checkpoint string
+	after      map[string]string // each file's history.Sum as the turn ended
 	files      []string
 	done       bool
 	undone     bool
@@ -54,6 +55,7 @@ func turns(entries []history.Entry) []turn {
 			if n := len(ts); n > 0 && !ts[n-1].done {
 				ts[n-1].done = true
 				ts[n-1].files = strList(e.Data["files"])
+				ts[n-1].after = sumMap(e.Data["after"])
 			}
 		case "undo":
 			seq, _ := intOf(e.Data["seq_of_turn"])
@@ -65,6 +67,24 @@ func turns(entries []history.Entry) []turn {
 		}
 	}
 	return ts
+}
+
+// sumMap tolerates both the in-process (map[string]string) and
+// JSONL-replayed (map[string]any) shapes of a done entry's after.
+func sumMap(v any) map[string]string {
+	switch m := v.(type) {
+	case map[string]string:
+		return m
+	case map[string]any:
+		out := make(map[string]string, len(m))
+		for k, x := range m {
+			if s, ok := x.(string); ok {
+				out[k] = s
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 // strList tolerates both the in-process ([]string) and JSONL-replayed
@@ -177,7 +197,7 @@ func undoTurn(h treeHistory, t turn) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if restored, skipped, err = history.Restore(cwd, t.checkpoint, t.files); err != nil {
+		if restored, skipped, err = history.Restore(cwd, t.checkpoint, t.after, t.files); err != nil {
 			return "", fmt.Errorf("undo: %w", err)
 		}
 	}

@@ -968,6 +968,15 @@ func (r *runner) doneData() map[string]any {
 		files = []string{}
 	}
 	data["files"] = files
+	// Each file as the turn ended: /undo leaves one alone if
+	// something (a background job) has written it since.
+	if len(files) > 0 {
+		after := make(map[string]string, len(files))
+		for _, f := range files {
+			after[f] = history.Sum(f)
+		}
+		data["after"] = after
+	}
 	if ran {
 		data["exit"] = exit
 	}

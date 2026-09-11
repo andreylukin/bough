@@ -9,6 +9,7 @@ package history
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -109,8 +110,11 @@ func ignored(top, rel string) bool {
 // the working tree is touched. Paths are as the tools recorded them
 // (relative to dir, or absolute); one outside the repo, gitignored,
 // or not a regular file in the checkpoint is skipped, never deleted.
+// after maps a path to its Sum as the turn ended: a file that no
+// longer matches — something else wrote it since, a background job
+// say — is skipped, not clobbered. A path after lacks is not checked.
 // Returns the paths restored and the ones skipped.
-func Restore(dir, tree string, files []string) (restored []string, skipped []Skipped, err error) {
+func Restore(dir, tree string, after map[string]string, files []string) (restored []string, skipped []Skipped, err error) {
 	top, err := git(dir, nil, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return nil, nil, err
@@ -131,6 +135,10 @@ func Restore(dir, tree string, files []string) (restored []string, skipped []Ski
 		rel, err := filepath.Rel(top, abs)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
 			skipped = append(skipped, Skipped{f, "outside the repo"})
+			continue
+		}
+		if want, ok := after[f]; ok && Sum(abs) != want {
+			skipped = append(skipped, Skipped{f, "changed since the turn"})
 			continue
 		}
 		// rel is toplevel-relative and ls-tree scopes a pathspec to
@@ -176,6 +184,21 @@ func Restore(dir, tree string, files []string) (restored []string, skipped []Ski
 		restored = append(restored, f)
 	}
 	return restored, skipped, nil
+}
+
+// Sum is the sha256 of path's content: what /undo checks a file
+// still holds before reverting it. "" when path is absent or not a
+// regular file.
+func Sum(path string) string {
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		return ""
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(b))
 }
 
 // Checkpoints is the "checkpoints" service: the loop snapshots the
