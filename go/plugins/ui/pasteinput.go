@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"os"
+	"time"
 )
 
 var (
@@ -35,22 +36,51 @@ func (p *pasteInput) Read(b []byte) (int, error) {
 			}
 		}
 		chunk := b[:n]
-		if s, e := bytes.LastIndex(chunk, pasteStart), bytes.LastIndex(chunk, pasteEnd); s > e {
-			p.inPaste = true
-		} else if e > s {
-			p.inPaste = false
+		// Outside a paste, a read ending in a prefix of the paste-start
+		// sequence (a bare ESC included) waits briefly for the rest:
+		// ultraviolet would flush it as keys at its 50ms timeout and the
+		// paste body would arrive as keystrokes (its newline submits).
+		// Not held across reads, so a real Escape key costs at most
+		// startWait.
+		for n < len(b) && !p.openAfter(chunk) && tailPrefix(chunk, pasteStart) > 0 && waitReadable(p.Fd(), startWait) {
+			m, err := p.File.Read(b[n:])
+			n += m
+			chunk = b[:n]
+			if err != nil {
+				return n, err
+			}
 		}
+		p.inPaste = p.openAfter(chunk)
 		if p.inPaste {
-			for k := min(len(pasteEnd)-1, n); k > 0; k-- {
-				if bytes.HasSuffix(chunk, pasteEnd[:k]) {
-					p.held = append(append([]byte(nil), chunk[n-k:]...), p.held...)
-					n -= k
-					break
-				}
+			if k := tailPrefix(chunk, pasteEnd); k > 0 {
+				p.held = append(append([]byte(nil), chunk[n-k:]...), p.held...)
+				n -= k
 			}
 		}
 		if n > 0 {
 			return n, nil
 		}
 	}
+}
+
+// startWait bounds how long a split paste-start tail waits for the rest.
+const startWait = 100 * time.Millisecond
+
+// openAfter reports whether a paste is open once chunk has been read.
+func (p *pasteInput) openAfter(chunk []byte) bool {
+	if s, e := bytes.LastIndex(chunk, pasteStart), bytes.LastIndex(chunk, pasteEnd); s != e {
+		return s > e
+	}
+	return p.inPaste
+}
+
+// tailPrefix is the length of the longest proper prefix of seq that
+// chunk ends with (0 when none).
+func tailPrefix(chunk, seq []byte) int {
+	for k := min(len(seq)-1, len(chunk)); k > 0; k-- {
+		if bytes.HasSuffix(chunk, seq[:k]) {
+			return k
+		}
+	}
+	return 0
 }
