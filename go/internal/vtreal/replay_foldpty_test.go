@@ -170,9 +170,6 @@ const (
 	foldPtyBugNarrationLead = "known bug: a step fold led by a one-line narration (assistant) block " +
 		"cannot be opened — clickTranscript toggles only collapsible() blocks (plugins/ui/model.go:1228) " +
 		"and focusables offers only collapsible leads (model.go:1280), so neither click nor tab+enter reaches it"
-	foldPtyBugCollapseAll = "known bug: collapse_all does not refold an open step fold — setAllCollapsed " +
-		"(plugins/ui/model.go:1377) flips collapsed flags only, never m.unfolded, and flashes " +
-		"\"nothing to collapse: every step is already folded\" with ▾ N steps on screen"
 )
 
 func foldPtyKnown() bool { return os.Getenv("BOUGH_KNOWN_FOLD_PTY") != "" }
@@ -448,11 +445,6 @@ func TestFoldPtyHistoryTapes(t *testing.T) {
 			a.settled()
 			foldPtyFrame(a, "collapse_all")
 			for _, y := range foldPtyHeaders(a, "▾") {
-				l := strings.TrimPrefix(strings.TrimLeft(a.lines()[y], " "), "▾ ")
-				if foldPtyStepRow.MatchString(l) && !foldPtyKnown() {
-					t.Logf("%s (row %d %q)", foldPtyBugCollapseAll, y, l)
-					continue
-				}
 				t.Errorf("collapse_all left an open header on row %d:\n%s", y, a.text())
 			}
 			if n := a.doneCount(); n != turns {
