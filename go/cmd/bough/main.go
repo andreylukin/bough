@@ -384,7 +384,7 @@ func main() {
 	// reaches the wait below — with no handler installed yet the default
 	// disposition would kill the process instead of unmounting cleanly.
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	// SIGUSR1 asks a running session to start a fresh one. A detached
 	// `bough web` session otherwise keeps the same conversation
 	// forever: opening the browser again is not a new session the way
@@ -463,6 +463,9 @@ func main() {
 	// when a headless turn errored, else 0 (TUI /quit and ctrl+c too).
 	<-sig
 	stopWatch()
+	// The tui owns the terminal: hand it back before the unmount so a
+	// signal never exits with the alt screen and mouse still on.
+	ui.StopTUI()
 	ctx.Unmount()
 	os.Exit(ui.ExitCode())
 }

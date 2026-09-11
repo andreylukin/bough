@@ -29,27 +29,6 @@ func signalsConfig(tape string) string {
 		fmt.Sprintf("config: {file: %q, delay_ms: 50}", tape), 1)
 }
 
-// signalsKnownBugs fail today and are skipped unless
-// BOUGH_SIGNALS_KNOWN_BUGS is set; delete an entry once it is fixed.
-//   - SIGHUP: cmd/bough/main.go never subscribes to it, so the default
-//     disposition kills the process with the terminal still in the alt
-//     screen, mouse on and cursor hidden; mid-turn the history also
-//     lacks the turn's done/cancelled entry.
-//   - SIGINT mid-turn: bubbletea's own interrupt handling tears the UI
-//     down ("program was interrupted") and the streaming turn never
-//     records done/cancelled (SIGTERM mid-turn usually does).
-//   - SIGTERM mid-turn: intermittent under load (2 of 5 runs of the
-//     whole TestSignals group, 0 of 8 alone): the process dies with
-//     the alt screen and mouse modes 1002/1006 still on and no
-//     done/cancelled entry, i.e. the signal path races the turn's
-//     shutdown and sometimes skips the clean unmount.
-var signalsKnownBugs = map[string]bool{
-	"SIGHUP/idle":      true,
-	"SIGHUP/mid-turn":  true,
-	"SIGINT/mid-turn":  true,
-	"SIGTERM/mid-turn": true,
-}
-
 func TestSignals(t *testing.T) {
 	t.Parallel()
 	tape, _ := filepath.Abs("testdata/replay/signals.jsonl")
@@ -64,9 +43,6 @@ func TestSignals(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
-				if signalsKnownBugs[name] && os.Getenv("BOUGH_SIGNALS_KNOWN_BUGS") == "" {
-					t.Skip("known bug, see signalsKnownBugs; set BOUGH_SIGNALS_KNOWN_BUGS=1 to run")
-				}
 				signalsRun(t, tape, s.sig, mid)
 			})
 		}

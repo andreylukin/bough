@@ -1907,7 +1907,9 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	kctx.Provide("steer", t.Steer)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		emit := func(kind, text string) {
 			// Live gets what replay gets: a noted entry's data
 			// (the done marker's files and exit) rides along.
@@ -1947,6 +1949,12 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	kctx.Effect(func() {
 		cancel()
 		close(inputs)
+		// A turn in flight records its cancelled/done entry before
+		// the history row (unmounted after this one) closes the file.
+		select {
+		case <-stopped:
+		case <-time.After(3 * time.Second):
+		}
 	})
 	return nil
 }
