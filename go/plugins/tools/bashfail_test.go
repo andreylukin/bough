@@ -175,7 +175,6 @@ func TestBashFailDaemonHoldsStdout(t *testing.T) {
 	t.Cleanup(func() { exec.Command("pkill", "-f", marker).Run() })
 	out, err, el := bashFailRun(t, cm, `tools.bash("sh -c 'sleep 30; : `+marker+`' & echo started")`, 6*time.Second)
 	if err != nil || !strings.Contains(out, "started") {
-		bashFailKnown(t, "tools.go:211 WaitDelay: a backgrounded child holding stdout turns a successful command into an error: "+errString(err))
 		t.Fatalf("%q %v (%s)", out, err, el)
 	}
 }

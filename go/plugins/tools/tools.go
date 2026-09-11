@@ -216,6 +216,12 @@ func (s *Stats) bash(cmd string, opts ...any) (string, error) {
 	c.Cancel = func() error { return killProcessGroup(c) }
 	c.WaitDelay = 2 * time.Second
 	out, err := c.CombinedOutput()
+	// ErrWaitDelay means sh exited 0 but a backgrounded child (`cmd &`)
+	// still holds the output pipe: the command succeeded, the child
+	// keeps running, and what was written so far is the output.
+	if errors.Is(err, exec.ErrWaitDelay) {
+		err = nil
+	}
 	if ctx.Err() == context.DeadlineExceeded {
 		s.exited(-1)
 		return "", fmt.Errorf("bash: killed after %s: %s\n%s", bashTimeout, cmd, out)
