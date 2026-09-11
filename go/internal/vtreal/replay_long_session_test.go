@@ -89,6 +89,9 @@ func longSessionRun(t *testing.T, n int, budget time.Duration) {
 		if took > budget {
 			t.Errorf("%s: took %s to settle (budget %s):\n%s", where, took, budget, screen)
 		}
+		if !strings.Contains(screen, longSessionMarker(i)) {
+			t.Errorf("%s: answer %s not on screen:\n%s", where, longSessionMarker(i), screen)
+		}
 		if composerRow(strings.Split(screen, "\n")) < 0 {
 			t.Errorf("%s: composer not on screen:\n%s", where, screen)
 		}
