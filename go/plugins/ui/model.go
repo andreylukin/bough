@@ -708,7 +708,7 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 // pane and hand the whole transcript a sideways scroll.
 func (m *model) box(text string, content, border lipgloss.Style) string {
 	w := max(m.width-4, 10)
-	text = xansi.Hardwrap(strings.TrimRight(text, "\n"), w-2, true)
+	text = xansi.Hardwrap(strings.TrimRight(text, "\n"), w-4, true) // w less border and padding
 	return content.
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(border.GetForeground()).

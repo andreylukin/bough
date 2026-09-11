@@ -4,8 +4,22 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 )
+
+// An open box is exactly pane width - 4, however long its unbroken
+// runs: hard-wrapping at w-2 forgot the padding and pushed the box two
+// cells wider than its neighbours.
+func TestBoxWidthWithUnbrokenRun(t *testing.T) {
+	d := newDrv(t, 100, 24, cfgWith(t, nil, nil, nil))
+	out := d.m.box(strings.Repeat("-", 180), lipgloss.NewStyle(), lipgloss.NewStyle())
+	for i, l := range strings.Split(out, "\n") {
+		if w := xansi.StringWidth(l); w != 96 {
+			t.Fatalf("box row %d is %d cells wide, want 96: %s", i, w, xansi.Strip(l))
+		}
+	}
+}
 
 // No rendered line may be wider than the pane: a wide line makes the
 // viewport scrollable sideways and the whole transcript reads as if it
