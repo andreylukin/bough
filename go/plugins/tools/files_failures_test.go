@@ -322,11 +322,13 @@ func TestFilesPatchFailures(t *testing.T) {
 		}
 	})
 	t.Run("CRLF file: multi-line old copied from view", func(t *testing.T) {
-		filesKnown(t, "patch on a CRLF file with a multi-line old copied from view (LF) never matches; view hides the \\r (tools.go patch: exact-byte strings.Count)")
 		q := filepath.Join(dir, "crlf2.txt")
 		filesSeed(t, q, "one\r\ntwo\r\nthree\r\n")
 		if _, err := (&Stats{}).patch(q, "one\ntwo", "ONE\nTWO"); err != nil {
 			t.Fatalf("patch = %v", err)
+		}
+		if got, _ := os.ReadFile(q); string(got) != "ONE\r\nTWO\r\nthree\r\n" {
+			t.Fatalf("content = %q, want CRLF kept", got)
 		}
 	})
 	t.Run("identical content", func(t *testing.T) {

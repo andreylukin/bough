@@ -668,6 +668,13 @@ func (s *Stats) patch(path, old, new string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// view hides \r, so an LF old copied from a CRLF file never matches
+	// byte-for-byte: translate old and new to the file's line endings.
+	if !strings.Contains(string(data), old) && strings.Contains(old, "\n") &&
+		!strings.Contains(old, "\r") && strings.Contains(string(data), "\r\n") {
+		old = strings.ReplaceAll(old, "\n", "\r\n")
+		new = strings.ReplaceAll(strings.ReplaceAll(new, "\r\n", "\n"), "\n", "\r\n")
+	}
 	switch n := strings.Count(string(data), old); n {
 	case 0:
 		if line, ok := closestMatch(string(data), old); ok {
