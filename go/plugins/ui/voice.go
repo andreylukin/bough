@@ -127,7 +127,7 @@ func (m *model) voiceKey(key string, msg tea.KeyPressMsg, cfg *uiCfg) (bool, tea
 		m.v.burst = 0
 		return false, nil
 	}
-	if m.v.busy {
+	if m.v.busy || m.pendingAsk != "" { // a pending ask owns the composer
 		return false, nil
 	}
 	if m.v.mode == "tap" {

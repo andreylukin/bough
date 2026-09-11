@@ -75,17 +75,11 @@ func voiceWhileAskPendingCheck(t *testing.T, d *drv, fa *fakeAsk, sentinel strin
 
 func TestVoiceWhileAskPending(t *testing.T) {
 	t.Run("tap", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_VOICE_WHILE_ASK_PENDING") == "" {
-			t.Skip("known bug: voiceKey (plugins/ui/voice.go) ignores m.pendingAsk, so space starts a take over a pending ask; set BOUGH_KNOWN_VOICE_WHILE_ASK_PENDING=1")
-		}
 		d, fa, s := voiceWhileAskPendingDrv(t, "tap")
 		d.feed(keySpace())
 		voiceWhileAskPendingCheck(t, d, fa, s)
 	})
 	t.Run("hold", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_VOICE_WHILE_ASK_PENDING") == "" {
-			t.Skip("known bug: voiceKey (plugins/ui/voice.go) ignores m.pendingAsk, so space starts a take over a pending ask; set BOUGH_KNOWN_VOICE_WHILE_ASK_PENDING=1")
-		}
 		d, fa, s := voiceWhileAskPendingDrv(t, "hold")
 		d.feed(keySpace())
 		d.feed(keySpace())
