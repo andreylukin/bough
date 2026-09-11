@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/term"
 )
 
 // editorDoneMsg delivers the editor's exit to Update.
@@ -53,7 +54,11 @@ func (m *model) openEditor() tea.Cmd {
 		m.flash = "editor: " + err.Error()
 		return nil
 	}
-	return tea.ExecProcess(editorCommand(path), func(err error) tea.Msg {
+	cmd := editorCommand(path)
+	if term.IsTerminal(os.Stdin.Fd()) {
+		cmd.Stdin = os.Stdin // the raw tty, not pasteInput (see tui.go)
+	}
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return editorDoneMsg{path: path, err: err}
 	})
 }

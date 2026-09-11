@@ -94,8 +94,7 @@ func TestBracketedPasteEdge(t *testing.T) {
 	}{
 		{"esc_and_ctrl_bytes", []string{"\x1b[200~ab\x1bcd\x03ef\x07gh\x1b[201~"}, []string{"ab", "gh"}, []string{"[201~", "\x1b", "^["}, ""},
 		{"crlf", []string{"\x1b[200~one\r\ntwo\r\nthree\x1b[201~"}, []string{"one\ntwo\nthree"}, []string{"^M"}, ""},
-		{"split_end", []string{"\x1b[200~split paste\x1b[20", "1~"}, []string{"split paste"}, []string{"[20", "1~"},
-			"a paste-end split across reads is dropped as an expired UnknownEvent (ultraviolet terminal_reader.go scanEvents), so the paste never ends"},
+		{"split_end", []string{"\x1b[200~split paste\x1b[20", "1~"}, []string{"split paste"}, []string{"[20", "1~"}, ""},
 		{"nested_start", []string{"\x1b[200~outer \x1b[200~inner\x1b[201~"}, []string{"outer", "inner"}, []string{"[200~", "[201~"}, ""},
 	}
 	for _, c := range cases {

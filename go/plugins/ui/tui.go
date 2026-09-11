@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/term"
 )
 
 // The terminal can only be owned once per process, but hot reload can
@@ -32,7 +33,11 @@ func runTUI() {
 			m := newModel(80, 24, sendLive, events, &liveCfg) // real size arrives via WindowSizeMsg
 			// main owns the signals (SIGINT/SIGTERM/SIGHUP): bubbletea's
 			// own handler would tear the ui down past the unmount.
-			p := tea.NewProgram(m, tea.WithoutSignalHandler())
+			opts := []tea.ProgramOption{tea.WithoutSignalHandler()}
+			if term.IsTerminal(os.Stdin.Fd()) {
+				opts = append(opts, tea.WithInput(&pasteInput{File: os.Stdin}))
+			}
+			p := tea.NewProgram(m, opts...)
 			tuiMu.Lock()
 			tuiProg = p
 			tuiMu.Unlock()
