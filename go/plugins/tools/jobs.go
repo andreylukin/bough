@@ -132,7 +132,7 @@ type Jobs struct {
 	// runCtx is the running script's context (nil = none): esc cancels
 	// it, and a jobWait blocked in Go only notices through it.
 	runCtx func() context.Context
-	owner func() string // the mounted session's file; nil or "" = one session
+	owner  func() string // the mounted session's file; nil or "" = one session
 
 	mu      sync.Mutex
 	next    int
