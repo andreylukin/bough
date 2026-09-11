@@ -231,9 +231,6 @@ func TestSoakIdleAndChurnFull(t *testing.T) {
 // flat and every size must hold the composer and status bar. 30 turns
 // by default, 500 with BOUGH_SOAK_IDLE_AND_CHURN=1.
 func TestSoakIdleAndChurnResizeTmux(t *testing.T) {
-	if os.Getenv("BOUGH_KNOWN_SOAK_IDLE_AND_CHURN") == "" {
-		t.Skip("known bug: a resize between turns can leave a torn frame (status bar + stale composer mid-screen, never repainted); set BOUGH_KNOWN_SOAK_IDLE_AND_CHURN=1 to run")
-	}
 	t.Parallel()
 	n := 30
 	if os.Getenv("BOUGH_SOAK_IDLE_AND_CHURN") != "" {

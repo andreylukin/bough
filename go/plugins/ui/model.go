@@ -141,6 +141,7 @@ type model struct {
 	mdCache     map[string]string // assistant markdown render cache (cleared on resize)
 	parts       map[int]partEntry // per-block rendered part, by block id (cleared with mdCache)
 	bgLight     bool              // terminal background is light (tea.BackgroundColorMsg)
+	sized       bool              // a real WindowSizeMsg arrived (newModel's size is a placeholder)
 }
 
 // partEntry is one block's fitted render and what it was rendered
@@ -786,8 +787,19 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		changed := m.sized && (m.width != msg.Width || m.height != msg.Height)
+		m.sized = true
 		m.resize(msg.Width, msg.Height)
-		return m, nil
+		if !changed {
+			return m, nil // first size, or no change: nothing drawn at another size
+		}
+		// A frame the renderer drew for the old size can reach the
+		// terminal after it resized, and its scroll optimisation leaves
+		// margins set to the old height (ESC[1;12r). The renderer's
+		// full redraw never resets them, so a taller screen redraws
+		// inside the old region and stays torn. Reset the margins, then
+		// repaint the whole screen.
+		return m, tea.Sequence(tea.Raw("\x1b[r"), tea.ClearScreen)
 
 	case boardMsg:
 		m.takeBoard(msg.b)
