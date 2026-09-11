@@ -1236,7 +1236,7 @@ func (m *model) clickTranscript(y int) tea.Cmd {
 				}
 				return nil
 			}
-			if b.collapsible() {
+			if _, lead := m.foldAt(r.idx); b.collapsible() || lead {
 				m.toggleBlock(r.idx)
 			}
 			return nil
@@ -1283,12 +1283,18 @@ func (m *model) focusables() []stop {
 			hidden[i] = true // drawn as part of the lead's fold row
 		}
 	}
+	closed := map[int]bool{}
+	for _, r := range m.runs() {
+		if !r.open {
+			closed[r.lead] = true
+		}
+	}
 	var out []stop
 	for i := range m.blocks {
 		if open[i] {
 			out = append(out, stop{idx: i, fold: true})
 		}
-		if m.blocks[i].collapsible() && !hidden[i] {
+		if (m.blocks[i].collapsible() || closed[i]) && !hidden[i] {
 			out = append(out, stop{idx: i})
 		}
 	}

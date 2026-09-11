@@ -276,9 +276,6 @@ func TestFoldPtyStepFoldNarrationLed(t *testing.T) {
 		}
 	}
 	if !clicked && !keyed {
-		if !foldPtyKnown() {
-			t.Skip(foldPtyBugNarrationLead + "; set BOUGH_KNOWN_FOLD_PTY=1 to run")
-		}
 		t.Fatalf("the narration-led fold opened neither by click nor by tab+enter:\n%s", a.text())
 	}
 	foldPtyFrame(a, "fold open")
