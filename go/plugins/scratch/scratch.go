@@ -279,6 +279,31 @@ func (p *Pad) save() error {
 	return os.Rename(tmp, filepath.Join(p.dir, stateFile))
 }
 
+// creatable reports whether dir exists or could be made, without
+// making it: the nearest existing ancestor must accept a new entry.
+func creatable(dir string) bool {
+	for d := dir; ; d = filepath.Dir(d) {
+		if st, err := os.Stat(d); err == nil {
+			if !st.IsDir() {
+				return false
+			}
+			if d == dir {
+				return true
+			}
+			f, err := os.CreateTemp(d, ".bough-probe-*")
+			if err != nil {
+				return false
+			}
+			f.Close()
+			os.Remove(f.Name())
+			return true
+		}
+		if filepath.Dir(d) == d {
+			return false
+		}
+	}
+}
+
 func size(n int) string {
 	switch {
 	case n >= 1<<20:
@@ -326,9 +351,10 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			name = strings.TrimSuffix(filepath.Base(h.Path()), ".jsonl")
 		}
 		dir = filepath.Join(home, ".bough", "scratch", name)
-		// A read-only home cannot hold it; $BOUGH_SCRATCH must still
-		// name a dir tools.bash can write, so use the temp dir.
-		if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		// A read-only home can never hold it, and $BOUGH_SCRATCH must
+		// name a directory tools.bash can write: fall back to the temp
+		// dir, made now since nothing else would make it there.
+		if !creatable(dir) {
 			dir = filepath.Join(os.TempDir(), "bough-scratch", name)
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return fmt.Errorf("scratchpad: %w", err)

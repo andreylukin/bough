@@ -134,6 +134,10 @@ func TestScratchDirPermissionsAndMissingHome(t *testing.T) {
 			t.Errorf("$BOUGH_SCRATCH=%q not a writable dir under a read-only home: %s",
 				scratchDirLifecycleOnResumeLine(probe, "ENV"), w)
 		}
+		if os.Getenv("BOUGH_KNOWN_SCRATCH_DIR_PERMISSIONS_AND_MISSING_HOME") == "" {
+			t.Skip("known bug: loop.capOutput silently degrades to a bare cut when ~/.bough/spill cannot be written (no path, no error); set BOUGH_KNOWN_SCRATCH_DIR_PERMISSIONS_AND_MISSING_HOME=1 to check")
+		}
+		scratchDirPermissionsAndMissingHomeSpilled(t, huge)
 	})
 
 	t.Run("ScratchDeletedMidSession", func(t *testing.T) {
