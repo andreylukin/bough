@@ -12,9 +12,10 @@ package ui
 // turn i forks at turn i-1; the first row has no earlier turn, and the
 // point before it is a fresh session (/new).
 //
-// It moves the CONVERSATION only. Putting files back is /undo, one
-// turn at a time, so each row says what its turn wrote rather than
-// implying the code travels with it.
+// The files come back too: before forking it runs "/undo <seq>", which
+// puts what every turn from the picked one on wrote (a subagent's
+// edits included) back to that turn's checkpoint. Each row says what
+// its turn wrote, so the menu shows what going back will revert.
 
 import (
 	"fmt"
@@ -114,6 +115,9 @@ func (m model) handleRewindKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if pick >= len(rows) {
 			return m, nil // "(current)": nothing to do
 		}
+		// Files first, while the history still holds the turns being
+		// rewound past; the fork below leaves them behind.
+		m.dispatch("/undo " + strconv.FormatInt(rows[pick].seq, 10))
 		var cmd tea.Cmd
 		if pick == 0 {
 			// Before the first prompt is a session with no turns.

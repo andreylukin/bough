@@ -7,7 +7,7 @@ package vtreal
 // the sub:* entries. bough resumes it; double esc rewinds to before
 // turn 2. The conversation must lose the subagent card and every entry
 // after turn 1, a fresh bough resuming the fork must show the same,
-// and — the gated part — the subagent's edit must be undone on disk.
+// and the subagent's edit must be undone on disk.
 
 import (
 	"encoding/json"
@@ -200,10 +200,6 @@ func TestRewindAcrossSubagentTurn(t *testing.T) {
 	})
 
 	t.Run("SubagentEditRestored", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_REWIND_ACROSS_SUBAGENT_TURN") == "" {
-			t.Skip("known gap: rewind (plugins/ui/rewind.go handleRewindKey -> /tree fork) moves the conversation only; " +
-				"the subagent's sub.txt edit stays on disk. Set BOUGH_KNOWN_REWIND_ACROSS_SUBAGENT_TURN=1 to run.")
-		}
 		if got, _ := os.ReadFile(filepath.Join(home, "sub.txt")); string(got) != "original\n" {
 			t.Errorf("sub.txt = %q after rewinding past the subagent's turn, want %q", got, "original\n")
 		}

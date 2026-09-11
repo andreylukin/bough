@@ -101,8 +101,8 @@ func intOf(v any) (int64, bool) {
 // registerTree installs /undo and /tree.
 func registerTree(r *Registry, ctx *kernel.Context) error {
 	if err := r.Register(
-		CommandInfo{Name: "undo", Usage: "", Summary: "revert the files the last turn wrote"},
-		func(string) (string, error) { return runUndo(ctx) },
+		CommandInfo{Name: "undo", Usage: "[seq]", Summary: "revert the files the last turn wrote, or every turn from seq on"},
+		func(args string) (string, error) { return runUndo(ctx, args) },
 	); err != nil {
 		return err
 	}
@@ -113,11 +113,20 @@ func registerTree(r *Registry, ctx *kernel.Context) error {
 }
 
 // runUndo reverts the last completed turn not yet undone: only the
-// files its done entry lists, back to the turn's checkpoint tree.
-func runUndo(ctx *kernel.Context) (string, error) {
+// files its done entry lists, back to the turn's checkpoint tree. With
+// a seq it reverts every such turn from that one on, newest first, so
+// a file two of them wrote ends at the oldest one's checkpoint — what
+// the rewind picker needs when it goes back to before turn seq.
+func runUndo(ctx *kernel.Context, args string) (string, error) {
 	h, err := kernel.Get[treeHistory](ctx, "history")
 	if err != nil {
 		return "", fmt.Errorf("undo: no history service")
+	}
+	from := int64(-1)
+	if args = strings.TrimSpace(args); args != "" {
+		if from, err = strconv.ParseInt(args, 10, 64); err != nil {
+			return "", fmt.Errorf("usage: /undo [seq]")
+		}
 	}
 	ts := turns(h.Entries())
 	i := len(ts) - 1
@@ -126,15 +135,38 @@ func runUndo(ctx *kernel.Context) (string, error) {
 		// would race, and the list of what it wrote is not final.
 		return "", fmt.Errorf("undo: turn %d is still running (esc stops it first)", ts[i].seq)
 	}
+	var b strings.Builder
 	for ; i >= 0; i-- {
-		if ts[i].done && !ts[i].undone {
+		if !ts[i].done || ts[i].undone {
+			continue
+		}
+		if from >= 0 && ts[i].seq < from {
+			break
+		}
+		out, err := undoTurn(h, ts[i])
+		if err != nil {
+			return b.String(), err
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(out)
+		if from < 0 {
 			break
 		}
 	}
-	if i < 0 {
+	if b.Len() == 0 {
+		if from >= 0 {
+			return "", nil // nothing from seq on is left to undo
+		}
 		return "", fmt.Errorf("undo: nothing to undo")
 	}
-	t := ts[i]
+	return b.String(), nil
+}
+
+// undoTurn puts one turn's files back to its checkpoint and records
+// the "undo" entry.
+func undoTurn(h treeHistory, t turn) (string, error) {
 	var restored []string
 	var skipped []history.Skipped
 	if len(t.files) > 0 {
