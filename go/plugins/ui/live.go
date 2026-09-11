@@ -218,6 +218,13 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	var hist historyView
 	if h, err := kernel.Get[historyView](ctx, "history"); err == nil {
 		hist = h
+		// A failed append goes in the transcript: on stderr it painted
+		// over the alt screen, composer and status bar included.
+		if s, ok := h.(interface{ SetErrorSink(func(error)) }); ok {
+			s.SetErrorSink(func(err error) {
+				liveB.publish(Event{Kind: "error", Text: "history not saved: " + err.Error()})
+			})
+		}
 	}
 	var cmds commandsView
 	if c, err := kernel.Get[commandsView](ctx, "commands"); err == nil {

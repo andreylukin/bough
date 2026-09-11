@@ -60,6 +60,16 @@ type Store struct {
 	// is the first error of that streak until TakeErr hands it over.
 	failing bool
 	failErr error
+	onErr   func(error) // SetErrorSink; nil = keep it for TakeErr
+}
+
+// SetErrorSink routes append write errors to f instead of stderr — the
+// TUI owns the terminal, and a stderr line lands over its alt screen.
+// f is called once per run of failures, under the store's lock.
+func (s *Store) SetErrorSink(f func(error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onErr = f
 }
 
 // Open creates (or truncates) the JSONL file at path, creating parent
@@ -278,8 +288,9 @@ func LastPrompt(entries []Entry) string {
 }
 
 // Append records one entry: monotonically increasing Seq, current time,
-// one JSON line flushed to disk. A write error is loud on stderr but
-// the in-memory entry survives, so the session keeps working.
+// one JSON line flushed to disk. A write error is reported (TakeErr, or the
+// SetErrorSink) but the in-memory entry survives, so the session keeps
+// working.
 func (s *Store) Append(kind string, data map[string]any) Entry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -305,7 +316,12 @@ func (s *Store) Append(kind string, data map[string]any) Entry {
 		// lost line so a later append can land once space frees up.
 		s.w.Reset(s.f)
 		if !s.failing {
-			s.failing, s.failErr = true, err
+			s.failing = true
+			if s.onErr != nil {
+				s.onErr(err)
+			} else {
+				s.failErr = err
+			}
 		}
 	} else {
 		s.failing = false

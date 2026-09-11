@@ -505,3 +505,21 @@ func TestTwoResumedStoresKeepSeqUnique(t *testing.T) {
 		t.Errorf("parents b1=%d a2=%d, want 1 (b's own branch) and 2", b1.Parent, a2.Parent)
 	}
 }
+
+// A sink takes append errors instead of stderr (the TUI owns the
+// terminal), once per run of failures.
+func TestAppendErrorSink(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "s.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []error
+	s.SetErrorSink(func(err error) { got = append(got, err) })
+	s.Append("input", nil)
+	s.f.Close() // every later write fails
+	s.Append("input", nil)
+	s.Append("input", nil)
+	if len(got) != 1 {
+		t.Fatalf("sink called %d times, want 1: %v", len(got), got)
+	}
+}
