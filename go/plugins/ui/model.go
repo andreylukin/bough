@@ -1084,10 +1084,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pick = 0
 			return m, nil
 		}
-		if m.pal.open {
+		if m.pal.open && !strings.Contains(m.input.Value(), " ") {
 			// The draft is the palette's one-line filter: a paste joins
 			// it as one line, newlines as spaces and control bytes
 			// dropped (not ansi-stripped: that eats the byte after ESC).
+			// Once the draft has arguments ("/skill args"), a paste is
+			// an argument and takes the normal paste path below.
 			clean := strings.Map(func(r rune) rune {
 				if unicode.IsControl(r) && !unicode.IsSpace(r) {
 					return -1
