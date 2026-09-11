@@ -690,6 +690,9 @@ func (s *Stats) patch(path, old, new string) (string, error) {
 	default:
 		return "", fmt.Errorf("patch: old text occurs %d times in %s; include more surrounding lines", n, path)
 	}
+	if old == new {
+		return "", fmt.Errorf("patch: old and new text are identical — no change to %s", path)
+	}
 	out := strings.Replace(string(data), old, new, 1)
 	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
 		return "", err

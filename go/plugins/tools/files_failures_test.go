@@ -331,7 +331,6 @@ func TestFilesPatchFailures(t *testing.T) {
 		}
 	})
 	t.Run("identical content", func(t *testing.T) {
-		filesKnown(t, "patch with old == new reports \"patched (+0 lines)\" and records the file as written (tools.go patch: no no-op check)")
 		want := filesSeed(t, p, orig)
 		st := &Stats{}
 		out, err := st.patch(p, "alpha", "alpha")
