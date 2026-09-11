@@ -19,6 +19,7 @@ import (
 
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/history"
+	"github.com/andreylukin/bough/plugins/todo"
 )
 
 // sessionsReg mirrors the built-in /sessions: no args opens the
@@ -274,4 +275,27 @@ func jsonLine(t *testing.T, v any) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// appendHist is a fakeHist the todo service can read (Append unused).
+type appendHist struct{ fakeHist }
+
+func (appendHist) Append(string, map[string]any) history.Entry { return history.Entry{} }
+
+func TestPickerSwapDropsTheLeftSessionsTodoList(t *testing.T) {
+	d, _ := midSession(t)
+	d.m.todoText = "[ ] 1 from the session we leave" // pinned before the swap
+	choose := d.cfgp.Load().choose
+	d.cfgp.Load().choose = func(id string) {
+		choose(id)
+		c := d.cfgp.Load()
+		c.todo = todo.NewTodos(appendHist{c.hist.(fakeHist)}, nil) // "other" has no todo entries
+	}
+	d.dispatchLine("/sessions")
+	d.press(keyDown())
+	d.press(keyDown()) // "other"
+	d.press(keyEnter())
+	if d.m.todoText != "" {
+		t.Errorf("the left session's todo list survived the swap: %q", d.m.todoText)
+	}
 }
