@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -257,9 +258,13 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 			return nil, fmt.Errorf("bash: until %q is not a valid regexp: %v", until, err)
 		}
 	}
+	// Script in a file, stdin /dev/null: a stdin reader must not eat the script.
+	script, err := bashScript(cmd)
+	if err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(j.ctx, limit)
-	c := exec.CommandContext(ctx, "sh", "-s")
-	c.Stdin = strings.NewReader(cmd)
+	c := exec.CommandContext(ctx, "sh", script)
 	ownProcessGroup(c)
 	c.Cancel = func() error { return killProcessGroup(c) }
 	c.WaitDelay = 2 * time.Second
@@ -274,6 +279,7 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 	c.Stderr = c.Stdout
 	if err := c.Start(); err != nil {
 		cancel()
+		os.Remove(script)
 		b.mu.Lock()
 		b.done, b.err, b.ended = true, err.Error(), time.Now()
 		b.mu.Unlock()
@@ -284,6 +290,7 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 		defer j.running.Done()
 		err := c.Wait()
 		cancel()
+		os.Remove(script)
 		b.mu.Lock()
 		b.done, b.ended = true, time.Now()
 		switch {

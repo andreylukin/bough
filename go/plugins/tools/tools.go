@@ -203,19 +203,12 @@ func (s *Stats) bash(cmd string, opts ...any) (string, error) {
 	// byte no longer makes exec fail with "invalid argument". Not on
 	// stdin either: a stdin reader (cat, read, ssh) would eat the rest
 	// of the script. stdin is /dev/null.
-	script, err := os.CreateTemp("", "bough-bash-*.sh")
+	script, err := bashScript(cmd)
 	if err != nil {
-		return "", fmt.Errorf("bash: script file: %v", err)
+		return "", err
 	}
-	defer os.Remove(script.Name())
-	_, err = script.WriteString(cmd)
-	if cerr := script.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return "", fmt.Errorf("bash: script file: %v", err)
-	}
-	c := exec.CommandContext(ctx, "sh", script.Name())
+	defer os.Remove(script)
+	c := exec.CommandContext(ctx, "sh", script)
 	// Its own process group, killed as a group: `sh -c` execs or forks
 	// the command, and killing sh alone leaves a sleep, a server, a
 	// build running after the turn was cancelled.
@@ -603,4 +596,21 @@ func (s *Stats) patch(path, old, new string) (string, error) {
 	s.wrote(path)
 	return fmt.Sprintf("patched %s (%+d lines)", path,
 		strings.Count(new, "\n")-strings.Count(old, "\n")) + lineDiff(old, new), nil
+}
+
+// bashScript writes cmd to a temp file for `sh <file>`; the caller removes it.
+func bashScript(cmd string) (string, error) {
+	f, err := os.CreateTemp("", "bough-bash-*.sh")
+	if err != nil {
+		return "", fmt.Errorf("bash: script file: %v", err)
+	}
+	_, err = f.WriteString(cmd)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(f.Name())
+		return "", fmt.Errorf("bash: script file: %v", err)
+	}
+	return f.Name(), nil
 }

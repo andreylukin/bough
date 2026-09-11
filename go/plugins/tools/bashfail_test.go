@@ -227,6 +227,7 @@ func TestBashFailBackgroundJob(t *testing.T) {
 		{"echo bg-err >&2; exit 7", "7"},
 		{"kill -9 $$", "killed"},
 		{"no-such-cmd-bough-bg", "127"},
+		{"cat >/dev/null\necho bg-$((40+2))", "bg-42"},
 	} {
 		if _, err := s.bash(tc.cmd, 30); err != nil {
 			t.Fatal(err)
