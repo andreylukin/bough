@@ -195,7 +195,6 @@ func TestFilesWriteFailures(t *testing.T) {
 		if st, _ := os.Stat(p); st.Size() != 0 {
 			t.Fatal("not empty")
 		}
-		filesKnown(t, "write reports \"0 bytes, 1 lines\" for empty content (and 3 lines for \"a\\nb\\n\") (tools.go write: strings.Count(content, \"\\n\")+1)")
 		if strings.Contains(out, "1 lines") {
 			t.Fatalf("write summary = %q", out)
 		}

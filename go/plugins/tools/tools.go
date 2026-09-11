@@ -274,11 +274,21 @@ func (s *Stats) write(path, content string) (string, error) {
 		return "", err
 	}
 	s.wrote(path)
-	out := fmt.Sprintf("wrote %s (%d bytes, %d lines)", path, len(content), strings.Count(content, "\n")+1)
+	out := fmt.Sprintf("wrote %s (%d bytes, %d lines)", path, len(content), lineCount(content))
 	if hadFile == nil {
 		out += lineDiff(string(before), content)
 	}
 	return out, nil
+}
+
+// lineCount counts lines the way wc -l plus an unterminated tail does:
+// "" is 0, "a\nb\n" is 2, "a\nb" is 2.
+func lineCount(s string) int {
+	n := strings.Count(s, "\n")
+	if s != "" && !strings.HasSuffix(s, "\n") {
+		n++
+	}
+	return n
 }
 
 // diffLimit caps the lines a diff considers; past it the change is
