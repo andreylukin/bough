@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dop251/goja"
 )
 
 func TestRunToolAndConsole(t *testing.T) {
@@ -360,5 +362,55 @@ func TestRunHookCancelledByContext(t *testing.T) {
 	}
 	if d := time.Since(start); d > 2*time.Second {
 		t.Fatalf("cancel took %s; the hook ran to completion", d)
+	}
+}
+
+// A row remounting while a Run is parked in a tool (tools.ask waiting
+// on the user, /model swapping the llm row) registers tools and runs
+// WithVM from another goroutine. That must not wait for the Run: the
+// UI's Update is the caller and froze until the ask timed out.
+func TestParkedRunFreesTheVM(t *testing.T) {
+	cm := New(5 * time.Second)
+	entered, release := make(chan struct{}), make(chan struct{})
+	cm.RegisterTool("wait", func() (string, error) {
+		defer cm.Park()()
+		close(entered)
+		<-release
+		return "released", nil
+	})
+	cm.RegisterTool("old", func() (string, error) { return "old", nil })
+	done := make(chan string, 1)
+	go func() {
+		out, err := cm.Run(`console.log("before"); tools.wait() + " " + tools.fresh()`)
+		if err != nil {
+			out = err.Error()
+		}
+		done <- out
+	}()
+	<-entered
+
+	registered := make(chan error, 1)
+	go func() {
+		cm.RegisterTool("old", nil)
+		cm.RegisterTool("fresh", func() (string, error) { return "fresh", nil })
+		registered <- cm.WithVM(func(vm *goja.Runtime, tools *goja.Object) error {
+			return tools.Set("mark", "set")
+		})
+	}()
+	select {
+	case err := <-registered:
+		if err != nil {
+			t.Fatalf("WithVM: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RegisterTool/WithVM waited on the parked Run")
+	}
+	close(release)
+	if out := <-done; out != "before\nreleased fresh" {
+		t.Errorf("parked Run = %q, want %q", out, "before\nreleased fresh")
+	}
+	out, err := cm.Run(`[String(tools.old), tools.mark].join(" ")`)
+	if err != nil || out != "null set" {
+		t.Errorf("after the Run: out=%q err=%v, want %q", out, err, "null set")
 	}
 }

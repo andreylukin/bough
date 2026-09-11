@@ -2,10 +2,12 @@ package vtreal
 
 // A tools.ask is pending when the user opens /model, swaps provider,
 // opens the picker again and escapes it, then answers the ask by
-// number. The ask must survive the picker, the answer must reach the
-// next model request (now the swapped-in provider: a fake OpenAI
-// Responses server that records each request body), and the assistant
-// entry that follows the answer must carry the NEW model and provider.
+// number. The ask must survive the picker (and the swap must not wait
+// on it), the turn in flight finishes on the llm it started with (the
+// loop's remount handover), and the next turn goes to the swapped-in
+// provider (a fake OpenAI Responses server that records each request
+// body) with the answer in its history; its assistant entry carries
+// the NEW model and provider.
 //
 // The llm row carries both the replay tape and a base_url: replay
 // ignores base_url, and the swap keeps the row's config, so llm-openai
@@ -98,11 +100,6 @@ func TestAskThenModelPickerSwapAnswer(t *testing.T) {
 	t.Parallel()
 	t.Run("SwapWhileAskPending", func(t *testing.T) {
 		t.Parallel()
-		if os.Getenv("BOUGH_KNOWN_ASKTHENMODELPICKERSWAPANSWER") == "" {
-			t.Skip("known bug: /model while a tools.ask is pending freezes the UI until the ask times out " +
-				"(ui dispatchAs runs the swap synchronously in Update; the llm row's Reconcile waits on the blocked turn); " +
-				"set BOUGH_KNOWN_ASKTHENMODELPICKERSWAPANSWER=1 to run")
-		}
 		askThenModelPickerSwapAnswerRun(t)
 	})
 }
@@ -155,8 +152,13 @@ func askThenModelPickerSwapAnswerRun(t *testing.T) {
 	}
 	a.check("picker closed, ask pending")
 
-	// Answer by number.
+	// Answer by number: the turn finishes on the tape, then the next
+	// turn is the new provider's.
 	a.typeText("2")
+	a.key(uv.KeyEnter, 0)
+	a.waitFor("Color locked in.")
+	a.settled()
+	a.typeText("again")
 	a.key(uv.KeyEnter, 0)
 	a.waitFor(askThenModelPickerSwapAnswerWord)
 	if got := askPasteAnswerEntry(a); got != "vermilion" {
@@ -177,7 +179,8 @@ func askThenModelPickerSwapAnswerRun(t *testing.T) {
 		t.Errorf("the next llm request is not for %s:\n%.500s", mdl, bs[0])
 	}
 
-	// The assistant entry after the answer names the new model/provider.
+	// The new provider's assistant entry (the last one) names the new
+	// model/provider.
 	var after []map[string]any
 	deadline = time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
@@ -191,19 +194,20 @@ func askThenModelPickerSwapAnswerRun(t *testing.T) {
 				after = append(after, e.Data)
 			}
 		}
-		if len(after) > 0 {
+		if len(after) > 1 {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if len(after) == 0 {
-		t.Fatalf("no assistant entry after the answer:\n%s", a.text())
+	if len(after) < 2 {
+		t.Fatalf("no new-provider assistant entry after the answer:\n%s", a.text())
 	}
-	if got, _ := after[0]["model"].(string); got != mdl {
-		t.Errorf("assistant entry model = %q, want %q (%v)", got, mdl, after[0])
+	last := after[len(after)-1]
+	if got, _ := last["model"].(string); got != mdl {
+		t.Errorf("assistant entry model = %q, want %q (%v)", got, mdl, last)
 	}
-	if got, _ := after[0]["provider"].(string); !strings.Contains(got, "openai") {
-		t.Errorf("assistant entry provider = %q, want the swapped-in openai (%v)", got, after[0])
+	if got, _ := last["provider"].(string); !strings.Contains(got, "openai") {
+		t.Errorf("assistant entry provider = %q, want the swapped-in openai (%v)", got, last)
 	}
 	a.check("after answer")
 }

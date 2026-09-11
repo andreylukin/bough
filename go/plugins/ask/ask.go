@@ -89,8 +89,13 @@ func (a *Asker) ask(question string, options ...string) (string, error) {
 	if rc, ok := a.code.(interface{ RunContext() context.Context }); ok {
 		done = rc.RunContext().Done()
 	}
-	resume := a.code.Pause()
-	defer resume()
+	// Park (codemode) also frees the VM while the user thinks: a
+	// /model swap remounts rows that register tools on it.
+	park := a.code.Pause
+	if p, ok := a.code.(interface{ Park() func() }); ok {
+		park = p.Park
+	}
+	defer park()()
 	select {
 	case <-done:
 		a.mu.Lock()

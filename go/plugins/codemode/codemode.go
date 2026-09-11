@@ -356,6 +356,26 @@ func (cm *CodeMode) Pause() func() {
 	return func() { t.Reset(cm.timeout) }
 }
 
+// Park is Pause for a tool that waits on something outside the VM
+// (tools.ask on the user): it also lets go of the VM mutex until the
+// returned resume retakes it, so another goroutine (a row remounting
+// under /model) can register tools meanwhile instead of waiting out
+// the answer. Call it from the VM goroutine inside a Run.
+func (cm *CodeMode) Park() func() {
+	resume := cm.Pause()
+	g := gid()
+	if cm.owner.Load() != g {
+		return resume
+	}
+	cm.owner.Store(0)
+	cm.mu.Unlock()
+	return func() {
+		cm.mu.Lock()
+		cm.owner.Store(g)
+		resume()
+	}
+}
+
 // Interrupt aborts the running script (the loop's turn cancel); the
 // next Run clears it, so an interrupt landing between runs is inert.
 func (cm *CodeMode) Interrupt() {
