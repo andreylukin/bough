@@ -273,9 +273,6 @@ func TestUnicodeInBangShellAndJobStrip(t *testing.T) {
 
 	t.Run("JobStripWideCJKFitsPane", func(t *testing.T) {
 		t.Parallel()
-		if os.Getenv(unicodeinbangshellandjobstripKnown) == "" {
-			t.Skip("known bug: jobRows (plugins/ui/jobstrip.go) sizes line(r.Cmd, room) in graphemes, not cells, so wide CJK overflows the row and cuts its elapsed tail; set " + unicodeinbangshellandjobstripKnown + "=1 to run")
-		}
 		cmd := "sleep 20; : " + strings.Repeat("漢", 30)
 		a, row := unicodeinbangshellandjobstripJob(t, 50, 24, cmd)
 		if !unicodeinbangshellandjobstripTail.MatchString(row) {

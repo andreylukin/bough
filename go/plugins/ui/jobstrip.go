@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/andreylukin/bough/plugins/tools"
+	xansi "github.com/charmbracelet/x/ansi"
 )
 
 // jobStripMax is how many jobs get a row of their own; the rest are
@@ -56,7 +57,7 @@ func (m *model) jobRows(cfg *uiCfg) []string {
 		// The command is what identifies the job, so it takes whatever
 		// width is left after the fixed parts.
 		room := max(m.width-len(label)-len(tail)-8, 12)
-		row := mark + " " + th["dim"].Render(label+" · ") + line(r.Cmd, room) +
+		row := mark + " " + th["dim"].Render(label+" · ") + xansi.Truncate(line(r.Cmd, room), room, "…") +
 			th["dim"].Render(" · "+tail)
 		out = append(out, row)
 	}
