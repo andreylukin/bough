@@ -54,6 +54,7 @@ type voiceState struct {
 	startedAt time.Time
 	lastSpace time.Time // last Space press: the burst and release clocks
 	burst     int       // rapid Space presses in a row
+	typed     bool      // this burst began in the @ picker or an ask: its spaces are text
 }
 
 // voiceMsg delivers a finished take: its transcript or the error.
@@ -123,6 +124,13 @@ func (m *model) voiceKey(key string, msg tea.KeyPressMsg, cfg *uiCfg) (bool, tea
 		}
 		return false, nil
 	}
+	if m.at.open || m.pendingAsk != "" || (m.v.typed && key == "space" && now.Sub(m.v.lastSpace) < spaceRepeatGap) {
+		if key == "space" {
+			m.v.typed, m.v.lastSpace = true, now
+		}
+		return false, nil
+	}
+	m.v.typed = false
 	if key != "space" {
 		m.v.burst = 0
 		return false, nil

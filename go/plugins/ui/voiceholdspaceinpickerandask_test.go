@@ -67,13 +67,8 @@ func voiceHoldSpaceInPickerAndAskNoTake(t *testing.T, d *drv, sentinel string) {
 	}
 }
 
-const voiceHoldSpaceInPickerAndAskGate = "BOUGH_KNOWN_VOICE_HOLD_SPACE_IN_PICKER_AND_ASK"
-
 func TestVoiceHoldSpaceInPickerAndAsk(t *testing.T) {
 	t.Run("picker", func(t *testing.T) {
-		if os.Getenv(voiceHoldSpaceInPickerAndAskGate) == "" {
-			t.Skip("known bug: voiceKey (plugins/ui/voice.go) gates only on m.pal.open, not m.at.open, so a held space in the @ picker filter starts a take and backspaces the typed spaces away; set " + voiceHoldSpaceInPickerAndAskGate + "=1")
-		}
 		dir := t.TempDir()
 		os.WriteFile(filepath.Join(dir, "main.go"), []byte("x"), 0o644)
 		wd, _ := os.Getwd()
@@ -91,9 +86,6 @@ func TestVoiceHoldSpaceInPickerAndAsk(t *testing.T) {
 		}
 	})
 	t.Run("ask", func(t *testing.T) {
-		if os.Getenv(voiceHoldSpaceInPickerAndAskGate) == "" {
-			t.Skip("known bug: voiceKey (plugins/ui/voice.go) ignores m.pendingAsk, so a held space in the ask freeform box starts a take and eats the typed spaces; set " + voiceHoldSpaceInPickerAndAskGate + "=1")
-		}
 		d, fa, sentinel := voiceHoldSpaceInPickerAndAskDrv(t)
 		d.feed(askEvent())
 		if d.m.pendingAsk != "ask-1" {
