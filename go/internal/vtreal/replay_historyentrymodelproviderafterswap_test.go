@@ -12,6 +12,7 @@ package vtreal
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -83,12 +84,16 @@ func historyEntryModelProviderAfterSwapProv(t *testing.T, path string) []string 
 
 // historyEntryModelProviderAfterSwapFiles is the original session file
 // and the fork file for seq ("" when absent).
+var forkName = regexp.MustCompile(`-f[0-9]+\.jsonl$`)
+
 func historyEntryModelProviderAfterSwapFiles(home, seq string) (orig, fork string) {
 	paths, _ := filepath.Glob(filepath.Join(home, ".bough", "history", "*.jsonl"))
 	for _, p := range paths {
+		// A uuid session id can itself contain "-f": only a trailing
+		// -f<digits> marks a fork.
 		if strings.HasSuffix(p, "-f"+seq+".jsonl") {
 			fork = p
-		} else if !strings.Contains(filepath.Base(p), "-f") {
+		} else if !forkName.MatchString(filepath.Base(p)) {
 			orig = p
 		}
 	}
