@@ -158,7 +158,7 @@ func TestCodemodeRuntimeDeepRecursion(t *testing.T) {
 }
 
 func TestCodemodeRuntimePanicCatchableInJS(t *testing.T) {
-	codemodeRuntimeKnown(t, "a panicking Go tool crashes the process (codemode.go:271, no recover)")
+	codemodeRuntimeKnown(t, "a panicking Go tool is not a JS exception: RunCtx recovers it as the whole block's error, so try/catch cannot catch it")
 	cm := codemodeRuntimeVM()
 	cm.RegisterTool("boom", func() (string, error) { panic("host blew up") })
 	out, err := codemodeRuntimeRun(t, cm, `try { tools.boom() } catch (e) { console.log("caught") }`, 5*time.Second)
