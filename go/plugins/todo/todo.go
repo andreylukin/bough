@@ -151,16 +151,23 @@ func (t *Todos) Render() string {
 		if it.State == "done" {
 			box = "[x]"
 		}
-		fmt.Fprintf(&b, "%s %d %s", box, it.ID, it.Text)
+		fmt.Fprintf(&b, "%s %d %s", box, it.ID, oneLine(it.Text))
 	}
 	return b.String()
 }
 
+// oneLine folds line breaks into spaces: one item is one line, so inner
+// newlines can't render as extra, forged items in list() and the system
+// prompt. Render applies it too, for items stored before Add did.
+func oneLine(text string) string {
+	return strings.TrimSpace(strings.Join(strings.FieldsFunc(text, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == '\v' || r == '\f' || r == '\u0085' || r == '\u2028' || r == '\u2029'
+	}), " "))
+}
+
 // Add appends an open item and returns its id.
 func (t *Todos) Add(text string) (int, error) {
-	// One item is one line: inner newlines would render as extra,
-	// forged items in list() and the system prompt.
-	text = strings.TrimSpace(strings.Join(strings.FieldsFunc(text, func(r rune) bool { return r == '\n' || r == '\r' }), " "))
+	text = oneLine(text)
 	if text == "" {
 		return 0, fmt.Errorf("todo: empty text")
 	}

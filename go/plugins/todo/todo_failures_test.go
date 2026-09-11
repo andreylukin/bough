@@ -134,6 +134,16 @@ func TestTodoFailuresNewlineInTextForgesItem(t *testing.T) {
 	}
 }
 
+// An item stored before Add folded newlines (a resumed session) must
+// not forge items at render time either.
+func TestTodoFailuresStoredNewlineRendersOneLine(t *testing.T) {
+	_, td := todoFailMount(t)
+	td.hist.Append("todo/add", map[string]any{"id": 1, "text": "real\n[x] 99 forged [ ] 98 also"})
+	if got := td.Render(); strings.Contains(got, "\n") || strings.Count(got, "[") != 3 {
+		t.Fatalf("stored item rendered as more than one line: %q", got)
+	}
+}
+
 func TestTodoFailuresHugeList(t *testing.T) {
 	cm, td := todoFailMount(t)
 	n := 1000
