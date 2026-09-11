@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/andreylukin/bough/plugins/history"
 	uv "github.com/charmbracelet/ultraviolet"
 )
 
@@ -127,8 +128,11 @@ func TestSkillsMentionInjects(t *testing.T) {
 }
 
 // The system prompt carries no skill catalogue today: skills reach the
-// model only by injection into the user turn. This pins the current
-// contract; if a catalogue section is added, flip the assertion.
+// model only by injection into the user turn. The check reads the full
+// prompt dump from history (the screen shows only its tail) and
+// requires the dump to exist, so a missing dump cannot pass vacuously.
+// This pins the current contract; if a catalogue section is added,
+// flip the assertion.
 func TestSkillsSystemPromptHasNoCatalogue(t *testing.T) {
 	t.Parallel()
 	a := skillsStart(t)
@@ -136,9 +140,23 @@ func TestSkillsSystemPromptHasNoCatalogue(t *testing.T) {
 	if !a.waitDone(1, 30e9) {
 		t.Fatalf("SYSTEM! turn never finished:\n%s", a.text())
 	}
-	s := a.settled()
-	if strings.Contains(s, "SKILLMARK_") {
-		t.Errorf("skill body leaked into the system prompt:\n%s", s)
+	var prompt strings.Builder
+	paths, _ := filepath.Glob(filepath.Join(a.home, ".bough", "history", "*.jsonl"))
+	for _, p := range paths {
+		entries, _ := history.Read(p)
+		for _, e := range entries {
+			if s, ok := e.Data["text"].(string); ok && e.Kind == "assistant" {
+				prompt.WriteString(s)
+			}
+		}
+	}
+	if prompt.Len() < 200 {
+		t.Fatalf("no system prompt dump in history (%d chars):\n%s", prompt.Len(), a.text())
+	}
+	for _, leak := range []string{"SKILLMARK_", "alpha things", "bravo job"} {
+		if strings.Contains(prompt.String(), leak) {
+			t.Errorf("system prompt contains skill text %q:\n%s", leak, a.text())
+		}
 	}
 }
 
