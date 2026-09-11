@@ -11,7 +11,6 @@ package vtreal
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -37,9 +36,6 @@ func TestSigtstpSuspendResume(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if os.Getenv("BOUGH_KNOWN_SIGTSTP_SUSPEND_RESUME") == "" {
-				t.Skip("known bug: bough installs no SIGCONT handler (bubbletea only restores after its own ctrl+z Suspend), so an external SIGTSTP/SIGCONT never re-enables alt screen/mouse/bracketed paste or repaints; set BOUGH_KNOWN_SIGTSTP_SUSPEND_RESUME=1 to run")
-			}
 			sigtstpSuspendResumeRun(t, tape, mid)
 		})
 	}

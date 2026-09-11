@@ -41,6 +41,7 @@ func runTUI() {
 			tuiMu.Lock()
 			tuiProg = p
 			tuiMu.Unlock()
+			watchResume(p)
 			_, err := p.Run()
 			close(tuiDone)
 			if err != nil {
