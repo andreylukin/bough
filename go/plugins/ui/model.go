@@ -1236,7 +1236,7 @@ func (m *model) clickTranscript(y int) tea.Cmd {
 				}
 				return nil
 			}
-			if _, lead := m.foldAt(r.idx); b.collapsible() || lead {
+			if b.collapsible() || m.closedLead(r.idx) {
 				m.toggleBlock(r.idx)
 			}
 			return nil
@@ -1274,19 +1274,15 @@ type stop struct {
 func (m *model) focusables() []stop {
 	hidden := map[int]bool{}
 	open := map[int]bool{}
+	closed := map[int]bool{}
 	for _, r := range m.runs() {
 		if r.open {
 			open[r.lead] = true
 			continue
 		}
+		closed[r.lead] = true
 		for i := r.from + 1; i < r.to; i++ {
 			hidden[i] = true // drawn as part of the lead's fold row
-		}
-	}
-	closed := map[int]bool{}
-	for _, r := range m.runs() {
-		if !r.open {
-			closed[r.lead] = true
 		}
 	}
 	var out []stop
@@ -1355,12 +1351,19 @@ func (m *model) toggleFocused() bool {
 			m.refold(i)
 			return true
 		}
-		if m.blocks[i].collapsible() {
+		if m.blocks[i].collapsible() || m.closedLead(i) {
 			m.toggleBlock(i)
 			return true
 		}
 	}
 	return false
+}
+
+// closedLead reports whether block i leads a closed fold: a one-line
+// narration can lead one without being collapsible itself.
+func (m *model) closedLead(i int) bool {
+	r, ok := m.foldAt(i)
+	return ok && !r.open
 }
 
 // toggleBlock flips block i, focuses it, and keeps its header on

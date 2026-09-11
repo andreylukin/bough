@@ -201,3 +201,32 @@ func TestNarratedStepsFold(t *testing.T) {
 		t.Errorf("want exactly the fold row:\n%s", p)
 	}
 }
+
+// A fold led by a line of narration opens like any other: by a click
+// on its row and by tab+enter. The lead is an assistant block, not
+// collapsible, so neither path used to reach it.
+func TestNarrationLedFoldOpens(t *testing.T) {
+	t.Parallel()
+	for _, how := range []string{"click", "keys"} {
+		d := defaultDrv(t)
+		d.event("assistant", "Let me look at the loader.")
+		d.event("code", `tools.view("loader.go")`)
+		d.event("result", "ok")
+		d.event("assistant", "Now the test.")
+		d.event("code", `tools.bash("go test ./...")`)
+		d.event("result", "ok")
+		d.event("done", "")
+		if !strings.Contains(d.plain(), "▸ 2 steps") {
+			t.Fatalf("setup: want a closed fold:\n%s", d.plain())
+		}
+		if how == "click" {
+			d.m.clickTranscript(d.m.ranges[0].start - d.m.vp.YOffset())
+		} else {
+			d.press(tea.KeyPressMsg{Code: tea.KeyTab})
+			d.press(tea.KeyPressMsg{Code: tea.KeyEnter})
+		}
+		if p := d.plain(); !strings.Contains(p, "▾ 2 steps") {
+			t.Errorf("%s: the narration-led fold did not open:\n%s", how, p)
+		}
+	}
+}
