@@ -135,9 +135,6 @@ func TestResumeMidBgjobOutput(t *testing.T) {
 	})
 
 	t.Run("job_marked_ended", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_RESUMEMIDBGJOBOUTPUT") == "" {
-			t.Skip("known bug: a job killed with its bough resumes with no ended/orphaned marker; set BOUGH_KNOWN_RESUMEMIDBGJOBOUTPUT to run")
-		}
 		low := strings.ToLower(s)
 		ok := false
 		for _, w := range []string{"orphan", "lost", "ended", "killed", "interrupted", "no longer running"} {

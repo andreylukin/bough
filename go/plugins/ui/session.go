@@ -14,7 +14,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -121,6 +123,13 @@ func (m *model) replay() {
 	// prompt still waiting for its answer.
 	if open {
 		m.blocks = append(m.blocks, block{id: m.nextID, kind: "system", text: "■ interrupted — bough exited before this turn finished"})
+		m.nextID++
+	}
+	// Background jobs live in the process that started them: one with
+	// no finished notice on file died with that process (or outlives
+	// it as an untracked orphan). Say so, or it reads as still running.
+	for _, n := range deadJobs(entries) {
+		m.blocks = append(m.blocks, block{id: m.nextID, kind: "system", text: fmt.Sprintf("■ job %d ended with the previous bough process — no longer running", n)})
 		m.nextID++
 	}
 	m.expireAsks()                 // an ask with no answer entry replays as expired
@@ -485,4 +494,36 @@ func shortDir(dir, cwd, home string) string {
 // it cuts between graphemes, never inside a ZWJ sequence.
 func truncateCols(s string, n int) string {
 	return ansi.Truncate(strings.SplitN(s, "\n", 2)[0], n, "…")
+}
+
+var (
+	jobStartRe = regexp.MustCompile(`^job (\d+) started in the background`)
+	jobDoneRe  = regexp.MustCompile(`job (\d+) \[([^\]]+)\]`)
+)
+
+// deadJobs lists, in start order, the background jobs a transcript
+// started ("job N started in the background" results) with no later
+// finished notice (a "job" entry or a "[background job]" wake input
+// naming "job N [status]").
+func deadJobs(entries []history.Entry) []int {
+	var open []int
+	for _, e := range entries {
+		text, _ := e.Data["text"].(string)
+		switch {
+		case e.Kind == "result":
+			if g := jobStartRe.FindStringSubmatch(text); g != nil {
+				n, _ := strconv.Atoi(g[1])
+				open = append(open, n)
+			}
+		case e.Kind == "job" || (e.Kind == "input" && strings.HasPrefix(text, "[background job]")):
+			for _, g := range jobDoneRe.FindAllStringSubmatch(text, -1) {
+				if g[2] == "running" {
+					continue
+				}
+				n, _ := strconv.Atoi(g[1])
+				open = slices.DeleteFunc(open, func(x int) bool { return x == n })
+			}
+		}
+	}
+	return open
 }
