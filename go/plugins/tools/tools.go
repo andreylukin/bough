@@ -444,14 +444,21 @@ func readView(path string, rng ...int) (string, error) {
 	var lines []string
 	size, n, capped := 0, 0, false
 	for {
-		line, rerr := r.ReadString('\n')
-		if line == "" && rerr != nil {
+		keep := 0
+		if n+1 >= start && (stop == 0 || n+1 <= stop) {
+			keep = viewCap - size + 1
+		}
+		line, full, rerr := readLineCapped(r, keep)
+		if full == 0 && rerr != nil {
 			break
 		}
 		n++
-		if n >= start && (stop == 0 || n <= stop) {
+		if keep > 0 {
 			if size+len(line) > viewCap {
 				capped = true
+				if len(lines) == 0 { // one line alone overruns the cap: show its head
+					lines = append(lines, line[:viewCap])
+				}
 				break
 			}
 			size += len(line)
@@ -476,6 +483,24 @@ func readView(path string, rng ...int) (string, error) {
 		fmt.Fprintf(&b, "[view stopped at %d KB after line %d; pass a range, e.g. view(path, %d, %d)]\n", viewCap>>10, start+len(lines)-1, start+len(lines), start+len(lines)+999)
 	}
 	return b.String(), nil
+}
+
+// readLineCapped reads one line (through '\n') but keeps at most keep
+// bytes of it, so an unbroken multi-MB line is never held whole. full is
+// the line's true length.
+func readLineCapped(r *bufio.Reader, keep int) (string, int, error) {
+	var b []byte
+	full := 0
+	for {
+		chunk, err := r.ReadSlice('\n')
+		full += len(chunk)
+		if room := keep - len(b); room > 0 {
+			b = append(b, chunk[:min(room, len(chunk))]...)
+		}
+		if err != bufio.ErrBufferFull {
+			return string(b), full, err
+		}
+	}
 }
 
 // viewCap bounds the bytes of file text one view returns.

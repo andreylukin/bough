@@ -405,3 +405,15 @@ func TestFilesFailuresThroughCodemode(t *testing.T) {
 		}
 	}
 }
+
+func TestFilesViewOneHugeLine(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "oneline")
+	filesSeed(t, p, strings.Repeat("x", 20<<20))
+	out, err := readView(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) > 300<<10 || !strings.Contains(out, "1│xxx") || !strings.Contains(out, "view stopped") {
+		t.Fatalf("view of one 20 MB line returned %d bytes: %.80q", len(out), out)
+	}
+}
