@@ -307,6 +307,10 @@ func (m model) handlePickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.pick < len(rows)-1 {
 			m.pick++
 		}
+	case "pgup":
+		m.pick = max(m.pick-m.pickerPage(cfg), 0)
+	case "pgdown":
+		m.pick = max(min(m.pick+m.pickerPage(cfg), len(rows)-1), 0)
 	case "enter":
 		if cfg.choose == nil || len(rows) == 0 {
 			return m, nil
@@ -387,6 +391,16 @@ func (m *model) resumeID(id string) {
 	*m = m.leavePicker(id)
 }
 
+// pickerPage is how many session rows fit between the picker's header
+// and its hint row (at least one).
+func (m *model) pickerPage(cfg *uiCfg) int {
+	header := 2
+	if cfg.choose == nil {
+		header += 2
+	}
+	return max(m.height-1-header, 1)
+}
+
 // pickerView renders the full-screen session list: this directory's
 // sessions first, one row per session (local time, entry count,
 // first-input title, working directory), the current session marked,
@@ -415,7 +429,10 @@ func (m *model) pickerView(cfg *uiCfg) string {
 	cur := m.currentID(cfg)
 	cwd, _ := os.Getwd()
 	home, _ := os.UserHomeDir()
-	for i, s := range rows {
+	// Scroll so the selected row stays on screen above the hint row.
+	start := max(m.pick-m.pickerPage(cfg)+1, 0)
+	for i, s := range rows[start:] {
+		i += start
 		marker, st := "  ", th["result"]
 		if i == m.pick {
 			marker, st = "▸ ", th["focus"]

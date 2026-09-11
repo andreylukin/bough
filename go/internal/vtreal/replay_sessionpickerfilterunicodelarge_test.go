@@ -149,9 +149,6 @@ func TestSessionPickerFilterUnicodeLarge(t *testing.T) {
 
 	t.Run("PageDownKeepsSelectionVisible", func(t *testing.T) {
 		t.Parallel()
-		if os.Getenv(sessionPickerFilterUnicodeLargeGate) == "" {
-			t.Skip("known bug: session picker has no scroll offset or pgdown — selection walks off screen (plugins/ui/session.go pickerView/handlePickerKey); set " + sessionPickerFilterUnicodeLargeGate + "=1")
-		}
 		a, ids, _ := sessionPickerFilterUnicodeLargeOpen(t, 100, 20)
 		a.key(uv.KeyPgDown, 0)
 		a.settled()
