@@ -129,6 +129,7 @@ type model struct {
 	sessRows    sessList       // mid-session picker list (see session.go); nil = launch picker
 	welcome     bool           // fresh-session orientation text (see welcomeView)
 	unfolded    map[int]int    // fold lead id -> end index of its run, shown as rows (see fold.go)
+	keepRow     map[int]bool   // block ids closed by hand: they stay rows, never fold (see fold.go)
 	pendingAsk  string         // ask id the composer routes answers to; "" = none
 	keysBlock   int            // id of the last "?"/keys block; esc drops it first while an ask is pending
 	pal         palette        // "/" command palette (see palette.go)
@@ -1367,6 +1368,16 @@ func (m *model) toggleBlock(i int) {
 		return
 	}
 	m.blocks[i].collapsed = !m.blocks[i].collapsed
+	// Closing a block by hand keeps it a row: folded into a neighbour's
+	// run it would vanish, and enter again could not reopen it.
+	if m.blocks[i].collapsed {
+		if m.keepRow == nil {
+			m.keepRow = map[int]bool{}
+		}
+		m.keepRow[m.blocks[i].id] = true
+	} else {
+		delete(m.keepRow, m.blocks[i].id)
+	}
 	m.focusID = m.blocks[i].id
 	m.focusFold = false
 	m.refresh()
@@ -1382,6 +1393,7 @@ func (m *model) toggleBlock(i int) {
 // returning how many changed. Expanding skips blocks over previewCap
 // lines unless focused (see blocks.go).
 func (m *model) setAllCollapsed(collapsed bool) int {
+	m.keepRow = nil
 	n := 0
 	for i := range m.blocks {
 		if b := &m.blocks[i]; b.collapsible() && b.collapsed != collapsed && m.mayExpand(b, collapsed) {

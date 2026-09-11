@@ -51,7 +51,7 @@ func (m *model) foldable(i int) bool {
 	b := &m.blocks[i]
 	switch b.kind {
 	case "code", "result", "thinking":
-		return b.collapsed
+		return b.collapsed && !m.keepRow[b.id]
 	case "assistant":
 		return !b.live && !strings.Contains(b.text, "\n") && m.leadsIntoStep(i)
 	}

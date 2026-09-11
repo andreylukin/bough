@@ -280,7 +280,7 @@ func foldModelRun(rt *rapid.T, t *testing.T, maxSteps int) {
 				// Known bug (TestFoldModelCollapseJoinsFold): a block folded
 				// away has no range, toggleBlock's EnsureVisible finds
 				// nothing, and the shrink clamps the view to the bottom.
-				if hdr < d.m.vp.YOffset() && (row == cur || os.Getenv("BOUGH_KNOWN_FOLD_MODEL") != "") {
+				if hdr < d.m.vp.YOffset() {
 					rt.Fatalf("toggle while scrolled up jumped to bottom, header row %d above offset %d", hdr, d.m.vp.YOffset())
 				}
 			}
@@ -294,12 +294,8 @@ func foldModelRun(rt *rapid.T, t *testing.T, maxSteps int) {
 				}
 				joined = joined && !beforeCol[d.m.blocks[cur].id] && d.m.blocks[cur].collapsed
 				d.feed(keyEnter())
-				if joined && os.Getenv("BOUGH_KNOWN_FOLD_MODEL") == "" {
-					// Known bug, pinned in TestFoldModelCollapseJoinsFold.
-					for _, b := range d.m.blocks {
-						ref.collapsed[b.id] = b.collapsed
-					}
-					break
+				if joined {
+					rt.Fatalf("collapsing block %d folded it into a run", d.m.blocks[cur].id)
 				}
 				for _, b := range d.m.blocks {
 					if b.collapsed != beforeCol[b.id] {
@@ -407,11 +403,10 @@ func TestFoldModelCollapseExpandAll(t *testing.T) {
 // fold.go foldable/runs + model.go toggleBlock (foldAt short-circuit).
 func TestFoldModelCollapseJoinsFold(t *testing.T) {
 	t.Parallel()
-	foldModelKnown(t, "collapsing a block beside a closed step folds it away; enter twice does not restore it")
 	d := defaultDrv(t)
 	steps(d, 1)
+	d.m.toggleBlock(0) // expand the first step
 	d.event("code", `tools.bash("echo z")`)
-	d.m.toggleBlock(0)  // expand the first step
 	d.press(keyEnter()) // collapse it again (focus on it)
 	d.press(keyEnter()) // ...and expand it back
 	if d.m.blocks[0].collapsed {
