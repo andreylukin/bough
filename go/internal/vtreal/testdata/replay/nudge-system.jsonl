@@ -1,0 +1,11 @@
+{"seq":1,"at":"2026-09-10T10:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T10:00:01Z","kind":"input","data":{"text":"first question"}}
+{"seq":3,"at":"2026-09-10T10:00:02Z","kind":"assistant","data":{"text":"```stop\nFirst answer.\n```"}}
+{"seq":4,"at":"2026-09-10T10:00:02Z","kind":"nudge","data":{"text":"NUDGEHEAD you stopped early"}}
+{"seq":5,"at":"2026-09-10T10:00:02Z","kind":"system","data":{"text":"SYSHEAD note\nSYSBODY line two\nSYSBODY line three"}}
+{"seq":6,"at":"2026-09-10T10:00:03Z","kind":"done","data":{"text":""}}
+{"seq":7,"at":"2026-09-10T10:00:04Z","kind":"title","data":{"text":"Nudge fixture session"}}
+{"seq":8,"at":"2026-09-10T10:00:10Z","kind":"input","data":{"text":"second question"}}
+{"seq":9,"at":"2026-09-10T10:00:11Z","kind":"assistant","data":{"text":"```stop\nSecond answer.\n```"}}
+{"seq":10,"at":"2026-09-10T10:00:11Z","kind":"system","data":{"text":"SYSONE single line note"}}
+{"seq":11,"at":"2026-09-10T10:00:11Z","kind":"done","data":{"text":""}}
