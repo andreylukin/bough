@@ -167,9 +167,6 @@ func TestScratchDirPermissionsAndMissingHome(t *testing.T) {
 		if env := scratchDirLifecycleOnResumeLine(probe, "ENV"); env != dir {
 			t.Errorf("$BOUGH_SCRATCH = %q after rm, want %q", env, dir)
 		}
-		if os.Getenv("BOUGH_KNOWN_SCRATCH_DIR_PERMISSIONS_AND_MISSING_HOME") == "" {
-			t.Skip("known bug: scratch.Pad makes its dir only on note/set/file, so after the dir is removed $BOUGH_SCRATCH points at a missing dir for tools.bash; set BOUGH_KNOWN_SCRATCH_DIR_PERMISSIONS_AND_MISSING_HOME=1 to check")
-		}
 		if w := scratchDirLifecycleOnResumeLine(probe, "W"); w != "WRITABLE" {
 			t.Errorf("$BOUGH_SCRATCH %s is %s after the dir was removed mid-session (tools.bash never re-creates it)", dir, w)
 		}

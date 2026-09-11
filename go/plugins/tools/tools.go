@@ -217,6 +217,12 @@ func (s *Stats) bash(cmd string, opts ...any) (string, error) {
 		return "", err
 	}
 	defer os.Remove(script)
+	// $BOUGH_SCRATCH (the scratchpad row) is promised to the command
+	// as a usable directory; it is made lazily and may have been
+	// removed since, so make sure it exists before the command runs.
+	if d := os.Getenv("BOUGH_SCRATCH"); d != "" {
+		_ = os.MkdirAll(d, 0o755)
+	}
 	c := exec.CommandContext(ctx, "sh", script)
 	// Its own process group, killed as a group: `sh -c` execs or forks
 	// the command, and killing sh alone leaves a sleep, a server, a
