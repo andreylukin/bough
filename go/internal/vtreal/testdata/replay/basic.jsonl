@@ -1,0 +1,19 @@
+{"seq":1,"at":"2026-09-10T10:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T10:00:01Z","kind":"input","data":{"text":"list the files here"}}
+{"seq":3,"at":"2026-09-10T10:00:02Z","kind":"assistant","data":{"text":"```js\nconsole.log(tools.bash(\"ls -la\"))\n```"}}
+{"seq":4,"at":"2026-09-10T10:00:02Z","kind":"code","data":{"text":"console.log(tools.bash(\"ls -la\"))\n"}}
+{"seq":5,"at":"2026-09-10T10:00:02Z","kind":"result","data":{"code":"console.log(tools.bash(\"ls -la\"))\n","text":"total 8\n-rw-r--r--  1 me  staff  12 Sep 10 10:00 a.go\n-rw-r--r--  1 me  staff  34 Sep 10 10:00 b.go\n"}}
+{"seq":6,"at":"2026-09-10T10:00:03Z","kind":"assistant","data":{"text":"Two Go files: `a.go` and `b.go`.\n\n```stop\nTwo Go files, a.go and b.go.\n```"}}
+{"seq":7,"at":"2026-09-10T10:00:03Z","kind":"done","data":{"text":""}}
+{"seq":8,"at":"2026-09-10T10:00:10Z","kind":"input","data":{"text":"run the tests and show me a very long separator line"}}
+{"seq":9,"at":"2026-09-10T10:00:11Z","kind":"assistant","data":{"text":"```js\nconsole.log(tools.bash(\"go test ./... && printf '%s\\\\n' \\\"$(printf -- '-%.0s' $(seq 1 180))\\\"\"))\n```"}}
+{"seq":10,"at":"2026-09-10T10:00:11Z","kind":"code","data":{"text":"console.log(tools.bash(\"go test ./... && printf '%s\\\\n' \\\"$(printf -- '-%.0s' $(seq 1 180))\\\"\"))\n"}}
+{"seq":11,"at":"2026-09-10T10:00:12Z","kind":"result","data":{"code":"console.log(tools.bash(\"go test ./... && printf '%s\\\\n' \\\"$(printf -- '-%.0s' $(seq 1 180))\\\"\"))\n","text":"ok  \texample.com/demo\t0.012s\n------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------\nhttps://example.com/a/very/long/url/that/does/not/break/anywhere/at/all/because/it/has/no/spaces/in/it/whatsoever/0123456789abcdef0123456789abcdef\n"}}
+{"seq":12,"at":"2026-09-10T10:00:13Z","kind":"assistant","data":{"text":"```js\ntools.bash(\"exit 3\")\n```"}}
+{"seq":13,"at":"2026-09-10T10:00:13Z","kind":"code","data":{"text":"tools.bash(\"exit 3\")\n"}}
+{"seq":14,"at":"2026-09-10T10:00:13Z","kind":"result","data":{"code":"tools.bash(\"exit 3\")\n","text":"error: exit status 3"}}
+{"seq":15,"at":"2026-09-10T10:00:14Z","kind":"assistant","data":{"text":"```stop\nTests pass. The extra command failed with exit status 3.\n```"}}
+{"seq":16,"at":"2026-09-10T10:00:14Z","kind":"done","data":{"text":""}}
+{"seq":17,"at":"2026-09-10T10:01:00Z","kind":"input","data":{"text":"thanks"}}
+{"seq":18,"at":"2026-09-10T10:01:01Z","kind":"assistant","data":{"text":"```stop\nAny time.\n```"}}
+{"seq":19,"at":"2026-09-10T10:01:01Z","kind":"done","data":{"text":""}}

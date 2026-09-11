@@ -75,8 +75,9 @@ func NewTerminal(tb testing.TB, cols, rows int) (*Terminal, error) {
 		CursorVisibility: func(v bool) { t.mu.Lock(); t.cursorVis = v; t.mu.Unlock() },
 	})
 	t.Emu = emu
-	go io.Copy(emu, pty) //nolint:errcheck // app output → emulator
-	go io.Copy(pty, emu) //nolint:errcheck // emulator input (keys, replies) → app
+	setTitle := func(s string) { t.mu.Lock(); t.title = s; t.mu.Unlock() }
+	go io.Copy(newTitleFilter(emu, setTitle), pty) //nolint:errcheck // app output → emulator
+	go io.Copy(pty, emu)                           //nolint:errcheck // emulator input (keys, replies) → app
 	return t, nil
 }
 

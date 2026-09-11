@@ -70,13 +70,17 @@ type app struct {
 	cmd  *exec.Cmd
 	cols int
 	rows int
+	home string
 }
 
-func start(t *testing.T, cols, rows int) *app {
+func start(t *testing.T, cols, rows int) *app { return startCfg(t, cols, rows, config) }
+
+// startCfg boots bough with the given bough.yml in a fresh $HOME.
+func startCfg(t *testing.T, cols, rows int, yml string) *app {
 	t.Helper()
 	home := t.TempDir()
 	cfg := filepath.Join(home, "bough.yml")
-	if err := os.WriteFile(cfg, []byte(config), 0o644); err != nil {
+	if err := os.WriteFile(cfg, []byte(yml), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	term, err := NewTerminal(t, cols, rows)
@@ -92,7 +96,7 @@ func start(t *testing.T, cols, rows int) *app {
 	if err := term.Start(cmd); err != nil {
 		t.Fatal(err)
 	}
-	a := &app{t: t, term: term, cmd: cmd, cols: cols, rows: rows}
+	a := &app{t: t, term: term, cmd: cmd, cols: cols, rows: rows, home: home}
 	t.Cleanup(func() {
 		if cmd.ProcessState == nil {
 			_ = cmd.Process.Kill()
