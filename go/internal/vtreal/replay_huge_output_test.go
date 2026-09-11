@@ -114,8 +114,10 @@ func TestHugeOutput(t *testing.T) {
 			if row < 0 {
 				t.Fatalf("no collapsed header %q:\n%s", c.header, a.text())
 			}
-			if strings.Contains(a.text(), "line 0001") {
-				t.Fatalf("collapsed block shows its body:\n%s", a.text())
+			for i, l := range ls {
+				if i != row && strings.Contains(l, c.body) {
+					t.Fatalf("collapsed block shows a body row at %d:\n%s", i, a.text())
+				}
 			}
 
 			a.hugeOutputTimed("expand", func() {
