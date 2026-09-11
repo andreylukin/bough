@@ -321,6 +321,13 @@ func (m model) leavePicker(id string) model {
 	if !launch && (id == "" || id == m.currentID(cfg)) {
 		return m
 	}
+	if !launch && m.running {
+		// Swapping history under a live turn would render its deltas
+		// into the resumed session and lose its own cancelled entry
+		// (cancel is async, so it cannot be cancelled-then-swapped).
+		m.flash = "a turn is running — esc cancels it, then resume"
+		return m
+	}
 	if cfg.choose != nil {
 		cfg.choose(id)
 	}

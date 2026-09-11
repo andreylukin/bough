@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -51,11 +52,6 @@ func TestSessionPickerResumeWhileStreaming(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if os.Getenv("BOUGH_KNOWN_SESSION_PICKER_RESUME_WHILE_STREAMING") == "" {
-				t.Skip("known bug: picking a session mid-turn neither refuses nor cancels the running turn; " +
-					"its deltas render into the resumed session and its history never records cancelled " +
-					"(plugins/ui/session.go leavePicker); set BOUGH_KNOWN_SESSION_PICKER_RESUME_WHILE_STREAMING=1 to run")
-			}
 			sessionPickerResumeWhileStreamingRun(t, tc.delayMS)
 		})
 	}
@@ -126,13 +122,13 @@ func sessionPickerResumeWhileStreamingRun(t *testing.T, delayMS int) {
 	var kinds []string
 	for {
 		kinds = sessionPickerResumeWhileStreamingKinds(t, bPath)
-		if (len(kinds) > 0 && kinds[len(kinds)-1] == "cancelled") || time.Now().After(deadline) {
+		if slices.Contains(kinds, "cancelled") || time.Now().After(deadline) {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if len(kinds) == 0 || kinds[len(kinds)-1] != "cancelled" {
-		t.Errorf("B's history does not end cancelled: kinds %v", kinds)
+	if !slices.Contains(kinds, "cancelled") { // the loop writes cancelled, then done
+		t.Errorf("B's history has no cancelled entry: kinds %v", kinds)
 	}
 	aAfter, _ := os.ReadFile(aPath)
 	for _, bad := range sessionPickerResumeWhileStreamingBText {
