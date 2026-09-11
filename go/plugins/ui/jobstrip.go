@@ -29,7 +29,14 @@ func (m *model) jobRows(cfg *uiCfg) []string {
 	if cfg.jobs == nil {
 		return nil
 	}
-	live := cfg.jobs.Running()
+	// The jobs are process-wide and outlive a /tree fork or resume;
+	// the strip is this session's, so it shows only the jobs it started.
+	var live []tools.Running
+	for _, r := range cfg.jobs.Running() {
+		if r.Session == "" || cfg.hist == nil || r.Session == cfg.hist.Path() {
+			live = append(live, r)
+		}
+	}
 	if len(live) == 0 {
 		return nil
 	}

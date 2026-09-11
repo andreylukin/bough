@@ -194,6 +194,8 @@ type Running struct {
 	Cmd   string        // the command, first line
 	Since time.Duration // how long it has been running
 	Watch string        // the until pattern, "" when there is none
+	// Session is the history path of the session that started it.
+	Session string
 }
 
 // Running lists the jobs still going, oldest first.
@@ -206,7 +208,7 @@ func (j *Jobs) Running() []Running {
 	for _, b := range list {
 		b.mu.Lock()
 		if !b.done && b.owner == cur {
-			r := Running{ID: b.id, Cmd: firstLine(b.cmd), Since: b.elapsed()}
+			r := Running{ID: b.id, Cmd: firstLine(b.cmd), Since: b.elapsed(), Session: b.owner}
 			if b.until != nil {
 				r.Watch = b.until.String()
 			}
