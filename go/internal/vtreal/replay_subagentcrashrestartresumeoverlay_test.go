@@ -103,9 +103,6 @@ func TestSubagentCrashRestartResumeOverlay(t *testing.T) {
 		if n := subagentCrashRestartResumeOverlayCards(s, "subagent"); n < 3 {
 			t.Fatalf("want 3 subagent cards after resume, got %d:\n%s", n, s)
 		}
-		if os.Getenv("BOUGH_KNOWN_SUBAGENT_CRASH_RESTART_RESUME_OVERLAY") == "" {
-			t.Skip("known bug: resumed spawn cards with no sub:done stay 'running' forever (plugins/ui/session.go closes only the parent turn as interrupted); set BOUGH_KNOWN_SUBAGENT_CRASH_RESTART_RESUME_OVERLAY=1 to run")
-		}
 		time.Sleep(time.Second)
 		s := b.settled()
 		if n := subagentCrashRestartResumeOverlayCards(s, "running"); n != 0 {

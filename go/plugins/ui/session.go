@@ -132,6 +132,13 @@ func (m *model) replay() {
 		m.blocks = append(m.blocks, block{id: m.nextID, kind: "system", text: fmt.Sprintf("■ job %d ended with the previous bough process — no longer running", n)})
 		m.nextID++
 	}
+	// A subagent card with no sub:done on file died with the process
+	// that ran it: close it as cancelled, or it spins forever.
+	for i := range m.blocks {
+		if b := &m.blocks[i]; b.kind == "spawn" && b.sub != nil && b.sub.status == "running" {
+			b.sub.status = "cancelled"
+		}
+	}
 	m.expireAsks()                 // an ask with no answer entry replays as expired
 	m.running = false              // a replayed transcript is never mid-turn
 	m.welcome = len(m.blocks) == 0 // fresh session (0 entries): orient
