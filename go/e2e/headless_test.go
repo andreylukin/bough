@@ -117,14 +117,15 @@ func TestHeadlessContextMD(t *testing.T) {
 	mustContain(t, out, "AGENTS_MD_MARKER_31337", "# Context:")
 }
 
-func TestHeadlessInitJSBadKeyFailsBoot(t *testing.T) {
+// A broken init.js is a notice, not a fatal boot error.
+func TestHeadlessInitJSBadKeyKeepsBoot(t *testing.T) {
 	t.Parallel()
 	b := launchHeadless(t, launchOpts{
 		cwd: map[string]string{".bough/init.js": `bough.setup({ bogus: 1 });`},
 	})
 	b.closeStdin()
-	if code := b.waitExit(); code == 0 {
-		t.Fatalf("expected nonzero exit; output:\n%s", b.out.String())
+	if code := b.waitExit(); code != 0 {
+		t.Fatalf("expected boot to survive (exit 0), got %d; output:\n%s", code, b.out.String())
 	}
 	mustContain(t, b.out.String(), `unknown key "bogus"`)
 }
