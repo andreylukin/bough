@@ -137,9 +137,6 @@ func TestQueuedMessagesSurviveCrash(t *testing.T) {
 		}
 	}
 
-	if os.Getenv("BOUGH_KNOWN_QUEUED_MESSAGES_SURVIVE_CRASH") == "" {
-		t.Skip("known bug: a SIGKILLed turn stays open in the log after --resume (no done/cancelled after its input); set BOUGH_KNOWN_QUEUED_MESSAGES_SURVIVE_CRASH=1 to run")
-	}
 	open := false
 	for _, e := range after {
 		switch e.Kind {

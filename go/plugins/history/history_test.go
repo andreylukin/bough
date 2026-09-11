@@ -43,6 +43,32 @@ func TestApplyCreatesMissingFileWithMeta(t *testing.T) {
 	}
 }
 
+// Resuming a log whose last input has no done/cancelled (the process
+// was killed mid-turn) closes that turn with a cancelled entry, once.
+func TestApplyResumeClosesKilledTurn(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "killed.jsonl")
+	s, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Append("input", map[string]any{"text": "alpha"})
+	s.Close()
+	for range 2 {
+		ctx := kernel.NewContext()
+		if err := (plugin{}).Apply(ctx, map[string]any{"file": p}); err != nil {
+			t.Fatal(err)
+		}
+		ctx.Unmount()
+	}
+	es, err := readEntries(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(es) != 2 || es[1].Kind != "cancelled" || es[1].Data["interrupted"] != true {
+		t.Fatalf("entries after two resumes = %+v, want input then one cancelled", es)
+	}
+}
+
 func TestFreshSessionOnlyMetaIsRemoved(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	ctx := kernel.NewContext()

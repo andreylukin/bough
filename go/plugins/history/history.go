@@ -359,6 +359,22 @@ func (s *Store) Entries() []Entry {
 	return append([]Entry(nil), s.entries...)
 }
 
+// openTurn reports whether the last input has no done/cancelled after it.
+func (s *Store) openTurn() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	open := false
+	for _, e := range s.entries {
+		switch e.Kind {
+		case "input":
+			open = true
+		case "done", "cancelled":
+			open = false
+		}
+	}
+	return open
+}
+
 // onlyMeta reports whether nothing but the "meta" entry was recorded.
 func (s *Store) onlyMeta() bool {
 	s.mu.Lock()
@@ -436,6 +452,12 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		if cwd, err := os.Getwd(); err == nil {
 			s.Append("meta", map[string]any{"cwd": cwd})
 		}
+	} else if s.openTurn() {
+		// The process died mid-turn (SIGKILL, crash): nothing recorded
+		// its end. Close it as cancelled so the next turn gets the
+		// loop's [cancelled] note instead of an unanswered prompt it
+		// might pick back up. "interrupted" tells the UI it was not esc.
+		s.Append("cancelled", map[string]any{"interrupted": true})
 	}
 	ctx.Provide("history", s)
 	ctx.Provide("checkpoints", &Checkpoints{session: strings.TrimSuffix(filepath.Base(s.Path()), ".jsonl")})

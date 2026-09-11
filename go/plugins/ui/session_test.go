@@ -103,6 +103,10 @@ func TestReplayMarksInterruptedTurn(t *testing.T) {
 	if p := newDrv(t, 80, 24, cfgWith(t, nil, nil, h)).plain(); !strings.Contains(p, "interrupted") {
 		t.Errorf("killed turn replayed with no interrupted marker:\n%s", p)
 	}
+	h.entries = append(h.entries, history.Entry{Seq: 3, Kind: "cancelled", Data: map[string]any{"interrupted": true}})
+	if p := newDrv(t, 80, 24, cfgWith(t, nil, nil, h)).plain(); !strings.Contains(p, "interrupted") || strings.Contains(p, "stopped by you") {
+		t.Errorf("turn closed on resume must read as interrupted, not esc:\n%s", p)
+	}
 	if p := newDrv(t, 80, 24, cfgWith(t, nil, nil, seededHist())).plain(); strings.Contains(p, "interrupted") {
 		t.Errorf("finished turn must not be marked interrupted:\n%s", p)
 	}

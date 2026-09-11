@@ -64,6 +64,10 @@ func (m *model) replay() {
 		case "done", "cancelled":
 			open = false
 		}
+		if e.Kind == "cancelled" && e.Data["interrupted"] == true {
+			open = true // closed on resume after a crash: mark it, not "stopped by you"
+			continue
+		}
 		switch e.Kind {
 		case "meta", "undo":
 			// session bookkeeping (cwd, a /undo's revert record —
