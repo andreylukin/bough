@@ -1999,6 +1999,12 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		case <-stopped:
 		case <-time.After(3 * time.Second):
 		}
+		// Jobs still running die with the session; say so in history
+		// so a resumed model is not left waiting for their news.
+		if s, ok := r.notices.(interface{ Stop() }); ok {
+			s.Stop()
+			r.landJobs(func(string, string) {})
+		}
 	})
 	return nil
 }

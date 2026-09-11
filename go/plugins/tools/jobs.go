@@ -125,7 +125,8 @@ func firstLine(s string) string {
 // session and the notices they have queued for the agent.
 type Jobs struct {
 	ctx   context.Context // the plugin's context: a job survives a turn cancel
-	pause func() func()   // codemode's Pause seam, for jobWait
+	stop  context.CancelFunc
+	pause func() func() // codemode's Pause seam, for jobWait
 	// runCtx is the running script's context (nil = none): esc cancels
 	// it, and a jobWait blocked in Go only notices through it.
 	runCtx func() context.Context
@@ -141,6 +142,16 @@ type Jobs struct {
 
 func newJobs(ctx context.Context) *Jobs {
 	return &Jobs{ctx: ctx, wake: make(chan struct{}, 1)}
+}
+
+// Stop kills every job still running and waits for their notices, so
+// the loop can record them before the session closes: a job killed at
+// quit is otherwise a promise ("you will be told") nobody keeps.
+func (j *Jobs) Stop() {
+	if j.stop != nil {
+		j.stop()
+	}
+	j.wait(3 * time.Second)
 }
 
 // wait blocks until every job's Wait has returned, at most d. Once the
@@ -299,6 +310,8 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 		switch {
 		case ctx.Err() == context.DeadlineExceeded:
 			b.err, b.exit = "killed after "+limit.String(), -1
+		case j.ctx.Err() != nil:
+			b.err, b.exit = "killed when bough quit", -1
 		case err != nil:
 			b.err, b.exit = err.Error(), -1
 			if ee, ok := err.(*exec.ExitError); ok {

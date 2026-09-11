@@ -124,10 +124,8 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	jctx, cancelJobs := context.WithCancel(context.Background())
 	st.jobs = newJobs(jctx)
 	st.jobs.runCtx = st.runCtx
-	ctx.Effect(func() {
-		cancelJobs()
-		st.jobs.wait(3 * time.Second)
-	})
+	st.jobs.stop = cancelJobs
+	ctx.Effect(st.jobs.Stop)
 	if p, ok := reg.(pauser); ok {
 		st.jobs.pause = p.Pause
 	}

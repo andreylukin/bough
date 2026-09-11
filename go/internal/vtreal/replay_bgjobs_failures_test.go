@@ -233,9 +233,6 @@ func TestBgjobsQuitKillsJobAndResume(t *testing.T) {
 		}
 	}
 	t.Run("history records that the job died at quit", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_TOOLS_BACKGROUND_JOBS") != "1" {
-			t.Skip("known bug (BOUGH_KNOWN_TOOLS_BACKGROUND_JOBS=1 to run): jobs killed at unmount queue no notice/entry (plugins/tools/tools.go Apply Effect cancels jobs after the loop stops), so a resumed model still believes `You will be told when it finishes`")
-		}
 		var es []history.Entry = jobsHistory(b)
 		for _, e := range es {
 			text, _ := e.Data["text"].(string)
