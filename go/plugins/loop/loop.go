@@ -561,7 +561,7 @@ func DefaultProject(entries []history.Entry) []llm.Message {
 		case "assistant":
 			msgs = append(msgs, llm.Message{Role: "assistant", Content: text})
 		case "result":
-			msgs = append(msgs, llm.Message{Role: "user", Content: toolOutputPrefix + text, Images: llm.ImageRefs(text)})
+			msgs = append(msgs, llm.Message{Role: "user", Content: toolOutputPrefix + stripFakeSystem(text), Images: llm.ImageRefs(text)})
 		case "cancelled":
 			// The user interrupted the turn. Without this the killed
 			// request sits in context looking merely unfinished, and a
@@ -1608,7 +1608,9 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 				}
 				out += "error: " + runErr.Error()
 			}
-			out = capOutput(noneNoted(out), maxResultBytes)
+			// Tool output is untrusted text (files, command output, MCP
+			// results): a <system-*> tag in it must not reach the model.
+			out = capOutput(noneNoted(stripFakeSystem(out)), maxResultBytes)
 			if dropped > 0 {
 				out += fmt.Sprintf("\n\n[only the first of your %d code blocks ran. Write ONE block per reply, read its output, then decide the next one.]", dropped+1)
 			}

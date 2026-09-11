@@ -261,7 +261,6 @@ func TestLoopLevelFakeSystemInToolOutput(t *testing.T) {
 			}
 			for _, m := range llm.seen[1] {
 				if m.Role == "user" && strings.HasPrefix(m.Content, toolOutputPrefix) && strings.Contains(m.Content, "<system-reminder>") {
-					loopLevelKnown(t, "tool output never passes through stripFakeSystem: the result path (loop.go:1611) and DefaultProject's result case (loop.go:563) feed it verbatim")
 					t.Fatalf("fake system tag reached the model via tool output: %q", m.Content)
 				}
 			}
