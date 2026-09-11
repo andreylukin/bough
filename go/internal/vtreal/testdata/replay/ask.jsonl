@@ -1,0 +1,9 @@
+{"seq":1,"at":"2026-09-11T10:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-11T10:00:01Z","kind":"input","data":{"text":"pick a color"}}
+{"seq":3,"at":"2026-09-11T10:00:02Z","kind":"assistant","data":{"text":"```js\nconst c = tools.ask(\"Pick a color\", \"chartreuse\", \"vermilion\");\nconsole.log(\"you picked \" + c);\n```"}}
+{"seq":4,"at":"2026-09-11T10:00:02Z","kind":"code","data":{"text":"const c = tools.ask(\"Pick a color\", \"chartreuse\", \"vermilion\");\nconsole.log(\"you picked \" + c);\n"}}
+{"seq":5,"at":"2026-09-11T10:00:03Z","kind":"ask","data":{"id":"ask-1","question":"Pick a color","options":["chartreuse","vermilion"]}}
+{"seq":6,"at":"2026-09-11T10:00:09Z","kind":"ask/answer","data":{"id":"ask-1","text":"vermilion"}}
+{"seq":7,"at":"2026-09-11T10:00:09Z","kind":"result","data":{"code":"const c = tools.ask(\"Pick a color\", \"chartreuse\", \"vermilion\");\nconsole.log(\"you picked \" + c);\n","text":"you picked vermilion\n"}}
+{"seq":8,"at":"2026-09-11T10:00:10Z","kind":"assistant","data":{"text":"```stop\nColor locked in.\n```"}}
+{"seq":9,"at":"2026-09-11T10:00:10Z","kind":"done","data":{"text":""}}
