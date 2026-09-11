@@ -125,9 +125,6 @@ func TestCodemodeRuntimePanickingHostFn(t *testing.T) {
 		"error panic":  func() (string, error) { panic(os.ErrClosed) },
 	} {
 		t.Run(name, func(t *testing.T) {
-			// Gated BEFORE running: the panic is not recovered anywhere and
-			// takes the whole test binary (and bough) down.
-			codemodeRuntimeKnown(t, "a panicking Go tool crashes the process: RunCtx (codemode.go:271) calls cm.scoped with no recover, and loop.runCode's goroutine (loop/cancel.go:133) has none either")
 			cm := codemodeRuntimeVM()
 			cm.RegisterTool("boom", fn)
 			out, err := codemodeRuntimeRun(t, cm, `console.log("before"); tools.boom()`, 5*time.Second)

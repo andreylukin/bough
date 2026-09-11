@@ -268,7 +268,15 @@ func (cm *CodeMode) RunCtx(ctx context.Context, code string) (string, error) {
 	prevTimer := cm.timer // nested Run: restore the parent's timer after
 	cm.timer = timer
 	cm.vm.ClearInterrupt() // a cancel that landed between runs must not abort this one
-	v, err := cm.scoped(goja.Undefined(), cm.vm.ToValue(code))
+	v, err := func() (v goja.Value, err error) {
+		// A panicking Go tool must become the block's error, not kill bough.
+		defer func() {
+			if r := recover(); r != nil {
+				v, err = nil, fmt.Errorf("codemode: tool panic: %v", r)
+			}
+		}()
+		return cm.scoped(goja.Undefined(), cm.vm.ToValue(code))
+	}()
 	err = withSource(code, err)
 	cm.timer = prevTimer
 	timer.Stop()
