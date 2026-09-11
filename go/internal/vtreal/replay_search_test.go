@@ -105,6 +105,9 @@ func TestSearch(t *testing.T) {
 		a.waitFor("draft text")
 		a.key('s', uv.ModCtrl)
 		a.key(uv.KeyEscape, 0)
+		// The esc hold (escresidue.go) releases the Esc 250 ms late: a
+		// quiet screen before then is not the settled one.
+		a.waitFor("? keys")
 		s := a.settled()
 		if !strings.Contains(s, "draft text") {
 			t.Errorf("draft lost after ctrl+s / esc:\n%s", a.text())
