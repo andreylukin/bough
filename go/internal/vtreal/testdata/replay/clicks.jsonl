@@ -1,0 +1,13 @@
+{"seq":1,"at":"2026-09-10T10:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T10:00:01Z","kind":"input","data":{"text":"count to two"}}
+{"seq":3,"at":"2026-09-10T10:00:02Z","kind":"assistant","data":{"text":"```js\nconsole.log(1)\nconsole.log(2)\n```"}}
+{"seq":4,"at":"2026-09-10T10:00:02Z","kind":"code","data":{"text":"console.log(1)\nconsole.log(2)\n"}}
+{"seq":5,"at":"2026-09-10T10:00:02Z","kind":"result","data":{"code":"console.log(1)\nconsole.log(2)\n","text":"one\ntwo\nthree\n"}}
+{"seq":6,"at":"2026-09-10T10:00:03Z","kind":"assistant","data":{"text":"```stop\nCounted.\n```"}}
+{"seq":7,"at":"2026-09-10T10:00:03Z","kind":"done","data":{"text":""}}
+{"seq":8,"at":"2026-09-10T10:00:10Z","kind":"input","data":{"text":"now break it"}}
+{"seq":9,"at":"2026-09-10T10:00:11Z","kind":"assistant","data":{"text":"```js\nconsole.log(3)\nconsole.log(4)\n```"}}
+{"seq":10,"at":"2026-09-10T10:00:11Z","kind":"code","data":{"text":"console.log(3)\nconsole.log(4)\n"}}
+{"seq":11,"at":"2026-09-10T10:00:12Z","kind":"result","data":{"code":"console.log(3)\nconsole.log(4)\n","text":"error: boom failed\n  at one\n  at two"}}
+{"seq":12,"at":"2026-09-10T10:00:13Z","kind":"assistant","data":{"text":"```stop\nIt broke.\n```"}}
+{"seq":13,"at":"2026-09-10T10:00:13Z","kind":"done","data":{"text":""}}
