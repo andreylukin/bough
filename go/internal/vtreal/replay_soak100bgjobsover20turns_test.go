@@ -144,6 +144,11 @@ func soak100bgjobsover20turnsChildren(t *testing.T, pid int) []string {
 	var kids []string
 	for _, l := range strings.Split(string(out), "\n") {
 		f := strings.Fields(l)
+		// The tty crash guard (plugins/ui/crashguard.go) is bough re-exec'd for
+		// the process's whole life; it is expected, not a leak.
+		if len(f) == 4 && filepath.Base(f[3]) == "bough" {
+			continue
+		}
 		if len(f) > 1 && f[0] == strconv.Itoa(pid) {
 			kids = append(kids, strings.TrimSpace(l))
 		}
