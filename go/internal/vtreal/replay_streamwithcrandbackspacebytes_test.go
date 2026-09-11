@@ -129,9 +129,6 @@ func TestStreamWithCRAndBackspaceBytes(t *testing.T) {
 	})
 
 	t.Run("Backspace", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_STREAMWITHCRANDBACKSPACEBYTES") == "" {
-			t.Skip("known bug: plugins/ui sanitizeText drops \\b instead of erasing the previous char (\"stepX\\bY\" renders \"stepXY\"); set BOUGH_KNOWN_STREAMWITHCRANDBACKSPACEBYTES=1 to run")
-		}
 		t.Parallel()
 		a := streamWithCRAndBackspaceBytesRun(t)
 		row := hugeOutputRow(a.lines(), "▸ result")
