@@ -124,6 +124,10 @@ func (m *model) expireAsks() {
 func (m *model) clearPendingAsk() {
 	m.pendingAsk = ""
 	m.input.Placeholder = "say something"
+	if m.input.Value() == "" {
+		m.input.SetValue(m.askStash)
+	}
+	m.askStash = ""
 }
 
 // strList tolerates both the in-process ([]string) and JSONL-replayed

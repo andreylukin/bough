@@ -143,6 +143,7 @@ type model struct {
 	keepRow     map[int]bool   // block ids closed by hand: they stay rows, never fold (see fold.go)
 	pendingAsk  string         // ask id the composer routes answers to; "" = none
 	keysBlock   int            // id of the last "?"/keys block; esc drops it first while an ask is pending
+	askStash    string         // composer draft displaced by the pending ask
 	pal         palette        // "/" command palette (see palette.go)
 	at          palette        // "@" file picker (see atfiles.go)
 	atFiles     []string       // the picker's file list, read when it opens
@@ -1158,6 +1159,12 @@ func (m *model) addEvent(ev Event) {
 	case "ask":
 		m.blocks = append(m.blocks, block{id: id, kind: "ask", text: ev.Text,
 			askID: ev.ID, options: ev.Options})
+		if m.pendingAsk == "" {
+			// The draft is not the answer: set it aside until the ask
+			// is released (clearPendingAsk).
+			m.askStash = m.input.Value()
+			m.input.Reset()
+		}
 		m.pendingAsk = ev.ID
 		m.input.Placeholder = askPlaceholder
 	case "code", "result":

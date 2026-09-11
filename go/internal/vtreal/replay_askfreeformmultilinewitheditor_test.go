@@ -136,9 +136,6 @@ func TestAskFreeformMultilineWithEditor(t *testing.T) {
 	editorNoTempLeft(a)
 
 	t.Run("draft restored", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_ASK_FREEFORM_MULTILINE_WITH_EDITOR") == "" {
-			t.Skip("known bug: a composer draft present when an ask arrives becomes the answer's text and is never restored (plugins/ui/model.go case \"ask\" / ask.go answerPending input.Reset); set BOUGH_KNOWN_ASK_FREEFORM_MULTILINE_WITH_EDITOR=1 to run")
-		}
 		if row := editorComposer(a); !strings.Contains(row, "draft before ask") {
 			t.Fatalf("composer row %q: the pre-ask draft was not restored\n%s", row, a.text())
 		}
