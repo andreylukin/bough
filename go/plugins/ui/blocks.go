@@ -294,17 +294,28 @@ func (m *model) finishThinking(id int, text string) {
 }
 
 func (m *model) addDelta(id int, delta string) {
-	if n := len(m.blocks); n > 0 && m.blocks[n-1].live && m.blocks[n-1].kind == "assistant" {
-		m.blocks[n-1].text += delta
+	if i := m.liveReply(); i >= 0 {
+		m.blocks[i].text += delta
 		return
 	}
 	m.blocks = append(m.blocks, block{id: id, kind: "assistant", text: delta, live: true})
 }
 
+// liveReply is the index of the streaming assistant block, or -1. It
+// need not be last: a steer landing mid-stream is appended after it.
+func (m *model) liveReply() int {
+	for i := len(m.blocks) - 1; i >= 0; i-- {
+		if m.blocks[i].live && m.blocks[i].kind == "assistant" {
+			return i
+		}
+	}
+	return -1
+}
+
 // dropLive removes the provisional streaming block, if any.
 func (m *model) dropLive() {
-	if n := len(m.blocks); n > 0 && m.blocks[n-1].live && m.blocks[n-1].kind == "assistant" {
-		m.blocks = m.blocks[:n-1]
+	if i := m.liveReply(); i >= 0 {
+		m.blocks = append(m.blocks[:i], m.blocks[i+1:]...)
 	}
 }
 

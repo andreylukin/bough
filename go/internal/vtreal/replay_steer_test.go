@@ -144,18 +144,13 @@ func TestSteerMidTurn(t *testing.T) {
 		}
 	})
 
-	// Known bug (2026-09-11): the live block streaming when the steer
-	// was entered stays on screen frozen ("● bough / Surveying▌") above
-	// the steer, next to the full reply. Strict with BOUGH_STEER_STRICT=1.
+	// The live block streaming when the steer was entered must not stay
+	// on screen frozen ("● bough / Surveying▌") above the steer.
 	t.Run("TestSteerNoStaleLiveBlock", func(t *testing.T) {
 		if strings.Count(screen, steerFirst) == 1 && !strings.Contains(screen, "▌") {
 			return
 		}
-		msg := fmt.Sprintf("a frozen partial live block survives the steered turn:\n%s", screen)
-		if os.Getenv("BOUGH_STEER_STRICT") == "" {
-			t.Skip("known bug: " + msg)
-		}
-		t.Error(msg)
+		t.Errorf("a frozen partial live block survives the steered turn:\n%s", screen)
 	})
 
 	t.Run("TestSteerReachesNextModelCall", func(t *testing.T) {

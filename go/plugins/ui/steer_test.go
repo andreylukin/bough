@@ -216,3 +216,24 @@ func TestKeysHelpNamesFollowUp(t *testing.T) {
 		t.Fatalf("keys help should name alt+enter and steering:\n%s", txt)
 	}
 }
+
+// A steer landing while a reply streams sits below the live block;
+// the reply's "assistant" event must still replace that block, not
+// leave it frozen above the steer with a second copy below.
+func TestSteerMidStreamDropsLiveBlock(t *testing.T) {
+	t.Parallel()
+	d, _ := steerDrv(t, true)
+	d.event("assistant-delta", "Surveying")
+	d.event("assistant-delta", " the tree")
+	d.event("steer", "use B instead")
+	d.event("assistant", "Surveying the tree done.")
+	d.event("done", "")
+	for _, b := range d.m.blocks {
+		if b.live {
+			t.Fatalf("live block survived the turn: %+v", b)
+		}
+	}
+	if f := d.plain(); strings.Count(f, "Surveying") != 1 || strings.Contains(f, "▌") {
+		t.Fatalf("want one settled reply:\n%s", f)
+	}
+}
