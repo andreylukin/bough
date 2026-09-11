@@ -28,12 +28,12 @@ func commandsTape(t *testing.T) string {
 	return p
 }
 
-// commandsSystemText is every "system" entry this run has written,
-// joined — where a command's output lands, whether or not it is still
-// on screen (a long one, /context, scrolls away).
-func commandsSystemText(a *app) string {
+// commandsSystemEntries is every "system" entry this run has written —
+// where a command's output lands, whether or not it is still on screen
+// (a long one, /context, scrolls away).
+func commandsSystemEntries(a *app) []string {
 	paths, _ := filepath.Glob(filepath.Join(a.home, ".bough", "history", "*.jsonl"))
-	var b strings.Builder
+	var out []string
 	for _, p := range paths {
 		entries, err := history.Read(p)
 		if err != nil {
@@ -42,29 +42,34 @@ func commandsSystemText(a *app) string {
 		for _, e := range entries {
 			if e.Kind == "system" {
 				text, _ := e.Data["text"].(string)
-				b.WriteString(text)
-				b.WriteString("\n")
+				out = append(out, text)
 			}
 		}
 	}
-	return b.String()
+	return out
 }
 
 // commandsDispatch types one "/..." line and waits for its output to
-// reach the transcript log.
+// reach the transcript log. Only entries written after the line was
+// sent count, so an earlier command's output cannot satisfy it.
 func commandsDispatch(t *testing.T, a *app, line, want string) {
 	t.Helper()
+	before := len(commandsSystemEntries(a))
 	a.typeText(line)
 	a.key(uv.KeyEnter, 0)
+	var fresh string
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if strings.Contains(commandsSystemText(a), want) {
-			return
+		if all := commandsSystemEntries(a); len(all) > before {
+			fresh = strings.Join(all[before:], "\n")
+			if strings.Contains(fresh, want) {
+				return
+			}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("%s: output never mentioned %q\nlogged system output:\n%s\nscreen:\n%s",
-		line, want, commandsSystemText(a), a.text())
+	t.Fatalf("%s: output never mentioned %q\nsystem output since the command:\n%s\nscreen:\n%s",
+		line, want, fresh, a.text())
 }
 
 // commandsCloseOverlay presses esc until the composer is back. A
@@ -99,7 +104,7 @@ func TestCommandsDuringReplay(t *testing.T) {
 		{"help", "/help", "list commands"},
 		{"context", "/context", "Everything the model is told before your message"},
 		{"cost", "/cost", "cost:"},
-		{"keys", "/keys", "keys"},
+		{"keys", "/keys", "mid-turn: queue the line"},
 		{"theme", "/theme", "usage: /theme <name>"},
 		{"scratch", "/scratch", "scratchpad:"},
 		{"todo", "/todo", "no todos"},
