@@ -641,7 +641,7 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 		if b.collapsed {
 			return m.header(b, th)
 		}
-		return th["system"].Width(max(m.width, 10)).Render(b.text)
+		return linkURLs(th["system"].Width(max(m.width, 10)).Render(b.text))
 	case "error":
 		// Wrap to width — the viewport clips long lines, and the tail
 		// of an error is usually the actionable part. Collapsed, the
@@ -1684,4 +1684,14 @@ func (m *model) todoPanel(cfg *uiCfg) []string {
 		lines = append(lines, xansi.Truncate(sanitizeText(l), max(m.width, 1), "…"))
 	}
 	return lines
+}
+
+// bareURL is a URL as it appears in rendered text: up to whitespace or
+// an escape, not ending in sentence punctuation.
+var bareURL = regexp.MustCompile(`https?://[^\s\x1b]*[^\s\x1b.,;:)'"]`)
+
+// linkURLs makes each URL in rendered text an OSC 8 link, so a page
+// URL in command output (/artifacts) is one click away.
+func linkURLs(s string) string {
+	return bareURL.ReplaceAllString(s, "\x1b]8;;$0\x07$0\x1b]8;;\x07")
 }

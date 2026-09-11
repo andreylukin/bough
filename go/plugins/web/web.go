@@ -11,6 +11,7 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -19,6 +20,7 @@ import (
 	"os/exec"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -161,7 +163,24 @@ func Open(url string) error {
 	if runtime.GOOS == "darwin" {
 		cmd = "open"
 	}
-	return exec.Command(cmd, url).Start()
+	c := exec.Command(cmd, url)
+	var stderr bytes.Buffer
+	c.Stderr = &stderr
+	if err := c.Start(); err != nil {
+		return err
+	}
+	// open/xdg-open hand off and exit at once; a failure (no handler,
+	// no display) is a non-zero exit. One that lingers is not waited on.
+	done := make(chan error, 1)
+	go func() { done <- c.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("%s: %v %s", cmd, err, strings.TrimSpace(stderr.String()))
+		}
+	case <-time.After(2 * time.Second):
+	}
+	return nil
 }
 
 // One listener per process: a remount reuses it.

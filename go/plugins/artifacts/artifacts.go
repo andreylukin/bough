@@ -173,7 +173,10 @@ func (s *Store) Publish(name string, code string) (string, error) {
 	}
 	s.mu.Unlock()
 	if first && s.open != nil {
-		_ = s.open(url)
+		if err := s.open(url); err != nil {
+			// Still published: say so, so the user gets the URL.
+			return url + "\nthe browser did not open (" + err.Error() + "); give the user this URL", nil
+		}
 	}
 	return url, nil
 }
@@ -672,6 +675,25 @@ func init() {
 	kernel.Register("artifacts", func() kernel.Plugin { return plugin{} })
 }
 
+// openLatest opens the page published most recently (the index when
+// none), whether or not Publish already opened it, and says what
+// happened: a browser that would not open still leaves the URL.
+func (s *Store) openLatest() string {
+	s.mu.Lock()
+	url := s.last
+	s.mu.Unlock()
+	if url == "" {
+		url = s.web.URL() + "/artifacts/"
+	}
+	if s.open == nil {
+		return url
+	}
+	if err := s.open(url); err != nil {
+		return "the browser did not open (" + err.Error() + "): " + url
+	}
+	return "opened " + url
+}
+
 func (plugin) Name() string     { return "artifacts" }
 func (plugin) Inject() []string { return []string{"codemode", "web"} }
 
@@ -744,16 +766,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		info := commands.CommandInfo{Name: "artifacts", Usage: "[open]", Summary: "pages published this session, with their URLs; open = the latest in the browser"}
 		run := func(args string) (string, error) {
 			if args == "open" {
-				s.mu.Lock()
-				url := s.last
-				s.mu.Unlock()
-				if url == "" {
-					url = s.web.URL() + "/artifacts/"
-				}
-				if err := web.Open(url); err != nil {
-					return url, nil
-				}
-				return "opened " + url, nil
+				return s.openLatest(), nil
 			}
 			return s.List(), nil
 		}
