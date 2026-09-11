@@ -284,9 +284,9 @@ func TestFenceVariants(t *testing.T) {
 	}{
 		"two":       {uitest.Bash("echo A") + "\nthen\n" + uitest.Bash("echo B"), 1, "end-two"},
 		"non-js":    {"```python\nprint('x')\n```\nnot run", 0, "not run"},
-		"unclosed":  {"```js\ntools.bash(\"echo U\")", 0, "echo U"},
-		"tilde":     {"~~~js\ntools.bash(\"echo T\")\n~~~\nnot run", 0, "not run"},
-		"uppercase": {"```JS\ntools.bash(\"echo C\")\n```\nnot run", 0, "not run"},
+		"unclosed":  {"```js\ntools.bash(\"echo U\")", 0, "end-unclosed"}, // the retry supersedes the first reply
+		"tilde":     {"~~~js\ntools.bash(\"echo T\")\n~~~\nnot run", 0, "end-tilde"},
+		"uppercase": {"```JS\ntools.bash(\"echo C\")\n```\nnot run", 0, "end-uppercase"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
