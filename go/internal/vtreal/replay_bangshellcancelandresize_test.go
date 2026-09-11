@@ -62,8 +62,6 @@ func bangShellCancelAndResizeNextTurn(t *testing.T, tm *tmuxApp, home string) {
 
 func TestBangShellCancelAndResize(t *testing.T) {
 	t.Parallel()
-	const gate = "BOUGH_KNOWN_BANG_SHELL_CANCEL_AND_RESIZE"
-
 	t.Run("TestBangShellCancelAndResizeCompletesAfterResize", func(t *testing.T) {
 		t.Parallel()
 		tm, home, line, marker := bangShellCancelAndResizeStart(t)
@@ -90,9 +88,6 @@ func TestBangShellCancelAndResize(t *testing.T) {
 
 	t.Run("TestBangShellCancelAndResizeEscKillsChild", func(t *testing.T) {
 		t.Parallel()
-		if os.Getenv(gate) == "" {
-			t.Skip("known bug: esc does not cancel a running ! command — runBang (plugins/ui/bang.go) runs under a 60s-timeout context nothing else cancels; set " + gate + " to run")
-		}
 		tm, home, line, marker := bangShellCancelAndResizeStart(t)
 		resizeTmuxSend(tm, line)
 		tm.waitFor("bscr-tick-10")

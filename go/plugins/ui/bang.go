@@ -1,7 +1,7 @@
 package ui
 
 // "!" bash mode: a composer line starting with "!" runs the rest
-// directly as `sh -c` (60s timeout, cwd = process cwd) — it NEVER
+// directly as `sh -c` (60s timeout or esc, cwd = process cwd) — it NEVER
 // reaches the LLM. The line echoes like a dispatched command and the
 // output lands as a collapsible result-style block labeled "! <cmd>".
 // Both halves are recorded to history as "command"/"system" entries
@@ -9,9 +9,7 @@ package ui
 // prints "[system] <output>" instead (see headless.go).
 
 import (
-	"bytes"
 	"context"
-	"io"
 	"os/exec"
 	"strings"
 	"sync"
@@ -30,26 +28,29 @@ func bangCmd(line string) string {
 // runBang executes one "!" command. The result is always renderable
 // text: combined output, with a loud trailing "! <reason>" line on a
 // non-zero exit or timeout, and "(no output)" for silence.
-func runBang(cmd string) string { return runBangTo(cmd, nil) }
+func runBang(cmd string) string {
+	return runBangCtx(context.Background(), cmd, &bangBuf{})
+}
 
-// runBangTo is runBang that also copies the combined output to w (if
-// non-nil) as it arrives, so the TUI can stream a running command.
-func runBangTo(cmd string, w io.Writer) string {
-	ctx, cancel := context.WithTimeout(context.Background(), bangTimeout)
+// runBangCtx runs cmd in its own process group, streaming combined
+// output into buf; cancelling ctx kills the whole group (sh -c's
+// children included) and ends the text with "! cancelled".
+func runBangCtx(ctx context.Context, cmd string, buf *bangBuf) string {
+	ctx, cancel := context.WithTimeout(ctx, bangTimeout)
 	defer cancel()
-	var out bytes.Buffer
 	c := exec.CommandContext(ctx, "sh", "-c", cmd)
-	c.Stdout = &out
-	if w != nil {
-		c.Stdout = io.MultiWriter(&out, w)
-	}
-	c.Stderr = c.Stdout
+	c.Stdout, c.Stderr = buf, buf
+	ownProcessGroup(c)
+	c.Cancel = func() error { return killProcessGroup(c) }
+	c.WaitDelay = time.Second
 	err := c.Run()
-	s := strings.TrimRight(out.String(), "\n")
+	s := strings.TrimRight(buf.String(), "\n")
 	note := ""
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:
 		note = "! timeout after " + bangTimeout.String()
+	case ctx.Err() != nil:
+		note = "! cancelled"
 	case err != nil:
 		note = "! " + err.Error()
 	}
@@ -64,67 +65,49 @@ func runBangTo(cmd string, w io.Writer) string {
 	return s + "\n" + note
 }
 
-// bangRun is one running "!" command: its output so far, a wake
-// channel poked on every write, and the final result once it exits
-// (exited closes then too, releasing a pending chunk wait).
-type bangRun struct {
-	line     string
-	id       int // the result block streaming this run's output
-	mu       sync.Mutex
-	buf      []byte
-	wake     chan struct{}
-	done     chan string
-	exited   chan struct{}
-	finished bool // set by finishBang (UI goroutine): late chunks are dropped
+// bangBuf is the concurrency-safe output sink a running "!" command
+// writes and the UI's tick reads.
+type bangBuf struct {
+	mu sync.Mutex
+	b  []byte
 }
 
-func (r *bangRun) Write(p []byte) (int, error) {
-	r.mu.Lock()
-	r.buf = append(r.buf, p...)
-	r.mu.Unlock()
-	select {
-	case r.wake <- struct{}{}:
-	default:
-	}
+func (b *bangBuf) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.b = append(b.b, p...)
 	return len(p), nil
 }
 
-func (r *bangRun) partial() string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return strings.TrimRight(string(r.buf), "\n")
+func (b *bangBuf) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.b)
 }
 
-// wait blocks until the run exits.
-func (r *bangRun) wait() tea.Msg {
-	return bangDoneMsg{line: r.line, id: r.id, out: <-r.done, run: r}
+// bangRun is the in-flight "!" command: esc cancels it, ticks copy
+// its partial output into its result block.
+type bangRun struct {
+	id     int // the result block
+	buf    *bangBuf
+	cancel context.CancelFunc
 }
-
-// next waits for the run's next output; nil once it has exited.
-func (r *bangRun) next() tea.Msg {
-	select {
-	case <-r.wake:
-		return bangChunkMsg{run: r}
-	case <-r.exited:
-		return nil
-	}
-}
-
-// bangChunkMsg says a running "!" command wrote more output.
-type bangChunkMsg struct{ run *bangRun }
 
 // bangDoneMsg delivers a finished "!" command's output to Update.
 type bangDoneMsg struct {
 	line string // the full "!" composer line
-	id   int    // the result block to settle
 	out  string
 	run  *bangRun
 }
 
+// bangTickMsg refreshes a running "!" block's partial output.
+type bangTickMsg struct{ run *bangRun }
+
+const bangTick = 100 * time.Millisecond
+
 // dispatchBang handles a submitted "!" line: echo + history "command"
-// entry and a labeled result block now, then the shell run in the
-// background, its output streamed into that block as it arrives so a
-// slow command never freezes the UI or hides its progress.
+// entry now, then the shell run as a tea.Cmd so a slow command never
+// freezes the UI. The result block exists from the start and streams.
 func (m *model) dispatchBang(line string) tea.Cmd {
 	cfg := m.cfg.Load()
 	m.input.Reset()
@@ -132,47 +115,54 @@ func (m *model) dispatchBang(line string) tea.Cmd {
 	m.log(cfg, "command", line)
 	m.blocks = append(m.blocks, block{id: m.nextID, kind: "command", text: line})
 	m.nextID++
-	r := &bangRun{line: line, id: m.nextID, wake: make(chan struct{}, 1), done: make(chan string, 1), exited: make(chan struct{})}
-	m.blocks = append(m.blocks, block{id: r.id, kind: "result", label: "! " + bangCmd(line), text: "running…"})
+	cmd := bangCmd(line)
+	ctx, cancel := context.WithCancel(context.Background())
+	run := &bangRun{id: m.nextID, buf: &bangBuf{}, cancel: cancel}
+	m.bang = run
+	m.blocks = append(m.blocks, block{id: run.id, kind: "result", label: "! " + cmd, text: "…"})
 	m.nextID++
 	m.refresh()
 	m.vp.GotoBottom()
-	cmd := bangCmd(line)
-	go func() {
-		r.done <- runBangTo(cmd, r)
-		close(r.exited)
-	}()
-	return tea.Batch(r.wait, r.next)
+	return tea.Batch(func() tea.Msg {
+		defer cancel()
+		return bangDoneMsg{line: line, out: runBangCtx(ctx, cmd, run.buf), run: run}
+	}, bangTickCmd(run))
 }
 
-// streamBang shows a running command's output so far and waits for more.
-func (m *model) streamBang(msg bangChunkMsg) tea.Cmd {
-	if msg.run.finished {
-		return nil
-	}
-	if s := msg.run.partial(); s != "" {
-		m.setBangText(msg.run.id, s)
-	}
-	return msg.run.next
+func bangTickCmd(run *bangRun) tea.Cmd {
+	return tea.Tick(bangTick, func(time.Time) tea.Msg { return bangTickMsg{run: run} })
 }
 
-func (m *model) setBangText(id int, text string) {
+// setBangText replaces the run's result block text.
+func (m *model) setBangText(run *bangRun, text string) {
 	for i := range m.blocks {
-		if m.blocks[i].id == id {
+		if m.blocks[i].id == run.id {
 			m.blocks[i].text = text
-			m.refresh()
-			m.vp.GotoBottom()
-			return
 		}
 	}
+	m.refresh()
+	m.vp.GotoBottom()
 }
 
-// finishBang records the "system" history entry and settles the
-// labeled result block on the final output. The user asked for this
-// output, so it starts expanded (still collapsible like any result block).
+// tickBang copies partial output in while the run is still current.
+func (m *model) tickBang(msg bangTickMsg) tea.Cmd {
+	if m.bang != msg.run {
+		return nil
+	}
+	if s := strings.TrimRight(msg.run.buf.String(), "\n"); s != "" {
+		m.setBangText(msg.run, s)
+	}
+	return bangTickCmd(msg.run)
+}
+
+// finishBang records the "system" history entry and fills the
+// labeled result block. The user asked for this output, so it starts
+// expanded (still collapsible like any result block).
 func (m *model) finishBang(msg bangDoneMsg) {
 	cfg := m.cfg.Load()
 	m.log(cfg, "system", msg.out)
-	msg.run.finished = true
-	m.setBangText(msg.id, msg.out)
+	if m.bang == msg.run {
+		m.bang = nil
+	}
+	m.setBangText(msg.run, msg.out)
 }

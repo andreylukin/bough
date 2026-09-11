@@ -134,6 +134,7 @@ type model struct {
 	sel         selection     // mouse drag selection (see select.go)
 	lines       []string      // rendered content lines, for the selection
 	stop        stopState     // quit-key arming (see stop.go)
+	bang        *bangRun      // the running "!" command (esc cancels); nil = none
 	leader      bool          // the leader key was pressed: the next key is a chord (see actions.go)
 	comp        composerState // prompt recall (see composer.go)
 	tab         tabState      // Tab path-completion cycling (see pathcomplete.go)
@@ -854,12 +855,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.finishPredict(msg)
 		return m, nil
 
-	case bangChunkMsg:
-		return m, m.streamBang(msg)
-
 	case bangDoneMsg:
 		m.finishBang(msg)
 		return m, nil
+
+	case bangTickMsg:
+		return m, m.tickBang(msg)
 
 	case editorDoneMsg:
 		m.finishEditor(msg)
@@ -1430,6 +1431,12 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// the tool's return value, so the model knows it was waved off).
 	if key == "esc" && m.pendingAsk != "" && !m.inspecting {
 		m.answerPending("(declined)")
+		return m, nil
+	}
+
+	// A running "!" command owns esc: cancel it (kills its group).
+	if key == "esc" && m.bang != nil && !m.inspecting {
+		m.bang.cancel()
 		return m, nil
 	}
 
