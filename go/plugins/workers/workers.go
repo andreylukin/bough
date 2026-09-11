@@ -500,6 +500,12 @@ func (w *Workers) runChildTo(ctx context.Context, task string, id int, run func(
 		}
 		reply, err := w.llm.Complete(ctx, system, msgs)
 		if err != nil {
+			// A cancel landing mid-call is a cancel, not a provider
+			// failure: no error card, and spawn must not refund the slot.
+			if cerr := ctx.Err(); cerr != nil {
+				note("done", "", map[string]any{"status": "cancelled", "steps": steps})
+				return "", fmt.Errorf("workers: cancelled: %w", cerr)
+			}
 			note("error", err.Error(), nil)
 			note("done", "", map[string]any{"status": "error", "steps": steps})
 			return "", fmt.Errorf("workers: subagent llm: %w", err)

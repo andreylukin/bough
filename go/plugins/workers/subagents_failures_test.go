@@ -376,7 +376,6 @@ func TestSubagentsHangCancelledSpawnCard(t *testing.T) {
 		t.Fatalf("worker 1 has %d done cards", n)
 	}
 	t.Run("card says cancelled", func(t *testing.T) {
-		subagentsKnownBug(t, `a child cancelled mid-llm-call is carded status "error" with a sub:error "context canceled" (plugins/workers/workers.go runChildTo llm-error branch never checks ctx.Err()); spawn also refunds the slot as if the provider failed`)
 		if st, _ := r.done(1); st != "cancelled" {
 			t.Fatalf("done card = %q, want cancelled", st)
 		}
