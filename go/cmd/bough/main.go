@@ -265,6 +265,7 @@ func versionString() string {
 }
 
 func main() {
+	ui.RunCrashGuardIfAsked() // the tty crash-guard child (plugins/ui/crashguard.go)
 	loadEnvFile() // ~/.bough/env: API keys for launchd/fresh shells
 	cmd, args, err := command(os.Args[1:])
 	if err != nil {

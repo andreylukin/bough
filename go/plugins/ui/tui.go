@@ -33,7 +33,9 @@ func runTUI() {
 			m := newModel(80, 24, sendLive, events, &liveCfg) // real size arrives via WindowSizeMsg
 			// main owns the signals (SIGINT/SIGTERM/SIGHUP): bubbletea's
 			// own handler would tear the ui down past the unmount.
-			opts := []tea.ProgramOption{tea.WithoutSignalHandler()}
+			// Panics are not caught here: every panic, in any goroutine,
+			// takes the one crash path the crash guard handles.
+			opts := []tea.ProgramOption{tea.WithoutSignalHandler(), tea.WithoutCatchPanics()}
 			if term.IsTerminal(os.Stdin.Fd()) {
 				opts = append(opts, tea.WithInput(&pasteInput{File: os.Stdin}))
 			}
@@ -42,7 +44,9 @@ func runTUI() {
 			tuiProg = p
 			tuiMu.Unlock()
 			watchResume(p)
+			startCrashGuard()
 			_, err := p.Run()
+			stopCrashGuard()
 			close(tuiDone)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "ui: tui:", err)

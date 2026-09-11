@@ -10,8 +10,6 @@ package vtreal
 // picks the site: update, view, cmd (a tea.Cmd), pump (the waitEvent
 // goroutine that feeds loop events), goroutine (a plain goroutine, as a
 // plugin emitting events would run).
-//
-// Skipped unless BOUGH_KNOWN_SCROLL=1.
 
 import (
 	"encoding/json"
@@ -164,9 +162,6 @@ func startPanic(t *testing.T, at string) *app {
 }
 
 func TestScrollPanicRestoration(t *testing.T) {
-	if os.Getenv("BOUGH_KNOWN_SCROLL") != "1" {
-		t.Skip("known failure; set BOUGH_KNOWN_SCROLL=1")
-	}
 	for _, at := range []string{"update", "view", "cmd", "pump", "goroutine"} {
 		t.Run(at, func(t *testing.T) {
 			t.Parallel()
