@@ -1,0 +1,4 @@
+{"seq":1,"at":"2026-09-10T10:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T10:00:01Z","kind":"input","data":{"text":"how many go files are here"}}
+{"seq":3,"at":"2026-09-10T10:00:03Z","kind":"assistant","data":{"text":"```stop\nTwo Go files: a.go and b.go.\n```"}}
+{"seq":4,"at":"2026-09-10T10:00:03Z","kind":"done","data":{"text":""}}
