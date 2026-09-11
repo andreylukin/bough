@@ -309,7 +309,6 @@ func TestSubagentsBackgroundChildCannotSpawnAll(t *testing.T) {
 }
 
 func TestSubagentsEmptyTask(t *testing.T) {
-	subagentsKnownBug(t, `spawn("")/spawnAll([""]) are not validated (plugins/workers/workers.go spawn/spawnAll): the child is sent an empty user message, which real providers reject`)
 	l := subagentsTape(map[string][]string{"": {"CHILD_RAN_ON_EMPTY"}, "   ": {"CHILD_RAN_ON_EMPTY"}})
 	r := subagentsMount(t, 5*time.Second, nil, l)
 	for _, js := range []string{`tools.spawn("")`, `tools.spawn("   ")`, `tools.spawnAll([""])`} {

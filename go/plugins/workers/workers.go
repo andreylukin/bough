@@ -197,6 +197,9 @@ func (w *Workers) Background(ctx context.Context, task string, shape map[string]
 // spawn is tools.spawn(task) -> final reply. A returned error becomes a
 // JS exception in the calling code block.
 func (w *Workers) spawn(task string, shape ...map[string]any) (any, error) {
+	if strings.TrimSpace(task) == "" {
+		return "", fmt.Errorf("workers: spawn needs a non-empty task")
+	}
 	w.mu.Lock()
 	if w.inChild {
 		w.mu.Unlock()
@@ -338,6 +341,11 @@ type codeRes struct {
 func (w *Workers) spawnAll(tasks []string, shape ...map[string]any) ([]any, error) {
 	if len(tasks) == 0 {
 		return nil, fmt.Errorf("workers: spawnAll needs at least one task")
+	}
+	for i, t := range tasks {
+		if strings.TrimSpace(t) == "" {
+			return nil, fmt.Errorf("workers: spawnAll task %d is empty", i)
+		}
 	}
 	w.mu.Lock()
 	if w.inChild {
