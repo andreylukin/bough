@@ -3,7 +3,9 @@
 // ./.bough/init.js (both optional) in the shared codemode VM with a
 // global `bough` API, and Provides the services those files configure:
 // "theme", "keymap", "llm" (a JS provider), "cognition", "projection".
-// Unknown setup keys, bad style strings, and JS errors fail Apply loud.
+// Unknown setup keys, bad style strings, and JS errors are loud but not
+// fatal: Apply publishes them as the "notice" service (the ui's first
+// row) and the rest of the tree mounts.
 package initjs
 
 import (
@@ -499,7 +501,24 @@ func init() {
 func (plugin) Name() string     { return "init-js" }
 func (plugin) Inject() []string { return []string{"codemode", "commands"} }
 
+// Apply runs mount; a broken init file must not take boot down with it,
+// so its error becomes a notice (joined after any launcher notice).
 func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
+	err := mount(ctx)
+	if err == nil {
+		return nil
+	}
+	fmt.Fprintln(os.Stderr, err)
+	n := err.Error()
+	if prev, perr := kernel.Get[string](ctx, "notice"); perr == nil && prev != "" {
+		n = prev + " · " + n
+	}
+	ctx.Provide("notice", n)
+	return nil
+}
+
+// mount executes the init files and Provides what they configure.
+func mount(ctx *kernel.Context) error {
 	cm, err := kernel.Get[vmHost](ctx, "codemode")
 	if err != nil {
 		return err
@@ -538,9 +557,6 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		st.sealed = true
 		return nil
 	})
-	if err != nil {
-		return err
-	}
 
 	// Unmount: drop the global, JS-registered tools, and JS-registered
 	// commands so a remount (or removal of this row) leaves the shared
@@ -557,6 +573,9 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			reg.Unregister(n)
 		}
 	})
+	if err != nil {
+		return err
+	}
 
 	if len(st.theme) > 0 {
 		ctx.Provide("theme", st.theme)

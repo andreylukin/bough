@@ -39,8 +39,32 @@ func apply(t *testing.T, globalJS, projectJS string) (*kernel.Context, *codemode
 	cm := codemode.New(5 * time.Second)
 	ctx.Provide("codemode", cm)
 	ctx.Provide("commands", commands.NewRegistry())
-	err := plugin{}.Apply(ctx, nil)
+	err := mount(ctx)
 	return ctx, cm, err
+}
+
+// A broken init.js is a notice, not a failed mount: the rest of the
+// tree must still boot.
+func TestSyntaxErrorIsNoticeNotApplyError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(t.TempDir())
+	if err := os.MkdirAll(filepath.Join(home, ".bough"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".bough", "init.js"), []byte("bough.setup({\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := kernel.NewContext()
+	ctx.Provide("codemode", codemode.New(5*time.Second))
+	ctx.Provide("commands", commands.NewRegistry())
+	if err := (plugin{}).Apply(ctx, nil); err != nil {
+		t.Fatalf("Apply = %v, want nil (error as notice)", err)
+	}
+	n, err := kernel.Get[string](ctx, "notice")
+	if err != nil || !strings.Contains(n, "init.js") || !strings.Contains(n, "SyntaxError") {
+		t.Fatalf("notice = %q, %v; want a SyntaxError naming init.js", n, err)
+	}
 }
 
 func TestSetupTypoFailsApply(t *testing.T) {

@@ -120,11 +120,9 @@ func TestInitJsCommand(t *testing.T) {
 	}
 }
 
-// A syntax error in init.js must be visible, naming the file. Today
-// kernel.Mount treats any row's Apply error as fatal, so bough exits
-// with the error on stderr (on the PTY) instead of booting degraded
-// with a notice. This asserts the visible half; the boot-survives half
-// is TestInitJsSyntaxErrorKeepsBoot, skipped until the seam exists.
+// A syntax error in init.js must be visible, naming the file: init-js
+// publishes it as the "notice" service instead of failing its mount.
+// TestInitJsSyntaxErrorKeepsBoot asserts the rest of the tree boots.
 func TestInitJsSyntaxErrorVisible(t *testing.T) {
 	t.Parallel()
 	a := initJsBoot(t, "bough.setup({ui: {theme: {user: \"#ff0000\"}}\n")
@@ -134,8 +132,7 @@ func TestInitJsSyntaxErrorVisible(t *testing.T) {
 }
 
 func TestInitJsSyntaxErrorKeepsBoot(t *testing.T) {
-	t.Skip("missing seam: cmd/bough/main.go ctx.Mount (kernel.Mount) is fatal on any row Apply error; " +
-		"init-js cannot boot degraded and publish a \"notice\" for the ui row")
+	t.Parallel()
 	a := initJsBoot(t, "bough.setup({\n")
 	a.waitFor("say something")
 	a.waitFor("init.js")
