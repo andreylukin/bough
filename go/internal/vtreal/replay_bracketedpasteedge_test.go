@@ -92,8 +92,7 @@ func TestBracketedPasteEdge(t *testing.T) {
 		bad   []string // substrings that must never reach the screen
 		known string   // a known product bug: skipped unless BOUGH_KNOWN_BRACKETEDPASTEEDGE is set
 	}{
-		{"esc_and_ctrl_bytes", []string{"\x1b[200~ab\x1bcd\x03ef\x07gh\x1b[201~"}, []string{"ab", "gh"}, []string{"[201~", "\x1b", "^["},
-			"a paste carrying ESC/ctrl bytes never lands in the composer (uv keeps raw control bytes in PasteEvent; plugins/ui/paste.go handlePaste does not strip them)"},
+		{"esc_and_ctrl_bytes", []string{"\x1b[200~ab\x1bcd\x03ef\x07gh\x1b[201~"}, []string{"ab", "gh"}, []string{"[201~", "\x1b", "^["}, ""},
 		{"crlf", []string{"\x1b[200~one\r\ntwo\r\nthree\x1b[201~"}, []string{"one\ntwo\nthree"}, []string{"^M"}, ""},
 		{"split_end", []string{"\x1b[200~split paste\x1b[20", "1~"}, []string{"split paste"}, []string{"[20", "1~"},
 			"a paste-end split across reads is dropped as an expired UnknownEvent (ultraviolet terminal_reader.go scanEvents), so the paste never ends"},
@@ -106,9 +105,11 @@ func TestBracketedPasteEdge(t *testing.T) {
 				t.Skip("known bug: " + c.known)
 			}
 			a := start(t, 80, 24)
+			a.waitFor("say something") // before raw mode, a cooked PTY flushes the paste on its \x03
 			bracketedpasteedgeWrite(t, a, c.parts...)
 			last := c.want[len(c.want)-1]
-			a.waitFor(last[strings.LastIndex(last, "\n")+1:])
+			// the composer, not the screen: earlier rows can already contain "gh"
+			a.waitUntil(func(s string) bool { return strings.Contains(bracketedpasteedgeDraft(s), last) }, "composer to hold "+last)
 			s := a.settled()
 			draft := bracketedpasteedgeDraft(s)
 			for _, w := range c.want {
