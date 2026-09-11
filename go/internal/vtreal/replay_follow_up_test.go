@@ -186,6 +186,9 @@ func TestFollowUpAltEnterQueuesMidTurn(t *testing.T) {
 	cfg := strings.Replace(replayConfig(tape),
 		fmt.Sprintf("config: {file: %q}\n", tape),
 		fmt.Sprintf("config: {file: %q, delay_ms: 400}\n", tape), 1)
+	if !strings.Contains(cfg, "delay_ms: 400") {
+		t.Fatalf("could not add delay_ms to the replay row:\n%s", cfg)
+	}
 	a := startCfg(t, 100, 30, cfg)
 	a.typeText("alpha")
 	a.key(uv.KeyEnter, 0)
