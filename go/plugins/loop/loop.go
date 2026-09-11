@@ -716,6 +716,11 @@ func (r *runner) note(emit func(kind, text string), kind, text string, extra map
 	data := map[string]any{"text": text}
 	maps.Copy(data, extra)
 	r.hist.Append(kind, data)
+	if h, ok := r.hist.(interface{ TakeErr() error }); ok {
+		if err := h.TakeErr(); err != nil {
+			emit("system", fmt.Sprintf("history not saved: %v", err))
+		}
+	}
 	r.noteData = extra
 	emit(kind, text)
 	r.noteData = nil

@@ -56,6 +56,10 @@ type Store struct {
 	last    int64 // seq of this store's own latest entry: the next entry's parent
 	off     int64 // bytes of the file this store has seen (read or written)
 	closed  bool
+	// failing is set while appends fail (a full disk, EFBIG); failErr
+	// is the first error of that streak until TakeErr hands it over.
+	failing bool
+	failErr error
 }
 
 // Open creates (or truncates) the JSONL file at path, creating parent
@@ -297,7 +301,14 @@ func (s *Store) Append(kind string, data map[string]any) Entry {
 		}
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bough: history append: %v\n", err)
+		// A bufio.Writer stays failed after its first error; drop the
+		// lost line so a later append can land once space frees up.
+		s.w.Reset(s.f)
+		if !s.failing {
+			s.failing, s.failErr = true, err
+		}
+	} else {
+		s.failing = false
 	}
 	return e
 }
@@ -324,6 +335,17 @@ func (s *Store) catchUp() {
 		}
 	}
 	s.off = st.Size()
+}
+
+// TakeErr returns the error that started the current run of failed
+// appends, once: the caller (the loop) shows it in the TUI. Printing
+// to stderr drew over the alt screen and said nothing useful there.
+func (s *Store) TakeErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	err := s.failErr
+	s.failErr = nil
+	return err
 }
 
 // write puts one line on disk, reopening the file if the store has

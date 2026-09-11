@@ -124,9 +124,6 @@ func TestHistoryDBDiskFull(t *testing.T) {
 		}
 	})
 	t.Run("layout intact", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_HISTORY_DB_DISK_FULL") == "" {
-			t.Skip("known bug: history.Store.Append prints \"bough: history append: ... file too large\" to stderr, which lands on the alt screen over the composer and status bar (plugins/history/history.go Append); set BOUGH_KNOWN_HISTORY_DB_DISK_FULL=1 to run")
-		}
 		a.t = t
 		a.check("turn 2 on a full disk")
 	})
@@ -143,9 +140,6 @@ func TestHistoryDBDiskFull(t *testing.T) {
 		}
 	})
 	t.Run("visible error", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_HISTORY_DB_DISK_FULL") == "" {
-			t.Skip("known bug: history.Store.Append reports write errors on stderr only (plugins/history/history.go Append); the TUI never shows that turn 2 was not saved; set BOUGH_KNOWN_HISTORY_DB_DISK_FULL=1 to run")
-		}
 		// Above the composer: rendered by the TUI, not stderr bleeding
 		// over the alt screen.
 		ls := strings.Split(screen, "\n")
