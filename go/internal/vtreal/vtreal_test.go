@@ -11,9 +11,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -25,6 +27,17 @@ import (
 var bin string // built once in TestMain
 
 func TestMain(m *testing.M) {
+	// Every child inherits this: none may take the user's page server
+	// port (localhost:7683) and serve this build's pages from a temp HOME.
+	os.Setenv("BOUGH_WEB_ADDR", "127.0.0.1:0")
+	// A killed run (ctrl+c, go test's SIGTERM) must not orphan children.
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sig
+		killChildren()
+		os.Exit(1)
+	}()
 	dir, err := os.MkdirTemp("", "vtreal-")
 	if err != nil {
 		panic(err)
@@ -40,6 +53,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	code := m.Run()
+	killChildren()
 	os.RemoveAll(dir)
 	os.Exit(code)
 }

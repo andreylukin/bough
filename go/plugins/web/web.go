@@ -5,7 +5,9 @@
 // stay quiet — the pages are the same for all of them, because every
 // row that mounts here reads its state from disk, not from the process.
 //
-// Row config: addr (default localhost:7683).
+// Row config: addr (default localhost:7683, or $BOUGH_WEB_ADDR when
+// set: the test suites set 127.0.0.1:0 so the hundreds of processes
+// they boot never take the user's port and serve their stale pages).
 package web
 
 import (
@@ -138,6 +140,9 @@ func (plugin) Inject() []string { return nil }
 
 func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	addr := defaultAddr
+	if a := os.Getenv("BOUGH_WEB_ADDR"); a != "" {
+		addr = a
+	}
 	for k, v := range cfg {
 		if k != "addr" {
 			return fmt.Errorf("web: unknown config key %q", k)

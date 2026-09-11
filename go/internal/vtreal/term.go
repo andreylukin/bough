@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"os/exec"
 	"sync"
 	"testing"
@@ -81,7 +82,31 @@ func NewTerminal(tb testing.TB, cols, rows int) (*Terminal, error) {
 	return t, nil
 }
 
-func (t *Terminal) Start(cmd *exec.Cmd) error { return t.pty.Start(cmd) }
+// Start runs cmd on the PTY and records it for killChildren. xpty
+// starts it in the test binary's own process group (no Setsid), so a
+// killed run would otherwise leave it running, holding its port.
+func (t *Terminal) Start(cmd *exec.Cmd) error {
+	setDeathSig(cmd)
+	if err := t.pty.Start(cmd); err != nil {
+		return err
+	}
+	children.Store(cmd.Process.Pid, struct{}{})
+	return nil
+}
+
+// children are the pids every Terminal started in this test binary.
+var children sync.Map
+
+// killChildren kills every started child; TestMain calls it on exit
+// and on SIGINT/SIGTERM so a killed run leaves no orphan holding a port.
+func killChildren() {
+	children.Range(func(k, _ any) bool {
+		if p, err := os.FindProcess(k.(int)); err == nil {
+			_ = p.Kill()
+		}
+		return true
+	})
+}
 
 func (t *Terminal) Wait(cmd *exec.Cmd) error { return xpty.WaitProcess(t.tb.Context(), cmd) }
 

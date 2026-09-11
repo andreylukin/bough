@@ -29,6 +29,8 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	repoRoot = filepath.Dir(filepath.Dir(file))
+	// Children inherit this: none may take the user's page server port.
+	os.Setenv("BOUGH_WEB_ADDR", "127.0.0.1:0")
 
 	if bin := os.Getenv("BOUGH_BIN"); bin != "" {
 		boughBin = bin
