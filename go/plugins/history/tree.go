@@ -62,6 +62,10 @@ func Snapshot(dir string) (string, error) {
 		if err := os.WriteFile(tmp.Name(), data, 0o600); err != nil {
 			return "", err
 		}
+	} else if err := os.Remove(tmp.Name()); err != nil {
+		// No index yet (fresh `git init`): git reads a missing index
+		// file as empty but rejects a zero-byte one.
+		return "", err
 	}
 	env := []string{"GIT_INDEX_FILE=" + tmp.Name()}
 	if _, err := git(dir, env, "add", "-A"); err != nil {

@@ -86,6 +86,29 @@ func TestSnapshotPinsTreeWithoutTouchingIndex(t *testing.T) {
 // to its checkpoint content, a path the checkpoint lacks is deleted,
 // a listed path outside the repo is skipped (never deleted), and an
 // unlisted dirty file is left alone.
+// A freshly `git init`ed repo has no index file yet; an empty temp
+// index would be rejected as "smaller than expected".
+func TestSnapshotFreshRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tree, err := Snapshot(dir)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if got := runGit(t, dir, "cat-file", "-p", tree+":a.txt"); got != "one" {
+		t.Fatalf("a.txt in tree = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git", "index")); !os.IsNotExist(err) {
+		t.Fatalf("real index touched: %v", err)
+	}
+}
+
 func TestRestoreExactlyTheListedFiles(t *testing.T) {
 	repo := newRepo(t)
 	tree, err := Snapshot(repo)

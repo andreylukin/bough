@@ -75,11 +75,6 @@ func undoWorkspace(t *testing.T) (home, session string) {
 	write(".gitignore", ".bough/\nbough.yml\n")
 	write("a.txt", "before\n")
 	write("keep.txt", "before\n")
-	// history.Snapshot fails on a repo with no index yet (its empty
-	// temp index is "smaller than expected"), so seed one.
-	if out, err := exec.Command("git", "-C", home, "add", ".gitignore").CombinedOutput(); err != nil {
-		t.Fatalf("git add: %v %s", err, out)
-	}
 	tree, err := history.Snapshot(home)
 	if err != nil {
 		t.Fatalf("snapshot: %v", err)
