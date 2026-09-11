@@ -1,0 +1,28 @@
+{"seq":1,"at":"2026-09-10T13:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T13:00:01Z","kind":"input","data":{"text":"count to eight"}}
+{"seq":3,"at":"2026-09-10T13:00:02Z","kind":"assistant","data":{"text":"```js\nconsole.log(0)\n```"}}
+{"seq":4,"at":"2026-09-10T13:00:02Z","kind":"code","data":{"text":"console.log(0)\n"}}
+{"seq":5,"at":"2026-09-10T13:00:02Z","kind":"result","data":{"code":"console.log(0)\n","text":"0\n"}}
+{"seq":6,"at":"2026-09-10T13:00:02Z","kind":"assistant","data":{"text":"```js\nconsole.log(1)\n```"}}
+{"seq":7,"at":"2026-09-10T13:00:02Z","kind":"code","data":{"text":"console.log(1)\n"}}
+{"seq":8,"at":"2026-09-10T13:00:02Z","kind":"result","data":{"code":"console.log(1)\n","text":"1\n"}}
+{"seq":9,"at":"2026-09-10T13:00:02Z","kind":"assistant","data":{"text":"```js\nconsole.log(2)\n```"}}
+{"seq":10,"at":"2026-09-10T13:00:02Z","kind":"code","data":{"text":"console.log(2)\n"}}
+{"seq":11,"at":"2026-09-10T13:00:02Z","kind":"result","data":{"code":"console.log(2)\n","text":"2\n"}}
+{"seq":12,"at":"2026-09-10T13:00:02Z","kind":"assistant","data":{"text":"```js\nconsole.log(3)\n```"}}
+{"seq":13,"at":"2026-09-10T13:00:02Z","kind":"code","data":{"text":"console.log(3)\n"}}
+{"seq":14,"at":"2026-09-10T13:00:02Z","kind":"result","data":{"code":"console.log(3)\n","text":"3\n"}}
+{"seq":15,"at":"2026-09-10T13:00:02Z","kind":"assistant","data":{"text":"```js\nconsole.log(4)\n```"}}
+{"seq":16,"at":"2026-09-10T13:00:02Z","kind":"code","data":{"text":"console.log(4)\n"}}
+{"seq":17,"at":"2026-09-10T13:00:02Z","kind":"result","data":{"code":"console.log(4)\n","text":"4\n"}}
+{"seq":18,"at":"2026-09-10T13:00:02Z","kind":"assistant","data":{"text":"```js\nconsole.log(5)\n```"}}
+{"seq":19,"at":"2026-09-10T13:00:02Z","kind":"code","data":{"text":"console.log(5)\n"}}
+{"seq":20,"at":"2026-09-10T13:00:02Z","kind":"result","data":{"code":"console.log(5)\n","text":"5\n"}}
+{"seq":21,"at":"2026-09-10T13:00:02Z","kind":"assistant","data":{"text":"```js\nconsole.log(6)\n```"}}
+{"seq":22,"at":"2026-09-10T13:00:02Z","kind":"code","data":{"text":"console.log(6)\n"}}
+{"seq":23,"at":"2026-09-10T13:00:02Z","kind":"result","data":{"code":"console.log(6)\n","text":"6\n"}}
+{"seq":24,"at":"2026-09-10T13:00:02Z","kind":"assistant","data":{"text":"```js\nconsole.log(7)\n```"}}
+{"seq":25,"at":"2026-09-10T13:00:02Z","kind":"code","data":{"text":"console.log(7)\n"}}
+{"seq":26,"at":"2026-09-10T13:00:02Z","kind":"result","data":{"code":"console.log(7)\n","text":"7\n"}}
+{"seq":27,"at":"2026-09-10T13:00:04Z","kind":"assistant","data":{"text":"I counted from 0 to 7 and ran out of room."}}
+{"seq":28,"at":"2026-09-10T13:00:04Z","kind":"done","data":{"text":""}}

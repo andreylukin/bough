@@ -1,0 +1,4 @@
+{"seq":1,"at":"2026-09-10T12:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T12:00:01Z","kind":"input","data":{"text":"say hello"}}
+{"seq":3,"at":"2026-09-10T12:00:02Z","kind":"assistant","data":{"text":"```stop\nHello there.\n```"}}
+{"seq":4,"at":"2026-09-10T12:00:02Z","kind":"done","data":{"text":""}}

@@ -1,0 +1,9 @@
+{"seq":1,"at":"2026-09-10T10:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T10:00:01Z","kind":"input","data":{"text":"run the failing command"}}
+{"seq":3,"at":"2026-09-10T10:00:02Z","kind":"assistant","data":{"text":"```js\ntools.bash(\"exit 3\")\n```"}}
+{"seq":4,"at":"2026-09-10T10:00:02Z","kind":"code","data":{"text":"tools.bash(\"exit 3\")\n"}}
+{"seq":5,"at":"2026-09-10T10:00:03Z","kind":"result","data":{"code":"tools.bash(\"exit 3\")\n","text":"error: exit status 3"}}
+{"seq":6,"at":"2026-09-10T10:00:04Z","kind":"assistant","data":{"text":"```stop\nThe command failed.\n```"}}
+{"seq":7,"at":"2026-09-10T10:00:04Z","kind":"nudge","data":{"text":"that reply stopped straight after a failed block"}}
+{"seq":8,"at":"2026-09-10T10:00:05Z","kind":"assistant","data":{"text":"```stop\nVerified: the command exited 3 and wrote nothing.\n```"}}
+{"seq":9,"at":"2026-09-10T10:00:05Z","kind":"done","data":{"text":""}}
