@@ -158,7 +158,9 @@ func (t *Todos) Render() string {
 
 // Add appends an open item and returns its id.
 func (t *Todos) Add(text string) (int, error) {
-	text = strings.TrimSpace(text)
+	// One item is one line: inner newlines would render as extra,
+	// forged items in list() and the system prompt.
+	text = strings.TrimSpace(strings.Join(strings.FieldsFunc(text, func(r rune) bool { return r == '\n' || r == '\r' }), " "))
 	if text == "" {
 		return 0, fmt.Errorf("todo: empty text")
 	}
