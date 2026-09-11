@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // rowState is the per-row bookkeeping behind the live lifecycle:
@@ -49,6 +50,9 @@ type Context struct {
 	providerOf map[string]string  // service key -> row id that last provided it ("" = context-level)
 	touches    map[string]int64   // service key -> sequence of its latest Provide
 	seq        int64
+
+	emitGate sync.RWMutex // held by Remount; Emit waits on it off the remounting goroutine
+	gateGID  atomic.Int64 // goroutine holding emitGate
 }
 
 // NewContext returns an empty Context.
@@ -174,6 +178,10 @@ func (c *Context) On(event string, fn func(payload any)) func() {
 // Emit fires event to all listeners. Fire-and-forget; a panicking
 // listener is contained (logged to stderr) and does not stop the rest.
 func (c *Context) Emit(event string, payload any) {
+	if c.gateGID.Load() != gid() {
+		c.emitGate.RLock()
+		defer c.emitGate.RUnlock()
+	}
 	c.mu.Lock()
 	fns := make([]func(any), 0, len(c.listeners[event]))
 	for _, fn := range c.listeners[event] {

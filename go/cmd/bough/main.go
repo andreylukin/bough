@@ -19,6 +19,7 @@ import (
 	"github.com/andreylukin/bough"
 	"github.com/andreylukin/bough/internal/schema"
 	"github.com/andreylukin/bough/kernel"
+	"github.com/dop251/goja"
 	_ "github.com/andreylukin/bough/plugins/activity"
 	_ "github.com/andreylukin/bough/plugins/artifacts"
 	_ "github.com/andreylukin/bough/plugins/ask"
@@ -546,11 +547,25 @@ func watchConfig(ctx *kernel.Context, src configSource, ov *overrides, headless 
 				reload(ctx, src, ov.all(), headless)
 			case <-initPending:
 				initPending = nil
-				for _, r := range ctx.Desired() {
-					if r.Plugin == "init-js" && !r.Disabled {
-						_ = ctx.Remount(r.ID)
-						kernel.Logf("bough: reloaded init.js (row %q)\n", r.ID)
+				remount := func() {
+					for _, r := range ctx.Desired() {
+						if r.Plugin == "init-js" && !r.Disabled {
+							_ = ctx.Remount(r.ID)
+							kernel.Logf("bough: reloaded init.js (row %q)\n", r.ID)
+						}
 					}
+				}
+				// Hold the VM across the remount: a block running mid-turn
+				// owns it, and init-js's Apply would wait on it with its
+				// dependents (the ui) already unmounted, losing the turn's
+				// output. The lock is per-goroutine reentrant, so Apply
+				// (run on this goroutine) takes it again.
+				if vm, err := kernel.Get[interface {
+					WithVM(func(*goja.Runtime, *goja.Object) error) error
+				}](ctx, "codemode"); err == nil {
+					_ = vm.WithVM(func(*goja.Runtime, *goja.Object) error { remount(); return nil })
+				} else {
+					remount()
 				}
 			case err, ok := <-w.Errors:
 				if !ok {

@@ -213,6 +213,17 @@ func (c *Context) Remount(id string) error {
 }
 
 func (c *Context) reconcile(newRows []Row, force string) error {
+	if force != "" {
+		// Hold emits until the forced row and its dependents are back:
+		// a remount mid-turn would otherwise drop the loop's events in
+		// the window where the ui row is unmounted.
+		c.emitGate.Lock()
+		c.gateGID.Store(gid())
+		defer func() {
+			c.gateGID.Store(0)
+			c.emitGate.Unlock()
+		}()
+	}
 	// Validate the candidate before touching the tree.
 	seen := map[string]bool{}
 	for i, r := range newRows {
