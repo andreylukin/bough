@@ -20,7 +20,7 @@ import (
 
 // runHooker is the slice of the codemode service we need.
 type runHooker interface {
-	RunHook(fileBody string, event map[string]any) (map[string]any, error)
+	RunHook(ctx context.Context, fileBody string, event map[string]any) (map[string]any, error)
 }
 
 // Service implements the "hooks" service (loop.Hooks).
@@ -99,7 +99,10 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 			fmt.Fprintf(os.Stderr, "hooks: %s: %v\n", path, err)
 			continue
 		}
-		res, err := s.code.RunHook(string(body), payload)
+		res, err := s.code.RunHook(ctx, string(body), payload)
+		if ctx.Err() != nil {
+			return merged, nil // the turn was cancelled: not a hook failure
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "hooks: %s: %v\n", path, err)
 			continue

@@ -37,9 +37,6 @@ func hooksSlowAndFailingTape(t *testing.T, input, code, result, reply string) st
 
 func TestHooksSlowAndFailingEscDuringSleepingHook(t *testing.T) {
 	t.Parallel()
-	if os.Getenv("BOUGH_KNOWN_HOOKS_SLOW_AND_FAILING") == "" {
-		t.Skip("known bug: esc during a sleeping pre-code-exec hook waits out the whole sleep (~4.7s of 5s): hooks.Service.Fire ignores ctx and codemode.RunHook takes none, so the loop's cancel never interrupts the hook; set BOUGH_KNOWN_HOOKS_SLOW_AND_FAILING=1 to run")
-	}
 	tape := hooksSlowAndFailingTape(t, "run the slow block", "SLEEPY_BLOCK()\n", "SLEEPY_RECORDED_OUTPUT", "Slow turn over.")
 	a := startCfg(t, 100, 30, replayConfig(tape))
 	hooksWrite(t, a.home, "pre-code-exec", "slow.js",

@@ -71,7 +71,7 @@ func TestRunHookReturnsObjectAndSeesTools(t *testing.T) {
 	cm.RegisterTool("greet", func(name string) (string, error) {
 		return "hello " + name, nil
 	})
-	res, err := cm.RunHook(`return {who: tools.greet(event.input), echo: event.input}`,
+	res, err := cm.RunHook(context.Background(), `return {who: tools.greet(event.input), echo: event.input}`,
 		map[string]any{"input": "world"})
 	if err != nil {
 		t.Fatalf("RunHook: %v", err)
@@ -83,7 +83,7 @@ func TestRunHookReturnsObjectAndSeesTools(t *testing.T) {
 
 func TestRunHookNoReturnIsNil(t *testing.T) {
 	cm := New(5 * time.Second)
-	res, err := cm.RunHook(`var x = event`, map[string]any{})
+	res, err := cm.RunHook(context.Background(), `var x = event`, map[string]any{})
 	if err != nil {
 		t.Fatalf("RunHook: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestRunHookNoReturnIsNil(t *testing.T) {
 
 func TestRunHookExceptionIsError(t *testing.T) {
 	cm := New(5 * time.Second)
-	if _, err := cm.RunHook(`throw new Error("bad hook")`, map[string]any{}); err == nil {
+	if _, err := cm.RunHook(context.Background(), `throw new Error("bad hook")`, map[string]any{}); err == nil {
 		t.Fatal("expected error from throwing hook")
 	}
 }
@@ -106,7 +106,7 @@ func TestRunHookSharesVMGlobals(t *testing.T) {
 	if _, err := cm.Run(`counter = 41`); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	res, err := cm.RunHook(`counter++; return {n: counter}`, map[string]any{})
+	res, err := cm.RunHook(context.Background(), `counter++; return {n: counter}`, map[string]any{})
 	if err != nil {
 		t.Fatalf("RunHook: %v", err)
 	}
@@ -346,5 +346,19 @@ func TestConsoleLogRendersBytesAsText(t *testing.T) {
 	}
 	if strings.TrimSpace(out) != "hello from a command" {
 		t.Errorf("bytes should print as text, got %q", out)
+	}
+}
+
+func TestRunHookCancelledByContext(t *testing.T) {
+	cm := New(30 * time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	start := time.Now()
+	_, err := cm.RunHook(ctx, `var t = Date.now() + 5000; while (Date.now() < t) {}`, map[string]any{})
+	if err == nil {
+		t.Fatal("cancelled hook returned no error")
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("cancel took %s; the hook ran to completion", d)
 	}
 }

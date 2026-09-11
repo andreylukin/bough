@@ -312,7 +312,8 @@ func (cm *CodeMode) Interrupt() {
 // VM (same mutex, same globals and tools.*) and calls it with event.
 // A returned object comes back as map[string]any; no return (undefined
 // or null) is nil, nil; a non-object return or JS exception is an error.
-func (cm *CodeMode) RunHook(fileBody string, event map[string]any) (map[string]any, error) {
+// Cancelling ctx (the loop's turn cancel) interrupts the hook.
+func (cm *CodeMode) RunHook(ctx context.Context, fileBody string, event map[string]any) (map[string]any, error) {
 	nested := cm.lock()
 	defer cm.unlock(nested)
 
@@ -328,7 +329,9 @@ func (cm *CodeMode) RunHook(fileBody string, event map[string]any) (map[string]a
 	timer := time.AfterFunc(cm.timeout, func() {
 		cm.vm.Interrupt("codemode: hook timeout after " + cm.timeout.String())
 	})
+	stop := context.AfterFunc(ctx, func() { cm.vm.Interrupt("codemode: hook cancelled") })
 	ret, err := fn(goja.Undefined(), cm.vm.ToValue(event))
+	stop()
 	timer.Stop()
 	cm.vm.ClearInterrupt()
 	if err != nil {
