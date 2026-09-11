@@ -107,7 +107,16 @@ func (m *model) statusBar(cfg *uiCfg) string {
 		}
 	}
 	if gap < 1 {
-		gap = 1
+		// Even the bare floor does not fit beside the identity: the
+		// identity gives way (shortened, else dropped), never "? keys".
+		room := m.width - lipgloss.Width(right) - 1
+		switch {
+		case room >= 2:
+			left = ansi.Truncate(left, room, "…")
+			gap = 1
+		default:
+			left, gap = "", max(0, m.width-lipgloss.Width(right))
+		}
 	}
 	// One row, always: a narrow pane truncates rather than wrapping the
 	// bar onto a second row and pushing the composer off screen.

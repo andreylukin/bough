@@ -3,16 +3,9 @@ package vtreal
 // Tiny terminals: boot, one replayed turn, one expanded box and the
 // "/" palette plus /help, each at 20x5, 30x8, 40x10 and 24x24. Every
 // settled screen must hold narrowCheck's invariants.
-//
-// Known bug (statusbar.go): the bar's comment calls "? keys" the
-// floor, but at 20 columns the left identity (" bough · replay") is
-// never dropped, so ansi.Truncate cuts the right side to "? k…". The
-// floor is asserted strictly at every size that has room for it and
-// only logged below narrowFloorCols unless BOUGH_NARROW_STRICT=1.
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,10 +15,6 @@ import (
 )
 
 var narrowSizes = [][2]int{{20, 5}, {30, 8}, {40, 10}, {24, 24}}
-
-// narrowFloorCols is the narrowest pane where the status bar currently
-// keeps "? keys" whole with the replay model's identity on the left.
-const narrowFloorCols = 24
 
 func narrowEach(t *testing.T, body func(t *testing.T, a *app)) {
 	tape, _ := filepath.Abs("testdata/replay/narrow.jsonl")
@@ -37,8 +26,9 @@ func narrowEach(t *testing.T, body func(t *testing.T, a *app)) {
 	}
 }
 
-// narrowCheck is app.check with the status-bar floor relaxed only
-// where the known truncation bug bites (see the file comment).
+// narrowCheck is app.check's invariants for tiny panes: no crash text,
+// the composer on the last rows, no row wider than the pane, and the
+// status bar's "? keys" floor.
 func narrowCheck(a *app, where string) {
 	a.t.Helper()
 	s := a.settled()
@@ -55,13 +45,7 @@ func narrowCheck(a *app, where string) {
 		}
 	}
 	if !strings.Contains(s, "? keys") {
-		if a.cols >= narrowFloorCols || os.Getenv("BOUGH_NARROW_STRICT") != "" {
-			a.t.Errorf("%s: status bar lost its \"? keys\" floor:\n%s", where, s)
-		} else if !strings.Contains(s, "? k") {
-			a.t.Errorf("%s: status bar missing entirely:\n%s", where, s)
-		} else {
-			a.t.Logf("%s: known bug: \"? keys\" truncated at %d columns:\n%s", where, a.cols, s)
-		}
+		a.t.Errorf("%s: status bar lost its \"? keys\" floor:\n%s", where, s)
 	}
 }
 

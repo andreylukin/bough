@@ -4,6 +4,7 @@ package ui
 
 import (
 	"github.com/andreylukin/bough/plugins/history"
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
 	"time"
@@ -504,5 +505,26 @@ func TestStatusBarCacheChip(t *testing.T) {
 	d.event("done", "")
 	if p := d.plain(); !strings.Contains(p, "⚡ cache hot") {
 		t.Errorf("a turn just ended: hot\n%s", p)
+	}
+}
+
+// "? keys" is the bar's floor: at every width that can hold it, a
+// narrow pane shortens or drops the identity instead of cutting it,
+// and the bar never outgrows the pane.
+func TestStatusBarKeysFloorNarrow(t *testing.T) {
+	t.Parallel()
+	for _, c := range []*uiCfg{cfgWith(t, nil, nil, nil), footerCfg(t)} {
+		c.status = "bough · replay"
+		d := newDrv(t, 80, 24, c)
+		for w := 1; w <= 40; w++ {
+			d.m.width = w
+			bar := ansi.Strip(d.m.statusBar(c))
+			if got := lipgloss.Width(bar); got > w {
+				t.Errorf("width %d: bar is %d wide: %q", w, got, bar)
+			}
+			if w >= lipgloss.Width("? keys ") && !strings.Contains(bar, "? keys") {
+				t.Errorf("width %d: bar lost its \"? keys\" floor: %q", w, bar)
+			}
+		}
 	}
 }
