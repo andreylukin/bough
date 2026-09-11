@@ -157,10 +157,6 @@ func (r *configReloadMidTurnRun) finish() {
 // The overlay's theme row changes mid-turn: the turn must not notice,
 // and /theme must name the new palette once it is done.
 func TestConfigReloadMidTurnOverlay(t *testing.T) {
-	if os.Getenv("BOUGH_KNOWN_CONFIG_RELOAD_MID_TURN") == "" {
-		t.Skip("known bug: cmd/bough reload() prints \"bough: reloaded <path>\" to stderr over the live TUI, " +
-			"overwriting the composer row; set BOUGH_KNOWN_CONFIG_RELOAD_MID_TURN=1 to run")
-	}
 	t.Parallel()
 	r := configReloadMidTurnBoot(t)
 	if err := os.WriteFile(r.cfg, []byte(configReloadMidTurnYml(r.tape, "dracula")), 0o644); err != nil {

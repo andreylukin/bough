@@ -552,7 +552,7 @@ func reload(ctx *kernel.Context, src configSource, sets setFlags) {
 		fmt.Fprintf(os.Stderr, "bough: reload: %v\n", err)
 		return
 	}
-	fmt.Fprintf(os.Stderr, "bough: reloaded %s\n", src.path)
+	kernel.Logf("bough: reloaded %s\n", src.path)
 }
 
 // applyOverrides applies each "id.key=value" to the matching row's config.
