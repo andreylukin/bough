@@ -227,9 +227,6 @@ func streamModelCheck(tt *testing.T, t *rapid.T, long bool) {
 					hits++
 				}
 			}
-			if nt != 0 && !streamModelKnown {
-				return // known bug: see TestStreamModelThinkingSplitByInterleavedBlock
-			}
 			if nt != 0 || hits != 1 {
 				t.Fatalf("thinking did not settle into one block: live=%d blocks=%d", nt, hits)
 			}
@@ -322,11 +319,8 @@ func TestStreamModelCancelLeavesLiveBlock(t *testing.T) {
 	}
 }
 
-// addThinkDelta extends the live reasoning block only while it is the
-// LAST block; finishThinking settles only the newest live one. A steer
-// typed while the model reasons (or a todo / subagent card) lands
-// between deltas: the next delta opens a second live block, and the
-// first stays "thinking…" forever with half the reasoning.
+// A steer typed while the model reasons (or a todo / subagent card)
+// lands between deltas; the reasoning must still settle as one block.
 // (rapid shrink: thinking-delta "", todo, thinking-delta "Reason…", thinking)
 func TestStreamModelThinkingSplitByInterleavedBlock(t *testing.T) {
 	t.Parallel()
@@ -344,9 +338,6 @@ func TestStreamModelThinkingSplitByInterleavedBlock(t *testing.T) {
 				live++
 			}
 		}
-	}
-	if (live != 0 || blocks != 1) && !streamModelKnown {
-		t.Skipf("known bug (BOUGH_KNOWN_STREAM_MODEL=1): reasoning split into %d blocks, %d still live (blocks.go addThinkDelta/finishThinking)", blocks, live)
 	}
 	if live != 0 || blocks != 1 {
 		t.Fatalf("reasoning split into %d thinking blocks, %d still live:\n%s", blocks, live, d.plain())

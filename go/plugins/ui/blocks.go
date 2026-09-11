@@ -275,9 +275,13 @@ func (m *model) addAssistant(text string) {
 // collapsed whatever the collapse policy says: it is the model talking
 // to itself, one header row until you want it.
 func (m *model) addThinkDelta(id int, delta string) {
-	if n := len(m.blocks); n > 0 && m.blocks[n-1].live && m.blocks[n-1].kind == "thinking" {
-		m.blocks[n-1].text += delta
-		return
+	// The live block need not be last: a steer, todo or subagent card
+	// can land between deltas.
+	for i := len(m.blocks) - 1; i >= 0; i-- {
+		if b := &m.blocks[i]; b.live && b.kind == "thinking" {
+			b.text += delta
+			return
+		}
 	}
 	m.blocks = append(m.blocks, block{id: id, kind: "thinking", text: delta, live: true, collapsed: true})
 }
