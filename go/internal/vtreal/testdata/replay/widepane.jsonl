@@ -1,0 +1,7 @@
+{"seq":1,"at":"2026-09-10T10:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T10:00:01Z","kind":"input","data":{"text":"show me a wide table"}}
+{"seq":3,"at":"2026-09-10T10:00:02Z","kind":"assistant","data":{"text":"```js\nconsole.log(tools.bash(\"printf '=%.0s' $(seq 1 380)\"))\n```"}}
+{"seq":4,"at":"2026-09-10T10:00:02Z","kind":"code","data":{"text":"console.log(tools.bash(\"printf '=%.0s' $(seq 1 380)\"))\n"}}
+{"seq":5,"at":"2026-09-10T10:00:02Z","kind":"result","data":{"code":"console.log(tools.bash(\"printf '=%.0s' $(seq 1 380)\"))\n","text":"============================================================================================================================================================================================================================================================================================================================================================================================\n"}}
+{"seq":6,"at":"2026-09-10T10:00:03Z","kind":"assistant","data":{"text":"Here is the table.\n\n| alpha_column | bravo_column | charlie_column | delta_column | echo_column |\n|---|---|---|---|---|\n| the first cell holds roughly forty-five chars | the second cell holds roughly forty-five chars | the third cell holds roughly forty-five chars | the fourth cell holds roughly forty-five chars | the fifth cell holds roughly forty-five chars |\n| a2 | b2 | c2 | d2 | e2 |\n\n```stop\nShowed a wide table.\n```"}}
+{"seq":7,"at":"2026-09-10T10:00:03Z","kind":"done","data":{"text":""}}
