@@ -280,7 +280,6 @@ func TestAskFailuresFromNestedSubagentRun(t *testing.T) {
 // and its own timeout, never on the run's context, so the turn hangs
 // until the ask timeout (10 min by default).
 func TestAskFailuresTurnCancelReleasesPendingAsk(t *testing.T) {
-	askFailKnownBug(t, "plugins/ask/ask.go:76 ask() ignores the run context: a turn cancelled while tools.ask is pending hangs until the ask timeout (default 10m)")
 	cm, a, events := askFailMount(t, 5*time.Second)
 	a.timeout = 20 * time.Second
 	ctx, cancel := context.WithCancel(t.Context())

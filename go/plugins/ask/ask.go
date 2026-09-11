@@ -8,6 +8,7 @@
 package ask
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -71,9 +72,20 @@ func (a *Asker) ask(question string, options ...string) (string, error) {
 	}
 	a.emit(Event{Kind: "ask", Text: question, ID: id, Options: options})
 
+	// The run's context: a cancelled turn (ctrl+c) must release the
+	// blocked call — goja cannot interrupt a Go host call.
+	done := context.Background().Done()
+	if rc, ok := a.code.(interface{ RunContext() context.Context }); ok {
+		done = rc.RunContext().Done()
+	}
 	resume := a.code.Pause()
 	defer resume()
 	select {
+	case <-done:
+		a.mu.Lock()
+		delete(a.pending, id)
+		a.mu.Unlock()
+		return "", fmt.Errorf("ask: cancelled with no answer")
 	case text, ok := <-ch:
 		if !ok {
 			return "", fmt.Errorf("ask: cancelled with no answer")
