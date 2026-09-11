@@ -445,3 +445,19 @@ func TestFoldModelRefoldAfterHandClose(t *testing.T) {
 		t.Fatalf("refold should give one closed run over every step, got %+v:\n%s", r, d.plain())
 	}
 }
+
+// A reply dropped from inside an open fold (a superseding note) must
+// not shift the fold's end onto the block after it.
+func TestFoldModelOpenFoldSurvivesRemoval(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	steps(d, 1)
+	d.event("assistant", "checking")
+	steps(d, 1)
+	d.m.unfold(0)
+	d.feed(eventMsg{Kind: "system", Text: "asked again", Data: map[string]any{"supersedes": true}})
+	rs := d.m.runs()
+	if len(rs) == 0 || rs[0].to != len(d.m.blocks)-1 {
+		t.Fatalf("open fold should end before the system note: runs %+v, %d blocks", rs, len(d.m.blocks))
+	}
+}

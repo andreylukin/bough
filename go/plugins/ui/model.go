@@ -128,7 +128,7 @@ type model struct {
 	board       boardState     // the attention board at the top (board.go)
 	sessRows    sessList       // mid-session picker list (see session.go); nil = launch picker
 	welcome     bool           // fresh-session orientation text (see welcomeView)
-	unfolded    map[int]int    // fold lead id -> end index of its run, shown as rows (see fold.go)
+	unfolded    map[int]int    // fold lead id -> id of its run's last block, shown as rows (see fold.go)
 	keepRow     map[int]bool   // block ids closed by hand: they stay rows, never fold (see fold.go)
 	pendingAsk  string         // ask id the composer routes answers to; "" = none
 	keysBlock   int            // id of the last "?"/keys block; esc drops it first while an ask is pending

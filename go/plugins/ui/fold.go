@@ -101,7 +101,16 @@ func (m *model) runs() []foldRun {
 	}
 	var out []foldRun
 	for i := 0; i < last; {
-		if to, open := m.unfolded[m.blocks[i].id]; open {
+		if end, open := m.unfolded[m.blocks[i].id]; open {
+			// Its extent is kept by the id of its last block, so a
+			// block removed above that end does not shift it.
+			to := i + 1
+			for j := i; j < len(m.blocks); j++ {
+				if m.blocks[j].id == end {
+					to = j + 1
+					break
+				}
+			}
 			// Steps that arrived after it opened join it, as they
 			// would have joined the closed run.
 			for to < last && m.foldable(to) {
@@ -218,7 +227,7 @@ func (m *model) refold(i int) {
 func (m *model) setFold(i int, open bool) {
 	id := m.blocks[i].id
 	if r, ok := m.foldAt(i); ok && open {
-		m.unfolded[id] = r.to
+		m.unfolded[id] = m.blocks[r.to-1].id
 	} else {
 		delete(m.unfolded, id)
 	}
