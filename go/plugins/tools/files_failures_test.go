@@ -346,7 +346,6 @@ func TestFilesPatchFailures(t *testing.T) {
 // Two subagents (two Stats: each worker has its own codemode) patch
 // different lines of one file at once: neither edit may be lost.
 func TestFilesConcurrentPatchesFromTwoAgents(t *testing.T) {
-	filesKnown(t, "patch is an unlocked read-modify-write: concurrent patches from two agents lose updates (tools.go patch: os.ReadFile ... os.WriteFile)")
 	for round := range 50 {
 		p := filepath.Join(t.TempDir(), "shared.txt")
 		var lines []string

@@ -553,10 +553,28 @@ func nearestLines(data string, at, lines int) string {
 	return b.String()
 }
 
+// pathLocks serialises patches to one file across all agents in the
+// process; entries are never freed (one small mutex per patched path).
+var pathLocks sync.Map
+
+func lockPath(path string) func() {
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	m, _ := pathLocks.LoadOrStore(path, &sync.Mutex{})
+	mu := m.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
 // patch replaces one exact occurrence of old with new in path. old
 // must match exactly once (include more context when it repeats). An
 // empty old creates the file with new when it does not exist yet.
 func (s *Stats) patch(path, old, new string) (string, error) {
+	// Every Stats (one per agent) shares this lock, so the
+	// read-modify-write below never interleaves with another patch.
+	unlock := lockPath(path)
+	defer unlock()
 	data, err := os.ReadFile(path)
 	if err != nil && old != "" {
 		err = withNeighbours(path, err)
