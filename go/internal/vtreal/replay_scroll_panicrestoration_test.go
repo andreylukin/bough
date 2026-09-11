@@ -24,6 +24,7 @@ import (
 
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
+	"golang.org/x/sys/unix"
 )
 
 const panicHookSrc = `package ui
@@ -193,6 +194,10 @@ func TestScrollPanicRestoration(t *testing.T) {
 				if st, ok := s.DEC[m]; ok && st.IsSet() {
 					bad = append(bad, fmt.Sprintf("DEC %d still set", int(m)))
 				}
+			}
+			if tio, err := unix.IoctlGetTermios(int(a.term.pty.Fd()), ioctlGetTermios); err == nil &&
+				tio.Lflag&(unix.ECHO|unix.ICANON) != unix.ECHO|unix.ICANON {
+				bad = append(bad, "tty left raw (no ECHO/ICANON)")
 			}
 			if !s.CursorVis {
 				bad = append(bad, "cursor hidden")
