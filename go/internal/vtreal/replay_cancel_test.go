@@ -31,10 +31,14 @@ var cancelSpinner = regexp.MustCompile(`[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \d+[sm]
 // still arriving when the test presses esc.
 func cancelConfig(tape string, delayMS int) string {
 	cfg := replayConfig(tape)
-	return strings.Replace(cfg,
+	out := strings.Replace(cfg,
 		fmt.Sprintf("config: {file: %q}", tape),
 		fmt.Sprintf("config: {file: %q, delay_ms: %d}", tape, delayMS),
 		1)
+	if out == cfg {
+		panic("cancelConfig: replayConfig's llm row changed shape; delay_ms not applied")
+	}
+	return out
 }
 
 func cancelTape(t *testing.T) string {
