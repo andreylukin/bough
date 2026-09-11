@@ -186,9 +186,11 @@ func (a *app) costBar(where string, chips ...string) {
 	}, fmt.Sprintf("%s: status bar shows %q", where, chips))
 }
 
-// costSend types a line, presses enter and waits for the n-th done.
-func (a *app) costSend(line string, n int) {
+// costSend types a line, presses enter and waits for one more done than
+// before (every $HOME already holds costold.jsonl and its two dones).
+func (a *app) costSend(line string) {
 	a.t.Helper()
+	n := a.doneCount() + 1
 	a.typeText(line)
 	a.key(uv.KeyEnter, 0)
 	if !a.waitDone(n, 30*time.Second) {
@@ -231,7 +233,7 @@ func TestCost(t *testing.T) {
 		srv, calls := costServer(t)
 		home, _ := costHome(t)
 		a := costStart(t, home, costConfig(srv.URL, ""))
-		a.costSend("hello", 1)
+		a.costSend("hello")
 		a.costBar("after one turn", costMoney(costCall), "50% ctx", "↑64.0k ↓2.0k")
 		a.costCommand("/cost", "cost: 64.0k in · 2.0k out · $0.7400 — the cost row's prices")
 		if n := calls.Load(); n != 1 {
@@ -267,7 +269,7 @@ func TestCost(t *testing.T) {
 		// turn starts from (last_in 32k of 128k).
 		a.costBar("resumed, before a turn", costMoney(costBase), "25% ctx", "↑132.0k ↓5.0k")
 		a.costCommand("/cost", "cost: 132.0k in · 5.0k out · $1.5700")
-		a.costSend("one more", 3) // the file already holds two dones
+		a.costSend("one more")
 		a.costBar("resumed, after a turn", costMoney(costBase+costCall), "50% ctx", "↑196.0k ↓7.0k")
 		if n := calls.Load(); n != 1 {
 			t.Errorf("model called %d times, want 1:\n%s", n, a.text())
@@ -285,7 +287,7 @@ func TestCost(t *testing.T) {
 		srv, _ := costServer(t)
 		home, _ := costHome(t)
 		a := costStart(t, home, costConfig(srv.URL, ""))
-		a.costSend("spend here", 1)
+		a.costSend("spend here")
 		a.costBar("fresh session", costMoney(costCall))
 		a.typeText("/sessions costold")
 		a.key(uv.KeyEnter, 0)
