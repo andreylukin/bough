@@ -508,7 +508,11 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if err == nil {
 		return nil
 	}
-	fmt.Fprintln(os.Stderr, err)
+	// Under the tui the notice is the report: a raw stderr write would
+	// paint over the screen (a hot reload runs while the tui is up).
+	if mode, _ := kernel.Get[string](ctx, "ui-mode"); mode != "tui" {
+		fmt.Fprintln(os.Stderr, err)
+	}
 	n := err.Error()
 	if prev, perr := kernel.Get[string](ctx, "notice"); perr == nil && prev != "" {
 		n = prev + " · " + n
@@ -537,7 +541,11 @@ func mount(ctx *kernel.Context) error {
 	if home, err := os.UserHomeDir(); err == nil {
 		files = append(files, filepath.Join(home, ".bough", "init.js"))
 	}
-	files = append(files, filepath.Join(".bough", "init.js"))
+	// Run from ~, ./.bough/init.js is the home file: run it once.
+	local := filepath.Join(".bough", "init.js")
+	if !sameFile(files, local) {
+		files = append(files, local)
+	}
 
 	err = cm.WithVM(func(vm *goja.Runtime, tools *goja.Object) error {
 		install(vm, tools, st, cm, reg, ctx)
@@ -550,7 +558,7 @@ func mount(ctx *kernel.Context) error {
 				return fmt.Errorf("init-js: %s: %w", path, err)
 			}
 			st.setupUsed = false
-			if err := runFile(vm, path, string(body)); err != nil {
+			if err := runFile(vm, tilde(path), string(body)); err != nil {
 				return err
 			}
 		}
@@ -605,6 +613,29 @@ func mount(ctx *kernel.Context) error {
 		ctx.Provide("projection", &jsProjection{cm: cm, fn: st.projFn})
 	}
 	return nil
+}
+
+// tilde names a file under $HOME as ~/...: the error lands in a notice
+// row, and a long temp or home prefix wraps "init.js" in two.
+func tilde(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if rel, ok := strings.CutPrefix(path, home+string(filepath.Separator)); ok {
+		return "~" + string(filepath.Separator) + rel
+	}
+	return path
+}
+
+// sameFile reports whether path is (via symlinks too) the first file.
+func sameFile(files []string, path string) bool {
+	if len(files) == 0 {
+		return false
+	}
+	a, err1 := os.Stat(files[0])
+	b, err2 := os.Stat(path)
+	return err1 == nil && err2 == nil && os.SameFile(a, b)
 }
 
 // runFile executes one init file under its own interrupt timeout.

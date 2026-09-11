@@ -510,13 +510,32 @@ func watchConfig(ctx *kernel.Context, src configSource, ov *overrides, headless 
 	if err := w.Add(filepath.Dir(abs)); err != nil {
 		return nil, fmt.Errorf("watch config: %w", err)
 	}
+	// The init-js row reads ~/.bough/init.js and ./.bough/init.js at
+	// Apply, outside the config: an edit to either remounts that row.
+	// A missing directory is not watched.
+	initFiles := map[string]bool{}
+	var initDirs []string
+	if home, err := os.UserHomeDir(); err == nil {
+		initDirs = append(initDirs, filepath.Join(home, ".bough"))
+	}
+	if d, err := filepath.Abs(".bough"); err == nil {
+		initDirs = append(initDirs, d)
+	}
+	for _, d := range initDirs {
+		if d == filepath.Dir(abs) || w.Add(d) == nil {
+			initFiles[filepath.Join(d, "init.js")] = true
+		}
+	}
 	go func() {
-		var pending <-chan time.Time
+		var pending, initPending <-chan time.Time
 		for {
 			select {
 			case ev, ok := <-w.Events:
 				if !ok {
 					return
+				}
+				if initFiles[filepath.Clean(ev.Name)] {
+					initPending = time.After(300 * time.Millisecond)
 				}
 				if filepath.Clean(ev.Name) != abs {
 					continue
@@ -525,6 +544,14 @@ func watchConfig(ctx *kernel.Context, src configSource, ov *overrides, headless 
 			case <-pending:
 				pending = nil
 				reload(ctx, src, ov.all(), headless)
+			case <-initPending:
+				initPending = nil
+				for _, r := range ctx.Desired() {
+					if r.Plugin == "init-js" && !r.Disabled {
+						_ = ctx.Remount(r.ID)
+						kernel.Logf("bough: reloaded init.js (row %q)\n", r.ID)
+					}
+				}
 			case err, ok := <-w.Errors:
 				if !ok {
 					return

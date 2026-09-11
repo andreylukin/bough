@@ -7,8 +7,8 @@ package vtreal
 // bough.yml overlay (the -config file, which cmd/bough watches and
 // hot-reloads). What must hold: the held turn finishes with its reply,
 // no crash text, one status bar (so one cost row), and the overlay's
-// change is live afterwards. init.js is read only at the init-js row's
-// Apply (plugins/initjs), so editing it alone is a documented no-reload.
+// change is live afterwards. An init.js edit alone reloads the init-js
+// row (cmd/bough watches ~/.bough/init.js), so its theme goes live too.
 
 import (
 	"fmt"
@@ -189,8 +189,9 @@ func TestConfigReloadMidTurnInitJs(t *testing.T) {
 			}
 			red, g, b, _ := c.Style.Fg.RGBA()
 			if red>>8 == 0xff && g == 0 && b == 0 {
-				t.Fatalf("user text turned #ff0000: init.js reloaded mid-session, which nothing documents:\n%s", r.text())
+				return
 			}
 		}
 	}
+	t.Fatalf("user text never turned #ff0000: the init.js edit was not reloaded:\n%s", r.text())
 }

@@ -7,12 +7,6 @@ package vtreal
 // hold: the ask stays pending and unanswered through every edit, the
 // throwing file's error is shown without dropping the ask, "2" still
 // answers it, and afterwards the new command runs and ctrl+g clears.
-//
-// Known bug: nothing watches init.js (cmd/bough watchConfig watches
-// only the -config file's directory; plugins/initjs reads init files
-// once, at the init-js row's Apply), so an edit never reaches the
-// running session. The phases that need a reload are gated behind
-// BOUGH_KNOWN_INITJSHOTRELOADDURINGASK.
 
 import (
 	"encoding/json"
@@ -58,15 +52,6 @@ func initJsHotReloadDuringAskTape(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return p
-}
-
-// initJsHotReloadDuringAskKnown skips a phase that needs init.js to be
-// reloaded mid-session unless the gate env var is set.
-func initJsHotReloadDuringAskKnown(t *testing.T) {
-	t.Helper()
-	if os.Getenv("BOUGH_KNOWN_INITJSHOTRELOADDURINGASK") == "" {
-		t.Skip("known bug: init.js edits are never reloaded mid-session (no watcher on ~/.bough/init.js; plugins/initjs reads it only at Apply); set BOUGH_KNOWN_INITJSHOTRELOADDURINGASK=1 to run")
-	}
 }
 
 // initJsHotReloadDuringAskPhase runs one phase with a.t pointed at the
@@ -120,7 +105,6 @@ func TestInitJsHotReloadDuringAsk(t *testing.T) {
 
 	write(initJsHotReloadDuringAskBad)
 	initJsHotReloadDuringAskPhase(t, a, "throwing edit shows error", func(t *testing.T) {
-		initJsHotReloadDuringAskKnown(t)
 		a.waitUntil(func(s string) bool {
 			return strings.Contains(s, "init.js") && strings.Contains(s, "HOTASK_BOOM")
 		}, "the init.js error while the ask is pending")
@@ -146,14 +130,13 @@ func TestInitJsHotReloadDuringAsk(t *testing.T) {
 	})
 
 	initJsHotReloadDuringAskPhase(t, a, "new command works", func(t *testing.T) {
-		initJsHotReloadDuringAskKnown(t)
+		time.Sleep(1500 * time.Millisecond) // past the watcher debounce of the last write
 		a.typeText("/hotask-cmd z")
 		a.key(uv.KeyEnter, 0)
 		a.waitFor("HOTASK_CMD z")
 	})
 
 	initJsHotReloadDuringAskPhase(t, a, "rebound key active", func(t *testing.T) {
-		initJsHotReloadDuringAskKnown(t)
 		a.typeText("draft to clear")
 		a.waitFor("> draft to clear")
 		a.key('g', uv.ModCtrl)

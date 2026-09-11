@@ -200,6 +200,19 @@ func (c *Context) fail(r Row, err error) {
 // invalid candidate (validated before anything unmounts — a bad config
 // never kills the tree).
 func (c *Context) Reconcile(newRows []Row) error {
+	return c.reconcile(newRows, "")
+}
+
+// Remount unmounts the mounted row id (and its dependents, as Reconcile
+// does for a changed row) and settles, so the row re-runs Apply against
+// the current desired tree. For a row whose inputs live outside its
+// config (init-js reads ~/.bough/init.js). Unknown or unmounted ids are
+// a no-op settle.
+func (c *Context) Remount(id string) error {
+	return c.reconcile(c.Desired(), id)
+}
+
+func (c *Context) reconcile(newRows []Row, force string) error {
 	// Validate the candidate before touching the tree.
 	seen := map[string]bool{}
 	for i, r := range newRows {
@@ -242,7 +255,7 @@ func (c *Context) Reconcile(newRows []Row) error {
 	for _, st := range mounted {
 		nr, ok := newByID[st.row.ID]
 		if !ok || nr.Disabled || nr.Plugin != st.row.Plugin ||
-			!reflect.DeepEqual(nr.Config, st.row.Config) {
+			!reflect.DeepEqual(nr.Config, st.row.Config) || st.row.ID == force {
 			drop[st.row.ID] = true
 			for _, k := range st.provides {
 				withdrawn[k] = true

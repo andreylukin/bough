@@ -396,7 +396,16 @@ func getStringMap(ctx *kernel.Context, key string) (map[string]string, bool, err
 // (the On subscription is auto-disposed with the row), and detach
 // inputs on unmount so nothing sends into a closed channel.
 func attachLive(ctx *kernel.Context, inputs chan<- string, cfg *uiCfg) {
-	liveCfg.Store(cfg)
+	prev := liveCfg.Swap(cfg)
+	// A remount under a running tui (init.js hot reload) can bring a
+	// new notice: the first mount's noteLaunch has already run, so it
+	// goes in the transcript as an error row.
+	tuiMu.Lock()
+	running := tuiProg != nil
+	tuiMu.Unlock()
+	if running && cfg.notice != "" && cfg.notice != prev.notice {
+		liveB.publish(Event{Kind: "error", Text: cfg.notice})
+	}
 	liveMu.Lock()
 	liveInputs = inputs
 	liveMu.Unlock()
