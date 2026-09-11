@@ -198,6 +198,12 @@ func TestFilesWriteFailures(t *testing.T) {
 		if strings.Contains(out, "1 lines") {
 			t.Fatalf("write summary = %q", out)
 		}
+		for c, want := range map[string]string{"a\nb\n": "2 lines", "a\nb": "2 lines", "\n": "1 lines"} {
+			out, err := (&Stats{}).write(filepath.Join(dir, "count.txt"), c)
+			if err != nil || !strings.Contains(out, want) {
+				t.Fatalf("write(%q) = %q, %v; want %s", c, out, err, want)
+			}
+		}
 	})
 	t.Run("huge content", func(t *testing.T) {
 		p := filepath.Join(dir, "huge.txt")
