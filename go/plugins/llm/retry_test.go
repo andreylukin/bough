@@ -122,3 +122,29 @@ func TestCerebrasRetriesTransientFailures(t *testing.T) {
 		t.Fatalf("a 400 was retried %d times", hits.Load())
 	}
 }
+
+// A 429 with Retry-After waits what the header asked, not the 5s
+// rate-limit schedule.
+func TestRetryAfterHonoured(t *testing.T) {
+	var n atomic.Int32
+	var first time.Time
+	var gap time.Duration
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if n.Add(1) == 1 {
+			first = time.Now()
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(429)
+			_, _ = w.Write([]byte(`{"error":{"message":"rate limited"}}`))
+			return
+		}
+		gap = time.Since(first)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"cost":0}}`))
+	}))
+	defer srv.Close()
+	o := &openrouterLLM{model: "m", key: "k", endpoint: srv.URL}
+	o.once.Do(func() {})
+	out, err := o.Complete(context.Background(), "", []Message{{Role: "user", Content: "hi"}})
+	if err != nil || out != "ok" || gap < 900*time.Millisecond || gap > 3*time.Second {
+		t.Fatalf("out=%q err=%v gap=%v", out, err, gap)
+	}
+}

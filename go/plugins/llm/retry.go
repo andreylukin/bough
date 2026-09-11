@@ -9,10 +9,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
-
-	"github.com/anthropics/anthropic-sdk-go"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/anthropics/anthropic-sdk-go"
 )
 
 const retryAttempts = 3
@@ -75,6 +76,31 @@ func WithRetryNotice(ctx context.Context, fn func(err error, attempt, attempts i
 	return context.WithValue(ctx, retryNoticeKey{}, fn)
 }
 
+// retryAfterErr carries the wait a provider's Retry-After header asked
+// for, so withRetries sleeps that long instead of its own schedule.
+type retryAfterErr struct {
+	error
+	after time.Duration
+}
+
+func (e retryAfterErr) Unwrap() error { return e.error }
+
+// withRetryAfter wraps err with h's Retry-After (seconds or an HTTP
+// date); err is returned as is when the header is absent or unreadable.
+func withRetryAfter(err error, h http.Header) error {
+	v := h.Get("Retry-After")
+	if v == "" {
+		return err
+	}
+	if n, e := strconv.Atoi(v); e == nil && n >= 0 {
+		return retryAfterErr{err, time.Duration(n) * time.Second}
+	}
+	if t, e := http.ParseTime(v); e == nil {
+		return retryAfterErr{err, max(time.Until(t), 0)}
+	}
+	return err
+}
+
 // withRetries runs do up to retryAttempts times while it reports a
 // retryable failure (retry=true), sleeping retryDelays between tries and
 // honouring ctx. The last error is returned when every try failed.
@@ -100,6 +126,9 @@ func withRetries[T any](ctx context.Context, do func() (T, bool, error)) (T, err
 			return zero, err
 		}
 		d := delays[min(i, len(delays)-1)]
+		if ra, ok := errors.AsType[retryAfterErr](err); ok {
+			d = ra.after
+		}
 		if fn, ok := ctx.Value(retryNoticeKey{}).(func(error, int, int, time.Duration)); ok {
 			fn(err, i+2, attempts, d)
 		}

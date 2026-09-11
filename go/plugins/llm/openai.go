@@ -216,7 +216,7 @@ func (o *openaiLLM) call(ctx context.Context, system string, messages []Message,
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			data, _ := io.ReadAll(resp.Body)
-			return "", retryableStatus(resp.StatusCode), openaiErr(resp.StatusCode, o.model, data)
+			return "", retryableStatus(resp.StatusCode), withRetryAfter(openaiErr(resp.StatusCode, o.model, data), resp.Header)
 		}
 		if onDelta != nil {
 			out, err := o.readStream(guardStalls(resp.Body, stallTimeout), func(d string) { delivered = true; onDelta(d) })

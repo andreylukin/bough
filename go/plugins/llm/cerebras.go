@@ -165,7 +165,7 @@ func (c *cerebrasLLM) call(ctx context.Context, system string, messages []Messag
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			data, _ := io.ReadAll(resp.Body)
-			return "", retryableStatus(resp.StatusCode), cerebrasErr(resp.StatusCode, c.model, data)
+			return "", retryableStatus(resp.StatusCode), withRetryAfter(cerebrasErr(resp.StatusCode, c.model, data), resp.Header)
 		}
 		if onDelta != nil {
 			// A stream that already delivered text is never retried:

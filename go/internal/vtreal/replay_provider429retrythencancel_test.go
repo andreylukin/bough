@@ -235,9 +235,6 @@ func TestProvider429RetryThenCancel(t *testing.T) {
 	})
 
 	t.Run("retry_after_honoured", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_PROVIDER429RETRYTHENCANCEL") == "" {
-			t.Skip("known bug: Retry-After is ignored — a 429 saying \"rate limited\" waits rateLimitDelays[0]=5s instead of the 2s the header asked (plugins/llm/retry.go withRetries); set BOUGH_KNOWN_PROVIDER429RETRYTHENCANCEL=1 to run")
-		}
 		t.Parallel()
 		srv := provider429NewServer(t)
 		a := provider429Start(t, srv)

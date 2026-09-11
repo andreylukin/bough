@@ -263,7 +263,7 @@ func (o *openrouterLLM) call(ctx context.Context, system string, messages []Mess
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			data, _ := io.ReadAll(resp.Body)
-			return "", retryableStatus(resp.StatusCode), openrouterErr(resp.StatusCode, o.model, data)
+			return "", retryableStatus(resp.StatusCode), withRetryAfter(openrouterErr(resp.StatusCode, o.model, data), resp.Header)
 		}
 		if onDelta != nil {
 			out, err := o.readStream(guardStalls(resp.Body, stallTimeout), func(d string) { delivered = true; onDelta(d) }, onThink)
