@@ -40,3 +40,16 @@ func alive(pid int) bool {
 
 // askFreshSession tells a running session to start a new one.
 func askFreshSession(pid int) error { return syscall.Kill(pid, syscall.SIGUSR1) }
+
+// catchSigpipe keeps a write to a closed stdout from killing the
+// process (Go's default for fd 1/2): the write returns EPIPE instead.
+func catchSigpipe() { signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE) }
+
+// dieBySigpipe exits the way an uncaught SIGPIPE would (the shell's 141).
+// The runtime ignores a SIGPIPE sent by kill; it dies only when a write
+// to fd 1 fails with EPIPE and SIGPIPE is not caught, so write again.
+func dieBySigpipe() {
+	signal.Reset(syscall.SIGPIPE)
+	os.Stdout.Write([]byte("\n"))
+	os.Exit(1)
+}

@@ -389,6 +389,11 @@ func main() {
 	// running `bough` again is.
 	fresh := make(chan os.Signal, 1)
 	notifyFreshSession(fresh)
+	if mode == "headless" {
+		// A closed stdout must not kill a turn mid-run: headless drops
+		// output once stdout breaks, finishes, then dies by SIGPIPE.
+		catchSigpipe()
+	}
 
 	ctx := kernel.NewContext()
 	ctx.Provide("ui-mode", mode)
@@ -481,6 +486,9 @@ func main() {
 	ctx.Unmount()
 	if cancelled {
 		os.Exit(130)
+	}
+	if ui.StdoutBroken() {
+		dieBySigpipe()
 	}
 	os.Exit(ui.ExitCode())
 }

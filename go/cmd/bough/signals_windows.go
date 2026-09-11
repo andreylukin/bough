@@ -57,3 +57,9 @@ func alive(pid int) bool {
 func askFreshSession(int) error {
 	return fmt.Errorf("starting a new session in a running web process is not supported on Windows")
 }
+
+// catchSigpipe: Windows has no SIGPIPE; a closed pipe is a write error.
+func catchSigpipe() {}
+
+// dieBySigpipe exits non-zero: there is no SIGPIPE to die by.
+func dieBySigpipe() { os.Exit(1) }

@@ -55,7 +55,7 @@ var (
 	hlErrored atomic.Bool
 	// hlOut/hlErr are the event sinks: "[assistant]" and friends on
 	// stdout, "[error]" on stderr. Vars so tests can capture them.
-	hlOut io.Writer = os.Stdout
+	hlOut io.Writer = &hlStdout{w: os.Stdout}
 	hlErr io.Writer = os.Stderr
 
 	// HeadlessJSON (--json) prints every event as one JSON object per
@@ -63,6 +63,31 @@ var (
 	// multi-line text never spills onto continuation lines.
 	HeadlessJSON bool
 )
+
+// hlStdout is headless stdout. Once a write fails (the reader went
+// away: `bough --headless | head -1`), later writes are dropped so the
+// run still finishes its turns and records them in history; the
+// launcher then exits by SIGPIPE (see StdoutBroken).
+type hlStdout struct {
+	w      io.Writer
+	broken atomic.Bool
+}
+
+func (o *hlStdout) Write(p []byte) (int, error) {
+	if o.broken.Load() {
+		return len(p), nil
+	}
+	if _, err := o.w.Write(p); err != nil {
+		o.broken.Store(true)
+	}
+	return len(p), nil
+}
+
+// StdoutBroken reports whether a headless write to stdout failed.
+func StdoutBroken() bool {
+	o, ok := hlOut.(*hlStdout)
+	return ok && o.broken.Load()
+}
 
 // hlLine writes one event line: "[kind] text" or, under HeadlessJSON,
 // a JSON object carrying kind, text and extra.
