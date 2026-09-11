@@ -210,7 +210,6 @@ func TestConfigReloadRemovesRow(t *testing.T) {
 	})
 
 	t.Run("todo_midturn_output", func(t *testing.T) {
-		configreloadremovesrowKnown(t, "ui remount mid-turn drops the rest of the streamed reply (Reconcile dependent closure remounts ui, plugins/ui/live.go:296)")
 		t.Parallel()
 		a, yml := configreloadremovesrowStart(t)
 		todoOpen(a)

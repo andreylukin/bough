@@ -682,7 +682,7 @@ type runner struct {
 	skills   Skills
 	sysctx   SystemContext
 	hist     History
-	cog      Cognition
+	cog      func() Cognition // resolved per step; nil without the seam
 	proj     Projection
 	stats    TurnStats
 	notices  Notices
@@ -1480,7 +1480,9 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			sys += "\n\n" + note
 		}
 		if r.cog != nil {
-			sys = r.cog.System(sys)
+			if c := r.cog(); c != nil {
+				sys = c.System(sys)
+			}
 		}
 		reply, err := r.complete(ctx, sys, emit)
 		if ctx.Err() != nil {
@@ -1921,8 +1923,15 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	if h, err := kernel.Get[History](kctx, "history"); err == nil {
 		r.hist = h
 	}
-	if c, err := kernel.Get[Cognition](kctx, "cognition"); err == nil {
-		r.cog = c
+	// Looked up per step, not held: a Get here would tie the loop's
+	// mount to the cognition provider, and dropping the todo row (which
+	// provides it) would remount the loop and kill the turn in flight.
+	r.cog = func() Cognition {
+		c, err := kernel.Get[Cognition](kctx, "cognition")
+		if err != nil {
+			return nil
+		}
+		return c
 	}
 	if pr, err := kernel.Get[Projection](kctx, "projection"); err == nil {
 		r.proj = pr
