@@ -102,7 +102,9 @@ func headlessJSONSubagentsAndAskRun(t *testing.T, answer string, idle int, extra
 	sc := bufio.NewScanner(stdout)
 	for sc.Scan() {
 		out.WriteString(sc.Text() + "\n")
-		if answer != "" && strings.HasPrefix(sc.Text(), "[ask] Pick a color") {
+		isAsk := strings.HasPrefix(sc.Text(), "[ask] Pick a color") ||
+			strings.Contains(sc.Text(), `"kind":"ask"`) && strings.Contains(sc.Text(), "Pick a color")
+		if answer != "" && isAsk {
 			once.Do(func() {
 				io.WriteString(stdin, answer+"\n")
 				stdin.Close()
@@ -169,9 +171,6 @@ func TestHeadlessJSONSubagentsAndAsk(t *testing.T) {
 
 	t.Run("JSONStreamIsNDJSON", func(t *testing.T) {
 		t.Parallel()
-		if os.Getenv(headlessJSONSubagentsAndAskKnown) == "" {
-			t.Skip("known bug: bough has no --json headless mode (flag provided but not defined: -json, exit 2); set " + headlessJSONSubagentsAndAskKnown + "=1 to run")
-		}
 		r := headlessJSONSubagentsAndAskRun(t, "2", 30, "--json")
 		if r.code != 0 {
 			t.Fatalf("--json run must exit 0:\n%s", r.screen())

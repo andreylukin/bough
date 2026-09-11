@@ -300,6 +300,7 @@ func main() {
 	var (
 		config   = flag.String("config", "", "path to config tree (default ./bough.yml, else ~/.bough/bough.yml, else embedded)")
 		headless = flag.Bool("headless", false, "read input from stdin, no TUI")
+		jsonOut  = flag.Bool("json", false, "headless: print each event as one JSON object per line")
 		web      = flag.String("web", "", "serve the UI in a browser at this addr (e.g. localhost:7681)")
 		schemaF  = flag.String("schema", "", "JSON Schema the turn's answer must match (headless: the answer is JSON, checked and asked again on a mismatch)")
 		dump     = flag.Bool("dump-config", false, "mount the config tree, print the row state table, and exit")
@@ -337,6 +338,7 @@ func main() {
 	switch {
 	case *headless:
 		mode = "headless"
+		ui.HeadlessJSON = *jsonOut
 	case *web != "":
 		mode = "web:" + *web
 	}
@@ -643,6 +645,7 @@ flags:
       --headless          read lines from stdin, print "[kind] text"
                           events on stdout ("[error]" on stderr; exit 1
                           if any turn errored), no TUI
+      --json              with --headless: one JSON object per event line
       --web <addr>        serve the UI in a browser (e.g. localhost:7681)
       --dump-config       mount the config tree, print the row table, exit
       --verbose           kernel/mcp/config diagnostics on stderr

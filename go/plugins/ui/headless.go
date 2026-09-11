@@ -57,7 +57,27 @@ var (
 	// stdout, "[error]" on stderr. Vars so tests can capture them.
 	hlOut io.Writer = os.Stdout
 	hlErr io.Writer = os.Stderr
+
+	// HeadlessJSON (--json) prints every event as one JSON object per
+	// line ({"kind","text",...}) instead of "[kind] text", so a
+	// multi-line text never spills onto continuation lines.
+	HeadlessJSON bool
 )
+
+// hlLine writes one event line: "[kind] text" or, under HeadlessJSON,
+// a JSON object carrying kind, text and extra.
+func hlLine(w io.Writer, kind, text string, extra map[string]any) {
+	if !HeadlessJSON {
+		fmt.Fprintf(w, "[%s] %s\n", kind, text)
+		return
+	}
+	obj := map[string]any{"kind": kind, "text": text}
+	for k, v := range extra {
+		obj[k] = v
+	}
+	b, _ := json.Marshal(obj)
+	w.Write(append(b, '\n'))
+}
 
 // ExitCode is the process exit status the launcher should use after
 // unmounting: 1 when a headless turn errored, else 0.
@@ -131,6 +151,10 @@ func hlPrint(ev Event) {
 		hlMu.Lock()
 		hlAsk = &hlAskState{id: ev.ID, options: ev.Options}
 		hlMu.Unlock()
+		if HeadlessJSON {
+			hlLine(hlOut, "ask", ev.Text, map[string]any{"id": ev.ID, "options": ev.Options})
+			return
+		}
 		fmt.Fprintf(hlOut, "[ask] %s\n", ev.Text)
 		for i, o := range ev.Options {
 			fmt.Fprintf(hlOut, "  %d. %s\n", i+1, o)
@@ -149,9 +173,9 @@ func hlPrint(ev Event) {
 	}
 	if ev.Kind == "error" {
 		hlErrored.Store(true)
-		fmt.Fprintf(hlErr, "[error] %s\n", ev.Text)
+		hlLine(hlErr, "error", ev.Text, nil)
 	} else {
-		fmt.Fprintf(hlOut, "[%s] %s\n", ev.Kind, ev.Text)
+		hlLine(hlOut, ev.Kind, ev.Text, nil)
 	}
 	if ev.Kind == "done" {
 		hlMu.Lock()
@@ -159,8 +183,12 @@ func hlPrint(ev Event) {
 		hlMu.Unlock()
 		if u != nil {
 			us := u.Usage()
-			fmt.Fprintf(hlOut, "[usage] {\"input_tokens\":%d,\"output_tokens\":%d,\"cost_usd\":%.6f,\"priced\":%t}\n",
-				us.InputTokens, us.OutputTokens, us.Cost, us.Priced)
+			if HeadlessJSON {
+				hlLine(hlOut, "usage", "", map[string]any{"input_tokens": us.InputTokens, "output_tokens": us.OutputTokens, "cost_usd": us.Cost, "priced": us.Priced})
+			} else {
+				fmt.Fprintf(hlOut, "[usage] {\"input_tokens\":%d,\"output_tokens\":%d,\"cost_usd\":%.6f,\"priced\":%t}\n",
+					us.InputTokens, us.OutputTokens, us.Cost, us.Priced)
+			}
 		}
 		hlPending.Add(-1)
 	}
@@ -260,7 +288,7 @@ func hlAnswerPending(line string) bool {
 	}
 	if err := ans.Answer(pa.id, text); err != nil {
 		hlErrored.Store(true)
-		fmt.Fprintf(hlErr, "[error] %s\n", err)
+		hlLine(hlErr, "error", err.Error(), nil)
 	}
 	return true
 }
@@ -330,7 +358,7 @@ func hlDispatch(line string) bool {
 	if hlog != nil {
 		hlog.Append("system", map[string]any{"text": out})
 	}
-	fmt.Fprintf(hlOut, "[system] %s\n", out)
+	hlLine(hlOut, "system", out, nil)
 	if act == commands.ActionQuit {
 		drainHeadless()
 		interruptSelf()
@@ -355,7 +383,7 @@ func hlBang(line string) {
 	if hlog != nil {
 		hlog.Append("system", map[string]any{"text": out})
 	}
-	fmt.Fprintf(hlOut, "[system] %s\n", out)
+	hlLine(hlOut, "system", out, nil)
 }
 
 // drainHeadless waits for every sent line's "done" (with an idle
