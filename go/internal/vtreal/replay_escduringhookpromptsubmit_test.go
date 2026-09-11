@@ -48,18 +48,6 @@ func escduringhookpromptsubmitComposerHas(s, substr string) bool {
 	return r >= 0 && strings.Contains(ls[r], substr)
 }
 
-// escduringhookpromptsubmitKnown skips a subtest that fails on a known
-// bug: hooks.Fire returns (nil, nil) when esc cancels a pending
-// user-prompt-submit hook, and loop.admit carries on as if the hook
-// approved — the cancelled prompt is recorded as input and the model
-// is still called.
-func escduringhookpromptsubmitKnown(t *testing.T) {
-	t.Helper()
-	if os.Getenv("BOUGH_KNOWN_ESCDURINGHOOKPROMPTSUBMIT") == "" {
-		t.Skip("known bug: a prompt cancelled during its user-prompt-submit hook is still admitted and sent (loop.admit ignores ctx.Err); set BOUGH_KNOWN_ESCDURINGHOOKPROMPTSUBMIT=1 to run")
-	}
-}
-
 func TestEscDuringHookPromptSubmit(t *testing.T) {
 	t.Parallel()
 	dir, err := os.MkdirTemp("", "escHook") // short: the paths ride in commands
@@ -111,7 +99,6 @@ return;`, "echo up > "+fifo, "sleep 0.05; test -e "+release+" && echo OPEN"))
 	}
 	a.check("after esc")
 	t.Run("FirstPromptNotSent", func(t *testing.T) {
-		escduringhookpromptsubmitKnown(t)
 		if strings.Contains(afterEsc, "ONLY_REPLY_ON_TAPE") {
 			t.Errorf("the cancelled prompt reached the model:\n%s", afterEsc)
 		}
@@ -129,7 +116,6 @@ return;`, "echo up > "+fifo, "sleep 0.05; test -e "+release+" && echo OPEN"))
 	a.check("after second")
 	s := a.settled()
 	t.Run("SecondPromptOnce", func(t *testing.T) {
-		escduringhookpromptsubmitKnown(t)
 		if c := strings.Count(s, "ONLY_REPLY_ON_TAPE"); c != 1 {
 			t.Errorf("tape reply on screen %d times, want 1:\n%s", c, s)
 		}

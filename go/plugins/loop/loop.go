@@ -741,9 +741,16 @@ func (r *runner) provenance() map[string]any {
 // admit runs one user line through the user-prompt-submit hook (which
 // may rewrite or block it), expands @files, injects skills and records
 // the "input" entry. Returns the line as admitted and, when the hook
-// blocked it, its reason (nothing recorded then).
+// blocked it, its reason (nothing recorded then). A turn's prompt is
+// not recorded either when esc cancelled ctx while the hook was
+// pending (the caller checks ctx.Err()); a steer still is, so the
+// next turn sees it under the cancelled note.
 func (r *runner) admit(ctx context.Context, input string, steer bool, emit func(kind, text string)) (line, blocked string) {
-	if res := r.fire(ctx, "user-prompt-submit", map[string]any{"input": input}, emit); res != nil {
+	res := r.fire(ctx, "user-prompt-submit", map[string]any{"input": input}, emit)
+	if !steer && ctx.Err() != nil {
+		return input, ""
+	}
+	if res != nil {
 		if b, ok := res["block"].(string); ok {
 			return input, b
 		}
@@ -1424,6 +1431,10 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	r.announceContext(emit)
 
 	input, blocked := r.admit(ctx, input, false, emit)
+	if ctx.Err() != nil {
+		finish("cancelled", r.doneData())
+		return ctx.Err()
+	}
 	if blocked != "" {
 		note("error", blocked, nil)
 		finish("", r.doneData()) // end the turn so headless drain sees it
