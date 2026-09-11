@@ -154,12 +154,14 @@ type model struct {
 	lines       []string      // rendered content lines, for the selection
 	boxRows     []bool        // lines[i] is a box() row (border or rail), so a drag copies its interior only
 	boxN        int           // line count of the last box() render (renderPart reads it)
+	soft        []string      // per line: joiner to the next when it is a soft wrap
 	stop        stopState     // quit-key arming (see stop.go)
 	bang        *bangRun      // the running "!" command (esc cancels); nil = none
 	leader      bool          // the leader key was pressed: the next key is a chord (see actions.go)
 	comp        composerState // prompt recall (see composer.go)
 	tab         tabState      // Tab path-completion cycling (see pathcomplete.go)
 	md          *glamour.TermRenderer
+	mdWide      *glamour.TermRenderer
 	mdCache     map[string]string // assistant markdown render cache (cleared on resize)
 	parts       map[int]partEntry // per-block rendered part, by block id (cleared with mdCache)
 	liveHead    liveWrap          // the streaming reply's wrapped finished lines (render)
@@ -335,7 +337,7 @@ func (m *model) refresh() {
 		parts = append(parts, part)
 		prev = voice
 	}
-	m.lines = strings.Split(strings.Join(parts, "\n"), "\n")
+	m.lines, m.soft = unwrapMarks(strings.Split(strings.Join(parts, "\n"), "\n"))
 	m.boxRows = make([]bool, len(m.lines))
 	for _, s := range boxAt {
 		for r := s[0]; r < s[1] && r < len(m.boxRows); r++ {
@@ -431,11 +433,23 @@ func (m *model) markdown(text string) string {
 		if err != nil {
 			return text
 		}
-		m.md = r
+		wide, err := glamour.NewTermRenderer(
+			glamour.WithStyles(mdStyles(style, m.cfg.Load().theme)),
+			glamour.WithWordWrap(0),
+			glamour.WithEmoji(),
+			glamour.WithPreservedNewLines(),
+		)
+		if err != nil {
+			return text
+		}
+		m.md, m.mdWide = r, wide
 	}
 	out, err := m.md.Render(text)
 	if err != nil {
 		return text
+	}
+	if wide, err := m.mdWide.Render(text); err == nil {
+		out = markWraps(out, wide)
 	}
 	out = strings.Trim(out, "\n")
 	m.mdCache[text] = out

@@ -345,7 +345,7 @@ func (m *model) subTranscript(b *block, cfg *uiCfg) string {
 		if ev.Kind == "result" {
 			tmp.text = resultText(ev.Text)
 		}
-		sb.WriteString("\n" + m.render(&tmp, cfg))
+		sb.WriteString("\n" + stripMarks(m.render(&tmp, cfg)))
 	}
 	switch s.status {
 	case "running":

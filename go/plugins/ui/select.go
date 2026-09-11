@@ -119,11 +119,21 @@ func (m *model) selectedText() string {
 			}
 			left, right = max(left, lo), min(right, hi)
 		}
-		if left >= right {
-			out = append(out, "")
+		piece := ""
+		if left < right {
+			piece = strings.TrimRight(ansi.Cut(plain, left, right), " ")
+		}
+		if r > r0 && r-1 < len(m.soft) && m.soft[r-1] != "" && len(out) > 0 {
+			// A soft wrap of the row above: rejoin it, dropping the
+			// continuation's indent and restoring the space it ate.
+			join := m.soft[r-1]
+			if join == "\x00" {
+				join = ""
+			}
+			out[len(out)-1] += join + strings.TrimLeft(piece, " ")
 			continue
 		}
-		out = append(out, strings.TrimRight(ansi.Cut(plain, left, right), " "))
+		out = append(out, piece)
 	}
 	return strings.TrimRight(strings.Join(out, "\n"), "\n")
 }

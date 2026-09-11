@@ -111,13 +111,12 @@ func TestCopyDragOverOpenBoxDropsBorders(t *testing.T) {
 // A long unbroken line hard-wrapped at the pane width must come back as
 // the one line the model wrote.
 func TestCopyDragJoinsWrappedLine(t *testing.T) {
-	copyKnown(t, "selection copies the hard-wrapped rendering, soft wraps become \\n (select.go:100 selectedText)")
 	d := defaultDrv(t)
 	long := strings.Repeat("abcdefghij", 20) // 200 cells, wraps at 80
 	d.event("assistant", long)
 	d.event("done", "")
 	r := frameRow(d, "abcdefghij")
-	text, _ := copyDrag(d, 0, r, 79, r+4)
+	text, _ := copyDrag(d, 0, r, 79, r+2) // the three wrapped rows
 	if strings.TrimSpace(text) != long {
 		t.Errorf("wrapped line not rejoined:\n got %q\nwant %q", text, long)
 	}
