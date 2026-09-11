@@ -1,0 +1,8 @@
+{"seq":1,"at":"2026-09-10T11:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T11:00:01Z","kind":"input","data":{"text":"plan the release"}}
+{"seq":3,"at":"2026-09-10T11:00:02Z","kind":"assistant","data":{"text":"```stop\nPlanned.\n```"}}
+{"seq":4,"at":"2026-09-10T11:00:02Z","kind":"todo/add","data":{"id":1,"text":"cut the tag"}}
+{"seq":5,"at":"2026-09-10T11:00:02Z","kind":"todo/add","data":{"id":2,"text":"review the diff"}}
+{"seq":6,"at":"2026-09-10T11:00:02Z","kind":"todo/add","data":{"id":3,"text":"write the notes"}}
+{"seq":7,"at":"2026-09-10T11:00:03Z","kind":"todo/done","data":{"id":2}}
+{"seq":8,"at":"2026-09-10T11:00:03Z","kind":"done","data":{"text":""}}
