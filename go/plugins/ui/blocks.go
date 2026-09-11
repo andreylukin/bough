@@ -457,6 +457,11 @@ func (m *model) flushTrailing() {
 // produced, then the done block carrying the entry's files/exit. A
 // queued user line, if any, starts now.
 func (m *model) finishTurn(id int, ev Event) {
+	// A cancelled or failed turn never sends the final "assistant": keep
+	// what streamed, but settle it so the cursor goes and it can fold.
+	if i := m.liveReply(); i >= 0 {
+		m.blocks[i].live = false
+	}
 	if !turnHasReply(m.blocks) {
 		m.blocks = append(m.blocks, block{id: id, kind: "error", text: "turn ended without a reply"})
 		id = m.nextID

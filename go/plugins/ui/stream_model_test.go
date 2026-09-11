@@ -212,9 +212,6 @@ func streamModelCheck(tt *testing.T, t *rapid.T, long bool) {
 			r.d.feed(eventMsg{Kind: "done"})
 			r.frame("cancel")
 			if nl, _ := r.liveCount("assistant"); nl != 0 || strings.Contains(r.d.plain(), "▌") {
-				if !streamModelKnown {
-					return // known bug: see TestStreamModelCancelLeavesLiveBlock
-				}
 				t.Fatalf("cancelled turn left %d live assistant block(s):\n%s", nl, r.d.plain())
 			}
 			return
@@ -315,11 +312,6 @@ func TestStreamModelCancelLeavesLiveBlock(t *testing.T) {
 	d.event("assistant-delta", "Half an answ")
 	d.event("cancelled", "")
 	d.event("done", "")
-	if !streamModelKnown {
-		if _, idx := (&streamModelRun{d: d}).liveCount("assistant"); idx >= 0 {
-			t.Skip("known bug (BOUGH_KNOWN_STREAM_MODEL=1): cancel mid-stream leaves the live block and its ▌ (dropLive only runs on \"assistant\", model.go addEvent)")
-		}
-	}
 	for _, b := range d.m.blocks {
 		if b.live {
 			t.Fatalf("live block survived a cancelled turn: %+v\n%s", b, d.plain())
