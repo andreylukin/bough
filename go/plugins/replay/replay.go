@@ -14,6 +14,12 @@
 //
 // delay_ms (llm side) pauses between streamed words; default 0.
 //
+// An "error" entry that ends a turn (the next top-level entry is its
+// done) is a failed model call: Complete returns it at that point. A
+// done's recorded usage is reported (llm.UsageReporter) once the call
+// before it has been answered, and an assistant entry's recorded model
+// is what Model() names, so the cost and model chips work under replay.
+//
 // Only the top-level transcript is replayed: sub:* entries were produced
 // by subagents, whose spawn call is itself a block with a recorded
 // result, so they never run.
@@ -33,6 +39,7 @@ import (
 	"github.com/andreylukin/bough/plugins/codemode"
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
+	"github.com/andreylukin/bough/plugins/loop"
 )
 
 func init() {
@@ -89,9 +96,19 @@ type Tape struct {
 	Results []result // result entries, top level only
 	Delay   time.Duration
 
-	mu sync.Mutex
-	ri int
-	xi int
+	mu    sync.Mutex
+	calls []call // every model call in order: replies and failures
+	ri    int
+	xi    int
+}
+
+// call is one recorded model call: a reply, or an error when err is
+// set. usage is what the done that followed it recorded.
+type call struct {
+	text  string
+	err   string
+	model string
+	usage llm.Usage
 }
 
 type result struct {
@@ -106,13 +123,29 @@ func Load(path string) (*Tape, error) {
 		return nil, fmt.Errorf("replay: %w", err)
 	}
 	t := &Tape{Path: path}
+	var top []history.Entry
 	for _, e := range entries {
+		if !strings.HasPrefix(e.Kind, "sub:") {
+			top = append(top, e)
+		}
+	}
+	for i, e := range top {
 		text, _ := e.Data["text"].(string)
 		switch e.Kind {
 		case "input":
 			t.Inputs = append(t.Inputs, text)
 		case "assistant":
 			t.Replies = append(t.Replies, text)
+			model, _ := e.Data["model"].(string)
+			t.calls = append(t.calls, call{text: text, model: model})
+		case "error":
+			if i+1 < len(top) && top[i+1].Kind == "done" && text != "" {
+				t.calls = append(t.calls, call{err: text})
+			}
+		case "done":
+			if n := len(t.calls); n > 0 {
+				t.calls[n-1].usage = loop.SumUsage([]history.Entry{e})
+			}
 		case "result":
 			code, _ := e.Data["code"].(string)
 			t.Results = append(t.Results, result{code: code, text: text})
@@ -127,15 +160,39 @@ func Load(path string) (*Tape, error) {
 // Turns is how many user inputs the tape holds.
 func (t *Tape) Turns() int { return len(t.Inputs) }
 
-func (t *Tape) nextReply() (string, bool) {
+func (t *Tape) nextCall() (call, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.ri >= len(t.Replies) {
-		return "", false
+	if t.ri >= len(t.calls) {
+		return call{}, false
 	}
-	r := t.Replies[t.ri]
+	c := t.calls[t.ri]
 	t.ri++
-	return r, true
+	return c, true
+}
+
+// served sums the usage of every call answered so far and names the
+// model of the latest reply that recorded one.
+func (t *Tape) served() (llm.Usage, string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var u llm.Usage
+	model := ""
+	for _, c := range t.calls[:t.ri] {
+		u.InputTokens += c.usage.InputTokens
+		u.OutputTokens += c.usage.OutputTokens
+		u.CacheReadTokens += c.usage.CacheReadTokens
+		u.CacheCreationTokens += c.usage.CacheCreationTokens
+		if c.usage.LastInputTokens > 0 {
+			u.LastInputTokens = c.usage.LastInputTokens
+		}
+		u.Cost += c.usage.Cost
+		u.Priced = u.Priced || c.usage.Priced
+		if c.model != "" {
+			model = c.model
+		}
+	}
+	return u, model
 }
 
 // nextResult prefers the recorded result of this exact block, looking
@@ -161,17 +218,50 @@ func (t *Tape) nextResult(code string) (string, bool) {
 }
 
 // Model is the llm side of the tape.
-type Model struct{ tape *Tape }
+type Model struct {
+	tape *Tape
 
-// Complete returns the next recorded reply. Past the end of the tape
-// it stops the turn, so a driver that sends more inputs than the
-// recording had still gets a clean done.
+	mu   sync.Mutex
+	seen [][]llm.Message
+}
+
+// Complete returns the next recorded reply, or the recorded error of a
+// failed call. Past the end of the tape it stops the turn, so a driver
+// that sends more inputs than the recording had still gets a clean done.
 func (m *Model) Complete(ctx context.Context, system string, messages []llm.Message) (string, error) {
-	r, ok := m.tape.nextReply()
+	m.mu.Lock()
+	m.seen = append(m.seen, append([]llm.Message(nil), messages...))
+	m.mu.Unlock()
+	c, ok := m.tape.nextCall()
 	if !ok {
 		return "```stop\n[replay: end of tape]\n```", nil
 	}
-	return r, nil
+	if c.err != "" {
+		return "", errors.New(c.err)
+	}
+	return c.text, nil
+}
+
+// Messages is what each call so far was sent, oldest first, so a test
+// can assert what the model saw.
+func (m *Model) Messages() [][]llm.Message {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([][]llm.Message(nil), m.seen...)
+}
+
+// Usage implements llm.UsageReporter from the usage the tape's done
+// entries recorded, summed over the calls answered so far.
+func (m *Model) Usage() llm.Usage {
+	u, _ := m.tape.served()
+	return u
+}
+
+// Model implements llm.Modeler: the model the latest answered reply
+// recorded, "" before one has.
+func (m *Model) Model() string {
+	_, model := m.tape.served()
+	return model
 }
 
 // Stream delivers the reply one word at a time, pausing Delay between
@@ -228,7 +318,11 @@ func (r *Runtime) Run(code string) (string, error) {
 	return out, nil
 }
 
-// RunCtx is Run: the recording cannot be cancelled mid-block.
+// RunCtx is Run, unless ctx is already done: a cancelled block
+// returns ctx's error and leaves the tape where it was.
 func (r *Runtime) RunCtx(ctx context.Context, code string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	return r.Run(code)
 }

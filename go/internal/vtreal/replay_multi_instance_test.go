@@ -150,20 +150,17 @@ func multiDrive(t *testing.T, tape string, ins ...*multiInstance) []string {
 			t.FailNow()
 		}
 	}
-	// No cross-talk: each session holds exactly its own turns, and the
-	// $HOME-wide doneCount is the sum of the sessions under that $HOME.
-	byHome := map[string]int{}
+	// No cross-talk: each session holds exactly its own turns, and
+	// doneCount (the newest session under a $HOME) sees one session's
+	// turns, never the sum of every session sharing that $HOME.
 	for _, m := range ins {
 		for _, k := range []string{"done", "input"} {
 			if n := multiKinds(m.session, k); n != turns {
 				t.Errorf("%s: %s has %d %q entries, want %d:\n%s", m.name, m.session, n, k, turns, m.a.text())
 			}
 		}
-		byHome[m.a.home] += turns
-	}
-	for _, m := range ins {
-		if got, want := m.a.doneCount(), byHome[m.a.home]; got != want {
-			t.Errorf("%s: doneCount under %s = %d, want %d:\n%s", m.name, m.a.home, got, want, m.a.text())
+		if got := m.a.doneCount(); got != turns {
+			t.Errorf("%s: doneCount under %s = %d, want %d:\n%s", m.name, m.a.home, got, turns, m.a.text())
 		}
 	}
 	screens := make([]string, len(ins))

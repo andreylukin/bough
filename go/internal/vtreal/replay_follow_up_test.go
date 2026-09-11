@@ -48,7 +48,7 @@ func followUpNewest(a *app) []history.Entry {
 }
 
 // followUpWaitDone waits until the newest session holds n finished
-// turns (doneCount sums every file, and a fork copies its dones).
+// turns (a fork copies its dones into the new file).
 func followUpWaitDone(a *app, n int) {
 	a.t.Helper()
 	deadline := time.Now().Add(30 * time.Second)

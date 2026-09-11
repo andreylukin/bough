@@ -89,19 +89,29 @@ func (a *app) check(where string) {
 	}
 }
 
-// doneCount reads the session bough wrote under this run's $HOME.
+// doneCount counts finished turns in the newest session file under
+// this run's $HOME: the one this run is writing. Older sessions there
+// (a resume fixture, another instance's) must not count toward it.
 func (a *app) doneCount() int {
 	paths, _ := filepath.Glob(filepath.Join(a.home, ".bough", "history", "*.jsonl"))
-	n := 0
+	var newest string
+	var at time.Time
 	for _, p := range paths {
-		entries, err := history.Read(p)
-		if err != nil {
-			continue
+		if st, err := os.Stat(p); err == nil && !st.ModTime().Before(at) {
+			newest, at = p, st.ModTime()
 		}
-		for _, e := range entries {
-			if e.Kind == "done" || e.Kind == "cancelled" {
-				n++
-			}
+	}
+	if newest == "" {
+		return 0
+	}
+	entries, err := history.Read(newest)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if e.Kind == "done" || e.Kind == "cancelled" {
+			n++
 		}
 	}
 	return n

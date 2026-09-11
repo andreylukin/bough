@@ -19,7 +19,6 @@ import (
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
 	"github.com/andreylukin/bough/plugins/loop"
-	"github.com/andreylukin/bough/plugins/replay"
 )
 
 // resumeConfig is replayConfig with the history row pointed at a
@@ -230,12 +229,6 @@ func TestResumeStatusBarShowsRecordedUsage(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Fatalf("resumed transcript missing %q:\n%s", want, s)
 		}
-	}
-	// The cost row only mounts over an llm that reports usage, and
-	// replay.Model has no Usage() method: under replay the bar shows no
-	// tally at all. Assert the chip the moment that seam exists.
-	if _, ok := any(&replay.Model{}).(llm.UsageReporter); !ok {
-		t.Skipf("replay.Model is not an llm.UsageReporter, so the cost row does not mount and the bar cannot show the tally on file; screen:\n%s", s)
 	}
 	if !strings.Contains(s, "↑12.3k ↓3.5k · $0.052") {
 		t.Fatalf("resumed status bar does not show the tally on file (↑12.3k ↓3.5k · $0.052):\n%s", s)
