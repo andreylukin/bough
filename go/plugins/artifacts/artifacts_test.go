@@ -248,3 +248,41 @@ func TestRenderEscapesScriptClose(t *testing.T) {
 		t.Fatalf("page: %.200s", page[strings.Index(page, "const PAGE"):])
 	}
 }
+
+// A name that climbs out of the session directory is refused by every
+// tool, and no URL shape reaches a file outside the store: unknown
+// pages, sources, sub-routes and encoded traversal are all 404.
+func TestNamesAndRoutesStayInsideTheStore(t *testing.T) {
+	s := newStore(t)
+	s.web.Handle("/artifacts/", s)
+	defer s.web.Unhandle("/artifacts/")
+	if err := os.WriteFile(s.root+"/secret.ui", []byte(sample), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"../secret", "..", "a/../../secret", `..\secret`, ".hidden", ""} {
+		if _, err := s.Publish(name, sample); err == nil {
+			t.Errorf("Publish(%q) accepted", name)
+		}
+		if _, err := s.Patch(name, "x = 1"); err == nil {
+			t.Errorf("Patch(%q) accepted", name)
+		}
+		if _, err := s.Answers(name); err == nil {
+			t.Errorf("Answers(%q) accepted", name)
+		}
+	}
+	if _, err := s.Publish("p", sample); err != nil {
+		t.Fatal(err)
+	}
+	base := s.web.URL() + "/artifacts/"
+	for _, p := range []string{
+		"s1/nope", "s1/nope.ui", "s1/nope/answers", "s2/p", "s1/p/bogus",
+		"s1/..%2fsecret", "..%2fsecret.ui", "s1/%2e%2e/secret.ui",
+	} {
+		if code, body := get(t, base+p); code != 404 {
+			t.Errorf("GET %s = %d %.80q", p, code, body)
+		}
+	}
+	if code, _ := get(t, base+"s1/p.ui"); code != 200 {
+		t.Errorf("the page itself = %d", code)
+	}
+}
