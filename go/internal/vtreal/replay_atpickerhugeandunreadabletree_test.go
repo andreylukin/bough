@@ -70,9 +70,6 @@ func TestAtPickerHugeAndUnreadableTree(t *testing.T) {
 	})
 
 	t.Run("finds a file past the walk cap", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_ATPICKERHUGEANDUNREADABLETREE") == "" {
-			t.Skip("known bug: listFiles stops at atMaxFiles (5000) before filtering, so files later in the walk are unfindable (plugins/ui/atfiles.go); set BOUGH_KNOWN_ATPICKERHUGEANDUNREADABLETREE=1")
-		}
 		a := atPickerHugeAndUnreadableTreeStart(t)
 		a.typeText("@needle")
 		a.atPickerWant("needle", []string{"zz/needle.go"}, "zz/needle.go")

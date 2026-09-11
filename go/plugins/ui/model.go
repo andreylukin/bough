@@ -127,6 +127,8 @@ type model struct {
 	pal         palette        // "/" command palette (see palette.go)
 	at          palette        // "@" file picker (see atfiles.go)
 	atFiles     []string       // the picker's file list, read when it opens
+	atCapped    bool           // the unfiltered walk hit atMaxFiles: re-walk per query
+	atWalkQ     string         // the query atFiles was walked for
 	flash       string
 	v           voiceState    // voice dictation (voice.go)
 	trailing    string        // assistant prose after an executed fence, emitted after its result

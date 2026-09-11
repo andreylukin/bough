@@ -30,9 +30,12 @@ func atStart(draft string) int {
 }
 
 // listFiles walks root (relative paths, sorted), skipping dot
-// directories, node_modules and vendor trees.
-func listFiles(root string) []string {
-	var out []string
+// directories, node_modules and vendor trees. Only files that could
+// match q (the picker's fuzzy filter) are kept and count toward the
+// cap, so a huge tree still finds files late in the walk; capped
+// reports that the walk stopped early.
+func listFiles(root, q string) (out []string, capped bool) {
+	q = strings.ToLower(strings.TrimLeft(strings.TrimSpace(q), "/"))
 	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -54,20 +57,26 @@ func listFiles(root string) []string {
 		if err != nil {
 			return nil
 		}
-		out = append(out, filepath.ToSlash(rel))
+		rel = filepath.ToSlash(rel)
+		if q != "" && !subsequence(strings.ToLower(rel), q) {
+			return nil
+		}
+		out = append(out, rel)
 		if len(out) >= atMaxFiles {
+			capped = true
 			return filepath.SkipAll
 		}
 		return nil
 	})
 	slices.Sort(out)
-	return out
+	return out, capped
 }
 
 // syncAt derives the picker from the draft, like syncPalette: it opens
 // on a word-initial "@" (never while the "/" palette owns the line),
 // closes when that word goes away, and stays closed after Esc until
-// the draft changes. The file list is read when the picker opens.
+// the draft changes. The file list is read when the picker opens, and
+// read again per query when the unfiltered walk hit the cap.
 func (m *model) syncAt() {
 	draft := m.input.Value()
 	if m.at.escaped && draft != m.at.escAt {
@@ -76,7 +85,12 @@ func (m *model) syncAt() {
 	open := !m.pal.open && !m.inspecting && !m.picking && !m.mp.open && atStart(draft) >= 0 && !m.at.escaped
 	if open && !m.at.open {
 		m.at.selected = 0
-		m.atFiles = listFiles(".")
+		m.atFiles, m.atCapped = listFiles(".", "")
+		m.atWalkQ = ""
+	}
+	if q := m.atQuery(); open && m.atCapped && q != m.atWalkQ && !pathQuery(q) {
+		m.atFiles, _ = listFiles(".", q)
+		m.atWalkQ = q
 	}
 	m.at.open = open
 }
