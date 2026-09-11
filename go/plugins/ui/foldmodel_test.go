@@ -244,14 +244,6 @@ func foldModelRun(rt *rapid.T, t *testing.T, maxSteps int) {
 			if cur < 0 {
 				continue
 			}
-			// Known bug (pinned in TestFoldModelOpenFoldStaleExtent): an
-			// open fold keeps the end index it had when opened, so steps
-			// that arrived since sit under a header that does not count
-			// them, and refold+unfold widens it.
-			stale := false
-			if r, ok := d.m.foldAt(cur); ok && r.open && d.m.focusFold && r.to < len(d.m.blocks) && d.m.foldable(r.to) {
-				stale = os.Getenv("BOUGH_KNOWN_FOLD_MODEL") == ""
-			}
 			wasBottom := d.m.vp.AtBottom()
 			wasFold := d.m.focusFold // enter on an open fold's header refolds it, by design
 			before := strings.Join(d.m.lines, "\n")
@@ -312,7 +304,7 @@ func foldModelRun(rt *rapid.T, t *testing.T, maxSteps int) {
 					}
 					ref.collapsed[b.id] = b.collapsed
 				}
-				if after := strings.Join(d.m.lines, "\n"); !stale && !refolded && stripANSI(after) != stripANSI(before) {
+				if after := strings.Join(d.m.lines, "\n"); !refolded && stripANSI(after) != stripANSI(before) {
 					rt.Fatalf("toggle twice changed the transcript:\n--- before\n%s\n--- after\n%s", stripANSI(before), stripANSI(after))
 				}
 				step = "toggle twice"
@@ -429,7 +421,6 @@ func TestFoldModelCollapseJoinsFold(t *testing.T) {
 // header back then swallows it (refold+unfold is not the identity).
 func TestFoldModelOpenFoldStaleExtent(t *testing.T) {
 	t.Parallel()
-	foldModelKnown(t, "an open fold's header does not count steps that arrived after it opened")
 	d := defaultDrv(t)
 	steps(d, 2)
 	d.m.unfold(0)

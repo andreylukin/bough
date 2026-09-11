@@ -86,7 +86,8 @@ func (m *model) foldRuns() []foldRun {
 // left alone: while the agent works, the steps arriving are the only
 // sign it is working. An open run keeps the extent it had when it was
 // opened: expanding a row inside it must not dissolve the header that
-// folds it back.
+// folds it back. It still grows over foldable blocks appended after
+// that extent.
 func (m *model) runs() []foldRun {
 	last := len(m.blocks)
 	if m.running {
@@ -101,6 +102,11 @@ func (m *model) runs() []foldRun {
 	var out []foldRun
 	for i := 0; i < last; {
 		if to, open := m.unfolded[m.blocks[i].id]; open {
+			// Steps that arrived after it opened join it, as they
+			// would have joined the closed run.
+			for to < last && m.foldable(to) {
+				to++
+			}
 			out = append(out, foldRun{from: i, to: to, lead: i, open: true})
 			i = to
 			continue
