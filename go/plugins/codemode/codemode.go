@@ -277,6 +277,7 @@ func (cm *CodeMode) RunCtx(ctx context.Context, code string) (string, error) {
 	prevTimer := cm.timer // nested Run: restore the parent's timer after
 	cm.timer = timer
 	cm.vm.ClearInterrupt() // a cancel that landed between runs must not abort this one
+	stopCancel := context.AfterFunc(ctx, cm.Interrupt)
 	v, err := func() (v goja.Value, err error) {
 		// A panicking Go tool must become the block's error, not kill bough.
 		defer func() {
@@ -289,6 +290,7 @@ func (cm *CodeMode) RunCtx(ctx context.Context, code string) (string, error) {
 	err = withSource(code, err)
 	cm.timer = prevTimer
 	timer.Stop()
+	stopCancel()
 	cm.vm.ClearInterrupt()
 
 	out := cm.out.String()

@@ -231,7 +231,6 @@ func TestCodemodeRuntimeCtxCancelStopsSpin(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		cm.Interrupt()
 		<-done
-		codemodeRuntimeKnown(t, "RunCtx never interrupts the VM on ctx.Done (codemode.go RunCtx has no context.AfterFunc)")
 		t.Fatal("ctx cancel did not interrupt a spinning block")
 	}
 	codemodeRuntimeNextWorks(t, cm)
