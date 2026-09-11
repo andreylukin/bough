@@ -67,7 +67,7 @@ func TestEscDuringHookPromptSubmit(t *testing.T) {
 if (!event.input.includes("FIRSTGATED")) return;
 tools.bash(%q);
 for (;;) { if (String(tools.bash(%q)).includes("OPEN")) break; }
-return;`, "echo up > "+fifo, "sleep 0.05; test -e "+release+" && echo OPEN"))
+return;`, "echo up > "+fifo, "sleep 0.05; test -e "+release+" && echo OPEN || true"))
 
 	a.typeText("FIRSTGATED prompt")
 	a.key(uv.KeyEnter, 0)
