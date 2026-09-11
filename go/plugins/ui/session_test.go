@@ -92,6 +92,22 @@ func TestProgramReplaysResumedTranscript(t *testing.T) {
 	}
 }
 
+// A turn killed mid-stream leaves [input] with no done/cancelled:
+// replay marks it interrupted; a finished turn gets no marker.
+func TestReplayMarksInterruptedTurn(t *testing.T) {
+	t.Parallel()
+	h := fakeHist{path: "/tmp/killed.jsonl", entries: []history.Entry{
+		{Seq: 1, Kind: "meta", Data: map[string]any{}},
+		{Seq: 2, Kind: "input", Data: map[string]any{"text": "stream a long answer"}},
+	}}
+	if p := newDrv(t, 80, 24, cfgWith(t, nil, nil, h)).plain(); !strings.Contains(p, "interrupted") {
+		t.Errorf("killed turn replayed with no interrupted marker:\n%s", p)
+	}
+	if p := newDrv(t, 80, 24, cfgWith(t, nil, nil, seededHist())).plain(); strings.Contains(p, "interrupted") {
+		t.Errorf("finished turn must not be marked interrupted:\n%s", p)
+	}
+}
+
 func TestProgramFreshSessionNoReplay(t *testing.T) {
 	t.Parallel()
 	events := make(chan Event, 16)

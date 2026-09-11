@@ -200,9 +200,6 @@ func TestCrashResumeIntegrity(t *testing.T) {
 			})
 
 			t.Run("incomplete_marker", func(t *testing.T) {
-				if os.Getenv("BOUGH_KNOWN_CRASH_RESUME_INTEGRITY") == "" {
-					t.Skip("known bug: a turn killed mid-stream resumes as a bare prompt with no cancelled/interrupted marker (plugins/ui/session.go replay); set BOUGH_KNOWN_CRASH_RESUME_INTEGRITY=1 to run")
-				}
 				low := strings.ToLower(s)
 				if !strings.Contains(low, "cancelled") && !strings.Contains(low, "interrupted") &&
 					!strings.Contains(low, "incomplete") && !strings.Contains(low, "without a reply") {

@@ -54,8 +54,15 @@ func (m *model) replay() {
 		return
 	}
 	entries := cfg.hist.Entries()
+	open := false // an input with no done/cancelled after it yet
 	for _, e := range entries {
 		text, _ := e.Data["text"].(string)
+		switch e.Kind {
+		case "input":
+			open = true
+		case "done", "cancelled":
+			open = false
+		}
 		switch e.Kind {
 		case "meta", "undo":
 			// session bookkeeping (cwd, a /undo's revert record —
@@ -103,6 +110,13 @@ func (m *model) replay() {
 		if len(cfg.todo.List()) > 0 {
 			m.todoText = cfg.todo.Render()
 		}
+	}
+	// A turn the process died in (SIGKILL, crash) left its input on
+	// disk with no done/cancelled entry: say so, or it reads as a
+	// prompt still waiting for its answer.
+	if open {
+		m.blocks = append(m.blocks, block{id: m.nextID, kind: "system", text: "■ interrupted — bough exited before this turn finished"})
+		m.nextID++
 	}
 	m.expireAsks()                 // an ask with no answer entry replays as expired
 	m.running = false              // a replayed transcript is never mid-turn
