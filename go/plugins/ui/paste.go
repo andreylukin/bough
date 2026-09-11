@@ -120,6 +120,19 @@ func pastedImagePath(s string) string {
 
 // expandPastes replaces every placeholder still in the draft with its
 // text. Placeholders the user deleted are simply not there to expand.
+// missingImage returns the path of an image the draft still tags whose
+// file is gone (deleted since the paste), "" when all are readable.
+func (m *model) missingImage(draft string) string {
+	for i, p := range m.comp.images {
+		if strings.Contains(draft, fmt.Sprintf("[Image #%d]", i+1)) {
+			if _, err := os.Stat(p); err != nil {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
 func (m *model) expandPastes(draft string) string {
 	for i, p := range m.comp.images {
 		tag := fmt.Sprintf("[Image #%d]", i+1)

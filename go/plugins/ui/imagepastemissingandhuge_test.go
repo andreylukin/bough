@@ -71,7 +71,6 @@ func TestImagePasteMissingAndHugeDriver(t *testing.T) {
 	})
 
 	t.Run("missing file surfaces an error and keeps the draft", func(t *testing.T) {
-		imagePasteMissingAndHugeGate(t, "submit never re-checks attached image paths (plugins/ui/model.go enter -> expandPastes in paste.go); the deleted image's tag is sent and llm.loadImages drops it silently")
 		img := imagePasteMissingAndHugeFile(t, "shot.png", 64)
 		d := defaultDrv(t)
 		d.typeStr("look ")

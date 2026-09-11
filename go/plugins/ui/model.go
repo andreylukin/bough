@@ -1486,6 +1486,12 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.input.CursorEnd()
 			return m, nil
 		}
+		// An attached image deleted since the paste would be dropped
+		// silently downstream: keep the draft and say so instead.
+		if p := m.missingImage(m.input.Value()); p != "" {
+			m.flash = "image missing: " + p + " · delete the tag to drop it"
+			return m, nil
+		}
 		line := strings.TrimSpace(m.expandPastes(m.input.Value()))
 		if line == "" {
 			return m, nil

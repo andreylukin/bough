@@ -49,12 +49,7 @@ func TestImagePasteMissingAndHugeReal(t *testing.T) {
 			t.Fatal(err)
 		}
 		a.key(uv.KeyEnter, 0)
-		if os.Getenv("BOUGH_KNOWN_IMAGE_PASTE_MISSING_AND_HUGE") == "" {
-			// Today the draft is sent anyway; at least the turn completes.
-			a.waitFor("echo: see")
-		}
 		t.Run("error visible and draft kept", func(t *testing.T) {
-			imagePasteMissingAndHugeGate(t, "submit sends a deleted image's tag with no error (plugins/ui/model.go enter -> expandPastes)")
 			a.waitUntil(func(s string) bool {
 				// The temp path carries the test name ("...MissingAndHuge..."): not a message.
 				s = strings.ReplaceAll(s, "MissingAndHuge", "")
