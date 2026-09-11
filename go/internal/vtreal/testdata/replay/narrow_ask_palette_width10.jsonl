@@ -1,0 +1,5 @@
+{"seq":1,"at":"2026-09-11T10:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-11T10:00:01Z","kind":"input","data":{"text":"go"}}
+{"seq":3,"at":"2026-09-11T10:00:02Z","kind":"assistant","data":{"text":"```js\nconst c = tools.ask(\"Deploy?\", \"alpha-supercalifragilisticexpialidocious-option\", \"bravo option with many short words that wrap\", \"charlie_unbroken_identifier_that_is_very_long_indeed\");\nconsole.log(\"picked \" + c);\n```"}}
+{"seq":4,"at":"2026-09-11T10:00:03Z","kind":"assistant","data":{"text":"```stop\nOK.\n```"}}
+{"seq":5,"at":"2026-09-11T10:00:03Z","kind":"done","data":{"text":""}}
