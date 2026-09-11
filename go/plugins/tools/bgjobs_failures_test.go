@@ -196,10 +196,10 @@ func TestBgjobsWait(t *testing.T) {
 	// loop cancels the run context and interrupts the VM, but a Go host
 	// call only sees the context.
 	t.Run("turn cancel unblocks tools.jobWait", func(t *testing.T) {
-		bgjobsKnown(t, "jobWait selects only on the plugin context (plugins/tools/jobs.go jobWait), never the run context, so esc cannot stop tools.jobWait(id) until the job's limit")
 		s := newTestStats(t)
 		cm := codemode.New(5 * time.Second)
 		s.runCtx = cm.RunContext
+		s.jobs.runCtx = cm.RunContext
 		s.jobs.pause = cm.Pause
 		cm.RegisterTool("bash", s.bash)
 		cm.RegisterTool("jobWait", s.jobs.jobWait)

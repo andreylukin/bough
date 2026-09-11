@@ -123,6 +123,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	// off the plugin's context, not the script's.
 	jctx, cancelJobs := context.WithCancel(context.Background())
 	st.jobs = newJobs(jctx)
+	st.jobs.runCtx = st.runCtx
 	ctx.Effect(func() {
 		cancelJobs()
 		st.jobs.wait(3 * time.Second)

@@ -126,6 +126,9 @@ func firstLine(s string) string {
 type Jobs struct {
 	ctx   context.Context // the plugin's context: a job survives a turn cancel
 	pause func() func()   // codemode's Pause seam, for jobWait
+	// runCtx is the running script's context (nil = none): esc cancels
+	// it, and a jobWait blocked in Go only notices through it.
+	runCtx func() context.Context
 
 	mu      sync.Mutex
 	next    int
@@ -381,6 +384,12 @@ func (j *Jobs) jobWait(id int, secs ...int) (string, error) {
 	if j.pause != nil {
 		defer j.pause()()
 	}
+	var turn <-chan struct{}
+	if j.runCtx != nil {
+		if rc := j.runCtx(); rc != nil {
+			turn = rc.Done()
+		}
+	}
 	for {
 		b.mu.Lock()
 		done := b.done
@@ -391,6 +400,8 @@ func (j *Jobs) jobWait(id int, secs ...int) (string, error) {
 		select {
 		case <-j.ctx.Done():
 			return "", fmt.Errorf("bash: cancelled waiting on job %d", id)
+		case <-turn:
+			return "", fmt.Errorf("cancelled waiting on job %d (it keeps running; tools.jobKill(%d) stops it)", id, id)
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
