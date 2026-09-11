@@ -1111,7 +1111,6 @@ func (m *model) addEvent(ev Event) {
 			m.lastEnd = "done" // the cancelled marker came first when it did
 		}
 		m.expireAsks() // a turn never ends with a live ask
-		m.dropLive()   // a call that failed mid-stream never sent its "assistant"
 		if m.flash == "cancelling…" {
 			m.flash = "" // the cancel landed: the transcript says so, the bar goes back to its chips
 		}
