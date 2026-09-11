@@ -150,9 +150,7 @@ func TestCodemodeRuntimeDeepRecursion(t *testing.T) {
 		t.Fatal("unbounded recursion returned no error")
 	}
 	if !strings.Contains(err.Error(), "RangeError") {
-		codemodeRuntimeNextWorks(t, cm)
-		codemodeRuntimeKnown(t, "no call-stack limit: codemode.New (codemode.go:162) never calls vm.SetMaxCallStackSize, so unbounded recursion runs to the 30 s timeout (took "+time.Since(start).String()+"): "+err.Error())
-		t.Errorf("want RangeError, got %v", err)
+		t.Errorf("want RangeError, got %v (after %s)", err, time.Since(start))
 	}
 	codemodeRuntimeNextWorks(t, cm)
 }

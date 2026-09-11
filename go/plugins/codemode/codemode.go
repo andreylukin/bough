@@ -4,6 +4,7 @@ package codemode
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"runtime"
@@ -81,6 +82,11 @@ func nodeHint(msg string) string {
 }
 
 func cleanErr(err error) error {
+	// goja's StackOverflowError carries only the stack, no message.
+	var so *goja.StackOverflowError
+	if errors.As(err, &so) {
+		return fmt.Errorf("RangeError: Maximum call stack size exceeded%s", nativeFrame.ReplaceAllString(err.Error(), ""))
+	}
 	msg := nativeFrame.ReplaceAllString(err.Error(), "")
 	msg += nodeHint(msg)
 	if msg != err.Error() {
@@ -159,6 +165,9 @@ func (cm *CodeMode) unlock(nested bool) {
 // captures into the output buffer.
 func New(timeout time.Duration) *CodeMode {
 	cm := &CodeMode{vm: goja.New(), timeout: timeout}
+	// Unbounded recursion fails fast with a RangeError instead of
+	// growing the heap until the timeout interrupts it.
+	cm.vm.SetMaxCallStackSize(10000)
 	cm.tools = cm.vm.NewObject()
 	cm.vm.Set("tools", cm.tools)
 
