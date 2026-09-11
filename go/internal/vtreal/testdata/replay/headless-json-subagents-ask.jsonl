@@ -1,0 +1,6 @@
+{"seq":1,"at":"2026-09-11T10:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-11T10:00:01Z","kind":"input","data":{"text":"delegate then ask"}}
+{"seq":3,"at":"2026-09-11T10:00:02Z","kind":"assistant","data":{"text":"```js\nconst r = tools.spawn(\"count the widgets\");\nconsole.log(\"sub said \" + JSON.stringify(r));\nconst c = tools.ask(\"Pick a color\", \"chartreuse\", \"vermilion\");\nconsole.log(\"you picked \" + c);\n```"}}
+{"seq":4,"at":"2026-09-11T10:00:03Z","kind":"assistant","data":{"text":"```stop\nStatus: ok\nFindings: 42 widgets.\n```"}}
+{"seq":5,"at":"2026-09-11T10:00:10Z","kind":"assistant","data":{"text":"```stop\nColor locked in.\n```"}}
+{"seq":6,"at":"2026-09-11T10:00:10Z","kind":"done","data":{"text":""}}
