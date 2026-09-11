@@ -59,13 +59,15 @@ func (s *Skills) Inject(input string) []string {
 		}
 		body, err := os.ReadFile(found[name])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "skills: read %s: %v\n", found[name], err)
+			// Inject runs mid-turn with the TUI owning the tty: a raw
+			// stderr write lands inside its frame and tears the screen.
+			kernel.Logf("skills: read %s: %v\n", found[name], err)
 			continue
 		}
 		blocks = append(blocks, "[skill: "+name+"]\n"+string(body))
 	}
 	if matched > maxBlocks {
-		fmt.Fprintf(os.Stderr, "skills: %d skills matched, injecting first %d\n", matched, maxBlocks)
+		kernel.Logf("skills: %d skills matched, injecting first %d\n", matched, maxBlocks)
 	}
 	return blocks
 }

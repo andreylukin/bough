@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,5 +180,30 @@ func TestManualSkillsOnlyInjectOnTheCommand(t *testing.T) {
 	}
 	if got := s.Inject("/todoist add a task"); len(got) != 1 {
 		t.Fatalf("/todoist must inject, got %d", len(got))
+	}
+}
+
+// A broken SKILL.md must not write to stderr: Inject runs mid-turn,
+// stderr is the TUI's tty, and a raw line there tears the frame.
+func TestInjectBrokenSkillWritesNothingToStderr(t *testing.T) {
+	pool := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(pool, "broken", "SKILL.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	got := New(pool).Inject("try broken now")
+	os.Stderr = old
+	w.Close()
+	out, _ := io.ReadAll(r)
+	if len(got) != 0 {
+		t.Errorf("broken skill injected: %q", got)
+	}
+	if len(out) != 0 {
+		t.Errorf("Inject wrote to stderr: %q", out)
 	}
 }

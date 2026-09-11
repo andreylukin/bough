@@ -162,11 +162,8 @@ func TestSkillsSystemPromptHasNoCatalogue(t *testing.T) {
 
 // Mentioning the broken skill is not fatal: the turn completes, the
 // app keeps running, and a later good skill still injects. The read
-// error goes to stderr only — there is no on-screen report to assert.
-// a.check is not used: after this turn the composer shows a ghost
-// prediction flush against the prompt (">echo: try broken now"), which
-// composerRow's "> " test rejects — a composer quirk, not a skills one —
-// so the crash and status-bar invariants are asserted directly.
+// error is not shown (it once went to stderr, the TUI's own tty, and
+// tore the frame: a duplicated user card, the status bar pushed off).
 func TestSkillsBrokenSkillNotFatal(t *testing.T) {
 	t.Parallel()
 	a := skillsStart(t)
