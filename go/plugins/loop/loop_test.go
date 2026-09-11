@@ -258,20 +258,25 @@ func TestCapOutputSpillsOversizedResult(t *testing.T) {
 	}
 }
 
-// capOutput degrades to the bare cut when the spill write fails.
-func TestCapOutputKeepsCutWhenSpillFails(t *testing.T) {
+// capOutput falls back to the temp dir when the spill dir cannot be
+// written, and says so when neither can.
+func TestCapOutputSpillFallsBackThenSaysNotSaved(t *testing.T) {
 	notDir := filepath.Join(t.TempDir(), "not-a-dir")
 	if err := os.WriteFile(notDir, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	spillDirOverride = notDir
 	defer func() { spillDirOverride = "" }()
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
 	got := capOutput("HEAD"+strings.Repeat("x", 5000)+"TAIL", 400)
-	if !strings.Contains(got, "bytes cut") {
-		t.Fatalf("the cut must still be named: %q", got)
+	if !strings.Contains(got, "bytes cut") || !strings.Contains(got, "full output saved to "+filepath.Join(tmp, "bough-spill")) {
+		t.Fatalf("want a spill into the temp dir: %q", got)
 	}
-	if strings.Contains(got, "full output saved") {
-		t.Fatalf("no spill line when the write failed: %q", got)
+	t.Setenv("TMPDIR", notDir)
+	got = capOutput("HEAD"+strings.Repeat("x", 5000)+"TAIL", 400)
+	if !strings.Contains(got, "bytes cut") || !strings.Contains(got, "full output not saved") {
+		t.Fatalf("an unsaved cut must say so: %q", got)
 	}
 }
 

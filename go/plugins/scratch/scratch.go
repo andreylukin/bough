@@ -326,6 +326,14 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			name = strings.TrimSuffix(filepath.Base(h.Path()), ".jsonl")
 		}
 		dir = filepath.Join(home, ".bough", "scratch", name)
+		// A read-only home cannot hold it; $BOUGH_SCRATCH must still
+		// name a dir tools.bash can write, so use the temp dir.
+		if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+			dir = filepath.Join(os.TempDir(), "bough-scratch", name)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return fmt.Errorf("scratchpad: %w", err)
+			}
+		}
 	}
 	pad, err := New(dir)
 	if err != nil {

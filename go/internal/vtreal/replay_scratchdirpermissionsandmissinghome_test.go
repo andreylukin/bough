@@ -129,9 +129,6 @@ func TestScratchDirPermissionsAndMissingHome(t *testing.T) {
 		if !strings.Contains(huge, "TAILMARK") {
 			t.Errorf("huge result lost its tail:\n%.400s", huge)
 		}
-		if os.Getenv("BOUGH_KNOWN_SCRATCH_DIR_PERMISSIONS_AND_MISSING_HOME") == "" {
-			t.Skip("known bug: loop.capOutput silently degrades to a bare cut when ~/.bough/spill cannot be written (no path, no error), and $BOUGH_SCRATCH points at a dir that cannot be made (no fallback); set BOUGH_KNOWN_SCRATCH_DIR_PERMISSIONS_AND_MISSING_HOME=1 to check")
-		}
 		scratchDirPermissionsAndMissingHomeSpilled(t, huge)
 		if w := scratchDirLifecycleOnResumeLine(probe, "W"); w != "WRITABLE" {
 			t.Errorf("$BOUGH_SCRATCH=%q not a writable dir under a read-only home: %s",

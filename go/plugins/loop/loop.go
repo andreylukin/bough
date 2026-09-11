@@ -1748,6 +1748,17 @@ func writeSpill(s string) (string, error) {
 		}
 		dir = filepath.Join(home, ".bough", "spill")
 	}
+	path, err := writeSpillIn(dir, s)
+	if err != nil {
+		// A read-only or missing home still has a temp dir.
+		if p, terr := writeSpillIn(filepath.Join(os.TempDir(), "bough-spill"), s); terr == nil {
+			return p, nil
+		}
+	}
+	return path, err
+}
+
+func writeSpillIn(dir, s string) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
@@ -1777,8 +1788,11 @@ func capOutput(s string, n int) string {
 		lines := strings.Count(strings.TrimRight(s, "\n"), "\n") + 1
 		return truncate(s, n) +
 			fmt.Sprintf("\n[full output saved to %s — %d lines; use tools.view or grep it]", path, lines)
+	} else {
+		// Say the middle is gone for good, so the model does not
+		// go looking for a file that was never written.
+		return truncate(s, n) + fmt.Sprintf("\n[full output not saved: %v]", err)
 	}
-	return truncate(s, n)
 }
 
 type plugin struct{}
