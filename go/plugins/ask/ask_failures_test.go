@@ -299,7 +299,6 @@ func TestAskFailuresTurnCancelReleasesPendingAsk(t *testing.T) {
 // "? " prompt in front of the user with nothing to answer; Add-style
 // validation (todo rejects empty text) should throw instead.
 func TestAskFailuresEmptyQuestionRejected(t *testing.T) {
-	askFailKnownBug(t, "plugins/ask/ask.go:61 ask() accepts an empty question: tools.ask() / tools.ask(undefined) show a blank prompt and block the turn")
 	cm, a, events := askFailMount(t, 5*time.Second)
 	ch := askFailRun(cm, t.Context(), `tools.ask()`)
 	select {

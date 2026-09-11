@@ -10,6 +10,7 @@ package ask
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,6 +61,16 @@ type Asker struct {
 // the "ask" loop event for the UI, and blocks until Answer (or the
 // timeout, which is an error the model sees as the tool failing).
 func (a *Asker) ask(question string, options ...string) (string, error) {
+	if strings.TrimSpace(question) == "" {
+		return "", fmt.Errorf("ask: question is empty")
+	}
+	kept := options[:0:0]
+	for _, o := range options {
+		if strings.TrimSpace(o) != "" {
+			kept = append(kept, o)
+		}
+	}
+	options = kept
 	a.mu.Lock()
 	a.seq++
 	id := fmt.Sprintf("ask-%d", a.seq)
