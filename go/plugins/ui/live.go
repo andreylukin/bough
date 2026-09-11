@@ -222,6 +222,11 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 		// over the alt screen, composer and status bar included.
 		if s, ok := h.(interface{ SetErrorSink(func(error)) }); ok {
 			s.SetErrorSink(func(err error) {
+				// Not a failure: another bough writes the same session.
+				if n, ok := err.(interface{ Notice() string }); ok {
+					liveB.publish(Event{Kind: "error", Text: n.Notice()})
+					return
+				}
 				liveB.publish(Event{Kind: "error", Text: "history not saved: " + err.Error()})
 			})
 		}

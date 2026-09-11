@@ -8,7 +8,6 @@ package vtreal
 // also tell its user another bough is writing the session.
 
 import (
-	"os"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -133,9 +132,6 @@ func TestDoubleInstanceSameSessionResume(t *testing.T) {
 	})
 
 	t.Run("SecondInstanceWarns", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_DOUBLE_INSTANCE_SAME_SESSION_RESUME") == "" {
-			t.Skip("known bug: a second bough resuming a session another bough holds forks it silently, no warning (plugins/history OpenExisting/Append); set BOUGH_KNOWN_DOUBLE_INSTANCE_SAME_SESSION_RESUME to run")
-		}
 		if !doubleInstanceSameSessionResumeWarning.MatchString(bScreen) {
 			t.Errorf("second instance never mentions the concurrent writer:\n%s", bScreen)
 		}

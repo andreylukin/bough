@@ -61,6 +61,19 @@ type Store struct {
 	failing bool
 	failErr error
 	onErr   func(error) // SetErrorSink; nil = keep it for TakeErr
+	shared  bool        // another writer's entries were seen (warned once)
+}
+
+// ConcurrentWriter is reported (to the SetErrorSink, else stderr) the
+// first time a store finds entries another bough appended to its file:
+// the two instances fork the session, and the user should know.
+type ConcurrentWriter struct{ Seq int64 }
+
+func (e ConcurrentWriter) Error() string { return e.Notice() }
+
+// Notice is the line the TUI shows for it.
+func (e ConcurrentWriter) Notice() string {
+	return fmt.Sprintf("another bough is writing this session (its entry seq %d); this instance continues on its own branch", e.Seq)
 }
 
 // SetErrorSink routes append write errors to f instead of stderr — the
@@ -382,6 +395,14 @@ func (s *Store) catchUp() {
 		}
 	}
 	s.off = st.Size()
+	if !s.shared && s.seq > s.last {
+		s.shared = true
+		if w := (ConcurrentWriter{Seq: s.seq}); s.onErr != nil {
+			s.onErr(w)
+		} else {
+			fmt.Fprintf(os.Stderr, "bough: history: %s\n", w.Notice())
+		}
+	}
 }
 
 // TakeErr returns the error that started the current run of failed

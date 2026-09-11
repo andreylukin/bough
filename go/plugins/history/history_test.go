@@ -561,3 +561,34 @@ func TestAppendErrorSink(t *testing.T) {
 		t.Fatalf("sink called %d times, want 1: %v", len(got), got)
 	}
 }
+
+// A resumed store that finds another writer's entries tells its sink,
+// once: two boughs on one session fork it, and the user should know.
+func TestConcurrentWriterIsReported(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Append("input", nil)
+	s.Close()
+	a, _ := OpenExisting(path)
+	b, _ := OpenExisting(path)
+	var aGot, bGot []error
+	a.SetErrorSink(func(err error) { aGot = append(aGot, err) })
+	b.SetErrorSink(func(err error) { bGot = append(bGot, err) })
+	a.Append("input", nil)
+	b.Append("input", nil)
+	b.Append("done", nil)
+	a.Close()
+	b.Close()
+	if len(bGot) != 1 {
+		t.Fatalf("b's sink got %v, want one ConcurrentWriter", bGot)
+	}
+	if _, ok := bGot[0].(ConcurrentWriter); !ok {
+		t.Errorf("b's sink got %T, want ConcurrentWriter", bGot[0])
+	}
+	if len(aGot) != 0 {
+		t.Errorf("a's sink got %v before b wrote anything", aGot)
+	}
+}
