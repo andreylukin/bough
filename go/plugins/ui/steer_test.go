@@ -237,3 +237,16 @@ func TestSteerMidStreamDropsLiveBlock(t *testing.T) {
 		t.Fatalf("want one settled reply:\n%s", f)
 	}
 }
+
+// A cancelled turn can end with its partial reply still live; the
+// next turn's stream must start its own block, not grow that one.
+func TestLiveReplyStopsAtTurnBoundary(t *testing.T) {
+	t.Parallel()
+	d, _ := steerDrv(t, true)
+	d.event("assistant-delta", "Old partial")
+	d.event("done", "")
+	d.event("assistant-delta", "New reply")
+	if f := d.plain(); strings.Contains(f, "Old partialNew reply") {
+		t.Fatalf("new stream grew the previous turn's block:\n%s", f)
+	}
+}

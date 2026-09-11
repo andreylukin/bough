@@ -303,8 +303,13 @@ func (m *model) addDelta(id int, delta string) {
 
 // liveReply is the index of the streaming assistant block, or -1. It
 // need not be last: a steer landing mid-stream is appended after it.
+// The search stops at the turn's "done": a cancelled turn's partial
+// stays where it is, and the next stream gets its own block.
 func (m *model) liveReply() int {
 	for i := len(m.blocks) - 1; i >= 0; i-- {
+		if m.blocks[i].kind == "done" {
+			break
+		}
 		if m.blocks[i].live && m.blocks[i].kind == "assistant" {
 			return i
 		}
