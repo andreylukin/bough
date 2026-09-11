@@ -198,11 +198,24 @@ func (s *Stats) bash(cmd string, opts ...any) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(parent, bashTimeout)
 	defer cancel()
-	// The script goes in on stdin, not as an argument: a heredoc'd file
+	// The script goes in a file, not as an argument: a heredoc'd file
 	// or a long one-liner is not bounded by ARG_MAX, and a stray NUL
-	// byte no longer makes exec fail with "invalid argument".
-	c := exec.CommandContext(ctx, "sh", "-s")
-	c.Stdin = strings.NewReader(cmd)
+	// byte no longer makes exec fail with "invalid argument". Not on
+	// stdin either: a stdin reader (cat, read, ssh) would eat the rest
+	// of the script. stdin is /dev/null.
+	script, err := os.CreateTemp("", "bough-bash-*.sh")
+	if err != nil {
+		return "", fmt.Errorf("bash: script file: %v", err)
+	}
+	defer os.Remove(script.Name())
+	_, err = script.WriteString(cmd)
+	if cerr := script.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return "", fmt.Errorf("bash: script file: %v", err)
+	}
+	c := exec.CommandContext(ctx, "sh", script.Name())
 	// Its own process group, killed as a group: `sh -c` execs or forks
 	// the command, and killing sh alone leaves a sleep, a server, a
 	// build running after the turn was cancelled.

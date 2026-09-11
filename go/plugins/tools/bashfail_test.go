@@ -152,7 +152,7 @@ func TestBashFailNoStateLeak(t *testing.T) {
 	}
 }
 
-// stdin is the script itself (sh -s): a command that reads stdin must
+// stdin is /dev/null, the script a file: a command that reads stdin must
 // not hang, and must not eat the rest of the script.
 func TestBashFailStdin(t *testing.T) {
 	cm, _ := bashFailRig(t)
@@ -162,7 +162,6 @@ func TestBashFailStdin(t *testing.T) {
 	t.Run("does-not-eat-script", func(t *testing.T) {
 		out, err, _ := bashFailRun(t, cm, `tools.bash("cat >/dev/null\necho after-cat")`, 5*time.Second)
 		if err != nil || !strings.Contains(out, "after-cat") {
-			bashFailKnown(t, "tools.go:204 feeds the script on stdin (sh -s), so a stdin reader (cat, read, ssh, npm prompts) swallows the following lines")
 			t.Fatalf("script after a stdin reader never ran: %q %v", out, err)
 		}
 	})
