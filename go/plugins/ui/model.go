@@ -854,6 +854,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.finishPredict(msg)
 		return m, nil
 
+	case bangChunkMsg:
+		return m, m.streamBang(msg)
+
 	case bangDoneMsg:
 		m.finishBang(msg)
 		return m, nil

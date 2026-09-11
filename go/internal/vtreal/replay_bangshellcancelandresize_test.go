@@ -80,9 +80,6 @@ func TestBangShellCancelAndResize(t *testing.T) {
 
 	t.Run("TestBangShellCancelAndResizeStreamsPartialOutput", func(t *testing.T) {
 		t.Parallel()
-		if os.Getenv(gate) == "" {
-			t.Skip("known bug: runBang (plugins/ui/bang.go) buffers CombinedOutput, so a running ! command shows no output until it exits; set " + gate + " to run")
-		}
 		tm, _, line, marker := bangShellCancelAndResizeStart(t)
 		resizeTmuxSend(tm, line)
 		tm.waitFor("bscr-tick-10")
