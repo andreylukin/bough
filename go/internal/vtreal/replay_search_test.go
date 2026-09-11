@@ -104,6 +104,7 @@ func TestSearch(t *testing.T) {
 		a.typeText("draft text")
 		a.waitFor("draft text")
 		a.key('s', uv.ModCtrl)
+		a.waitFor("esc closes") // the search bar replaced the status bar
 		a.key(uv.KeyEscape, 0)
 		// The esc hold (escresidue.go) releases the Esc 250 ms late: a
 		// quiet screen before then is not the settled one.

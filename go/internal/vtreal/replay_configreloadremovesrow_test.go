@@ -125,7 +125,9 @@ func TestConfigReloadRemovesRow(t *testing.T) {
 		t.Parallel()
 		a, yml := configreloadremovesrowStart(t)
 		configreloadremovesrowWrite(a, yml+"# touched\n")
-		a.waitUntil(func(s string) bool { return configreloadremovesrowNotices(s) >= 1 }, "reload notice")
+		// Under the TUI the reload notice goes to the log, not the
+		// screen: wait out the 300 ms debounce instead.
+		time.Sleep(1500 * time.Millisecond)
 		configreloadremovesrowCmd(a, "go slow")
 		if !a.waitDone(1, 20*time.Second) {
 			t.Fatalf("no turn ran after a no-op reload (input lost):\n%s", a.text())
