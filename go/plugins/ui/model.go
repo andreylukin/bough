@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"sync/atomic"
+	"unicode"
 
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
@@ -1058,7 +1059,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mp.open {
 			// The picker owns the keyboard; a paste is search text,
 			// not a hidden edit to the composer draft behind it.
-			m.mp.query += strings.Join(strings.Fields(msg.Content), " ")
+			// Control bytes (ESC, BEL, …) become spaces so none reach
+			// the query or the rendered frame.
+			clean := strings.Map(func(r rune) rune {
+				if unicode.IsControl(r) {
+					return ' '
+				}
+				return r
+			}, msg.Content)
+			m.mp.query += strings.Join(strings.Fields(clean), " ")
 			m.mp.filter()
 			return m, nil
 		}

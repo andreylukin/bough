@@ -60,7 +60,6 @@ func TestPasteIntoModelPickerAndPaletteFilter(t *testing.T) {
 			t.Errorf("draft changed by the picker paste: %q", got)
 		}
 		t.Run("Sanitized", func(t *testing.T) {
-			pasteIntoModelPickerAndPaletteFilterKnown(t, "model picker keeps the raw ESC byte in its search (model.go PasteMsg: strings.Fields only drops whitespace)")
 			pasteIntoModelPickerAndPaletteFilterClean(t, "picker query", query)
 			if strings.Contains(frame, "\x1bbar") {
 				t.Errorf("raw ESC leaked into the frame")
