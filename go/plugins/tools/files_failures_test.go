@@ -111,7 +111,6 @@ func TestFilesViewFailures(t *testing.T) {
 		}
 	})
 	t.Run("inverted range", func(t *testing.T) {
-		filesKnown(t, "view(path, 5, 2) returns \"\" and no error (tools.go readView: loop start..end silently empty)")
 		p := filepath.Join(dir, "ten")
 		filesSeed(t, p, strings.Repeat("l\n", 10))
 		out, err := readView(p, 5, 2)

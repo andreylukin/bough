@@ -474,6 +474,9 @@ func readView(path string, rng ...int) (string, error) {
 	if start > n {
 		return "", fmt.Errorf("view: %s has %d lines, start %d is past the end", path, n, start)
 	}
+	if len(rng) > 1 && rng[1] > 0 && rng[1] < start {
+		return "", fmt.Errorf("view: end %d is before start %d", rng[1], start)
+	}
 	width := len(strconv.Itoa(start + len(lines) - 1))
 	var b strings.Builder
 	for i, l := range lines {
