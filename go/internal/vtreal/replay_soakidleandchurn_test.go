@@ -223,9 +223,6 @@ func TestSoakIdleAndChurnFull(t *testing.T) {
 	if os.Getenv("BOUGH_SOAK_IDLE_AND_CHURN") == "" {
 		t.Skip("set BOUGH_SOAK_IDLE_AND_CHURN=1 to run the 500-turn soak")
 	}
-	if os.Getenv("BOUGH_KNOWN_SOAK_IDLE_AND_CHURN") == "" {
-		t.Skip("known bug: frame settle grows with transcript length (61ms at turn 1, ~245ms at 300) and by turn ~330 the screen lags the loop by >3s; set BOUGH_KNOWN_SOAK_IDLE_AND_CHURN=1 to run")
-	}
 	soakidleandchurnRun(t, 500)
 }
 

@@ -139,7 +139,43 @@ type model struct {
 	tab         tabState      // Tab path-completion cycling (see pathcomplete.go)
 	md          *glamour.TermRenderer
 	mdCache     map[string]string // assistant markdown render cache (cleared on resize)
+	parts       map[int]partEntry // per-block rendered part, by block id (cleared with mdCache)
 	bgLight     bool              // terminal background is light (tea.BackgroundColorMsg)
+}
+
+// partEntry is one block's fitted render and what it was rendered
+// from: refresh reuses it while the block, the theme and the focus are
+// unchanged, so a long transcript is not re-laid-out on every event.
+type partEntry struct {
+	b       block
+	cfg     *uiCfg
+	focused bool
+	part    string
+}
+
+// sameBlock reports whether two block values render the same.
+func sameBlock(a, b block) bool {
+	return a.id == b.id && a.kind == b.kind && a.text == b.text && a.label == b.label &&
+		a.collapsed == b.collapsed && a.queued == b.queued && a.steer == b.steer &&
+		a.pending == b.pending && slices.Equal(a.files, b.files) &&
+		(a.exit == nil) == (b.exit == nil) && (a.exit == nil || *a.exit == *b.exit) &&
+		a.askID == b.askID && slices.Equal(a.options, b.options) && a.answer == b.answer &&
+		a.answered == b.answered && a.expired == b.expired && a.sub == b.sub && a.live == b.live
+}
+
+// renderPart is render + fit, cached per block. Spawn cards (spinner,
+// clock) and streaming blocks change without their fields changing,
+// so they always render fresh.
+func (m *model) renderPart(b *block, cfg *uiCfg) string {
+	cacheable := b.kind != "spawn" && !b.live
+	if e, ok := m.parts[b.id]; cacheable && ok && e.cfg == cfg && e.focused == m.focused(b) && sameBlock(e.b, *b) {
+		return e.part
+	}
+	part := m.fit(strings.Trim(squeezeBlanks(m.render(b, cfg)), "\n"))
+	if cacheable {
+		m.parts[b.id] = partEntry{b: *b, cfg: cfg, focused: m.focused(b), part: part}
+	}
+	return part
 }
 
 func newModel(width, height int, send func(string), events <-chan Event, cfg *atomic.Pointer[uiCfg]) model {
@@ -154,7 +190,7 @@ func newModel(width, height int, send func(string), events <-chan Event, cfg *at
 	sp.Spinner = spinner.MiniDot
 
 	m := model{vp: vp, overlay: ov, input: ti, spin: sp, send: send, events: events, cfg: cfg,
-		focusID: -1, ovExpanded: map[int64]bool{}, mdCache: map[string]string{}, comp: composerState{recall: -1}}
+		focusID: -1, ovExpanded: map[int64]bool{}, mdCache: map[string]string{}, parts: map[int]partEntry{}, comp: composerState{recall: -1}}
 	m.resize(width, height)
 	if b := cfg.Load().board; b != nil && b.Sticky() {
 		m.board.on = true
@@ -193,6 +229,7 @@ func (m *model) resize(w, h int) {
 	m.input.SetWidth(max(w, 1))
 	m.md = nil // re-wrap markdown at the new width
 	m.mdCache = map[string]string{}
+	m.parts = map[int]partEntry{}
 	m.refresh()
 	if atBottom {
 		m.vp.GotoBottom()
@@ -226,6 +263,7 @@ func (m *model) refresh() {
 		next[r.from] = r
 	}
 	skipTo := 0
+	rule := cfg.theme["border"].Render(strings.Repeat("─", max(m.width, 1)))
 	for i := range m.blocks {
 		if i < skipTo {
 			continue
@@ -233,7 +271,7 @@ func (m *model) refresh() {
 		// The block renders own their content; the transcript owns the
 		// space between them: nothing between blocks of the same voice,
 		// one rule where the voice changes.
-		part := m.fit(strings.Trim(squeezeBlanks(m.render(&m.blocks[i], cfg)), "\n"))
+		part := m.renderPart(&m.blocks[i], cfg)
 		voice := voiceOf(m.blocks[i].kind)
 		var header string
 		if r, ok := next[i]; ok {
@@ -250,7 +288,7 @@ func (m *model) refresh() {
 			}
 		}
 		if i > 0 && separates(prev, voice) {
-			parts = append(parts, cfg.theme["border"].Render(strings.Repeat("─", max(m.width, 1))))
+			parts = append(parts, rule)
 			start++
 		}
 		if header != "" {
@@ -822,6 +860,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.bgLight = light
 			m.md = nil
 			m.mdCache = map[string]string{}
+			m.parts = map[int]partEntry{}
 			m.refresh()
 		}
 		return m, nil
