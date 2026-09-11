@@ -79,11 +79,6 @@ func TestClipboardCmdMissingEnv(t *testing.T) {
 	a.check("after the chord")
 
 	t.Run("flash_reports_failure", func(t *testing.T) {
-		if os.Getenv("BOUGH_KNOWN_CLIPBOARD_CMD_MISSING_ENV") == "" {
-			t.Skip("known bug: plugins/ui/clipboard.go finishCopy always flashes " +
-				"\"copied … · OSC 52\" even when no native tool ran and TERM lacks OSC 52; " +
-				"set BOUGH_KNOWN_CLIPBOARD_CMD_MISSING_ENV=1 to run")
-		}
 		low := strings.ToLower(s)
 		if !strings.Contains(low, "fail") && !strings.Contains(low, "unsupported") &&
 			!strings.Contains(low, "not copied") {

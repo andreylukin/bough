@@ -87,9 +87,29 @@ func copyNote(text string) string {
 }
 
 // finishCopy names the paths that took the text. OSC 52 is always
-// attempted, so it is listed last as the one we cannot confirm.
+// attempted, so it is listed last as the one we cannot confirm — unless
+// TERM names a terminal that has no OSC 52 at all. With no path left,
+// the copy failed and the flash says so.
 func (m *model) finishCopy(msg copiedMsg) {
-	m.flash = msg.note + " · " + strings.Join(append(msg.via, "OSC 52"), " + ")
+	via := msg.via
+	if osc52Capable() {
+		via = append(via, "OSC 52")
+	}
+	if len(via) == 0 {
+		m.flash = "copy failed · no clipboard tool and the terminal has no OSC 52"
+		return
+	}
+	m.flash = msg.note + " · " + strings.Join(via, " + ")
+}
+
+// osc52Capable reports whether the terminal may take an OSC 52 write:
+// false for the Linux console and dumb terminals, which have none.
+func osc52Capable() bool {
+	switch os.Getenv("TERM") {
+	case "linux", "dumb":
+		return false
+	}
+	return true
 }
 
 // copyFocused copies the raw text of the focused block, else the most

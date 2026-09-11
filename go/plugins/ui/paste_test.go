@@ -133,6 +133,21 @@ func TestCopyActionCopiesLastReplyRaw(t *testing.T) {
 	}
 }
 
+// With no native tool and a TERM without OSC 52 nothing took the text:
+// the flash says the copy failed instead of claiming OSC 52 did it.
+func TestCopyFlashFailsWithNoPath(t *testing.T) {
+	writeClipboardNative = func(string) []string { return nil }
+	t.Cleanup(func() { writeClipboardNative = clipboardNative })
+	t.Setenv("TERM", "linux")
+	d := defaultDrv(t)
+	d.event("assistant", "reply")
+	d.feed(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
+	d.press(keyRune('y'))
+	if !strings.HasPrefix(d.m.flash, "copy failed") || strings.Contains(d.m.flash, "copied") {
+		t.Errorf("flash = %q", d.m.flash)
+	}
+}
+
 func TestCopyActionWithNothingToCopy(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)
