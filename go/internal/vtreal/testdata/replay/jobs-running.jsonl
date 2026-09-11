@@ -1,0 +1,7 @@
+{"seq":1,"at":"2026-09-10T11:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T11:00:01Z","kind":"input","data":{"text":"start the long build"}}
+{"seq":3,"at":"2026-09-10T11:00:02Z","kind":"assistant","data":{"text":"```js\nconsole.log(tools.bash(\"sleep 45\", 120))\n```"}}
+{"seq":4,"at":"2026-09-10T11:00:02Z","kind":"code","data":{"text":"console.log(tools.bash(\"sleep 45\", 120))\n"}}
+{"seq":5,"at":"2026-09-10T11:00:02Z","kind":"result","data":{"code":"console.log(tools.bash(\"sleep 45\", 120))\n","text":"job 1 started in the background (limit 2m0s): sleep 45\n"}}
+{"seq":6,"at":"2026-09-10T11:00:03Z","kind":"assistant","data":{"text":"```stop\nThe build runs in the background as job 1.\n```"}}
+{"seq":7,"at":"2026-09-10T11:00:03Z","kind":"done","data":{"text":""}}

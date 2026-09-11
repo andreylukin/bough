@@ -1,0 +1,10 @@
+{"seq":1,"at":"2026-09-10T11:10:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T11:10:01Z","kind":"input","data":{"text":"start the short build"}}
+{"seq":3,"at":"2026-09-10T11:10:02Z","kind":"assistant","data":{"text":"```js\nconsole.log(tools.bash(\"sleep 3; echo BUILT-OK\", 120))\n```"}}
+{"seq":4,"at":"2026-09-10T11:10:02Z","kind":"code","data":{"text":"console.log(tools.bash(\"sleep 3; echo BUILT-OK\", 120))\n"}}
+{"seq":5,"at":"2026-09-10T11:10:02Z","kind":"result","data":{"code":"console.log(tools.bash(\"sleep 3; echo BUILT-OK\", 120))\n","text":"job 1 started in the background (limit 2m0s): sleep 3; echo BUILT-OK\n"}}
+{"seq":6,"at":"2026-09-10T11:10:03Z","kind":"assistant","data":{"text":"```stop\nStarted job 1; I will report when it lands.\n```"}}
+{"seq":7,"at":"2026-09-10T11:10:03Z","kind":"done","data":{"text":""}}
+{"seq":8,"at":"2026-09-10T11:10:06Z","kind":"input","data":{"text":"[background job] A command you started in the background has finished while you were idle. Deal with it if it needs anything, then reply to the user with what happened.\n\njob 1 [exited 0] sleep 3; echo BUILT-OK (3s)\nBUILT-OK"}}
+{"seq":9,"at":"2026-09-10T11:10:07Z","kind":"assistant","data":{"text":"```stop\nJob 1 finished cleanly and printed BUILT-OK.\n```"}}
+{"seq":10,"at":"2026-09-10T11:10:07Z","kind":"done","data":{"text":""}}
