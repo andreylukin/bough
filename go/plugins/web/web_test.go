@@ -1,8 +1,10 @@
 package web
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -51,5 +53,60 @@ func TestTakenPortStillHasURL(t *testing.T) {
 	}
 	if second.URL() != first.URL() {
 		t.Fatalf("URL %q vs %q", second.URL(), first.URL())
+	}
+}
+
+func peer(t *testing.T, h http.Handler) string {
+	t.Helper()
+	p := httptest.NewServer(h)
+	t.Cleanup(p.Close)
+	return p.Listener.Addr().String()
+}
+
+func identity(id Identity) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == identityPath {
+			json.NewEncoder(w).Encode(id)
+			return
+		}
+		http.NotFound(w, r)
+	})
+}
+
+// A same-build peer with our $HOME keeps the port; we share it quietly.
+func TestSameBuildPeerIsShared(t *testing.T) {
+	addr := peer(t, identity(self()))
+	shared = nil
+	s := New(addr)
+	if s.Serving() || s.Notice() != "" || s.URL() != "http://"+addr {
+		t.Fatalf("serving %v notice %q url %q", s.Serving(), s.Notice(), s.URL())
+	}
+}
+
+// A stale build, another $HOME, or a non-bough listener: serve our own
+// port, and the URL and the notice follow it.
+func TestUntrustedPeerGetsOwnPort(t *testing.T) {
+	me := self()
+	for name, h := range map[string]http.Handler{
+		"other build": identity(Identity{Build: "old", Home: me.Home, PID: 1}),
+		"other home":  identity(Identity{Build: me.Build, Home: "/tmp/x", PID: 1}),
+		"not bough":   http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "hello") }),
+	} {
+		addr := peer(t, h)
+		shared = nil
+		s := New(addr)
+		if !s.Serving() || s.URL() == "http://"+addr || !strings.Contains(s.Notice(), s.URL()) {
+			t.Fatalf("%s: serving %v url %q notice %q", name, s.Serving(), s.URL(), s.Notice())
+		}
+		s.Handle("/x", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "mine") }))
+		r, err := http.Get(s.URL() + "/x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		if string(b) != "mine" {
+			t.Fatalf("%s: body %q", name, b)
+		}
 	}
 }

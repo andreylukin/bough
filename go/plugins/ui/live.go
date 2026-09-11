@@ -245,6 +245,11 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	if n, err := kernel.Get[string](ctx, "notice"); err == nil {
 		cfg.notice = n
 	}
+	// The web row moved pages off its configured port (a stale or
+	// foreign server holds it): say where they are.
+	if w, err := kernel.Get[interface{ Notice() string }](ctx, "web"); err == nil && w.Notice() != "" {
+		cfg.notice = strings.TrimSpace(cfg.notice + "\n" + w.Notice())
+	}
 	cfg.cmds = cmds
 	cfg.hlog = hlog
 	if c, err := kernel.Get[contextFiles](ctx, "context-md"); err == nil {

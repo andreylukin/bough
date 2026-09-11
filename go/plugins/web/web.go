@@ -11,12 +11,14 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -32,6 +34,9 @@ type Service struct {
 	addr string // the address as bound (":0" resolved)
 	// served is true when this process holds the listener.
 	served bool
+	// notice says why pages are not on the configured address ("" =
+	// they are, or a same-build peer serves them).
+	notice string
 
 	rmu    sync.Mutex
 	routes map[string]http.Handler
@@ -86,6 +91,70 @@ func (s *Service) URL() string {
 // Serving reports whether this process holds the listener.
 func (s *Service) Serving() bool { return s.served }
 
+// Notice is a one-line user-facing warning when the pages moved off
+// the configured address; "" otherwise.
+func (s *Service) Notice() string { return s.notice }
+
+// identityPath is where a serving bough says who it is, so a process
+// that finds the port taken can tell a same-build peer (share it) from
+// a stale build, another $HOME, or some other program (serve its own).
+const identityPath = "/_bough/identity"
+
+// Identity is what the holder of the listener serves at identityPath.
+type Identity struct {
+	Build string `json:"build"`
+	Home  string `json:"home"`
+	PID   int    `json:"pid"`
+}
+
+// self is this process's identity; a var so tests can pose as another build.
+var self = func() Identity {
+	home, _ := os.UserHomeDir()
+	return Identity{Build: buildID(), Home: home, PID: os.Getpid()}
+}
+
+// buildID names the binary: its VCS revision plus the executable's
+// path and mtime, so two builds of one dirty tree still differ.
+func buildID() string {
+	id := ""
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, kv := range bi.Settings {
+			if kv.Key == "vcs.revision" || kv.Key == "vcs.modified" {
+				id += kv.Value + " "
+			}
+		}
+	}
+	if exe, err := os.Executable(); err == nil {
+		if fi, err := os.Stat(exe); err == nil {
+			id += fmt.Sprintf("%s@%d", exe, fi.ModTime().UnixNano())
+		}
+	}
+	return id
+}
+
+// probe asks whatever holds addr who it is: "" = a same-build peer
+// with our $HOME; otherwise the reason not to trust it.
+func probe(addr string) string {
+	c := &http.Client{Timeout: 2 * time.Second}
+	r, err := c.Get((&Service{addr: addr}).URL() + identityPath)
+	if err != nil {
+		return "is not answering http"
+	}
+	defer r.Body.Close()
+	var id Identity
+	if r.StatusCode != http.StatusOK || json.NewDecoder(r.Body).Decode(&id) != nil || id.Build == "" {
+		return "is not bough (or a bough too old to say)"
+	}
+	me := self()
+	switch {
+	case id.Build != me.Build:
+		return fmt.Sprintf("is a different bough build (pid %d)", id.PID)
+	case id.Home != me.Home:
+		return fmt.Sprintf("is a bough with another HOME %s (pid %d)", id.Home, id.PID)
+	}
+	return ""
+}
+
 // Open hands a page under the server to the desktop browser.
 func Open(url string) error {
 	cmd := "xdg-open"
@@ -102,8 +171,11 @@ var (
 )
 
 // New returns the process's server for addr, binding it on first use.
-// A bind failure is not an error: a peer bough is serving the same
-// pages, and this process's URL still points at them.
+// A bind failure is not an error when a same-build bough with the same
+// $HOME holds the port: it serves the same pages and this process's
+// URL points at them. Anything else there (a stale build, a test's
+// temp $HOME, another program) would serve the wrong pages or none, so
+// this process binds a free port instead and says so in Notice.
 func New(addr string) *Service {
 	mu.Lock()
 	defer mu.Unlock()
@@ -111,10 +183,25 @@ func New(addr string) *Service {
 		return shared
 	}
 	s := &Service{conf: addr, addr: addr, routes: map[string]http.Handler{}}
+	s.routes[identityPath] = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(self())
+	})
 	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		if why := probe(addr); why != "" {
+			host, _, _ := net.SplitHostPort(addr)
+			if l, err2 := net.Listen("tcp", net.JoinHostPort(host, "0")); err2 == nil {
+				ln, err = l, nil
+				old := s.URL()
+				s.addr = ln.Addr().String()
+				s.notice = fmt.Sprintf("web: %s %s, so pages are served at %s instead", old, why, s.URL())
+			}
+		}
+	}
 	if err == nil {
 		s.served = true
-		if _, port, _ := net.SplitHostPort(addr); port == "0" {
+		if _, port, _ := net.SplitHostPort(s.addr); port == "0" {
 			// A test's ":0" resolves to the port it got.
 			s.addr = ln.Addr().String()
 		}
