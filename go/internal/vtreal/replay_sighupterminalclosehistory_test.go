@@ -189,12 +189,6 @@ func TestSighupTerminalCloseHistory(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if !bg && os.Getenv("BOUGH_KNOWN_SIGHUP_TERMINAL_CLOSE_HISTORY") == "" {
-				// Known bug: a terminal closed during a foreground tools.bash
-				// keeps bough alive for the whole 60 s bashTimeout: shutdown
-				// never cancels the running bash (plugins/tools/tools.go bash).
-				t.Skip("known bug: bough outlives a closed terminal by the 60 s bash timeout during a foreground tools.bash; set BOUGH_KNOWN_SIGHUP_TERMINAL_CLOSE_HISTORY=1 to run")
-			}
 			home := t.TempDir()
 			gate := filepath.Join(home, "gate")
 			// The unique duration is the marker pgrep looks for.

@@ -131,10 +131,28 @@ type Jobs struct {
 	list    []*job
 	pending []string
 	wake    chan struct{} // buffered 1: a signal, not a queue
+
+	running sync.WaitGroup // one per job until its Wait returns
 }
 
 func newJobs(ctx context.Context) *Jobs {
 	return &Jobs{ctx: ctx, wake: make(chan struct{}, 1)}
+}
+
+// wait blocks until every job's Wait has returned, at most d. Once the
+// plugin context is cancelled exec kills each process group on its own
+// goroutine, and a process exiting right after unmount would race that
+// kill and leave the job running.
+func (j *Jobs) wait(d time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		j.running.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(d):
+	}
 }
 
 // Running is one live background job, for the strip the ui draws under
@@ -261,7 +279,9 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 		b.mu.Unlock()
 		return nil, fmt.Errorf("bash: %v", err)
 	}
+	j.running.Add(1)
 	go func() {
+		defer j.running.Done()
 		err := c.Wait()
 		cancel()
 		b.mu.Lock()

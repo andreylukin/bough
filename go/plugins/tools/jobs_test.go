@@ -225,3 +225,18 @@ func TestBackgroundJobSurvivesTurnCancel(t *testing.T) {
 		t.Fatalf("job notice = %q", n)
 	}
 }
+
+// Unmount cancels the jobs and waits for their kill to land: a process
+// exiting right after it must not leave a job command running.
+func TestWaitAfterCancelLeavesNoJobRunning(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &Stats{jobs: newJobs(ctx)}
+	if _, err := s.bash("sleep 30", 60); err != nil {
+		t.Fatalf("bash: %v", err)
+	}
+	cancel()
+	s.jobs.wait(5 * time.Second)
+	if r := s.jobs.Running(); len(r) != 0 {
+		t.Fatalf("job still running right after cancel + wait: %+v", r)
+	}
+}

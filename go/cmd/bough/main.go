@@ -468,6 +468,13 @@ func main() {
 	// The tui owns the terminal: hand it back before the unmount so a
 	// signal never exits with the alt screen and mouse still on.
 	ui.StopTUI()
+	// Cancel the turn in flight before any row unmounts: a running
+	// script holds the codemode lock, and a row that unregisters its
+	// tools on unmount (artifacts, mounted after the loop) would wait on
+	// it until a foreground tools.bash hit its 60 s timeout.
+	if cancel, err := kernel.Get[func()](ctx, "cancel"); err == nil {
+		cancel()
+	}
 	ctx.Unmount()
 	if cancelled {
 		os.Exit(130)

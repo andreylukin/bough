@@ -122,8 +122,11 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	// A background job outlives the turn that started it, so it hangs
 	// off the plugin's context, not the script's.
 	jctx, cancelJobs := context.WithCancel(context.Background())
-	ctx.Effect(cancelJobs)
 	st.jobs = newJobs(jctx)
+	ctx.Effect(func() {
+		cancelJobs()
+		st.jobs.wait(3 * time.Second)
+	})
 	if p, ok := reg.(pauser); ok {
 		st.jobs.pause = p.Pause
 	}
