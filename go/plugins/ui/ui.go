@@ -44,7 +44,7 @@ func (p *plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	}
 
 	if mode == "headless" {
-		b := &broadcaster{subs: map[int]chan Event{}}
+		b := &broadcaster{subs: map[int]*subscriber{}}
 		dispose := ctx.On("loop/event", func(payload any) {
 			b.publish(eventOf(payload))
 		})
@@ -114,10 +114,20 @@ func interruptSelf() {
 }
 
 // broadcaster fans a single kernel subscription out to per-view channels.
+// Each subscriber has its own unbounded queue drained by a goroutine, so
+// publish never blocks the emitter and a slow view never loses events
+// (a dropped final assistant/done left the spinner running forever).
 type broadcaster struct {
 	mu     sync.Mutex
 	nextID int
-	subs   map[int]chan Event
+	subs   map[int]*subscriber
+}
+
+type subscriber struct {
+	mu   sync.Mutex
+	q    []Event
+	wake chan struct{} // cap 1: queue has events
+	done chan struct{} // closed on unsubscribe
 }
 
 func (b *broadcaster) subscribe() (<-chan Event, func()) {
@@ -125,22 +135,52 @@ func (b *broadcaster) subscribe() (<-chan Event, func()) {
 	defer b.mu.Unlock()
 	id := b.nextID
 	b.nextID++
+	s := &subscriber{wake: make(chan struct{}, 1), done: make(chan struct{})}
 	ch := make(chan Event, 64)
-	b.subs[id] = ch
+	go s.drain(ch)
+	b.subs[id] = s
 	return ch, func() {
 		b.mu.Lock()
 		defer b.mu.Unlock()
-		delete(b.subs, id)
+		if _, ok := b.subs[id]; ok {
+			delete(b.subs, id)
+			close(s.done)
+		}
 	}
 }
 
 func (b *broadcaster) publish(ev Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for _, ch := range b.subs {
+	for _, s := range b.subs {
+		s.mu.Lock()
+		s.q = append(s.q, ev)
+		s.mu.Unlock()
 		select {
-		case ch <- ev:
-		default: // slow subscriber: drop rather than block the emitter
+		case s.wake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// drain forwards the queue to ch in order until unsubscribe.
+func (s *subscriber) drain(ch chan<- Event) {
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-s.wake:
+		}
+		s.mu.Lock()
+		q := s.q
+		s.q = nil
+		s.mu.Unlock()
+		for _, ev := range q {
+			select {
+			case ch <- ev:
+			case <-s.done:
+				return
+			}
 		}
 	}
 }

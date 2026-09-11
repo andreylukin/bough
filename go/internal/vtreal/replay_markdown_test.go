@@ -53,12 +53,7 @@ func markdownTape(t *testing.T, input, reply string) string {
 }
 
 // markdownConfig is replayConfig with the model streaming one word
-// every delayMs. At 0 the whole reply arrives as one burst of deltas,
-// overruns the ui's 64-event subscriber buffer (plugins/ui/ui.go
-// broadcaster.publish drops on full), and the final assistant/done
-// events are lost: the live view freezes mid-reply with the spinner
-// running forever even though history says done. A real provider
-// streams with gaps, so the tests pace the tape like one.
+// every delayMs; at 0 the whole reply arrives as one burst of deltas.
 func markdownConfig(tape string, delayMs int) string {
 	return strings.Replace(replayConfig(tape), "config: {file:",
 		fmt.Sprintf("config: {delay_ms: %d, file:", delayMs), 1) // the llm row comes first
@@ -68,7 +63,7 @@ func markdownConfig(tape string, delayMs int) string {
 // returns the settled app.
 func markdownRun(t *testing.T, cols int, input, reply string) *app {
 	t.Helper()
-	return markdownRunPaced(t, cols, 2, input, reply)
+	return markdownRunPaced(t, cols, 0, input, reply)
 }
 
 func markdownRunPaced(t *testing.T, cols, delayMs int, input, reply string) *app {
@@ -323,7 +318,7 @@ func TestMarkdownLongReply(t *testing.T) {
 	reply := sb.String()
 
 	markdownEachSize(t, func(t *testing.T, cols int) {
-		a := markdownRunPaced(t, cols, 5, "write the long report", reply)
+		a := markdownRunPaced(t, cols, 0, "write the long report", reply)
 		markdownWants(t, a, "The very last line of the report.")
 		ls := a.lines()
 		if r := composerRow(ls); r < 0 || r < len(ls)-3 {

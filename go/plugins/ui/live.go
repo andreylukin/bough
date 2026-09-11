@@ -139,7 +139,7 @@ type uiCfg struct {
 var (
 	liveMu     sync.Mutex
 	liveInputs chan<- string // current mount's inputs; nil while unmounted
-	liveB      = &broadcaster{subs: map[int]chan Event{}}
+	liveB      = &broadcaster{subs: map[int]*subscriber{}}
 	liveCfg    atomic.Pointer[uiCfg]
 )
 

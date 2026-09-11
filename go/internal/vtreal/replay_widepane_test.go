@@ -24,13 +24,7 @@ func TestWidePane(t *testing.T) {
 	for _, sz := range [][2]int{{300, 20}, {400, 60}} {
 		t.Run(fmt.Sprintf("%dx%d", sz[0], sz[1]), func(t *testing.T) {
 			t.Parallel()
-			// Paced: at delay 0 the ~110 word deltas overflow the ui's
-			// event buffer, which drops (broadcaster.publish in
-			// plugins/ui/ui.go) — the final assistant/done events with
-			// them, and the live block never settles.
-			cfg := strings.Replace(replayConfig(tape), "config: {file: "+fmt.Sprintf("%q", tape)+"}",
-				"config: {file: "+fmt.Sprintf("%q", tape)+", delay_ms: 5}", 1)
-			a := startCfg(t, sz[0], sz[1], cfg)
+			a := startCfg(t, sz[0], sz[1], replayConfig(tape))
 			a.typeText("show me a wide table")
 			a.key(uv.KeyEnter, 0)
 			if !a.waitDone(1, 30*time.Second) {
