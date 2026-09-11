@@ -1,0 +1,15 @@
+{"seq":1,"at":"2026-09-10T12:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
+{"seq":2,"at":"2026-09-10T12:00:01Z","kind":"input","data":{"text":"review the parser and count the tests"}}
+{"seq":3,"at":"2026-09-10T12:00:02Z","kind":"assistant","data":{"text":"Spawning two subagents."}}
+{"seq":4,"at":"2026-09-10T12:00:03Z","kind":"sub:start","data":{"worker":1,"text":"read parser.go and list the exported funcs"},"parent":3}
+{"seq":5,"at":"2026-09-10T12:00:04Z","kind":"sub:code","data":{"worker":1,"text":"tools.read(\"parser.go\")"},"parent":4}
+{"seq":6,"at":"2026-09-10T12:00:05Z","kind":"sub:result","data":{"worker":1,"text":"func ParseFile\nfunc ParseExpr\n"},"parent":5}
+{"seq":7,"at":"2026-09-10T12:00:06Z","kind":"sub:assistant","data":{"worker":1,"text":"Status: ok\nFindings: exports ParseFile and ParseExpr."},"parent":6}
+{"seq":8,"at":"2026-09-10T12:00:07Z","kind":"sub:done","data":{"worker":1,"status":"ok","steps":2},"parent":7}
+{"seq":9,"at":"2026-09-10T12:00:08Z","kind":"sub:start","data":{"worker":2,"text":"count the test files under internal"},"parent":3}
+{"seq":10,"at":"2026-09-10T12:00:09Z","kind":"sub:code","data":{"worker":2,"text":"tools.bash(\"ls internal | wc -l\")"},"parent":9}
+{"seq":11,"at":"2026-09-10T12:00:10Z","kind":"sub:result","data":{"worker":2,"text":"17\n"},"parent":10}
+{"seq":12,"at":"2026-09-10T12:00:11Z","kind":"sub:assistant","data":{"worker":2,"text":"Status: ok\nFindings: 17 test files under internal."},"parent":11}
+{"seq":13,"at":"2026-09-10T12:00:12Z","kind":"sub:done","data":{"worker":2,"status":"ok","steps":2},"parent":12}
+{"seq":14,"at":"2026-09-10T12:00:13Z","kind":"assistant","data":{"text":"```stop\nBoth subagents finished.\n```"}}
+{"seq":15,"at":"2026-09-10T12:00:13Z","kind":"done","data":{"text":""}}
