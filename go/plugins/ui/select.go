@@ -8,6 +8,7 @@ package ui
 // offset applied) and cells, so the selection survives scrolling.
 
 import (
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -95,6 +96,64 @@ func (s selection) bounds() (r0, c0, r1, c1 int) {
 	return r0, c0, r1, c1 + 1
 }
 
+// tableSpan is a markdown table as rendered: content rows [from, to)
+// and the source lines it came from.
+type tableSpan struct {
+	from, to int
+	src      string
+}
+
+// tableAt returns the rendered table covering content row r.
+func (m *model) tableAt(r int) (tableSpan, bool) {
+	for _, t := range m.tables {
+		if r >= t.from && r < t.to {
+			return t, true
+		}
+	}
+	return tableSpan{}, false
+}
+
+// tableDelim matches a markdown table's delimiter row: | --- | :-: |.
+var tableDelim = regexp.MustCompile(`^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?$`)
+
+// tableSpans pairs the markdown tables in src with the runs of ruled
+// rows (│ or ┼) in its rendered rows, offset by start. When the counts
+// differ nothing is paired and a drag copies what is shown.
+func tableSpans(src string, rows []string, start int) []tableSpan {
+	var srcs []string
+	lines := strings.Split(src, "\n")
+	for i := 0; i+1 < len(lines); i++ {
+		if !strings.Contains(lines[i], "|") || !tableDelim.MatchString(strings.TrimSpace(lines[i+1])) {
+			continue
+		}
+		j := i + 2
+		for j < len(lines) && strings.Contains(lines[j], "|") {
+			j++
+		}
+		srcs = append(srcs, strings.Join(lines[i:j], "\n"))
+		i = j - 1
+	}
+	var spans []tableSpan
+	for i := 0; i < len(rows); i++ {
+		if !strings.ContainsAny(ansi.Strip(rows[i]), "│┼") {
+			continue
+		}
+		j := i
+		for j < len(rows) && strings.ContainsAny(ansi.Strip(rows[j]), "│┼") {
+			j++
+		}
+		spans = append(spans, tableSpan{from: start + i, to: start + j})
+		i = j - 1
+	}
+	if len(spans) != len(srcs) {
+		return nil
+	}
+	for i := range spans {
+		spans[i].src = srcs[i]
+	}
+	return spans
+}
+
 // selectedText is the plain text under the highlight, lines joined
 // with newlines and trailing blanks trimmed.
 func (m *model) selectedText() string {
@@ -104,6 +163,13 @@ func (m *model) selectedText() string {
 	r0, c0, r1, c1 := m.sel.bounds()
 	var out []string
 	for r := r0; r <= r1 && r < len(m.lines); r++ {
+		if t, ok := m.tableAt(r); ok {
+			// A rendered table is truncated, rewrapped and ruled to fit
+			// the pane: any part of it copies as the markdown written.
+			out = append(out, t.src)
+			r = t.to - 1
+			continue
+		}
 		plain := ansi.Strip(m.lines[r])
 		left, right := 0, ansi.StringWidth(plain)
 		if r == r0 {

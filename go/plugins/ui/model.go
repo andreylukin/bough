@@ -156,6 +156,7 @@ type model struct {
 	sel         selection     // mouse drag selection (see select.go)
 	lines       []string      // rendered content lines, for the selection
 	boxRows     []bool        // lines[i] is a box() row (border or rail), so a drag copies its interior only
+	tables      []tableSpan   // rendered markdown tables (content rows), so a drag copies their source
 	boxN        int           // line count of the last box() render (renderPart reads it)
 	soft        []string      // per line: joiner to the next when it is a soft wrap
 	stop        stopState     // quit-key arming (see stop.go)
@@ -291,6 +292,7 @@ func (m *model) refresh() {
 	atBottom := m.vp.AtBottom()
 	parts := make([]string, 0, 2*len(m.blocks))
 	m.ranges = m.ranges[:0]
+	m.tables = m.tables[:0]
 	start, prev := 0, ""
 	var boxAt [][2]int // box() line spans [from, to) in the joined lines
 	next := map[int]foldRun{}
@@ -335,6 +337,9 @@ func (m *model) refresh() {
 		m.ranges = append(m.ranges, lineRange{start: start, end: start + n, idx: i})
 		if box > 0 {
 			boxAt = append(boxAt, [2]int{start + n - box, start + n})
+		}
+		if b := &m.blocks[i]; b.kind == "assistant" && !b.live && skipTo <= i {
+			m.tables = append(m.tables, tableSpans(b.text, strings.Split(part, "\n"), start)...)
 		}
 		start += n
 		parts = append(parts, part)

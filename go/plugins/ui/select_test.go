@@ -8,6 +8,34 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+// A drag over a markdown table rewrapped to a narrow pane copies the
+// table as the markdown the model wrote: no box drawing, no …
+// truncations, no cell text split across rows.
+func TestDragOverNarrowTableCopiesSourceMarkdown(t *testing.T) {
+	t.Parallel()
+	table := "| component | owner | status | latency budget | notes |\n" +
+		"| --- | --- | --- | --- | --- |\n" +
+		"| ingest pipeline | platform team | green | 250 milliseconds | backfill still running nightly |"
+	d := newDrv(t, 40, 40, cfgWith(t, nil, nil, nil))
+	d.event("assistant", "Here is the matrix.\n\n"+table+"\n\nThat is everything.")
+	d.event("done", "")
+	r0, r1 := frameRow(d, "Here is the matrix"), frameRow(d, "That is everything")
+	if r0 < 0 || r1 < 0 {
+		t.Fatalf("reply not on screen:\n%s", d.plain())
+	}
+	d.feed(tea.MouseClickMsg{X: 0, Y: r0, Button: tea.MouseLeft})
+	d.feed(tea.MouseMotionMsg{X: 39, Y: r1, Button: tea.MouseLeft})
+	got := d.m.selectedText()
+	for _, w := range []string{"Here is the matrix.", table, "That is everything."} {
+		if !strings.Contains(got, w) {
+			t.Errorf("selection lacks %q:\n%q", w, got)
+		}
+	}
+	if strings.ContainsAny(got, "│┼─…") {
+		t.Errorf("selection carries table glyphs:\n%q", got)
+	}
+}
+
 // reverseRe matches an SGR sequence carrying the reverse-video attribute.
 var reverseRe = regexp.MustCompile(`\x1b\[[0-9;]*\b7[;m]`)
 

@@ -200,9 +200,6 @@ func TestClipboardCopyOfFoldedAndWideContent(t *testing.T) {
 	// table's box drawing.
 	t.Run("drag_wide_table_40", func(t *testing.T) {
 		t.Parallel()
-		clipboardCopyOfFoldedAndWideContentKnown(t, "a drag over a table rewrapped at 40 cols copies "+
-			"│ ┼ ─ borders, … truncations and cell text split across rows "+
-			"(plugins/ui/select.go selectedText copies rendered rows)")
 		tape := markdownTape(t, "show the matrix", clipboardCopyOfFoldedAndWideContentTable)
 		a, clip := clipboardCopyOfFoldedAndWideContentStart(t, 40, markdownRows, markdownConfig(tape, 0))
 		clipboardCopyOfFoldedAndWideContentTurn(a, "show the matrix")
