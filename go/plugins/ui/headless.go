@@ -47,6 +47,7 @@ var (
 	hlUsage   llm.UsageReporter // current mount's "usage" service; nil = no usage lines
 	hlAsk     *hlAskState
 	hlPending atomic.Int64
+	hlEOF     atomic.Bool // stdin closed: no stdin line can answer an ask
 	hlTick    = make(chan struct{}, 1)
 
 	// hlErrored flips on the first "error" event; the launcher exits 1
@@ -134,6 +135,9 @@ func hlPrint(ev Event) {
 		for i, o := range ev.Options {
 			fmt.Fprintf(hlOut, "  %d. %s\n", i+1, o)
 		}
+		if hlEOF.Load() {
+			hlCancelAsk()
+		}
 		return
 	}
 	if ev.Kind == "done" || ev.Kind == "error" {
@@ -198,7 +202,12 @@ func headlessPump() {
 		hlSubmit(line)
 	}
 
-	// EOF: drain until every sent line saw its "done", or events go idle.
+	// EOF: no line can answer an ask now, so fail a pending one (and
+	// any that arms later) instead of blocking the turn until its
+	// timeout. Then drain until every sent line saw its "done", or
+	// events go idle.
+	hlEOF.Store(true)
+	hlCancelAsk()
 	drainHeadless()
 	interruptSelf()
 }
@@ -254,6 +263,29 @@ func hlAnswerPending(line string) bool {
 		fmt.Fprintf(hlErr, "[error] %s\n", err)
 	}
 	return true
+}
+
+// askCanceler is the optional Cancel half of the "ask-answers" service.
+type askCanceler interface {
+	Cancel(id string) error
+}
+
+// hlCancelAsk fails the pending tools.ask, if any, once stdin is
+// closed: the run is marked errored (an unanswered question is not a
+// clean success) and the blocked turn gets a tool error to finish on.
+func hlCancelAsk() {
+	hlMu.Lock()
+	pa, ans := hlAsk, hlAnswer
+	hlAsk = nil
+	hlMu.Unlock()
+	if pa == nil {
+		return
+	}
+	hlErrored.Store(true)
+	fmt.Fprintf(hlErr, "[error] stdin closed with tools.ask %s unanswered\n", pa.id)
+	if c, ok := ans.(askCanceler); ok {
+		c.Cancel(pa.id)
+	}
 }
 
 // hlDispatch runs a "/" line through the commands service, printing

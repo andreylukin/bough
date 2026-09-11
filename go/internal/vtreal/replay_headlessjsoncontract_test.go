@@ -255,7 +255,6 @@ func TestHeadlessJSONContract(t *testing.T) {
 		t.Parallel()
 		// stdin closes with the ask unanswered: the run must end (not
 		// hang) and must not pass as a clean success.
-		headlessJSONContractKnown(t, "stdin EOF with a tools.ask pending hangs: drainHeadless gives up after BOUGH_HEADLESS_IDLE and interrupts, but the process never exits while the ask blocks the turn (plugins/ui/headless.go drainHeadless/interruptSelf, hlAsk never cancelled)")
 		r := headlessJSONContractRun(t, headlessJSONContractAskCfg(t),
 			headlessJSONContractPrompt("pick a color"))
 		headlessJSONContractCheck(t, r)

@@ -148,6 +148,29 @@ func TestAskTimeoutErrors(t *testing.T) {
 	}
 }
 
+func TestCancelFailsPendingAsk(t *testing.T) {
+	t.Parallel()
+	fn, a, _, _, ctx := mount(t, nil)
+	ctx.On("loop/event", func(p any) {
+		if ev, ok := p.(Event); ok && ev.Kind == "ask" {
+			go a.Cancel(ev.ID)
+		}
+	})
+	done := make(chan error, 1)
+	go func() { _, err := fn("anyone there?"); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "cancelled") {
+			t.Fatalf("want 'cancelled' error, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Cancel did not unblock the ask")
+	}
+	if err := a.Cancel("ask-1"); err == nil {
+		t.Fatal("cancelling a resolved ask should error")
+	}
+}
+
 func TestAnswerUnknownIDErrors(t *testing.T) {
 	t.Parallel()
 	_, a, _, _, _ := mount(t, nil)

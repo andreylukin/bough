@@ -74,7 +74,10 @@ func (a *Asker) ask(question string, options ...string) (string, error) {
 	resume := a.code.Pause()
 	defer resume()
 	select {
-	case text := <-ch:
+	case text, ok := <-ch:
+		if !ok {
+			return "", fmt.Errorf("ask: cancelled with no answer")
+		}
 		return text, nil
 	case <-time.After(a.timeout):
 		a.mu.Lock()
@@ -105,6 +108,21 @@ func (a *Asker) Answer(id, text string) error {
 		a.hist.Append("ask/answer", map[string]any{"id": id, "text": text})
 	}
 	ch <- text // buffered: never blocks the UI
+	return nil
+}
+
+// Cancel fails the pending ask id: the blocked tool call returns an
+// error now instead of waiting out the timeout (headless stdin closed,
+// so no answer can come). An unknown id is an error.
+func (a *Asker) Cancel(id string) error {
+	a.mu.Lock()
+	ch, ok := a.pending[id]
+	delete(a.pending, id)
+	a.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("ask: no pending ask %q", id)
+	}
+	close(ch)
 	return nil
 }
 
