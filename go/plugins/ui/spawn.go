@@ -10,6 +10,7 @@ package ui
 import (
 	"fmt"
 	xansi "github.com/charmbracelet/x/ansi"
+	"github.com/rivo/uniseg"
 	"strings"
 	"time"
 
@@ -53,11 +54,18 @@ func commonPrefixOf(a, b string) string {
 	return a[:i]
 }
 
-// line is one sanitized line of s, cut to n runes.
+// line is one sanitized line of s, cut to n graphemes (never inside a
+// ZWJ emoji or combining sequence).
 func line(s string, n int) string {
 	s = strings.SplitN(strings.TrimSpace(sanitizeText(s)), "\n", 2)[0]
-	if r := []rune(s); len(r) > n {
-		return string(r[:n]) + "…"
+	rest, state, cut := s, -1, 0
+	for i := 0; rest != ""; i++ {
+		if i == n {
+			return s[:cut] + "…"
+		}
+		var g string
+		g, rest, _, state = uniseg.FirstGraphemeClusterInString(rest, state)
+		cut += len(g)
 	}
 	return s
 }

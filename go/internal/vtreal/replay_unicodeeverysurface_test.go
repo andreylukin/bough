@@ -367,9 +367,6 @@ func TestUnicodeEverySurfaceTruncation(t *testing.T) {
 	// spawn.go line(label, 44): 42 runes + 👨 + ZWJ is the 44-rune cut.
 	t.Run("SubagentCardTitle", func(t *testing.T) {
 		t.Parallel()
-		if os.Getenv("BOUGH_KNOWN_UNICODE_EVERY_SURFACE") == "" {
-			t.Skip("known bug: plugins/ui/spawn.go line() cuts card titles by rune count and splits ZWJ graphemes; set BOUGH_KNOWN_UNICODE_EVERY_SURFACE=1")
-		}
 		tape := unicodeEverySurfaceTape(t, "subs.jsonl",
 			[2]any{"meta", unicodeEverySurfaceM{"cwd": "/tmp/demo"}},
 			[2]any{"input", unicodeEverySurfaceM{"text": "fan out"}},

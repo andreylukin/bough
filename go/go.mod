@@ -22,6 +22,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/uuid v1.6.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/rivo/uniseg v0.4.7
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.58.0
 	pgregory.net/rapid v1.3.0
@@ -71,7 +72,6 @@ require (
 	github.com/quic-go/quic-go v0.58.1 // indirect
 	github.com/quic-go/webtransport-go v0.9.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect

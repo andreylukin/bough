@@ -36,3 +36,17 @@ func TestSiblingCardsDropTheSharedOpening(t *testing.T) {
 		t.Fatalf("a single card lost its opening:\n%s", one.frame())
 	}
 }
+
+// line cuts by grapheme, never leaving a dangling ZWJ.
+func TestLineKeepsGraphemesWhole(t *testing.T) {
+	fam := "👨‍👩‍👧"
+	if got, want := line("xx"+fam+"yy", 3), "xx"+fam+"…"; got != want {
+		t.Fatalf("line = %q, want %q", got, want)
+	}
+	if got, want := line("xx"+fam+"yy", 2), "xx…"; got != want {
+		t.Fatalf("line = %q, want %q", got, want)
+	}
+	if got := line("abc", 3); got != "abc" {
+		t.Fatalf("line = %q, want %q", got, "abc")
+	}
+}
