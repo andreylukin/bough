@@ -5,6 +5,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/andreylukin/bough/internal/models"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/llm"
 )
@@ -162,12 +163,18 @@ func TestMountProvidesUsageOverTheLLM(t *testing.T) {
 func TestCatalogueAnswersForUnlistedModels(t *testing.T) {
 	l := &stubLLM{model: "z-ai/glm-5.3-flash"}
 	s := &Service{rep: l, model: l.Model, plugin: func() string { return "llm-openrouter" }, table: Table{}}
-	if got := s.ContextLimit(); got != 1_310_720 {
-		t.Fatalf("glm context = %d, want the catalogue's 1310720", got)
+	// Assert against the catalogue itself: it is ~/.bough/models.json
+	// refreshed weekly from models.dev, so hardcoded prices go stale.
+	glm, ok := models.Lookup("llm-openrouter", "z-ai/glm-5.3-flash")
+	if !ok || glm.Input == 0 || glm.Context == 0 {
+		t.Fatalf("catalogue lacks glm-5.3-flash: %+v", glm)
+	}
+	if got := s.ContextLimit(); got != glm.Context {
+		t.Fatalf("glm context = %d, want the catalogue's %d", got, glm.Context)
 	}
 	l.u = llm.Usage{InputTokens: 1_000_000, OutputTokens: 100_000}
 	u := s.Usage()
-	if !u.Priced || math.Abs(u.Cost-(0.075+0.025)) > 1e-9 {
+	if !u.Priced || math.Abs(u.Cost-glm.Cost(1_000_000, 100_000)) > 1e-9 {
 		t.Fatalf("glm price: %+v", u)
 	}
 	if s.Source() != "the model catalogue (models.dev)" {
@@ -178,8 +185,12 @@ func TestCatalogueAnswersForUnlistedModels(t *testing.T) {
 	// to charge half.
 	sol := &stubLLM{u: llm.Usage{InputTokens: 300_000, OutputTokens: 10_000}, model: "gpt-5.6-sol"}
 	ss := &Service{rep: sol, model: sol.Model, plugin: func() string { return "llm-openai" }, table: Table{}}
+	sm, ok := models.Lookup("llm-openai", "gpt-5.6-sol")
+	if !ok || len(sm.Tiers) == 0 || sm.Tiers[0].Over > 300_000 {
+		t.Fatalf("catalogue lacks sol's long-context tier: %+v", sm)
+	}
 	got := ss.Usage().Cost
-	want := 300_000*8.0/1e6 + 10_000*30.0/1e6
+	want := 300_000*sm.Tiers[0].Input/1e6 + 10_000*sm.Tiers[0].Output/1e6
 	if math.Abs(got-want) > 1e-9 {
 		t.Fatalf("tiered cost = %f, want %f", got, want)
 	}
