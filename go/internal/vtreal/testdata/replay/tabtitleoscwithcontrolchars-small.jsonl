@@ -1,0 +1,2 @@
+{"seq": 1, "at": "2026-09-11T10:00:00Z", "kind": "meta", "data": {"cwd": "/tmp/demo"}}
+{"seq": 2, "at": "2026-09-11T10:00:01Z", "kind": "assistant", "data": {"text": "Fix \u001b]0;PWNED\u0007 the\u001b[31m red\u202e flaky test\nsecond line ignored"}}
