@@ -60,10 +60,11 @@ func TestHelpOverlayDuringAsk(t *testing.T) {
 		a.waitFor(helpOverlayDuringAskKeysLine)
 		a.settled()
 		a.key(uv.KeyEscape, 0)
+		// Wait for the repaint: settled() alone can return the pre-esc
+		// screen when the redraw lags under a parallel run.
+		a.waitUntil(func(s string) bool { return !strings.Contains(s, helpOverlayDuringAskKeysLine) },
+			"first esc to close help")
 		s := a.settled()
-		if strings.Contains(s, helpOverlayDuringAskKeysLine) {
-			t.Errorf("first esc did not close help:\n%s", s)
-		}
 		if strings.Contains(s, "(declined)") || strings.Contains(s, "Color locked in.") ||
 			askOptionRow(a, 1, "chartreuse") < 0 || askOptionRow(a, 2, "vermilion") < 0 {
 			t.Fatalf("first esc resolved the ask instead of only closing help:\n%s", s)
