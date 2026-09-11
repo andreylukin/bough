@@ -71,7 +71,8 @@ func TestSteerThenEscRace(t *testing.T) {
 		if strings.Contains(screen, "ALPHAEND") {
 			t.Errorf("the reply kept streaming after esc:\n%s", screen)
 		}
-		// A cancel records "cancelled" then the usual "done" (loop/cancel.go).
+		// A cancel records the partial reply that streamed, "cancelled",
+		// then the usual "done" (loop/cancel.go).
 		var kinds []string
 		for _, e := range a.steerEntries() {
 			switch e.Kind {
@@ -79,8 +80,8 @@ func TestSteerThenEscRace(t *testing.T) {
 				kinds = append(kinds, e.Kind)
 			}
 		}
-		if got := strings.Join(kinds, " "); got != "cancelled done" {
-			t.Errorf("history tail = %q, want \"cancelled done\":\n%s", got, screen)
+		if got := strings.Join(kinds, " "); got != "assistant cancelled done" {
+			t.Errorf("history tail = %q, want \"assistant cancelled done\":\n%s", got, screen)
 		}
 	})
 

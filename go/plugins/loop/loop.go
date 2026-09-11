@@ -1076,7 +1076,7 @@ func (r *runner) complete(ctx context.Context, sys string, emit func(kind, text 
 	return r.completeMsgs(ctx, sys, r.project(), emit)
 }
 
-func (r *runner) completeMsgs(ctx context.Context, sys string, msgs []Message, emit func(kind, text string)) (string, error) {
+func (r *runner) completeMsgs(ctx context.Context, sys string, msgs []Message, emit func(kind, text string)) (reply string, err error) {
 	// A provider retry waits seconds (a rate limit, minutes): say so,
 	// or the turn looks hung.
 	ctx = llm.WithRetryNotice(ctx, func(_ error, attempt, attempts int, wait time.Duration) {
@@ -1086,10 +1086,18 @@ func (r *runner) completeMsgs(ctx context.Context, sys string, msgs []Message, e
 	// and recorded once at the end. It is NEVER fed back: DefaultProject
 	// ignores "thinking" entries, so the model re-reasons each step
 	// instead of reading its own half-thoughts as fact.
+	// What streamed so far is the reply when esc cuts the stream: the
+	// user read it, so the cancelled turn records it.
+	var streamed strings.Builder
+	defer func() {
+		if ctx.Err() != nil && reply == "" {
+			reply = streamed.String()
+		}
+	}()
 	if th, ok := r.llm.(llm.ThinkingStreamer); ok {
 		var think strings.Builder
-		reply, err := th.StreamThinking(ctx, sys, msgs,
-			func(delta string) { emit("assistant-delta", delta) },
+		reply, err = th.StreamThinking(ctx, sys, msgs,
+			func(delta string) { streamed.WriteString(delta); emit("assistant-delta", delta) },
 			func(delta string) {
 				think.WriteString(delta)
 				emit("thinking-delta", delta)
@@ -1101,7 +1109,7 @@ func (r *runner) completeMsgs(ctx context.Context, sys string, msgs []Message, e
 		return reply, err
 	}
 	if st, ok := r.llm.(llm.Streamer); ok {
-		return st.Stream(ctx, sys, msgs, func(delta string) { emit("assistant-delta", delta) })
+		return st.Stream(ctx, sys, msgs, func(delta string) { streamed.WriteString(delta); emit("assistant-delta", delta) })
 	}
 	return r.llm.Complete(ctx, sys, msgs)
 }
@@ -1486,6 +1494,9 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		}
 		reply, err := r.complete(ctx, sys, emit)
 		if ctx.Err() != nil {
+			if strings.TrimSpace(reply) != "" {
+				note("assistant", reply, r.provenance())
+			}
 			finish("cancelled", r.doneData()) // what it wrote so far: /undo after esc reverts it
 			return ctx.Err()
 		}
@@ -1667,6 +1678,9 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	msgs := append(r.project(), Message{Role: "user", Content: outOfSteps})
 	reply, err := r.completeMsgs(ctx, system, msgs, emit)
 	if ctx.Err() != nil {
+		if strings.TrimSpace(reply) != "" {
+			note("assistant", reply, r.provenance())
+		}
 		finish("cancelled", r.doneData()) // same reason as above
 		return ctx.Err()
 	}
