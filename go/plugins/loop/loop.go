@@ -1095,8 +1095,10 @@ func intOf(v any) int {
 	return 0
 }
 
-// fire runs a hook event if a hooks service is present. A Fire error
-// is logged as a loop error event and treated as no-op, never fatal.
+// fire runs a hook event if a hooks service is present. A Fire error is
+// reported as a loop error event and never fatal — and the result still
+// comes back: Fire reports per-file failures, so discarding its result
+// would let one throwing hook void what every other hook produced.
 func (r *runner) fire(ctx context.Context, event string, payload map[string]any, emit func(kind, text string)) map[string]any {
 	if r.hooks == nil {
 		return nil
@@ -1104,7 +1106,6 @@ func (r *runner) fire(ctx context.Context, event string, payload map[string]any,
 	res, err := r.hooks.Fire(ctx, event, payload)
 	if err != nil {
 		emit("error", "hook "+event+": "+err.Error())
-		return nil
 	}
 	return res
 }

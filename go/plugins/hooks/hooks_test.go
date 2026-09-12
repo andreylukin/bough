@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,8 +96,15 @@ func TestFireBrokenFileSkipped(t *testing.T) {
 	writeHook(t, cwd, "stop", "b.js", `return {ok: true}`)
 
 	res, err := s.Fire(context.Background(), "stop", map[string]any{})
-	if err != nil {
-		t.Fatal(err)
+	// Skipped, not fatal — but REPORTED. This used to go to os.Stderr,
+	// which under the TUI writes inside the alt-screen and corrupts the
+	// frame; the loop turns a returned error into a visible error event
+	// instead. Silence here is what let that bug live.
+	if err == nil {
+		t.Fatal("a broken hook file must be reported, not silently skipped")
+	}
+	if !strings.Contains(err.Error(), "a.js") {
+		t.Errorf("the error should name the file that failed: %v", err)
 	}
 	if res["ok"] != true {
 		t.Fatalf("want b.js result despite broken a.js, got %v", res)

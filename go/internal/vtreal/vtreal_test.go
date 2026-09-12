@@ -164,14 +164,27 @@ func (a *app) waitUntil(pred func(screen string) bool, what string) {
 	a.t.Fatalf("vtreal: timed out waiting for %s\nscreen:\n%s", what, a.text())
 }
 
-// settled waits until two consecutive snapshots 60ms apart match.
+// settled waits until the screen stops changing: THREE consecutive
+// snapshots 60ms apart must match, not two.
+//
+// Two was not enough under a loaded -race run. The renderer can pause
+// longer than one interval between painting the transcript and painting
+// the composer, and two identical samples of a half-drawn frame then
+// read as "settled" — which is how an assertion about the composer's
+// row saw it four lines off the bottom with blank rows beneath it.
 func (a *app) settled() string {
 	prev := a.text()
-	for range 50 {
+	same := 0
+	for range 60 {
 		time.Sleep(60 * time.Millisecond)
 		cur := a.text()
 		if cur == prev {
-			return cur
+			same++
+			if same >= 2 { // two matches in a row = three identical samples
+				return cur
+			}
+		} else {
+			same = 0
 		}
 		prev = cur
 	}

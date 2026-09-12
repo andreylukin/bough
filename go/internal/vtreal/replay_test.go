@@ -62,8 +62,25 @@ var panicky = regexp.MustCompile(`panic:|goroutine \d+ \[|runtime error:`)
 // check is the set of invariants every settled screen must hold.
 func (a *app) check(where string) {
 	a.t.Helper()
-	s := a.settled()
-	ls := strings.Split(s, "\n")
+	// The screen is eventually consistent and the callers are not: most
+	// reach here through waitDone, which gates on a history entry — a
+	// file write that lands BEFORE the repaint following it. So retry
+	// the layout invariant instead of asserting on whichever frame
+	// happened to be current, with a deadline so a composer that never
+	// comes back to the bottom still fails, and still prints the frame.
+	var s string
+	var ls []string
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		s = a.settled()
+		ls = strings.Split(s, "\n")
+		if r := composerRow(ls); r >= 0 && r >= len(ls)-3 {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+	}
 	if panicky.MatchString(s) {
 		a.t.Errorf("%s: crash text on screen:\n%s", where, s)
 	}

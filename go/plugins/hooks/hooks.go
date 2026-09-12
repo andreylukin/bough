@@ -7,6 +7,7 @@ package hooks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -93,10 +94,17 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 			}
 		}
 	}
+	// A hook that throws used to be written straight to os.Stderr. Under
+	// the TUI that lands inside the alt-screen and scribbles over the
+	// frame — the error text spliced itself into the composer's draft
+	// line and pushed the composer up the screen. Failures are returned
+	// instead, so the loop renders them as error events and history
+	// records them.
+	var failed []error
 	for _, path := range hookFiles(event) {
 		body, err := os.ReadFile(path)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "hooks: %s: %v\n", path, err)
+			failed = append(failed, fmt.Errorf("%s: %w", path, err))
 			continue
 		}
 		res, err := s.code.RunHook(ctx, string(body), payload)
@@ -104,7 +112,7 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 			return merged, nil // the turn was cancelled: not a hook failure
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "hooks: %s: %v\n", path, err)
+			failed = append(failed, fmt.Errorf("%s: %w", path, err))
 			continue
 		}
 		if res == nil {
@@ -121,7 +129,10 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 			break
 		}
 	}
-	return merged, nil
+	// errors.Join is nil when nothing failed, so a clean run is
+	// unchanged; merged still comes back, because one bad hook file must
+	// not void what the others contributed.
+	return merged, errors.Join(failed...)
 }
 
 // hookFiles lists the .js files for event: ~/.bough/hooks/<event>/
