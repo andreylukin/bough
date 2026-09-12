@@ -16,13 +16,23 @@ export interface Command {
   run: () => void;
 }
 
-/** Case-insensitive subsequence: "fmd" finds "Fix FMDS deploy". */
-function score(text: string, q: string): number {
+/**
+ * How well text answers q. Prefix beats substring beats scattered.
+ *
+ * `loose` allows a subsequence match, which is right for a short
+ * command label ("arch" → "Archive this conversation") and wrong for a
+ * session title: a prompt two sentences long contains almost any short
+ * query's letters in order, so "grafana" matched paragraphs about
+ * gitops. Titles are matched strictly and the full-text search finds
+ * what a title cannot.
+ */
+function score(text: string, q: string, loose: boolean): number {
   if (!q) return 0;
   const t = text.toLowerCase();
   const i = t.indexOf(q);
   if (i === 0) return 1000;       // prefix
   if (i > 0) return 500 - i;      // substring, earlier is better
+  if (!loose) return -1;
   let at = 0;
   for (const ch of q) {
     at = t.indexOf(ch, at) + 1;
@@ -85,12 +95,12 @@ export function Palette({ open, onClose, rows, commands, onOpenSession }: {
   const hits = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const cmds = commands
-      .map((c) => ({ c, s: needle ? score(c.label, needle) : 10 }))
+      .map((c) => ({ c, s: needle ? score(c.label, needle, true) : 10 }))
       .filter((x) => x.s >= 0);
     const sessions = rows
       .map((r) => {
         const title = plainTitle(r.title) || "Untitled session";
-        return { r, title, s: needle ? Math.max(score(title, needle), score(r.repo ?? "", needle)) : 0 };
+        return { r, title, s: needle ? Math.max(score(title, needle, false), score(r.repo ?? "", needle, false)) : 0 };
       })
       // With no query, commands only: a list of 150 titles is the
       // sidebar again, and the palette is for aiming at one.
