@@ -8,6 +8,7 @@ import { Code, parseCall, langForPath } from "./code";
 import { SkillPicker } from "./skills";
 import { HooksPage } from "./hooks";
 import { ContextPage } from "./context";
+import { Palette, usePaletteKey, type Command } from "./palette";
 
 export type View = "sessions" | "projects" | "hooks";
 
@@ -34,7 +35,12 @@ export function Sprout({ size = 18 }: { size?: number }) {
   );
 }
 
-export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived, onToggleArchived, view, onView }: {
+export /** ⌘ on a Mac, Ctrl everywhere else. */
+function modKey(): string {
+  return typeof navigator !== "undefined" && /Mac|iP/.test(navigator.platform) ? "\u2318" : "Ctrl+";
+}
+
+function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived, onToggleArchived, view, onView }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
   query: string; onQuery: (q: string) => void; showArchived: boolean; onToggleArchived: () => void;
   view: View; onView: (v: View) => void;
@@ -64,7 +70,11 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
                 onClick={() => onView("hooks")}>Hooks</button>
       </nav>
       <div style={{ padding: "0 20px 18px" }}>
-        <label htmlFor="q" className="field-label">Search sessions</label>
+        <label htmlFor="q" className="field-label">
+          Search sessions
+          {/* A palette nobody knows about is not a feature. */}
+          <span className="pal-key" aria-hidden="true">{modKey()}K</span>
+        </label>
         <input id="q" className="field" value={query} placeholder="Title, repo or branch"
                onChange={(e) => onQuery(e.target.value)} />
       </div>
@@ -523,6 +533,13 @@ export default function App() {
 
   const row = rows.find((r) => r.id === selected) ?? null;
 
+  const [palette, setPalette] = useState(false);
+  usePaletteKey(useCallback(() => setPalette(true), []));
+
+  const openSession = useCallback((id: string) => {
+    setSelected(id); setContext(false); setView("sessions"); setPane("thread");
+  }, []);
+
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     try { await fn(); setErr(null); }
@@ -530,8 +547,36 @@ export default function App() {
     finally { setBusy(false); await refresh(); }
   };
 
+  // What the chrome can do, the keyboard can do. Session-scoped
+  // commands only appear when one is open, so the list never offers
+  // something that would fail.
+  const commands: Command[] = [
+    { id: "go:sessions", group: "Go to", label: "Conversations",
+      run: () => { setView("sessions"); setContext(false); setPane("thread"); } },
+    { id: "go:projects", group: "Go to", label: "Projects",
+      run: () => { setView("projects"); setPane("thread"); } },
+    { id: "go:hooks", group: "Go to", label: "Hooks",
+      run: () => { setView("hooks"); setPane("thread"); } },
+    { id: "go:archived", group: "Go to",
+      label: archived ? "Hide archived conversations" : "Show archived conversations",
+      run: () => setArchived((v) => !v) },
+    ...(row ? [
+      { id: "s:context", group: "This conversation", label: "Show what is shaping this conversation",
+        hint: "Context", run: () => { setContext(true); setPane("thread"); } },
+      { id: "s:archive", group: "This conversation",
+        label: row.archived ? "Unarchive this conversation" : "Archive this conversation",
+        run: () => act(() => (row.archived ? api.unarchive(row.id) : api.archive(row.id))) },
+      ...(row.status === "running" ? [{
+        id: "s:stop", group: "This conversation", label: "Stop this turn",
+        run: () => act(() => api.interrupt(row.id)),
+      }] : []),
+    ] : []),
+  ];
+
   return (
     <div className="app" data-pane={pane}>
+      <Palette open={palette} onClose={() => setPalette(false)} rows={rows}
+               commands={commands} onOpenSession={openSession} />
       <Sidebar rows={visible} selected={selected}
                onSelect={(id) => { setSelected(id); setContext(false); setView("sessions"); setPane("thread"); }}
                query={query} onQuery={setQuery} view={view} onView={(v) => { setView(v); setPane("thread"); }}
