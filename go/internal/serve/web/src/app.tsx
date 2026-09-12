@@ -6,7 +6,7 @@ import { ProjectsView } from "./projects";
 import { Markdown, codeLabel, doneSummary, groupTurns, isQuiet, plainTitle, stripRunFences, type Turn, lineCount } from "./render";
 import { SkillPicker } from "./skills";
 
-type View = "sessions" | "projects";
+export type View = "sessions" | "projects";
 
 const POLL_MS = 4000; // sessions we are not streaming still change status
 
@@ -21,7 +21,7 @@ function bucket(iso: string): string {
 }
 const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-function Sprout({ size = 18 }: { size?: number }) {
+export function Sprout({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="var(--accent)"
          strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
@@ -31,7 +31,7 @@ function Sprout({ size = 18 }: { size?: number }) {
   );
 }
 
-function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived, onToggleArchived, view, onView }: {
+export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived, onToggleArchived, view, onView }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
   query: string; onQuery: (q: string) => void; showArchived: boolean; onToggleArchived: () => void;
   view: View; onView: (v: View) => void;
@@ -104,7 +104,7 @@ function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived, onTog
 
 /* ---------------- transcript ---------------- */
 
-function CodeBlock({ line }: { line: Line }) {
+export function CodeBlock({ line }: { line: Line }) {
   const { label, detail } = codeLabel(line.text);
   const lines = line.text.split("\n").length;
   return (
@@ -119,7 +119,7 @@ function CodeBlock({ line }: { line: Line }) {
   );
 }
 
-function ResultBlock({ line }: { line: Line }) {
+export function ResultBlock({ line }: { line: Line }) {
   // history.EntryText prepends a result's own code to its text (the
   // command is as memorable as its output). Here the code already has
   // its own block directly above, so showing it again doubles every
@@ -146,7 +146,7 @@ function ResultBlock({ line }: { line: Line }) {
  * as running text that is an unreadable wall — a push with a diff in
  * it fills the pane. It is a result, so it reads like one.
  */
-function JobBlock({ line }: { line: Line }) {
+export function JobBlock({ line }: { line: Line }) {
   const all = (line.text || "").split("\n");
   const head = all[0] ?? "";
   const body = all.slice(1).join("\n").trim();
@@ -164,7 +164,7 @@ function JobBlock({ line }: { line: Line }) {
   );
 }
 
-function Entry({ line, codes }: { line: Line; codes: string[] }) {
+export function Entry({ line, codes }: { line: Line; codes: string[] }) {
   const k = line.kind;
   if (k === "assistant" || k === "sub:assistant") {
     const body = stripRunFences(line.text, codes);
@@ -204,7 +204,7 @@ function Entry({ line, codes }: { line: Line; codes: string[] }) {
   return <div className="meta-line">{line.text || k}</div>;
 }
 
-function TurnView({ turn }: { turn: Turn }) {
+export function TurnView({ turn }: { turn: Turn }) {
   const summary = turn.done ? doneSummary(turn.done) : "";
   const codes = turn.body.filter((l) => l.kind === "code" || l.kind === "sub:code").map((l) => l.text);
   return (
@@ -233,7 +233,7 @@ function TurnView({ turn }: { turn: Turn }) {
 interface ModelInfo { id: string; context?: number; efforts?: string[]; input?: number; output?: number }
 interface ProviderInfo { plugin: string; models?: ModelInfo[] }
 
-function Controls({ row, projects, onModel, onEffort, onAssign }: {
+export function Controls({ row, projects, onModel, onEffort, onAssign }: {
   row: Row; projects: Project[];
   onModel: (m: string) => void; onEffort: (e: string) => void; onAssign: (p: string) => void;
 }) {
@@ -279,7 +279,7 @@ function Controls({ row, projects, onModel, onEffort, onAssign }: {
 
 /* ---------------- thread ---------------- */
 
-function Thread({ row, lines, projects, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, busy }: {
+export function Thread({ row, lines, projects, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, busy }: {
   row: Row; lines: Line[]; projects: Project[]; busy: boolean;
   onSend: (t: string) => void; onAnswer: (t: string) => void; onInterrupt: () => void;
   onArchive: () => void; onRename: (t: string) => void;

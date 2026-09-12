@@ -32,3 +32,23 @@ Two things about the wire that are easy to get wrong:
   listener, so a named frame is invisible to a client that did not
   register that exact name, and bough's kind vocabulary is open-ended.
   The kind rides in the JSON payload instead.
+
+## Storybook
+
+The components under `src/` rendered in isolation, against the same
+stylesheet the app ships (`design/bough.css`, a copy of the `<style>`
+in `dist/index.html` kept honest by `bun run design:check`):
+
+```sh
+bun run storybook          # http://localhost:6006
+bun run build-storybook    # static site in storybook-static/ (ignored)
+```
+
+Stories live in `src/stories/`, one file per area, with sample data in
+`fixtures.ts`. `Controls` and `SkillPicker` fetch `/api/models` and
+`/api/skills` on mount; the fixtures answer those two routes and pass
+everything else through. No addons: the point is the components under
+the real CSS, not the tooling.
+
+The Claude Design bundle in `design/` is a sibling of this, not a
+build of it — see `design/README.md`.

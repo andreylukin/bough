@@ -34,3 +34,7 @@ bench/harbor/dist/
 # tmux debug logs and the unevaluated-expr sqlite artifact (2026-09-01);
 # these never belong in the tree.
 tmux-*.log
+
+# Storybook output for the control room UI (go/internal/serve/web).
+storybook-static/
+*.log
