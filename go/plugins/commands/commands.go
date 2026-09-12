@@ -279,6 +279,9 @@ func registerBuiltins(r *Registry, ctx *kernel.Context) error {
 	if err := registerModel(r, ctx); err != nil {
 		return err
 	}
+	if err := registerThink(r, ctx); err != nil {
+		return err
+	}
 	if err := registerTree(r, ctx); err != nil {
 		return err
 	}

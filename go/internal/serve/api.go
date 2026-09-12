@@ -36,6 +36,13 @@ type Row struct {
 	Entries  int       `json:"entries"`
 	Modified time.Time `json:"modified"`
 	Ask      *Ask      `json:"ask,omitempty"`
+	// Model and Effort are what this session was last ASKED to run as
+	// (empty = whatever its own config says). They are not read back
+	// from the child, so do not present them as ground truth.
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
+	// Project is the grouping this conversation was put in, by id.
+	Project string `json:"project,omitempty"`
 }
 
 // maxBody caps every request body: the API takes prompts and titles,
@@ -60,6 +67,14 @@ func NewAPI(sup *Supervisor) *API {
 	a.mux.HandleFunc("POST /api/sessions/{id}/rename", a.rename)
 	a.mux.HandleFunc("POST /api/sessions/{id}/archive", a.archive)
 	a.mux.HandleFunc("POST /api/sessions/{id}/unarchive", a.unarchive)
+	a.mux.HandleFunc("POST /api/sessions/{id}/model", a.setModel)
+	a.mux.HandleFunc("POST /api/sessions/{id}/effort", a.setEffort)
+	a.mux.HandleFunc("GET /api/models", a.models)
+	a.mux.HandleFunc("GET /api/projects", a.listProjects)
+	a.mux.HandleFunc("POST /api/projects", a.createProject)
+	a.mux.HandleFunc("POST /api/projects/{id}/rename", a.renameProject)
+	a.mux.HandleFunc("DELETE /api/projects/{id}", a.deleteProject)
+	a.mux.HandleFunc("POST /api/sessions/{id}/project", a.assignProject)
 	a.mux.HandleFunc("GET /api/sessions/{id}/events", a.events)
 	// The UI, on EXACT paths only. A catch-all "GET /" would match a
 	// wrong-method request to a real API route (GET on a POST-only
@@ -340,6 +355,9 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 		Entries:  in.Entries,
 		Modified: in.ModTime,
 		Ask:      ask,
+		Model:    meta.Model,
+		Effort:   meta.Effort,
+		Project:  meta.Project,
 	}
 }
 

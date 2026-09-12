@@ -1,5 +1,5 @@
 // The one place that knows the wire. Everything else takes typed values.
-import type { Ask, Event, Line, Row } from "./types";
+import type { Ask, Event, Line, Project, Row } from "./types";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -49,6 +49,16 @@ export const api = {
   interrupt: (id: string) => post(`/api/sessions/${id}/interrupt`),
   rename: (id: string, title: string) => post(`/api/sessions/${id}/rename`, { title }),
   archive: (id: string) => post(`/api/sessions/${id}/archive`),
+  model: (id: string, model: string) => post(`/api/sessions/${id}/model`, { model }),
+  effort: (id: string, effort: string) => post(`/api/sessions/${id}/effort`, { effort }),
+  assign: (id: string, project: string) => post(`/api/sessions/${id}/project`, { project }),
+
+  projects: () => req<{ projects: Project[] }>("/api/projects").then((r) => r.projects ?? []),
+  newProject: (name: string) =>
+    req<{ project: Project }>("/api/projects", { method: "POST", body: JSON.stringify({ name }) })
+      .then((r) => r.project),
+  renameProject: (id: string, name: string) => post(`/api/projects/${id}/rename`, { name }),
+  deleteProject: (id: string) => req<{ ok: true }>(`/api/projects/${id}`, { method: "DELETE" }),
   unarchive: (id: string) => post(`/api/sessions/${id}/unarchive`),
 };
 
@@ -71,4 +81,4 @@ export function subscribe(id: string, onEvent: (ev: Event) => void): () => void 
   return () => src.close();
 }
 
-export type { Ask, Event, Line, Row };
+export type { Ask, Event, Line, Project, Row };

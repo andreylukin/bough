@@ -15,10 +15,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/andreylukin/bough/plugins/history"
+	"github.com/andreylukin/bough/plugins/llm"
 )
 
 // Event is one line of a child's output, or a synthetic line the
@@ -39,6 +42,24 @@ type Event struct {
 type SessionMeta struct {
 	Title    string `json:"title,omitempty"` // supervisor-set rename; "" = use history title
 	Archived bool   `json:"archived,omitempty"`
+	// Model and Effort are what this supervisor last ASKED a session
+	// for, not necessarily what the child is running: the child owns
+	// its config, and a resumed session starts from bough.yml. "" means
+	// never set from here, which the UI shows as the default.
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
+	// Project is the grouping this session belongs to, by project id.
+	// "" is ungrouped, which is the normal state — a session is never
+	// forced into one.
+	Project string `json:"project,omitempty"`
+}
+
+// Project is a named grouping of sessions. It exists independently of
+// its members so an empty project can be created first and filled
+// later, and so renaming one does not touch any session.
+type Project struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // Options configures a Supervisor. Every path is explicit so tests can
@@ -100,15 +121,16 @@ type Supervisor struct {
 	// same freshly-appeared history id.
 	createMu sync.Mutex
 
-	mu     sync.Mutex
-	kids   map[string]*child
-	events map[string][]Event
-	seq    map[string]int64
-	asks   map[string]*Ask
-	subs   map[string]map[int]chan Event
-	nextID int
-	meta   map[string]SessionMeta
-	closed bool
+	mu       sync.Mutex
+	kids     map[string]*child
+	events   map[string][]Event
+	seq      map[string]int64
+	asks     map[string]*Ask
+	subs     map[string]map[int]chan Event
+	nextID   int
+	meta     map[string]SessionMeta
+	projects map[string]Project
+	closed   bool
 }
 
 // NewSupervisor loads the meta store and resolves the bough binary. A
@@ -131,16 +153,17 @@ func NewSupervisor(opt Options) (*Supervisor, error) {
 		ring = defaultRing
 	}
 	s := &Supervisor{
-		opt:    opt,
-		exe:    exe,
-		cwd:    cwd,
-		ring:   ring,
-		kids:   map[string]*child{},
-		events: map[string][]Event{},
-		seq:    map[string]int64{},
-		asks:   map[string]*Ask{},
-		subs:   map[string]map[int]chan Event{},
-		meta:   map[string]SessionMeta{},
+		opt:      opt,
+		exe:      exe,
+		cwd:      cwd,
+		ring:     ring,
+		kids:     map[string]*child{},
+		events:   map[string][]Event{},
+		seq:      map[string]int64{},
+		asks:     map[string]*Ask{},
+		subs:     map[string]map[int]chan Event{},
+		meta:     map[string]SessionMeta{},
+		projects: map[string]Project{},
 	}
 	if opt.MetaPath != "" {
 		if err := os.MkdirAll(filepath.Dir(opt.MetaPath), 0o755); err != nil {
@@ -730,6 +753,127 @@ func (s *Supervisor) SetTitle(id, title string) error {
 	return s.saveMetaLocked()
 }
 
+// newProjectID is a time-ordered id, so a listing is stable and two
+// projects made in the same second cannot collide.
+func newProjectID() string { return history.NewID() }
+
+// Projects lists the groupings, newest id last (ids are time-ordered),
+// with the session count each one holds.
+func (s *Supervisor) Projects() []Project {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Project, 0, len(s.projects))
+	for _, p := range s.projects {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// NewProject creates a grouping and returns it.
+func (s *Supervisor) NewProject(name string) (Project, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Project{}, fmt.Errorf("serve: supervisor: a project needs a name")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.projects == nil {
+		s.projects = map[string]Project{}
+	}
+	p := Project{ID: newProjectID(), Name: name}
+	s.projects[p.ID] = p
+	return p, s.saveMetaLocked()
+}
+
+// RenameProject changes a grouping's name; membership is untouched.
+func (s *Supervisor) RenameProject(id, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("serve: supervisor: a project needs a name")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.projects[id]
+	if !ok {
+		return fmt.Errorf("serve: supervisor: no project %q", id)
+	}
+	p.Name = name
+	s.projects[id] = p
+	return s.saveMetaLocked()
+}
+
+// DeleteProject removes a grouping and unassigns its sessions. Deleting
+// a project never deletes a conversation — the grouping is a label, and
+// losing the label must not lose the work.
+func (s *Supervisor) DeleteProject(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.projects[id]; !ok {
+		return fmt.Errorf("serve: supervisor: no project %q", id)
+	}
+	delete(s.projects, id)
+	for sid, m := range s.meta {
+		if m.Project == id {
+			m.Project = ""
+			s.meta[sid] = m
+		}
+	}
+	return s.saveMetaLocked()
+}
+
+// AssignProject puts a session in a grouping ("" removes it).
+func (s *Supervisor) AssignProject(sessionID, projectID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if projectID != "" {
+		if _, ok := s.projects[projectID]; !ok {
+			return fmt.Errorf("serve: supervisor: no project %q", projectID)
+		}
+	}
+	m := s.meta[sessionID]
+	m.Project = projectID
+	s.meta[sessionID] = m
+	return s.saveMetaLocked()
+}
+
+// SetModel asks a session to switch model by writing the same /model
+// command a person would type. The child owns the change — its llm row
+// reconfigures live — so nothing restarts and there is no second code
+// path to keep in step with the TUI.
+func (s *Supervisor) SetModel(id, model string) error {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return fmt.Errorf("serve: supervisor: model is required")
+	}
+	if err := s.Send(id, "/model "+model); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.meta[id]
+	m.Model = model
+	s.meta[id] = m
+	return s.saveMetaLocked()
+}
+
+// SetEffort asks a session for more or less reasoning, via /think.
+func (s *Supervisor) SetEffort(id, level string) error {
+	level = strings.ToLower(strings.TrimSpace(level))
+	if level == "" || !llm.ValidEffort(level) {
+		return fmt.Errorf("serve: supervisor: %q is not a reasoning level (have %s)", level, strings.Join(llm.Efforts, ", "))
+	}
+	if err := s.Send(id, "/think "+level); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.meta[id]
+	m.Effort = level
+	s.meta[id] = m
+	return s.saveMetaLocked()
+}
+
 // SetArchived hides a session. Archiving kills its child first: an
 // archived session that kept writing history would be a ghost writer.
 // It is reversible, and unarchiving does not respawn anything.
@@ -755,6 +899,19 @@ func (s *Supervisor) loadMeta() error {
 		}
 		return fmt.Errorf("serve: supervisor: read %s: %w", s.opt.MetaPath, err)
 	}
+	// The file began as a bare map of session id -> meta and grew a
+	// projects table. Read both shapes: an older file must not lose its
+	// titles and archive flags just because the format moved on.
+	var f metaFile
+	if err := json.Unmarshal(b, &f); err == nil && (f.Sessions != nil || f.Projects != nil) {
+		for k, v := range f.Sessions {
+			s.meta[k] = v
+		}
+		for k, v := range f.Projects {
+			s.projects[k] = v
+		}
+		return nil
+	}
 	var m map[string]SessionMeta
 	if err := json.Unmarshal(b, &m); err != nil {
 		return fmt.Errorf("serve: supervisor: parse %s: %w", s.opt.MetaPath, err)
@@ -765,12 +922,19 @@ func (s *Supervisor) loadMeta() error {
 	return nil
 }
 
+// metaFile is what meta.json holds now: sessions and the groupings they
+// belong to, in one atomically-written file.
+type metaFile struct {
+	Sessions map[string]SessionMeta `json:"sessions,omitempty"`
+	Projects map[string]Project     `json:"projects,omitempty"`
+}
+
 // saveMetaLocked rewrites meta.json atomically; caller holds s.mu.
 func (s *Supervisor) saveMetaLocked() error {
 	if s.opt.MetaPath == "" {
 		return nil
 	}
-	b, err := json.MarshalIndent(s.meta, "", "  ")
+	b, err := json.MarshalIndent(metaFile{Sessions: s.meta, Projects: s.projects}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("serve: supervisor: encode meta: %w", err)
 	}

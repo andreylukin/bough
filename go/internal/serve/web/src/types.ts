@@ -20,6 +20,12 @@ export interface Ask {
   seq: number;
 }
 
+/** A named grouping of conversations. A label, not a container. */
+export interface Project {
+  id: string;
+  name: string;
+}
+
 /** One session, as GET /api/sessions returns it. */
 export interface Row {
   id: string;
@@ -33,6 +39,9 @@ export interface Row {
   entries: number;
   modified: string;
   ask?: Ask;
+  model?: string;
+  effort?: string;
+  project?: string;
 }
 
 /** One transcript entry, from GET /api/sessions/{id}. */
