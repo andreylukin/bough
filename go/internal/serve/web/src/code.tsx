@@ -45,9 +45,26 @@ export function langForPath(path: string): string {
 export interface Call {
   verb: string;   // Ran, Wrote, Patched, Read, …
   target: string; // the command, or the path
+  gist: string;   // the collapsed one-line preview
   body: string;   // what to show in the block
   lang: string;   // how to colour it
   raw: string;    // the original program, still reachable
+}
+
+/**
+ * The part of a command worth showing in one line.
+ *
+ * Agents working in a worktree prefix nearly every command with
+ * `cd <very long branch-scoped path> && …`. That prefix is identical
+ * on every row of a session, so it is the one part carrying no
+ * information — and it was consuming the whole preview, leaving
+ * "git commit" and "cat somefile" looking exactly alike. The directory
+ * is still there when the block is opened.
+ */
+export function gistOf(cmd: string): string {
+  const m = /^\s*cd\s+(?:"[^"]*"|'[^']*'|[^\s;&|]+)\s*(?:&&|;)\s*/.exec(cmd);
+  const rest = m ? cmd.slice(m[0].length) : cmd;
+  return (rest.trim() || cmd.trim()).split("\n")[0];
 }
 
 /** Read one JS string literal starting at `from` (the quote). */
@@ -91,25 +108,25 @@ export function parseCall(code: string): Call {
   const many = (raw.match(/tools\.\w+\s*\(/g) ?? []).length > 1;
   if (!call || many) {
     // Several calls in one block, or none: show the program itself.
-    return { verb: many ? "Ran a program" : "Code", target: "", body: raw, lang: "javascript", raw };
+    return { verb: many ? "Ran a program" : "Code", target: "", gist: gistOf(raw), body: raw, lang: "javascript", raw };
   }
   const [a = "", b = ""] = call.args;
   switch (call.name) {
     case "bash":
-      return { verb: "Ran", target: a, body: a, lang: "bash", raw };
+      return { verb: "Ran", target: a, gist: gistOf(a), body: a, lang: "bash", raw };
     case "write":
-      return { verb: "Wrote", target: a, body: b || raw, lang: langForPath(a), raw };
+      return { verb: "Wrote", target: a, gist: a, body: b || raw, lang: langForPath(a), raw };
     case "patch":
-      return { verb: "Patched", target: a, body: b || raw, lang: langForPath(a) || "diff", raw };
+      return { verb: "Patched", target: a, gist: a, body: b || raw, lang: langForPath(a) || "diff", raw };
     case "view":
-      return { verb: "Read", target: a, body: "", lang: "", raw };
+      return { verb: "Read", target: a, gist: a, body: "", lang: "", raw };
     case "spawn":
     case "spawnAll":
-      return { verb: "Spawned subagents", target: "", body: raw, lang: "javascript", raw };
+      return { verb: "Spawned subagents", target: "", gist: gistOf(raw), body: raw, lang: "javascript", raw };
     case "ask":
-      return { verb: "Asked you", target: a, body: "", lang: "", raw };
+      return { verb: "Asked you", target: a, gist: a, body: "", lang: "", raw };
     default:
-      return { verb: call.name, target: a, body: raw, lang: "javascript", raw };
+      return { verb: call.name, target: a, gist: gistOf(a || raw), body: raw, lang: "javascript", raw };
   }
 }
 

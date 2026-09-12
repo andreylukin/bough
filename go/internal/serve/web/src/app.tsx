@@ -120,7 +120,7 @@ export function CodeBlock({ line }: { line: Line }) {
     <details className="block">
       <summary>
         <span className="block-label">{call.verb}</span>
-        <span className="mono block-detail">{firstLine(call.target || call.body)}</span>
+        <span className="mono block-detail">{firstLine(call.gist)}</span>
         {lines > 1 && <span className="num block-lines">{lineCount(lines)}</span>}
       </summary>
       <div className="block-body">

@@ -294,7 +294,9 @@ function HookRow({ h, off, setOff, onOff, load, save, dryrun }: {
            : h.shadowed ? { word: "Shadowed", tone: "warn" }
            : undefined}
       tags={[h.scope === "home" ? "Home" : "Project"]}
-      facts={<>fired {when(h.lastFired, "never")}{h.lastDecision ? ` · last ${h.lastDecision}` : ""}</>}
+      facts={h.lastDecision
+        ? <>last decided {when(h.lastFired, "never")} · {h.lastDecision}</>
+        : <>no decisions recorded</>}
       alert={h.failing ? h.error : h.shadowed ? "A project file of the same name wins over this one." : ""}
       actions={<OffToggle id={offId("hook", h.id)} off={off} what={`the hook ${h.name}`}
                           setOff={setOff} onChange={onOff} />}
@@ -453,7 +455,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
           <span><span className="hk2-sum-n">{offCount}</span>{" "}
             <span className="hk2-sum-lab">turned off</span></span>
           <span><span className="hk2-sum-n">{recent.length}</span>{" "}
-            <span className="hk2-sum-lab">fires recorded</span></span>
+            <span className="hk2-sum-lab">decisions recorded</span></span>
         </div>
         <section className="proj">
           <div className="proj-head">
@@ -569,11 +571,11 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
 
         <section className="proj">
           <div className="proj-head">
-            <h2>Recent fires</h2>
+            <h2>Recent decisions</h2>
             <span className="num proj-count">newest first</span>
           </div>
           {recent.length === 0
-            ? <p className="proj-none">Nothing has fired yet. Once a hook runs, every call lands here with what it decided.</p>
+            ? <p className="proj-none">No hook has decided anything yet. A hook that runs and passes the call through is not recorded — only one that blocks, denies, rewrites, throws, or leaves a note lands here.</p>
             : recent.map((f, i) => (
               <div key={`${f.at}-${f.name}-${i}`} className="proj-row hk-row">
                 <div className="hk-main">
