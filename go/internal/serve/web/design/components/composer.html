@@ -1,0 +1,47 @@
+<!-- @dsCard group="Composer" name="Composer" subtitle="Textarea, hints, Skills, Stop and Send; the skills picker open" -->
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../bough.css">
+<style>
+.composer-wrap{max-width:820px;padding-top:280px}
+.skills-pop{position:absolute}
+</style>
+</head>
+<body>
+<div class="composer-wrap">
+  <div class="composer">
+    <textarea id="composer" rows="2" placeholder="Send a message — it steers the turn already running"></textarea>
+    <div style="display:flex;align-items:center;gap:14px">
+      <span class="hint">Return to send</span>
+      <span class="hint">Shift + Return for a newline</span>
+      <div style="margin-left:auto;display:flex;gap:10px">
+        <div class="skills-anchor">
+          <button class="btn" aria-expanded="true" aria-haspopup="dialog">Skills</button>
+          <div class="skills-pop" role="dialog" aria-label="Insert a skill">
+            <input class="skills-filter" placeholder="Filter skills" aria-label="Filter skills">
+            <div class="skills-list" role="listbox" aria-label="Skills">
+              <button class="skill skill-on" role="option" aria-selected="true">
+                <span class="mono skill-name">/grill-me</span>
+                <span class="skill-sum">Interrogate a design until every assumption has been said out loud.</span>
+              </button>
+              <button class="skill" role="option">
+                <span class="mono skill-name">/review</span>
+                <span class="skill-sum">Read the diff on this branch the way a strict reviewer would.</span>
+              </button>
+              <button class="skill" role="option">
+                <span class="mono skill-name">/wiki</span>
+                <span class="skill-sum">Compile the session wiki from history.</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <button class="btn">Stop</button>
+        <button class="btn btn-primary" disabled>Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

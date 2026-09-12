@@ -1,0 +1,21 @@
+<!-- @dsCard group="Actions" name="Buttons" subtitle="Outline, primary, disabled, link" -->
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../bough.css">
+<style>
+.demo{padding:24px 28px;display:flex;flex-direction:column;gap:20px}
+.rowx{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.lab{font-size:12px;color:var(--text-3);width:80px;flex-shrink:0}
+</style>
+</head>
+<body>
+<div class="demo">
+  <div class="rowx"><span class="lab">.btn</span><button class="btn">Rename</button><button class="btn">Archive</button><button class="btn">Stop</button><button class="btn">Skills</button></div>
+  <div class="rowx"><span class="lab">.btn-primary</span><button class="btn btn-primary">Send</button><button class="btn btn-primary">New project</button><button class="btn btn-primary">Yes, go ahead</button></div>
+  <div class="rowx"><span class="lab">:disabled</span><button class="btn btn-primary" disabled>Send</button><button class="btn" disabled>Stop</button></div>
+  <div class="rowx"><span class="lab">.link</span><button class="link">Show archived</button><button class="link">Rename</button><button class="link">Delete</button></div>
+</div>
+</body>
+</html>

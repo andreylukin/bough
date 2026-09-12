@@ -5,7 +5,9 @@
   "description": "The bough serve control room UI. Built with bun into dist/app.js, which is committed and go:embed-ed.",
   "scripts": {
     "build": "bun build src/main.tsx --outfile=dist/app.js --minify --define:process.env.NODE_ENV='\"production\"'",
-    "dev": "bun build src/main.tsx --outfile=dist/app.js --watch"
+    "dev": "bun build src/main.tsx --outfile=dist/app.js --watch",
+    "design:check": "node design/check.mjs",
+    "design:sync": "node design/check.mjs --write"
   },
   "dependencies": {
     "dompurify": "^3.4.15",

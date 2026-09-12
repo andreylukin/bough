@@ -1,0 +1,55 @@
+<!-- @dsCard group="Foundations" name="Colors" subtitle="Surfaces, lines, text, and the three hues" -->
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../bough.css">
+<style>
+.demo{padding:24px 28px;display:flex;flex-direction:column;gap:22px;max-width:720px}
+.demo h2{margin:0;font-size:12px;font-weight:500;color:var(--text-3)}
+.sw{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.chip{display:flex;flex-direction:column;gap:6px}
+.chip i{display:block;height:44px;border-radius:7px;border:1px solid var(--line)}
+.chip b{font-size:13px;font-weight:500;color:var(--text-1)}
+.chip span{font-size:12px;color:var(--text-3)}
+.note{font-size:13px;color:var(--text-3);max-width:60ch;margin:0}
+</style>
+</head>
+<body>
+<div class="demo">
+  <div>
+    <h2>Surfaces</h2>
+    <div class="sw">
+      <div class="chip"><i style="background:var(--bg)"></i><b>--bg</b><span class="mono">#0f1310</span></div>
+      <div class="chip"><i style="background:var(--surface)"></i><b>--surface</b><span class="mono">#191d1a</span></div>
+      <div class="chip"><i style="background:var(--raised)"></i><b>--raised</b><span class="mono">#222723</span></div>
+      <div class="chip"><i style="background:var(--sel)"></i><b>--sel</b><span class="mono">#242b25</span></div>
+    </div>
+  </div>
+  <div>
+    <h2>Lines</h2>
+    <div class="sw">
+      <div class="chip"><i style="background:var(--line)"></i><b>--line</b><span class="mono">#343a35 · decorative, 1.61:1</span></div>
+      <div class="chip"><i style="background:var(--line-strong)"></i><b>--line-strong</b><span class="mono">#646b65 · controls, ≥3:1</span></div>
+    </div>
+  </div>
+  <div>
+    <h2>Text</h2>
+    <div class="sw">
+      <div class="chip"><i style="background:var(--text-1)"></i><b>--text-1</b><span class="mono">#e3eae4</span></div>
+      <div class="chip"><i style="background:var(--text-2)"></i><b>--text-2</b><span class="mono">#b1b8b2</span></div>
+      <div class="chip"><i style="background:var(--text-3)"></i><b>--text-3</b><span class="mono">#89908a · 4.65:1 on raised</span></div>
+    </div>
+  </div>
+  <div>
+    <h2>One hue, one meaning</h2>
+    <div class="sw">
+      <div class="chip"><i style="background:var(--accent)"></i><b>--accent</b><span class="mono">#82cb9b · interactive</span></div>
+      <div class="chip"><i style="background:var(--amber)"></i><b>--amber</b><span class="mono">#eabc6e · waiting for you</span></div>
+      <div class="chip"><i style="background:var(--red)"></i><b>--red</b><span class="mono">#ed756e · failed</span></div>
+    </div>
+    <p class="note" style="margin-top:12px">Resting states carry no colour. Dark by commitment: every colour is painted, never inherited.</p>
+  </div>
+</div>
+</body>
+</html>
