@@ -140,6 +140,30 @@ function ResultBlock({ line }: { line: Line }) {
   );
 }
 
+/**
+ * A background job records its whole run as one entry: a header line
+ * ("job 49 [exited 0] <cmd> (3s)") then everything it printed. Shown
+ * as running text that is an unreadable wall — a push with a diff in
+ * it fills the pane. It is a result, so it reads like one.
+ */
+function JobBlock({ line }: { line: Line }) {
+  const all = (line.text || "").split("\n");
+  const head = all[0] ?? "";
+  const body = all.slice(1).join("\n").trim();
+  const exit = /\[exited ([0-9]+)\]/.exec(head);
+  const failed = exit ? exit[1] !== "0" : false;
+  return (
+    <details className={"block" + (failed ? " block-failed" : "")}>
+      <summary>
+        <span className="block-label">{failed ? "Job failed" : "Job"}</span>
+        <span className="mono block-detail">{head.replace(/^job\s+/, "").slice(0, 90)}</span>
+        {body && <span className="num block-lines">{lineCount(body.split("\n").length)}</span>}
+      </summary>
+      <pre className="mono">{body || "(no output)"}</pre>
+    </details>
+  );
+}
+
 function Entry({ line, codes }: { line: Line; codes: string[] }) {
   const k = line.kind;
   if (k === "assistant" || k === "sub:assistant") {
@@ -175,6 +199,7 @@ function Entry({ line, codes }: { line: Line; codes: string[] }) {
   }
   if (k === "error" || k === "sub:error") return <div className="err">{line.text}</div>;
   if (k === "ask") return null; // the live ask renders as its own card below
+  if (k === "job") return <JobBlock line={line} />;
   if (isQuiet(k)) return <div className="meta-line">{line.text || k}</div>;
   return <div className="meta-line">{line.text || k}</div>;
 }
