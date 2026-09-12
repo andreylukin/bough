@@ -149,7 +149,9 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .pal-label{font-size:13.5px;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;
            white-space:nowrap;flex:1}
 .pal-on .pal-label{color:var(--accent)}
-.pal-hint{font-size:12px;color:var(--text-3);flex-shrink:0}
+.pal-hint{font-size:12px;color:var(--text-3);min-width:0;max-width:56%;
+          overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+          font-family:var(--mono)}
 .pal-none{margin:0;padding:16px 12px;font-size:13px;color:var(--text-3)}
 /* the shortcut says it exists; a palette nobody finds is not a feature */
 .pal-key{margin-inline-start:auto;font:600 10.5px var(--mono);color:var(--text-3);

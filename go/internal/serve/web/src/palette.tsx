@@ -31,6 +31,34 @@ function score(text: string, q: string): number {
   return 100;
 }
 
+interface SearchLine { seq: number; kind: string; text: string }
+interface SearchHit { id: string; title: string; repo: string; branch: string; hits: number; lines: SearchLine[] }
+
+/**
+ * Titles are written by a small model after the first turn. What you
+ * actually remember is something that was SAID — a file name, an error,
+ * a command — so the palette asks the server to search the bodies too.
+ * Local matching answers instantly and this fills in behind it.
+ */
+function useFullText(q: string, open: boolean): SearchHit[] {
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  useEffect(() => {
+    const needle = q.trim();
+    if (!open || needle.length < 2) { setHits([]); return; }
+    // Debounced: this reads every transcript, and the box is typed into
+    // one character at a time.
+    let live = true;
+    const t = setTimeout(() => {
+      fetch("/api/search?q=" + encodeURIComponent(needle))
+        .then((r) => r.json())
+        .then((d) => { if (live) setHits(d.hits ?? []); })
+        .catch(() => { if (live) setHits([]); });
+    }, 180);
+    return () => { live = false; clearTimeout(t); };
+  }, [q, open]);
+  return hits;
+}
+
 export function Palette({ open, onClose, rows, commands, onOpenSession }: {
   open: boolean;
   onClose: () => void;
@@ -51,6 +79,8 @@ export function Palette({ open, onClose, rows, commands, onOpenSession }: {
     setAt(0);
     field.current?.focus();
   }, [open]);
+
+  const found = useFullText(q, open);
 
   const hits = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -75,8 +105,23 @@ export function Palette({ open, onClose, rows, commands, onOpenSession }: {
         run: () => onOpenSession(r.id),
       })),
     ];
+    // Full-text results for sessions the title match already found are
+    // not new information; the rest come after, each showing the line
+    // that matched so you can tell why it is here.
+    const seen = new Set(all.map((c) => c.id));
+    for (const h of found) {
+      if (seen.has("s:" + h.id)) continue;
+      const line = h.lines[0];
+      all.push({
+        id: "s:" + h.id,
+        label: plainTitle(h.title) || "Untitled session",
+        hint: line ? trimLine(line.text) : `${h.hits} matches`,
+        group: "Found in the conversation",
+        run: () => onOpenSession(h.id),
+      });
+    }
     return all.slice(0, 40);
-  }, [q, rows, commands, onOpenSession]);
+  }, [q, rows, commands, onOpenSession, found]);
 
   useEffect(() => { setAt(0); }, [q]);
   useEffect(() => {
@@ -133,6 +178,12 @@ export function Palette({ open, onClose, rows, commands, onOpenSession }: {
       </div>
     </>
   );
+}
+
+/** One matching line, short enough to sit on a row. */
+function trimLine(text: string): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  return t.length > 90 ? t.slice(0, 90) + "…" : t;
 }
 
 /** ⌘K on a Mac, Ctrl+K elsewhere, and never inside a text field. */
