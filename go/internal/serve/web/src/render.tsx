@@ -106,3 +106,8 @@ export function groupTurns(lines: Line[]): Turn[] {
   if (cur) turns.push(cur);
   return turns;
 }
+
+/** "1 line" / "4 lines" — a count that reads as English. */
+export function lineCount(n: number): string {
+  return n === 1 ? "1 line" : `${n} lines`;
+}

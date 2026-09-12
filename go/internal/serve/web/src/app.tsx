@@ -3,7 +3,7 @@ import { api, subscribe } from "./api";
 import type { Line, Project, Row } from "./types";
 import { StatusMark } from "./status";
 import { ProjectsView } from "./projects";
-import { Markdown, codeLabel, doneSummary, groupTurns, isQuiet, plainTitle, stripRunFences, type Turn } from "./render";
+import { Markdown, codeLabel, doneSummary, groupTurns, isQuiet, plainTitle, stripRunFences, type Turn, lineCount } from "./render";
 import { SkillPicker } from "./skills";
 
 type View = "sessions" | "projects";
@@ -112,7 +112,7 @@ function CodeBlock({ line }: { line: Line }) {
       <summary>
         <span className="block-label">{label}</span>
         {detail && <span className="mono block-detail">{detail}</span>}
-        <span className="num block-lines">{lines} lines</span>
+        <span className="num block-lines">{lineCount(lines)}</span>
       </summary>
       <pre className="mono">{line.text}</pre>
     </details>
@@ -133,7 +133,7 @@ function ResultBlock({ line }: { line: Line }) {
       <summary>
         <span className="block-label">Result</span>
         <span className="mono block-detail">{head.slice(0, 90)}</span>
-        <span className="num block-lines">{lines.length} lines</span>
+        <span className="num block-lines">{lineCount(lines.length)}</span>
       </summary>
       <pre className="mono">{body || "(no output)"}</pre>
     </details>
@@ -156,10 +156,20 @@ function Entry({ line, codes }: { line: Line; codes: string[] }) {
   if (k === "code" || k === "sub:code") return <CodeBlock line={line} />;
   if (k === "result" || k === "sub:result") return <ResultBlock line={line} />;
   if (k === "thinking") {
+    // A column of rows all reading just "Thinking" says nothing about
+    // which one is worth opening. Carry the same preview and line
+    // count every other block has.
+    const lines = (line.text || "").split("\n");
+    const head = lines.find((l) => l.trim()) ?? "";
     return (
       <details className="block thinking">
-        <summary><span className="block-label">Thinking</span></summary>
-        <pre className="mono">{line.text}</pre>
+        <summary>
+          <span className="block-label">Thinking</span>
+          <span className="block-detail">{plainTitle(head).slice(0, 90)}</span>
+        </summary>
+        {/* Reasoning is markdown like any other reply: left raw it
+            shows its own backticks and list markers as punctuation. */}
+        <div className="think-body"><Markdown text={line.text} /></div>
       </details>
     );
   }
