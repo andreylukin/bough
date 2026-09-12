@@ -215,15 +215,22 @@ function Entry({ line, codes }: { line: Line; codes: string[] }) {
     // news — the Hooks view is where the full ledger lives. Only a
     // fire that decided something, or threw, earns a line here.
     const d = line.data ?? {};
-    const decision = typeof d.decision === "string" ? d.decision : "";
-    const err = typeof d.error === "string" ? d.error : "";
-    if (!decision && !err) return null;
+    const decision = str(d.decision);
+    const err = str(d.error);
+    const notice = str(d.notice);
+    // A hook that passed through silently is not news. One that decided
+    // something, threw, or had something to say to you, is.
+    if (!decision && !err && !notice) return null;
     return (
       <p className="hook-line">
         <span className="mono">{str(d.name)}</span>
-        {" · "}{str(d.event)}{" · "}
-        <span className={err ? "hook-bad" : "hook-act"}>{err ? "errored" : decision}</span>
+        {" · "}{str(d.event)}
+        {(decision || err) && <>
+          {" · "}
+          <span className={err ? "hook-bad" : "hook-act"}>{err ? "errored" : decision}</span>
+        </>}
         {err && <span className="hook-why"> {err}</span>}
+        {notice && <span className="hook-why"> — {notice}</span>}
       </p>
     );
   }
