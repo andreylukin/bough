@@ -83,37 +83,50 @@ func (a *API) byRepo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"groups": a.repoGroups()})
 }
 
-// projectFromRepo makes one project out of one repo's sessions. It is a
-// single call on purpose: doing it from the client would be one request
-// per session, and a group here can hold twenty.
+// projectFromRepo makes one project out of one or more repos. Several
+// on purpose: a project here is an area of work, not a repo. A person
+// with hundreds of repos has a handful of areas, and "uni-fmds-
+// prototype-py" is the name of a checkout, not the name of a thing you
+// are doing. The caller names it.
 func (a *API) projectFromRepo(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Repo string `json:"repo"`
-		Name string `json:"name"`
+		Repos []string `json:"repos"`
+		Name  string   `json:"name"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	repo := strings.TrimSpace(body.Repo)
-	if repo == "" {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: repo is required"))
-		return
-	}
-	var group *RepoGroup
-	for _, g := range a.repoGroups() {
-		if g.Repo == repo {
-			group = &g
-			break
+	want := map[string]bool{}
+	for _, repo := range body.Repos {
+		if repo = strings.TrimSpace(repo); repo != "" {
+			want[repo] = true
 		}
 	}
-	if group == nil {
-		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: no unassigned sessions for %q", repo))
+	if len(want) == 0 {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: at least one repo is required"))
 		return
 	}
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
-		name = repo
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: name is required"))
+		return
 	}
+
+	var ids []string
+	found := map[string]bool{}
+	for _, g := range a.repoGroups() {
+		if want[g.Repo] {
+			found[g.Repo] = true
+			ids = append(ids, g.Sessions...)
+		}
+	}
+	for repo := range want {
+		if !found[repo] {
+			writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: no unassigned sessions for %q", repo))
+			return
+		}
+	}
+
 	p, err := a.sup.NewProject(name)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
@@ -122,7 +135,7 @@ func (a *API) projectFromRepo(w http.ResponseWriter, r *http.Request) {
 	// A session that vanished between listing and assigning is not a
 	// reason to fail the whole group; report how many actually moved.
 	moved := 0
-	for _, id := range group.Sessions {
+	for _, id := range ids {
 		if err := a.sup.AssignProject(id, p.ID); err == nil {
 			moved++
 		}

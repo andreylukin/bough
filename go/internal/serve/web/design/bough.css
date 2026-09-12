@@ -120,6 +120,15 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 /* thinking is prose, not a program: sans, wrapped, and a measure that
    does not run the full width of a wide window */
 .block-failed .block-label{color:var(--red)}
+/* picking repos for one project */
+.rp-pick{cursor:pointer;min-height:24px}
+.rp-pick input{width:16px;height:16px;accent-color:var(--accent);flex-shrink:0;cursor:pointer}
+.rp-bar{position:sticky;bottom:0;display:flex;flex-wrap:wrap;align-items:end;gap:10px 14px;
+        margin-top:12px;padding:12px 0 4px;border-top:1px solid var(--line-strong);
+        background:var(--bg)}
+.rp-name{display:flex;flex-direction:column;gap:4px;min-width:min(260px,100%)}
+.rp-name .field{margin:0}
+
 /* The Hooks page: many small things, each with a state. Rows share one
    grid so the eye runs down a column instead of re-reading each row's
    layout, and everything secondary is folded away until asked for. */

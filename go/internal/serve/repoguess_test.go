@@ -79,7 +79,8 @@ func TestProjectFromRepoMovesTheGroup(t *testing.T) {
 			codeEntry(2, `tools.bash("cd repos/uni-grouped && ls")`),
 		)
 	}
-	code, body := f.do(t, "POST", "/api/projects/from-repo", `{"repo":"uni-grouped"}`)
+	code, body := f.do(t, "POST", "/api/projects/from-repo",
+		`{"repos":["uni-grouped"],"name":"Grouped work"}`)
 	if code != http.StatusOK {
 		t.Fatalf("POST /api/projects/from-repo = %d (%v)", code, body)
 	}
@@ -102,8 +103,65 @@ func TestProjectFromRepoUnknown(t *testing.T) {
 	t.Parallel()
 	f := newAPI(t)
 	f.api.home = f.home
-	code, _ := f.do(t, "POST", "/api/projects/from-repo", `{"repo":"nope"}`)
+	code, _ := f.do(t, "POST", "/api/projects/from-repo", `{"repos":["nope"],"name":"Nope"}`)
 	if code != http.StatusNotFound {
 		t.Errorf("unknown repo = %d, want 404", code)
+	}
+}
+
+// A project is an area of work, so it holds several repos under a name
+// the person chose — not one project per checkout.
+func TestProjectFromSeveralRepos(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	f.api.home = f.home
+	now := time.Now()
+	seed := func(id, repo string) {
+		f.seed(t, id,
+			history.Entry{Seq: 1, At: now, Kind: "meta", Data: map[string]any{"cwd": f.home}},
+			codeEntry(2, `tools.bash("cd repos/`+repo+` && ls")`),
+		)
+	}
+	seed("01a00000-0000-7000-8000-0000000000e1", "uni-fmds-prototype")
+	seed("01a00000-0000-7000-8000-0000000000e2", "uni-fmds-prototype-py")
+	seed("01a00000-0000-7000-8000-0000000000e3", "unrelated-thing")
+
+	code, body := f.do(t, "POST", "/api/projects/from-repo",
+		`{"repos":["uni-fmds-prototype","uni-fmds-prototype-py"],"name":"FMDS"}`)
+	if code != http.StatusOK {
+		t.Fatalf("POST = %d (%v)", code, body)
+	}
+	if moved, _ := body["moved"].(float64); moved != 2 {
+		t.Errorf("moved = %v, want both repos' sessions", body["moved"])
+	}
+	p, _ := body["project"].(map[string]any)
+	if p["name"] != "FMDS" {
+		t.Errorf("name = %v, want the name the caller gave, not a repo name", p["name"])
+	}
+	// The repo nobody picked is still on offer.
+	_, after := f.do(t, "GET", "/api/projects/by-repo", "")
+	left := map[string]bool{}
+	groups, _ := after["groups"].([]any)
+	for _, g := range groups {
+		m, _ := g.(map[string]any)
+		left[m["repo"].(string)] = true
+	}
+	if !left["unrelated-thing"] {
+		t.Error("an unpicked repo was filed too")
+	}
+	if left["uni-fmds-prototype"] || left["uni-fmds-prototype-py"] {
+		t.Error("a filed repo is still on offer")
+	}
+}
+
+// A name is required: the whole point is that the project is not named
+// after a checkout.
+func TestProjectFromRepoNeedsAName(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	f.api.home = f.home
+	code, _ := f.do(t, "POST", "/api/projects/from-repo", `{"repos":["x"]}`)
+	if code != http.StatusBadRequest {
+		t.Errorf("no name = %d, want 400", code)
 	}
 }

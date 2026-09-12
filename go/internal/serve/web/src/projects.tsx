@@ -39,9 +39,18 @@ interface RepoGroup { repo: string; count: number; sessions: string[] }
  * is enough to offer the grouping ready-made. Nothing is filed until
  * you say so: these are suggestions, not projects.
  */
+/**
+ * A project is an area of work, not a repo. Someone with hundreds of
+ * repos has a handful of areas, and "uni-fmds-prototype-py" names a
+ * checkout, not a thing you are doing — so repos are picked in groups
+ * and the project is named by the person, not the path.
+ */
 function ByRepo() {
   const [groups, setGroups] = useState<RepoGroup[] | null>(null);
-  const [busy, setBusy] = useState("");
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [name, setName] = useState("");
+  const [touchedName, setTouchedName] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const load = useCallback(() => {
@@ -52,27 +61,41 @@ function ByRepo() {
   }, []);
   useEffect(load, [load]);
 
-  const file = async (repo: string) => {
-    setBusy(repo);
+  const chosen = useMemo(() => [...picked], [picked]);
+  const suggestion = useMemo(() => suggestName(chosen), [chosen]);
+  // The name follows the selection until you type your own.
+  useEffect(() => { if (!touchedName) setName(suggestion); }, [suggestion, touchedName]);
+
+  const toggle = (repo: string) => setPicked((prev) => {
+    const next = new Set(prev);
+    next.has(repo) ? next.delete(repo) : next.add(repo);
+    return next;
+  });
+
+  const make = async () => {
+    setBusy(true);
     setErr("");
     try {
       const r = await fetch("/api/projects/from-repo", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ repo }),
+        body: JSON.stringify({ repos: chosen, name: name.trim() }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
+      setPicked(new Set());
+      setTouchedName(false);
       load();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy("");
+      setBusy(false);
     }
   };
 
-  if (groups === null) return null;
-  if (groups.length === 0) return null;
+  if (groups === null || groups.length === 0) return null;
   const total = groups.reduce((n, g) => n + g.count, 0);
+  const picking = chosen.length > 0;
+  const covered = groups.filter((g) => picked.has(g.repo)).reduce((n, g) => n + g.count, 0);
 
   return (
     <section className="proj">
@@ -84,27 +107,66 @@ function ByRepo() {
         </span>
       </div>
       <p className="proj-none">
-        Read from the paths each conversation actually worked in. Making a project files
-        every conversation in that group; you can rename or delete it afterwards.
+        Read from the paths each conversation actually worked in. Pick the repos that belong
+        to one area of work and name it — a project can hold several repos.
       </p>
       {err && <p className="err">{err}</p>}
+
       {groups.map((g) => (
         <div key={g.repo} className="hk2-row">
-          <div className="hk2-line">
+          <label className="hk2-line rp-pick">
+            <input type="checkbox" checked={picked.has(g.repo)} onChange={() => toggle(g.repo)} />
             <span className="mono hk2-name">{g.repo}</span>
             <span className="hk2-facts">
               {g.count} {g.count === 1 ? "conversation" : "conversations"}
             </span>
-            <span className="hk2-actions">
-              <button className="btn" disabled={busy === g.repo} onClick={() => file(g.repo)}>
-                {busy === g.repo ? "Making…" : "Make a project"}
-              </button>
-            </span>
-          </div>
+          </label>
         </div>
       ))}
+
+      {picking && (
+        <div className="rp-bar">
+          <label className="rp-name">
+            <span className="ctl-label">Project name</span>
+            <input className="field" value={name} placeholder="What is this work?"
+                   onChange={(e) => { setTouchedName(true); setName(e.target.value); }} />
+          </label>
+          <span className="hk2-facts">
+            {chosen.length} {chosen.length === 1 ? "repo" : "repos"} · {covered}{" "}
+            {covered === 1 ? "conversation" : "conversations"}
+          </span>
+          <button className="btn btn-primary" disabled={busy || !name.trim()} onClick={make}>
+            {busy ? "Making…" : "Make a project"}
+          </button>
+          <button className="btn" onClick={() => { setPicked(new Set()); setTouchedName(false); }}>
+            Clear
+          </button>
+        </div>
+      )}
     </section>
   );
+}
+
+/**
+ * A first guess at what a set of repos is called: what they share,
+ * minus the organisation prefix every repo at a company carries. Two
+ * "uni-fmds-*" repos suggest "fmds"; unrelated ones suggest nothing,
+ * because a wrong name is worse than an empty box.
+ */
+export function suggestName(repos: string[]): string {
+  if (repos.length === 0) return "";
+  const parts = repos.map((r) => r.split("-").filter(Boolean));
+  const shared: string[] = [];
+  for (let i = 0; i < parts[0].length; i++) {
+    const seg = parts[0][i];
+    if (parts.every((p) => p[i] === seg)) shared.push(seg);
+    else break;
+  }
+  // A single leading segment shared by everything is the org, not the
+  // subject: "uni" alone says nothing about what the work is.
+  const useful = shared.length > 1 ? shared.slice(1) : shared;
+  if (repos.length === 1) return repos[0];
+  return useful.length > 0 ? useful.join("-") : "";
 }
 
 export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onCreate, onRename, onDelete }: {
