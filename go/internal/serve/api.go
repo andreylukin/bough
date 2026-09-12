@@ -88,6 +88,8 @@ func NewAPI(sup *Supervisor) *API {
 	a.mux.HandleFunc("PUT /api/hooks/file", a.putHookFile)
 	a.mux.HandleFunc("POST /api/hooks/dryrun", a.dryrun)
 	a.mux.HandleFunc("GET /api/projects", a.listProjects)
+	a.mux.HandleFunc("GET /api/projects/by-repo", a.byRepo)
+	a.mux.HandleFunc("POST /api/projects/from-repo", a.projectFromRepo)
 	a.mux.HandleFunc("POST /api/projects", a.createProject)
 	a.mux.HandleFunc("POST /api/projects/{id}/rename", a.renameProject)
 	a.mux.HandleFunc("DELETE /api/projects/{id}", a.deleteProject)
