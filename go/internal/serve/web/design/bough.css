@@ -34,12 +34,17 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
        border:1px solid var(--line-strong);border-radius:7px;padding:8px 11px}
 .field::placeholder{color:var(--text-3)}
 .group-head{font-size:12px;font-weight:500;color:var(--text-3);padding:0 20px 8px}
-.row{display:flex;flex-direction:column;gap:5px;width:100%;text-align:start;padding:9px 20px 10px;
+.row{display:flex;flex-direction:column;gap:4px;width:100%;text-align:start;padding:8px 20px 9px;
      background:none;border:0;border-left:2px solid transparent;color:inherit;font:inherit;cursor:pointer}
+.row-line{display:flex;align-items:center;gap:8px;min-width:0}
+.row-line .num{margin-left:auto;font-size:12px;color:var(--text-3);flex-shrink:0}
+.row-meta{display:flex;align-items:center;gap:8px;min-width:0;font-size:12px;color:var(--text-3)}
+.row-meta .mono{flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-meta .mono::before{content:"·";margin-inline-end:8px;color:var(--line-strong)}
 .row:hover{background:var(--raised)}
 .row-on{background:var(--sel);border-left-color:var(--accent)}
 .row-title{font-size:14px;font-weight:500;color:var(--text-2);white-space:nowrap;overflow:hidden;
-           text-overflow:ellipsis}
+           text-overflow:ellipsis;min-width:0}
 .row-on .row-title{color:var(--text-1)}
 .sidebar-foot{border-top:1px solid var(--line);padding:12px 20px}
 .link{background:none;border:0;padding:0;color:var(--text-3);font:12px var(--sans);cursor:pointer}
@@ -50,13 +55,22 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .thread.empty{align-items:center;justify-content:center;text-align:center;color:var(--text-3)}
 .thread.empty h1{font-size:20px;font-weight:600;color:var(--text-2);margin:0 0 8px}
 .thread.empty p{margin:0;max-width:46ch}
-.thread-head{flex-shrink:0;display:flex;align-items:center;gap:20px;padding:14px 32px;
+.thread-head{flex-shrink:0;display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:14px 32px;
              border-bottom:1px solid var(--line)}
-.head-main{display:flex;align-items:baseline;gap:14px;min-width:0}
+.head-main{display:flex;align-items:baseline;gap:14px;min-width:0;flex:1 1 320px}
+.status{white-space:nowrap;flex-shrink:0}
+.head-main h1{min-width:0}
+.back{display:none;align-self:center;flex-shrink:0;width:32px;height:32px;margin-inline-start:-8px;
+      align-items:center;justify-content:center;background:none;border:0;border-radius:6px;
+      color:var(--text-2);cursor:pointer}
+.back:hover{background:var(--raised);color:var(--text-1)}
 .head-main h1{margin:0;font-size:19px;font-weight:600;line-height:1.2;letter-spacing:-.01em;
               white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:44ch}
 .head-repo{font-size:13px;color:var(--text-3)}
-.head-side{margin-left:auto;display:flex;align-items:center;gap:12px;flex-shrink:0}
+.head-side{margin-left:auto;display:flex;flex-wrap:wrap;align-items:center;gap:12px;flex:0 1 auto;max-width:100%;
+           min-width:0}
+.head-actions{display:flex;gap:12px}
+.more{display:none}
 
 /* model + thinking selectors */
 .controls{display:flex;gap:10px}
@@ -73,7 +87,8 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .prompt-mark{color:var(--accent);flex-shrink:0}
 .prompt p{margin:0;font-size:16px;font-weight:500;text-wrap:pretty}
 .prompt-time{margin-left:auto;font-size:12px;color:var(--text-3);flex-shrink:0}
-.turn-body{display:flex;flex-direction:column;gap:14px;padding-left:22px}
+.turn-body{display:flex;flex-direction:column;gap:12px;padding-left:22px}
+.turn-body>.block+.block{margin-top:-6px}
 .turn-done{padding-left:22px;font-size:12px;color:var(--text-3)}
 
 .say{display:flex;flex-direction:column;gap:8px;max-width:78ch}
@@ -107,6 +122,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 
 /* markdown inside a reply */
 .md{color:var(--text-2)}
+.say .md{color:var(--text-1)}
 .md>:first-child{margin-top:0}
 .md>:last-child{margin-bottom:0}
 .md p{margin:0 0 12px;text-wrap:pretty}
@@ -137,6 +153,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
           display:flex;flex-direction:column;gap:12px}
 .composer textarea{width:100%;resize:vertical;background:none;border:0;color:var(--text-1);
                    font:15px/1.5 var(--sans)}
+.composer:focus-within{border-color:var(--accent)}
 .composer textarea:focus{outline:none}
 .composer textarea::placeholder{color:var(--text-3)}
 .hint{font-size:12px;color:var(--text-3)}
@@ -196,4 +213,43 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .skill-sum{display:block;font-size:12px;color:var(--text-3);line-height:1.45;margin-top:2px;
            overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .skills-empty{margin:0;padding:14px 12px;font-size:13px;color:var(--text-3);line-height:1.5}
+/* Middling windows: the sidebar gives up width before the thread does. */
+@media (max-width:1100px){
+  .sidebar{width:256px}
+  .transcript,.thread-head,.proj-body{padding-inline:24px}
+  .composer-wrap{padding-inline:24px}
+}
+/* A phone shows one pane: the list, or the thread with a way back. The
+   sidebar is not a drawer over the thread — nothing here is glanceable
+   enough to justify hiding the list behind a hamburger. */
+@media (max-width:720px){
+  .app[data-pane="list"] .thread{display:none}
+  .app[data-pane="thread"] .sidebar{display:none}
+  .sidebar{width:100%;border-right:0}
+  .back{display:inline-flex}
+  .thread-head{padding:10px 12px 10px 8px;gap:10px 8px;align-items:center}
+  .head-main{flex:1 1 0;min-width:0;gap:10px;align-items:center}
+  .head-main h1{font-size:17px;flex:0 1 auto}
+  .head-repo{display:none}
+  .more{display:inline-flex;flex-shrink:0;width:36px;height:36px;align-items:center;justify-content:center;
+        background:none;border:1px solid var(--line-strong);border-radius:6px;color:var(--text-2);cursor:pointer}
+  .more[aria-expanded="true"]{background:var(--sel);color:var(--text-1)}
+  .thread-head[data-more="0"] .head-side{display:none}
+  .head-side{margin-left:0;flex-basis:100%;flex-direction:column;align-items:stretch;gap:10px}
+  .controls{flex-direction:column;gap:8px}
+  .ctl{gap:10px}
+  .ctl-label{width:64px;flex-shrink:0}
+  .ctl select{flex:1 1 0;min-width:0;max-width:none;padding:7px 8px}
+  .head-actions{gap:8px}
+  .transcript{padding:16px 16px 8px;gap:24px}
+  .turn-body{padding-left:0}
+  .turn-done{padding-left:0}
+  .composer-wrap{padding:8px 12px 12px}
+  .composer{padding:10px 12px}
+  .hint+.hint{display:none}
+  .toast{left:16px;right:16px;bottom:16px;max-width:none}
+  .proj-body{padding:16px}
+  .proj-row{flex-wrap:wrap;gap:8px 14px}
+  .proj-open{flex-basis:100%}
+}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}

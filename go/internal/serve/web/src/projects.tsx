@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { Project, Row } from "./types";
 import { StatusMark } from "./status";
 import { plainTitle } from "./render";
+import { Back } from "./app";
 
 const clock = (iso: string) =>
   new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -28,9 +29,10 @@ function Conversation({ row, projects, onOpen, onAssign }: {
   );
 }
 
-export function ProjectsView({ projects, rows, onOpen, onAssign, onCreate, onRename, onDelete }: {
+export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onCreate, onRename, onDelete }: {
   projects: Project[]; rows: Row[];
   onOpen: (id: string) => void;
+  onBack?: () => void;
   onAssign: (id: string, project: string) => void;
   onCreate: (name: string) => void;
   onRename: (id: string, name: string) => void;
@@ -51,6 +53,7 @@ export function ProjectsView({ projects, rows, onOpen, onAssign, onCreate, onRen
   return (
     <div className="thread">
       <header className="thread-head">
+        <Back onBack={onBack} />
         <div className="head-main">
           <h1>Projects</h1>
           <span className="head-repo">

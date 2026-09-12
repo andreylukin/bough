@@ -18,7 +18,7 @@ const preview: Preview = {
     (Story) => (
       // The app is dark by commitment: every colour is painted. The
       // shell root fills the iframe so layout stories get their height.
-      <div style={{ background: "var(--bg)", color: "var(--text-1)", minHeight: "100vh" }}>
+      <div style={{ background: "var(--bg)", color: "var(--text-1)", height: "100vh" }}>
         <Story />
       </div>
     ),

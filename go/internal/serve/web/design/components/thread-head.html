@@ -5,9 +5,8 @@
 <meta charset="utf-8">
 <link rel="stylesheet" href="../bough.css">
 <style>
-.mark{display:inline-flex;align-items:center;gap:7px}
-.mark svg{width:13px;height:13px}
-.mark span{font-size:12px}
+.status svg{width:13px;height:13px}
+.status span{font-size:12px}
 </style>
 </head>
 <body>
@@ -15,7 +14,7 @@
   <div class="head-main">
     <h1>Fix the flaky PTY test</h1>
     <span class="mono head-repo">bough<span style="color:var(--line-strong)">/</span>main</span>
-    <span class="mark" style="color:var(--text-2)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5" stroke-dasharray="40 14"/></svg><span>Running</span></span>
+    <span class="status" style="display:inline-flex;align-items:center;gap:7px;color:var(--text-2)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5" stroke-dasharray="40 14"/></svg><span>Running</span></span>
   </div>
   <div class="head-side">
     <div class="controls">
@@ -23,8 +22,10 @@
       <label class="ctl"><span class="ctl-label">Project</span><select><option>Unassigned</option></select></label>
       <label class="ctl"><span class="ctl-label">Thinking</span><select><option>default</option></select></label>
     </div>
-    <button class="btn">Rename</button>
-    <button class="btn">Archive</button>
+    <div class="head-actions">
+      <button class="btn">Rename</button>
+      <button class="btn">Archive</button>
+    </div>
   </div>
 </header>
 </body>

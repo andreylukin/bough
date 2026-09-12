@@ -75,19 +75,19 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
               <button key={r.id} onClick={() => onSelect(r.id)}
                       className={"row" + (r.id === selected ? " row-on" : "")}
                       aria-current={r.id === selected ? "true" : undefined}>
-                <span className="row-title">{plainTitle(r.title) || "Untitled session"}</span>
-                <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <StatusMark status={r.status} />
-                  <span className="num" style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-3)" }}>
-                    {clock(r.modified)}
-                  </span>
+                <span className="row-line">
+                  <span className="row-title">{plainTitle(r.title) || "Untitled session"}</span>
+                  <span className="num">{clock(r.modified)}</span>
                 </span>
-                {(r.repo || r.branch) && (
-                  <span className="mono" style={{ fontSize: 12, color: "var(--text-3)" }}>
-                    {r.repo?.split("/").pop()}
-                    {r.branch && <span style={{ color: "var(--line-strong)" }}>/</span>}{r.branch}
-                  </span>
-                )}
+                <span className="row-meta">
+                  <StatusMark status={r.status} />
+                  {(r.repo || r.branch) && (
+                    <span className="mono">
+                      {r.repo?.split("/").pop()}
+                      {r.branch && <span style={{ color: "var(--line-strong)" }}>/</span>}{r.branch}
+                    </span>
+                  )}
+                </span>
               </button>
             ))}
           </div>
@@ -279,13 +279,26 @@ export function Controls({ row, projects, onModel, onEffort, onAssign }: {
 
 /* ---------------- thread ---------------- */
 
-export function Thread({ row, lines, projects, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, busy }: {
-  row: Row; lines: Line[]; projects: Project[]; busy: boolean;
+export function Back({ onBack }: { onBack?: () => void }) {
+  if (!onBack) return null;
+  return (
+    <button className="back" onClick={onBack} aria-label="Back to sessions">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
+           strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+    </button>
+  );
+}
+
+export function Thread({ row, lines, projects, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, busy }: {
+  row: Row; lines: Line[]; projects: Project[]; busy: boolean; onBack?: () => void;
   onSend: (t: string) => void; onAnswer: (t: string) => void; onInterrupt: () => void;
   onArchive: () => void; onRename: (t: string) => void;
   onModel: (m: string) => void; onEffort: (e: string) => void; onAssign: (p: string) => void;
 }) {
   const [draft, setDraft] = useState("");
+  // A phone hides the model, project and thinking controls behind one
+  // button: they change rarely, and the thread is what the screen is for.
+  const [more, setMore] = useState(false);
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [lines.length]);
   const turns = useMemo(() => groupTurns(lines), [lines]);
@@ -299,7 +312,8 @@ export function Thread({ row, lines, projects, onSend, onAnswer, onInterrupt, on
 
   return (
     <div className="thread">
-      <header className="thread-head">
+      <header className="thread-head" data-more={more ? "1" : "0"}>
+        <Back onBack={onBack} />
         <div className="head-main">
           <h1 title={row.title}>{plainTitle(row.title) || "Untitled session"}</h1>
           {(row.repo || row.branch) && (
@@ -310,13 +324,22 @@ export function Thread({ row, lines, projects, onSend, onAnswer, onInterrupt, on
           )}
           <StatusMark status={row.status} />
         </div>
+        <button className="more" aria-label="Session settings" aria-expanded={more}
+                onClick={() => setMore((v) => !v)}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
+               strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" />
+          </svg>
+        </button>
         <div className="head-side">
           <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} />
-          <button className="btn" onClick={() => {
-            const t = prompt("Rename session", plainTitle(row.title));
-            if (t !== null) onRename(t);
-          }}>Rename</button>
-          <button className="btn" onClick={onArchive}>{row.archived ? "Unarchive" : "Archive"}</button>
+          <div className="head-actions">
+            <button className="btn" onClick={() => {
+              const t = prompt("Rename session", plainTitle(row.title));
+              if (t !== null) onRename(t);
+            }}>Rename</button>
+            <button className="btn" onClick={onArchive}>{row.archived ? "Unarchive" : "Archive"}</button>
+          </div>
         </div>
       </header>
 
@@ -374,6 +397,9 @@ export default function App() {
   const [err, setErr] = useState<string | null>(null);
   const [view, setView] = useState<View>("sessions");
   const [projects, setProjects] = useState<Project[]>([]);
+  // Only a narrow window reads this (see the 720px media query): a
+  // phone shows the list or the thread, never both.
+  const [pane, setPane] = useState<"list" | "thread">("list");
 
   const refresh = useCallback(async () => {
     try {
@@ -434,20 +460,22 @@ export default function App() {
   };
 
   return (
-    <div className="app">
-      <Sidebar rows={visible} selected={selected} onSelect={(id) => { setSelected(id); setView("sessions"); }}
-               query={query} onQuery={setQuery} view={view} onView={setView}
+    <div className="app" data-pane={pane}>
+      <Sidebar rows={visible} selected={selected}
+               onSelect={(id) => { setSelected(id); setView("sessions"); setPane("thread"); }}
+               query={query} onQuery={setQuery} view={view} onView={(v) => { setView(v); setPane("thread"); }}
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)} />
       {view === "projects" ? (
         <ProjectsView
           projects={projects} rows={rows}
           onOpen={(id) => { setSelected(id); setView("sessions"); }}
+          onBack={() => setPane("list")}
           onAssign={(id, p) => act(() => api.assign(id, p))}
           onCreate={(name) => act(() => api.newProject(name))}
           onRename={(id, name) => act(() => api.renameProject(id, name))}
           onDelete={(id) => act(() => api.deleteProject(id))} />
       ) : row ? (
-        <Thread row={row} lines={lines} projects={projects} busy={busy}
+        <Thread row={row} lines={lines} projects={projects} busy={busy} onBack={() => setPane("list")}
           onSend={(t) => act(() => api.prompt(row.id, t))}
           onAnswer={(t) => act(() => api.answer(row.id, t))}
           onInterrupt={() => act(() => api.interrupt(row.id))}

@@ -68,7 +68,7 @@ export const STATUS: Record<Status, { label: string; tone: string; glyph: React.
 export function StatusMark({ status, size = 13 }: { status: Status; size?: number }) {
   const s = STATUS[status] ?? STATUS.idle;
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 7, color: s.tone }}>
+    <span className="status" style={{ display: "inline-flex", alignItems: "center", gap: 7, color: s.tone }}>
       <svg
         width={size}
         height={size}
