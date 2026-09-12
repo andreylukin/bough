@@ -231,26 +231,54 @@ function Source({ path, event, load, save, dryrun }: {
   );
 }
 
+/**
+ * One listed thing. Every row in this view is the same shape — state,
+ * name, a demoted line of facts, and the controls — so the eye can run
+ * down a column instead of re-reading each row's layout. Anything
+ * secondary (the file, its globs, what a plugin contributes) lives
+ * behind the row's own disclosure rather than on the page at all times.
+ */
+function Row({ name, state, tags, facts, detail, actions, off, alert }: {
+  name: string;
+  state?: { word: string; tone: "ok" | "bad" | "warn" };
+  tags?: string[];
+  facts?: React.ReactNode;
+  detail?: React.ReactNode;
+  actions?: React.ReactNode;
+  off: boolean;
+  alert?: string;
+}) {
+  return (
+    <div className={"hk2-row" + (off ? " hk2-off" : "")}>
+      <div className="hk2-line">
+        {state && <span className={"hk2-state hk2-" + state.tone}>{state.word}</span>}
+        <span className="mono hk2-name">{name}</span>
+        {(tags ?? []).map((t) => <span key={t} className="hk2-tag">{t}</span>)}
+        <span className="hk2-facts">{facts}</span>
+        <span className="hk2-actions">{actions}</span>
+      </div>
+      {alert && <p className="hk2-alert">{alert}</p>}
+      {detail}
+    </div>
+  );
+}
+
 function WatcherRow({ w, off, setOff, onOff, load, save }: {
   w: Watcher; off: boolean; setOff: SetOff; onOff: (off: boolean) => void; load: Load; save: Save;
 }) {
   return (
-    <div className={"proj-row hk-row" + (off ? " hk-is-off" : "")}>
-      <div className="hk-main">
-        <span className="mono hk-name">{w.name}</span>
-        <OffWord off={off} />
-        {w.failing
-          ? <span className="hk-state hk-bad">Failing</span>
-          : <span className="hk-state hk-ok">Healthy</span>}
-        <span className="hk-when">Every {w.every}</span>
-        <span className="hk-when">Ran {when(w.lastRun, "never")}</span>
-        <span className="hk-when">Woke a session {when(w.lastWoke, "never")}</span>
+    <Row
+      name={w.name}
+      off={off}
+      state={w.failing ? { word: "Failing", tone: "bad" } : { word: "Healthy", tone: "ok" }}
+      facts={<>every {w.every} · ran {when(w.lastRun, "never")} · woke a session {when(w.lastWoke, "never")}</>}
+      alert={w.failing ? w.error : ""}
+      actions={<>
         <OffToggle id={offId("watcher", w.id)} off={off} what={`the watcher ${w.name}`}
                    setOff={setOff} onChange={onOff} />
-      </div>
-      {w.failing && w.error && <p className="err hk-why">{w.error}</p>}
-      <Source path={w.path} load={load} save={save} />
-    </div>
+      </>}
+      detail={<Source path={w.path} load={load} save={save} />}
+    />
   );
 }
 
@@ -259,21 +287,19 @@ function HookRow({ h, off, setOff, onOff, load, save, dryrun }: {
   load: Load; save: Save; dryrun: DryRun;
 }) {
   return (
-    <div className={"proj-row hk-row" + (off ? " hk-is-off" : "")}>
-      <div className="hk-main">
-        <span className="mono hk-name">{h.name}</span>
-        <OffWord off={off} />
-        <span className="hk-tag">{h.scope === "home" ? "Home" : "Project"}</span>
-        {h.failing && <span className="hk-state hk-bad">Failing</span>}
-        {h.shadowed && <span className="hk-state hk-shadow">Shadowed — a project file of the same name wins</span>}
-        <span className="hk-when">Fired {when(h.lastFired, "never")}</span>
-        {h.lastDecision && <span className="hk-when">Last decision: {h.lastDecision}</span>}
-        <OffToggle id={offId("hook", h.id)} off={off} what={`the hook ${h.name}`}
-                   setOff={setOff} onChange={onOff} />
-      </div>
-      {h.failing && h.error && <p className="err hk-why">{h.error}</p>}
-      <Source path={h.path} event={h.event} load={load} save={save} dryrun={dryrun} />
-    </div>
+    <Row
+      name={h.name}
+      off={off}
+      state={h.failing ? { word: "Failing", tone: "bad" }
+           : h.shadowed ? { word: "Shadowed", tone: "warn" }
+           : undefined}
+      tags={[h.scope === "home" ? "Home" : "Project"]}
+      facts={<>fired {when(h.lastFired, "never")}{h.lastDecision ? ` · last ${h.lastDecision}` : ""}</>}
+      alert={h.failing ? h.error : h.shadowed ? "A project file of the same name wins over this one." : ""}
+      actions={<OffToggle id={offId("hook", h.id)} off={off} what={`the hook ${h.name}`}
+                          setOff={setOff} onChange={onOff} />}
+      detail={<Source path={h.path} event={h.event} load={load} save={save} dryrun={dryrun} />}
+    />
   );
 }
 
@@ -288,20 +314,20 @@ export function RuleRow({ r, off, setOff, onOff, load, save }: {
   r: Rule; off: boolean; setOff: SetOff; onOff: (off: boolean) => void; load: Load; save: Save;
 }) {
   return (
-    <div className={"proj-row hk-row" + (off ? " hk-is-off" : "")}>
-      <div className="hk-main">
-        <span className="mono hk-name">{r.name}</span>
-        <OffWord off={off} />
-        <span className="hk-tag">{r.scope === "home" ? "Home" : "Repo"}</span>
-        <span className="hk-when">{kindWord[r.kind]}</span>
-        <OffToggle id={offId("rule", r.id)} off={off} what={`the rule ${r.name}`}
-                   setOff={setOff} onChange={onOff} />
-      </div>
-      {r.kind === "scoped" && r.globs.length > 0 && (
-        <p className="mono hk-globs">{r.globs.join("  ")}</p>
-      )}
-      <Source path={r.path} load={load} save={save} />
-    </div>
+    <Row
+      name={r.name}
+      off={off}
+      tags={[r.scope === "home" ? "Home" : "Repo"]}
+      facts={<>
+        {kindWord[r.kind]}
+        {r.kind === "scoped" && r.globs.length > 0 && (
+          <span className="mono hk2-globs">{r.globs.join("  ")}</span>
+        )}
+      </>}
+      actions={<OffToggle id={offId("rule", r.id)} off={off} what={`the rule ${r.name}`}
+                          setOff={setOff} onChange={onOff} />}
+      detail={<Source path={r.path} load={load} save={save} />}
+    />
   );
 }
 
@@ -313,34 +339,39 @@ function PluginRow({ p, off, setOff, onOff }: {
     ...p.commands.map((c) => ["command", c] as const),
   ];
   return (
-    <div className={"proj-row hk-row" + (off ? " hk-is-off" : "")}>
-      <div className="hk-main">
-        <span className="mono hk-name">{p.name}</span>
-        <OffWord off={off} />
-        <span className="hk-tag">{p.scope === "user" ? "User" : "Project"}</span>
-        <span className="num hk-when">v{p.version}</span>
-        <span className="hk-when">from {p.marketplace}</span>
-        {!p.present && <span className="hk-state hk-bad">Not present — nothing is installed at its path</span>}
-        <OffToggle id={offId("plugin", p.id)} off={off} what={`the plugin ${p.name}`}
-                   setOff={setOff} onChange={onOff} />
-      </div>
-      {p.scope === "project" && p.projectPath && (
-        <p className="mono hk-globs">Only in {p.projectPath}</p>
+    <Row
+      name={p.name}
+      off={off}
+      state={p.present ? undefined : { word: "Not present", tone: "bad" }}
+      tags={[p.scope === "user" ? "User" : "Project"]}
+      facts={<>
+        <span className="num">v{p.version}</span> · {p.marketplace} ·{" "}
+        {gives.length === 0 ? "no skills or commands"
+          : `${p.skills.length} skills, ${p.commands.length} commands`}
+      </>}
+      alert={p.present ? "" : "Nothing is installed at its path, so it contributes nothing."}
+      actions={<OffToggle id={offId("plugin", p.id)} off={off} what={`the plugin ${p.name}`}
+                          setOff={setOff} onChange={onOff} />}
+      detail={gives.length === 0 && !p.projectPath ? undefined : (
+        <details className="hk2-more">
+          <summary>What it brings</summary>
+          <div className="hk2-more-body">
+            {p.scope === "project" && p.projectPath && (
+              <p className="hk2-note">Only inside <span className="mono">{p.projectPath}</span></p>
+            )}
+            <p className="mono hk2-path">{p.installPath}</p>
+            <ul className="hk2-gives">
+              {gives.map(([what, name]) => (
+                <li key={`${what}-${name}`}>
+                  <span className="mono hk2-give">{what === "skill" ? `/${name}` : name}</span>
+                  <span className="hk2-facts"> {what}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </details>
       )}
-      <p className="mono hk-path">{p.installPath}</p>
-      {gives.length === 0
-        ? <p className="hk-when">Contributes no skills or commands.</p>
-        : (
-          <ul className="hk-gives">
-            {gives.map(([what, name]) => (
-              <li key={`${what}-${name}`}>
-                <span className="mono hk-give-name">{what === "skill" ? `/${name}` : name}</span>
-                <span className="hk-when"> {what}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-    </div>
+    />
   );
 }
 
@@ -384,6 +415,14 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
   }, [hooks]);
 
   const broken = watchers.filter((w) => w.failing).length + hooks.filter((h) => h.failing).length;
+  // The server's own `off` is the fallback, not `false`: a toggle made
+  // in this tab wins, but anything already off stays counted.
+  const offCount = [
+    ...watchers.map((w) => [offId("watcher", w.id), w.off] as const),
+    ...hooks.map((h) => [offId("hook", h.id), h.off] as const),
+    ...rules.map((r) => [offId("rule", r.id), r.off] as const),
+    ...plugins.map((p) => [offId("plugin", p.id), p.off] as const),
+  ].filter(([id, wire]) => isOff(id, wire)).length;
   const recent = useMemo(
     () => [...fires].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)),
     [fires],
@@ -404,6 +443,18 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
       </header>
 
       <div className="scroll proj-body">
+        {/* What needs attention, before any list: on a page of five
+            sections the counts are the only thing most visits need. */}
+        <div className="hk2-sum">
+          <span><span className="hk2-sum-n">{watchers.length + hooks.length + rules.length + plugins.length}</span>{" "}
+            <span className="hk2-sum-lab">things in force</span></span>
+          <span><span className={"hk2-sum-n" + (broken ? " hk2-bad" : "")}>{broken}</span>{" "}
+            <span className="hk2-sum-lab">failing</span></span>
+          <span><span className="hk2-sum-n">{offCount}</span>{" "}
+            <span className="hk2-sum-lab">turned off</span></span>
+          <span><span className="hk2-sum-n">{recent.length}</span>{" "}
+            <span className="hk2-sum-lab">fires recorded</span></span>
+        </div>
         <section className="proj">
           <div className="proj-head">
             <h2>Watchers</h2>

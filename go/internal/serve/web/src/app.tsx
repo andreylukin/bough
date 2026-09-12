@@ -4,6 +4,7 @@ import type { Line, Project, Row } from "./types";
 import { StatusMark } from "./status";
 import { ProjectsView } from "./projects";
 import { Markdown, codeLabel, doneSummary, groupTurns, isQuiet, plainTitle, stripRunFences, type Turn, lineCount } from "./render";
+import { Code, parseCall, langForPath } from "./code";
 import { SkillPicker } from "./skills";
 import { HooksPage } from "./hooks";
 import { ContextPage } from "./context";
@@ -110,18 +111,37 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
 /* ---------------- transcript ---------------- */
 
 export function CodeBlock({ line }: { line: Line }) {
-  const { label, detail } = codeLabel(line.text);
-  const lines = line.text.split("\n").length;
+  const call = useMemo(() => parseCall(line.text), [line.text]);
+  const lines = call.body ? call.body.split("\n").length : 0;
+  // Collapsed by default. A turn is a list of things the agent did; the
+  // point of the list is to be scanned, and an open block for every one
+  // of them buries the reply that follows.
   return (
-    <details className="block" open>
+    <details className="block">
       <summary>
-        <span className="block-label">{label}</span>
-        {detail && <span className="mono block-detail">{detail}</span>}
-        <span className="num block-lines">{lineCount(lines)}</span>
+        <span className="block-label">{call.verb}</span>
+        <span className="mono block-detail">{firstLine(call.target || call.body)}</span>
+        {lines > 1 && <span className="num block-lines">{lineCount(lines)}</span>}
       </summary>
-      <pre className="mono">{line.text}</pre>
+      <div className="block-body">
+        {call.body && <Code text={call.body} lang={call.lang} />}
+        {call.body !== call.raw && (
+          // The program bough actually ran, one layer further in. The
+          // block above is the readable version of it, not a substitute.
+          <details className="block-inner">
+            <summary><span className="block-label">The call</span></summary>
+            <Code text={call.raw} lang="javascript" />
+          </details>
+        )}
+      </div>
     </details>
   );
+}
+
+/** The first non-empty line, for a one-line summary. */
+function firstLine(text: string): string {
+  const l = text.split("\n").find((x) => x.trim()) ?? "";
+  return l.length > 110 ? l.slice(0, 110) + "…" : l;
 }
 
 export function ResultBlock({ line }: { line: Line }) {
@@ -140,9 +160,22 @@ export function ResultBlock({ line }: { line: Line }) {
         <span className="mono block-detail">{head.slice(0, 90)}</span>
         <span className="num block-lines">{lineCount(lines.length)}</span>
       </summary>
-      <pre className="mono">{body || "(no output)"}</pre>
+      <div className="block-body">
+        <Code text={body || "(no output)"} lang={resultLang(line)} />
+      </div>
     </details>
   );
+}
+
+/**
+ * Colour a result by what produced it: a file that was read is coloured
+ * as that file, everything else is shell output.
+ */
+function resultLang(line: Line): string {
+  const code = typeof line.data?.code === "string" ? (line.data.code as string) : "";
+  const call = code ? parseCall(code) : null;
+  if (call?.verb === "Read" && call.target) return langForPath(call.target);
+  return "";
 }
 
 /**

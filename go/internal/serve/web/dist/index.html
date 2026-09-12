@@ -128,6 +128,79 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 /* thinking is prose, not a program: sans, wrapped, and a measure that
    does not run the full width of a wide window */
 .block-failed .block-label{color:var(--red)}
+/* The Hooks page: many small things, each with a state. Rows share one
+   grid so the eye runs down a column instead of re-reading each row's
+   layout, and everything secondary is folded away until asked for. */
+.hk2-row{padding:9px 0;border-top:1px solid var(--line)}
+.hk2-row:first-of-type{border-top:0}
+.hk2-line{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+.hk2-name{font-size:13.5px;color:var(--text-1);font-weight:500;overflow-wrap:anywhere}
+.hk2-off .hk2-name{color:var(--text-3);text-decoration:line-through}
+.hk2-facts{font-size:12px;color:var(--text-3);min-width:0;overflow-wrap:anywhere}
+.hk2-globs{display:block;margin-top:2px;font-size:12px;color:var(--text-3)}
+.hk2-actions{margin-inline-start:auto;display:flex;gap:8px;align-items:center;flex-shrink:0}
+
+/* State is a word, never a colour alone. */
+.hk2-state{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+           padding:2px 6px;border-radius:4px;flex-shrink:0}
+.hk2-ok{color:var(--accent);background:color-mix(in oklab,var(--accent) 14%,transparent)}
+.hk2-bad{color:var(--red);background:color-mix(in oklab,var(--red) 16%,transparent)}
+.hk2-warn{color:var(--amber);background:color-mix(in oklab,var(--amber) 16%,transparent)}
+.hk2-tag{font-size:11px;color:var(--text-3);border:1px solid var(--line-strong);
+         border-radius:999px;padding:1px 7px;flex-shrink:0}
+.hk2-alert{margin:5px 0 0;padding-inline-start:9px;border-inline-start:2px solid var(--red);
+           font-size:12px;color:var(--red);overflow-wrap:anywhere}
+.hk2-note{margin:0 0 4px;font-size:12px;color:var(--text-3)}
+.hk2-path{margin:0 0 6px;font-size:11.5px;color:var(--text-3);overflow-wrap:anywhere}
+.hk2-more>summary{font-size:12px;color:var(--text-3);cursor:pointer;padding:4px 0;
+                  list-style:none;min-height:24px;display:flex;align-items:center;gap:6px}
+.hk2-more>summary::-webkit-details-marker{display:none}
+.hk2-more>summary::before{content:"\203a";font-family:var(--mono)}
+.hk2-more[open]>summary::before{content:"\2304"}
+.hk2-more-body{padding-inline-start:14px}
+.hk2-gives{margin:0;padding-inline-start:16px;columns:2;column-gap:24px}
+.hk2-gives li{margin:2px 0;break-inside:avoid}
+.hk2-give{font-size:12.5px;color:var(--text-2)}
+
+/* The page header: what needs attention, before any list. */
+.hk2-sum{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:baseline;
+         padding:0 0 14px;border-bottom:1px solid var(--line);margin-bottom:6px}
+.hk2-sum-n{font:600 13px var(--mono);font-variant-numeric:tabular-nums}
+.hk2-sum-lab{font-size:12px;color:var(--text-3)}
+@media (max-width:720px){
+  .hk2-actions{margin-inline-start:0;width:100%}
+  .hk2-gives{columns:1}
+}
+
+/* syntax colours — drawn from the app's own palette rather than a stock
+   highlight.js theme, so code sits in the interface instead of on it.
+   Hue carries meaning: green is the accent already used for "the agent",
+   amber for literal values, red for anything destructive-looking. */
+.hl{white-space:pre-wrap;overflow-wrap:anywhere}
+.hljs-comment,.hljs-quote{color:var(--text-3);font-style:italic}
+.hljs-string,.hljs-regexp,.hljs-meta-string{color:var(--amber)}
+.hljs-number,.hljs-literal,.hljs-boolean{color:#cfa6e0}
+.hljs-keyword,.hljs-selector-tag,.hljs-built_in{color:var(--accent)}
+.hljs-title,.hljs-title.function_,.hljs-section{color:#9ec9f0}
+.hljs-attr,.hljs-attribute,.hljs-property{color:#e0c98a}
+.hljs-variable,.hljs-template-variable,.hljs-params{color:var(--text-1)}
+.hljs-type,.hljs-class .hljs-title{color:#8fd6c4}
+.hljs-symbol,.hljs-bullet,.hljs-link{color:var(--accent)}
+.hljs-deletion{color:var(--red)}
+.hljs-addition{color:var(--accent)}
+.hljs-emphasis{font-style:italic}
+.hljs-strong{font-weight:600}
+
+/* a block's contents, and the call folded one layer inside it */
+.block-body{border-top:1px solid var(--line)}
+.block-inner{border-top:1px solid var(--line);background:var(--bg)}
+.block-inner>summary{display:flex;align-items:center;gap:8px;padding:6px 14px;cursor:pointer;
+                     list-style:none;font-size:12px}
+.block-inner>summary::-webkit-details-marker{display:none}
+.block-inner>summary::before{content:"\203a";color:var(--text-3);font-family:var(--mono);width:8px}
+.block-inner[open]>summary::before{content:"\2304"}
+.block-inner>summary .block-label{font-size:12px;color:var(--text-3)}
+.block-inner pre{border-top:1px solid var(--line)}
 .thinking pre{color:var(--text-3);font:13px/1.65 var(--sans);white-space:pre-wrap;
               text-indent:0;padding-inline-start:14px;max-width:78ch}
 .think-body{padding:2px 14px 12px;max-width:78ch}
