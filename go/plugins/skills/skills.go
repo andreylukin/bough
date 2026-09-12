@@ -17,36 +17,74 @@ import (
 	"strings"
 
 	"github.com/andreylukin/bough/kernel"
+	"github.com/andreylukin/bough/plugins/ccplugins"
 	"github.com/andreylukin/bough/plugins/commands"
+	"github.com/andreylukin/bough/plugins/offlist"
+	"github.com/andreylukin/bough/plugins/prompts"
 )
 
 const maxBlocks = 3
 
 // Skills implements loop.Skills. Pools are scanned in order; a later
-// pool shadows an earlier one on the same skill name.
+// pool shadows an earlier one on the same skill name. The skills of
+// the user's installed Claude Code plugins come first, so a pool skill
+// of the same name still wins.
 type Skills struct {
 	pools []string
+	home  string // user home; "" disables plugin skills and the off switch
+	work  string // the path being worked on, for project-scoped plugins
 }
 
 // New returns a Skills scanning the given pool directories.
 func New(pools ...string) *Skills { return &Skills{pools: pools} }
 
 // Default returns the Skills the agent itself uses: the two pools
-// under home, then the repo-local one. `bough serve` lists the same
-// set, so the web picker and the TUI never disagree about what exists.
+// under home, then the repo-local one, plus the plugin skills active
+// for the current directory. `bough serve` lists the same set, so the
+// web picker and the TUI never disagree about what exists.
 func Default(home string) *Skills {
-	return New(
+	work, err := os.Getwd()
+	if err != nil {
+		work = ""
+	}
+	return DefaultFor(home, work)
+}
+
+// DefaultFor is Default for a session working somewhere other than the
+// process's own directory — the user runs bough from home, so a
+// project-scoped plugin has to be judged against the path being worked
+// on, not against the cwd.
+func DefaultFor(home, work string) *Skills {
+	s := New(
 		filepath.Join(home, ".claude", "skills"),
 		filepath.Join(home, ".bough", "skills"),
 		filepath.Join(".claude", "skills"),
 	)
+	s.home, s.work = home, work
+	return s
+}
+
+// boughHome is where off.yml lives; "" when this Skills has no home.
+func (s *Skills) boughHome() string {
+	if s.home == "" {
+		return ""
+	}
+	return filepath.Join(s.home, ".bough")
+}
+
+// off reports whether a skill is switched off in off.yml.
+func (s *Skills) off(name string) bool {
+	if s.home == "" {
+		return false
+	}
+	return offlist.Load(s.boughHome()).Off("skill", name)
 }
 
 // Inject returns "[skill: <name>]\n<SKILL.md contents>" blocks for
 // every skill mentioned in input, capped at maxBlocks.
 func (s *Skills) Inject(input string) []string {
-	found := s.scan()
-	names := slices.Sorted(maps.Keys(found))
+	skills := s.scan()
+	names := slices.Sorted(maps.Keys(skills))
 
 	var blocks []string
 	matched := 0
@@ -61,18 +99,21 @@ func (s *Skills) Inject(input string) []string {
 		// per mention — "/parallel" runs it, prose does not — either
 		// because its SKILL.md says `manual: true` or because its name
 		// is a word people write without meaning it.
-		if (manual(found[name]) || commonWord(name)) && !strings.Contains(input, "/"+name) {
+		if (manual(skills[name].path) || commonWord(name)) && !strings.Contains(input, "/"+name) {
+			continue
+		}
+		if s.off(name) {
 			continue
 		}
 		matched++
 		if len(blocks) >= maxBlocks {
 			continue
 		}
-		body, err := os.ReadFile(found[name])
+		body, err := os.ReadFile(skills[name].path)
 		if err != nil {
 			// Inject runs mid-turn with the TUI owning the tty: a raw
 			// stderr write lands inside its frame and tears the screen.
-			kernel.Logf("skills: read %s: %v\n", found[name], err)
+			kernel.Logf("skills: read %s: %v\n", skills[name].path, err)
 			continue
 		}
 		blocks = append(blocks, "[skill: "+name+"]\n"+string(body))
@@ -84,14 +125,38 @@ func (s *Skills) Inject(input string) []string {
 }
 
 // Names returns every skill name across the pools, sorted, for the
-// startup header.
-func (s *Skills) Names() []string { return slices.Sorted(maps.Keys(s.scan())) }
+// startup header. Skills switched off in off.yml are not there.
+func (s *Skills) Names() []string {
+	var out []string
+	for _, name := range slices.Sorted(maps.Keys(s.scan())) {
+		if !s.off(name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
 
-// scan returns name -> SKILL.md path across the pools (later pools
-// shadow earlier ones). A symlinked skill directory counts.
-func (s *Skills) scan() map[string]string {
-	found := map[string]string{}
-	for _, pool := range s.pools {
+// found is one discovered skill.
+type found struct {
+	path   string // its SKILL.md
+	source string // "plugin" or "pool"
+}
+
+// scan returns name -> skill across the pools (later pools shadow
+// earlier ones). A symlinked skill directory counts.
+func (s *Skills) scan() map[string]found {
+	pools := s.pools
+	if s.home != "" {
+		pools = append(ccplugins.SkillDirs(s.home, s.work), pools...)
+	}
+	plugins := len(pools) - len(s.pools)
+
+	out := map[string]found{}
+	for i, pool := range pools {
+		source := "pool"
+		if i < plugins {
+			source = "plugin"
+		}
 		entries, err := os.ReadDir(pool)
 		if err != nil {
 			continue // missing pool is fine
@@ -99,11 +164,11 @@ func (s *Skills) scan() map[string]string {
 		for _, e := range entries {
 			p := filepath.Join(pool, e.Name(), "SKILL.md")
 			if _, err := os.Stat(p); err == nil {
-				found[e.Name()] = p
+				out[e.Name()] = found{path: p, source: source}
 			}
 		}
 	}
-	return found
+	return out
 }
 
 // commonWords are skill names that are also ordinary English: a
@@ -188,9 +253,12 @@ func (s *Skills) registerCommands(ctx *kernel.Context) {
 	if err != nil {
 		return
 	}
-	for name, path := range s.scan() {
+	for name, sk := range s.scan() {
+		if s.off(name) {
+			continue
+		}
 		info := commands.CommandInfo{Name: name, Usage: "[args]", Kind: "skill",
-			Summary: "skill: " + summarize(description(path))}
+			Summary: "skill: " + summarize(description(sk.path))}
 		err := reg.Register(info, func(args string) (string, error) {
 			return "", commands.SubmitAction(strings.TrimSpace("/" + name + " " + args))
 		})
@@ -218,14 +286,18 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	}
 	s := Default(home)
 	s.registerCommands(ctx)
+	s.registerPluginCommands(ctx)
 	ctx.Provide("skills", s)
 	return nil
 }
 
 // SkillInfo is one skill as a picker shows it.
 type SkillInfo struct {
+	ID      string `json:"id"` // the off-switch id: the skill's name
 	Name    string `json:"name"`
 	Summary string `json:"summary"`
+	Source  string `json:"source"` // "plugin" or "pool"
+	Off     bool   `json:"off"`
 	Manual  bool   `json:"manual"` // only ever runs as /name, never on a mention
 }
 
@@ -233,15 +305,71 @@ type SkillInfo struct {
 // what a picker needs and nothing more: the SKILL.md body stays on
 // disk until the loop injects it.
 func (s *Skills) Catalog() []SkillInfo {
-	found := s.scan()
-	out := make([]SkillInfo, 0, len(found))
-	for _, name := range slices.Sorted(maps.Keys(found)) {
-		path := found[name]
+	skills := s.scan()
+	out := make([]SkillInfo, 0, len(skills))
+	for _, name := range slices.Sorted(maps.Keys(skills)) {
+		sk := skills[name]
 		out = append(out, SkillInfo{
+			ID:      name,
 			Name:    name,
-			Summary: summarize(description(path)),
-			Manual:  manual(path) || commonWord(name),
+			Summary: summarize(description(sk.path)),
+			Source:  sk.source,
+			Off:     s.off(name),
+			Manual:  manual(sk.path) || commonWord(name),
 		})
 	}
 	return out
+}
+
+// registerPluginCommands adds a "/name" command per Markdown file in
+// the commands/ directory of every active plugin. They behave like
+// prompt templates: dispatching one submits the file's body with
+// "$ARGUMENTS" and "$1".. filled in. A name already taken — by a
+// built-in, or by a skill of the same name — keeps its owner, and the
+// clash is logged rather than passed off as loaded.
+func (s *Skills) registerPluginCommands(ctx *kernel.Context) {
+	if s.home == "" {
+		return
+	}
+	reg, err := kernel.Get[*commands.Registry](ctx, "commands")
+	if err != nil {
+		return
+	}
+	for _, p := range ccplugins.Active(s.home, s.work) {
+		dir := filepath.Join(p.InstallPath, "commands")
+		for _, name := range p.Commands {
+			path := filepath.Join(dir, name+".md")
+			info := commands.CommandInfo{Name: name, Usage: "[args]", Kind: "template",
+				Summary: strings.TrimSpace(p.Name + ": " + summarize(description(path)))}
+			err := reg.Register(info, func(args string) (string, error) {
+				body, err := os.ReadFile(path)
+				if err != nil {
+					return "", err
+				}
+				text := strings.TrimSpace(prompts.Expand(frontmatterless(string(body)), args))
+				if text == "" {
+					return "", fmt.Errorf("/%s: empty command (%s)", name, path)
+				}
+				return "", commands.SubmitAction(text)
+			})
+			if err != nil {
+				kernel.Logf("skills: plugin %s command /%s: %v\n", p.ID, name, err)
+				continue
+			}
+			ctx.Effect(func() { reg.Unregister(name) })
+		}
+	}
+}
+
+// frontmatterless drops a leading "---" YAML block: it is metadata for
+// the loader, not part of the prompt the command submits.
+func frontmatterless(body string) string {
+	rest, ok := strings.CutPrefix(body, "---\n")
+	if !ok {
+		return body
+	}
+	if _, after, ok := strings.Cut(rest, "\n---"); ok {
+		return strings.TrimPrefix(after, "\n")
+	}
+	return body
 }

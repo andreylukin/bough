@@ -17,8 +17,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/andreylukin/bough/kernel"
+	"github.com/andreylukin/bough/plugins/offlist"
 )
 
 // runHooker is the slice of the codemode service we need.
@@ -42,6 +44,12 @@ type Service struct {
 // the session.
 const fireRing = 200
 
+// maxHookOutput bounds what one hook may push into the model's context
+// through a structured key. Unbounded, a hook rewriting a result could
+// spend the whole window without anyone having asked for it; the same
+// 10,000 characters Claude Code allows.
+const maxHookOutput = 10000
+
 // Fire is one hook run: what ran, how long it took, and what it
 // decided. The json tags are the /api/hooks "fires" contract.
 type Fire struct {
@@ -52,6 +60,12 @@ type Fire struct {
 	Ms       int64     `json:"ms"`
 	Decision string    `json:"decision"`
 	Error    string    `json:"error"`
+	// Notice is the hook's message to the human. It is recorded and
+	// shown, and never reaches the model.
+	Notice string `json:"notice"`
+	// Truncated names the keys capped at maxHookOutput, so a shortened
+	// result is visible rather than mysterious.
+	Truncated []string `json:"truncated"`
 }
 
 // SetSession names the session the fires that follow belong to. The
@@ -87,10 +101,20 @@ func (s *Service) record(f Fire) {
 func (s *Service) TakeFireRecords() []map[string]any {
 	out := make([]map[string]any, 0, len(s.pending))
 	for _, f := range s.TakeFires() {
-		out = append(out, map[string]any{
+		rec := map[string]any{
 			"event": f.Event, "name": f.Name, "ms": f.Ms,
 			"decision": f.Decision, "error": f.Error,
-		})
+		}
+		// Absent rather than empty: the loop decides whether a fire is
+		// worth keeping by looking for these, and a present-but-empty
+		// value would make every fire look interesting.
+		if f.Notice != "" {
+			rec["notice"] = f.Notice
+		}
+		if len(f.Truncated) > 0 {
+			rec["truncated"] = f.Truncated
+		}
+		out = append(out, rec)
 	}
 	if len(out) == 0 {
 		return nil
@@ -139,11 +163,64 @@ func decision(payload, res map[string]any) string {
 		return "denied"
 	}
 	for k, v := range res {
+		if k == "notice" {
+			continue // the diagnostic channel decides nothing
+		}
 		if old, ok := payload[k]; ok && !reflect.DeepEqual(old, v) {
 			return "rewrote"
 		}
 	}
 	return ""
+}
+
+// notice reads a hook's message to the human out of its result.
+func notice(res map[string]any) string {
+	n, _ := res["notice"].(string)
+	return n
+}
+
+// mergeInto merges one hook result into the merged result. Later keys
+// overwrite, except notices: two hooks with something to say both get
+// to say it.
+func mergeInto(merged, res map[string]any) {
+	if n := notice(res); n != "" {
+		if had := notice(merged); had != "" {
+			n = had + "\n" + n
+		}
+		res = maps.Clone(res)
+		res["notice"] = n
+	}
+	maps.Copy(merged, res)
+}
+
+// capKeys truncates the keys a hook can push into the model's context and
+// returns the names of the ones it cut. Only these three are read at a
+// fire site, so only these three can reach the model.
+func capKeys(res map[string]any) []string {
+	var cut []string
+	for _, k := range []string{"code", "input", "result"} {
+		s, ok := res[k].(string)
+		if !ok || len(s) <= maxHookOutput {
+			continue
+		}
+		n := maxHookOutput
+		for n > 0 && !utf8.RuneStart(s[n]) {
+			n-- // never cut a rune in half
+		}
+		res[k] = s[:n] + fmt.Sprintf("\n[hook output truncated at %d characters]", maxHookOutput)
+		cut = append(cut, k)
+	}
+	return cut
+}
+
+// off reports whether the user has turned this hook off. A hook's id is
+// "<event>/<name>", the same id the API reports for the row.
+func off(event, name string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	return offlist.Load(filepath.Join(home, ".bough")).Off("hook", event+"/"+name)
 }
 
 // goHook is a hook written in Go by another row (the rules row's
@@ -179,7 +256,8 @@ func (s *Service) Add(event, name string, fn func(payload map[string]any) map[st
 // Fire runs every hook file for event, in base-name order, project
 // shadowing global. Results merge in order (later keys overwrite);
 // a "block" or "deny" key short-circuits remaining files. A file
-// that fails to read or run is logged to stderr and skipped.
+// that fails to read or run is logged to stderr and skipped. A hook
+// the user has turned off in off.yml does not run at all.
 // No hook files, or none returning anything, is a nil result.
 func (s *Service) Fire(ctx context.Context, event string, payload map[string]any) (map[string]any, error) {
 	var merged map[string]any
@@ -187,17 +265,22 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 	gohs := append([]goHook(nil), s.gohs[event]...)
 	s.mu.Unlock()
 	for _, h := range gohs {
+		if off(event, h.name) {
+			continue
+		}
 		start := time.Now()
 		res := h.fn(payload)
+		cut := capKeys(res)
 		s.record(Fire{At: start, Event: event, Name: h.name,
-			Ms: time.Since(start).Milliseconds(), Decision: decision(payload, res)})
+			Ms: time.Since(start).Milliseconds(), Decision: decision(payload, res),
+			Notice: notice(res), Truncated: cut})
 		if res == nil {
 			continue
 		}
 		if merged == nil {
 			merged = map[string]any{}
 		}
-		maps.Copy(merged, res)
+		mergeInto(merged, res)
 		if _, ok := res["block"]; ok {
 			return merged, nil
 		}
@@ -219,8 +302,11 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 	// records them.
 	var failed []error
 	for _, path := range hookFiles(event) {
-		start := time.Now()
 		name := filepath.Base(path)
+		if off(event, name) {
+			continue
+		}
+		start := time.Now()
 		body, err := os.ReadFile(path)
 		if err != nil {
 			s.record(Fire{At: start, Event: event, Name: name,
@@ -238,15 +324,17 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 			failed = append(failed, fmt.Errorf("%s: %w", path, err))
 			continue
 		}
+		cut := capKeys(res)
 		s.record(Fire{At: start, Event: event, Name: name,
-			Ms: time.Since(start).Milliseconds(), Decision: decision(payload, res)})
+			Ms: time.Since(start).Milliseconds(), Decision: decision(payload, res),
+			Notice: notice(res), Truncated: cut})
 		if res == nil {
 			continue
 		}
 		if merged == nil {
 			merged = map[string]any{}
 		}
-		maps.Copy(merged, res)
+		mergeInto(merged, res)
 		if _, ok := res["block"]; ok {
 			break
 		}

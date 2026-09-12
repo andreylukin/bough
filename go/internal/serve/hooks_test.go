@@ -209,3 +209,26 @@ func TestFiresFromHistory(t *testing.T) {
 		t.Errorf("ms = %v, want 3", got["ms"])
 	}
 }
+
+// The user runs bough from home, which makes the project pools the
+// home pools again. A hook found twice would get two rows sharing one
+// off-switch id, each marked as shadowing the other. Nothing is
+// written here: a file seeded into the real cwd would show up in the
+// project pool of every other test running beside this one.
+func TestPoolsHomeIsCwdHasNoProjectPools(t *testing.T) {
+	t.Parallel()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newHooksAPI(t)
+	f.api.home = cwd
+	for _, p := range f.api.pools() {
+		if p.scope == "project" {
+			t.Errorf("cwd is home, but a project pool was listed: %s", p.dir)
+		}
+	}
+	if !sameDir(cwd, cwd+string(filepath.Separator)+".") {
+		t.Error("sameDir should see through a trailing element")
+	}
+}

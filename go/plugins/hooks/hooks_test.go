@@ -197,3 +197,107 @@ func TestLedgerRingIsBounded(t *testing.T) {
 		t.Fatalf("Fires(5) returned %d", got)
 	}
 }
+
+func TestNoticeIsRecordedAndDecidesNothing(t *testing.T) {
+	s := fixture(t)
+	cwd, _ := os.Getwd()
+	writeHook(t, cwd, "post-result", "audit.js", `return {notice: "3 secrets scanned"}`)
+	res, err := s.Fire(context.Background(), "post-result", map[string]any{"result": "out"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := res["notice"].(string); got != "3 secrets scanned" {
+		t.Fatalf("notice not returned: %v", res)
+	}
+	if _, ok := res["result"]; ok {
+		t.Fatalf("a notice-only hook touched the payload: %v", res)
+	}
+	fires := s.Fires(0)
+	if len(fires) != 1 || fires[0].Notice != "3 secrets scanned" {
+		t.Fatalf("notice not in the ledger: %+v", fires)
+	}
+	if fires[0].Decision != "" {
+		t.Fatalf("a notice decided something: %q", fires[0].Decision)
+	}
+}
+
+func TestNoticesFromSeveralHooksBothSurvive(t *testing.T) {
+	s := fixture(t)
+	cwd, _ := os.Getwd()
+	writeHook(t, cwd, "post-result", "a.js", `return {notice: "first"}`)
+	writeHook(t, cwd, "post-result", "b.js", `return {notice: "second"}`)
+	res, err := s.Fire(context.Background(), "post-result", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := res["notice"].(string); got != "first\nsecond" {
+		t.Fatalf("notices lost: %q", got)
+	}
+}
+
+func TestResultIsCappedAndTheCutIsRecorded(t *testing.T) {
+	s := fixture(t)
+	cwd, _ := os.Getwd()
+	writeHook(t, cwd, "post-result", "big.js", `return {result: "x".repeat(20000)}`)
+	res, err := s.Fire(context.Background(), "post-result", map[string]any{"result": "out"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _ := res["result"].(string)
+	if len(out) <= maxHookOutput || len(out) > maxHookOutput+100 {
+		t.Fatalf("result not capped: %d chars", len(out))
+	}
+	if !strings.Contains(out, "truncated at 10000 characters") {
+		t.Fatalf("no truncation note: %q", out[len(out)-80:])
+	}
+	fires := s.Fires(0)
+	if len(fires) != 1 || len(fires[0].Truncated) != 1 || fires[0].Truncated[0] != "result" {
+		t.Fatalf("truncation not in the ledger: %+v", fires)
+	}
+}
+
+func TestOffHookDoesNotFire(t *testing.T) {
+	s := fixture(t)
+	home, _ := os.UserHomeDir()
+	cwd, _ := os.Getwd()
+	writeHook(t, cwd, "post-result", "audit.js", `return {result: "REWRITTEN"}`)
+	if err := os.MkdirAll(filepath.Join(home, ".bough"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".bough", "off.yml"),
+		[]byte("off:\n  - hook:post-result/audit.js\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Fire(context.Background(), "post-result", map[string]any{"result": "out"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != nil {
+		t.Fatalf("an off hook ran: %v", res)
+	}
+	if fires := s.Fires(0); len(fires) != 0 {
+		t.Fatalf("an off hook was recorded: %+v", fires)
+	}
+}
+
+func TestOffAppliesToGoHooks(t *testing.T) {
+	s := fixture(t)
+	home, _ := os.UserHomeDir()
+	if err := os.MkdirAll(filepath.Join(home, ".bough"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".bough", "off.yml"),
+		[]byte("off:\n  - hook:post-result/rules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.Add("post-result", "rules", func(map[string]any) map[string]any {
+		return map[string]any{"deny": "rule"}
+	})
+	res, err := s.Fire(context.Background(), "post-result", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != nil {
+		t.Fatalf("an off go hook ran: %v", res)
+	}
+}

@@ -6,6 +6,7 @@ import { ProjectsView } from "./projects";
 import { Markdown, codeLabel, doneSummary, groupTurns, isQuiet, plainTitle, stripRunFences, type Turn, lineCount } from "./render";
 import { SkillPicker } from "./skills";
 import { HooksPage } from "./hooks";
+import { ContextPage } from "./context";
 
 export type View = "sessions" | "projects" | "hooks";
 
@@ -315,10 +316,10 @@ export function Back({ onBack }: { onBack?: () => void }) {
   );
 }
 
-export function Thread({ row, lines, projects, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, busy }: {
+export function Thread({ row, lines, projects, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy }: {
   row: Row; lines: Line[]; projects: Project[]; busy: boolean; onBack?: () => void;
   onSend: (t: string) => void; onAnswer: (t: string) => void; onInterrupt: () => void;
-  onArchive: () => void; onRename: (t: string) => void;
+  onArchive: () => void; onRename: (t: string) => void; onContext?: () => void;
   onModel: (m: string) => void; onEffort: (e: string) => void; onAssign: (p: string) => void;
 }) {
   const [draft, setDraft] = useState("");
@@ -365,6 +366,7 @@ export function Thread({ row, lines, projects, onSend, onAnswer, onInterrupt, on
               if (t !== null) onRename(t);
             }}>Rename</button>
             <button className="btn" onClick={onArchive}>{row.archived ? "Unarchive" : "Archive"}</button>
+            {onContext && <button className="btn" onClick={onContext}>Context</button>}
           </div>
         </div>
       </header>
@@ -426,6 +428,9 @@ export default function App() {
   // Only a narrow window reads this (see the 720px media query): a
   // phone shows the list or the thread, never both.
   const [pane, setPane] = useState<"list" | "thread">("list");
+  // The Context panel takes over the thread pane for the open session,
+  // and closes when a different one is opened.
+  const [context, setContext] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -488,7 +493,7 @@ export default function App() {
   return (
     <div className="app" data-pane={pane}>
       <Sidebar rows={visible} selected={selected}
-               onSelect={(id) => { setSelected(id); setView("sessions"); setPane("thread"); }}
+               onSelect={(id) => { setSelected(id); setContext(false); setView("sessions"); setPane("thread"); }}
                query={query} onQuery={setQuery} view={view} onView={(v) => { setView(v); setPane("thread"); }}
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)} />
       {view === "hooks" ? (
@@ -502,6 +507,8 @@ export default function App() {
           onCreate={(name) => act(() => api.newProject(name))}
           onRename={(id, name) => act(() => api.renameProject(id, name))}
           onDelete={(id) => act(() => api.deleteProject(id))} />
+      ) : row && context ? (
+        <ContextPage session={row.id} onBack={() => setContext(false)} />
       ) : row ? (
         <Thread row={row} lines={lines} projects={projects} busy={busy} onBack={() => setPane("list")}
           onSend={(t) => act(() => api.prompt(row.id, t))}
@@ -511,7 +518,8 @@ export default function App() {
           onRename={(t) => act(() => api.rename(row.id, t))}
           onModel={(m) => act(() => api.model(row.id, m))}
           onEffort={(e) => act(() => api.effort(row.id, e))}
-          onAssign={(p) => act(() => api.assign(row.id, p))} />
+          onAssign={(p) => act(() => api.assign(row.id, p))}
+          onContext={() => setContext(true)} />
       ) : (
         <div className="thread empty">
           <div>

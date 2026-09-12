@@ -82,6 +82,8 @@ func NewAPI(sup *Supervisor) *API {
 	a.mux.HandleFunc("GET /api/models", a.models)
 	a.mux.HandleFunc("GET /api/skills", a.skills)
 	a.mux.HandleFunc("GET /api/hooks", a.hooks)
+	a.mux.HandleFunc("GET /api/sessions/{id}/context", a.sessionContext)
+	a.mux.HandleFunc("POST /api/off", a.setOff)
 	a.mux.HandleFunc("GET /api/hooks/file", a.hookFile)
 	a.mux.HandleFunc("PUT /api/hooks/file", a.putHookFile)
 	a.mux.HandleFunc("POST /api/hooks/dryrun", a.dryrun)

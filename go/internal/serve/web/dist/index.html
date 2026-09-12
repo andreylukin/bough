@@ -104,6 +104,9 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .sub-dot{width:8px;height:8px;border-radius:50%;border:1.5px solid var(--text-3)}
 .err{background:var(--surface);border-left:2px solid var(--red);border-radius:0 6px 6px 0;
      padding:10px 14px;color:var(--red);white-space:pre-wrap;font-size:14px;max-width:78ch}
+.hk-notice{margin:3px 0 0;padding-inline-start:10px;font-size:12px;color:var(--text-3);
+           border-inline-start:2px solid var(--line-strong);overflow-wrap:anywhere}
+.hk-cut{color:var(--amber)}
 .hook-line{margin:0 0 6px;font-size:12px;color:var(--text-3)}
 .hook-act{color:var(--amber)}
 .hook-bad{color:var(--red)}
@@ -296,6 +299,26 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 @media (max-width:720px){
   .hk-time{flex-basis:auto}
   .hk-main{gap:4px 10px}
+}
+/* rules, plugins and the per-session context panel. Everything listed
+   is on until someone turns it off, so the control says "Turn off" at
+   rest; an item that is off stays in the list, carries the word "Off",
+   and offers the way back — dimming alone would leave no way to find
+   it again. */
+.hk-offbtn{min-height:32px;flex-shrink:0;font:12px var(--sans);color:var(--text-2);background:none;
+           border:1px solid var(--line-strong);border-radius:6px;padding:6px 12px;cursor:pointer}
+.hk-offbtn:hover{color:var(--text-1)}
+.hk-offbtn:disabled{opacity:.5;cursor:default}
+.hk-act{margin-inline-start:auto}
+.hk-is-off{opacity:.75}
+.hk-offword{color:var(--amber)}
+.hk-globs{margin:0;font-size:12px;color:var(--text-3);overflow-wrap:anywhere}
+.hk-summary{margin:0;max-width:78ch}
+.hk-gives{margin:0;padding:0;list-style:none;display:flex;flex-wrap:wrap;gap:4px 16px}
+.hk-give-name{font-size:12px;color:var(--text-2)}
+.ctx-lede{margin:0;max-width:70ch;font-size:13px;color:var(--text-3)}
+@media (max-width:720px){
+  .hk-act{margin-inline-start:0}
 }
 </style>
 </head>

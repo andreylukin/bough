@@ -16,13 +16,16 @@ package rules
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
+	"github.com/andreylukin/bough/plugins/offlist"
 )
 
 // The seams this row uses, each optional.
@@ -56,7 +59,65 @@ func New(home, project string) *Service {
 	return &Service{home: home, project: project, shown: map[string]bool{}, reported: map[string]bool{}}
 }
 
-func (s *Service) claude() []Rule { return loadClaude(dedupe(claudeDirs(s.home, s.project))) }
+// claude reads the Claude rules in force, given the files a code
+// block touched (nil when nothing is touched: the central and project
+// directories still apply).
+func (s *Service) claude(paths []string) []Rule {
+	off := offlist.Load(filepath.Join(s.home, ".bough"))
+	var out []Rule
+	for _, r := range loadClaude(dedupe(ruleDirs(".claude", s.home, s.project, paths))) {
+		if !off.Off("rule", r.ID()) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// codex reads the Codex prefix rules in force, minus the files turned
+// off.
+func (s *Service) codex(paths []string) ([]Prefix, []error) {
+	rules, errs := loadCodex(dedupe(codexDirs(s.home, s.project, paths)))
+	off := offlist.Load(filepath.Join(s.home, ".bough"))
+	kept := rules[:0]
+	for _, r := range rules {
+		if !off.Off("rule", r.File) {
+			kept = append(kept, r)
+		}
+	}
+	return kept, errs
+}
+
+// Rules is what the rest of bough lists: every rule in force, prose
+// and scoped and gate alike, without re-implementing the parsing.
+func (s *Service) Rules() []Rule {
+	out := s.claude(nil)
+	px, _ := s.codex(nil)
+	var files []string
+	bodies := map[string][]string{}
+	for _, r := range px {
+		if _, ok := bodies[r.File]; !ok {
+			files = append(files, r.File)
+		}
+		bodies[r.File] = append(bodies[r.File], prefixLine(r))
+	}
+	for _, f := range files {
+		out = append(out, Rule{Path: f, Body: strings.Join(bodies[f], "\n"), gate: true})
+	}
+	return out
+}
+
+// prefixLine renders one prefix rule the way /rules shows it.
+func prefixLine(r Prefix) string {
+	pattern := make([]string, len(r.Pattern))
+	for i, alts := range r.Pattern {
+		pattern[i] = strings.Join(alts, "|")
+	}
+	line := fmt.Sprintf("%s → %s", strings.Join(pattern, " "), r.Decision)
+	if r.Justification != "" {
+		line += fmt.Sprintf(" (%s)", r.Justification)
+	}
+	return line
+}
 
 // dedupe drops a repeated dir (the project IS the home directory).
 func dedupe(dirs []string) []string {
@@ -77,7 +138,7 @@ func dedupe(dirs []string) []string {
 // Unscoped is the preamble source: every rule file without paths.
 func (s *Service) Unscoped() []string {
 	var out []string
-	for _, r := range s.claude() {
+	for _, r := range s.claude(nil) {
 		if !r.Scoped() {
 			out = append(out, r.Path)
 		}
@@ -88,14 +149,49 @@ func (s *Service) Unscoped() []string {
 // Touched is the post-result hook: the scoped rules that match a file
 // the code mentioned and have not been shown yet, appended to the
 // result so the model reads them with the output.
+// TouchedNamed is Touched plus the rule files it injected. A repo rule
+// is only ever conditionally in force — it applies when a turn touches
+// a file under that repo — so it cannot be listed from a working
+// directory the way a central rule can. Naming what fired is the only
+// honest way to make it visible.
+func (s *Service) TouchedNamed(code string) (string, []string) {
+	before := s.shownSet()
+	text := s.Touched(code)
+	if text == "" {
+		return "", nil
+	}
+	var fired []string
+	for _, p := range s.shownSet() {
+		if !slices.Contains(before, p) {
+			fired = append(fired, s.short(p))
+		}
+	}
+	slices.Sort(fired)
+	return text, fired
+}
+
+// shownSet is the rule paths already injected this session.
+func (s *Service) shownSet() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Sorted(maps.Keys(s.shown))
+}
+
 func (s *Service) Touched(code string) string {
 	paths := pathsIn(code)
 	if len(paths) == 0 {
 		return ""
 	}
 	root, _ := filepath.Abs(s.project)
+	abs := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(root, p)
+		}
+		abs = append(abs, p)
+	}
 	var b strings.Builder
-	for _, r := range s.claude() {
+	for _, r := range s.claude(abs) {
 		if !r.Scoped() {
 			continue
 		}
@@ -140,7 +236,7 @@ func (s *Service) short(p string) string {
 // Policy is the bash gate: nil when the command may run, else the
 // refusal the model reads.
 func (s *Service) Policy(cmd string) error {
-	rules, errs := loadCodex(dedupe(codexDirs(s.home, s.project)))
+	rules, errs := s.codex(pathsIn(cmd))
 	for _, err := range errs {
 		s.mu.Lock()
 		seen := s.reported[err.Error()]
@@ -196,10 +292,10 @@ func (s *Service) Policy(cmd string) error {
 // force, from where.
 func (s *Service) Summary() string {
 	var b strings.Builder
-	cr := s.claude()
-	px, errs := loadCodex(dedupe(codexDirs(s.home, s.project)))
+	cr := s.claude(nil)
+	px, errs := s.codex(nil)
 	if len(cr) == 0 && len(px) == 0 && len(errs) == 0 {
-		return "no rules: none under " + strings.Join(append(dedupe(claudeDirs(s.home, s.project)), dedupe(codexDirs(s.home, s.project))...), ", ")
+		return "no rules: none under " + strings.Join(append(dedupe(claudeDirs(s.home, s.project)), dedupe(codexDirs(s.home, s.project, nil))...), ", ")
 	}
 	for _, r := range cr {
 		if r.Scoped() {
@@ -209,15 +305,7 @@ func (s *Service) Summary() string {
 		}
 	}
 	for _, r := range px {
-		pattern := make([]string, len(r.Pattern))
-		for i, alts := range r.Pattern {
-			pattern[i] = strings.Join(alts, "|")
-		}
-		fmt.Fprintf(&b, "%s: %s → %s", s.short(r.File), strings.Join(pattern, " "), r.Decision)
-		if r.Justification != "" {
-			fmt.Fprintf(&b, " (%s)", r.Justification)
-		}
-		b.WriteString("\n")
+		fmt.Fprintf(&b, "%s: %s\n", s.short(r.File), prefixLine(r))
 	}
 	for _, err := range errs {
 		fmt.Fprintf(&b, "error: %v\n", err)
@@ -229,7 +317,7 @@ func (s *Service) Summary() string {
 // more guidance arrives when it touches those files.
 func (s *Service) scopedSection() string {
 	var lines []string
-	for _, r := range s.claude() {
+	for _, r := range s.claude(nil) {
 		if r.Scoped() {
 			lines = append(lines, fmt.Sprintf("- %s: %s", strings.Join(r.Globs, ", "), s.short(r.Path)))
 		}
@@ -268,12 +356,18 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if h, err := kernel.Get[hooker](ctx, "hooks"); err == nil {
 		ctx.Effect(h.Add("post-result", "rules", func(payload map[string]any) map[string]any {
 			code, _ := payload["code"].(string)
-			extra := s.Touched(code)
+			extra, fired := s.TouchedNamed(code)
 			if extra == "" {
 				return nil
 			}
 			result, _ := payload["result"].(string)
-			return map[string]any{"result": result + extra}
+			// The notice names the files; it reaches the ledger and the
+			// transcript, never the model, which already has the rule
+			// text itself in the result above.
+			return map[string]any{
+				"result": result + extra,
+				"notice": "applied " + strings.Join(fired, ", "),
+			}
 		}))
 	}
 	if p, err := kernel.Get[policer](ctx, "turn-stats"); err == nil {

@@ -207,3 +207,104 @@ func TestNoHooksWritesNothing(t *testing.T) {
 		}
 	}
 }
+
+// mcphooksinitjsFires is every hook entry history recorded.
+func mcphooksinitjsFires(r *runner) []map[string]any {
+	var out []map[string]any
+	for _, e := range r.hist.Entries() {
+		if e.Kind == "hook" {
+			out = append(out, e.Data)
+		}
+	}
+	return out
+}
+
+// The diagnostic channel: a notice is for the human only. It must be
+// recorded, shown, and absent from everything the model is fed.
+func TestMcpHooksInitjsNoticeNeverReachesTheModel(t *testing.T) {
+	r, llm := mcphooksinitjsRunner(t, map[string]string{
+		"post-result/audit.js": `return {notice: "SECRETSCAN clean"}`,
+	}, mcphooksinitjsBlock, "done")
+	kinds, texts := mcphooksinitjsRun(t, r, "go")
+
+	if got := mcphooksinitjsLastResult(r); !strings.Contains(got, "RAN 2") || strings.Contains(got, "SECRETSCAN") {
+		t.Fatalf("model fed %q", got)
+	}
+	for _, call := range llm.calls {
+		for _, m := range call {
+			if strings.Contains(m.Content, "SECRETSCAN") {
+				t.Fatalf("the notice reached the model: %q", m.Content)
+			}
+		}
+	}
+	shown := false
+	for i, k := range kinds {
+		if k == "system" && strings.Contains(texts[i], "SECRETSCAN clean") {
+			shown = true
+		}
+	}
+	if !shown {
+		t.Fatalf("the notice was never shown: %v %q", kinds, texts)
+	}
+	var rec map[string]any
+	for _, f := range mcphooksinitjsFires(r) {
+		if f["name"] == "audit.js" {
+			rec = f
+		}
+	}
+	if rec == nil || rec["notice"] != "SECRETSCAN clean" {
+		t.Fatalf("notice not recorded to history: %v", mcphooksinitjsFires(r))
+	}
+}
+
+// A hook may not spend the model's context window unasked: an oversized
+// result is capped, and the cut is on the record.
+func TestMcpHooksInitjsOversizedResultIsCapped(t *testing.T) {
+	r, _ := mcphooksinitjsRunner(t, map[string]string{
+		"post-result/big.js": `return {result: "z".repeat(50000)}`,
+	}, mcphooksinitjsBlock, "done")
+	mcphooksinitjsRun(t, r, "go")
+
+	got := mcphooksinitjsLastResult(r)
+	if len(got) > 10100 {
+		t.Fatalf("model fed %d chars; the cap is 10000", len(got))
+	}
+	if !strings.Contains(got, "truncated at 10000 characters") {
+		t.Fatal("the truncation is invisible to the model")
+	}
+	var rec map[string]any
+	for _, f := range mcphooksinitjsFires(r) {
+		if f["name"] == "big.js" {
+			rec = f
+		}
+	}
+	if rec == nil {
+		t.Fatalf("big.js not recorded: %v", mcphooksinitjsFires(r))
+	}
+	cut, _ := rec["truncated"].([]string)
+	if len(cut) != 1 || cut[0] != "result" {
+		t.Fatalf("truncation not recorded: %v", rec["truncated"])
+	}
+}
+
+// The off switch: a hook listed in off.yml does not run.
+func TestMcpHooksInitjsOffHookDoesNotFire(t *testing.T) {
+	r, _ := mcphooksinitjsRunner(t, map[string]string{
+		"pre-code-exec/guard.js": `return {deny: "nope"}`,
+	}, mcphooksinitjsBlock, "done")
+	home, _ := os.UserHomeDir()
+	if err := os.MkdirAll(filepath.Join(home, ".bough"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".bough", "off.yml"),
+		[]byte("off:\n  - hook:pre-code-exec/guard.js\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mcphooksinitjsRun(t, r, "go")
+	if got := mcphooksinitjsLastResult(r); !strings.Contains(got, "RAN 2") {
+		t.Fatalf("the off hook still denied the block: %q", got)
+	}
+	if fires := mcphooksinitjsFires(r); len(fires) != 0 {
+		t.Fatalf("an off hook was recorded: %v", fires)
+	}
+}

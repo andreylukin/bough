@@ -25,14 +25,10 @@ type Prefix struct {
 	File          string
 }
 
-// codexDirs is where the files live, user then project.
-func codexDirs(home, project string) []string {
-	var dirs []string
-	if home != "" {
-		dirs = append(dirs, filepath.Join(home, ".codex", "rules"))
-	}
-	dirs = append(dirs, filepath.Join(project, ".codex", "rules"))
-	return dirs
+// codexDirs is where the files live, user then project, then the
+// ancestors of any file the command mentions.
+func codexDirs(home, project string, paths []string) []string {
+	return ruleDirs(".codex", home, project, paths)
 }
 
 // loadCodex parses every .rules file in dirs. A file that fails to

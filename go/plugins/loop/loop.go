@@ -1126,6 +1126,21 @@ func (r *runner) fire(ctx context.Context, event string, payload map[string]any,
 	if err != nil {
 		emit("error", "hook "+event+": "+err.Error())
 	}
+	// The diagnostic channel: a hook talking to the human. It is shown
+	// and recorded (the ledger drain below carries it), and dropped
+	// here so it cannot be mistaken for a decision by a fire site or
+	// ride along into the model's payload.
+	if res != nil {
+		if n, ok := res["notice"].(string); ok {
+			if n = strings.TrimSpace(n); n != "" {
+				emit("system", "hook "+event+": "+n)
+			}
+			delete(res, "notice")
+			if len(res) == 0 {
+				res = nil // a notice alone decides nothing
+			}
+		}
+	}
 	// The ledger lives in this process; `bough serve` is a different one
 	// and cannot read it. History is the only thing both see, so every
 	// fire is written there. Nothing is recorded when no hook ran, so a
@@ -1135,8 +1150,11 @@ func (r *runner) fire(ctx context.Context, event string, payload map[string]any,
 			// Only a fire that decided something is worth keeping. The
 			// rules row registers a hook on post-result, so it fires on
 			// EVERY tool result; recording those too put a hook entry
-			// between every block of every transcript.
-			if rec["decision"] == "" && rec["error"] == "" {
+			// between every block of every transcript. A notice or a
+			// truncation counts as something decided: the notice exists
+			// only to be shown, and a shortened result must not be a
+			// mystery.
+			if rec["decision"] == "" && rec["error"] == "" && rec["notice"] == nil && rec["truncated"] == nil {
 				continue
 			}
 			r.hist.Append("hook", rec)

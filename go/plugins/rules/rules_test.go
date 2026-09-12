@@ -172,3 +172,121 @@ func TestPolicy(t *testing.T) {
 	var target error = errors.New("x")
 	_ = target
 }
+
+// The user runs bough from home, so project == home and the two
+// central directories collapse into one. A rule kept in a repo deep
+// under home must still be found — and it stacks with the central
+// rule rather than replacing it.
+func TestRepoRulesStackWithCentral(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	repo := filepath.Join(home, "repos", "foo")
+	write(t, filepath.Join(home, ".claude", "rules", "uni.md"), "---\npaths: \"**/*.py\"\n---\nCentral: type hints.")
+	write(t, filepath.Join(repo, ".claude", "rules", "local.md"), "---\npaths: \"**/*.py\"\n---\nRepo: no bare except.")
+	s := New(home, home)
+
+	got := s.Touched(`tools.patch("` + filepath.Join(repo, "app", "main.py") + `", "a", "b")`)
+	if !strings.Contains(got, "Central: type hints.") || !strings.Contains(got, "Repo: no bare except.") {
+		t.Fatalf("both rules should apply, got %q", got)
+	}
+	if strings.Index(got, "Central:") > strings.Index(got, "Repo:") {
+		t.Fatalf("the nearest rule should read last: %q", got)
+	}
+}
+
+// The walk up stops at home: a rules directory above it is never read.
+func TestWalkStopsAtHome(t *testing.T) {
+	t.Parallel()
+	above := t.TempDir()
+	home := filepath.Join(above, "home")
+	write(t, filepath.Join(above, ".claude", "rules", "outside.md"), "---\npaths: \"**/*.py\"\n---\nOutside.")
+	write(t, filepath.Join(home, "repos", "foo", "x.py"), "print()")
+	s := New(home, home)
+	if got := s.Touched(`tools.view("` + filepath.Join(home, "repos", "foo", "x.py") + `")`); got != "" {
+		t.Fatalf("read a rule above home: %q", got)
+	}
+	for _, d := range ancestorDirs(".claude", home, []string{filepath.Join(home, "repos", "foo", "x.py")}) {
+		if !strings.HasPrefix(d, home) {
+			t.Fatalf("walked outside home: %s", d)
+		}
+	}
+}
+
+// A rule listed in ~/.bough/off.yml does not load.
+func TestOffRuleDoesNotLoad(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	repo := filepath.Join(home, "repos", "foo")
+	central := filepath.Join(home, ".claude", "rules", "uni.md")
+	local := filepath.Join(repo, ".claude", "rules", "local.md")
+	write(t, central, "---\npaths: \"**/*.py\"\n---\nCentral: type hints.")
+	write(t, local, "---\npaths: \"**/*.py\"\n---\nRepo: no bare except.")
+	write(t, filepath.Join(home, ".bough", "off.yml"), "off:\n  - rule:"+local+"\n")
+
+	s := New(home, home)
+	got := s.Touched(`tools.view("` + filepath.Join(repo, "app", "main.py") + `")`)
+	if !strings.Contains(got, "Central: type hints.") || strings.Contains(got, "Repo:") {
+		t.Fatalf("off rule loaded: %q", got)
+	}
+}
+
+// Rules() lists everything in force and says what kind each is.
+func TestRulesKinds(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	write(t, filepath.Join(home, ".claude", "rules", "style.md"), "# Style\nTabs.")
+	write(t, filepath.Join(home, ".claude", "rules", "api.md"), "---\npaths: \"src/**/*.ts\"\n---\nValidate.")
+	write(t, filepath.Join(home, ".codex", "rules", "default.rules"), docRules)
+
+	kinds := map[string]string{}
+	for _, r := range New(home, home).Rules() {
+		kinds[filepath.Base(r.ID())] = r.Kind()
+	}
+	want := map[string]string{"style.md": "prose", "api.md": "scoped", "default.rules": "gate"}
+	for name, k := range want {
+		if kinds[name] != k {
+			t.Errorf("%s = %q, want %q", name, kinds[name], k)
+		}
+	}
+}
+
+// A repo rule is conditionally in force, so it can never be listed from
+// a working directory — the only way to see it is to name it when it
+// fires. Without this the stacking works and is invisible.
+func TestTouchedNamesWhatFired(t *testing.T) {
+	home := t.TempDir()
+	write := func(dir, name, body string) {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(home, ".claude", "rules"), "central.md",
+		"---\npaths:\n  - \"**/*.py\"\n---\nCENTRAL-BODY\n")
+	write(filepath.Join(home, "repos", "demo", ".claude", "rules"), "repo.md",
+		"---\npaths:\n  - \"**/*.py\"\n---\nREPO-BODY\n")
+
+	// project == home: the user always runs bough from their home dir.
+	s := New(home, home)
+	text, fired := s.TouchedNamed(`tools.view("repos/demo/app/main.py")`)
+	if text == "" {
+		t.Fatal("no rules injected for a .py under a repo")
+	}
+	if !strings.Contains(text, "CENTRAL-BODY") || !strings.Contains(text, "REPO-BODY") {
+		t.Errorf("rules did not STACK; got:\n%s", text)
+	}
+	if len(fired) != 2 {
+		t.Fatalf("fired = %v, want both rule files named", fired)
+	}
+	joined := strings.Join(fired, " ")
+	if !strings.Contains(joined, "central.md") || !strings.Contains(joined, "repo.md") {
+		t.Errorf("fired = %v, want central.md and repo.md", fired)
+	}
+
+	// Already-shown rules are not re-reported on a second touch.
+	if _, again := s.TouchedNamed(`tools.view("repos/demo/app/other.py")`); len(again) != 0 {
+		t.Errorf("re-reported already-injected rules: %v", again)
+	}
+}

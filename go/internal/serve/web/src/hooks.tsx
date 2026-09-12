@@ -4,6 +4,8 @@ import { Back } from "./app";
 // The hooks wire types live here, not in types.ts: they are read by this
 // view and nothing else, and GET /api/hooks always sends every field.
 export interface Hook {
+  id: string;
+  off: boolean;
   name: string;
   event: string;
   path: string;
@@ -16,6 +18,8 @@ export interface Hook {
 }
 
 export interface Watcher {
+  id: string;
+  off: boolean;
   name: string;
   path: string;
   every: string;
@@ -33,12 +37,46 @@ export interface Fire {
   ms: number;
   decision: string;
   error: string;
+  notice: string;
+  truncated: string[];
+}
+
+/**
+ * One rules file. `kind` is what the file does: prose is always in
+ * context, scoped only applies to the paths in `globs`, and a gate can
+ * refuse a tool call. A home rule and a repo rule of the same name both
+ * apply — they stack, which is why the two scopes are shown apart.
+ */
+export interface Rule {
+  id: string;
+  name: string;
+  path: string;
+  scope: "home" | "repo";
+  kind: "prose" | "scoped" | "gate";
+  globs: string[];
+  off: boolean;
+}
+
+export interface Plugin {
+  id: string;
+  name: string;
+  marketplace: string;
+  version: string;
+  scope: "user" | "project";
+  projectPath: string;
+  installPath: string;
+  present: boolean;
+  skills: string[];
+  commands: string[];
+  off: boolean;
 }
 
 export interface HooksData {
   hooks: Hook[];
   watchers: Watcher[];
   fires: Fire[];
+  rules: Rule[];
+  plugins: Plugin[];
 }
 
 const clock = (iso: string) =>
@@ -77,6 +115,57 @@ export const hooksApi = {
       body: JSON.stringify({ path, event }),
     }),
 };
+
+/**
+ * Turning something off is one endpoint for every kind of thing, so the
+ * id it takes carries its kind: `hook:`, `watcher:`, `rule:`, `plugin:`,
+ * `skill:`. The server writes ~/.bough/off.yml and rejects a kind it
+ * does not know.
+ */
+export type OffKind = "hook" | "watcher" | "rule" | "plugin" | "skill";
+export type SetOff = (id: string, off: boolean) => Promise<void>;
+
+export const offId = (kind: OffKind, id: string) => `${kind}:${id}`;
+
+export const setOffApi: SetOff = (id, off) =>
+  req<{ ok: true }>("/api/off", { method: "POST", body: JSON.stringify({ id, off }) }).then(() => {});
+
+/**
+ * The on/off control every listed thing gets. Everything is on until
+ * someone says otherwise, so the resting word is "Turn off"; an item
+ * that is off keeps its row, says the word "Off" beside its name, and
+ * offers the way back.
+ */
+export function OffToggle({ id, off, what, setOff, onChange }: {
+  id: string; off: boolean; what: string; setOff: SetOff; onChange: (off: boolean) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const flip = () => {
+    setBusy(true);
+    setErr("");
+    setOff(id, !off)
+      .then(() => onChange(!off))
+      .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <>
+      <button className="hk-offbtn hk-act" disabled={busy} onClick={flip}>
+        {off ? "Turn back on" : "Turn off"}
+        <span className="visually-hidden"> {what}</span>
+      </button>
+      {err && <span className="hk-state hk-bad">Did not save — {err}</span>}
+    </>
+  );
+}
+
+/** The word an off row carries, so the state is never dimming alone. */
+function OffWord({ off }: { off: boolean }) {
+  return off ? <span className="hk-state hk-offword">Off</span> : null;
+}
 
 export type Load = (path: string) => Promise<string>;
 export type Save = (path: string, body: string) => Promise<void>;
@@ -142,17 +231,22 @@ function Source({ path, event, load, save, dryrun }: {
   );
 }
 
-function WatcherRow({ w, load, save }: { w: Watcher; load: Load; save: Save }) {
+function WatcherRow({ w, off, setOff, onOff, load, save }: {
+  w: Watcher; off: boolean; setOff: SetOff; onOff: (off: boolean) => void; load: Load; save: Save;
+}) {
   return (
-    <div className="proj-row hk-row">
+    <div className={"proj-row hk-row" + (off ? " hk-is-off" : "")}>
       <div className="hk-main">
         <span className="mono hk-name">{w.name}</span>
+        <OffWord off={off} />
         {w.failing
           ? <span className="hk-state hk-bad">Failing</span>
           : <span className="hk-state hk-ok">Healthy</span>}
         <span className="hk-when">Every {w.every}</span>
         <span className="hk-when">Ran {when(w.lastRun, "never")}</span>
         <span className="hk-when">Woke a session {when(w.lastWoke, "never")}</span>
+        <OffToggle id={offId("watcher", w.id)} off={off} what={`the watcher ${w.name}`}
+                   setOff={setOff} onChange={onOff} />
       </div>
       {w.failing && w.error && <p className="err hk-why">{w.error}</p>}
       <Source path={w.path} load={load} save={save} />
@@ -160,19 +254,92 @@ function WatcherRow({ w, load, save }: { w: Watcher; load: Load; save: Save }) {
   );
 }
 
-function HookRow({ h, load, save, dryrun }: { h: Hook; load: Load; save: Save; dryrun: DryRun }) {
+function HookRow({ h, off, setOff, onOff, load, save, dryrun }: {
+  h: Hook; off: boolean; setOff: SetOff; onOff: (off: boolean) => void;
+  load: Load; save: Save; dryrun: DryRun;
+}) {
   return (
-    <div className="proj-row hk-row">
+    <div className={"proj-row hk-row" + (off ? " hk-is-off" : "")}>
       <div className="hk-main">
         <span className="mono hk-name">{h.name}</span>
+        <OffWord off={off} />
         <span className="hk-tag">{h.scope === "home" ? "Home" : "Project"}</span>
         {h.failing && <span className="hk-state hk-bad">Failing</span>}
         {h.shadowed && <span className="hk-state hk-shadow">Shadowed — a project file of the same name wins</span>}
         <span className="hk-when">Fired {when(h.lastFired, "never")}</span>
         {h.lastDecision && <span className="hk-when">Last decision: {h.lastDecision}</span>}
+        <OffToggle id={offId("hook", h.id)} off={off} what={`the hook ${h.name}`}
+                   setOff={setOff} onChange={onOff} />
       </div>
       {h.failing && h.error && <p className="err hk-why">{h.error}</p>}
       <Source path={h.path} event={h.event} load={load} save={save} dryrun={dryrun} />
+    </div>
+  );
+}
+
+const kindWord: Record<Rule["kind"], string> = {
+  prose: "Prose — always in context",
+  scoped: "Scoped — only the paths below",
+  gate: "Gate — can refuse a tool call",
+};
+
+/** Exported so the per-session Context panel shows a rule the same way. */
+export function RuleRow({ r, off, setOff, onOff, load, save }: {
+  r: Rule; off: boolean; setOff: SetOff; onOff: (off: boolean) => void; load: Load; save: Save;
+}) {
+  return (
+    <div className={"proj-row hk-row" + (off ? " hk-is-off" : "")}>
+      <div className="hk-main">
+        <span className="mono hk-name">{r.name}</span>
+        <OffWord off={off} />
+        <span className="hk-tag">{r.scope === "home" ? "Home" : "Repo"}</span>
+        <span className="hk-when">{kindWord[r.kind]}</span>
+        <OffToggle id={offId("rule", r.id)} off={off} what={`the rule ${r.name}`}
+                   setOff={setOff} onChange={onOff} />
+      </div>
+      {r.kind === "scoped" && r.globs.length > 0 && (
+        <p className="mono hk-globs">{r.globs.join("  ")}</p>
+      )}
+      <Source path={r.path} load={load} save={save} />
+    </div>
+  );
+}
+
+function PluginRow({ p, off, setOff, onOff }: {
+  p: Plugin; off: boolean; setOff: SetOff; onOff: (off: boolean) => void;
+}) {
+  const gives = [
+    ...p.skills.map((s) => ["skill", s] as const),
+    ...p.commands.map((c) => ["command", c] as const),
+  ];
+  return (
+    <div className={"proj-row hk-row" + (off ? " hk-is-off" : "")}>
+      <div className="hk-main">
+        <span className="mono hk-name">{p.name}</span>
+        <OffWord off={off} />
+        <span className="hk-tag">{p.scope === "user" ? "User" : "Project"}</span>
+        <span className="num hk-when">v{p.version}</span>
+        <span className="hk-when">from {p.marketplace}</span>
+        {!p.present && <span className="hk-state hk-bad">Not present — nothing is installed at its path</span>}
+        <OffToggle id={offId("plugin", p.id)} off={off} what={`the plugin ${p.name}`}
+                   setOff={setOff} onChange={onOff} />
+      </div>
+      {p.scope === "project" && p.projectPath && (
+        <p className="mono hk-globs">Only in {p.projectPath}</p>
+      )}
+      <p className="mono hk-path">{p.installPath}</p>
+      {gives.length === 0
+        ? <p className="hk-when">Contributes no skills or commands.</p>
+        : (
+          <ul className="hk-gives">
+            {gives.map(([what, name]) => (
+              <li key={`${what}-${name}`}>
+                <span className="mono hk-give-name">{what === "skill" ? `/${name}` : name}</span>
+                <span className="hk-when"> {what}</span>
+              </li>
+            ))}
+          </ul>
+        )}
     </div>
   );
 }
@@ -188,10 +355,25 @@ function Decision({ fire }: { fire: Fire }) {
   );
 }
 
-export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.write, dryrun = hooksApi.dryrun }: {
-  data: HooksData; onBack?: () => void; load?: Load; save?: Save; dryrun?: DryRun;
+/**
+ * What the user has just turned off or on, over what the last poll said.
+ * The poll catches up within seconds; until it does, the row must show
+ * the state the click asked for.
+ */
+export function useOffs() {
+  const [offs, setOffs] = useState<Record<string, boolean>>({});
+  const isOff = useCallback((id: string, wire: boolean) => offs[id] ?? wire, [offs]);
+  const mark = useCallback((id: string) => (off: boolean) => setOffs((o) => ({ ...o, [id]: off })), []);
+  return { isOff, mark };
+}
+
+export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.write, dryrun = hooksApi.dryrun, setOff = setOffApi }: {
+  data: HooksData; onBack?: () => void; load?: Load; save?: Save; dryrun?: DryRun; setOff?: SetOff;
 }) {
-  const { hooks, watchers, fires } = data;
+  const { hooks, watchers, fires, rules, plugins } = data;
+  const { isOff, mark } = useOffs();
+  const homeRules = rules.filter((r) => r.scope === "home");
+  const repoRules = rules.filter((r) => r.scope === "repo");
   const byEvent = useMemo(() => {
     const m = new Map<string, Hook[]>();
     for (const h of hooks) {
@@ -238,7 +420,10 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
                    <code className="mono"> ci.js</code> — and it shows up here on the next tick.</p>
               </div>
             )
-            : watchers.map((w) => <WatcherRow key={w.path} w={w} load={load} save={save} />)}
+            : watchers.map((w) => (
+              <WatcherRow key={w.path} w={w} load={load} save={save} setOff={setOff}
+                          off={isOff(w.id, w.off)} onOff={mark(w.id)} />
+            ))}
         </section>
 
         <section className="proj">
@@ -261,8 +446,73 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
             : byEvent.map(([event, list]) => (
               <div key={event} className="hk-event">
                 <h3 className="mono hk-event-name">{event}</h3>
-                {list.map((h) => <HookRow key={h.path} h={h} load={load} save={save} dryrun={dryrun} />)}
+                {list.map((h) => (
+                  <HookRow key={h.path} h={h} load={load} save={save} dryrun={dryrun} setOff={setOff}
+                           off={isOff(h.id, h.off)} onOff={mark(h.id)} />
+                ))}
               </div>
+            ))}
+        </section>
+
+        <section className="proj">
+          <div className="proj-head">
+            <h2>Rules</h2>
+            <span className="num proj-count">
+              {rules.length} {rules.length === 1 ? "rule" : "rules"}
+            </span>
+          </div>
+          {rules.length === 0
+            ? (
+              <div className="proj-empty">
+                <p className="proj-empty-title">No rules in force</p>
+                <p>A rule is a <code className="mono">.md</code> file in <code className="mono">~/.claude/rules</code> (every
+                   repo) or <code className="mono">.claude/rules</code> in a repo (that repo only). Write one — say
+                   <code className="mono"> python-standards.md</code> — and it appears here, and in the Context panel of
+                   every session it applies to.</p>
+              </div>
+            )
+            : (
+              <>
+                <div className="hk-event">
+                  <h3 className="hk-event-name">Home — every repo</h3>
+                  {homeRules.length === 0
+                    ? <p className="proj-none">Nothing in <code className="mono">~/.claude/rules</code> yet.</p>
+                    : homeRules.map((r) => (
+                      <RuleRow key={r.id} r={r} load={load} save={save} setOff={setOff}
+                               off={isOff(r.id, r.off)} onOff={mark(r.id)} />
+                    ))}
+                </div>
+                <div className="hk-event">
+                  <h3 className="hk-event-name">Repo — stacks on top of the home rules</h3>
+                  {repoRules.length === 0
+                    ? <p className="proj-none">No repo checked out here adds rules of its own.</p>
+                    : repoRules.map((r) => (
+                      <RuleRow key={r.id} r={r} load={load} save={save} setOff={setOff}
+                               off={isOff(r.id, r.off)} onOff={mark(r.id)} />
+                    ))}
+                </div>
+              </>
+            )}
+        </section>
+
+        <section className="proj">
+          <div className="proj-head">
+            <h2>Plugins</h2>
+            <span className="num proj-count">
+              {plugins.length} {plugins.length === 1 ? "plugin" : "plugins"}
+            </span>
+          </div>
+          {plugins.length === 0
+            ? (
+              <div className="proj-empty">
+                <p className="proj-empty-title">No plugins installed</p>
+                <p>A plugin comes from a marketplace listed in <code className="mono">~/.claude/settings.json</code> and
+                   brings skills and slash commands with it. Add a marketplace and install one — say
+                   <code className="mono"> uni-common</code> — and everything it contributes is listed here.</p>
+              </div>
+            )
+            : plugins.map((p) => (
+              <PluginRow key={p.id} p={p} setOff={setOff} off={isOff(p.id, p.off)} onOff={mark(p.id)} />
             ))}
         </section>
 
@@ -282,6 +532,16 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
                   <span className="num hk-when">{f.ms}ms</span>
                   <Decision fire={f} />
                 </div>
+                {f.notice && (
+                  /* A notice never reached the model; this is the only
+                     place it survives after the turn scrolls away. */
+                  <p className="hk-notice">{f.notice}</p>
+                )}
+                {f.truncated?.length > 0 && (
+                  <p className="hk-notice hk-cut">
+                    Truncated at the 10,000-character cap: {f.truncated.join(", ")}
+                  </p>
+                )}
               </div>
             ))}
         </section>

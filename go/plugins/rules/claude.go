@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Rule is one rules file.
@@ -21,20 +22,79 @@ type Rule struct {
 	Path  string   // on disk
 	Globs []string // empty = unscoped
 	Body  string   // the markdown after the frontmatter
+	gate  bool     // a Codex .rules file of prefix_rules
 }
 
 // Scoped reports whether the rule applies only to some files.
 func (r Rule) Scoped() bool { return len(r.Globs) > 0 }
 
+// ID is how the rest of bough names this rule — in the off list, in
+// the UI. The absolute path is stable across restarts.
+func (r Rule) ID() string { return r.Path }
+
+// Kind says what the rule does: "prose" joins the preamble every
+// turn, "scoped" waits until a matching file is touched, "gate" is a
+// Codex prefix_rule file that decides shell commands.
+func (r Rule) Kind() string {
+	switch {
+	case r.gate:
+		return "gate"
+	case r.Scoped():
+		return "scoped"
+	}
+	return "prose"
+}
+
 // claudeDirs is where rules live: user first, then project, so a
-// project rule reads after (and so overrides) a user one.
+// project rule reads after (and so stacks on top of) a user one.
 func claudeDirs(home, project string) []string {
+	return ruleDirs(".claude", home, project, nil)
+}
+
+// ruleDirs is the search path for one tool's rules directory: the
+// central one under home, the project's, and then — for every file a
+// code block touched — the rules directory of each ancestor of that
+// file, walking up to home and no further.
+//
+// The ancestors matter because the user runs bough from their home
+// directory, so home and project are the same place and a rule kept
+// in ~/repos/foo/.claude/rules would otherwise never be found. A repo
+// rule STACKS with the central one, so the nearest directory comes
+// last and its rule reads last.
+func ruleDirs(sub, home, project string, paths []string) []string {
 	var dirs []string
 	if home != "" {
-		dirs = append(dirs, filepath.Join(home, ".claude", "rules"))
+		dirs = append(dirs, filepath.Join(home, sub, "rules"))
 	}
-	dirs = append(dirs, filepath.Join(project, ".claude", "rules"))
-	return dirs
+	dirs = append(dirs, filepath.Join(project, sub, "rules"))
+	return append(dirs, ancestorDirs(sub, home, paths)...)
+}
+
+// ancestorDirs walks up from each touched file to home, collecting
+// rules directories shallowest first. The walk stops at home and
+// never leaves it, so a stray absolute path elsewhere on the disk
+// contributes nothing and we never climb to /.
+func ancestorDirs(sub, home string, paths []string) []string {
+	if home == "" || len(paths) == 0 {
+		return nil
+	}
+	home = filepath.Clean(home)
+	prefix := home + string(filepath.Separator)
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range paths {
+		var chain []string
+		for d := filepath.Dir(filepath.Clean(p)); strings.HasPrefix(d, prefix); d = filepath.Dir(d) {
+			chain = append(chain, filepath.Join(d, sub, "rules"))
+		}
+		for i := len(chain) - 1; i >= 0; i-- {
+			if !seen[chain[i]] {
+				seen[chain[i]] = true
+				out = append(out, chain[i])
+			}
+		}
+	}
+	return out
 }
 
 // loadClaude reads every .md under the rules dirs, recursively, in
@@ -43,18 +103,7 @@ func claudeDirs(home, project string) []string {
 func loadClaude(dirs []string) []Rule {
 	var out []Rule
 	for _, dir := range dirs {
-		var files []string
-		_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			if !d.IsDir() && strings.HasSuffix(p, ".md") {
-				files = append(files, p)
-			}
-			return nil
-		})
-		sort.Strings(files)
-		for _, f := range files {
+		for _, f := range mdFiles(dir) {
 			body, err := os.ReadFile(f)
 			if err != nil {
 				continue
@@ -67,6 +116,61 @@ func loadClaude(dirs []string) []Rule {
 		}
 	}
 	return out
+}
+
+// mdFiles lists the .md files under a rules directory, recursively,
+// in path order. Walking every ancestor of every touched path on
+// every tool call would stat a great deal, so the listing is cached
+// per directory and thrown away when the directory's mtime or size
+// changes — which is when files are added or removed. The files
+// themselves are still read fresh, so editing a rule mid-session
+// counts on the next turn.
+var listing struct {
+	sync.Mutex
+	dirs map[string]*listingEntry
+}
+
+type listingEntry struct {
+	files []string
+	mtime time.Time
+	size  int64
+}
+
+func mdFiles(dir string) []string {
+	var mtime time.Time
+	var size int64
+	st, err := os.Stat(dir)
+	if err == nil {
+		if !st.IsDir() {
+			return nil
+		}
+		mtime, size = st.ModTime(), st.Size()
+	}
+
+	listing.Lock()
+	defer listing.Unlock()
+	if listing.dirs == nil {
+		listing.dirs = map[string]*listingEntry{}
+	}
+	if e, ok := listing.dirs[dir]; ok && e.mtime.Equal(mtime) && e.size == size {
+		return e.files
+	}
+
+	var files []string
+	if err == nil {
+		_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if !d.IsDir() && strings.HasSuffix(p, ".md") {
+				files = append(files, p)
+			}
+			return nil
+		})
+		sort.Strings(files)
+	}
+	listing.dirs[dir] = &listingEntry{files: files, mtime: mtime, size: size}
+	return files
 }
 
 // frontmatter splits a leading --- block off body and returns the

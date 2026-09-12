@@ -18,12 +18,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/andreylukin/bough/internal/serve/watch"
+	"github.com/andreylukin/bough/plugins/ccplugins"
 	"github.com/andreylukin/bough/plugins/codemode"
+	"github.com/andreylukin/bough/plugins/offlist"
+	"github.com/andreylukin/bough/plugins/rules"
 )
 
 // HookRow is one installed hook file. lastFired/lastDecision/failing
 // come from the ledger, which lives in the child process (see fires).
 type HookRow struct {
+	// ID is the off-switch id: "<event>/<name>", the same string
+	// plugins/hooks checks before it runs a file.
+	ID           string     `json:"id"`
 	Name         string     `json:"name"`
 	Event        string     `json:"event"`
 	Path         string     `json:"path"`
@@ -33,6 +40,28 @@ type HookRow struct {
 	LastDecision string     `json:"lastDecision"`
 	Failing      bool       `json:"failing"`
 	Error        string     `json:"error"`
+	Off          bool       `json:"off"`
+}
+
+// WatcherRow is the engine's status plus the two fields the control
+// room needs on every switchable thing: its off-switch id and whether
+// that switch is thrown.
+type WatcherRow struct {
+	ID string `json:"id"`
+	watch.WatcherStatus
+	Off bool `json:"off"`
+}
+
+// RuleRow is one rule file as the control room lists it. Globs is the
+// `paths:` frontmatter — what makes a rule scoped.
+type RuleRow struct {
+	ID    string   `json:"id"`
+	Name  string   `json:"name"`
+	Path  string   `json:"path"`
+	Scope string   `json:"scope"`
+	Kind  string   `json:"kind"`
+	Globs []string `json:"globs"`
+	Off   bool     `json:"off"`
 }
 
 // HookFire is one row of the ledger: what ran, how long it took, and
@@ -45,6 +74,11 @@ type HookFire struct {
 	Ms       int64     `json:"ms"`
 	Decision string    `json:"decision"`
 	Error    string    `json:"error"`
+	// Notice is what a hook wanted the human to know. It never reached
+	// the model — that is the point of the channel — so this page is
+	// the only place it is visible after the turn scrolls away.
+	Notice    string   `json:"notice"`
+	Truncated []string `json:"truncated"`
 }
 
 // dryrunTimeout bounds a hand-run hook. A dry run is a person waiting
@@ -71,7 +105,10 @@ func (a *API) pools() []pool {
 			pool{filepath.Join(a.home, ".bough", "watchers"), "home", "watchers"},
 		)
 	}
-	if cwd, err := os.Getwd(); err == nil {
+	// The user runs bough from home, so the project pools are then the
+	// home pools again. Listing a file twice would give it two rows
+	// with the same off-switch id, each claiming to shadow the other.
+	if cwd, err := os.Getwd(); err == nil && !sameDir(cwd, a.home) {
 		out = append(out,
 			pool{filepath.Join(cwd, ".bough", "hooks"), "project", "hooks"},
 			pool{filepath.Join(cwd, ".bough", "watchers"), "project", "watchers"},
@@ -80,14 +117,31 @@ func (a *API) pools() []pool {
 	return out
 }
 
+// sameDir compares two directories as the filesystem sees them, so a
+// cwd reached through a symlink (/tmp on macOS) still matches home.
+func sameDir(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ra, err1 := filepath.EvalSymlinks(a)
+	rb, err2 := filepath.EvalSymlinks(b)
+	return err1 == nil && err2 == nil && ra == rb
+}
+
 // hooks answers the control room's one read: installed hooks, watcher
 // status, recent fires.
 func (a *API) hooks(w http.ResponseWriter, r *http.Request) {
 	fires := a.fires()
+	cwd, _ := os.Getwd()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"hooks":    withLast(a.installed(), fires),
-		"watchers": a.watcherStatus(),
+		"watchers": a.watchers(),
 		"fires":    fires,
+		"rules":    a.ruleRows(cwd),
+		"plugins":  a.pluginRows(),
 	})
 }
 
@@ -138,19 +192,33 @@ func (a *API) fires() []HookFire {
 				continue
 			}
 			out = append(out, HookFire{
-				At:       e.At,
-				Session:  si.ID,
-				Event:    str(e.Data["event"]),
-				Name:     str(e.Data["name"]),
-				Ms:       num(e.Data["ms"]),
-				Decision: str(e.Data["decision"]),
-				Error:    str(e.Data["error"]),
+				At:        e.At,
+				Session:   si.ID,
+				Event:     str(e.Data["event"]),
+				Name:      str(e.Data["name"]),
+				Ms:        num(e.Data["ms"]),
+				Decision:  str(e.Data["decision"]),
+				Error:     str(e.Data["error"]),
+				Notice:    str(e.Data["notice"]),
+				Truncated: strs(e.Data["truncated"]),
 			})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
 	if len(out) > fireLimit {
 		out = out[:fireLimit]
+	}
+	return out
+}
+
+// strs reads a history entry's list of strings; JSON gives []any.
+func strs(v any) []string {
+	raw, _ := v.([]any)
+	out := make([]string, 0, len(raw))
+	for _, e := range raw {
+		if s, ok := e.(string); ok {
+			out = append(out, s)
+		}
 	}
 	return out
 }
@@ -201,6 +269,7 @@ func (a *API) installed() []HookRow {
 					projects[key{ev.Name(), f.Name()}] = true
 				}
 				rows = append(rows, HookRow{
+					ID:    ev.Name() + "/" + f.Name(),
 					Name:  f.Name(),
 					Event: ev.Name(),
 					Path:  filepath.Join(p.dir, ev.Name(), f.Name()),
@@ -209,8 +278,10 @@ func (a *API) installed() []HookRow {
 			}
 		}
 	}
+	off := a.off()
 	out := make([]HookRow, 0, len(rows))
 	for _, row := range rows {
+		row.Off = off.Off("hook", row.ID)
 		row.Shadowed = row.Scope == "home" && projects[key{row.Event, row.Name}]
 		out = append(out, row)
 	}
@@ -220,6 +291,89 @@ func (a *API) installed() []HookRow {
 		}
 		return strings.Compare(x.Name, y.Name)
 	})
+	return out
+}
+
+// off is the switch list for this home. The handlers read it fresh:
+// off.yml is a file the user edits by hand as well as through the API.
+func (a *API) off() *offlist.List { return offlist.Load(a.boughHome()) }
+
+func (a *API) boughHome() string { return filepath.Join(a.home, ".bough") }
+
+// watchers decorates the engine's rows with the off switch. The id is
+// the file's base name, which is what plugins/hooks and the watcher
+// engine both name a watcher by.
+func (a *API) watchers() []WatcherRow {
+	off := a.off()
+	out := []WatcherRow{}
+	for _, st := range a.watcherStatus() {
+		out = append(out, WatcherRow{ID: st.Name, WatcherStatus: st, Off: off.Off("watcher", st.Name)})
+	}
+	return out
+}
+
+// ruleRows lists the rules in force for a directory. Rules() has
+// already dropped the ones switched off — they would otherwise be
+// invisible, and a switch nothing shows cannot be thrown back — so
+// every "rule:" entry in off.yml is added afterwards from its path.
+func (a *API) ruleRows(project string) []RuleRow {
+	off := a.off()
+	out := []RuleRow{}
+	seen := map[string]bool{}
+	for _, r := range rules.New(a.home, project).Rules() {
+		globs := r.Globs
+		if globs == nil {
+			globs = []string{}
+		}
+		seen[r.ID()] = true
+		out = append(out, RuleRow{
+			ID:    r.ID(),
+			Name:  filepath.Base(r.Path),
+			Path:  r.Path,
+			Scope: a.ruleScope(r.Path),
+			Kind:  r.Kind(),
+			Globs: globs,
+		})
+	}
+	for _, e := range off.Entries() {
+		path, ok := strings.CutPrefix(e, "rule:")
+		if !ok || seen[path] {
+			continue
+		}
+		// An off rule is never parsed, so its kind is read off the
+		// name: only Codex's .rules files gate shell commands.
+		kind := "prose"
+		if strings.HasSuffix(path, ".rules") {
+			kind = "gate"
+		}
+		out = append(out, RuleRow{
+			ID: path, Name: filepath.Base(path), Path: path,
+			Scope: a.ruleScope(path), Kind: kind, Globs: []string{}, Off: true,
+		})
+	}
+	return out
+}
+
+// ruleScope says where a rule came from. Anything under the user's
+// home rule directories is "home"; everything else was found beside
+// the code, which is what "repo" means to the reader.
+func (a *API) ruleScope(path string) string {
+	for _, sub := range []string{".claude", ".codex"} {
+		if a.home != "" && under(filepath.Join(a.home, sub, "rules"), path) {
+			return "home"
+		}
+	}
+	return "repo"
+}
+
+// pluginRows is every Claude Code plugin in the manifest, present or
+// not — a plugin whose install directory has gone is exactly what the
+// control room exists to show.
+func (a *API) pluginRows() []ccplugins.Plugin {
+	out := ccplugins.Installed(a.home)
+	if out == nil {
+		return []ccplugins.Plugin{}
+	}
 	return out
 }
 
