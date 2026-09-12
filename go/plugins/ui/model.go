@@ -172,6 +172,13 @@ type model struct {
 	liveHead    liveWrap          // the streaming reply's wrapped finished lines (render)
 	bgLight     bool              // terminal background is light (tea.BackgroundColorMsg)
 	sized       bool              // a real WindowSizeMsg arrived (newModel's size is a placeholder)
+
+	// pickCorpus is the listed sessions' transcripts, lowercased and
+	// keyed by id, so the picker's query reaches what was SAID in a
+	// session and not only how it opened. pickCorpusFor is the row set
+	// it was built from, so a re-read rebuilds it (see pickerCorpus).
+	pickCorpus    map[string]string
+	pickCorpusFor string
 }
 
 // partEntry is one block's fitted render and what it was rendered

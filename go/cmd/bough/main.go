@@ -188,7 +188,7 @@ func (s configSource) describe() string {
 }
 
 // commands are the subcommands `bough <name>` dispatches to.
-var commands = map[string]bool{"rows": true, "sessions": true, "log": true, "update": true, "restart": true, "web": true}
+var commands = map[string]bool{"rows": true, "sessions": true, "search": true, "log": true, "update": true, "restart": true, "web": true}
 
 // command splits argv into the subcommand (if any) and its args. A
 // first arg that is neither a flag nor a known subcommand is an error
@@ -274,6 +274,9 @@ func main() {
 		return
 	case "sessions":
 		runSessions(args)
+		return
+	case "search":
+		runSearch(args)
 		return
 	case "update":
 		runUpdate(args)
@@ -703,6 +706,8 @@ Single-dash long flags (-set, -headless) are accepted too.
 commands:
   rows      print the row state table and exit
   sessions  list stored sessions, newest first
+  search    find sessions by what was said in them; repo:/branch:/since:
+            filter, e.g. bough search "rate limit repo:bough since:7d"
   log       pretty-print a session's history (latest when no arg)
   update    git pull + rebuild this binary + restart the web session
   restart   bounce the running --web session onto the current binary

@@ -211,6 +211,12 @@ type SessionInfo struct {
 	Entries int       // parseable entry count
 	Title   string    // first input entry's text, first line
 	Cwd     string    // working directory from the "meta" entry; "" for old files
+	// Repo and Branch are the git repository root and branch recorded
+	// on the "meta" entry when the session started. Both "" outside a
+	// repo and for sessions written before they were captured; callers
+	// fall back to Cwd, which is why neither is an error.
+	Repo   string
+	Branch string
 	// ForkedFrom and AtSeq are the fork origin from the "meta" entry
 	// (see Fork): the id of the session this one was forked from and
 	// the turn it was forked at. "" and 0 for a session that is not a
@@ -241,6 +247,7 @@ func List(dir string) ([]SessionInfo, error) {
 			continue
 		}
 		title, cwd, from := "", "", ""
+		repo, branch := "", ""
 		var atSeq int64
 		for _, e := range entries {
 			// A "title" entry is a name the session was given (the
@@ -253,6 +260,8 @@ func List(dir string) ([]SessionInfo, error) {
 			}
 			if e.Kind == "meta" && cwd == "" {
 				cwd, _ = e.Data["cwd"].(string)
+				repo, _ = e.Data["repo"].(string)
+				branch, _ = e.Data["branch"].(string)
 				if src, _ := e.Data["forked_from"].(string); src != "" {
 					from = strings.TrimSuffix(filepath.Base(src), ".jsonl")
 					// at_seq round-trips through JSON as a float64.
@@ -275,6 +284,8 @@ func List(dir string) ([]SessionInfo, error) {
 			Entries: len(entries),
 			Title:   title,
 			Cwd:     cwd,
+			Repo:    repo,
+			Branch:  branch,
 
 			ForkedFrom: from,
 			AtSeq:      atSeq,
@@ -540,7 +551,17 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	}
 	if created {
 		if cwd, err := os.Getwd(); err == nil {
-			s.Append("meta", map[string]any{"cwd": cwd})
+			data := map[string]any{"cwd": cwd}
+			// Only when the session starts inside a checkout. Started
+			// from a directory that merely holds repos, there is no
+			// one repo to name, and search falls back to the text.
+			if repo, branch := repoInfo(cwd); repo != "" {
+				data["repo"] = repo
+				if branch != "" {
+					data["branch"] = branch
+				}
+			}
+			s.Append("meta", data)
 		}
 	} else if s.openTurn() {
 		// The process died mid-turn (SIGKILL, crash): nothing recorded

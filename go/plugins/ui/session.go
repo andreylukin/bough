@@ -222,7 +222,61 @@ func (m *model) pickerRows(cfg *uiCfg) []sessRow {
 		return rows
 	}
 	q := strings.ToLower(m.pickQuery)
-	return slices.DeleteFunc(rows, func(r sessRow) bool { return !strings.Contains(strings.ToLower(r.Title), q) })
+	corpus := m.pickerCorpus(infos)
+	return slices.DeleteFunc(rows, func(r sessRow) bool {
+		if strings.Contains(strings.ToLower(r.Title), q) {
+			return false
+		}
+		return !strings.Contains(corpus[r.ID], q)
+	})
+}
+
+// pickerCorpus is every listed session's transcript, lowercased and
+// keyed by id, read once per row set and reused for the whole typing
+// run.
+//
+// A title is the session's first prompt, so filtering on titles alone
+// answers only "how did this session open" — and what you remember is
+// usually something said in the middle of it. Reading the files is
+// affordable (a year of sessions is tens of megabytes of JSONL) and
+// happens on the first keystroke rather than when the picker opens, so
+// opening it stays instant.
+func (m *model) pickerCorpus(infos []history.SessionInfo) map[string]string {
+	key := corpusKey(infos)
+	if m.pickCorpus != nil && m.pickCorpusFor == key {
+		return m.pickCorpus
+	}
+	corpus := make(map[string]string, len(infos))
+	for _, in := range infos {
+		if in.Path == "" {
+			continue // no file to read (a synthesized row)
+		}
+		entries, err := history.Read(in.Path)
+		if err != nil {
+			continue // unreadable is not matchable, and never fatal
+		}
+		var b strings.Builder
+		for _, e := range entries {
+			b.WriteString(history.EntryText(e))
+			b.WriteByte('\n')
+		}
+		corpus[in.ID] = strings.ToLower(b.String())
+	}
+	m.pickCorpus, m.pickCorpusFor = corpus, key
+	return corpus
+}
+
+// corpusKey identifies a row set cheaply, so a mid-session re-read (or
+// a fork landing) rebuilds instead of filtering stale text.
+func corpusKey(infos []history.SessionInfo) string {
+	var b strings.Builder
+	for _, in := range infos {
+		b.WriteString(in.ID)
+		b.WriteByte(' ')
+		b.WriteString(in.ModTime.Format(time.RFC3339Nano))
+		b.WriteByte(';')
+	}
+	return b.String()
 }
 
 // sessionTree nests each fork under the session it was forked from
@@ -432,7 +486,7 @@ func (m *model) pickerView(cfg *uiCfg) string {
 		"",
 	}
 	if m.pickQuery != "" {
-		lines = append(lines, th["accent"].Render("filter: ")+m.pickQuery, "")
+		lines = append(lines, th["accent"].Render("search: ")+m.pickQuery, "")
 	}
 	if cfg.choose == nil {
 		lines = append(lines, th["error"].Render("✗ session-choose service missing — list is read-only"), "")
@@ -464,9 +518,9 @@ func (m *model) pickerView(cfg *uiCfg) string {
 		}
 		lines = append(lines, st.Render(row))
 	}
-	hint := "type to filter · ↑/↓ select · enter resume · esc new session"
+	hint := "type to search · ↑/↓ select · enter resume · esc new session"
 	if m.sessRows != nil {
-		hint = "type to filter · ↑/↓ select · enter resume · esc back"
+		hint = "type to search · ↑/↓ select · enter resume · esc back"
 	}
 	hints := th["dim"].Render(hint)
 	for len(lines) < m.height-1 {

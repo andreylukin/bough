@@ -68,6 +68,8 @@ go build ./cmd/bough
 ./bough log                  # pretty-print the latest session's history
 ./bough log <file> --raw     # a specific history file, raw JSONL
 ./bough sessions             # list sessions, newest first
+./bough search <query>       # find sessions by what was said in them;
+                             # repo:/branch:/since: narrow the results
 ./bough mcp list             # configured MCP servers (plugin command)
 ./bough mcp tools [server]   # their tools (all, or one server); mcp search <q> finds one
 ./bough mcp status           # does each server answer; mcp call <srv/tool> [args] runs one
