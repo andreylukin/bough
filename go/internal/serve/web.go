@@ -7,13 +7,23 @@ package serve
 // viewer — that keeps `go build` the only build step this repo needs.
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"io/fs"
 	"net/http"
+	"time"
 )
 
 //go:embed web/dist
 var webFiles embed.FS
+
+// asset is one embedded file and the tag a browser revalidates with.
+type asset struct {
+	body []byte
+	etag string
+}
 
 // staticHandler serves the built UI. Unknown paths fall back to the
 // shell rather than 404ing: the client owns its routes, and the API
@@ -23,15 +33,42 @@ func staticHandler() (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	files := http.FileServer(http.FS(sub))
 	shell, err := fs.ReadFile(sub, "index.html")
+	if err != nil {
+		return nil, err
+	}
+	// Every asset is tagged with a hash of its own bytes. An embedded
+	// file has a zero mod time, so http.FileServer sent the bundle with
+	// no ETag, no Last-Modified and no Cache-Control — and a browser
+	// given none of those caches on a heuristic of its own. The shell
+	// is no-store and so always arrived fresh, which is what made this
+	// hard to see: the page looked current while its JavaScript was
+	// months old, and neither rebuilding nor restarting changed it.
+	assets := map[string]asset{}
+	err = fs.WalkDir(sub, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := fs.ReadFile(sub, p)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(b)
+		assets[p] = asset{body: b, etag: `"` + hex.EncodeToString(sum[:16]) + `"`}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
-			if _, err := fs.Stat(sub, r.URL.Path[1:]); err == nil {
-				files.ServeHTTP(w, r)
+			if a, ok := assets[r.URL.Path[1:]]; ok {
+				// no-cache is "revalidate every time", not "do not
+				// cache": with the ETag the answer is a 304 and no
+				// bytes whenever the bundle has not changed.
+				w.Header().Set("Cache-Control", "no-cache")
+				w.Header().Set("ETag", a.etag)
+				http.ServeContent(w, r, r.URL.Path, time.Time{}, bytes.NewReader(a.body))
 				return
 			}
 			// No SPA fallback: this client has no client-side routes,
