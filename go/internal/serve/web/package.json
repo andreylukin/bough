@@ -1,0 +1,14 @@
+{
+  "name": "bough-control-room",
+  "private": true,
+  "version": "0.0.1",
+  "description": "The bough serve control room UI. Built with bun into dist/app.js, which is committed and go:embed-ed.",
+  "scripts": {
+    "build": "bun build src/main.tsx --outfile=dist/app.js --minify --define:process.env.NODE_ENV='\"production\"'",
+    "dev": "bun build src/main.tsx --outfile=dist/app.js --watch"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  }
+}

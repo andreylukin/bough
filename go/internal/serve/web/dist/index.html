@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bough Control Room</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2382cb9b' stroke-width='1.8' stroke-linecap='round'%3E%3Cpath d='M12 21V9'/%3E%3Cpath d='M12 9c0-3 2-5 5-5 0 3-2 5-5 5z'/%3E%3Cpath d='M12 13c0-2.5-1.8-4.5-4.5-4.5 0 2.5 2 4.5 4.5 4.5z'/%3E%3C/svg%3E">
+<style>
+/* Tokens. Every text pair below was measured, not eyeballed: the
+   tightest is text-3 on raised at 4.65:1, against a 4.5:1 floor.
+   line is decorative (1.61:1, deliberately faint); line-strong is for
+   borders that DEFINE a control and clears 3:1 on every surface.
+
+   One hue, one meaning: accent is interactive and brand only, amber is
+   "waiting for you", red is "failed". Resting states carry no colour.
+
+   Committed to dark. This is a control room, not a document, so the
+   single theme is a choice — every colour is painted explicitly rather
+   than inherited from the host. */
+:root {
+  --bg: #0f1310; --surface: #191d1a; --raised: #222723; --sel: #242b25;
+  --line: #343a35; --line-strong: #646b65;
+  --text-1: #e3eae4; --text-2: #b1b8b2; --text-3: #89908a;
+  --accent: #82cb9b; --amber: #eabc6e; --red: #ed756e;
+  /* System stack on purpose: a localhost tool must render identically
+     on a plane. The mock used IBM Plex; swap it in here if the webfont
+     is ever worth the offline cost. */
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text-1);
+       font: 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased;
+       -moz-osx-font-smoothing: grayscale; }
+.num { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--mono); }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+.app { display: flex; height: 100%; }
+.scroll { overflow-y: auto; min-height: 0; }
+
+/* ---- sidebar ---- */
+.sidebar { width: 304px; flex-shrink: 0; border-right: 1px solid var(--line);
+           background: var(--surface); display: flex; flex-direction: column; }
+.sidebar .scroll { flex-grow: 1; padding-bottom: 16px; }
+.field-label { display: block; font-size: 12px; font-weight: 500; color: var(--text-3); margin-bottom: 6px; }
+.field { width: 100%; font: 13px var(--sans); color: var(--text-1); background: var(--raised);
+         border: 1px solid var(--line-strong); border-radius: 7px; padding: 8px 11px; }
+.field::placeholder { color: var(--text-3); }
+.group-head { font-size: 12px; font-weight: 500; color: var(--text-3); padding: 0 20px 8px; }
+.row { display: flex; flex-direction: column; gap: 5px; width: 100%; text-align: start;
+       padding: 9px 20px 10px; background: none; border: 0; border-left: 2px solid transparent;
+       color: inherit; font: inherit; cursor: pointer; }
+.row:hover { background: var(--raised); }
+.row-on { background: var(--sel); border-left-color: var(--accent); }
+.row-title { font-size: 14px; font-weight: 500; color: var(--text-2);
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-on .row-title { color: var(--text-1); }
+.sidebar-foot { border-top: 1px solid var(--line); padding: 12px 20px; }
+.link { background: none; border: 0; padding: 0; color: var(--text-3); font: 12px var(--sans); cursor: pointer; }
+.link:hover { color: var(--text-1); }
+
+/* ---- thread ---- */
+.thread { flex-grow: 1; display: flex; flex-direction: column; min-width: 0; }
+.thread.empty { align-items: center; justify-content: center; text-align: center; color: var(--text-3); }
+.thread.empty h1 { font-size: 20px; font-weight: 600; color: var(--text-2); margin: 0 0 8px; }
+.thread.empty p { margin: 0; max-width: 46ch; }
+.thread-head { flex-shrink: 0; display: flex; align-items: baseline; gap: 14px;
+               padding: 16px 32px 14px; border-bottom: 1px solid var(--line); }
+.thread-head h1 { margin: 0; font-size: 20px; font-weight: 600; line-height: 1.2;
+                  letter-spacing: -0.01em; text-wrap: balance;
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 52ch; }
+.transcript { flex-grow: 1; padding: 26px 32px; display: flex; flex-direction: column; gap: 22px; }
+.rule { height: 1px; background: var(--line); }
+
+.block { background: var(--surface); border-radius: 8px; overflow: hidden; }
+.block > summary { display: flex; align-items: center; gap: 9px; padding: 9px 14px; cursor: pointer; list-style: none; }
+.block > summary::-webkit-details-marker { display: none; }
+.block > summary::before { content: "›"; color: var(--text-3); font-family: var(--mono); }
+.block[open] > summary::before { content: "⌄"; }
+.block pre { margin: 0; padding: 12px 14px; border-top: 1px solid var(--line);
+             font: 13px/1.6 var(--mono); color: var(--text-2); overflow-x: auto; white-space: pre; }
+
+.ask { background: var(--raised); border-radius: 8px; padding: 16px 18px;
+       display: flex; flex-direction: column; gap: 12px; max-width: 74ch; }
+
+/* ---- composer ---- */
+.composer-wrap { flex-shrink: 0; padding: 0 32px 24px; }
+.composer { background: var(--surface); border: 1px solid var(--line-strong); border-radius: 9px;
+            padding: 13px 16px; display: flex; flex-direction: column; gap: 12px; }
+.composer textarea { width: 100%; resize: vertical; background: none; border: 0; color: var(--text-1);
+                     font: 15px/1.5 var(--sans); }
+.composer textarea:focus { outline: none; }
+.composer textarea::placeholder { color: var(--text-3); }
+.hint { font-size: 12px; color: var(--text-3); }
+.composer .hint + .hint { margin-inline-start: 8px; }
+
+.btn { font: 13px var(--sans); color: var(--text-2); background: none;
+       border: 1px solid var(--line-strong); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+.btn:hover { color: var(--text-1); }
+.btn-primary { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 500; }
+.btn-primary:hover { color: var(--bg); filter: brightness(1.08); }
+.btn:disabled { opacity: .5; cursor: default; }
+
+.toast { position: fixed; right: 20px; bottom: 20px; max-width: 46ch;
+         background: var(--raised); border: 1px solid var(--red); color: var(--text-1);
+         border-radius: 8px; padding: 10px 14px; font-size: 13px; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

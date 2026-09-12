@@ -188,7 +188,7 @@ func (s configSource) describe() string {
 }
 
 // commands are the subcommands `bough <name>` dispatches to.
-var commands = map[string]bool{"rows": true, "sessions": true, "search": true, "log": true, "update": true, "restart": true, "web": true}
+var commands = map[string]bool{"rows": true, "sessions": true, "search": true, "log": true, "update": true, "restart": true, "web": true, "serve": true}
 
 // command splits argv into the subcommand (if any) and its args. A
 // first arg that is neither a flag nor a known subcommand is an error
@@ -286,6 +286,9 @@ func main() {
 		return
 	case "web":
 		runWeb(args)
+		return
+	case "serve":
+		runServe(args)
 		return
 	}
 	if pc, ok := kernel.FindCommand(cmd); ok && cmd != "" {
@@ -713,6 +716,8 @@ commands:
   restart   bounce the running --web session onto the current binary
   web       [addr] start the browser UI detached and open it (default
             localhost:7681); "web status" / "web stop"
+  serve     [addr] start the session control API detached (default
+            127.0.0.1:7684); "serve status" / "serve stop"
 
 config:
   ./bough.yml           project rows, overlaid on the embedded default
