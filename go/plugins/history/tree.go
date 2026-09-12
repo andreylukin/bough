@@ -235,6 +235,77 @@ func (c *Checkpoints) Pin(seq int64, tree string) {
 	}
 }
 
+// ChangedFiles is the paths differing between two tree objects, as
+// paths relative to dir (falling back to absolute for anything outside
+// it).
+//
+// The write tools record what a turn touched, but they only see their
+// own writes: a file changed by a shell command — a heredoc, sed -i, a
+// script — was recorded nowhere, which is most edits in practice. Two
+// checkpoints bracket the turn instead, so what changed is observed
+// rather than reported, whatever did it.
+//
+// The path form matters: git prints toplevel-relative paths, while
+// Restore joins a relative path to the working directory. Running from
+// a subdirectory those differ, and /undo would revert the wrong path
+// (or silently skip it as outside the repo), so they are normalized
+// here rather than at each use.
+func ChangedFiles(dir, before, after string) ([]string, error) {
+	top, err := git(dir, nil, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return nil, err
+	}
+	out, err := git(dir, nil, "diff", "--name-only", "-z", before, after)
+	if err != nil {
+		return nil, err
+	}
+	if r, err := filepath.EvalSymlinks(top); err == nil {
+		top = r
+	}
+	base := dir
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		base = r
+	}
+	var files []string
+	for _, rel := range strings.Split(out, "\x00") {
+		if rel == "" {
+			continue
+		}
+		abs := filepath.Join(top, rel)
+		if r, err := filepath.Rel(base, abs); err == nil && r != ".." && !strings.HasPrefix(r, "../") {
+			files = append(files, r)
+			continue
+		}
+		files = append(files, abs)
+	}
+	return files, nil
+}
+
+// Changed is the files that differ from the turn's checkpoint now:
+// the working tree is snapshotted again and the two trees compared.
+// nil outside a git repo, or when anything goes wrong — a turn's
+// record is worth a log line, never an error.
+func (c *Checkpoints) Changed(before string) []string {
+	if before == "" {
+		return nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	after, err := Snapshot(cwd)
+	if err != nil {
+		kernel.Logf("bough: history: no end-of-turn snapshot: %v\n", err)
+		return nil
+	}
+	files, err := ChangedFiles(cwd, before, after)
+	if err != nil {
+		kernel.Logf("bough: history: changed files: %v\n", err)
+		return nil
+	}
+	return files
+}
+
 // Ancestors is the chain of entries ending at seq, root first: each
 // entry's ParentOf, walked back (a seq missing from a corrupt line is
 // stepped over).

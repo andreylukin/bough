@@ -111,6 +111,9 @@ type TurnStats interface {
 type Checkpointer interface {
 	Snapshot() string
 	Pin(seq int64, tree string)
+	// Changed is what differs from the turn's checkpoint now — the
+	// edits a shell command made, which no tool reported.
+	Changed(before string) []string
 }
 
 // Sections is the "prompt-sections" service: named system-prompt
@@ -701,8 +704,11 @@ type runner struct {
 	guidance   string // the benchmark brief, when task_guidance is set
 	base       string // system_prompt from config; "" = SystemPrompt
 	cp         Checkpointer
-	secs       *Sections
-	hasAsk     bool // an "ask-answers" service is mounted: document tools.ask
+	// turnTree is this turn's checkpoint, kept so the done entry can
+	// diff against it; "" outside a repo or without the seam.
+	turnTree string
+	secs     *Sections
+	hasAsk   bool // an "ask-answers" service is mounted: document tools.ask
 	// steer hands over the steering messages sent since the last
 	// call (turns.takeSteers); final shuts the gate, see there. nil =
 	// no steering.
@@ -798,6 +804,9 @@ func (r *runner) admit(ctx context.Context, input string, steer bool, emit func(
 		if tree = r.cp.Snapshot(); tree != "" {
 			data["checkpoint"] = tree
 		}
+	}
+	if !steer {
+		r.turnTree = tree
 	}
 	in := r.hist.Append("input", data)
 	if tree != "" {
@@ -960,15 +969,34 @@ func (r *runner) landJobs(emit func(kind, text string)) {
 	}
 }
 
-// doneData builds the "done" entry's data: files written this turn and
-// the last bash exit code (when a bash call ran), from the optional
-// turn-stats seam. Without it, only "files": [] is present.
+// doneData builds the "done" entry's data: the files this turn
+// changed and the last bash exit code (when a bash call ran).
+//
+// Files come from two seams because neither is enough alone. The
+// turn-stats tally sees only the write tools' own writes, so an edit
+// made by a shell command — a heredoc, sed -i, a script, which is most
+// of them — was recorded nowhere. The checkpoints see everything that
+// moved inside the repo, but nothing outside it, which is where the
+// scratchpad and /tmp live. The union is what the turn actually did.
 func (r *runner) doneData() map[string]any {
 	data := map[string]any{"files": []string{}}
-	if r.stats == nil {
-		return data
+	var files []string
+	shell := r.stats == nil // no tally at all: the trees are all there is
+	if r.stats != nil {
+		f, exit, ran := r.stats.Take()
+		files, shell = f, ran
+		if ran {
+			data["exit"] = exit
+		}
 	}
-	files, exit, ran := r.stats.Take()
+	// Only when a shell command ran: the diff exists to catch what the
+	// write tools could not see, so with nothing run there is nothing
+	// for them to have missed. It also keeps the snapshot — git work
+	// proportional to the repo, ~35ms here and more in a large one —
+	// off the end of every turn that never touched a shell.
+	if r.cp != nil && shell {
+		files = mergeFiles(files, r.cp.Changed(r.turnTree))
+	}
 	if files == nil {
 		files = []string{}
 	}
@@ -982,9 +1010,6 @@ func (r *runner) doneData() map[string]any {
 		}
 		data["after"] = after
 	}
-	if ran {
-		data["exit"] = exit
-	}
 	if r.report != nil {
 		if u := UsageDelta(r.reported, r.report()); u != nil {
 			data["usage"] = u
@@ -992,6 +1017,22 @@ func (r *runner) doneData() map[string]any {
 		r.reported = r.report()
 	}
 	return data
+}
+
+// mergeFiles adds the paths b contributes to a, in order and without
+// duplicates. The tools' own record leads: those paths are what the
+// transcript already showed as written.
+func mergeFiles(a, b []string) []string {
+	seen := make(map[string]bool, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, f := range append(append([]string{}, a...), b...) {
+		if f == "" || seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	return out
 }
 
 // UsageDelta is what a turn spent: the tally now less the tally at the
