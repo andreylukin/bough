@@ -230,3 +230,36 @@ func TestWebPidfileKeepsALiveOwner(t *testing.T) {
 	}
 	rm()
 }
+
+// `bough update` rebuilt the binary and left the control room running
+// the UI it started with — and a second `bough serve` declines to take
+// over while exiting 0, so nothing said anything was wrong. Updating
+// must bounce it.
+func TestRestartServeNoPidfile(t *testing.T) {
+	var out bytes.Buffer
+	if err := restartServe(t.TempDir(), "/bin/echo", &out); err != nil {
+		t.Fatalf("restartServe with no control room = %v, want nil", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("said %q about a control room that is not running", out.String())
+	}
+}
+
+func TestRestartServeStalePidfile(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".bough"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A pid that is certainly not alive.
+	if err := os.WriteFile(servePidfile(home),
+		[]byte("2147483000 127.0.0.1:7684\t/tmp\tembedded\t\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := restartServe(home, "/bin/echo", &out); err != nil {
+		t.Fatalf("restartServe over a stale pidfile = %v, want nil", err)
+	}
+	if _, err := os.Stat(servePidfile(home)); err == nil {
+		t.Error("stale pidfile survived")
+	}
+}

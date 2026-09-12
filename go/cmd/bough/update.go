@@ -71,10 +71,46 @@ func runUpdate(args []string) {
 	if err := restartWeb(home, target, os.Stdout); err != nil {
 		fatal(err)
 	}
+	// The control room embeds its UI in the binary, so a running
+	// supervisor serves the bundle it started with forever — and a
+	// second `bough serve` declines to take over and exits 0, which
+	// reads like success. Updating without this left the page showing
+	// an old UI that no amount of rebuilding could shift.
+	if err := restartServe(home, target, os.Stdout); err != nil {
+		fatal(err)
+	}
 }
 
-// runRestart is `bough restart`: bounce the running --web session (if
-// any) onto the current binary.
+// restartServe bounces a running `bough serve` onto the current binary.
+// Silent when none is running: not everyone runs the control room.
+func restartServe(home, bin string, out io.Writer) error {
+	cur, ok := runningServe(home)
+	if !ok {
+		return nil
+	}
+	fmt.Fprintf(out, "bough: stopping control room (pid %d)…\n", cur.pid)
+	if err := interrupt(cur.pid); err != nil {
+		return fmt.Errorf("signal pid %d: %w", cur.pid, err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for alive(cur.pid) {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("control room (pid %d) did not exit within 10s", cur.pid)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	os.Remove(servePidfile(home)) // best-effort; the exiting process usually removed it
+
+	pid, logPath, err := launchServe(home, bin, cur.addr)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "bough: restarted control room on %s (pid %d, log %s)\n", cur.addr, pid, logPath)
+	return nil
+}
+
+// runRestart is `bough restart`: bounce the running --web session and
+// the control room, whichever are up, onto the current binary.
 func runRestart(args []string) {
 	if len(args) > 0 {
 		fatal(fmt.Errorf("restart takes no arguments, got %v", args))
@@ -83,7 +119,11 @@ func runRestart(args []string) {
 	if err != nil {
 		fatal(fmt.Errorf("home dir: %w", err))
 	}
-	if err := restartWeb(home, resolveExe(), os.Stdout); err != nil {
+	exe := resolveExe()
+	if err := restartWeb(home, exe, os.Stdout); err != nil {
+		fatal(err)
+	}
+	if err := restartServe(home, exe, os.Stdout); err != nil {
 		fatal(err)
 	}
 }
