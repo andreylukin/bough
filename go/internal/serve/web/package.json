@@ -9,7 +9,8 @@
     "design:check": "node design/check.mjs",
     "design:sync": "node design/check.mjs --write",
     "storybook": "storybook dev -p 6006 --no-open",
-    "build-storybook": "storybook build -o storybook-static"
+    "build-storybook": "storybook build -o storybook-static",
+    "build:types": "tsc -p tsconfig.ds.json"
   },
   "dependencies": {
     "dompurify": "^3.4.15",
@@ -21,6 +22,8 @@
     "@storybook/react-vite": "^10.6.0",
     "@types/dompurify": "^3.2.0",
     "storybook": "^10.6.0",
+    "typescript": "^7.0.2",
     "vite": "^8.3.0"
-  }
+  },
+  "types": "types/ds-entry.d.ts"
 }

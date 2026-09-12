@@ -1,0 +1,29 @@
+{
+  "projectId": "49994de9-4eaf-4559-b637-00d424ce3396",
+  "shape": "storybook",
+  "pkg": "bough-control-room",
+  "globalName": "BoughWeb",
+  "storybookConfigDir": "go/internal/serve/web/.storybook",
+  "storybookStatic": ".design-sync/sb-reference",
+  "buildCmd": "cd go/internal/serve/web && bun run build && bun run build:types",
+  "entry": "go/internal/serve/web/ds-entry.ts",
+  "srcDir": "go/internal/serve/web/src",
+  "cssEntry": "design/bough.css",
+  "titleMap": {
+    "Transcript": "TurnView",
+    "Shell": "App",
+    "Foundations": null
+  },
+  "overrides": {
+    "App": {
+      "cardMode": "column"
+    },
+    "StatusMark": {
+      "cardMode": "column"
+    },
+    "Thread": {
+      "cardMode": "column"
+    }
+  },
+  "readmeHeader": ".design-sync/conventions.md"
+}

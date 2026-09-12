@@ -50,5 +50,5 @@ Stories live in `src/stories/`, one file per area, with sample data in
 everything else through. No addons: the point is the components under
 the real CSS, not the tooling.
 
-The Claude Design bundle in `design/` is a sibling of this, not a
-build of it — see `design/README.md`.
+The Claude Design sync is generated from these same stories — see
+`design/README.md`.
