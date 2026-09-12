@@ -4,6 +4,7 @@ import type { Line, Project, Row } from "./types";
 import { StatusMark } from "./status";
 import { ProjectsView } from "./projects";
 import { Markdown, codeLabel, doneSummary, groupTurns, isQuiet, plainTitle, stripRunFences, type Turn } from "./render";
+import { SkillPicker } from "./skills";
 
 type View = "sessions" | "projects";
 
@@ -314,6 +315,10 @@ function Thread({ row, lines, projects, onSend, onAnswer, onInterrupt, onArchive
             <span className="hint">Return to send</span>
             <span className="hint">Shift + Return for a newline</span>
             <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
+              <SkillPicker onPick={(name) => {
+                setDraft((d) => (d.trimStart().startsWith("/") ? d : `/${name} ${d.trimStart()}`));
+                document.getElementById("composer")?.focus();
+              }} />
               {row.status === "running" && <button className="btn" onClick={onInterrupt}>Stop</button>}
               <button className="btn btn-primary" onClick={send} disabled={busy || !draft.trim()}>Send</button>
             </div>

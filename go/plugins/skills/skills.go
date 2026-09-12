@@ -31,6 +31,17 @@ type Skills struct {
 // New returns a Skills scanning the given pool directories.
 func New(pools ...string) *Skills { return &Skills{pools: pools} }
 
+// Default returns the Skills the agent itself uses: the two pools
+// under home, then the repo-local one. `bough serve` lists the same
+// set, so the web picker and the TUI never disagree about what exists.
+func Default(home string) *Skills {
+	return New(
+		filepath.Join(home, ".claude", "skills"),
+		filepath.Join(home, ".bough", "skills"),
+		filepath.Join(".claude", "skills"),
+	)
+}
+
 // Inject returns "[skill: <name>]\n<SKILL.md contents>" blocks for
 // every skill mentioned in input, capped at maxBlocks.
 func (s *Skills) Inject(input string) []string {
@@ -205,12 +216,32 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("skills: home dir: %w", err)
 	}
-	s := New(
-		filepath.Join(home, ".claude", "skills"),
-		filepath.Join(home, ".bough", "skills"),
-		filepath.Join(".claude", "skills"),
-	)
+	s := Default(home)
 	s.registerCommands(ctx)
 	ctx.Provide("skills", s)
 	return nil
+}
+
+// SkillInfo is one skill as a picker shows it.
+type SkillInfo struct {
+	Name    string `json:"name"`
+	Summary string `json:"summary"`
+	Manual  bool   `json:"manual"` // only ever runs as /name, never on a mention
+}
+
+// Catalog lists every skill across the pools, sorted by name. It is
+// what a picker needs and nothing more: the SKILL.md body stays on
+// disk until the loop injects it.
+func (s *Skills) Catalog() []SkillInfo {
+	found := s.scan()
+	out := make([]SkillInfo, 0, len(found))
+	for _, name := range slices.Sorted(maps.Keys(found)) {
+		path := found[name]
+		out = append(out, SkillInfo{
+			Name:    name,
+			Summary: summarize(description(path)),
+			Manual:  manual(path) || commonWord(name),
+		})
+	}
+	return out
 }

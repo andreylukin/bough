@@ -20,6 +20,10 @@ import (
 type API struct {
 	sup *Supervisor
 	mux *http.ServeMux
+	// home is where the skill pools are looked up. A field rather than
+	// a call to os.UserHomeDir() inside the handler, so a test lists a
+	// seeded pool instead of whatever the developer happens to have.
+	home string
 }
 
 // Row is one session as the wire sees it: what history knows, what the
@@ -56,7 +60,8 @@ const heartbeat = 15 * time.Second
 // NewAPI wires the routes. Method+pattern routing means a wrong method
 // on a real path is the mux's own 405, not a 404.
 func NewAPI(sup *Supervisor) *API {
-	a := &API{sup: sup, mux: http.NewServeMux()}
+	home, _ := os.UserHomeDir()
+	a := &API{sup: sup, mux: http.NewServeMux(), home: home}
 	a.mux.HandleFunc("GET /api/health", a.health)
 	a.mux.HandleFunc("GET /api/sessions", a.listSessions)
 	a.mux.HandleFunc("POST /api/sessions", a.createSession)
@@ -70,6 +75,7 @@ func NewAPI(sup *Supervisor) *API {
 	a.mux.HandleFunc("POST /api/sessions/{id}/model", a.setModel)
 	a.mux.HandleFunc("POST /api/sessions/{id}/effort", a.setEffort)
 	a.mux.HandleFunc("GET /api/models", a.models)
+	a.mux.HandleFunc("GET /api/skills", a.skills)
 	a.mux.HandleFunc("GET /api/projects", a.listProjects)
 	a.mux.HandleFunc("POST /api/projects", a.createProject)
 	a.mux.HandleFunc("POST /api/projects/{id}/rename", a.renameProject)

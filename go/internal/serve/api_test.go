@@ -22,14 +22,16 @@ import (
 type apiFixture struct {
 	*fixture
 	srv *httptest.Server
+	api *API
 }
 
 func newAPI(t *testing.T, extraEnv ...string) *apiFixture {
 	t.Helper()
 	f := newFixture(t, extraEnv...)
-	srv := httptest.NewServer(NewAPI(f.sup))
+	api := NewAPI(f.sup)
+	srv := httptest.NewServer(api)
 	t.Cleanup(srv.Close)
-	return &apiFixture{fixture: f, srv: srv}
+	return &apiFixture{fixture: f, srv: srv, api: api}
 }
 
 func (f *apiFixture) do(t *testing.T, method, path, body string) (int, map[string]any) {
