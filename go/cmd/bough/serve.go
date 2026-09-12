@@ -245,7 +245,17 @@ func serveForeground(home, addr string) error {
 	if err != nil {
 		return fmt.Errorf("serve: listen %s: %w", addr, err)
 	}
-	srv := &http.Server{Addr: addr, Handler: serve.NewAPI(sup)}
+	api := serve.NewAPI(sup)
+	srv := &http.Server{Addr: addr, Handler: api}
+
+	// Watchers run for as long as the server does. They execute shell,
+	// so a server bound off loopback gets none — say why, rather than
+	// leaving someone wondering where their watcher went.
+	watchCtx, stopWatch := context.WithCancel(context.Background())
+	defer stopWatch()
+	if err := api.StartWatchers(watchCtx, addr); err != nil {
+		fmt.Fprintln(os.Stderr, "bough serve: watchers off:", err)
+	}
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)

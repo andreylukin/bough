@@ -96,6 +96,10 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .sub-dot{width:8px;height:8px;border-radius:50%;border:1.5px solid var(--text-3)}
 .err{background:var(--surface);border-left:2px solid var(--red);border-radius:0 6px 6px 0;
      padding:10px 14px;color:var(--red);white-space:pre-wrap;font-size:14px;max-width:78ch}
+.hook-line{margin:0 0 6px;font-size:12px;color:var(--text-3)}
+.hook-act{color:var(--amber)}
+.hook-bad{color:var(--red)}
+.hook-why{color:var(--text-3)}
 .meta-line{font-size:12px;color:var(--text-3);max-width:78ch}
 
 /* collapsible code and results */
@@ -253,3 +257,35 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
   .proj-open{flex-basis:100%}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+/* hooks: watchers, installed hooks, recent fires. The sections reuse the
+   projects chrome; only the row internals are new. State is never colour
+   alone — every red or amber mark carries the word beside it. */
+.hk-row{flex-direction:column;align-items:stretch;gap:8px}
+.hk-main{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;min-width:0}
+.hk-name{font-size:13px;color:var(--text-1);overflow-wrap:anywhere}
+.hk-when{font-size:12px;color:var(--text-3)}
+.hk-time{flex:0 0 11ch}
+.hk-tag{font-size:11px;color:var(--text-2);border:1px solid var(--line-strong);border-radius:999px;
+        padding:1px 8px}
+.hk-state{font-size:12px;font-weight:500}
+.hk-ok{color:var(--text-3)}
+.hk-bad{color:var(--red)}
+.hk-shadow{color:var(--amber)}
+.hk-why{font-size:13px;margin:0}
+.hk-event{display:flex;flex-direction:column;gap:2px;padding-top:10px}
+.hk-event-name{margin:0;font-size:12px;font-weight:500;color:var(--text-3)}
+.hk-toggle{align-self:flex-start;min-height:28px;font:12px var(--sans);color:var(--text-3);
+           background:none;border:0;padding:4px 0;cursor:pointer}
+.hk-toggle:hover{color:var(--text-1)}
+.hk-panel{display:flex;flex-direction:column;gap:10px;padding-bottom:6px}
+.hk-panel[hidden]{display:none}
+.hk-path{margin:0;font-size:12px;color:var(--text-3);overflow-wrap:anywhere}
+.hk-edit{width:100%;background:var(--surface);color:var(--text-1);border:1px solid var(--line-strong);
+         border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.6;resize:vertical}
+.hk-acts{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.hk-acts .btn{min-height:28px}
+.hk-note{font-size:12px;color:var(--text-3)}
+@media (max-width:720px){
+  .hk-time{flex-basis:auto}
+  .hk-main{gap:4px 10px}
+}

@@ -65,7 +65,7 @@ export function plainTitle(t: string): string {
   return t.replace(/^#{1,6}\s+/, "").replace(/[*_`]/g, "").trim();
 }
 
-const QUIET = new Set(["job", "usage", "system", "nudge", "command", "meta", "title", "undo"]);
+const QUIET = new Set(["job", "hook", "usage", "system", "nudge", "command", "meta", "title", "undo"]);
 
 /** Kinds that are bookkeeping, not conversation. */
 export function isQuiet(kind: string): boolean {

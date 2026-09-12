@@ -160,3 +160,50 @@ func TestMcpHooksInitjsPromptHookFailures(t *testing.T) {
 		})
 	}
 }
+
+// The Hooks view lives in another process and can only read history, so
+// a fire that never reaches the session file is a fire nobody can see.
+// This is the seam between the in-memory ledger and the web.
+func TestFireIsRecordedToHistory(t *testing.T) {
+	r, _ := mcphooksinitjsRunner(t, map[string]string{
+		"post-result/guard.js": `return { deny: "not allowed" }`,
+	}, "```js\nconsole.log(1)\n```", "done")
+	mcphooksinitjsRun(t, r, "go")
+
+	var fires []map[string]any
+	for _, e := range r.hist.Entries() {
+		if e.Kind == "hook" {
+			fires = append(fires, e.Data)
+		}
+	}
+	if len(fires) == 0 {
+		t.Fatal("no hook entry in history: the ledger cannot reach the control room")
+	}
+	var denied map[string]any
+	for _, f := range fires {
+		if f["name"] == "guard.js" {
+			denied = f
+		}
+	}
+	if denied == nil {
+		t.Fatalf("guard.js not recorded; got %v", fires)
+	}
+	if denied["event"] != "post-result" {
+		t.Errorf("event = %v, want post-result", denied["event"])
+	}
+	if denied["decision"] != "denied" {
+		t.Errorf("decision = %v, want denied", denied["decision"])
+	}
+}
+
+// A session with no hooks installed must not pay for the ledger: no
+// hook ran, so nothing is written.
+func TestNoHooksWritesNothing(t *testing.T) {
+	r, _ := mcphooksinitjsRunner(t, nil, "```js\nconsole.log(1)\n```", "done")
+	mcphooksinitjsRun(t, r, "go")
+	for _, e := range r.hist.Entries() {
+		if e.Kind == "hook" {
+			t.Fatalf("hook entry written with no hooks installed: %v", e.Data)
+		}
+	}
+}

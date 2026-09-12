@@ -1095,6 +1095,19 @@ func intOf(v any) int {
 	return 0
 }
 
+// sessionNamer is the hooks service's ledger seam: it records every
+// fire, and this tells it which session the records belong to.
+type sessionNamer interface{ SetSession(id string) }
+
+// fireDrainer is the hooks service's ledger half: the fires recorded
+// since the last drain, already shaped as history data. It returns
+// maps rather than a hooks.Fire so this package need not import
+// plugins/hooks — whose in-package test imports this one, which would
+// make the pair a cycle.
+type fireDrainer interface {
+	TakeFireRecords() []map[string]any
+}
+
 // fire runs a hook event if a hooks service is present. A Fire error is
 // reported as a loop error event and never fatal — and the result still
 // comes back: Fire reports per-file failures, so discarding its result
@@ -1103,9 +1116,31 @@ func (r *runner) fire(ctx context.Context, event string, payload map[string]any,
 	if r.hooks == nil {
 		return nil
 	}
+	// The hooks service records every fire for the control room; name
+	// the session the records belong to before firing.
+	if n, ok := r.hooks.(sessionNamer); ok && r.hist != nil && r.hist.Path() != "" {
+		p := r.hist.Path()
+		n.SetSession(strings.TrimSuffix(filepath.Base(p), filepath.Ext(p)))
+	}
 	res, err := r.hooks.Fire(ctx, event, payload)
 	if err != nil {
 		emit("error", "hook "+event+": "+err.Error())
+	}
+	// The ledger lives in this process; `bough serve` is a different one
+	// and cannot read it. History is the only thing both see, so every
+	// fire is written there. Nothing is recorded when no hook ran, so a
+	// session with no hooks installed pays nothing.
+	if d, ok := r.hooks.(fireDrainer); ok && r.hist != nil {
+		for _, rec := range d.TakeFireRecords() {
+			// Only a fire that decided something is worth keeping. The
+			// rules row registers a hook on post-result, so it fires on
+			// EVERY tool result; recording those too put a hook entry
+			// between every block of every transcript.
+			if rec["decision"] == "" && rec["error"] == "" {
+				continue
+			}
+			r.hist.Append("hook", rec)
+		}
 	}
 	return res
 }

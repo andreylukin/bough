@@ -110,3 +110,90 @@ func TestFireBrokenFileSkipped(t *testing.T) {
 		t.Fatalf("want b.js result despite broken a.js, got %v", res)
 	}
 }
+
+func TestLedgerRecordsDecisions(t *testing.T) {
+	s := fixture(t)
+	cwd, _ := os.Getwd()
+	s.SetSession("sess-1")
+	writeHook(t, cwd, "post-result", "noop.js", `return null`)
+	writeHook(t, cwd, "post-result", "rewrite.js", `return {output: "clean"}`)
+	writeHook(t, cwd, "post-result", "zblock.js", `return {block: "no"}`)
+	if _, err := s.Fire(context.Background(), "post-result", map[string]any{"output": "dirty"}); err != nil {
+		t.Fatal(err)
+	}
+	fires := s.Fires(0)
+	if len(fires) != 3 {
+		t.Fatalf("want 3 fires, got %d: %v", len(fires), fires)
+	}
+	// newest first: zblock, rewrite, noop.
+	want := []struct{ name, decision string }{
+		{"zblock.js", "blocked"}, {"rewrite.js", "rewrote"}, {"noop.js", ""},
+	}
+	for i, w := range want {
+		f := fires[i]
+		if f.Name != w.name || f.Decision != w.decision {
+			t.Errorf("fire %d = %q/%q, want %q/%q", i, f.Name, f.Decision, w.name, w.decision)
+		}
+		if f.Event != "post-result" || f.Session != "sess-1" || f.At.IsZero() {
+			t.Errorf("fire %d = %+v", i, f)
+		}
+	}
+}
+
+func TestLedgerRecordsDeny(t *testing.T) {
+	s := fixture(t)
+	cwd, _ := os.Getwd()
+	writeHook(t, cwd, "pre-code-exec", "guard.js", `return {deny: "nope"}`)
+	if _, err := s.Fire(context.Background(), "pre-code-exec", map[string]any{"code": "rm"}); err != nil {
+		t.Fatal(err)
+	}
+	fires := s.Fires(0)
+	if len(fires) != 1 || fires[0].Decision != "denied" {
+		t.Fatalf("want one denied fire, got %+v", fires)
+	}
+}
+
+// A rules row rides the same seam, so its decisions land in the ledger
+// without the rules package knowing the ledger exists.
+func TestLedgerRecordsGoHook(t *testing.T) {
+	s := fixture(t)
+	s.Add("post-result", "rules", func(map[string]any) map[string]any {
+		return map[string]any{"deny": "rule"}
+	})
+	if _, err := s.Fire(context.Background(), "post-result", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	fires := s.Fires(0)
+	if len(fires) != 1 || fires[0].Name != "rules" || fires[0].Decision != "denied" {
+		t.Fatalf("want one denied rules fire, got %+v", fires)
+	}
+}
+
+func TestLedgerRecordsFailure(t *testing.T) {
+	s := fixture(t)
+	cwd, _ := os.Getwd()
+	writeHook(t, cwd, "post-result", "boom.js", `throw new Error("boom")`)
+	if _, err := s.Fire(context.Background(), "post-result", map[string]any{}); err == nil {
+		t.Fatal("want an error")
+	}
+	fires := s.Fires(0)
+	if len(fires) != 1 || fires[0].Error == "" {
+		t.Fatalf("want one failing fire, got %+v", fires)
+	}
+}
+
+func TestLedgerRingIsBounded(t *testing.T) {
+	s := fixture(t)
+	s.Add("tick", "counter", func(map[string]any) map[string]any { return nil })
+	for range fireRing + 50 {
+		if _, err := s.Fire(context.Background(), "tick", map[string]any{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(s.Fires(0)); got != fireRing {
+		t.Fatalf("ring holds %d, want %d", got, fireRing)
+	}
+	if got := len(s.Fires(5)); got != 5 {
+		t.Fatalf("Fires(5) returned %d", got)
+	}
+}

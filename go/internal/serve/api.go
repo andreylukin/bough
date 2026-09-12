@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/andreylukin/bough/internal/serve/watch"
 	"github.com/andreylukin/bough/plugins/history"
 )
 
@@ -24,6 +25,10 @@ type API struct {
 	// a call to os.UserHomeDir() inside the handler, so a test lists a
 	// seeded pool instead of whatever the developer happens to have.
 	home string
+	// watch is the watcher engine, nil until StartWatchers runs it (and
+	// when it refuses to: watchers are shell, and a non-loopback bind
+	// means no engine at all).
+	watch *watch.Engine
 }
 
 // Row is one session as the wire sees it: what history knows, what the
@@ -76,6 +81,10 @@ func NewAPI(sup *Supervisor) *API {
 	a.mux.HandleFunc("POST /api/sessions/{id}/effort", a.setEffort)
 	a.mux.HandleFunc("GET /api/models", a.models)
 	a.mux.HandleFunc("GET /api/skills", a.skills)
+	a.mux.HandleFunc("GET /api/hooks", a.hooks)
+	a.mux.HandleFunc("GET /api/hooks/file", a.hookFile)
+	a.mux.HandleFunc("PUT /api/hooks/file", a.putHookFile)
+	a.mux.HandleFunc("POST /api/hooks/dryrun", a.dryrun)
 	a.mux.HandleFunc("GET /api/projects", a.listProjects)
 	a.mux.HandleFunc("POST /api/projects", a.createProject)
 	a.mux.HandleFunc("POST /api/projects/{id}/rename", a.renameProject)

@@ -5,8 +5,9 @@ import { StatusMark } from "./status";
 import { ProjectsView } from "./projects";
 import { Markdown, codeLabel, doneSummary, groupTurns, isQuiet, plainTitle, stripRunFences, type Turn, lineCount } from "./render";
 import { SkillPicker } from "./skills";
+import { HooksPage } from "./hooks";
 
-export type View = "sessions" | "projects";
+export type View = "sessions" | "projects" | "hooks";
 
 const POLL_MS = 4000; // sessions we are not streaming still change status
 
@@ -56,6 +57,9 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
         <button className={"nav-item" + (view === "projects" ? " nav-on" : "")}
                 aria-current={view === "projects" ? "page" : undefined}
                 onClick={() => onView("projects")}>Projects</button>
+        <button className={"nav-item" + (view === "hooks" ? " nav-on" : "")}
+                aria-current={view === "hooks" ? "page" : undefined}
+                onClick={() => onView("hooks")}>Hooks</button>
       </nav>
       <div style={{ padding: "0 20px 18px" }}>
         <label htmlFor="q" className="field-label">Search sessions</label>
@@ -164,7 +168,12 @@ export function JobBlock({ line }: { line: Line }) {
   );
 }
 
-export function Entry({ line, codes }: { line: Line; codes: string[] }) {
+export /** Entry data is JSON: read a field as a string without trusting it. */
+function str(v: unknown): string {
+  return typeof v === "string" ? v : "";
+}
+
+function Entry({ line, codes }: { line: Line; codes: string[] }) {
   const k = line.kind;
   if (k === "assistant" || k === "sub:assistant") {
     const body = stripRunFences(line.text, codes);
@@ -200,6 +209,23 @@ export function Entry({ line, codes }: { line: Line; codes: string[] }) {
   if (k === "error" || k === "sub:error") return <div className="err">{line.text}</div>;
   if (k === "ask") return null; // the live ask renders as its own card below
   if (k === "job") return <JobBlock line={line} />;
+  if (k === "hook") {
+    // Hooks fire on every tool call. One that passed through is not
+    // news — the Hooks view is where the full ledger lives. Only a
+    // fire that decided something, or threw, earns a line here.
+    const d = line.data ?? {};
+    const decision = typeof d.decision === "string" ? d.decision : "";
+    const err = typeof d.error === "string" ? d.error : "";
+    if (!decision && !err) return null;
+    return (
+      <p className="hook-line">
+        <span className="mono">{str(d.name)}</span>
+        {" · "}{str(d.event)}{" · "}
+        <span className={err ? "hook-bad" : "hook-act"}>{err ? "errored" : decision}</span>
+        {err && <span className="hook-why"> {err}</span>}
+      </p>
+    );
+  }
   if (isQuiet(k)) return <div className="meta-line">{line.text || k}</div>;
   return <div className="meta-line">{line.text || k}</div>;
 }
@@ -465,7 +491,9 @@ export default function App() {
                onSelect={(id) => { setSelected(id); setView("sessions"); setPane("thread"); }}
                query={query} onQuery={setQuery} view={view} onView={(v) => { setView(v); setPane("thread"); }}
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)} />
-      {view === "projects" ? (
+      {view === "hooks" ? (
+        <HooksPage onBack={() => setPane("list")} />
+      ) : view === "projects" ? (
         <ProjectsView
           projects={projects} rows={rows}
           onOpen={(id) => { setSelected(id); setView("sessions"); }}

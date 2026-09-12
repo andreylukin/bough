@@ -12,9 +12,11 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/andreylukin/bough/kernel"
 )
@@ -28,8 +30,120 @@ type runHooker interface {
 type Service struct {
 	code runHooker
 
-	mu   sync.Mutex
-	gohs map[string][]goHook // in-process hooks by event
+	mu      sync.Mutex
+	gohs    map[string][]goHook // in-process hooks by event
+	fires   []Fire              // ring of the last fireRing records, oldest first
+	pending []Fire              // recorded but not yet drained to history
+	session string              // the session the fires belong to
+}
+
+// fireRing bounds the ledger: hooks fire on every tool call
+// (pre-code-exec, post-result), so an unbounded slice would grow with
+// the session.
+const fireRing = 200
+
+// Fire is one hook run: what ran, how long it took, and what it
+// decided. The json tags are the /api/hooks "fires" contract.
+type Fire struct {
+	At       time.Time `json:"at"`
+	Session  string    `json:"session"`
+	Event    string    `json:"event"`
+	Name     string    `json:"name"`
+	Ms       int64     `json:"ms"`
+	Decision string    `json:"decision"`
+	Error    string    `json:"error"`
+}
+
+// SetSession names the session the fires that follow belong to. The
+// loop sets it around a fire: the Hooks seam is one call wide, and
+// threading a session through it would widen the hot path.
+func (s *Service) SetSession(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.session = id
+}
+
+// record appends one fire to the ring and to the undrained queue.
+func (s *Service) record(f Fire) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f.Session = s.session
+	s.fires = append(s.fires, f)
+	s.pending = append(s.pending, f)
+	if len(s.fires) > fireRing {
+		s.fires = append(s.fires[:0:0], s.fires[len(s.fires)-fireRing:]...)
+	}
+}
+
+// TakeFires drains the fires recorded since the last drain. The ring
+// above only outlives the call; `bough serve` is a different process
+// and can read nothing from this one's memory, so the loop drains
+// after every fire and writes them to the session history, which both
+// processes share. Without this the ledger is invisible to the web.
+// TakeFireRecords drains the fires recorded since the last drain, as
+// history data. Maps rather than Fire values because plugins/loop
+// consumes this and must not import this package: the in-package test
+// here imports the loop, so the pair would be a cycle.
+func (s *Service) TakeFireRecords() []map[string]any {
+	out := make([]map[string]any, 0, len(s.pending))
+	for _, f := range s.TakeFires() {
+		out = append(out, map[string]any{
+			"event": f.Event, "name": f.Name, "ms": f.Ms,
+			"decision": f.Decision, "error": f.Error,
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (s *Service) TakeFires() []Fire {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.pending) == 0 {
+		return nil
+	}
+	out := s.pending
+	s.pending = nil
+	return out
+}
+
+// Fires returns the most recent fires, newest first. limit <= 0 means
+// everything the ring holds.
+func (s *Service) Fires(limit int) []Fire {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := len(s.fires)
+	if limit > 0 && limit < n {
+		n = limit
+	}
+	out := make([]Fire, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, s.fires[len(s.fires)-1-i])
+	}
+	return out
+}
+
+// decision reads what a hook result did to the payload: a block or a
+// deny short-circuits the event, and any key of the payload the
+// result replaced is a rewrite. Anything else is a pass.
+func decision(payload, res map[string]any) string {
+	if res == nil {
+		return ""
+	}
+	if _, ok := res["block"]; ok {
+		return "blocked"
+	}
+	if _, ok := res["deny"]; ok {
+		return "denied"
+	}
+	for k, v := range res {
+		if old, ok := payload[k]; ok && !reflect.DeepEqual(old, v) {
+			return "rewrote"
+		}
+	}
+	return ""
 }
 
 // goHook is a hook written in Go by another row (the rules row's
@@ -73,7 +187,10 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 	gohs := append([]goHook(nil), s.gohs[event]...)
 	s.mu.Unlock()
 	for _, h := range gohs {
+		start := time.Now()
 		res := h.fn(payload)
+		s.record(Fire{At: start, Event: event, Name: h.name,
+			Ms: time.Since(start).Milliseconds(), Decision: decision(payload, res)})
 		if res == nil {
 			continue
 		}
@@ -102,8 +219,12 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 	// records them.
 	var failed []error
 	for _, path := range hookFiles(event) {
+		start := time.Now()
+		name := filepath.Base(path)
 		body, err := os.ReadFile(path)
 		if err != nil {
+			s.record(Fire{At: start, Event: event, Name: name,
+				Ms: time.Since(start).Milliseconds(), Error: err.Error()})
 			failed = append(failed, fmt.Errorf("%s: %w", path, err))
 			continue
 		}
@@ -112,9 +233,13 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 			return merged, nil // the turn was cancelled: not a hook failure
 		}
 		if err != nil {
+			s.record(Fire{At: start, Event: event, Name: name,
+				Ms: time.Since(start).Milliseconds(), Error: err.Error()})
 			failed = append(failed, fmt.Errorf("%s: %w", path, err))
 			continue
 		}
+		s.record(Fire{At: start, Event: event, Name: name,
+			Ms: time.Since(start).Milliseconds(), Decision: decision(payload, res)})
 		if res == nil {
 			continue
 		}
