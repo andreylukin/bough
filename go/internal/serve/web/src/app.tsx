@@ -5,7 +5,7 @@ import { StatusMark, Working } from "./status";
 import { ProjectsView } from "./projects";
 import { Select, type Option } from "./select";
 import { DialogHost, askText } from "./dialog";
-import { Markdown, codeLabel, doneSummary, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, plainTitle, stepCount, stripRunFences, type Item, type SubAgent, type Turn, lineCount } from "./render";
+import { Markdown, codeLabel, doneSummary, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, plainTitle, stepCount, stripRunFences, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath } from "./code";
 import { SkillPicker } from "./skills";
 import { Mentions, triggerAt, type Trigger } from "./mention";
@@ -41,11 +41,6 @@ export function Sprout({ size = 18 }: { size?: number }) {
 export /** A path as a person reads it: ~ for home, and no repetition of it. */
 function shortPath(p: string, home: string): string {
   return home && p.startsWith(home) ? "~" + p.slice(home.length) : p;
-}
-
-/** Five "Untitled session" rows are indistinguishable; an id tail is not. */
-function untitled(id: string): string {
-  return "Session " + id.slice(-6);
 }
 
 /** ⌘ on a Mac, Ctrl everywhere else. */
@@ -317,7 +312,7 @@ export function Entry({ line, codes, nested }: { line: Line; codes: string[]; ne
   const k = line.kind;
   if (k === "assistant" || k === "sub:assistant") {
     const body = stripRunFences(line.text, codes);
-    if (!body) return null; // the reply was only the program it ran
+    if (blank(body)) return null; // the reply was only the program it ran
     // Inside a subagent card the rail and the card's own header
     // already say whose words these are; repeating "subagent" above
     // every paragraph of a five-step run is noise.
@@ -502,7 +497,9 @@ export function ToolCall({ code, result }: { code: Line; result?: Line }) {
       </summary>
       <div className="block-body">
         {call.body && <Code text={call.body} lang={call.lang} />}
-        {result && <Code text={out || "(no output)"} lang={resultLang(result)} />}
+        {/* Output keeps its columns: a docker ps or a table wrapped at the
+            block's edge scatters every row across three lines. */}
+        {result && <div className="tool-output"><Code text={out || "(no output)"} lang={resultLang(result)} /></div>}
         {call.body !== call.raw && (
           <details className="block-inner">
             <summary><span className="block-label">The call</span></summary>

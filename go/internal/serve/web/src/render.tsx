@@ -60,6 +60,21 @@ export function stripRunFences(text: string, codes: string[]): string {
   ).replace(/\n{3,}/g, "\n\n").trim();
 }
 
+/**
+ * Nothing a reader would see. A reply can be a program plus a stray
+ * marker the model emitted ("<focus seq=12>"): the sanitiser drops the
+ * tag, the Markdown renders empty, and a bare "bough" label was left
+ * between two runs of tool calls, splitting them.
+ */
+export function blank(text: string): boolean {
+  return !text.replace(/<[^>\n]*>/g, "").trim();
+}
+
+/** Five "Untitled session" rows are indistinguishable; an id tail is not. */
+export function untitled(id: string): string {
+  return "Session " + id.slice(-6);
+}
+
 /** Titles can arrive as raw markdown ("## What I found"). Show the words. */
 export function plainTitle(t: string): string {
   return t.replace(/^#{1,6}\s+/, "").replace(/[*_`]/g, "").trim();
@@ -161,7 +176,7 @@ export function groupTools(items: Item[], codes: string[]): Item[] {
     // Reasoning between calls is part of the same stretch of work: a
     // "Thinking" row before every call split every run into singles.
     if (it.kind === "line" && it.line.kind === "thinking") { run.push(it.line); continue; }
-    if (it.kind === "line" && it.line.kind === "assistant" && !stripRunFences(it.line.text, codes)) continue;
+    if (it.kind === "line" && it.line.kind === "assistant" && blank(stripRunFences(it.line.text, codes))) continue;
     // An ask sits between the call that asked and that call's result; it
     // renders as its own card, so it must not split the pair or the run.
     if (it.kind === "line" && it.line.kind === "ask") continue;

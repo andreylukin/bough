@@ -322,6 +322,9 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
    Hue carries meaning: green is the accent already used for "the agent",
    amber for literal values, red for anything destructive-looking. */
 .hl{white-space:pre-wrap;overflow-wrap:anywhere}
+.tool-output{border-top:1px solid var(--line)}
+.block .tool-output pre.hl{white-space:pre;overflow-wrap:normal;overflow-x:auto;border-top:0;
+                           text-indent:0;padding:12px 14px}
 .hljs-comment,.hljs-quote{color:var(--text-3);font-style:italic}
 .hljs-string,.hljs-regexp,.hljs-meta-string{color:var(--amber)}
 .hljs-number,.hljs-literal,.hljs-boolean{color:#cfa6e0}

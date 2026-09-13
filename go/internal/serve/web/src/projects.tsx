@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Project, Row } from "./types";
 import { StatusMark } from "./status";
-import { plainTitle } from "./render";
+import { plainTitle, untitled } from "./render";
 import { Back } from "./app";
 import { Select } from "./select";
 import { askConfirm, askText } from "./dialog";
@@ -16,7 +16,7 @@ function Conversation({ row, projects, onOpen, onAssign }: {
   return (
     <div className="proj-row">
       <button className="proj-open" onClick={() => onOpen(row.id)}>
-        {plainTitle(row.title) || "Untitled session"}
+        {plainTitle(row.title) || untitled(row.id)}
       </button>
       <StatusMark status={row.status} />
       <span className="num proj-when">{clock(row.modified)}</span>
