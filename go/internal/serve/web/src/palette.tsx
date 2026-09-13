@@ -78,7 +78,7 @@ function isSentence(q: string): boolean {
   return q.trim().split(/\s+/).length >= 4;
 }
 
-export function Palette({ open, onClose, rows, commands, onOpenSession, onStart }: {
+export function Palette({ open, onClose, rows, commands, onOpenSession, onStart, initialQuery = "" }: {
   open: boolean;
   onClose: () => void;
   rows: Row[];
@@ -86,8 +86,10 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart 
   onOpenSession: (id: string) => void;
   /** Start a conversation with what was typed as its first message. */
   onStart?: (text: string) => void;
+  /** Seeds the box. Only a story uses it: nothing can type for us there. */
+  initialQuery?: string;
 }) {
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(initialQuery);
   const [at, setAt] = useState(0);
   const field = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -96,10 +98,10 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart 
   useEffect(() => {
     if (!open) return;
     opener.current = document.activeElement;
-    setQ("");
+    setQ(initialQuery);
     setAt(0);
     field.current?.focus();
-  }, [open]);
+  }, [open, initialQuery]);
 
   const found = useFullText(q, open);
 

@@ -31,13 +31,25 @@ const hooks: Hook[] = [
 ];
 
 const fires: Fire[] = [
-  { at: minsAgo(5), session: "s1", event: "pre-code-exec", name: "rules", ms: 3, decision: "rewrote", error: "" },
-  { at: minsAgo(6), session: "s1", event: "pre-code-exec", name: "guard", ms: 1, decision: "denied", error: "" },
-  { at: minsAgo(12), session: "s2", event: "post-result", name: "notify", ms: 41, decision: "", error: "" },
-  { at: minsAgo(18), session: "s2", event: "pre-code-exec", name: "guard", ms: 2, decision: "", error: "" },
+  // The rules row names the files it injected through the notice
+  // channel: a repo rule is only ever conditionally in force, so this
+  // is the only place it becomes visible.
+  { at: minsAgo(5), session: "s1", event: "post-result", name: "rules", ms: 3, decision: "rewrote",
+    error: "", notice: "applied .claude/rules/python-standards.md, repos/demo/.claude/rules/repo.md",
+    truncated: [] },
+  { at: minsAgo(6), session: "s1", event: "pre-code-exec", name: "guard", ms: 1, decision: "denied",
+    error: "", notice: "", truncated: [] },
+  // A diagnostic hook: something to say, nothing decided, and none of
+  // it reaches the model.
+  { at: minsAgo(12), session: "s2", event: "post-result", name: "audit-log.js", ms: 41, decision: "",
+    error: "", notice: "logged this tool call to the audit trail", truncated: [] },
+  // A hook that pushed more than the cap into the model.
+  { at: minsAgo(16), session: "s2", event: "post-result", name: "verbose.js", ms: 7, decision: "rewrote",
+    error: "", notice: "", truncated: ["result"] },
   { at: minsAgo(20), session: "s2", event: "post-result", name: "notify", ms: 9, decision: "",
-    error: "hook threw after 9ms" },
-  { at: minsAgo(33), session: "s3", event: "pre-code-exec", name: "guard", ms: 2, decision: "blocked", error: "" },
+    error: "hook threw after 9ms", notice: "", truncated: [] },
+  { at: minsAgo(33), session: "s3", event: "pre-code-exec", name: "guard", ms: 2, decision: "blocked",
+    error: "", notice: "", truncated: [] },
 ];
 
 // A repo rule sitting under the central one of the same name: both are

@@ -10,7 +10,9 @@
     "design:sync": "node design/check.mjs --write",
     "storybook": "storybook dev -p 6006 --no-open",
     "build-storybook": "storybook build -o storybook-static",
-    "build:types": "tsc -p tsconfig.ds.json"
+    "build:types": "tsc -p tsconfig.ds.json",
+    "typecheck": "tsc --noEmit --jsx react-jsx --module esnext --moduleResolution bundler --target es2022 --skipLibCheck --strict src/*.tsx src/*.ts src/stories/*.tsx src/stories/*.ts",
+    "check": "bun run typecheck && bun run design:check"
   },
   "dependencies": {
     "dompurify": "^3.4.15",
@@ -22,6 +24,7 @@
   "devDependencies": {
     "@storybook/react-vite": "^10.6.0",
     "@types/dompurify": "^3.2.0",
+    "@types/react-dom": "^19.3.0",
     "storybook": "^10.6.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.0"

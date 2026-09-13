@@ -46,7 +46,7 @@ function modKey(): string {
   return typeof navigator !== "undefined" && /Mac|iP/.test(navigator.platform) ? "\u2318" : "Ctrl+";
 }
 
-function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived, onToggleArchived, view, onView }: {
+export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived, onToggleArchived, view, onView }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
   query: string; onQuery: (q: string) => void; showArchived: boolean; onToggleArchived: () => void;
   view: View; onView: (v: View) => void;
@@ -294,7 +294,7 @@ function str(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
-function Entry({ line, codes, nested }: { line: Line; codes: string[]; nested?: boolean }) {
+export function Entry({ line, codes, nested }: { line: Line; codes: string[]; nested?: boolean }) {
   const k = line.kind;
   if (k === "assistant" || k === "sub:assistant") {
     const body = stripRunFences(line.text, codes);
