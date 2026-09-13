@@ -78,9 +78,9 @@ type Row struct {
 	Empty bool `json:"empty,omitempty"`
 }
 
-// maxBody caps every request body: the API takes prompts and titles,
-// never uploads.
-const maxBody = 1 << 20
+// maxBody caps every JSON request body. Prompts carry pasted logs and
+// files, so it is generous; images go through /api/attachments.
+const maxBody = 8 << 20
 
 // heartbeat keeps an idle SSE stream alive through proxies and tells a
 // client the server is still there while a session sits quiet.
@@ -105,6 +105,8 @@ func NewAPI(sup *Supervisor) *API {
 	a.mux.HandleFunc("POST /api/sessions/{id}/ack", a.ack)
 	a.mux.HandleFunc("POST /api/sessions/{id}/model", a.setModel)
 	a.mux.HandleFunc("POST /api/sessions/{id}/effort", a.setEffort)
+	a.mux.HandleFunc("POST /api/attachments", a.upload)
+	a.mux.HandleFunc("GET /api/attachments", a.attachment)
 	a.mux.HandleFunc("GET /api/search", a.search)
 	a.mux.HandleFunc("GET /api/files", a.files)
 	a.mux.HandleFunc("GET /api/models", a.models)

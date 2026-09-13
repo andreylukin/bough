@@ -1189,7 +1189,10 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
   // skill was invoked from. What you typed is the part before them.
   // An @file is attached the same way, as "[file: path]\n<contents>":
   // pasted source is context, not the words of the prompt.
-  const [said, ...skills] = (turn.prompt?.text ?? "").split(/\n+(?=\[(?:skill|file): [^\]\n]+\]\n)/);
+  const [raw, ...skills] = (turn.prompt?.text ?? "").split(/\n+(?=\[(?:skill|file): [^\]\n]+\]\n)/);
+  // A pasted image rides as "[Image #N: path]": show the tag and the picture, not the path.
+  const images = [...raw.matchAll(/\[Image #\d+: ([^\]\n]+)\]/g)].map((m) => m[1]);
+  const said = raw.replace(/\[Image (#\d+): [^\]\n]+\]/g, "[Image $1]");
   const [full, setFull] = useState(false);
   const long = said.length > 420 || said.split("\n").length > 4;
   return (
@@ -1205,6 +1208,15 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
               <button className="link prompt-more" onClick={() => setFull((v) => !v)}>
                 {full ? "Show less" : "Show full prompt"}
               </button>
+            )}
+            {images.length > 0 && (
+              <div className="prompt-images">
+                {images.map((p, i) => (
+                  <a key={i} href={api.attachmentURL(p)} target="_blank" rel="noreferrer" title={p}>
+                    <img src={api.attachmentURL(p)} alt={`Image #${i + 1}`} />
+                  </a>
+                ))}
+              </div>
             )}
             {skills.map((s, i) => {
               const [head, ...body] = s.split("\n");
@@ -1480,12 +1492,60 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
     if (ok === false) setSending(null);
     setFailed(ok === false ? { text: t, answer } : null);
   };
+  // Pastes too big to edit in place, and pasted images, sit in the draft
+  // as "[Pasted text #N +L lines]" and "[Image #N]" tags, as in the TUI.
+  // Send swaps them for the text and "[Image #N: path]"; a tag you
+  // deleted drops its paste.
+  const pastes = useRef<string[]>([]);
+  const images = useRef<string[]>([]);
+  const [uploading, setUploading] = useState(0);
+  const [attachErr, setAttachErr] = useState("");
+  useEffect(() => { pastes.current = []; images.current = []; setAttachErr(""); }, [row.id]);
+  const insert = (s: string) => {
+    const el = composer.current;
+    const from = el?.selectionStart ?? draft.length, to = el?.selectionEnd ?? draft.length;
+    setDraft((d) => d.slice(0, from) + s + d.slice(to));
+    setTrigger(null);
+    requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(from + s.length, from + s.length); });
+  };
+  const attach = async (files: File[]) => {
+    setAttachErr("");
+    for (const f of files) {
+      setUploading((n) => n + 1);
+      try {
+        const path = await api.attach(f);
+        images.current.push(path);
+        insert(`[Image #${images.current.length}] `);
+      } catch (err) {
+        setAttachErr(`Image not attached: ${(err as Error).message}`);
+      } finally {
+        setUploading((n) => n - 1);
+      }
+    }
+  };
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    pasted.current = true;
+    const files = [...e.clipboardData.files].filter((f) => /^image\/(png|jpeg|gif|webp)$/.test(f.type));
+    if (files.length) { e.preventDefault(); void attach(files); return; }
+    const text = e.clipboardData.getData("text/plain").replace(/\r\n?/g, "\n");
+    const n = text.split("\n").length;
+    if (text.length <= 800 && n <= 12) return;
+    e.preventDefault();
+    pastes.current.push(text);
+    insert(`[Pasted text #${pastes.current.length} +${n} lines] `);
+  };
+  const expand = (t: string) => t
+    .replace(/\[Image #(\d+)\]/g, (m, i) => (images.current[i - 1] ? `[Image #${i}: ${images.current[i - 1]}]` : m))
+    .replace(/\[Pasted text #(\d+) \+\d+ lines\]/g, (m, i) => pastes.current[i - 1] ?? m);
+
   const send = async () => {
     const t = draft.trim();
     // Enter reaches here even while the Send button is disabled.
-    if (!t || busy) return;
+    if (!t || busy || uploading) return;
     setDraft("");
-    await deliver(t, Boolean(row.ask));
+    const full = expand(t);
+    pastes.current = []; images.current = [];
+    await deliver(full, Boolean(row.ask));
   };
 
   return (
@@ -1631,7 +1691,7 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
             placeholder={row.ask ? "Answer the question above"
               : running ? "Send a message — it steers the turn already running"
               : "Send a message to start the next turn"}
-            onPaste={() => { pasted.current = true; }}
+            onPaste={onPaste}
             onChange={(e) => {
               setDraft(e.target.value);
               // The change a paste produces carries a caret at the end
@@ -1661,13 +1721,15 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <span className="hint">Return to send</span>
             <span className="hint">Shift + Return for a newline</span>
+            {uploading > 0 && <span className="attach-note">Attaching image…</span>}
+            {attachErr && <span className="attach-note attach-err" role="alert">{attachErr}</span>}
             <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
               <SkillPicker onPick={(name) => {
                 setDraft((d) => (d.trimStart().startsWith("/") ? d : `/${name} ${d.trimStart()}`));
                 document.getElementById("composer")?.focus();
               }} />
               {running && <button className="btn" onClick={onInterrupt}>Stop</button>}
-              <button className="btn btn-primary" onClick={send} disabled={busy || !draft.trim()}>Send</button>
+              <button className="btn btn-primary" onClick={send} disabled={busy || uploading > 0 || !draft.trim()}>Send</button>
             </div>
           </div>
         </div>

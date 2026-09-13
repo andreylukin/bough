@@ -640,6 +640,13 @@ func (s *Supervisor) write(ch *child, text string) error {
 	if ch.stdin == nil {
 		return fmt.Errorf("serve: supervisor: session has no stdin")
 	}
+	// The child reads a line per prompt; a multi-line one (a paste, a
+	// shift+return) rides as the {"prompt": ...} line it also accepts,
+	// or each of its lines would arrive as a prompt of its own.
+	if strings.Contains(text, "\n") {
+		b, _ := json.Marshal(map[string]string{"prompt": text})
+		text = string(b)
+	}
 	if _, err := io.WriteString(ch.stdin, text+"\n"); err != nil {
 		return fmt.Errorf("serve: supervisor: write stdin: %w", err)
 	}

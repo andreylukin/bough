@@ -61,6 +61,14 @@ export const api = {
     }).then((r) => r.session),
 
   prompt: (id: string, text: string) => post(`/api/sessions/${id}/prompt`, { text }),
+  /** Save a pasted image on the server; the path is what a prompt references. */
+  attach: async (img: Blob) => {
+    const res = await fetch("/api/attachments", { method: "POST", headers: { "content-type": img.type }, body: img });
+    const body = (await res.json().catch(() => ({}))) as { path?: string; error?: string };
+    if (!res.ok || !body.path) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
+    return body.path;
+  },
+  attachmentURL: (path: string) => `/api/attachments?path=${encodeURIComponent(path)}`,
   answer: (id: string, text: string) => post(`/api/sessions/${id}/answer`, { text }),
   interrupt: (id: string) => post(`/api/sessions/${id}/interrupt`),
   rename: (id: string, title: string) => post(`/api/sessions/${id}/rename`, { title }),
