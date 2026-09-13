@@ -29,6 +29,9 @@ function bucket(iso: string): string {
 }
 const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+/** A phone-width window, where the list and a thread take turns. */
+const narrow = () => typeof window !== "undefined" && window.matchMedia("(max-width: 720px)").matches;
+
 export function Sprout({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="var(--accent)"
@@ -181,7 +184,7 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
                       onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
                       onFocus={(e) => peek(r, e.currentTarget)} onBlur={unpeek}
                       aria-describedby={card?.id === r.id ? "row-card" : undefined}
-                      className={"row" + (r.id === selected ? " row-on" : "")}
+                      className={"row" + (name === "Needs you" || name === "Running" ? " row-act" : " row-settled") + (r.id === selected ? " row-on" : "")}
                       aria-current={r.id === selected ? "true" : undefined}>
                 <span className="row-line">
                   <span className="row-title">{plainTitle(r.title) || untitled(r.id)}</span>
@@ -1522,7 +1525,8 @@ export default function App() {
   useEffect(() => {
     const read = () => {
       const h = window.location.hash.replace(/^#\/?/, "");
-      if (h === "hooks" || h === "projects") { setView(h); setContext(false); return; }
+      // A direct link to a page shows that page, on a phone too.
+      if (h === "hooks" || h === "projects") { setView(h); setContext(false); setPane("thread"); return; }
       const wr = parseWikiHash(h);
       if (wr) { setView("wiki"); setWikiRoute(wr); setContext(false); setPane("thread"); return; }
       const m = /^s\/([^/]+)(\/context)?$/.exec(h);
@@ -1622,7 +1626,7 @@ export default function App() {
         if (n) act(() => api.newProject(n));
       } },
     { id: "go:sessions", group: "Go to", label: "Sessions",
-      run: () => { setView("sessions"); setContext(false); setPane("thread"); } },
+      run: () => { setView("sessions"); setContext(false); setPane(narrow() ? "list" : "thread"); } },
     { id: "go:projects", group: "Go to", label: "Projects",
       run: () => { setView("projects"); setPane("thread"); } },
     { id: "go:hooks", group: "Go to", label: "Hooks",
@@ -1665,7 +1669,7 @@ export default function App() {
       <Sidebar rows={visible} selected={selected}
                onSelect={openSession}
                query={query} onQuery={setQuery} view={view} wikiFlags={wikiFlags}
-               onView={(v) => { if (v === "wiki") goWiki({ at: "index" }); else { setView(v); setPane("thread"); } }}
+               onView={(v) => { if (v === "wiki") goWiki({ at: "index" }); else { setView(v); setPane(v === "sessions" && narrow() ? "list" : "thread"); } }}
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)}
                onNew={() => setPalette(true)}
                onAck={(id) => act(() => api.ack(id))} />
