@@ -54,7 +54,11 @@ function useFullText(q: string, open: boolean): SearchHit[] {
   const [hits, setHits] = useState<SearchHit[]>([]);
   useEffect(() => {
     const needle = q.trim();
-    if (!open || needle.length < 2) { setHits([]); return; }
+    // A sentence is not a search. Every term has to appear somewhere in
+    // a session, and "to" and "the" appear in all of them — so asking
+    // for one matched everything and buried the thing you were plainly
+    // trying to do, which was start it.
+    if (!open || needle.length < 2 || isSentence(needle)) { setHits([]); return; }
     // Debounced: this reads every transcript, and the box is typed into
     // one character at a time.
     let live = true;
@@ -67,6 +71,11 @@ function useFullText(q: string, open: boolean): SearchHit[] {
     return () => { live = false; clearTimeout(t); };
   }, [q, open]);
   return hits;
+}
+
+/** Four words or more reads as something to say, not something to find. */
+function isSentence(q: string): boolean {
+  return q.trim().split(/\s+/).length >= 4;
 }
 
 export function Palette({ open, onClose, rows, commands, onOpenSession, onStart }: {
@@ -137,13 +146,18 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart 
     // matched, or at the end when something did.
     const typed = q.trim();
     if (onStart && typed.length >= 2 && !typed.includes(":")) {
-      all.push({
+      const startHere: Command = {
         id: "start:" + typed,
         label: `Start a conversation: “${typed}”`,
         hint: "sends it as the first message",
         group: "Start",
         run: () => onStart(typed),
-      });
+      };
+      // A sentence leads; a word or two follows whatever it matched,
+      // because a short query is usually the name of something that
+      // already exists.
+      if (isSentence(typed)) all.unshift(startHere);
+      else all.push(startHere);
     }
     return all.slice(0, 40);
   }, [q, rows, commands, onOpenSession, found, onStart]);
