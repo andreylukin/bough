@@ -586,8 +586,13 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .head-main h1{font-size:17px;flex:0 1 auto}
   .head-repo{display:none}
   .thread-head>.more{width:36px;height:36px;order:0}
-  .thread-head[data-more="0"] .head-side{display:none}
-  .head-side{margin-left:0;flex-basis:100%;flex-direction:column;align-items:stretch;gap:10px}
+  /* The run setting stays in view on a phone; the rest waits behind More. */
+  .head-side{margin-left:0;flex-basis:100%;flex-direction:row;align-items:center;gap:8px}
+  .head-side .head-actions{display:none}
+  .thread-head[data-more="1"] .head-side .head-actions{display:flex}
+  .ctl-run .ctl-label{display:none}
+  .ctl-run .sel{flex:1 1 0}
+  .ctl-run .sel-btn{height:36px}
   .head-extra{flex-direction:column;align-items:stretch;gap:10px}
   /* Under 16px iOS zooms the page on focus. */
   .field,.sel-btn,.sel-search,.composer textarea{font-size:16px}

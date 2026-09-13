@@ -975,27 +975,33 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
     models.push({ value: row.model, label: row.model, group: "In use" });
   }
 
+  // Effort is offered for what the chosen model supports; a model the
+  // catalogue does not describe falls back to every level it knows.
+  const chosen = cat?.providers.flatMap((p) => p.models ?? []).find((m) => m.id === row.model);
+  const efforts = chosen?.efforts?.length ? chosen.efforts : (cat?.efforts ?? []);
+
   return (
     <div className="controls">
       {only !== "rest" && (
-        <div className="ctl">
+        // What the next turn runs as is one setting: the model and how hard
+        // it thinks, side by side, on every screen.
+        <div className="ctl ctl-run">
           <span className="ctl-label">Model</span>
           <Select label="Model" value={row.model ?? ""} options={models} searchable align="end"
                   onChange={(v) => v && onModel(v)} />
+          {efforts.length > 0 && (
+            <Select label="Effort" value={row.effort ?? ""} align="end" onChange={(v) => v && onEffort(v)}
+                    options={[...(row.effort ? [] : [{ value: "", label: "Default effort" }]), ...efforts.map((e) => ({ value: e, label: effortLabel(e) }))]} />
+          )}
         </div>
       )}
-      {only !== "model" && <>
+      {only !== "model" && (
         <div className="ctl">
           <span className="ctl-label">Project</span>
           <Select label="Project" value={row.project ?? ""} align="end" onChange={onAssign}
                   options={[{ value: "", label: "Unassigned" }, ...projects.map((p) => ({ value: p.id, label: p.name }))]} />
         </div>
-        <div className="ctl">
-          <span className="ctl-label">Thinking</span>
-          <Select label="Thinking" value={row.effort ?? ""} align="end" onChange={(v) => v && onEffort(v)}
-                  options={[...(row.effort ? [] : [{ value: "", label: "Default" }]), ...(cat?.efforts ?? []).map((e) => ({ value: e, label: effortLabel(e) }))]} />
-        </div>
-      </>}
+      )}
     </div>
   );
 }
