@@ -1201,7 +1201,12 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [archived, setArchived] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Two kinds of failure. A refresh that failed is stale data and heals on
+  // the next poll; a send or action that failed is something you did that
+  // did not happen, so it stays until you dismiss it — the 4s poll used to
+  // clear it before it could be read.
   const [err, setErr] = useState<string | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [view, setView] = useState<View>("sessions");
   const [projects, setProjects] = useState<Project[]>([]);
   // Only a narrow window reads this (see the 720px media query): a
@@ -1226,8 +1231,8 @@ export default function App() {
   const refresh = useCallback(async () => {
     try {
       const [rs, ps] = await Promise.all([api.sessions(archived), api.projects()]);
-      setRows(rs); setProjects(ps); setErr(null);
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+      setRows(rs); setProjects(ps); setLoadErr(null);
+    } catch (e) { setLoadErr(e instanceof Error ? e.message : String(e)); }
   }, [archived]);
 
   useEffect(() => { refresh(); const t = setInterval(refresh, POLL_MS); return () => clearInterval(t); }, [refresh]);
@@ -1499,7 +1504,9 @@ export default function App() {
         </div>
       )}
       <DialogHost />
-      {err && <div className="toast" role="status">{err}</div>}
+      {err ? (
+        <button className="toast" role="alert" onClick={() => setErr(null)} title="Dismiss">{err}</button>
+      ) : loadErr && <div className="toast" role="status">{loadErr}</div>}
     </div>
   );
 }
