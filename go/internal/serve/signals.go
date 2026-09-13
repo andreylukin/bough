@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/andreylukin/bough/plugins/history"
@@ -55,9 +56,22 @@ func RunningJobs(entries []history.Entry, childAlive bool) []Job {
 	return out
 }
 
-// CacheTTL is how long a provider keeps a used prompt prefix: Anthropic's
-// ephemeral cache and OpenAI's automatic one both hold about five minutes.
-const CacheTTL = 5 * time.Minute
+// cacheTTLFor is how long a provider keeps a used prompt prefix, as its
+// docs state it: Anthropic's default ephemeral cache is five minutes;
+// OpenAI keeps prefixes for at least 30 minutes on GPT-5.6 and later
+// (gpt-6 included) and five to ten on earlier models. Unknown providers
+// get the short window, so the chip errs toward "cold".
+func cacheTTLFor(model string) time.Duration {
+	m := strings.ToLower(strings.TrimPrefix(model, "~"))
+	if gpt := regexp.MustCompile(`gpt-(\d+)(?:\.(\d+))?`).FindStringSubmatch(m); gpt != nil {
+		major, _ := strconv.Atoi(gpt[1])
+		minor, _ := strconv.Atoi(gpt[2])
+		if major > 5 || (major == 5 && minor >= 6) {
+			return 30 * time.Minute
+		}
+	}
+	return 5 * time.Minute
+}
 
 // Cache is the prompt cache as of the last turn that reported one: when
 // that turn ended, what it read from and wrote to the cache, and how
@@ -72,7 +86,7 @@ type Cache struct {
 
 // LastCache is the cache state after the most recent turn whose provider
 // reported cache tokens; nil when none ever did.
-func LastCache(entries []history.Entry) *Cache {
+func LastCache(entries []history.Entry, model string) *Cache {
 	for i := len(entries) - 1; i >= 0; i-- {
 		e := entries[i]
 		if e.Kind != "done" {
@@ -82,7 +96,7 @@ func LastCache(entries []history.Entry) *Cache {
 		if !ok {
 			continue
 		}
-		c := Cache{At: e.At, TTL: int(CacheTTL / time.Second), Read: int(num(u["cache_read"])), Write: int(num(u["cache_write"])), In: int(num(u["in"]))}
+		c := Cache{At: e.At, TTL: int(cacheTTLFor(model) / time.Second), Read: int(num(u["cache_read"])), Write: int(num(u["cache_write"])), In: int(num(u["in"]))}
 		if c.Read+c.Write > 0 {
 			return &c
 		}

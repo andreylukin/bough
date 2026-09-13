@@ -420,7 +420,7 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 		Effort:   meta.Effort,
 		Project:  meta.Project,
 		Jobs:     RunningJobs(entries, live),
-		Cache:    LastCache(entries),
+		Cache:    LastCache(entries, model),
 	}
 }
 

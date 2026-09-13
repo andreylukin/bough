@@ -696,7 +696,8 @@ function CacheChip({ cache, model }: { cache: NonNullable<Row["cache"]>; model?:
           title={`${provider} prompt cache · last turn read ${tokenCount(cache.read)} of ${tokenCount(cache.in)} input tokens from it (${hit}%), wrote ${tokenCount(cache.write)}`}>
       <span className="rt-label">Cache</span>
       <span className="num rt-value">
-        {left ? `hot · ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "cold"}
+        {/* "~": the window is the provider's documented minimum, not a reading. */}
+        {left ? `hot · ~${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "cold"}
       </span>
     </span>
   );
