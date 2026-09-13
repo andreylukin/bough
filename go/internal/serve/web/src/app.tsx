@@ -568,19 +568,35 @@ export function TurnView({ turn, tail }: { turn: Turn; tail?: React.ReactNode })
     [turn.body]);
   // The loop appends "[skill: name]\n<SKILL.md>" blocks to the prompt a
   // skill was invoked from. What you typed is the part before them.
-  const [said, ...skills] = (turn.prompt?.text ?? "").split(/\n+(?=\[skill: [^\]\n]+\]\n)/);
+  // An @file is attached the same way, as "[file: path]\n<contents>":
+  // pasted source is context, not the words of the prompt.
+  const [said, ...skills] = (turn.prompt?.text ?? "").split(/\n+(?=\[(?:skill|file): [^\]\n]+\]\n)/);
+  const [full, setFull] = useState(false);
+  const long = said.length > 420 || said.split("\n").length > 4;
   return (
     <section className="turn">
       {turn.prompt && (
         <div className="prompt">
           <span className="mono prompt-mark">&gt;</span>
           <div className="prompt-text">
-            <p>{said}</p>
+            {/* A long brief (pasted logs, a spec) is evidence, not the
+                thing to navigate by: four lines, and one click for the rest. */}
+            <p className={long && !full ? "prompt-clamp" : undefined}>{said}</p>
+            {long && (
+              <button className="link prompt-more" onClick={() => setFull((v) => !v)}>
+                {full ? "Show less" : "Show full prompt"}
+              </button>
+            )}
             {skills.map((s, i) => {
               const [head, ...body] = s.split("\n");
+              const m = /^\[(skill|file): (.+)\]$/.exec(head.trim());
+              const isFile = m?.[1] === "file";
               return (
-                <details key={i} className="block prompt-skill">
-                  <summary><span className="block-label">Skill · {head.slice(8, -1).trim()}</span></summary>
+                <details key={i} className={"block prompt-skill" + (isFile ? " prompt-file" : "")}>
+                  <summary>
+                    <span className="block-label">{isFile ? "File" : "Skill"}</span>
+                    <span className="mono block-detail">{m?.[2] ?? head}</span>
+                  </summary>
                   <pre>{body.join("\n")}</pre>
                 </details>
               );
@@ -642,6 +658,18 @@ export function StreamView({ runs }: { runs: DeltaRun[] }) {
 /* ---------------- model + effort ---------------- */
 
 interface ModelInfo { id: string; context?: number; efforts?: string[]; input?: number; output?: number }
+
+/** 1050000 → "1M", 262144 → "262k": the size a person says, not a unit conversion. */
+function contextSize(tokens: number): string {
+  if (tokens >= 1_000_000) return `${+(tokens / 1_000_000).toFixed(tokens % 1_000_000 < 50_000 ? 0 : 1)}M`;
+  return `${Math.round(tokens / 1000)}k`;
+}
+
+/** The API's effort enums ("xhigh") read as words in the menu. */
+function effortLabel(e: string): string {
+  const words: Record<string, string> = { xhigh: "Extra high", minimal: "Minimal", max: "Max" };
+  return words[e] ?? e.charAt(0).toUpperCase() + e.slice(1);
+}
 interface ProviderInfo { plugin: string; models?: ModelInfo[] }
 
 export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
@@ -661,7 +689,7 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
   for (const p of cat?.providers ?? []) {
     for (const m of p.models ?? []) {
       models.push({ value: m.id, label: m.id, group: p.plugin.replace(/^llm-/, ""),
-                    detail: m.context ? `${Math.round(m.context / 1000)}k` : undefined });
+                    detail: m.context ? contextSize(m.context) : undefined });
     }
   }
   if (row.model && !models.some((o) => o.value === row.model)) {
@@ -686,7 +714,7 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
         <div className="ctl">
           <span className="ctl-label">Thinking</span>
           <Select label="Thinking" value={row.effort ?? ""} align="end" onChange={(v) => v && onEffort(v)}
-                  options={[{ value: "", label: "Default" }, ...(cat?.efforts ?? []).map((e) => ({ value: e, label: e }))]} />
+                  options={[{ value: "", label: "Default" }, ...(cat?.efforts ?? []).map((e) => ({ value: e, label: effortLabel(e) }))]} />
         </div>
       </>}
     </div>

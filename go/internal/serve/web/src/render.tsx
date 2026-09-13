@@ -109,6 +109,10 @@ export function groupTurns(lines: Line[]): Turn[] {
       cur = { seq: l.seq, prompt: l, body: [], done: null };
       continue;
     }
+    // A cancel is followed by the done the loop always writes. With the
+    // turn already closed, that done opened an empty turn of its own and
+    // a stopped turn read "Stopped" then "Finished".
+    if (!cur && (l.kind === "done" || l.kind === "cancelled") && turns.length && turns[turns.length - 1].done) continue;
     if (!cur) cur = { seq: l.seq, prompt: null, body: [], done: null };
     if (l.kind === "done" || l.kind === "cancelled") {
       cur.done = l;

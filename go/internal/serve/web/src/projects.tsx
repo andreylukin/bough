@@ -20,11 +20,14 @@ function Conversation({ row, projects, onOpen, onAssign }: {
       </button>
       <StatusMark status={row.status} />
       <span className="num proj-when">{clock(row.modified)}</span>
-      <div className="proj-move">
-        <Select label="Move to project" value={row.project ?? ""} align="end"
-                onChange={(p) => onAssign(row.id, p)}
-                options={[{ value: "", label: "Unassigned" }, ...projects.map((p) => ({ value: p.id, label: p.name }))]} />
-      </div>
+      {/* With no project to move to, a one-option menu is a dead end. */}
+      {projects.length > 0 && (
+        <div className="proj-move">
+          <Select label="Move to project" value={row.project ?? ""} align="end"
+                  onChange={(p) => onAssign(row.id, p)}
+                  options={[{ value: "", label: "Unassigned" }, ...projects.map((p) => ({ value: p.id, label: p.name }))]} />
+        </div>
+      )}
     </div>
   );
 }
