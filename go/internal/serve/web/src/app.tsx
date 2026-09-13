@@ -1332,9 +1332,12 @@ function RuntimeStrip({ row, lines, paused, onRetry }: { row: Row; lines: Line[]
         </span>
       )}
       {u && (
-        <Tip tip={limit ? `${u.lastIn.toLocaleString()} of ${limit.toLocaleString()} tokens` : switched ? "The model changed since this input was read" : "The model's context window is not in the catalogue"}>
+        <Tip tip={limit ? `${u.lastIn.toLocaleString()} of ${limit.toLocaleString()} tokens, read by ${row.model}`
+                  : !row.model ? "No model is recorded for this session, so headroom is not known"
+                  : switched ? "The model changed after this input was read; headroom shows once the new model answers"
+                  : `${row.model} has no context window in the catalogue`}>
           <span className="rt-label">{limit ? "Context" : "Last input"}</span>
-          <span className="num rt-value">{tokenCount(u.lastIn)}{limit ? `/${tokenCount(limit)}` : " · window unknown"}</span>
+          <span className="num rt-value">{tokenCount(u.lastIn)}{limit ? ` · ${tokenCount(Math.max(0, limit - u.lastIn))} left` : ""}</span>
           {pct !== undefined && (
             <span className="rt-bar" role="meter" aria-label="Context used" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
               <span className={pct >= 80 ? "rt-hot" : undefined} style={{ width: `${pct}%` }} />
@@ -1393,43 +1396,53 @@ function usePopovers(root: React.RefObject<HTMLElement | null>) {
  * kept and marked stale). A file opens its diff.
  */
 function ChangesChip({ id, tick }: { id: string; tick: number }) {
-  const [state, setState] = useState<{ files: Change[] | null; repo: boolean; failed: boolean }>({ files: null, repo: true, failed: false });
+  const [state, setState] = useState<{ files: Change[] | null; repo: boolean; failed: boolean; at?: number }>({ files: null, repo: true, failed: false });
   const [nonce, setNonce] = useState(0);
-  const [diff, setDiff] = useState<{ path: string; text: string | null; failed?: boolean } | null>(null);
+  const [diff, setDiff] = useState<{ path: string; sig: string; text: string | null; failed?: boolean } | null>(null);
   useEffect(() => {
     let live = true;
     // A hand edit or another session changes the tree without a transcript
     // entry, so it is re-read on a timer too.
     const read = () => api.changes(id)
-      .then((r) => { if (live) setState({ files: r.files, repo: r.repo, failed: false }); })
+      .then((r) => { if (live) setState({ files: r.files, repo: r.repo, failed: false, at: Date.now() }); })
       .catch(() => { if (live) setState((s) => ({ ...s, failed: true })); });
     read();
     const t = setInterval(read, 10_000);
     return () => { live = false; clearInterval(t); };
   }, [id, tick, nonce]);
+  const sigOf = (f?: Change) => f ? `${f.add}/${f.del}/${f.new}` : "gone";
   const open = (path: string) => {
-    setDiff({ path, text: null });
-    api.diff(id, path).then((text) => setDiff((d) => d?.path === path ? { path, text } : d),
-      () => setDiff((d) => d?.path === path ? { path, text: null, failed: true } : d));
+    const sig = sigOf(state.files?.find((f) => f.path === path));
+    setDiff({ path, sig, text: null });
+    api.diff(id, path).then((text) => setDiff((d) => d?.path === path ? { path, sig, text } : d),
+      () => setDiff((d) => d?.path === path ? { path, sig, text: null, failed: true } : d));
   };
-  const { files, repo, failed } = state;
-  // Clean and outside a repo stay quiet: an idle strip is small.
+  const { files, repo, failed, at } = state;
+  // What was measured and when: the working tree's git status, stamped.
+  const read = at ? `git status of the working tree, read ${clock(new Date(at).toISOString())}` : undefined;
   if (files === null && !failed) return <span className="rt"><span className="rt-label">Changes…</span></span>;
   if (files === null) return <button className="rt rt-link" onClick={() => setNonce((n) => n + 1)}><span className="rt-label">Changes</span><span className="rt-value rt-stale">unavailable · Retry</span></button>;
-  if (!repo) return null;
-  if (!files.length) return failed ? null : <span className="rt"><span className="rt-label">Clean</span></span>;
+  if (!repo) return <span className="rt" title="The session's folder is not a git repository"><span className="rt-label">Changes</span><span className="rt-value rt-stale">unavailable</span></span>;
+  if (!files.length) return (
+    <span className="rt" title={failed ? `The last refresh failed · ${read}` : read}>
+      <span className="rt-label">Changes</span><span className={"rt-value" + (failed ? " rt-stale" : "")}>{failed ? "clean · stale" : "clean"}</span>
+    </span>
+  );
   const add = files.reduce((n, f) => n + Math.max(0, f.add), 0);
   const del = files.reduce((n, f) => n + Math.max(0, f.del), 0);
   return (
     <details className="rt rt-jobs" onToggle={(e) => { if (!e.currentTarget.open) setDiff(null); }}>
-      <summary aria-label={`Changes: ${files.length} files, ${add} added, ${del} removed${failed ? ", stale" : ""}`}>
+      <summary title={read} aria-label={`Changes: ${files.length} files, ${add} added, ${del} removed${failed ? ", stale" : ""}`}>
         <span className="rt-label">Changes</span>
         <span className={"num rt-value" + (failed ? " rt-stale" : "")}>{files.length} <span className="rt-add">+{add}</span> <span className="rt-del">−{del}</span></span>
       </summary>
       {diff ? (
         <div className="rt-pop rt-diff">
-          <button className="head-pop-item rt-back" onClick={() => setDiff(null)}>← <span className="mono">{diff.path}</span></button>
-          {diff.text !== null ? <pre className="mono rt-diff-body">{diff.text.split("\n").map((l, i) => (
+          <button className="head-pop-item rt-back" aria-label="Back to files" onClick={() => setDiff(null)}>← Back to files · <span className="mono">{diff.path}</span></button>
+          {diff.text !== null && sigOf(files.find((f) => f.path === diff.path)) !== diff.sig && (
+            <button className="btn rt-stop" onClick={() => open(diff.path)}>File changed since opened · Reload</button>
+          )}
+          {diff.text !== null ?<pre className="mono rt-diff-body">{diff.text.split("\n").map((l, i) => (
               <span key={i} className={l.startsWith("+") && !l.startsWith("+++") ? "rt-add" : l.startsWith("-") && !l.startsWith("---") ? "rt-del" : l.startsWith("@@") ? "rt-label" : undefined}>{l + "\n"}</span>
             ))}</pre>
             : diff.failed ? <button className="btn rt-stop" onClick={() => open(diff.path)}>Couldn’t read the diff · Retry</button>
@@ -1443,12 +1456,14 @@ function ChangesChip({ id, tick }: { id: string; tick: number }) {
           )}
           {files.map((f) => (
             <li key={f.path}>
-              <button className="rt-link mono rt-job-cmd" title={f.path} onClick={() => open(f.path)}>{f.path}</button>
-              <span className="num">
-                {f.new ? <span className="rt-add">new</span>
-                  : f.add < 0 ? <span className="rt-label">binary</span>
-                  : <><span className="rt-add">+{f.add}</span> <span className="rt-del">−{f.del}</span></>}
-              </span>
+              <button className="rt-link rt-file" title={f.path} onClick={() => open(f.path)}>
+                <span className="mono rt-job-cmd">{f.path}</span>
+                <span className="num">
+                  {f.new ? <span className="rt-add">new</span>
+                    : f.add < 0 ? <span className="rt-label">binary</span>
+                    : <><span className="rt-add">+{f.add}</span> <span className="rt-del">−{f.del}</span></>}
+                </span>
+              </button>
             </li>
           ))}
         </ul>
@@ -1542,11 +1557,16 @@ function CacheChip({ cache, model }: { cache: NonNullable<Row["cache"]>; model?:
  */
 function Tip({ tip, label, className, children }: { tip: string; /** The accessible name, when the visible words are too short to be one. */ label?: string; className?: string; children: React.ReactNode }) {
   const id = useId();
+  // Hover and focus show it; a click or tap pins it; Escape shuts it.
+  const [held, setHeld] = useState<"pin" | "shut" | null>(null);
   return (
-    <span className={"rt rt-tip" + (className ? " " + className : "")} tabIndex={0} aria-label={label} aria-describedby={id}>
+    <button type="button" className={"rt rt-tip" + (className ? " " + className : "")} aria-label={label} aria-describedby={id}
+            aria-expanded={held === "pin"} data-tip={held ?? undefined}
+            onClick={() => setHeld((h) => h === "pin" ? "shut" : "pin")} onBlur={() => setHeld(null)} onMouseLeave={() => setHeld((h) => h === "shut" ? null : h)}
+            onKeyDown={(e) => { if (e.key === "Escape" && held !== "shut") { e.stopPropagation(); setHeld("shut"); } }}>
       {children}
       <span className="rt-tip-body" role="tooltip" id={id}>{tip}</span>
-    </span>
+    </button>
   );
 }
 
@@ -1778,7 +1798,7 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
                   onChange={(v) => (v ? onModel(v) : undefined)} />
           {efforts.length > 0 && (
             <Select label="Effort" value={row.effort ?? ""} align="end" note="Applies to the next turn" onChange={(v) => (v ? onEffort(v) : undefined)}
-                    options={[...(row.effort ? [] : [{ value: "", label: "Default effort" }]), ...efforts.map((e) => ({ value: e, label: effortLabel(e) }))]} />
+                    options={[...(row.effort ? [] : [{ value: "", label: "Provider default" }]), ...efforts.map((e) => ({ value: e, label: effortLabel(e) }))]} />
           )}
           {catFailed && <button className="btn" onClick={() => setNonce((n) => n + 1)}>Models unavailable · Retry</button>}
         </div>
@@ -2174,7 +2194,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
           {row.trouble && row.trouble !== "tests failed" ? (
             // One status: the reason replaces "Done".
             <span className="status head-trouble"><StatusMark status="error" bare />{capital(row.trouble)}</span>
-          ) : <StatusMark status={row.status} />}
+          ) : row.status === "done" ? <span className="status head-idle">Idle</span> : <StatusMark status={row.status} />}
           {/* A test failure is the Tests chip's to say, once. */}
           {running && turns[turns.length - 1]?.prompt?.at && !turns[turns.length - 1]?.done && <RunClock since={turns[turns.length - 1].prompt!.at} />}
           {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}

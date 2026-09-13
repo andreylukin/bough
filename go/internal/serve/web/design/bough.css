@@ -315,8 +315,13 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .rt-link:hover .rt-value{text-decoration:underline}
 .rt-stop{height:24px;padding:0 8px;font-size:12px;flex-shrink:0}
 /* A figure's detail: after a beat on hover, at once on focus or a tap. */
-.rt-tip{position:relative;border-radius:4px}
-.rt-tip-body{position:absolute;top:calc(100% + 6px);left:0;z-index:30;width:max-content;max-width:min(360px,calc(100vw - 32px));
+.rt-tip{position:relative;border-radius:4px;background:none;border:0;padding:0;font:inherit;color:inherit;cursor:default;text-align:start}
+.rt-tip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.rt-tip[data-tip="pin"]>.rt-tip-body{display:block;animation:none}
+.rt-tip[data-tip="shut"]>.rt-tip-body{display:none!important}
+.rt-file{display:flex;justify-content:space-between;align-items:center;gap:12px;width:100%;min-height:36px;min-width:0}
+.head-idle{color:var(--text-3)}
+.rt-tip-body{position:absolute;top:calc(100% + 8px);left:0;z-index:30;width:max-content;max-width:min(360px,calc(100vw - 24px));
   padding:6px 10px;font-size:12px;line-height:16px;color:var(--text-2);background:var(--raised);
   border:1px solid var(--line);border-radius:8px;display:none}
 /* display, not visibility: a hidden tip must not widen a phone's page. */
@@ -845,14 +850,20 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .sidebar{width:100%;border-right:0}
   .side-collapse{display:none}
   .back{display:inline-flex}
-  /* A phone stacks it: title, the run setting in reach, then the budget wrapping. */
-  .thread-head{padding:4px 12px 8px 8px;gap:4px 8px;grid-template-columns:auto minmax(0,1fr);
-               grid-template-rows:44px 44px auto;grid-template-areas:"back main" "side side" "strip strip"}
-  .thread-head>.runtime-strip{flex-wrap:wrap;padding:0 4px}
-  .head-main{gap:10px}
+  /* A phone stacks it: identity (title over status), the run setting, then the budget wrapping. */
+  .thread-head{padding:4px 12px 6px 8px;gap:2px 8px;grid-template-columns:44px minmax(0,1fr) 128px 12px 44px;
+               grid-template-rows:44px 44px auto;grid-template-areas:"back main main main more" "model model effort ctx ctx" "strip strip strip strip strip"}
+  .thread-head>.head-side,.head-side>.controls,.head-side .ctl-run{display:contents}
+  .head-side>.head-more{grid-area:more}
+  .head-side>.head-context{grid-area:ctx;height:44px;padding:0;justify-content:center}
+  .head-side .ctl-run>:first-child{grid-area:model;min-width:0}
+  .head-side .ctl-run>:nth-child(2){grid-area:effort;min-width:0}
+  .head-side .ctl-run .sel-btn{width:100%;height:44px}
+  .head-main{flex-wrap:wrap;align-content:center;gap:0 10px}
+  .head-main h1{flex:1 1 100%;line-height:20px;max-width:none}
+  .thread-head>.runtime-strip{flex-wrap:wrap;padding:0 4px;gap:4px 12px;font-variant-numeric:tabular-nums}
+  .thread-head>.runtime-strip>*{flex-shrink:0;min-height:24px;white-space:nowrap}
   .head-repo{display:none}
-  .head-side .controls,.ctl-run{flex:1 1 0;min-width:0}
-  .ctl-run .sel{flex:1 1 0}
   /* Anchored under the whole header so it never covers the run setting. */
   .thread-head{position:relative}
   .head-more{position:static}
@@ -889,25 +900,7 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .proj-open{flex-basis:100%}
   /* The dynamic viewport, so browser chrome never hides the composer. */
   .app{height:100dvh}
-  /* Header: back, title and settings on one 44px row; the run and budget under it. */
-  /* The real pickers and Context get a 44px row of their own; Settings keeps only Project, Rename, Archive. */
-  /* Title on its own row (two lines at most); pickers, status and budget share one wrapping line. */
-  .thread-head{display:flex;flex-wrap:wrap;align-items:center;column-gap:12px;row-gap:0}
-  .thread-head>.head-side,.thread-head>.head-main,.thread-head>.runtime-strip{display:contents}
-  .thread-head>.back{order:0}
-  .head-main h1{order:1;flex:1 1 calc(100% - 128px);white-space:normal;line-height:20px;max-width:none;padding-block:2px;
-    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-  .head-side>.head-more{order:2}
-  .head-side>.controls{order:3;flex:0 1 auto}
-  .head-side>.controls .sel{flex:none}
-  .head-side>.controls .sel-btn{width:auto;max-width:132px}
-  .head-main>*:not(h1){order:4}
-  .head-side>.head-context{order:5;height:44px}
-  .thread-head>.runtime-strip>*{order:6}
-  .head-side>.controls .ctl-run{flex-direction:row;gap:8px}
-  .head-side>.controls .sel-btn{height:44px}
   .back,.head-more>.more{width:44px;height:44px}
-  .thread-head>.runtime-strip{padding:0 4px;gap:0 14px;font-variant-numeric:tabular-nums}
   .head-pop .ctl-run{flex-direction:column;align-items:stretch;gap:8px}
   .head-pop{padding:8px;max-width:354px}
   /* The list: a separate 44px disclosure column, Seen beside it. */
@@ -930,7 +923,7 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .md td code{white-space:normal;overflow-wrap:anywhere}
   /* Jump to latest never covers the last lines. */
   .thread:has(.jump-latest) .transcript{padding-bottom:64px}
-  .runtime-strip summary,.runtime-strip .rt-link{min-height:44px}
+  .runtime-strip summary,.runtime-strip .rt-link{min-height:24px}
   /* Composer at rest: one row, the input beside its buttons; a long draft puts them under it. */
   .composer{flex-direction:row;align-items:flex-end;gap:6px;padding:6px 6px 6px 12px;min-height:56px}
   .composer textarea{flex:1 1 auto;align-self:center;line-height:22px;padding-block:4px;min-height:30px;box-sizing:content-box}
