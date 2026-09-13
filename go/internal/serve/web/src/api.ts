@@ -71,7 +71,7 @@ export const api = {
     return body.path;
   },
   attachmentURL: (path: string) => `/api/attachments?path=${encodeURIComponent(path)}`,
-  answer: (id: string, text: string) => post(`/api/sessions/${id}/answer`, { text }),
+  answer: (id: string, text: string, ask?: string) => post(`/api/sessions/${id}/answer`, { text, ask }),
   interrupt: (id: string) => post(`/api/sessions/${id}/interrupt`),
   rename: (id: string, title: string) => post(`/api/sessions/${id}/rename`, { title }),
   archive: (id: string) => post(`/api/sessions/${id}/archive`),

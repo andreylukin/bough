@@ -8,7 +8,7 @@ import { rankSkills, useSkills } from "./mention";
 
 export interface Skill { name: string; summary: string; manual: boolean }
 
-export function SkillPicker({ onPick }: { onPick: (name: string) => void }) {
+export function SkillPicker({ onPick }: { onPick: (name: string, known: string[]) => void }) {
   const [open, setOpen] = useState(false);
   const { all, error, retry } = useSkills(open);
   const [q, setQ] = useState("");
@@ -29,6 +29,7 @@ export function SkillPicker({ onPick }: { onPick: (name: string) => void }) {
   const hits = useMemo(() => rankSkills(all ?? [], q), [all, q]);
 
   useEffect(() => { setAt(0); }, [q]);
+  const active = hits.length ? Math.min(at, hits.length - 1) : -1;
 
   // Keep the active row in view as the arrows walk past the fold.
   useEffect(() => {
@@ -37,13 +38,14 @@ export function SkillPicker({ onPick }: { onPick: (name: string) => void }) {
 
   const close = () => { setOpen(false); setQ(""); trigger.current?.focus(); };
 
-  const pick = (s: { name: string }) => { onPick(s.name); setOpen(false); setQ(""); };
+  const pick = (s: { name: string }) => { onPick(s.name, (all ?? []).map((x) => x.name)); setOpen(false); setQ(""); };
 
   const keys = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing) return;
     if (e.key === "Escape") { e.preventDefault(); close(); return; }
     if (e.key === "ArrowDown") { e.preventDefault(); setAt((i) => Math.min(i + 1, hits.length - 1)); return; }
     if (e.key === "ArrowUp") { e.preventDefault(); setAt((i) => Math.max(i - 1, 0)); return; }
-    if (e.key === "Enter") { e.preventDefault(); if (hits[at]) pick(hits[at]); }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (active >= 0) pick(hits[active]); }
   };
 
   return (
@@ -57,12 +59,12 @@ export function SkillPicker({ onPick }: { onPick: (name: string) => void }) {
           <div className="skills-pop" role="dialog" aria-label="Insert a skill">
             <input ref={field} className="skills-filter" value={q} placeholder="Filter skills"
               aria-label="Filter skills" aria-controls="skill-list" role="combobox" aria-expanded="true"
-              aria-activedescendant={hits[at] ? "skill-" + at : undefined}
+              aria-activedescendant={active >= 0 ? "skill-" + active : undefined}
               onChange={(e) => setQ(e.target.value)} onKeyDown={keys} />
             <div id="skill-list" ref={listbox} className="skills-list" role="listbox" aria-label="Skills">
               {hits.map((s, i) => (
-                <button key={s.name} id={"skill-" + i} role="option" aria-selected={i === at} data-at={i === at ? 1 : 0}
-                  tabIndex={-1} className={"skill" + (i === at ? " skill-on" : "")}
+                <button key={s.name} id={"skill-" + i} role="option" aria-selected={i === active} data-at={i === active ? 1 : 0}
+                  tabIndex={-1} className={"skill" + (i === active ? " skill-on" : "")}
                   onMouseEnter={() => setAt(i)} onClick={() => pick(s)}>
                   <span className="mono skill-name">/{s.name}</span>
                   {s.summary && <span className="skill-sum">{s.summary}</span>}

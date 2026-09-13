@@ -328,7 +328,11 @@ func TestAPICreateAndPromptAndAsk(t *testing.T) {
 	if code, _ := f.do(t, "POST", "/api/sessions/created/prompt", `{"text":"x"}`); code != http.StatusConflict {
 		t.Errorf("prompt with an armed ask = %d, want 409", code)
 	}
-	if code, body := f.do(t, "POST", "/api/sessions/created/answer", `{"text":"a"}`); code != http.StatusOK {
+	// An answer written for another question is refused, not delivered.
+	if code, _ := f.do(t, "POST", "/api/sessions/created/answer", `{"text":"a","ask":"not-this-one"}`); code != http.StatusConflict {
+		t.Errorf("answer to an expired question = %d, want 409", code)
+	}
+	if code, body := f.do(t, "POST", "/api/sessions/created/answer", `{"text":"a","ask":"`+f.sup.PendingAsk("created").ID+`"}`); code != http.StatusOK {
 		t.Fatalf("answer = %d %v", code, body)
 	}
 	waitFor(t, "the answer to land", func() bool {

@@ -95,45 +95,50 @@ export function rankSkills<T extends SkillRow>(all: T[], q: string): T[] {
  * repos in it. The server searches, bounded, and is asked only after
  * you stop typing.
  */
-function useFiles(on: boolean, token: string, session: string): Choice[] {
-  const [hits, setHits] = useState<FileRow[]>([]);
+function useFiles(on: boolean, token: string, session: string) {
+  const [hits, setHits] = useState<FileRow[] | null>(null);
+  const [error, setError] = useState(false);
+  const [tries, setTries] = useState(0);
   useEffect(() => {
     // A bare "@" asks too: the server answers it with the files nearest
     // the top of the project, so the picker opens the moment you type it.
-    if (!on) { setHits([]); return; }
+    if (!on) { setHits(null); setError(false); return; }
     let live = true;
     const t = setTimeout(() => {
       fetch(`/api/files?q=${encodeURIComponent(token)}&session=${encodeURIComponent(session)}`)
-        .then((r) => r.json())
-        .then((d) => { if (live) setHits(d.files ?? []); })
-        .catch(() => { if (live) setHits([]); });
+        .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+        .then((d) => { if (live) { setHits(d.files ?? []); setError(false); } })
+        .catch(() => { if (live) { setHits([]); setError(true); } });
     }, 140);
     return () => { live = false; clearTimeout(t); };
-  }, [on, token, session]);
-  return useMemo(() => hits.map((f) => ({
+  }, [on, token, session, tries]);
+  const files = useMemo<Choice[] | null>(() => hits && hits.map((f) => ({
     value: f.path, label: f.path, hint: f.dir ? "directory" : "",
   })), [hits]);
+  return { files, error, retry: () => setTries((n) => n + 1) };
 }
 
-export function Mentions({ trigger, session, onPick, onClose, onOpen }: {
+export function Mentions({ trigger, session, onPick, onClose, onOpen, onActive }: {
   trigger: Trigger | null;
   session: string;
   onPick: (t: Trigger, value: string) => void;
   onClose: () => void;
   /** Whether the picker is on screen and owns Enter, so the hint can step aside. */
   onOpen?: (open: boolean) => void;
+  /** The highlighted option's id, for the composer's aria-activedescendant. */
+  onActive?: (id: string | undefined) => void;
 }) {
   const [at, setAt] = useState(0);
   const box = useRef<HTMLDivElement>(null);
-  const { all: skills } = useSkills(trigger?.kind === "/");
-  const files = useFiles(trigger?.kind === "@", trigger?.token ?? "", session);
+  const { all: skills, error: skillsErr, retry: retrySkills } = useSkills(trigger?.kind === "/");
+  const { files, error: filesErr, retry: retryFiles } = useFiles(trigger?.kind === "@", trigger?.token ?? "", session);
 
   const token = (trigger?.token ?? "").toLowerCase();
   const hits = useMemo(() => {
     if (!trigger) return [];
     // Files are already ranked by the server, which saw the whole tree;
     // re-ranking here would only throw that away.
-    if (trigger.kind === "@") return files.slice(0, 20);
+    if (trigger.kind === "@") return (files ?? []).slice(0, 20);
     return rankSkills(skills ?? [], token).slice(0, 20)
       .map((s) => ({ value: s.name, label: "/" + s.name, hint: s.summary }));
   }, [trigger, token, skills, files]);
@@ -142,6 +147,15 @@ export function Mentions({ trigger, session, onPick, onClose, onOpen }: {
   // Results can shrink under the cursor without the token changing.
   useEffect(() => { setAt((i) => Math.min(i, Math.max(hits.length - 1, 0))); }, [hits.length]);
   useEffect(() => { onOpen?.(Boolean(trigger && hits.length)); }, [trigger, hits.length, onOpen]);
+  useEffect(() => { onActive?.(trigger && hits.length ? "mention-" + at : undefined); }, [trigger, hits.length, at, onActive]);
+  // A fast answer shows nothing; only a slow one says it is looking.
+  const loaded = trigger?.kind === "@" ? files !== null : skills !== null;
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (!trigger || loaded) { setSlow(false); return; }
+    const t = setTimeout(() => setSlow(true), 200);
+    return () => clearTimeout(t);
+  }, [trigger, loaded]);
   useEffect(() => {
     box.current?.querySelector('[data-at="1"]')?.scrollIntoView({ block: "nearest" });
   }, [at, hits.length]);
@@ -168,8 +182,19 @@ export function Mentions({ trigger, session, onPick, onClose, onOpen }: {
     return () => el?.removeEventListener("keydown", h, true);
   }, [trigger, hits, at, onPick, onClose]);
 
-  if (!trigger || hits.length === 0) return null;
+  if (!trigger) return null;
   const isFiles = trigger.kind === "@";
+  if (hits.length === 0) {
+    // Nothing to pick is still an answer: say which one, never go blank.
+    const failed = isFiles ? filesErr : skillsErr;
+    const q = trigger.token ? ` match “${trigger.token}”` : "";
+    const msg = failed ? <>Couldn’t load {isFiles ? "files" : "skills"}. <button className="link" onMouseDown={(e) => e.preventDefault()}
+        onClick={isFiles ? retryFiles : retrySkills}>Retry</button></>
+      : !loaded ? (slow ? (isFiles ? "Finding files…" : "Loading skills…") : null)
+      : !isFiles && skills?.length === 0 ? "No skills installed"
+      : `No ${isFiles ? "files" : "skills"}${q || " found"}`;
+    return msg && <div className="mention"><p className="mention-state" role="status">{msg}</p></div>;
+  }
   return (
     <div className="mention" ref={box}>
       <div className="mention-list" id="mention-list" role="listbox" aria-label={isFiles ? "Files" : "Skills"}>
@@ -181,7 +206,7 @@ export function Mentions({ trigger, session, onPick, onClose, onOpen }: {
           const dir = isFiles && slash >= 0 ? c.value.slice(0, slash) : "";
           const isDir = isFiles && c.hint === "directory";
           return (
-            <button key={c.value} id={"mention-" + i} role="option" aria-selected={i === at} data-at={i === at ? 1 : 0}
+            <button key={c.value} id={"mention-" + i} role="option" tabIndex={-1} aria-selected={i === at} data-at={i === at ? 1 : 0}
                     className={"mention-item" + (i === at ? " mention-on" : "")}
                     onMouseDown={(e) => e.preventDefault() /* keep the composer focused */}
                     onMouseEnter={() => setAt(i)} onClick={() => onPick(trigger, c.value)}>

@@ -1798,7 +1798,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   activity?: string; projects: Project[]; busy: boolean; onBack?: () => void;
   /** Scroll to this turn (1-based) once it is on screen; `at` makes a repeat click count. */
   jump?: { turn: number; at: number } | null;
-  onSend: (t: string) => Promise<string | null> | void; onAnswer: (t: string) => Promise<string | null> | void; onInterrupt: () => Promise<boolean> | void;
+  onSend: (t: string) => Promise<string | null> | void; onAnswer: (t: string, ask?: string) => Promise<string | null> | void; onInterrupt: () => Promise<boolean> | void;
   onArchive: () => void; onRename: (t: string) => void; onContext?: () => void; onAck?: () => void;
   onModel: (m: string) => Promise<boolean> | void; onEffort: (e: string) => Promise<boolean> | void; onAssign: (p: string) => void;
 }) {
@@ -1936,6 +1936,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   // that follows the Escape would otherwise open it straight back.
   const dismissed = useRef("");
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [activeOpt, setActiveOpt] = useState<string | undefined>();
   const caretTrigger = (el: HTMLTextAreaElement) => {
     const t = triggerAt(el.value, el.selectionStart ?? 0);
     const key = t ? `${t.from}:${t.kind}${t.token}` : "";
@@ -1947,12 +1948,15 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   // into the draft: you may already be typing the next one, and switching
   // sessions must not lose it.
   const failedKey = "bough:failed:" + row.id;
-  const [failed, setFailed] = useState<{ text: string; answer: boolean; ask?: string; error?: string } | null>(() => {
-    try { return JSON.parse(sessionStorage.getItem(failedKey) ?? "null"); } catch { return null; }
+  type Failure = { text: string; answer: boolean; ask?: string; error?: string };
+  // Every send that did not go through is kept, each with its own cause.
+  const [failures, setFailures] = useState<Failure[]>(() => {
+    try { const v = JSON.parse(sessionStorage.getItem(failedKey) ?? "null"); return !v ? [] : Array.isArray(v) ? v : [v]; } catch { return []; }
   });
   useEffect(() => {
-    try { failed ? sessionStorage.setItem(failedKey, JSON.stringify(failed)) : sessionStorage.removeItem(failedKey); } catch { /* storage off */ }
-  }, [failed, failedKey]);
+    try { failures.length ? sessionStorage.setItem(failedKey, JSON.stringify(failures)) : sessionStorage.removeItem(failedKey); } catch { /* storage off */ }
+  }, [failures, failedKey]);
+  const drop = (f: Failure) => setFailures((q) => q.filter((x) => x !== f));
 
   // What you just sent, shown the moment you send it. The recorded input
   // can take seconds to land (the child may be starting), and a message
@@ -1971,20 +1975,24 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
 
   // The option being submitted, keyed to the question it answers.
   const [answering, setAnswering] = useState<{ ask: string; text: string } | null>(null);
-  const deliver = async (t: string, answer: boolean) => {
-    const askId = row.ask?.id;
-    // An answer written for a question that has since been replaced is
-    // not sent to the new one; it goes back to the draft instead.
-    if (answer && failed?.ask && failed.text === t && failed.ask !== askId) { setFailed(null); setDraft(t); return; }
+  // `ask` is the question the answer was written for, captured when it was
+  // written: the server refuses it once a newer question has replaced it.
+  const deliver = async (t: string, answer: boolean, ask = row.ask?.id, retried?: Failure) => {
+    if (retried) drop(retried);
+    // An answer to a question that has since been replaced goes back to
+    // the draft, unless you are already writing something newer there.
+    if (answer && retried && ask !== row.ask?.id) {
+      if (!draft.trim()) setDraft(t);
+      else setFailures((q) => [...q, { ...retried, error: "That question expired" }]);
+      return;
+    }
     const id = ++sendId.current;
     if (!answer) setSending((q) => [...q, { id, text: t, after: newest }]);
-    else setAnswering({ ask: askId ?? "", text: t });
-    const error = await (answer ? onAnswer(t) : onSend(t));
+    else setAnswering({ ask: ask ?? "", text: t });
+    const error = await (answer ? onAnswer(t, ask) : onSend(t));
     if (answer) setAnswering(null);
     if (error) setSending((q) => q.filter((p) => p.id !== id));
-    // Only the retried message clears a failure; an unrelated send leaves it.
-    if (error) setFailed({ text: t, answer, ask: askId, error });
-    else setFailed((f) => (f && f.text === t ? null : f));
+    if (error) setFailures((q) => [...q, { text: t, answer, ask, error }]);
   };
   // Stop is asked once; the button says so until the ask is answered.
   const [stopping, setStopping] = useState<"" | "stopping" | "failed">("");
@@ -2028,14 +2036,17 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   };
   const attach = async (files: File[]) => {
     setAttachErr("");
-    for (const f of files) {
+    // The tag lands at paste time, where the caret was; its path follows.
+    // Until it does, the slot is "" and Send waits.
+    const slots = files.map(() => images.current.push("") - 1);
+    insert(slots.map((i) => `[Image #${i + 1}] `).join(""));
+    for (const [k, f] of files.entries()) {
       setUploading((n) => n + 1);
       try {
-        const path = await api.attach(f);
-        images.current.push(path);
-        insert(`[Image #${images.current.length}] `);
+        images.current[slots[k]] = await api.attach(f);
+        try { sessionStorage.setItem(attsKey, JSON.stringify({ pastes: pastes.current, images: images.current })); } catch { /* storage off */ }
       } catch (err) {
-        setAttachErr(`Image not attached: ${(err as Error).message}`);
+        setAttachErr(`Image #${slots[k] + 1} not attached: ${(err as Error).message}`);
       } finally {
         setUploading((n) => n - 1);
       }
@@ -2202,26 +2213,34 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             </button>
           </div>
         )}
-        {failed && (
-          <div className="send-failed" role="alert">
-            <span className="send-failed-text" title={failed.error ? `${failed.error}\n\n${failed.text}` : failed.text}>
-              <strong>Not sent</strong> {failed.text}
-            </span>
-            <span className="send-failed-actions">
-              <button className="btn" disabled={busy} onClick={() => deliver(failed.text, failed.answer)}>Retry</button>
-              {/* Edit never lands on a newer draft: two prompts glued together is a third nobody wrote. */}
-              <button className="btn" disabled={Boolean(draft.trim())} title={draft.trim() ? "Send or clear the current draft first" : undefined}
-                onClick={() => { setDraft(failed.text); setFailed(null); composer.current?.focus(); }}>Edit</button>
-              <button className="link" onClick={() => setFailed(null)}>Dismiss</button>
-            </span>
-          </div>
-        )}
+        {failures.map((failed, i) => (
+          <details key={i} className="send-failed" role="alert">
+            {/* The cause is on the row; the whole prompt is one click away. */}
+            <summary>
+              <strong>{failed.answer ? "Answer not sent" : "Not sent"}</strong>
+              <span className="send-failed-text">{failed.error || "No response"} · {failed.text}</span>
+            </summary>
+            <div className="send-failed-body">
+              {failed.error && <p className="send-failed-error">{failed.error}</p>}
+              <p className="send-failed-prompt">{failed.text}</p>
+              <span className="send-failed-actions">
+                <button className="btn" disabled={busy} onClick={() => deliver(failed.text, failed.answer, failed.ask, failed)}>Retry</button>
+                {/* Edit never lands on a newer draft: two prompts glued together is a third nobody wrote. */}
+                <button className="btn" disabled={Boolean(draft.trim())} title={draft.trim() ? "Send or clear the current draft first" : undefined}
+                  onClick={() => { setDraft(failed.text); drop(failed); composer.current?.focus(); }}>Edit</button>
+                <button className="link" onClick={() => drop(failed)}>Discard</button>
+              </span>
+            </div>
+          </details>
+        ))}
         <div className={"composer" + (draft.includes("\n") || draft.length > 60 ? " composer-multi" : "")}>
           <Mentions trigger={trigger} session={row.id}
             onPick={(t, value) => {
               // Replace the token being typed, and leave a trailing
               // space so the next word is not glued to it.
-              const next = draft.slice(0, t.from) + t.kind + value + " " + draft.slice(t.to);
+              // The whole token, including any of it after the caret.
+              const tail = /^\S*\s?/.exec(draft.slice(t.to))![0];
+              const next = draft.slice(0, t.from) + t.kind + value + " " + draft.slice(t.to + tail.length);
               setDraft(next);
               setTrigger(null);
               const el = composer.current;
@@ -2229,11 +2248,11 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
               requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(caret, caret); });
             }}
             onClose={() => { if (trigger) dismissed.current = `${trigger.from}:${trigger.kind}${trigger.token}`; setTrigger(null); }}
-            onOpen={setPickerOpen} />
+            onOpen={setPickerOpen} onActive={setActiveOpt} />
           <textarea id="composer" ref={composer} value={draft} rows={1}
             aria-label={row.ask ? "Answer to agent question" : "Message"}
             aria-controls={pickerOpen ? "mention-list" : undefined}
-            aria-activedescendant={pickerOpen ? document.querySelector(".mention-on")?.id : undefined}
+            aria-activedescendant={pickerOpen ? activeOpt : undefined}
             placeholder={row.ask ? "Answer…" : running ? "Steer the running turn…" : "Next turn…"}
             onPaste={(e) => { pasted.current = true; onPaste(e); }}
             onChange={(e) => {
@@ -2267,9 +2286,13 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             {uploading > 0 && <span className="attach-note">Attaching image…</span>}
             {attachErr && <span className="attach-note attach-err" role="alert">{attachErr}</span>}
             <div className="composer-actions">
-              <SkillPicker onPick={(name) => {
-                // A skill runs only as the lead word, so a pick replaces the one there.
-                setDraft((d) => `/${name} ${d.trimStart().replace(/^\/\S+\s*/, "")}`);
+              <SkillPicker onPick={(name, known) => {
+                // A skill runs only as the lead word, so a pick replaces a
+                // skill already there, never a leading path like /tmp/x.
+                setDraft((d) => {
+                  const rest = d.trimStart(), lead = /^\/(\S+)\s*/.exec(rest);
+                  return `/${name} ${lead && known.includes(lead[1]) ? rest.slice(lead[0].length) : rest}`;
+                });
                 document.getElementById("composer")?.focus();
               }} />
               {running && (
@@ -2670,7 +2693,7 @@ export default function App() {
         <Thread key={row.id} row={row} lines={lines} jump={jump?.id === row.id ? jump : null} loading={loadedFor !== row.id} loadError={loadFail ?? undefined} paused={paused}
           onRetry={() => (loadedFor === row.id ? retryRef.current() : setLoadTry((n) => n + 1))} stream={stream} activity={activity} projects={projects} busy={busy} onBack={goList}
           onSend={(t) => deliverTo(() => api.prompt(row.id, t))}
-          onAnswer={(t) => deliverTo(() => api.answer(row.id, t))}
+          onAnswer={(t, ask) => deliverTo(() => api.answer(row.id, t, ask))}
           onInterrupt={() => act(() => api.interrupt(row.id))}
           onArchive={() => act(() => (row.archived ? api.unarchive(row.id) : api.archive(row.id)))}
           onRename={(t) => act(() => api.rename(row.id, t))}

@@ -264,8 +264,31 @@ func (a *API) prompt(w http.ResponseWriter, r *http.Request) {
 	a.textVerb(w, r, a.sup.Send)
 }
 
+// answer replies to the armed ask. A client that names the question it
+// answered is refused when that question has since been replaced, so a
+// late answer never lands on a newer question nobody read.
 func (a *API) answer(w http.ResponseWriter, r *http.Request) {
-	a.textVerb(w, r, a.sup.Answer)
+	id := r.PathValue("id")
+	var body struct {
+		Text string `json:"text"`
+		Ask  string `json:"ask"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if _, ok := a.info(id); !ok {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: unknown session %q", id))
+		return
+	}
+	if p := a.sup.PendingAsk(id); body.Ask != "" && p != nil && p.ID != body.Ask {
+		writeErr(w, http.StatusConflict, fmt.Errorf("serve: api: session %q: that question expired; a newer one is pending", id))
+		return
+	}
+	if err := a.sup.Answer(id, body.Text); err != nil {
+		writeErr(w, statusFor(err), fmt.Errorf("serve: api: session %q: %w", id, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (a *API) textVerb(w http.ResponseWriter, r *http.Request, fn func(id, text string) error) {
