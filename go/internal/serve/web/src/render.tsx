@@ -290,6 +290,26 @@ export function foldRetries(body: Line[]): Line[] {
   return out;
 }
 
+/**
+ * A /model switch lands as the command, the command with its argument,
+ * and the loop's "model: …" echo. A run of them folds into one line
+ * naming where it ended up; the verbatim record rides along.
+ */
+export function foldModelSwitch(body: Line[]): Line[] {
+  const out: Line[] = [];
+  for (const l of body) {
+    const is = isQuiet(l.kind) && /^(\/model\b|model: )/.test(l.text);
+    const prev = out[out.length - 1];
+    if (!is) { out.push(l); continue; }
+    const recs = prev?.kind === "model-switch" ? [...(prev.data?.lines as string[]), l.text] : [l.text];
+    const to = [...recs].reverse().find((t) => t.startsWith("model: "))?.slice(7)
+      ?? [...recs].reverse().find((t) => /^\/model \S/.test(t))?.slice(7) ?? "";
+    const next: Line = { ...(prev?.kind === "model-switch" ? prev : l), kind: "model-switch", text: to, data: { lines: recs } };
+    if (prev?.kind === "model-switch") out[out.length - 1] = next; else out.push(next);
+  }
+  return out;
+}
+
 function readStr(v: unknown): string {
   return typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
 }

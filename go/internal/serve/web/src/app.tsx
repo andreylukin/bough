@@ -6,7 +6,7 @@ import { STATUS, StatusMark, Working } from "./status";
 import { ProjectsView } from "./projects";
 import { Select, type Option } from "./select";
 import { DialogHost, askText } from "./dialog";
-import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, type Item, type SubAgent, type Turn, lineCount } from "./render";
+import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath } from "./code";
 import { SkillPicker } from "./skills";
 import { Mentions, triggerAt, type Trigger } from "./mention";
@@ -323,6 +323,10 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
                 {r.jobs.length}<span className="visually-hidden"> {r.jobs.length === 1 ? "job" : "jobs"}</span>
               </span>
             )}
+            {/* Touch has no hover card: a phone reads status and age off the row. */}
+            <span className={"num row-meta" + (failed ? " row-meta-bad" : r.status === "needs-you" ? " row-meta-ask" : "")} aria-hidden="true">
+              {failed ? capital(failed) : STATUS[r.status]?.label ?? r.status} · {ago(r.lastAt)}
+            </span>
           </button>
           {/* The disclosure and Seen are siblings of the row, not inside
               it: a button in a button is invalid and would open it too. */}
@@ -661,6 +665,19 @@ export function Entry({ line, codes, nested }: { line: Line; codes: string[]; ne
           <span className="block-detail">{str(line.data?.why)}</span>
         </summary>
         <pre className="mono">{line.text}</pre>
+      </details>
+    );
+  }
+  if (k === "model-switch") {
+    // A /model switch records the command and the loop's echo: one line, the record inside.
+    const recs = (line.data?.lines ?? []) as string[];
+    return (
+      <details className="block thin">
+        <summary>
+          <span className="block-label">Model changed</span>
+          <span className="block-detail">{line.text}</span>
+        </summary>
+        <pre className="mono">{recs.join("\n")}</pre>
       </details>
     );
   }
@@ -1088,7 +1105,7 @@ function TurnFooter({ turn }: { turn: Turn }) {
  * actually answering. The window is only named when the session records
  * its model; a default model is not guessed at.
  */
-function RuntimeStrip({ row, lines }: { row: Row; lines: Line[] }) {
+function RuntimeStrip({ row, lines, onRun }: { row: Row; lines: Line[]; /** Opens the settings the phone's run line stands in for. */ onRun?: () => void }) {
   const [limits, setLimits] = useState<Record<string, number>>({});
   useEffect(() => {
     fetch("/api/models").then((r) => r.json()).then((c: { providers?: ProviderInfo[] }) => {
@@ -1104,6 +1121,13 @@ function RuntimeStrip({ row, lines }: { row: Row; lines: Line[] }) {
   const pct = u && limit ? Math.min(100, Math.round((u.lastIn / limit) * 100)) : undefined;
   return (
     <div className="runtime-strip">
+      {/* A phone has no room for the pickers: the run is one line, one tap opens them. */}
+      {onRun && (
+        <button className="rt rt-link rt-run" onClick={onRun} aria-label="Model and effort settings">
+          <span className="rt-value">{row.model ? row.model.split("/").pop() : "Default model"}</span>
+          <span className="rt-label">{row.effort ? effortLabel(row.effort) : "Default effort"}</span>
+        </button>
+      )}
       {u && (
         <Tip tip={limit ? `${u.lastIn.toLocaleString()} of ${limit.toLocaleString()} tokens` : "The model's context window is not in the catalogue"}>
           <span className="rt-label">{limit ? "Context" : "Last input"}</span>
@@ -1302,7 +1326,7 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
   const codes = turn.body.filter((l) => l.kind === "code" || l.kind === "sub:code").map((l) => l.text);
   const hooks = useMemo(() => turn.body.filter(isHookLine), [turn.body]);
   const items = useMemo<Item[]>(
-    () => groupTools(groupSubs(foldRetries(turn.body.filter((l) => !isHookLine(l)))), codes),
+    () => groupTools(groupSubs(foldModelSwitch(foldRetries(turn.body.filter((l) => !isHookLine(l))))), codes),
     // codes is derived from turn.body on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [turn.body]);
@@ -1849,7 +1873,18 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
               </svg>
             </button>
             {more && (
-              <div className="head-pop" id={"more-" + row.id}>
+              <div className="head-pop" id={"more-" + row.id} onKeyDown={(e) => {
+                // Tab stays inside the open settings.
+                if (e.key !== "Tab") return;
+                const all = [...e.currentTarget.querySelectorAll<HTMLElement>("button,input")].filter((el) => el.offsetParent);
+                const first = all[0], last = all[all.length - 1];
+                if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+                else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+              }}>
+                <div className="head-pop-phone">
+                  <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" />
+                  {row.cache && <div className="head-pop-cache"><CacheChip cache={row.cache} model={row.model} /></div>}
+                </div>
                 <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="rest" />
                 <button className="head-pop-item" onClick={async () => {
                   closeMore(false);
@@ -1857,12 +1892,13 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
                   const t = await askText("Rename session", { initial: plainTitle(row.title), action: "Rename", allowEmpty: true });
                   if (t !== null) onRename(t);
                 }}>Rename</button>
+                {onContext && <button className="head-pop-item head-pop-phone" onClick={() => { closeMore(false); onContext(); }}>Context</button>}
                 <button className="head-pop-item" onClick={() => { closeMore(true); onArchive(); }}>{row.archived ? "Unarchive" : "Archive"}</button>
               </div>
             )}
           </div>
         </div>
-        <RuntimeStrip row={row} lines={lines} />
+        <RuntimeStrip row={row} lines={lines} onRun={() => setMore(true)} />
       </header>
 
       <div className="scroll transcript" ref={scroller} onScroll={onScroll}>
@@ -1950,7 +1986,7 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
             </span>
           </div>
         )}
-        <div className="composer">
+        <div className={"composer" + (draft.includes("\n") || draft.length > 60 ? " composer-multi" : "")}>
           <Mentions trigger={trigger} session={row.id}
             onPick={(t, value) => {
               // Replace the token being typed, and leave a trailing
