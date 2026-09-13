@@ -55,7 +55,7 @@ export const SubagentCards: StoryObj = {
     const run = groupSubs(body).find((i) => i.kind === "sub");
     return (
       <div style={{ padding: 24, maxWidth: 760 }}>
-        {run?.kind === "sub" && <SubRun agents={run.agents} />}
+        {run?.kind === "sub" && <SubRun agents={run.agents} live />}
       </div>
     );
   },

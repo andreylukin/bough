@@ -1,5 +1,6 @@
 import { marked } from "marked";
 import DOMPurify from "dompurify";
+import { useEffect, useRef } from "react";
 import type { Line } from "./types";
 
 /**
@@ -11,8 +12,19 @@ import type { Line } from "./types";
  * anything including HTML, so it is sanitized rather than trusted.
  */
 export function Markdown({ text }: { text: string }) {
-  const html = DOMPurify.sanitize(marked.parse(text, { async: false }) as string);
-  return <div className="md" dangerouslySetInnerHTML={{ __html: html }} />;
+  // A wide table scrolls in its own box; a fade on the right says there is more.
+  const html = DOMPurify.sanitize(marked.parse(text, { async: false }) as string)
+    .replace(/<table>/g, '<div class="md-table"><div class="md-table-scroll" tabindex="0" role="region" aria-label="Table, scrolls sideways"><table>')
+    .replace(/<\/table>/g, "</table></div></div>");
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const boxes = [...(ref.current?.querySelectorAll<HTMLElement>(".md-table-scroll") ?? [])];
+    const mark = (b: HTMLElement) => b.parentElement!.toggleAttribute("data-end", b.scrollLeft + b.clientWidth >= b.scrollWidth - 1);
+    const on = (e: Event) => mark(e.currentTarget as HTMLElement);
+    boxes.forEach((b) => { mark(b); b.addEventListener("scroll", on, { passive: true }); });
+    return () => boxes.forEach((b) => b.removeEventListener("scroll", on));
+  }, [html]);
+  return <div className="md" ref={ref} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 /**
@@ -322,6 +334,14 @@ function readStr(v: unknown): string {
   return typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
 }
 
+/** A task recorded as a structured payload names its words, never "[object Object]". */
+function taskText(l: Line): string {
+  const d = l.data?.text as unknown;
+  const o = (d && typeof d === "object" ? d : l.data?.task) as Record<string, unknown> | undefined;
+  if (o && typeof o === "object") return readStr(o.task) || readStr(o.prompt) || readStr(o.text);
+  return l.text === "[object Object]" ? "" : l.text;
+}
+
 export function groupSubs(body: Line[]): Item[] {
   const out: Item[] = [];
   let run: { kind: "sub"; seq: number; agents: SubAgent[] } | null = null;
@@ -350,7 +370,7 @@ export function groupSubs(body: Line[]): Item[] {
       run.agents.push(a);
     }
     a.to = l.at;
-    if (l.kind === "sub:start") { a.task = l.text; continue; }
+    if (l.kind === "sub:start") { a.task = taskText(l); continue; }
     if (l.kind === "sub:done") {
       a.status = readStr(l.data?.status) || "ok";
       const n = l.data?.steps;

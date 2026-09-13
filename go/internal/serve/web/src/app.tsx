@@ -851,18 +851,21 @@ export function Entry({ line, codes, nested }: { line: Line; codes: string[]; ne
 /* ---------------- subagents ---------------- */
 
 /** How a finished subagent is described: a word, a glyph, never a hue alone. */
-function subState(status: string): { word: string; cls: string } {
+function subState(status: string, live: boolean): { word: string; cls: string } {
   if (status === "error") return { word: "Failed", cls: "sub-failed" };
   if (status === "ok") return { word: "Finished", cls: "sub-ok" };
+  // No done record and its turn is over: it is not working, we just never heard.
+  if (!live) return { word: "Completion not recorded", cls: "sub-unknown" };
   return { word: "Working", cls: "sub-live" };
 }
 
-export function SubAgentView({ agent }: { agent: SubAgent }) {
-  const st = subState(agent.status);
+export function SubAgentView({ agent, live }: { agent: SubAgent; live: boolean }) {
+  const st = subState(agent.status, live);
+  const working = agent.status === "" && live;
   const codes = agent.lines.filter((l) => l.kind === "sub:code").map((l) => l.text);
-  const task = firstLine(plainTitle(agent.task)) || "a subagent";
+  const task = firstLine(plainTitle(agent.task)) || "Task not recorded";
   // While it works, the line says what it is doing right now.
-  const lastCode = agent.status === "" ? [...agent.lines].reverse().find((l) => l.kind === "sub:code") : undefined;
+  const lastCode = working ? [...agent.lines].reverse().find((l) => l.kind === "sub:code") : undefined;
   const op = lastCode ? parseCall(lastCode.text) : null;
   const ms = Date.parse(agent.to) - Date.parse(agent.from);
   const errors = agent.status === "error" ? agent.lines.filter((l) => l.kind === "sub:error") : [];
@@ -876,7 +879,7 @@ export function SubAgentView({ agent }: { agent: SubAgent }) {
         <span className="sub-tag">Subagent {agent.worker}</span>
         <span className="sub-task">{task}</span>
         <span className="sub-state">
-          {agent.status === "" && (
+          {working && (
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                  strokeLinecap="round" className="spin-mark" aria-hidden="true">
               <circle cx="12" cy="12" r="8.5" strokeDasharray="40 14" />
@@ -908,10 +911,10 @@ export function SubAgentView({ agent }: { agent: SubAgent }) {
  * so they are dealt back into one card per agent — otherwise the
  * transcript reads as one agent with a split personality.
  */
-export function SubRun({ agents }: { agents: SubAgent[] }) {
+export function SubRun({ agents, live }: { agents: SubAgent[]; live: boolean }) {
   return (
     <div className="subrun">
-      {agents.map((a) => <SubAgentView key={a.worker + ":" + a.seq} agent={a} />)}
+      {agents.map((a) => <SubAgentView key={a.worker + ":" + a.seq} agent={a} live={live} />)}
     </div>
   );
 }
@@ -1270,7 +1273,7 @@ function RuntimeStrip({ row, lines, paused, onRetry }: { row: Row; lines: Line[]
       {u && (
         <Tip tip={limit ? `${u.lastIn.toLocaleString()} of ${limit.toLocaleString()} tokens` : switched ? "The model changed since this input was read" : "The model's context window is not in the catalogue"}>
           <span className="rt-label">{limit ? "Context" : "Last input"}</span>
-          <span className="num rt-value">{tokenCount(u.lastIn)}{limit ? ` · ${tokenCount(Math.max(0, limit - u.lastIn))} left` : ""}</span>
+          <span className="num rt-value">{tokenCount(u.lastIn)}{limit ? `/${tokenCount(limit)}` : " · window unknown"}</span>
           {pct !== undefined && (
             <span className="rt-bar" role="meter" aria-label="Context used" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
               <span className={pct >= 80 ? "rt-hot" : undefined} style={{ width: `${pct}%` }} />
@@ -1604,7 +1607,7 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
       )}
       <div className="turn-body">
         {items.map((it) => it.kind === "sub"
-          ? <SubRun key={"sub" + it.seq} agents={it.agents} />
+          ? <SubRun key={"sub" + it.seq} agents={it.agents} live={!turn.done && !turn.stopped} />
           : it.kind === "tools"
           ? <ToolRun key={"tools" + it.seq} lines={it.lines} codes={codes} />
           : <Entry key={it.seq} line={it.line} codes={codes} />)}
@@ -1844,6 +1847,20 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     document.addEventListener("mousedown", away);
     return () => { window.removeEventListener("keydown", key, true); document.removeEventListener("mousedown", away); };
   }, [more, closeMore]);
+  // Opening moves focus in, and the popover never runs under the keyboard.
+  useLayoutEffect(() => {
+    const pop = more ? moreRef.current?.querySelector<HTMLElement>(".head-pop") : null;
+    if (!pop) return;
+    const fit = () => {
+      const vv = window.visualViewport;
+      const bottom = vv ? vv.offsetTop + vv.height : innerHeight;
+      pop.style.maxHeight = `${Math.max(120, bottom - pop.getBoundingClientRect().top - 12)}px`;
+    };
+    fit();
+    pop.querySelector<HTMLElement>("button,input")?.focus();
+    window.visualViewport?.addEventListener("resize", fit);
+    return () => window.visualViewport?.removeEventListener("resize", fit);
+  }, [more]);
   const end = useRef<HTMLDivElement>(null);
   const ask = useRef<HTMLDivElement>(null);
   // The reminder above the composer is for a question scrolled out of

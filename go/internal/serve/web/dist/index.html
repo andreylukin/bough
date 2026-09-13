@@ -57,7 +57,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .turn-n{flex-shrink:0;width:16px;text-align:end;color:var(--text-3);font-size:12px}
 .turn-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .turn-wait{padding-inline-start:26px;font-size:12px;line-height:28px;color:var(--text-3)}
-@media (pointer:coarse){.turn-line{height:40px}.row-twist{top:6px;width:32px;height:32px}}
+@media (max-width:720px),(pointer:coarse){.turn-line{height:44px}.row-twist{top:6px;width:32px;height:32px}}
 @media (prefers-reduced-motion:reduce){.row-twist svg,.sec-fold svg{transition:none}}
 /* A turn you jumped to says where it is, then lets go. */
 .turn{scroll-margin-top:12px}
@@ -104,14 +104,14 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .sec-count-trouble{color:var(--red)}
 .sec-count-needs-you{color:var(--amber)}
 .sec{margin-top:2px}
-@media (pointer:coarse){.sec-fold,.ws-head{height:44px}.side-icon,.side-new{width:44px;height:44px}}
+@media (max-width:720px),(pointer:coarse){.sec-fold,.ws-head{height:44px}.side-icon,.side-new{width:44px;height:44px}}
 /* A session: its status mark, its title, and a trailing count only when there is one. */
 .row{display:flex;align-items:center;gap:10px;width:100%;height:32px;text-align:start;padding:0 10px;
      background:none;border:0;border-radius:8px;color:inherit;font:inherit;cursor:pointer}
 .row-has-log{padding-inline-end:34px}
 .row-mark{display:grid;place-items:center;width:16px;flex-shrink:0}
 /* After the base row, so the touch height is not overwritten by it. */
-@media (pointer:coarse){.row{height:44px}}
+@media (max-width:720px),(pointer:coarse){.row{height:44px}}
 /* Status and age on the title's line, only where there is no hover card. */
 .row-meta{display:none;flex-shrink:0;margin-inline-start:auto;font-size:12px;line-height:16px;color:#b1b8b2;white-space:nowrap}
 .row-meta-ask{color:#eabc6e}
@@ -172,12 +172,14 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .head-pop .ctl{width:100%;justify-content:space-between}
 .head-pop-item{display:flex;align-items:center;height:36px;padding:0 10px;text-align:start;font:13px var(--sans);
                color:var(--text-2);background:none;border:0;border-radius:6px;cursor:pointer}
+.head-pop .ctl-label{padding-inline-start:4px}
+.head-pop{overflow-y:auto}
 .head-pop-item:hover{background:var(--sel);color:var(--text-1)}
 /* Model, effort, cache and Context move into settings only on a phone. */
 .head-clock{font-size:12px;color:var(--text-2)}
 .sel-save{font-size:12px;color:var(--text-3);white-space:nowrap;margin-inline-start:6px}
 .sel-save-failed{background:none;border:0;padding:0;color:var(--red);cursor:pointer}
-@media (pointer:coarse){.head-pop-item{height:44px}}
+@media (max-width:720px),(pointer:coarse){.head-pop-item{height:44px}}
 .more{display:inline-flex;flex-shrink:0;width:32px;height:32px;align-items:center;justify-content:center;
       background:none;border:1px solid var(--line-strong);border-radius:6px;color:var(--text-2);cursor:pointer}
 .more:hover{color:var(--text-1)}
@@ -237,7 +239,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .sel-label+.sel-check{margin-inline-start:auto}
 .sel-check{flex-shrink:0;color:var(--accent)}
 .sel-empty{margin:0;padding:12px;font-size:13px;color:var(--text-3)}
-@media (pointer:coarse){.sel-btn{height:44px}.sel-item{min-height:44px}}
+@media (max-width:720px),(pointer:coarse){.sel-btn{height:44px}.sel-item{min-height:44px}}
 
 /* turns */
 /* Commands and output want the width; replies keep an 80ch measure. */
@@ -421,7 +423,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
               font-size:12px;color:var(--text-3)}
 .mention-foot kbd{font:11px var(--mono);color:var(--text-2);background:var(--surface);
                   border:1px solid var(--line);border-radius:4px;padding:0 4px;margin-inline-end:3px}
-@media (pointer:coarse){.mention-item{min-height:44px}.mention-foot{display:none}}
+@media (max-width:720px),(pointer:coarse){.mention-item{min-height:44px}.mention-foot{display:none}}
 
 /* ⌘K quick access */
 .pal-scrim{position:fixed;inset:0;background:rgb(0 0 0/.55);z-index:60}
@@ -646,7 +648,13 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .md a:hover{color:var(--text-1)}
 .md blockquote{margin:0 0 12px;padding-inline-start:14px;border-inline-start:2px solid var(--line-strong);
                color:var(--text-3)}
-.md table{border-collapse:collapse;margin:0 0 12px;font-size:14px;display:block;overflow-x:auto}
+.md-table{position:relative;margin:0 0 12px}
+.md-table-scroll{overflow-x:auto;border-radius:4px}
+.md-table-scroll:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.md-table::after{content:"";position:absolute;inset-block:0;right:0;width:16px;pointer-events:none;
+  background:linear-gradient(to right,transparent,var(--bg))}
+.md-table[data-end]::after{display:none}
+.md table{border-collapse:collapse;margin:0;font-size:14px;display:table}
 .md th,.md td{border:1px solid var(--line);padding:6px 10px;text-align:start}
 .md th{color:var(--text-1);font-weight:600}
 .md hr{border:0;border-top:1px solid var(--line);margin:16px 0}
@@ -657,7 +665,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 /* Short options sit in a row; long ones wrap to their own lines. */
 .ask-options{display:flex;gap:6px;flex-wrap:wrap}
 .ask-option{min-height:36px;height:auto;padding-block:8px;font-size:14px;line-height:20px;white-space:normal;text-align:start}
-@media (pointer:coarse){.ask-option{min-height:44px}}
+@media (max-width:720px),(pointer:coarse){.ask-option{min-height:44px}}
 .ask-q{margin:0;font-size:15px;font-weight:500;color:var(--text-1)}
 
 /* composer */
@@ -678,12 +686,12 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .send-failed-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .send-failed .btn{height:32px;padding:0 10px;font-size:13px}
 @media (max-width:480px){.send-failed-actions{flex-basis:100%}.send-failed .btn,.send-failed .link{min-height:44px}}
-@media (pointer:coarse){.send-failed .btn{height:44px}}
+@media (max-width:720px),(pointer:coarse){.send-failed .btn{height:44px}}
 /* Floats over the transcript's foot: appearing never moves what you read. */
 .composer-wrap>.jump-latest{position:absolute;z-index:5;bottom:100%;right:24px;width:auto;margin:0;
   height:32px;padding:0 12px;border-radius:6px;font-size:12px;background:var(--raised)}
 .composer-wrap>.jump-latest:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-@media (pointer:coarse){.composer-wrap>.jump-latest{height:40px}}
+@media (max-width:720px),(pointer:coarse){.composer-wrap>.jump-latest{height:40px}}
 .composer{background:var(--surface);border:1px solid var(--line-strong);border-radius:9px;padding:10px 12px;
           display:flex;flex-direction:column;gap:6px}
 .composer-bar{display:flex;align-items:center;gap:12px}
@@ -700,7 +708,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
            white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ask-bar strong{color:var(--amber);font-weight:600}
 .ask-bar .btn{height:32px}
-@media (pointer:coarse){.ask-bar{min-height:44px}.ask-bar .btn{height:44px}}
+@media (max-width:720px),(pointer:coarse){.ask-bar{min-height:44px}.ask-bar .btn{height:44px}}
 .composer textarea:focus{outline:none}
 .composer textarea::placeholder{color:var(--text-3)}
 .hint{font-size:12px;line-height:16px;color:var(--text-3);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -733,7 +741,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 /* A half-faded accent still reads as "press me"; an empty Send is not. */
 .btn-primary:disabled{background:var(--raised);color:var(--text-3);border-color:var(--line);opacity:1;filter:none}
 /* Fingers are not cursors: the icon buttons get a full touch target. */
-@media (pointer:coarse){.back,.head-more>.more,.copy-btn{min-width:44px;min-height:44px}}
+@media (max-width:720px),(pointer:coarse){.back,.head-more>.more,.copy-btn{min-width:44px;min-height:44px}}
 /* On a phone the command is the part worth reading: it takes its own full
    line instead of being cut to fit beside a line count. */
 @media (max-width:720px){
@@ -888,11 +896,19 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .app{height:100dvh}
   /* Header: back, title and settings on one 44px row; the run and budget under it. */
   /* The real pickers and Context get a 44px row of their own; Settings keeps only Project, Rename, Archive. */
-  .thread-head{grid-template-columns:auto minmax(0,1fr) auto;grid-template-rows:44px 44px auto;grid-template-areas:"back main side" "run run ctx" "strip strip strip"}
-  .thread-head>.head-side{display:contents}
-  .head-side>.controls{grid-area:run;align-self:center}
-  .head-side>.head-context{grid-area:ctx;height:44px}
-  .head-side>.head-more{grid-area:side}
+  /* Title on its own row (two lines at most); pickers, status and budget share one wrapping line. */
+  .thread-head{display:flex;flex-wrap:wrap;align-items:center;column-gap:12px;row-gap:0}
+  .thread-head>.head-side,.thread-head>.head-main,.thread-head>.runtime-strip{display:contents}
+  .thread-head>.back{order:0}
+  .head-main h1{order:1;flex:1 1 calc(100% - 128px);white-space:normal;line-height:20px;max-width:none;padding-block:2px;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .head-side>.head-more{order:2}
+  .head-side>.controls{order:3;flex:0 1 auto}
+  .head-side>.controls .sel{flex:none}
+  .head-side>.controls .sel-btn{width:auto;max-width:132px}
+  .head-main>*:not(h1){order:4}
+  .head-side>.head-context{order:5;height:44px}
+  .thread-head>.runtime-strip>*{order:6}
   .head-side>.controls .ctl-run{flex-direction:row;gap:8px}
   .head-side>.controls .sel-btn{height:44px}
   .back,.head-more>.more{width:44px;height:44px}
@@ -911,8 +927,15 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .transcript{gap:20px}
   .md ul,.md ol{padding-inline-start:18px}
   .turn-body>.block.thin+.block.thin,.sub-body>.block.thin+.block.thin{margin-top:0}
-  .block.thin>summary{position:relative}
-  .block.thin>summary::after{content:"";position:absolute;inset:-6px 0}
+  .block.thin>summary{min-height:44px}
+  /* Tables: the first column stays put while the rest scroll under it. */
+  .md table{font-size:13px;line-height:18px}
+  .md th,.md td{padding:8px;min-width:180px}
+  .md th:first-child,.md td:first-child{position:sticky;left:0;z-index:1;min-width:104px;max-width:104px;background:var(--bg);box-shadow:inset -1px 0 var(--line)}
+  .md td code{white-space:normal;overflow-wrap:anywhere}
+  /* Jump to latest never covers the last lines. */
+  .thread:has(.jump-latest) .transcript{padding-bottom:64px}
+  .runtime-strip summary,.runtime-strip .rt-link{min-height:44px}
   /* Composer at rest: one row, the input beside its buttons; a long draft puts them under it. */
   .composer{flex-direction:row;align-items:flex-end;gap:6px;padding:6px 6px 6px 12px;min-height:56px}
   .composer textarea{flex:1 1 auto;align-self:center;line-height:22px;padding-block:4px;min-height:30px;box-sizing:content-box}
