@@ -59,8 +59,9 @@ type Row struct {
 	// cache after the last turn that reported one.
 	Jobs  []Job  `json:"jobs,omitempty"`
 	Cache *Cache `json:"cache,omitempty"`
-	// Trouble: failed or interrupted, and not yet marked seen.
-	Trouble bool `json:"trouble,omitempty"`
+	// Trouble is why this session needs a person ("failed",
+	// "interrupted", "tests failed"), or "" once marked seen.
+	Trouble string `json:"trouble,omitempty"`
 }
 
 // maxBody caps every request body: the API takes prompts and titles,

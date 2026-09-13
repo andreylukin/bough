@@ -46,8 +46,8 @@ export interface Row {
   jobs?: Job[];
   /** The prompt cache after the last turn that reported one. */
   cache?: Cache;
-  /** Failed or interrupted, and not yet marked seen. */
-  trouble?: boolean;
+  /** Why this session needs you ("failed", "interrupted", "tests failed"); absent once marked seen. */
+  trouble?: string;
 }
 
 export interface Job { id: number; cmd: string; started: string }

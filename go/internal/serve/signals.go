@@ -61,20 +61,30 @@ func RunningJobs(entries []history.Entry, childAlive bool) []Job {
 // first time the feature is on. A week covers a weekend away.
 const troubleWindow = 7 * 24 * time.Hour
 
-// Troubled says whether a session's outcome still needs a person: it
-// failed or was interrupted (not stopped on purpose), within the window,
-// and recorded something after the last time it was marked seen.
-func Troubled(st Status, entries []history.Entry, ack int64, now time.Time) bool {
+// Troubled says why a session's outcome still needs a person, or "" when
+// it does not: it failed, was interrupted (not stopped on purpose), or its
+// last test run failed — within the window, and with something recorded
+// after the last time it was marked seen. The reason is what the sidebar
+// shows, so a finished session is not just "Done" in a queue of trouble.
+func Troubled(st Status, entries []history.Entry, ack int64, now time.Time) string {
 	if len(entries) == 0 {
-		return false
+		return ""
 	}
 	last := entries[len(entries)-1]
 	if last.Seq <= ack || now.Sub(last.At) >= troubleWindow {
-		return false
+		return ""
 	}
-	// A turn can finish cleanly while the tests it ran failed: finishing
-	// is the lifecycle, the exit is the verdict.
-	return st == StatusError || st == StatusInterrupted || lastTestFailed(entries)
+	switch {
+	case st == StatusError:
+		return "failed"
+	case st == StatusInterrupted:
+		return "interrupted"
+	case lastTestFailed(entries):
+		// A turn can finish cleanly while the tests it ran failed:
+		// finishing is the lifecycle, the exit is the verdict.
+		return "tests failed"
+	}
+	return ""
 }
 
 // testCmd matches a command that runs a test suite (the web view's

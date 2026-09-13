@@ -144,7 +144,12 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
                 </span>
                 <span className="row-meta">
                   {/* The time beside the title already says "Waiting" or "Running". */}
-                  <StatusMark status={r.status} bare={r.status === "needs-you" || r.status === "running"} />
+                  {r.trouble === "tests failed" && r.status === "done" ? (
+                    // "Done" in a queue of trouble says nothing; the reason does.
+                    <span className="row-trouble">Tests failed</span>
+                  ) : (
+                    <StatusMark status={r.status} bare={r.status === "needs-you" || r.status === "running"} />
+                  )}
                   {r.jobs && r.jobs.length > 0 && (
                     <span className="num row-jobs" title={r.jobs.map((j) => j.cmd).join("\n")}>
                       {r.jobs.length} {r.jobs.length === 1 ? "job" : "jobs"}
