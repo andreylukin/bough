@@ -1198,6 +1198,18 @@ export default function App() {
   // The Context panel takes over the thread pane for the open session,
   // and closes when a different one is opened.
   const [context, setContext] = useState(false);
+  const [wikiRoute, setWikiRoute] = useState<WikiRoute>({ at: "index" });
+  // The review count on the nav item. Polled slowly: it changes when an
+  // ingest lands, which is minutes apart at the fastest.
+  const [wikiFlags, setWikiFlags] = useState(0);
+  useEffect(() => {
+    const load = () => wikiApi.index()
+      .then((ix) => setWikiFlags(ix.health.unsupported + ix.health.superseded + ix.health.uncited))
+      .catch(() => setWikiFlags(0));
+    load();
+    const t = setInterval(load, 60_000);
+    return () => clearInterval(t);
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -1292,6 +1304,9 @@ export default function App() {
   useEffect(() => { if (status && status !== "running") setStream([]); }, [status]);
 
   const [palette, setPalette] = useState(false);
+  // What the palette opens with, when something other than ⌘K opened it
+  // (Review's "Search history" hands it the claim).
+  const [palQuery, setPalQuery] = useState("");
   const [home, setHome] = useState("");
   useEffect(() => { api.home().then(setHome).catch(() => setHome("")); }, []);
 
@@ -1309,6 +1324,8 @@ export default function App() {
     const read = () => {
       const h = window.location.hash.replace(/^#\/?/, "");
       if (h === "hooks" || h === "projects") { setView(h); setContext(false); return; }
+      const wr = parseWikiHash(h);
+      if (wr) { setView("wiki"); setWikiRoute(wr); setContext(false); setPane("thread"); return; }
       const m = /^s\/([^/]+)(\/context)?$/.exec(h);
       if (m) {
         setView("sessions"); setSelected(m[1]); setContext(Boolean(m[2])); setPane("thread");
@@ -1333,12 +1350,21 @@ export default function App() {
   useEffect(() => {
     const want = view === "hooks" ? "#/hooks"
       : view === "projects" ? "#/projects"
+      : view === "wiki" ? `#/${wikiHash(wikiRoute)}`
       : selected ? `#/s/${selected}${context ? "/context" : ""}`
       : "#/";
     if (window.location.hash !== want) {
       window.history.replaceState(null, "", want);
     }
-  }, [view, selected, context]);
+  }, [view, selected, context, wikiRoute]);
+
+  // Moving around the wiki pushes, like opening a conversation: Back
+  // from a cited entry returns to the page, and from a page to the index.
+  const goWiki = useCallback((r: WikiRoute) => {
+    setWikiRoute(r); setView("wiki"); setContext(false); setPane("thread");
+    const want = `#/${wikiHash(r)}`;
+    if (window.location.hash !== want) window.history.pushState(null, "", want);
+  }, []);
 
   usePaletteKey(useCallback(() => setPalette(true), []));
 
@@ -1387,6 +1413,13 @@ export default function App() {
       run: () => { setView("projects"); setPane("thread"); } },
     { id: "go:hooks", group: "Go to", label: "Hooks",
       run: () => { setView("hooks"); setPane("thread"); } },
+    { id: "go:wiki", group: "Go to", label: "Wiki", run: () => goWiki({ at: "index" }) },
+    { id: "wiki:review", group: "Wiki", label: "Review flagged claims",
+      hint: wikiFlags ? `${wikiFlags} flagged` : undefined, run: () => goWiki({ at: "review" }) },
+    { id: "wiki:activity", group: "Wiki", label: "Wiki activity", run: () => goWiki({ at: "activity" }) },
+    { id: "wiki:ingest", group: "Wiki", label: "Ingest now",
+      hint: "compiles finished sessions into the wiki",
+      run: () => act(() => wikiApi.ingest()).then((ok) => { if (ok) goWiki({ at: "activity" }); }) },
     { id: "go:archived", group: "Go to",
       label: archived ? "Hide archived conversations" : "Show archived conversations",
       run: () => setArchived((v) => !v) },
@@ -1405,14 +1438,19 @@ export default function App() {
 
   return (
     <div className="app" data-pane={pane}>
-      <Palette open={palette} onClose={() => setPalette(false)} rows={rows}
-               commands={commands} onOpenSession={openSession}
+      <Palette open={palette} onClose={() => { setPalette(false); setPalQuery(""); }} rows={rows}
+               commands={commands} onOpenSession={openSession} initialQuery={palQuery}
+               onOpenWikiPage={(path) => goWiki({ at: "page", path })}
                onStart={home ? (text) => start(home, text) : undefined} />
       <Sidebar rows={visible} selected={selected}
                onSelect={(id) => { setSelected(id); setContext(false); setView("sessions"); setPane("thread"); }}
-               query={query} onQuery={setQuery} view={view} onView={(v) => { setView(v); setPane("thread"); }}
+               query={query} onQuery={setQuery} view={view} wikiFlags={wikiFlags}
+               onView={(v) => { if (v === "wiki") goWiki({ at: "index" }); else { setView(v); setPane("thread"); } }}
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)} />
-      {view === "hooks" ? (
+      {view === "wiki" ? (
+        <WikiPage route={wikiRoute} onRoute={goWiki} onBack={() => setPane("list")} onOpenSession={openSession}
+                  onSearch={(text) => { setPalQuery(text.replace(/\s+/g, " ").slice(0, 60)); setPalette(true); }} />
+      ) : view === "hooks" ? (
         <HooksPage onBack={() => setPane("list")} />
       ) : view === "projects" ? (
         <ProjectsView

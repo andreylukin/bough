@@ -37,39 +37,47 @@ func Digest(id string, entries []history.Entry, from int64) string {
 		if e.Seq <= from {
 			continue
 		}
-		text, _ := e.Data["text"].(string)
-		switch e.Kind {
-		case "meta":
-			if cwd, _ := e.Data["cwd"].(string); cwd != "" {
-				digestLine(&b, e.Seq, "cwd", cwd, 1)
-			}
-		case "title":
-			digestLine(&b, e.Seq, "title", text, 1)
-		case "input":
-			digestLine(&b, e.Seq, "user", text, 60)
-		case "steer":
-			digestLine(&b, e.Seq, "user (mid-turn)", text, 30)
-		case "assistant":
-			digestLine(&b, e.Seq, "assistant", text, 60)
-		case "code":
-			digestLine(&b, e.Seq, "ran", text, 8)
-		case "result":
-			digestLine(&b, e.Seq, "output", text, 10)
-		case "error":
-			digestLine(&b, e.Seq, "error", text, 10)
-		case "command":
-			digestLine(&b, e.Seq, "command", text, 3)
-		case "ask":
-			digestLine(&b, e.Seq, "asked the user", text, 10)
-		case "ask/answer":
-			digestLine(&b, e.Seq, "user answered", text, 10)
-		case "cancelled":
-			digestLine(&b, e.Seq, "cancelled", "the user stopped the turn", 1)
+		if label, text, n, ok := describe(e); ok {
+			digestLine(&b, e.Seq, label, text, n)
 		}
-		// Skipped: thinking, sub:* (a subagent's own steps; its report
-		// returns as a result), done, nudge, todo, job bookkeeping.
 	}
 	return b.String()
+}
+
+// describe is how the digest names an entry and how much of it it
+// keeps. ok is false for the kinds the digest skips: thinking, sub:* (a
+// subagent's own steps; its report returns as a result), done, nudge,
+// todo, job bookkeeping.
+func describe(e history.Entry) (label, text string, maxLines int, ok bool) {
+	text, _ = e.Data["text"].(string)
+	switch e.Kind {
+	case "meta":
+		cwd, _ := e.Data["cwd"].(string)
+		return "cwd", cwd, 1, cwd != ""
+	case "title":
+		return "title", text, 1, true
+	case "input":
+		return "user", text, 60, true
+	case "steer":
+		return "user (mid-turn)", text, 30, true
+	case "assistant":
+		return "assistant", text, 60, true
+	case "code":
+		return "ran", text, 8, true
+	case "result":
+		return "output", text, 10, true
+	case "error":
+		return "error", text, 10, true
+	case "command":
+		return "command", text, 3, true
+	case "ask":
+		return "asked the user", text, 10, true
+	case "ask/answer":
+		return "user answered", text, 10, true
+	case "cancelled":
+		return "cancelled", "the user stopped the turn", 1, true
+	}
+	return "", "", 0, false
 }
 
 const maxLineChars = 400

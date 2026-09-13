@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -17,8 +18,9 @@ import (
 // if anything is, run a headless bough in the wiki directory with
 // "/llm-wiki ingest <ids>" and commit what it wrote. With nothing
 // pending it returns at once and never calls a model, so a 5-minute
-// schedule costs nothing on a quiet day.
-func Run(p paths, exe string, all bool, maxSessions int, quiet time.Duration) error {
+// schedule costs nothing on a quiet day. only, when set, ingests that
+// one pending session and nothing else (the control room's "Ingest").
+func Run(p paths, exe string, all bool, maxSessions int, quiet time.Duration, only string) error {
 	if err := ensureWiki(p); err != nil {
 		return err
 	}
@@ -31,6 +33,9 @@ func Run(p paths, exe string, all bool, maxSessions int, quiet time.Duration) er
 		return err
 	}
 	pend, err := FindPending(p, quiet, all, time.Now())
+	if only != "" {
+		pend = slices.DeleteFunc(pend, func(x Pending) bool { return x.ID != only })
+	}
 	if err != nil || len(pend) == 0 {
 		return err
 	}

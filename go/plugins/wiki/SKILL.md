@@ -58,7 +58,9 @@ Updated: YYYY-MM-DD · Sessions: `<session>#<seq>`, ...
 path, a command, a cause — carries a citation `` `<session>#<seq>` `` (in
 backticks) pointing at the history entry it came from. Find the seq in the
 digest *before* you write the claim. No citation, no claim. Inference is
-labeled as inference. `"${BOUGH_BIN:-bough}" wiki check` verifies every citation resolves.
+labeled as inference: start the sentence (or bullet) with `*Inference:*`,
+so the control room can tell it from a claim that lost its citation.
+`"${BOUGH_BIN:-bough}" wiki check` verifies every citation resolves.
 
 When a newer session contradicts a page, keep the old claim and mark it:
 `**Outdated** (superseded by `<session>#<seq>`): ...` — do not silently

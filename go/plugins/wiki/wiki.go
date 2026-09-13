@@ -46,7 +46,7 @@ func (plugin) Name() string                                { return "wiki" }
 func (plugin) Inject() []string                            { return nil }
 func (plugin) Apply(*kernel.Context, map[string]any) error { return nil }
 
-const usage = "pending [--all] | digest <session> [--from N] | check | run [--all] [--max N] | install [--every 5m] | uninstall"
+const usage = "pending [--all] | digest <session> [--from N] | check | run [--all] [--max N] [--only <session>] | install [--every 5m] | uninstall"
 
 func (plugin) Commands() []kernel.Command {
 	return []kernel.Command{{
@@ -129,7 +129,7 @@ func runCLI(_ map[string]any, args []string) error {
 		if err != nil {
 			return err
 		}
-		return Run(p, exe, flags.all, flags.max, defaultQuiet)
+		return Run(p, exe, flags.all, flags.max, defaultQuiet, flags.only)
 	case "install":
 		exe, err := selfExe()
 		if err != nil {
@@ -147,6 +147,7 @@ type cliFlags struct {
 	from  int64
 	max   int
 	every time.Duration
+	only  string
 	rest  []string
 }
 
@@ -169,6 +170,8 @@ func parseFlags(args []string) cliFlags {
 			if n, err := strconv.Atoi(next()); err == nil && n > 0 {
 				f.max = n
 			}
+		case "--only":
+			f.only = next()
 		case "--every":
 			if d, err := time.ParseDuration(next()); err == nil && d >= time.Minute {
 				f.every = d

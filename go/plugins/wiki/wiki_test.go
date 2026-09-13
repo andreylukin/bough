@@ -221,7 +221,7 @@ func TestRunIngestsPendingAndCommits(t *testing.T) {
 	exe, record := fakeBough(t, t.TempDir())
 
 	// First run: creates the wiki (with a baseline of now), nothing pending.
-	if err := Run(p, exe, false, 3, 30*time.Minute); err != nil {
+	if err := Run(p, exe, false, 3, 30*time.Minute, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(record); err == nil {
@@ -239,7 +239,7 @@ func TestRunIngestsPendingAndCommits(t *testing.T) {
 	// A session after the baseline, quiet for an hour: pending.
 	at := time.Now().Add(time.Second)
 	session(t, p, "s1", "/repo", at, at.Add(-time.Hour), "input", "assistant")
-	if err := Run(p, exe, false, 3, 30*time.Minute); err != nil {
+	if err := Run(p, exe, false, 3, 30*time.Minute, ""); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(record)
@@ -272,7 +272,7 @@ func TestRunSkipsWhileLocked(t *testing.T) {
 		t.Fatal("could not take the lock")
 	}
 	defer unlock()
-	if err := Run(p, exe, false, 3, 30*time.Minute); err != nil {
+	if err := Run(p, exe, false, 3, 30*time.Minute, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(record); err == nil {

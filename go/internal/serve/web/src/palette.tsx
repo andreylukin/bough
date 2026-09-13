@@ -14,6 +14,28 @@ export interface Command {
   hint?: string;
   group: string;
   run: () => void;
+  /** Shown under the row while it is selected: why this result is here. */
+  detail?: string;
+}
+
+interface WikiHit { path: string; title: string; topic: string; excerpt: string; counts: { cited: number } }
+
+/** Pages whose claims mention the query, from the wiki's own search. */
+function useWikiHits(q: string, open: boolean, on: boolean): WikiHit[] {
+  const [hits, setHits] = useState<WikiHit[]>([]);
+  useEffect(() => {
+    const needle = q.trim();
+    if (!on || !open || needle.length < 2 || isSentence(needle)) { setHits([]); return; }
+    let live = true;
+    const t = setTimeout(() => {
+      fetch("/api/wiki/search?q=" + encodeURIComponent(needle))
+        .then((r) => r.json())
+        .then((d) => { if (live) setHits(d.hits ?? []); })
+        .catch(() => { if (live) setHits([]); });
+    }, 180);
+    return () => { live = false; clearTimeout(t); };
+  }, [q, open, on]);
+  return hits;
 }
 
 /**
@@ -78,7 +100,7 @@ function isSentence(q: string): boolean {
   return q.trim().split(/\s+/).length >= 4;
 }
 
-export function Palette({ open, onClose, rows, commands, onOpenSession, onStart, initialQuery = "" }: {
+export function Palette({ open, onClose, rows, commands, onOpenSession, onStart, onOpenWikiPage, initialQuery = "" }: {
   open: boolean;
   onClose: () => void;
   rows: Row[];
@@ -86,6 +108,8 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
   onOpenSession: (id: string) => void;
   /** Start a conversation with what was typed as its first message. */
   onStart?: (text: string) => void;
+  /** Open a wiki page; when set, the wiki's pages are searched too. */
+  onOpenWikiPage?: (path: string) => void;
   /** Seeds the box. Only a story uses it: nothing can type for us there. */
   initialQuery?: string;
 }) {
@@ -104,6 +128,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
   }, [open, initialQuery]);
 
   const found = useFullText(q, open);
+  const pages = useWikiHits(q, open, Boolean(onOpenWikiPage));
 
   const hits = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -128,6 +153,21 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
         run: () => onOpenSession(r.id),
       })),
     ];
+    // A wiki page carries the claim that matched: the point of the wiki
+    // is the join between a page and the entry behind it, and a title
+    // alone does not show which is which.
+    if (onOpenWikiPage) {
+      for (const p of pages) {
+        all.push({
+          id: "w:" + p.path,
+          label: p.title,
+          hint: [p.topic, p.counts.cited ? `${p.counts.cited} cited` : ""].filter(Boolean).join(" · "),
+          group: "Wiki pages",
+          detail: p.excerpt,
+          run: () => onOpenWikiPage(p.path),
+        });
+      }
+    }
     // Full-text results for sessions the title match already found are
     // not new information; the rest come after, each showing the line
     // that matched so you can tell why it is here.
@@ -162,7 +202,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
       else all.push(startHere);
     }
     return all.slice(0, 40);
-  }, [q, rows, commands, onOpenSession, found, onStart]);
+  }, [q, rows, commands, onOpenSession, found, onStart, pages, onOpenWikiPage]);
 
   useEffect(() => { setAt(0); }, [q]);
   useEffect(() => {
@@ -207,6 +247,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
                   <span className="pal-label">{c.label}</span>
                   {c.hint && <span className="pal-hint">{c.hint}</span>}
                 </button>
+                {i === at && c.detail && <span className="pal-ev">{c.detail}</span>}
               </div>
             );
           })}
