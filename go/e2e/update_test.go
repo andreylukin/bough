@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRestartNoPidfile(t *testing.T) {
@@ -36,8 +37,16 @@ func TestUpdateOutsideCheckout(t *testing.T) {
 	// those. Cleanups run last-registered-first, so this one makes the
 	// clone writable before the directory is torn down.
 	t.Cleanup(func() {
-		_ = makeWritable(home)
-		_ = os.RemoveAll(home) // do it here, while everything is writable
+		// The whole sandbox, retried: a git or go child of update can
+		// still be writing into it for a moment after bough exits.
+		base := filepath.Dir(home)
+		for range 20 {
+			_ = makeWritable(base)
+			if os.RemoveAll(base) == nil {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
 	})
 
 	// A local repo standing in for GitHub: this asserts that update
