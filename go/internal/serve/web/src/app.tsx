@@ -1267,6 +1267,10 @@ export default function App() {
   const [rows, setRows] = useState<Row[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
+  // The catch-up cursor: the newest history seq on screen, read outside
+  // any state updater.
+  const lastSeq = useRef(0);
+  useEffect(() => { lastSeq.current = lines.length ? lines[lines.length - 1].seq : 0; }, [lines]);
   // Live fragments of the reply being written, newest last. Never
   // merged into `lines`: these carry no history seq and the recorded
   // entry always supersedes them.
@@ -1340,30 +1344,31 @@ export default function App() {
     // nothing saying so. Retry on a backoff until one lands.
     let backoff = 4000;
     const catchUp = () => {
-      setLines((prev) => {
-        const since = prev.length ? prev[prev.length - 1].seq : 0;
-        api.session(selected, since).then((r) => {
-          if (!live) return;
-          backoff = 4000;
-          setRows((rs) => rs.map((x) => (x.id === r.session.id ? r.session : x)));
-          if (!r.entries.length) return;
-          const drop = superseded;
-          superseded = 0;
-          // The recorded entries are in hand; the fragments they were
-          // built from go in the same commit, so the text is never
-          // absent for a frame and never shown twice.
-          setStream((cur) => { runs = Math.max(0, runs - drop); return cur.slice(drop); });
-          setLines((cur) => {
-            const seen = new Set(cur.map((l) => l.seq));
-            return [...cur, ...r.entries.filter((e) => !seen.has(e.seq))];
-          });
-        }).catch(() => {
-          if (!live) return;
-          clearTimeout(timer);
-          timer = setTimeout(catchUp, backoff);
-          backoff = Math.min(backoff * 2, 30_000);
+      // The fetch used to start inside a setLines updater, which React may
+      // run twice. The cursor comes from a ref instead, and the stream
+      // boundary is captured when the request starts: a response must not
+      // drop fragments that belong to an event after it.
+      const since = lastSeq.current;
+      const drop = superseded;
+      api.session(selected, since).then((r) => {
+        if (!live) return;
+        backoff = 4000;
+        setRows((rs) => rs.map((x) => (x.id === r.session.id ? r.session : x)));
+        if (!r.entries.length) return;
+        superseded = Math.max(0, superseded - drop);
+        // The recorded entries are in hand; the fragments they were
+        // built from go in the same commit, so the text is never
+        // absent for a frame and never shown twice.
+        setStream((cur) => { runs = Math.max(0, runs - drop); return cur.slice(drop); });
+        setLines((cur) => {
+          const seen = new Set(cur.map((l) => l.seq));
+          return [...cur, ...r.entries.filter((e) => !seen.has(e.seq))];
         });
-        return prev;
+      }).catch(() => {
+        if (!live) return;
+        clearTimeout(timer);
+        timer = setTimeout(catchUp, backoff);
+        backoff = Math.min(backoff * 2, 30_000);
       });
     };
     const stop = subscribe(selected, (ev) => {

@@ -497,6 +497,13 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .btn-primary:disabled{background:var(--raised);color:var(--text-3);border-color:var(--line);opacity:1;filter:none}
 /* Fingers are not cursors: the icon buttons get a full touch target. */
 @media (pointer:coarse){.back,.thread-head>.more,.copy-btn{min-width:44px;min-height:44px}}
+/* On a phone the command is the part worth reading: it takes its own full
+   line instead of being cut to fit beside a line count. */
+@media (max-width:720px){
+  .block>summary{flex-wrap:wrap;row-gap:2px}
+  .block>summary>.block-detail{order:5;flex-basis:100%;white-space:normal;overflow-wrap:anywhere;line-height:18px;padding-inline-start:18px}
+  .block:not([open])>summary>.block-lines{display:none}
+}
 .toast{position:fixed;right:20px;bottom:20px;max-width:46ch;background:var(--raised);
        border:1px solid var(--red);color:var(--text-1);border-radius:8px;padding:10px 14px;font-size:13px}
 /* A dismissible alert is a button; buttons do not inherit the font or alignment. */
