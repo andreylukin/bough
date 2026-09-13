@@ -77,7 +77,7 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
       <nav className="nav" aria-label="Views">
         <button className={"nav-item" + (view === "sessions" ? " nav-on" : "")}
                 aria-current={view === "sessions" ? "page" : undefined}
-                onClick={() => onView("sessions")}>Conversations</button>
+                onClick={() => onView("sessions")}>Sessions</button>
         <button className={"nav-item" + (view === "projects" ? " nav-on" : "")}
                 aria-current={view === "projects" ? "page" : undefined}
                 onClick={() => onView("projects")}>Projects</button>
@@ -85,7 +85,7 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
                 aria-current={view === "hooks" ? "page" : undefined}
                 onClick={() => onView("hooks")}>Hooks</button>
       </nav>
-      <div style={{ padding: "0 20px 18px" }}>
+      <div className="session-search">
         <label htmlFor="q" className="field-label">
           Search sessions
           {/* A palette nobody knows about is not a feature. */}
@@ -94,7 +94,7 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
         <input id="q" className="field" value={query} placeholder="Title, repo or branch"
                onChange={(e) => onQuery(e.target.value)} />
       </div>
-      <div className="scroll" style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      <div className="scroll" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {groups.length === 0 && (
           <p style={{ padding: "0 20px", color: "var(--text-3)", fontSize: 13 }}>
             {query ? `No sessions match “${query}”.` : "No sessions yet."}
@@ -102,7 +102,7 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
         )}
         {groups.map(([name, list]) => (
           <div key={name} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <div className="group-head">{name}</div>
+            <div className="group-head">{name}<span className="num group-count">{list.length}</span></div>
             {list.map((r) => (
               <button key={r.id} onClick={() => onSelect(r.id)}
                       className={"row" + (r.id === selected ? " row-on" : "")}
@@ -1175,7 +1175,9 @@ export default function App() {
       if (m) {
         setView("sessions"); setSelected(m[1]); setContext(Boolean(m[2])); setPane("thread");
       } else if (h === "") {
-        setView("sessions"); setSelected(null); setContext(false);
+        // No session named: on a phone that is the list. The thread pane
+        // held only "Choose a session", with no list and no way back to it.
+        setView("sessions"); setSelected(null); setContext(false); setPane("list");
       }
     };
     read();
@@ -1263,7 +1265,7 @@ export default function App() {
         const n = await askText("New project", { placeholder: "What is this work?", action: "Create" });
         if (n) act(() => api.newProject(n));
       } },
-    { id: "go:sessions", group: "Go to", label: "Conversations",
+    { id: "go:sessions", group: "Go to", label: "Sessions",
       run: () => { setView("sessions"); setContext(false); setPane("thread"); } },
     { id: "go:projects", group: "Go to", label: "Projects",
       run: () => { setView("projects"); setPane("thread"); } },
