@@ -273,8 +273,8 @@ func TestThreeStepToolChain(t *testing.T) {
 	}
 }
 
-// Only the first fence of a reply runs; a reply with a fence the loop
-// must not run (indented, quoted) is prose only.
+// Every js fence of a reply runs, in order (two finished steps fold
+// into one row); a fence the loop must not run is prose only.
 func TestFenceVariants(t *testing.T) {
 	t.Parallel()
 	cases := map[string]struct {
@@ -282,7 +282,7 @@ func TestFenceVariants(t *testing.T) {
 		ran   int
 		end   string // what marks the turn's end on screen
 	}{
-		"two":       {uitest.Bash("echo A") + "\nthen\n" + uitest.Bash("echo B"), 1, "end-two"},
+		"two":       {uitest.Bash("echo A") + "\nthen\n" + uitest.Bash("echo B"), 2, "end-two"},
 		"non-js":    {"```python\nprint('x')\n```\nnot run", 0, "not run"},
 		"unclosed":  {"```js\ntools.bash(\"echo U\")", 0, "end-unclosed"}, // the retry supersedes the first reply
 		"tilde":     {"~~~js\ntools.bash(\"echo T\")\n~~~\nnot run", 0, "end-tilde"},
@@ -296,7 +296,12 @@ func TestFenceVariants(t *testing.T) {
 			d.Say("x")
 			turnDone(d, c.end)
 			fits(t, d)
-			if n := strings.Count(d.Frame(), "▸ Ran"); n != c.ran {
+			f := d.Frame()
+			n := strings.Count(f, "▸ Ran")
+			if strings.Contains(f, fmt.Sprintf("steps · ran %d commands", c.ran)) {
+				n = c.ran
+			}
+			if n != c.ran {
 				t.Fatalf("%s: %d code blocks ran, want %d:\n%s", name, n, c.ran, d.Frame())
 			}
 		})

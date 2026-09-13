@@ -149,6 +149,8 @@ func TestRulesForbiddenUnderSteerForbidden(t *testing.T) {
 	if !a.waitDone(1, 60*time.Second) {
 		t.Fatalf("turn never finished:\n%s", a.text())
 	}
+	// done lands in history before the turn is painted over the welcome.
+	a.waitUntil(func(s string) bool { return strings.Contains(s, "RFUS-MARKER") }, "the refusal justification")
 	screen := a.settled()
 	a.check("after forbidden")
 	rulesForbiddenUnderSteerAbsent(t, a, sentinel)
