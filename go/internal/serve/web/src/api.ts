@@ -25,8 +25,12 @@ const post = (path: string, body?: unknown) =>
   req<{ ok: true }>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
 
 export interface Change { path: string; add: number; del: number; new?: boolean }
+/** One line of a session's running log, written by the small model per turn. */
+export interface TurnLine { turn: number; text: string; at: string }
 
 export const api = {
+  /** The session's running log, one caveman line per finished turn. */
+  turns: (id: string) => req<{ turns: TurnLine[] }>(`/api/sessions/${id}/turns`).then((r) => r.turns ?? []),
   /** What is uncommitted in the session's working tree, live from git. */
   changes: (id: string) => req<{ repo: boolean; files: Change[] }>(`/api/sessions/${id}/changes`),
   /** Ask the session to stop one of its background jobs. */

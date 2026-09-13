@@ -79,15 +79,3 @@ func TestTroubled(t *testing.T) {
 		t.Fatal("a failure older than the window is history, not a queue item")
 	}
 }
-
-func TestCacheTTLFor(t *testing.T) {
-	t.Parallel()
-	for model, want := range map[string]int{
-		"anthropic/claude-opus-5": 300, "openai/gpt-6-astra": 1800, "~openai/gpt-5.6": 1800,
-		"openai/gpt-5.4": 300, "": 300,
-	} {
-		if got := int(cacheTTLFor(model).Seconds()); got != want {
-			t.Errorf("cacheTTLFor(%q) = %ds, want %ds", model, got, want)
-		}
-	}
-}

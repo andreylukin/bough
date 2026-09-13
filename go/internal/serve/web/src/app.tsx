@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, subscribe, type Change } from "./api";
+import { api, subscribe, type Change, type TurnLine } from "./api";
 import type { Line, Project, Row } from "./types";
 import { StatusMark, Working } from "./status";
 import { ProjectsView } from "./projects";
@@ -147,16 +147,30 @@ export function Sidebar({ rows, selected, onSelect, query, showArchived, onToggl
   const [card, setCard] = useState<{ id: string; text: string; top: number; left: number } | null>(null);
   const peekTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const quiet = useRef(false);
+  // The last few lines of each session's running log, fetched the first
+  // time its card opens.
+  const turnLines = useRef(new Map<string, TurnLine[]>());
+  const [, setTurnsLoaded] = useState(0);
   const peek = (r: Row, el: HTMLElement) => {
     clearTimeout(peekTimer.current);
     if (!r.summary || quiet.current) { setCard(null); return; }
     const rect = (el.querySelector(".row-title") ?? el).getBoundingClientRect();
-    peekTimer.current = setTimeout(() => setCard({
-      id: r.id, text: r.summary!,
-      top: Math.min(rect.bottom + 6, window.innerHeight - 160),
-      left: Math.max(12, Math.min(rect.left, window.innerWidth - 344)),
-    }), 450);
+    peekTimer.current = setTimeout(() => {
+      setCard({
+        id: r.id, text: r.summary!,
+        top: Math.min(rect.bottom + 6, window.innerHeight - 220),
+        left: Math.max(12, Math.min(rect.left, window.innerWidth - 344)),
+      });
+      if (!turnLines.current.has(r.id)) {
+        turnLines.current.set(r.id, []);
+        api.turns(r.id).then((t) => {
+          turnLines.current.set(r.id, t.slice(-3));
+          setTurnsLoaded((n) => n + 1);
+        }).catch(() => turnLines.current.delete(r.id));
+      }
+    }, 450);
   };
+  const cardTurns = card ? turnLines.current.get(card.id) ?? [] : [];
   const unpeek = () => { clearTimeout(peekTimer.current); setCard(null); };
   useEffect(() => () => clearTimeout(peekTimer.current), []);
 
@@ -190,7 +204,14 @@ export function Sidebar({ rows, selected, onSelect, query, showArchived, onToggl
   return (
     <div className="sidebar">
       {card && (
-        <div id="row-card" className="row-card" role="tooltip" style={{ top: card.top, left: card.left }}>{card.text}</div>
+        <div id="row-card" className="row-card" role="tooltip" style={{ top: card.top, left: card.left }}>
+          {card.text}
+          {cardTurns.length > 0 && (
+            <ol className="row-card-turns">
+              {cardTurns.map((l) => <li key={l.turn} value={l.turn}>{l.text}</li>)}
+            </ol>
+          )}
+        </div>
       )}
       <div className="scroll" onScroll={unpeek} onKeyDown={walk}>
         {groups.length > 0 && (

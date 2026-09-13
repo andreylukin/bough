@@ -282,6 +282,26 @@ func TestDefaultProject(t *testing.T) {
 	}
 }
 
+// The session-title plugin's running log and names are for people: they
+// never reach the model.
+func TestDefaultProjectSkipsSummaries(t *testing.T) {
+	got := DefaultProject([]history.Entry{
+		{Kind: "input", Data: map[string]any{"text": "hi"}},
+		{Kind: "assistant", Data: map[string]any{"text": "hello"}},
+		{Kind: "done", Data: map[string]any{}},
+		{Kind: "turn-summary", Data: map[string]any{"text": "SUMMARY-LINE", "turn": 1}},
+		{Kind: "title", Data: map[string]any{"text": "TITLE-TEXT", "summary": "SUMMARY-TEXT", "turn": 1, "final": true}},
+	})
+	if len(got) != 2 {
+		t.Fatalf("DefaultProject = %v, want only the input and the reply", got)
+	}
+	for _, m := range got {
+		if strings.Contains(m.Content, "SUMMARY") || strings.Contains(m.Content, "TITLE") {
+			t.Fatalf("summary leaked into context: %v", got)
+		}
+	}
+}
+
 // A cancelled turn projects a marker into the preceding user message
 // (or its own when nothing precedes it), so the model does not resume
 // the interrupted work on the next unrelated question.

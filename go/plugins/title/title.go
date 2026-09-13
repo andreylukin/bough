@@ -1,16 +1,18 @@
-// Package title is the "session-title" plugin: a small model names the
-// session and says in a few sentences what it is about, so `bough
-// sessions`, the picker and the web sidebar read as a list of jobs rather
-// than a list of opening sentences.
+// Package title is the "session-title" plugin: a small model keeps a
+// running log of the session, one caveman line per finished turn, and
+// names the session from that log, so `bough sessions`, the picker and
+// the web sidebar read as a list of jobs rather than a list of opening
+// sentences.
 //
-// A conversation drifts: the first message says "the gate is red", the
-// tenth is shipping a refactor. So the name is not settled after the
-// first turn but revisited as the session grows (turns 1, 3, 8, then
-// every 10th), each time from everything the person asked plus the latest
-// reply. Each naming is a "title" history entry carrying the summary and
-// the turn it was written at; readers take the last one, and a resumed
-// session carries on the schedule from it. That is a handful of cheap
-// calls over a long session, never one per turn.
+// Every finished turn (done, cancelled or failed) appends a
+// "turn-summary" entry {text, turn}. The first one also gives a new
+// session a provisional name from its first line. The real name — a
+// "title" entry {text, summary, turn, final: true} written from the whole
+// log — comes when the session goes quiet past its model's prompt-cache
+// window (the person has walked away; nothing is being saved by waiting)
+// or when the session shuts down with turns logged since the last
+// naming. Readers take the last title entry. Neither kind is ever
+// projected into model context.
 //
 // This is the other half of the llm-small row (see llm.Small): the
 // canonical small-model job in every harness that has one.
@@ -32,50 +34,29 @@ import (
 	"github.com/andreylukin/bough/plugins/loop"
 )
 
-// Prompt asks for two labelled lines rather than JSON: small models break
-// JSON far more often than they break a "Title:" prefix.
-const Prompt = `You name coding sessions. Read what the user asked across the whole conversation (and the assistant's latest reply) and answer with exactly two lines:
-Title: 3 to 7 words naming what the session is about overall, like a good branch name in prose — not just its first request. No quotes, no trailing period, no "session" or "task".
-Summary: two or three plain sentences saying what the user is working on, what has been done, and where it stands now.
-No preamble, nothing else.`
+const maxSummary = 400
 
-// maxInput bounds what the namer reads; maxPerInput keeps one pasted log
-// from crowding out every other request in it.
-const (
-	maxInput    = 6000
-	maxPerInput = 400
-	maxSummary  = 400
-)
-
-// History is the seam: read the entries, append the title.
+// History is the seam: read the entries, append the log and the title.
 type History interface {
 	Entries() []history.Entry
 	Append(kind string, data map[string]any) history.Entry
 }
 
-// Titler names a session, and renames it as the conversation grows.
+// Titler keeps a session's running log and names the session from it.
 type Titler struct {
 	llm  llm.LLM
 	hist History
 	emit func(kind, text string)
 	ctx  context.Context
+	// ttl is the main model's cache window, read when a turn ends (the
+	// model can change mid-session); after schedules the quiet check and
+	// returns its stop. Both are seams for tests.
+	ttl   func() time.Duration
+	after func(time.Duration, func()) (stop func() bool)
 
-	mu      sync.Mutex
-	running bool
-}
-
-// due reports whether a session that has finished turns turns, and was
-// last named at turn named (0 = never), should be named now.
-func due(turns, named int) bool {
-	if turns <= named || turns == 0 {
-		return false
-	}
-	for _, at := range []int{1, 3, 8} {
-		if named < at && turns >= at {
-			return true
-		}
-	}
-	return turns >= 10 && turns/10 > named/10
+	work  sync.Mutex // one model call sequence at a time: never a line twice
+	tmu   sync.Mutex
+	timer func() bool
 }
 
 // Clean trims what a small model tends to wrap around a title — and a
@@ -142,109 +123,118 @@ func Parse(reply string) (title, summary string) {
 	return title, summary
 }
 
-// digest is what the namer reads: every request the person made, each cut
-// short, and the latest reply. "" when nothing has been asked yet.
-func digest(entries []history.Entry) string {
-	var asks []string
-	reply := ""
-	for _, e := range entries {
-		text, _ := e.Data["text"].(string)
-		switch e.Kind {
-		case "input":
-			if t := strings.TrimSpace(text); t != "" {
-				if r := []rune(t); len(r) > maxPerInput {
-					t = string(r[:maxPerInput]) + "…"
-				}
-				asks = append(asks, "- "+t)
-			}
-		case "assistant":
-			if strings.TrimSpace(text) != "" {
-				reply = text
-			}
-		}
-	}
-	if len(asks) == 0 {
-		return ""
-	}
-	// The newest requests matter most for where the session stands, so a
-	// long session keeps its first request and as many recent ones as fit.
-	body := strings.Join(asks, "\n")
-	for len(body) > maxInput && len(asks) > 2 {
-		asks = append(asks[:1], asks[2:]...)
-		body = asks[0] + "\n…\n" + strings.Join(asks[1:], "\n")
-	}
-	out := "What the user asked, in order:\n" + body
-	if reply != "" {
-		if r := []rune(reply); len(r) > 1500 {
-			reply = string(r[:1500]) + "…"
-		}
-		out += "\n\nThe assistant's latest reply:\n" + reply
-	}
-	return out
-}
-
-// schedule reads how many turns have finished and the turn the session
-// was last named at.
-func schedule(entries []history.Entry) (turns, named int) {
-	for _, e := range entries {
-		switch e.Kind {
-		case "done":
-			turns++
-		case "title":
-			// An entry from before titles recorded their turn was the
-			// one-shot naming after the first turn.
-			named = 1
-			if n, ok := e.Data["turn"].(float64); ok {
-				named = int(n)
-			} else if n, ok := e.Data["turn"].(int); ok {
-				named = n
-			}
-		}
-	}
-	return turns, named
-}
-
-// name runs one naming when the schedule says it is due, off the turn's
-// goroutine; a naming already in flight is not doubled.
-func (t *Titler) name() {
-	t.mu.Lock()
-	if t.running {
-		t.mu.Unlock()
-		return
-	}
-	t.running = true
-	t.mu.Unlock()
-	defer func() {
-		t.mu.Lock()
-		t.running = false
-		t.mu.Unlock()
-	}()
-
-	entries := t.hist.Entries()
-	turns, named := schedule(entries)
-	if !due(turns, named) {
-		return
-	}
-	input := digest(entries)
-	if input == "" {
-		return
-	}
-	ctx, cancel := context.WithTimeout(t.ctx, 30*time.Second)
+// call runs one small-model completion under a bound.
+func call(ctx context.Context, l llm.LLM, system, input string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	reply, err := t.llm.Complete(ctx, Prompt, []llm.Message{{Role: "user", Content: input}})
+	return l.Complete(ctx, system, []llm.Message{{Role: "user", Content: input}})
+}
+
+// logTurns writes the log line of every finished turn not yet logged.
+// A session that predates the log (or was backfilled only in part) gets
+// just its latest turn: catching up a long history is `bough summarize`'s
+// job, not a turn's. Caller holds work.
+func (t *Titler) logTurns() {
+	entries := t.hist.Entries()
+	var closed []Turn
+	for _, tr := range Turns(entries) {
+		if tr.End != "" {
+			closed = append(closed, tr)
+		}
+	}
+	lines, logged := turnLog(entries)
+	from := logged + 1
+	if len(closed)-logged > 2 {
+		from = len(closed)
+	}
+	named := false
+	for _, e := range entries {
+		named = named || e.Kind == "title"
+	}
+	for n := from; n <= len(closed); n++ {
+		reply, err := call(t.ctx, t.llm, TurnPrompt, TurnInput(lines, closed[n-1]))
+		if err != nil {
+			return // the next turn picks it up
+		}
+		line := CleanLine(reply)
+		if line == "" {
+			return
+		}
+		t.hist.Append("turn-summary", map[string]any{"text": line, "turn": n})
+		lines = append(lines, fmt.Sprintf("%d. %s", n, line))
+		if n == 1 && !named {
+			// A new session is never untitled while it waits for its name.
+			if name := provisional(line); name != "" {
+				t.hist.Append("title", map[string]any{"text": name, "turn": 1})
+				t.emit("title", name)
+				named = true
+			}
+		}
+	}
+}
+
+// finalName names the session from its whole log, when turns were
+// logged since the last final naming. Caller holds work.
+func (t *Titler) finalName() {
+	entries := t.hist.Entries()
+	lines, logged := turnLog(entries)
+	if logged == 0 || logged <= lastFinal(entries) {
+		return
+	}
+	reply, err := call(t.ctx, t.llm, FinalPrompt, "Running log:\n"+strings.Join(lines, "\n"))
 	if err != nil {
-		return // an unnamed session still works; the first line stands in
+		return // the provisional (or an older) name stands
 	}
 	title, summary := Parse(reply)
 	if title == "" {
 		return
 	}
-	data := map[string]any{"text": title, "turn": turns}
+	data := map[string]any{"text": title, "turn": logged, "final": true}
 	if summary != "" {
 		data["summary"] = summary
 	}
 	t.hist.Append("title", data)
 	t.emit("title", title)
+}
+
+// turnDone logs the turn off the turn's goroutine, then restarts the
+// quiet timer.
+func (t *Titler) turnDone() {
+	t.work.Lock()
+	t.logTurns()
+	t.work.Unlock()
+	t.tmu.Lock()
+	defer t.tmu.Unlock()
+	if t.timer != nil {
+		t.timer()
+	}
+	t.timer = t.after(t.ttl(), t.quiet)
+}
+
+// quiet fires when nothing happened for a cache window after a turn. A
+// turn that has started since (an input with no end yet) cancels it:
+// that turn's end restarts the timer.
+func (t *Titler) quiet() {
+	if ts := Turns(t.hist.Entries()); len(ts) > 0 && ts[len(ts)-1].End == "" {
+		return
+	}
+	t.work.Lock()
+	defer t.work.Unlock()
+	t.finalName()
+}
+
+// shutdown names the session one last time before it closes.
+func (t *Titler) shutdown() {
+	t.tmu.Lock()
+	if t.timer != nil {
+		t.timer()
+		t.timer = nil
+	}
+	t.tmu.Unlock()
+	t.work.Lock()
+	defer t.work.Unlock()
+	t.logTurns()
+	t.finalName()
 }
 
 type plugin struct{}
@@ -270,14 +260,26 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	kctx.Effect(cancel)
-	t := &Titler{llm: l, hist: h, ctx: ctx}
+	t := &Titler{llm: l, hist: h, ctx: ctx,
+		ttl: func() time.Duration {
+			main, _ := kernel.Get[llm.LLM](kctx, "llm")
+			if main == nil {
+				return llm.CacheTTL("")
+			}
+			return llm.CacheTTL(llm.Name(main))
+		},
+		after: func(d time.Duration, f func()) func() bool { return time.AfterFunc(d, f).Stop },
+	}
 	t.emit = func(kind, text string) {
 		kctx.Emit("loop/event", loop.Event{Kind: kind, Text: text})
 	}
 	kctx.On("loop/event", func(p any) {
 		if ev, ok := p.(loop.Event); ok && ev.Kind == "done" {
-			go t.name()
+			go t.turnDone()
 		}
 	})
+	// Registered after cancel, so it runs first (LIFO) with ctx alive,
+	// and before history closes (rows unmount in reverse).
+	kctx.Effect(t.shutdown)
 	return nil
 }

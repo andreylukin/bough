@@ -3,9 +3,11 @@ package title
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
@@ -30,17 +32,106 @@ func TestClean(t *testing.T) {
 	}
 }
 
+// A log line is one line of at most 16 words, whatever came back.
+func TestCleanLine(t *testing.T) {
+	long := "You " + strings.Repeat("word ", 30)
+	cases := map[string]string{
+		"You fixed gate; agent ran go test, exit 0.":               "You fixed gate; agent ran go test, exit 0.",
+		"\n\n3. You fixed gate; agent ran go test.\nExplanation…":  "You fixed gate; agent ran go test.",
+		"You \x1b]2;PWNED\x07asked\u202e why; agent found \x07bug": "You asked why; agent found bug",
+		`"You shared serve.go; agent awaits review."`:              "You shared serve.go; agent awaits review.",
+		long: "You " + strings.TrimSpace(strings.Repeat("word ", 15)) + "…",
+		"":   "",
+	}
+	for in, want := range cases {
+		if got := CleanLine(in); got != want {
+			t.Errorf("CleanLine(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if n := len(strings.Fields(CleanLine(long))); n != maxWords {
+		t.Errorf("capped line has %d words", n)
+	}
+}
+
+func TestParse(t *testing.T) {
+	title, summary := Parse("Title: \"Rework the serve control room.\"\nSummary: The user is reshaping the web UI.\nJobs and cache now show.")
+	if title != "Rework the serve control room" || summary != "The user is reshaping the web UI. Jobs and cache now show." {
+		t.Fatalf("Parse = %q, %q", title, summary)
+	}
+	if title, summary := Parse("Fix the flaky golden test"); title != "Fix the flaky golden test" || summary != "" {
+		t.Fatalf("bare reply: %q, %q", title, summary)
+	}
+}
+
+func e(kind string, data map[string]any) history.Entry { return history.Entry{Kind: kind, Data: data} }
+func input(t string) history.Entry                   { return e("input", map[string]any{"text": t}) }
+func done() history.Entry                            { return e("done", map[string]any{}) }
+
+// Turns groups like the approved prototype: an input opens a turn, the
+// first done/cancelled/error closes it, a new input closes an open one.
+func TestTurns(t *testing.T) {
+	ts := Turns([]history.Entry{
+		e("meta", map[string]any{"cwd": "/x"}),
+		input("the gate is red"),
+		e("code", map[string]any{"text": `await tools.bash("go test ./...")`}),
+		e("result", map[string]any{"text": "FAIL", "exit": 1.0}),
+		e("code", map[string]any{"text": "console.log(1)\nmore"}),
+		e("result", map[string]any{"text": "1"}),
+		e("assistant", map[string]any{"text": "the golden file is stale"}),
+		e("assistant", map[string]any{"text": " "}),
+		done(),
+		input("stop that"), e("cancelled", nil), done(),
+		input("half"), input("still going"),
+	})
+	if len(ts) != 4 {
+		t.Fatalf("%d turns: %+v", len(ts), ts)
+	}
+	if ts[0].End != "done" || ts[0].Reply != "the golden file is stale" ||
+		strings.Join(ts[0].Calls, "|") != "bash: go test ./... → exit 1|console.log(1)" {
+		t.Fatalf("turn 1 = %+v", ts[0])
+	}
+	if ts[1].End != "cancelled" || ts[2].End != "" || ts[2].Ask != "half" || ts[3].End != "" {
+		t.Fatalf("ends = %q %q %q", ts[1].End, ts[2].End, ts[3].End)
+	}
+}
+
+func TestTurnInput(t *testing.T) {
+	tr := Turn{Ask: "go", End: "done", Reply: "ok"}
+	for i := range 15 {
+		tr.Calls = append(tr.Calls, fmt.Sprintf("c%d", i))
+	}
+	var log []string
+	for i := range 14 {
+		log = append(log, fmt.Sprintf("%d. You x", i+1))
+	}
+	in := TurnInput(log, tr)
+	for _, want := range []string{"Log so far:\n3. You x", "- c3\n- … 7 more …\n- c11", "Agent's last reply: ok\nTurn ended: done"} {
+		if !strings.Contains(in, want) {
+			t.Errorf("input lacks %q:\n%s", want, in)
+		}
+	}
+	if strings.Contains(in, "\n2. You x") || strings.Contains(in, "- c4\n") {
+		t.Errorf("input kept too much:\n%s", in)
+	}
+	if in := TurnInput(nil, Turn{Ask: "hi"}); !strings.Contains(in, "(empty)") || !strings.HasSuffix(in, "Turn ended: still open") {
+		t.Errorf("empty log input:\n%s", in)
+	}
+}
+
 type stubLLM struct {
-	mu    sync.Mutex
-	reply string
-	calls int
+	mu            sync.Mutex
+	turns, finals int
 }
 
 func (s *stubLLM) Complete(ctx context.Context, system string, msgs []llm.Message) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.calls++
-	return s.reply, nil
+	if system == FinalPrompt {
+		s.finals++
+		return fmt.Sprintf("Title: Fix gate %d\nSummary: You fix gate; agent on it.", s.finals), nil
+	}
+	s.turns++
+	return fmt.Sprintf("You fixed thing %d; agent ran go test.", s.turns), nil
 }
 
 type memHist struct {
@@ -56,119 +147,243 @@ func (m *memHist) Entries() []history.Entry {
 func (m *memHist) Append(kind string, data map[string]any) history.Entry {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	e := history.Entry{Kind: kind, Data: data}
-	m.entries = append(m.entries, e)
-	return e
+	en := history.Entry{Kind: kind, Data: data}
+	m.entries = append(m.entries, en)
+	return en
+}
+func (m *memHist) add(es ...history.Entry) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.entries = append(m.entries, es...)
 }
 
-func done() history.Entry { return history.Entry{Kind: "done", Data: map[string]any{}} }
-func input(t string) history.Entry {
-	return history.Entry{Kind: "input", Data: map[string]any{"text": t}}
-}
-
-func titles(h *memHist) []history.Entry {
+func kinds(h *memHist, kind string) []history.Entry {
 	var out []history.Entry
-	for _, e := range h.Entries() {
-		if e.Kind == "title" {
-			out = append(out, e)
+	for _, en := range h.Entries() {
+		if en.Kind == kind {
+			out = append(out, en)
 		}
 	}
 	return out
 }
 
-// A session is named after its first turn, then renamed as it grows —
-// at turns 3 and 8, then every 10th — never once per turn.
-func TestDue(t *testing.T) {
-	cases := []struct {
-		turns, named int
-		want         bool
-	}{
-		{0, 0, false}, {1, 0, true}, {1, 1, false}, {2, 1, false}, {3, 1, true},
-		{5, 3, false}, {8, 3, true}, {9, 8, false}, {10, 8, true}, {15, 10, false},
-		{20, 10, true}, {25, 0, true}, {4, 0, true},
-	}
-	for _, c := range cases {
-		if got := due(c.turns, c.named); got != c.want {
-			t.Errorf("due(%d turns, named at %d) = %v, want %v", c.turns, c.named, got, c.want)
-		}
-	}
+// fakeTimer is the quiet timer under test control.
+type fakeTimer struct {
+	mu      sync.Mutex
+	fire    func()
+	d       time.Duration
+	armed   int
+	stopped int
 }
 
-func TestParse(t *testing.T) {
-	title, summary := Parse("Title: \"Rework the serve control room.\"\nSummary: The user is reshaping the web UI.\nJobs and cache now show.")
-	if title != "Rework the serve control room" || summary != "The user is reshaping the web UI. Jobs and cache now show." {
-		t.Fatalf("Parse = %q, %q", title, summary)
-	}
-	// A model that ignored the format still yields its name.
-	if title, summary := Parse("Fix the flaky golden test"); title != "Fix the flaky golden test" || summary != "" {
-		t.Fatalf("bare reply: %q, %q", title, summary)
-	}
-}
-
-// The name follows the conversation: the second naming reads every
-// request, not only the first, and records the turn it was written at.
-func TestRenamesAsTheSessionGrows(t *testing.T) {
-	l := &stubLLM{reply: "Title: Fix the flaky golden test\nSummary: Chasing a red gate."}
-	h := &memHist{entries: []history.Entry{input("the gate is red, find out why"), done()}}
+func newTitler(l llm.LLM, h History) (*Titler, *fakeTimer, *[]string) {
+	ft := &fakeTimer{}
 	var emitted []string
 	tr := &Titler{llm: l, hist: h, ctx: context.Background(),
-		emit: func(kind, text string) { emitted = append(emitted, kind+":"+text) }}
+		emit: func(kind, text string) { emitted = append(emitted, kind+":"+text) },
+		ttl:  func() time.Duration { return llm.CacheTTL("openai/gpt-6-astra") },
+		after: func(d time.Duration, f func()) func() bool {
+			ft.mu.Lock()
+			defer ft.mu.Unlock()
+			ft.fire, ft.d = f, d
+			ft.armed++
+			return func() bool { ft.mu.Lock(); ft.stopped++; ft.mu.Unlock(); return true }
+		},
+	}
+	return tr, ft, &emitted
+}
 
-	tr.name()
-	tr.name() // same turn: not due again
-	if l.calls != 1 || len(titles(h)) != 1 {
-		t.Fatalf("after turn 1: %d calls, %d titles", l.calls, len(titles(h)))
+// Each finished turn gets one log line, never two; the first one also
+// names a new session provisionally.
+func TestLogsEachTurnOnce(t *testing.T) {
+	l := &stubLLM{}
+	h := &memHist{entries: []history.Entry{input("the gate is red"), done()}}
+	tr, ft, emitted := newTitler(l, h)
+	tr.turnDone()
+	tr.turnDone() // a doubled event
+	if l.turns != 1 || len(kinds(h, "turn-summary")) != 1 {
+		t.Fatalf("%d calls, %d lines", l.turns, len(kinds(h, "turn-summary")))
 	}
-	if got := titles(h)[0].Data; got["summary"] != "Chasing a red gate." || got["turn"] != 1 {
-		t.Fatalf("recorded %v", got)
+	line := kinds(h, "turn-summary")[0].Data
+	if line["text"] != "You fixed thing 1; agent ran go test." || line["turn"] != 1 {
+		t.Fatalf("line = %v", line)
+	}
+	ts := kinds(h, "title")
+	if len(ts) != 1 || ts[0].Data["text"] != "Fixed thing 1" || ts[0].Data["final"] != nil || l.finals != 0 {
+		t.Fatalf("provisional = %v (%d finals)", ts, l.finals)
+	}
+	if len(*emitted) != 1 || (*emitted)[0] != "title:Fixed thing 1" {
+		t.Fatalf("emitted %v", *emitted)
+	}
+	if ft.armed != 2 || ft.stopped != 1 || ft.d != 30*time.Minute {
+		t.Fatalf("timer armed %d stopped %d for %s", ft.armed, ft.stopped, ft.d)
 	}
 
-	h.entries = append(h.entries, input("now refactor the loader"), done(), input("and ship it"), done())
-	l.reply = "Title: Refactor and ship the loader\nSummary: Fixed the gate, then refactored the loader."
-	tr.name()
-	ts := titles(h)
-	if l.calls != 2 || len(ts) != 2 || ts[1].Data["text"] != "Refactor and ship the loader" || ts[1].Data["turn"] != 3 {
-		t.Fatalf("after turn 3: %d calls, titles %v", l.calls, ts)
-	}
-	if len(emitted) != 2 || !strings.HasPrefix(emitted[1], "title:") {
-		t.Fatalf("emitted %v", emitted)
+	h.add(input("now ship it"), e("cancelled", nil), done())
+	tr.turnDone()
+	if got := kinds(h, "turn-summary"); len(got) != 2 || got[1].Data["turn"] != 2 || len(kinds(h, "title")) != 1 {
+		t.Fatalf("after turn 2: lines %v, titles %v", got, kinds(h, "title"))
 	}
 }
 
-// A resumed session carries on the schedule from its last naming; one
-// named before titles recorded their turn counts as named at turn 1.
-func TestResumedSessionKeepsItsSchedule(t *testing.T) {
-	l := &stubLLM{reply: "Title: A new name"}
+// A session that predates the log gets only its latest turn logged, and
+// keeps its old name (no provisional rename).
+func TestOldSessionLogsOnlyLatestTurn(t *testing.T) {
+	l := &stubLLM{}
 	h := &memHist{entries: []history.Entry{
-		input("the gate is red"), done(),
-		{Kind: "title", Data: map[string]any{"text": "Fix the flaky golden test"}},
-		input("now push it"), done(),
+		input("a"), done(), e("title", map[string]any{"text": "Old name"}),
+		input("b"), done(), input("c"), done(), input("d"), done(),
 	}}
-	tr := &Titler{llm: l, hist: h, ctx: context.Background(), emit: func(string, string) {}}
-	tr.name()
-	if l.calls != 0 {
-		t.Fatalf("renamed at turn 2 (%d calls)", l.calls)
+	tr, _, _ := newTitler(l, h)
+	tr.turnDone()
+	got := kinds(h, "turn-summary")
+	if l.turns != 1 || len(got) != 1 || got[0].Data["turn"] != 4 || len(kinds(h, "title")) != 1 {
+		t.Fatalf("%d calls, lines %v", l.turns, got)
 	}
 }
 
-// A session with nothing said yet is not named.
-func TestEmptySessionNotNamed(t *testing.T) {
-	l := &stubLLM{reply: "Something"}
-	tr := &Titler{llm: l, hist: &memHist{entries: []history.Entry{done()}}, ctx: context.Background(), emit: func(string, string) {}}
-	tr.name()
-	if l.calls != 0 {
-		t.Fatalf("named an empty session (%d calls)", l.calls)
+// Quiet past the cache window names the session from its log; an input
+// before the timer fires cancels it; nothing new means no second call.
+func TestQuietTimerNamesSession(t *testing.T) {
+	l := &stubLLM{}
+	h := &memHist{entries: []history.Entry{input("the gate is red"), done()}}
+	tr, ft, _ := newTitler(l, h)
+	tr.turnDone()
+
+	h.add(input("and another thing")) // the person came back
+	ft.fire()
+	if l.finals != 0 {
+		t.Fatal("named while a turn was open")
+	}
+	h.add(done())
+	tr.turnDone()
+	ft.fire()
+	ts := kinds(h, "title")
+	final := ts[len(ts)-1].Data
+	if l.finals != 1 || final["final"] != true || final["text"] != "Fix gate 1" ||
+		final["summary"] != "You fix gate; agent on it." || final["turn"] != 2 {
+		t.Fatalf("final = %v (%d finals)", final, l.finals)
+	}
+	ft.fire()
+	tr.shutdown()
+	if l.finals != 1 {
+		t.Fatalf("renamed with nothing new (%d finals)", l.finals)
 	}
 }
 
-// A long session keeps its first request and the most recent ones.
-func TestDigestKeepsTheEnds(t *testing.T) {
-	var es []history.Entry
-	for i := 0; i < 40; i++ {
-		es = append(es, input(fmt.Sprintf("request %02d %s", i, strings.Repeat("x", 380))))
+// Shutting down names the session when turns were logged since the last
+// final naming, logging any turn still unlogged first.
+func TestShutdownNamesSession(t *testing.T) {
+	l := &stubLLM{}
+	h := &memHist{entries: []history.Entry{input("a"), done(), input("b"), done()}}
+	tr, ft, _ := newTitler(l, h)
+	tr.turnDone()
+	ft.stopped = 0
+	tr.shutdown()
+	if ft.stopped != 1 || l.turns != 2 || l.finals != 1 {
+		t.Fatalf("stopped %d, %d turn calls, %d finals", ft.stopped, l.turns, l.finals)
 	}
-	d := digest(es)
-	if len(d) > maxInput+200 || !strings.Contains(d, "request 00") || !strings.Contains(d, "request 39") || strings.Contains(d, "request 05") {
-		t.Fatalf("digest kept the wrong requests (%d bytes)", len(d))
+	ts := kinds(h, "title")
+	if last := ts[len(ts)-1].Data; last["final"] != true || last["turn"] != 2 {
+		t.Fatalf("last title %v", last)
+	}
+	// A session with no turns says nothing on the way out.
+	empty := &stubLLM{}
+	tr2, _, _ := newTitler(empty, &memHist{})
+	tr2.shutdown()
+	if empty.turns+empty.finals != 0 {
+		t.Fatal("named an empty session")
+	}
+}
+
+func writeSession(t *testing.T, dir, id string, es ...history.Entry) string {
+	t.Helper()
+	p := filepath.Join(dir, id+".jsonl")
+	s, err := history.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, en := range es {
+		s.Append(en.Kind, en.Data)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestBackfill(t *testing.T) {
+	dir := t.TempDir()
+	fresh := writeSession(t, dir, "01fresh", e("meta", map[string]any{"cwd": "/x"}),
+		input("a"), done(), input("b"), e("error", map[string]any{"text": "boom"}), done(), input("c"))
+	done1 := writeSession(t, dir, "02done", input("a"), done(),
+		e("turn-summary", map[string]any{"text": "You a; agent b.", "turn": 1}))
+	writeSession(t, dir, "03empty", e("meta", nil))
+
+	var stubs []*stubLLM
+	var mu sync.Mutex
+	newLLM := func() (llm.LLM, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		s := &stubLLM{}
+		stubs = append(stubs, s)
+		return s, nil
+	}
+	read := func(p string) []history.Entry {
+		es, err := history.Read(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return es
+	}
+	var out strings.Builder
+	before := len(read(fresh))
+	if err := Backfill(context.Background(), &out, dir, summarizeOpts{all: true, dry: true, maxTurns: 2}, newLLM); err != nil {
+		t.Fatal(err)
+	}
+	if len(read(fresh)) != before || len(stubs) != 1 || stubs[0].turns != 2 ||
+		!strings.Contains(out.String(), "  2. You fixed thing 2") || !strings.Contains(out.String(), "total: 3 calls") {
+		t.Fatalf("dry run wrote or miscounted:\n%s", out.String())
+	}
+
+	out.Reset()
+	if err := Backfill(context.Background(), &out, dir, summarizeOpts{all: true}, newLLM); err != nil {
+		t.Fatal(err)
+	}
+	var lines, finals int
+	for _, en := range read(fresh) {
+		switch {
+		case en.Kind == "turn-summary":
+			lines++
+		case en.Kind == "title" && en.Data["final"] == true && en.Data["turn"] == 3.0:
+			finals++
+		}
+	}
+	if lines != 3 || finals != 1 || !strings.Contains(out.String(), "total: 4 calls") {
+		t.Fatalf("%d lines, %d finals:\n%s", lines, finals, out.String())
+	}
+	if len(read(done1)) != 3 {
+		t.Fatal("touched an already summarized session")
+	}
+
+	// Named explicitly, a summarized session says why it was skipped.
+	out.Reset()
+	if err := Backfill(context.Background(), &out, dir, summarizeOpts{ids: []string{"01fresh", "02"}}, newLLM); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(out.String(), "already summarized") != 2 || !strings.Contains(out.String(), "total: 0 calls") {
+		t.Fatalf("skip output:\n%s", out.String())
+	}
+}
+
+func TestParseSummarize(t *testing.T) {
+	o, err := parseSummarize([]string{"abc", "--dry-run", "--max-turns", "5"})
+	if err != nil || !o.dry || o.maxTurns != 5 || o.ids[0] != "abc" || o.model != defaultModel {
+		t.Fatalf("%+v %v", o, err)
+	}
+	for _, bad := range [][]string{nil, {"--max-turns", "0", "x"}, {"--bogus"}, {"--max-turns"}} {
+		if _, err := parseSummarize(bad); err == nil {
+			t.Errorf("parseSummarize(%q) accepted", bad)
+		}
 	}
 }

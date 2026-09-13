@@ -110,7 +110,7 @@ func quoteBlock(text string) string {
 func writeEntry(b *strings.Builder, e history.Entry) {
 	text, _ := e.Data["text"].(string)
 	switch {
-	case e.Kind == "meta" || e.Kind == "done" || e.Kind == "nudge" || e.Kind == "title":
+	case e.Kind == "meta" || e.Kind == "done" || e.Kind == "nudge" || e.Kind == "title" || e.Kind == "turn-summary":
 		return // session bookkeeping, not the transcript
 	case strings.HasPrefix(e.Kind, "sub:") || strings.HasPrefix(e.Kind, "todo/"):
 		return // subagent and todo-list detail: too granular for a transcript

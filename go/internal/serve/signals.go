@@ -5,10 +5,10 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/andreylukin/bough/plugins/history"
+	"github.com/andreylukin/bough/plugins/llm"
 )
 
 // Signals a session carries besides its status, read from its history
@@ -113,23 +113,6 @@ func lastTestFailed(entries []history.Entry) bool {
 	return false
 }
 
-// cacheTTLFor is how long a provider keeps a used prompt prefix, as its
-// docs state it: Anthropic's default ephemeral cache is five minutes;
-// OpenAI keeps prefixes for at least 30 minutes on GPT-5.6 and later
-// (gpt-6 included) and five to ten on earlier models. Unknown providers
-// get the short window, so the chip errs toward "cold".
-func cacheTTLFor(model string) time.Duration {
-	m := strings.ToLower(strings.TrimPrefix(model, "~"))
-	if gpt := regexp.MustCompile(`gpt-(\d+)(?:\.(\d+))?`).FindStringSubmatch(m); gpt != nil {
-		major, _ := strconv.Atoi(gpt[1])
-		minor, _ := strconv.Atoi(gpt[2])
-		if major > 5 || (major == 5 && minor >= 6) {
-			return 30 * time.Minute
-		}
-	}
-	return 5 * time.Minute
-}
-
 // Cache is the prompt cache as of the last turn that reported one: when
 // that turn ended, what it read from and wrote to the cache, and how
 // long the prefix stays warm after it. The UI counts down from At.
@@ -153,7 +136,7 @@ func LastCache(entries []history.Entry, model string) *Cache {
 		if !ok {
 			continue
 		}
-		c := Cache{At: e.At, TTL: int(cacheTTLFor(model) / time.Second), Read: int(num(u["cache_read"])), Write: int(num(u["cache_write"])), In: int(num(u["in"]))}
+		c := Cache{At: e.At, TTL: int(llm.CacheTTL(model) / time.Second), Read: int(num(u["cache_read"])), Write: int(num(u["cache_write"])), In: int(num(u["in"]))}
 		if c.Read+c.Write > 0 {
 			return &c
 		}
