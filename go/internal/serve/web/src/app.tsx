@@ -1103,14 +1103,27 @@ export function Thread({ row, lines, loading = false, stream = [], projects, onA
 
   const caretTrigger = (el: HTMLTextAreaElement) => setTrigger(triggerAt(el.value, el.selectionStart ?? 0));
 
+  // A message that did not go through is kept on its own, not folded back
+  // into the draft: you may already be typing the next one, and switching
+  // sessions must not lose it.
+  const failedKey = "bough:failed:" + row.id;
+  const [failed, setFailed] = useState<{ text: string; answer: boolean } | null>(() => {
+    try { return JSON.parse(sessionStorage.getItem(failedKey) ?? "null"); } catch { return null; }
+  });
+  useEffect(() => {
+    try { failed ? sessionStorage.setItem(failedKey, JSON.stringify(failed)) : sessionStorage.removeItem(failedKey); } catch { /* storage off */ }
+  }, [failed, failedKey]);
+
+  const deliver = async (t: string, answer: boolean) => {
+    const ok = await (answer ? onAnswer(t) : onSend(t));
+    setFailed(ok === false ? { text: t, answer } : null);
+  };
   const send = async () => {
     const t = draft.trim();
     // Enter reaches here even while the Send button is disabled.
     if (!t || busy) return;
     setDraft("");
-    // A send that failed gives the words back rather than losing them.
-    const ok = await (row.ask ? onAnswer(t) : onSend(t));
-    if (ok === false) setDraft((d) => d || t);
+    await deliver(t, Boolean(row.ask));
   };
 
   return (
@@ -1209,6 +1222,19 @@ export function Thread({ row, lines, loading = false, stream = [], projects, onA
             }}>
               Answer question
             </button>
+          </div>
+        )}
+        {failed && (
+          <div className="send-failed" role="alert">
+            <span className="send-failed-text" title={failed.text}>Not sent: {failed.text}</span>
+            <button className="btn" disabled={busy} onClick={() => deliver(failed.text, failed.answer)}>Retry</button>
+            <button className="btn" onClick={() => {
+              // Put back beside what is already being typed, never over it.
+              setDraft((d) => (d.trim() ? d.trimEnd() + "\n\n" + failed.text : failed.text));
+              setFailed(null);
+              composer.current?.focus();
+            }}>Put back</button>
+            <button className="link" onClick={() => setFailed(null)}>Dismiss</button>
           </div>
         )}
         <div className="composer">
@@ -1497,6 +1523,14 @@ export default function App() {
     }
   }, []);
 
+  /** A send or answer: its failure is shown beside the composer it came from, not as a toast too. */
+  const deliverTo = async (fn: () => Promise<unknown>): Promise<boolean> => {
+    setBusy(true);
+    try { await fn(); return true; }
+    catch { return false; }
+    finally { setBusy(false); await refresh(); }
+  };
+
   const act = async (fn: () => Promise<unknown>): Promise<boolean> => {
     setBusy(true);
     try { await fn(); setErr(null); return true; }
@@ -1593,8 +1627,8 @@ export default function App() {
         <ContextPage session={row.id} onBack={() => setContext(false)} />
       ) : row ? (
         <Thread key={row.id} row={row} lines={lines} loading={loadedFor !== row.id} stream={stream} projects={projects} busy={busy} onBack={() => setPane("list")}
-          onSend={(t) => act(() => api.prompt(row.id, t))}
-          onAnswer={(t) => act(() => api.answer(row.id, t))}
+          onSend={(t) => deliverTo(() => api.prompt(row.id, t))}
+          onAnswer={(t) => deliverTo(() => api.answer(row.id, t))}
           onInterrupt={() => act(() => api.interrupt(row.id))}
           onArchive={() => act(() => (row.archived ? api.unarchive(row.id) : api.archive(row.id)))}
           onRename={(t) => act(() => api.rename(row.id, t))}

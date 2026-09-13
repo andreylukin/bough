@@ -460,6 +460,10 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
    lines up with what you are reading. */
 .composer-wrap{flex-shrink:0;padding:8px 32px 24px}
 .composer-wrap>*{width:100%;max-width:80ch;margin-inline:auto}
+.send-failed{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;line-height:16px;color:var(--red)}
+.send-failed-text{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.send-failed .btn{height:28px;padding:0 10px;font-size:12px;flex-shrink:0}
+@media (pointer:coarse){.send-failed .btn{height:44px}}
 .composer-wrap>.jump-latest{display:block;width:auto;margin:0 auto 8px;height:32px;padding:0 14px;font-size:12px}
 @media (pointer:coarse){.composer-wrap>.jump-latest{height:44px}}
 .composer{background:var(--surface);border:1px solid var(--line-strong);border-radius:9px;padding:12px 16px;
