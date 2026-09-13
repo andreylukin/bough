@@ -29,6 +29,8 @@ export interface Change { path: string; add: number; del: number; new?: boolean 
 export const api = {
   /** What is uncommitted in the session's working tree, live from git. */
   changes: (id: string) => req<{ repo: boolean; files: Change[] }>(`/api/sessions/${id}/changes`),
+  /** Ask the session to stop one of its background jobs. */
+  killJob: (id: string, job: number) => post(`/api/sessions/${id}/jobs/${job}/kill`),
 
   /** Where a new session starts, from the server that knows. */
   home: () => req<{ home: string }>("/api/health").then((r) => r.home ?? ""),

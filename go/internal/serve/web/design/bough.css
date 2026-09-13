@@ -201,6 +201,8 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .rt-job-cmd{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rt-add{color:var(--accent)}
 .rt-del{color:var(--red)}
+.rt-pop li{align-items:center}
+.rt-stop{height:24px;padding:0 8px;font-size:12px;flex-shrink:0}
 
 .say{display:flex;flex-direction:column;gap:8px;max-width:78ch}
 .say-who{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text-2)}

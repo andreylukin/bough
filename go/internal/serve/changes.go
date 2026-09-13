@@ -72,3 +72,20 @@ func (a *API) changes(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "files": files})
 }
+
+// killJob stops one of a session's background jobs. The job lives in the
+// child, so this asks the child to kill it; the job's own finished entry
+// then takes it off the running list.
+func (a *API) killJob(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	job, err := strconv.Atoi(r.PathValue("job"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: job id %q is not a number", r.PathValue("job")))
+		return
+	}
+	if err := a.sup.Send(id, "/jobkill "+strconv.Itoa(job)); err != nil {
+		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}

@@ -684,7 +684,7 @@ function RuntimeStrip({ row, lines }: { row: Row; lines: Line[] }) {
       )}
       <ChangesChip id={row.id} tick={lines.length} />
       {row.cache && <CacheChip cache={row.cache} model={row.model} />}
-      {row.jobs && row.jobs.length > 0 && <JobsChip jobs={row.jobs} />}
+      {row.jobs && row.jobs.length > 0 && <JobsChip session={row.id} jobs={row.jobs} />}
     </div>
   );
 }
@@ -762,7 +762,7 @@ function CacheChip({ cache, model }: { cache: NonNullable<Row["cache"]>; model?:
 }
 
 /** Background jobs still running, one click from their commands. */
-function JobsChip({ jobs }: { jobs: NonNullable<Row["jobs"]> }) {
+function JobsChip({ session, jobs }: { session: string; jobs: NonNullable<Row["jobs"]> }) {
   const now = useNow(true);
   return (
     <details className="rt rt-jobs">
@@ -775,6 +775,7 @@ function JobsChip({ jobs }: { jobs: NonNullable<Row["jobs"]> }) {
           <li key={j.id}>
             <span className="mono rt-job-cmd" title={j.cmd}>{j.cmd}</span>
             <span className="num rt-label">{duration(now - Date.parse(j.started))}</span>
+            <button className="btn rt-stop" onClick={() => api.killJob(session, j.id).catch(() => {})}>Stop</button>
           </li>
         ))}
       </ul>

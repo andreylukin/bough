@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/andreylukin/bough/kernel"
+	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/llm"
 )
 
@@ -172,6 +173,21 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	reg.RegisterTool("job", st.jobs.job)
 	reg.RegisterTool("jobWait", st.jobs.jobWait)
 	reg.RegisterTool("jobKill", st.jobs.jobKill)
+	// A person can stop a job too, not only the agent: serve's web view
+	// sends "/jobkill N" down the child's stdin.
+	if cmds, err := kernel.Get[*commands.Registry](ctx, "commands"); err == nil {
+		info := commands.CommandInfo{Name: "jobkill", Usage: "<id>", Summary: "stop a background job"}
+		if err := cmds.Register(info, func(args string) (string, error) {
+			id, err := strconv.Atoi(strings.TrimSpace(args))
+			if err != nil {
+				return "", fmt.Errorf("jobkill: want a job id, got %q", args)
+			}
+			return st.jobs.jobKill(id)
+		}); err != nil {
+			return err
+		}
+		ctx.Effect(func() { cmds.Unregister("jobkill") })
+	}
 	reg.RegisterTool("view", st.view)
 	reg.RegisterTool("patch", st.patch)
 	reg.RegisterTool("write", st.write)
