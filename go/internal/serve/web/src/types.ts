@@ -30,6 +30,8 @@ export interface Project {
 export interface Row {
   id: string;
   title: string;
+  /** A few sentences on what the session is about; absent until the small model has named it. */
+  summary?: string;
   cwd: string;
   repo?: string;
   branch?: string;

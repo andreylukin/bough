@@ -482,6 +482,11 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .composer textarea::placeholder{color:var(--text-3)}
 .hint{font-size:12px;color:var(--text-3)}
 .composer:not(:focus-within) .hint{visibility:hidden}
+/* The summary card: fixed beside the sidebar, never over the list it describes. */
+.row-card{position:fixed;z-index:40;width:320px;max-width:calc(100vw - 24px);padding:10px 12px;border-radius:8px;
+  background:var(--raised);border:1px solid var(--line-strong);color:var(--text-2);font-size:13px;line-height:1.45;
+  box-shadow:0 8px 24px rgba(0,0,0,.35);pointer-events:none}
+@media (hover:none){.row-card{display:none}}
 .row-trouble{color:var(--red);font-size:12px}
 .row-jobs{color:var(--accent)}
 .btn{font:13px var(--sans);color:var(--text-2);background:none;border:1px solid var(--line-strong);

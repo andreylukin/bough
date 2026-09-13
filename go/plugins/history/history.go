@@ -209,7 +209,10 @@ type SessionInfo struct {
 	Path    string    // full path
 	ModTime time.Time // file mtime (last activity)
 	Entries int       // parseable entry count
-	Title   string    // first input entry's text, first line
+	Title   string    // the latest "title" entry, else the first input's first line
+	// Summary is the latest title entry's few sentences on what the
+	// session is about; "" before it was first named.
+	Summary string
 	Cwd     string    // working directory from the "meta" entry; "" for old files
 	// Repo and Branch are the git repository root and branch recorded
 	// on the "meta" entry when the session started. Both "" outside a
@@ -246,7 +249,7 @@ func List(dir string) ([]SessionInfo, error) {
 			fmt.Fprintf(os.Stderr, "bough: history: skipping %s: %v\n", p, err)
 			continue
 		}
-		title, cwd, from := "", "", ""
+		title, summary, cwd, from := "", "", "", ""
 		repo, branch := "", ""
 		var atSeq int64
 		for _, e := range entries {
@@ -255,6 +258,9 @@ func List(dir string) ([]SessionInfo, error) {
 			if e.Kind == "title" {
 				if t, _ := e.Data["text"].(string); t != "" {
 					title = t
+					if s, _ := e.Data["summary"].(string); s != "" {
+						summary = s
+					}
 					continue
 				}
 			}
@@ -283,6 +289,7 @@ func List(dir string) ([]SessionInfo, error) {
 			ModTime: st.ModTime(),
 			Entries: len(entries),
 			Title:   title,
+			Summary: summary,
 			Cwd:     cwd,
 			Repo:    repo,
 			Branch:  branch,

@@ -87,8 +87,29 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
     document.querySelector(".sidebar .row-on")?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
+  // What a session is about, on hover or focus: the title names it, the
+  // summary says where it stands. One card for the whole list, fixed to
+  // the viewport beside the row, because the list scrolls and would clip
+  // anything hung off a row. It waits a beat so skimming does not flash it.
+  const [card, setCard] = useState<{ id: string; text: string; top: number; left: number } | null>(null);
+  const peekTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const peek = (r: Row, el: HTMLElement) => {
+    clearTimeout(peekTimer.current);
+    if (!r.summary) { setCard(null); return; }
+    const rect = el.getBoundingClientRect();
+    peekTimer.current = setTimeout(() => setCard({
+      id: r.id, text: r.summary!,
+      top: Math.min(rect.top, window.innerHeight - 160), left: rect.right + 8,
+    }), 450);
+  };
+  const unpeek = () => { clearTimeout(peekTimer.current); setCard(null); };
+  useEffect(() => () => clearTimeout(peekTimer.current), []);
+
   return (
     <div className="sidebar">
+      {card && (
+        <div id="row-card" className="row-card" role="tooltip" style={{ top: card.top, left: card.left }}>{card.text}</div>
+      )}
       <div className="brand"><Sprout /><span>bough</span>
         {onNew && <button className="btn brand-new" onClick={onNew} title={`New conversation (${modKey()}K)`}>New</button>}
       </div>
@@ -119,7 +140,7 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
         <input id="q" className="field" value={query} placeholder={`Search sessions · ${modKey()}K for commands`}
                onChange={(e) => onQuery(e.target.value)} />
       </div>
-      <div className="scroll" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div className="scroll" onScroll={unpeek} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {groups.length === 0 && (
           <p style={{ padding: "0 20px", color: "var(--text-3)", fontSize: 13 }}>
             {query ? `No sessions match “${query}”.` : "No sessions yet."}
@@ -130,6 +151,9 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
             <div className="group-head">{name}<span className="num group-count">{list.length}</span></div>
             {list.map((r) => (
               <button key={r.id} onClick={() => onSelect(r.id)}
+                      onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
+                      onFocus={(e) => peek(r, e.currentTarget)} onBlur={unpeek}
+                      aria-describedby={card?.id === r.id ? "row-card" : undefined}
                       className={"row" + (r.id === selected ? " row-on" : "")}
                       aria-current={r.id === selected ? "true" : undefined}>
                 <span className="row-line">
