@@ -937,8 +937,8 @@ export function SubAgentView({ agent, live }: { agent: SubAgent; live: boolean }
   return (
     <details className={"sub " + st.cls} open={agent.status === "error"}>
       <summary>
-        <span className="sub-tag">Subagent {agent.worker}</span>
         <span className="sub-task">{task}</span>
+        <span className="num sub-tag" title={`Subagent ${agent.worker}`}>#{agent.worker}</span>
         <span className="sub-state">
           {working && (
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -986,17 +986,14 @@ function gistOf(text: string): string {
 }
 
 /** One call's recorded facts, for its thin line and the hover list. */
-interface CallFacts { verb: string; gist: string; exit?: number; ms?: number; failed: boolean; preview?: string }
-
-/** A call this slow is worth its duration on the line; a quick one is not. */
-const SLOW_MS = 10_000;
+interface CallFacts { verb: string; gist: string; cmd: string; exit?: number; ms?: number; failed: boolean; preview?: string }
 
 function callFacts(code: Line, result?: Line): CallFacts {
   const call = parseCall(code.text);
   const out = result ? resultBody(result) : "";
   const exit = typeof result?.data?.exit === "number" ? (result.data.exit as number) : undefined;
   const ms = typeof result?.data?.ms === "number" ? (result.data.ms as number) : undefined;
-  return { verb: call.verb, gist: gistOf(call.gist), exit, ms, failed: (exit !== undefined && exit !== 0) || /^error\b/i.test(out) };
+  return { verb: call.verb, gist: gistOf(call.gist), cmd: gistOf(call.target || call.gist), exit, ms, failed: (exit !== undefined && exit !== 0) || /^error\b/i.test(out) };
 }
 
 const canHover = () => typeof window !== "undefined" && window.matchMedia?.("(hover: hover)").matches;
@@ -1059,7 +1056,7 @@ function useThinPop(rows: CallFacts[]) {
         {rows.map((r, i) => (
           <div key={i} className={"thin-pop-row" + (r.failed ? " thin-pop-failed" : "")}>
             <span>{r.verb}</span>
-            <span className="mono thin-pop-cmd">{r.gist}</span>
+            <span className="mono thin-pop-cmd">{r.cmd}</span>
             <span className="num">{r.exit !== undefined ? `exit ${r.exit}` : ""}</span>
             <span className="num">{r.ms !== undefined ? duration(r.ms) : ""}</span>
             {r.preview && <pre className="mono thin-pop-out">{r.preview}</pre>}
@@ -1095,15 +1092,23 @@ function resultBody(l: Line): string {
  */
 export function ToolRun({ lines, codes }: { lines: Line[]; codes: string[] }) {
   // Pair each call with the result recorded for it: one row per thing
-  // done, not a "Ran" row and a "Result" row saying half each.
+  // done, not a "Ran" row and a "Result" row saying half each. A result
+  // names its call in data.code, so notes in between never split the
+  // pair; one without that record pairs only with the call right above.
   const rows: React.ReactNode[] = [];
   const facts: CallFacts[] = [];
+  const used = new Set<number>();
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
+    if (used.has(i)) continue;
     if (l.kind === "code") {
-      const next = lines[i + 1];
-      const result = next?.kind === "result" ? next : undefined;
-      if (result) i++;
+      let result: Line | undefined;
+      for (let j = i + 1; j < lines.length; j++) {
+        const r = lines[j];
+        if (r.kind !== "result" || used.has(j)) continue;
+        const code = str(r.data?.code);
+        if (code ? code.trim() === l.text.trim() : j === i + 1) { result = r; used.add(j); break; }
+      }
       facts.push(callFacts(l, result));
       rows.push(<ToolCall key={l.seq} code={l} result={result} />);
     } else {
@@ -1132,7 +1137,7 @@ export function ToolRun({ lines, codes }: { lines: Line[]; codes: string[] }) {
   // The line names the work: what kind of calls, then what they were
   // aimed at. The count and time are secondary; the full targets sit in
   // the hover list and the expansion.
-  const verbs = [...new Set(facts.map((f) => f.verb))];
+  const verbs = [...new Set(facts.map((f) => f.verb))].map((v, i) => (i ? v.toLowerCase() : v));
   const targets = [...new Set(facts.map((f) => f.gist).filter(Boolean))];
   return (
     <details className="block thin toolrun" ref={box}>
@@ -1171,13 +1176,12 @@ export function ToolCall({ code, result }: { code: Line; result?: Line }) {
   const more = outAll.length - shown.length;
   // The full call and its exit code live here, keeping the line itself short.
   const { handlers, pop } = useThinPop(timedOut ? [] : [{
-    verb: result ? (failed ? "Failed" : "Output") : "no result yet", gist: call.gist, failed, exit, ms,
+    verb: result ? (failed ? "Failed" : "Output") : "no result yet", gist: call.gist, cmd: gistOf(call.target || call.gist), failed, exit, ms,
     preview: result ? shown.join("\n") + (more > 0 ? `\n+${lineCount(more)}` : "") : undefined,
   }]);
-  // Exit and time only when they are news: a failure, or a slow call.
-  const meta = failed
-    ? ["Failed", exit !== undefined && exit !== 0 ? `exit ${exit}` : "", ms !== undefined ? duration(ms) : ""]
-    : [ms !== undefined && ms >= SLOW_MS ? duration(ms) : ""];
+  // The recorded exit and time, success or not: "exit 0" is evidence too.
+  const meta = [failed ? "Failed" : "", exit !== undefined ? `exit ${exit}` : "", ms !== undefined ? duration(ms) : ""];
+  const what = call.lang === "bash" ? "Command" : call.lang === "javascript" ? "Program" : "Content";
   return (
     <details className={"block thin" + (failed ? " block-failed" : "")} data-seq={result?.seq}>
       <summary {...handlers}>
@@ -1190,11 +1194,17 @@ export function ToolCall({ code, result }: { code: Line; result?: Line }) {
       </summary>
       {pop}
       <div className="block-body">
-        {call.body && <Code text={call.body} lang={call.lang} />}
+        {/* Output first; the call that made it is one disclosure, once. */}
+        {!result && call.body && <Code text={call.body} lang={call.lang} />}
         {/* Output keeps its columns: a docker ps or a table wrapped at the
             block's edge scatters every row across three lines. */}
         {result && <div className="tool-output"><Code text={out || "(no output)"} lang={resultLang(result)} /></div>}
-        {call.body !== call.raw && (
+        {result ? (
+          <details className="block-inner">
+            <summary><span className="block-label">{what}</span></summary>
+            <Code text={call.body || call.raw} lang={call.body ? call.lang : "javascript"} />
+          </details>
+        ) : call.body !== call.raw && (
           <details className="block-inner">
             <summary><span className="block-label">The call</span></summary>
             <Code text={call.raw} lang="javascript" />
@@ -1836,7 +1846,7 @@ function ControlOverview({ rows, onReveal, loadedAt, loadErr, onRetry }: {
         {/* Lists are only as current as the last refresh, and say so. */}
         {loadErr && (
           <p className="ov-stale" role="status">
-            {loadedAt === null ? "Status unavailable" : `Stale · last updated ${ago(new Date(loadedAt).toISOString())} ago`}
+            {loadedAt === null ? "Status unavailable" : `Updates delayed · synced ${ago(new Date(loadedAt).toISOString())} ago`}
             <button className="link" onClick={onRetry}>Retry</button>
           </p>
         )}
@@ -1966,7 +1976,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     if (!loading) scrollMemo.set(row.id, { top: el.scrollTop, follow: atBottom.current });
     // What was recorded when you left, so the button can say something new arrived.
-    if (!atBottom.current && !away) awayAt.current = lines.length;
+    if (!atBottom.current && !away) awayAt.current = newest;
     setAway(!atBottom.current);
   };
   const awayAt = useRef(0);
@@ -1990,7 +2000,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   useEffect(() => {
     if (loading || restoredAt.current) return;
     restoredAt.current = true;
-    if (memo && !memo.follow && scroller.current) { scroller.current.scrollTop = memo.top; setAway(true); }
+    if (memo && !memo.follow && scroller.current) { scroller.current.scrollTop = memo.top; awayAt.current = newest; setAway(true); }
   }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (atBottom.current) end.current?.scrollIntoView({ block: "end" });
@@ -2292,11 +2302,6 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
       </div>
 
       <div className="composer-wrap">
-        {away && (
-          <button className="btn jump-latest" onClick={toLatest}>
-            {lines.length > awayAt.current ? "New activity ↓" : "Jump to latest"}
-          </button>
-        )}
         {row.ask && !askSeen && (
           <div className="ask-bar">
             <p><strong>Needs your answer</strong></p>
@@ -2383,6 +2388,14 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             {uploading > 0 && <span className="attach-note">Attaching image…</span>}
             {attachErr && <span className="attach-note attach-err" role="alert">{attachErr}</span>}
             <div className="composer-actions">
+              {/* Beside Send, so it never covers what you are reading. */}
+              {away && (
+                <button className="btn jump-latest" onClick={toLatest} title={modKey() + "End"}
+                        aria-label={newest > awayAt.current ? "New activity, jump to latest" : "Jump to latest"}>
+                  <span aria-hidden="true">↓</span>
+                  <span className="jump-word">{newest > awayAt.current ? "New activity" : "Latest"}</span>
+                </button>
+              )}
               <SkillPicker onPick={(name, known) => {
                 // A skill runs only as the lead word, so a pick replaces a
                 // skill already there, never a leading path like /tmp/x.
@@ -2459,16 +2472,20 @@ export default function App() {
   useEffect(() => {
     const load = () => wikiApi.index()
       .then((ix) => setWikiFlags(ix.health.unsupported + ix.health.superseded + ix.health.uncited))
-      .catch(() => setWikiFlags(0));
+      // A failed read is not "nothing to review": keep the last count.
+      .catch(() => {});
     load();
     const t = setInterval(load, 60_000);
     return () => clearInterval(t);
   }, []);
 
   const refresh = useCallback(async () => {
+    // Each read lands on its own: a projects outage must not freeze the
+    // fleet. Only the fleet's freshness is reported, in one place.
+    api.projects().then(setProjects, () => {});
     try {
-      const [rs, ps] = await Promise.all([api.sessions(archived), api.projects()]);
-      setRows(rs); setProjects(ps); setLoadErr(null); setRowsAll(archived); setLoadedAt(Date.now());
+      const rs = await api.sessions(archived);
+      setRows(rs); setLoadErr(null); setRowsAll(archived); setLoadedAt(Date.now());
     } catch (e) { setLoadErr(e instanceof Error ? e.message : String(e)); }
   }, [archived]);
 
@@ -2479,6 +2496,7 @@ export default function App() {
     let live = true;
     // Never show one session's transcript under another's header while loading.
     setLines([]);
+    lastSeq.current = 0; // the cursor belongs to the session just left
     setLoadFail(null); setPaused(undefined);
     // Its failure is the transcript's own state, with a retry, not a toast.
     api.session(selected).then((r) => {
@@ -2820,7 +2838,7 @@ export default function App() {
       <DialogHost />
       {err ? (
         <button className="toast" role="alert" onClick={() => setErr(null)} title="Dismiss">{err}</button>
-      ) : loadErr && <div className="toast" role="status">{loadErr}</div>}
+      ) : null}
     </div>
   );
 }

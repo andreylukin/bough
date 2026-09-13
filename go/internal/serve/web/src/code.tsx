@@ -102,6 +102,34 @@ function firstCall(src: string): { name: string; args: string[] } | null {
   return { name: m[1], args };
 }
 
+/**
+ * A shell command's operation and target, from a small table of
+ * commands bough runs often. Anything else is shown as it was run:
+ * the line names what the command is, never a guess at why.
+ */
+const OPS: [RegExp, string, (cmd: string, m: RegExpExecArray) => string][] = [
+  [/\brestish\s+exa\s+search\b/, "Search", (c) => quoted(c, "query")],
+  [/\brestish\s+exa\s+(?:get-contents|contents)\b/, "Fetch", (c) => /https?:\/\/[^\s"',\]]+/.exec(c)?.[0] ?? ""],
+  [/\bgo\s+test\b([^|;&]*)/, "Test", (_, m) => m[1].trim()],
+  [/\bgo\s+build\b([^|;&]*)/, "Build", (_, m) => m[1].trim()],
+  [/\bgo\s+vet\b([^|;&]*)/, "Vet", (_, m) => m[1].trim()],
+];
+
+/** The value of a `query: "…"` or `"query": "…"` argument. */
+function quoted(cmd: string, key: string): string {
+  const v = new RegExp(`"?${key}"?\\s*:\\s*"([^"]*)"`).exec(cmd)?.[1] ?? "";
+  return v.includes("${") ? "" : v; // filled in at run time: not recorded
+}
+
+export function describeBash(cmd: string): { verb: string; gist: string } {
+  for (const [re, verb, target] of OPS) {
+    const m = re.exec(cmd);
+    // No literal target (a URL built at run time): the operation alone.
+    if (m) return { verb, gist: target(cmd, m) };
+  }
+  return { verb: "Ran", gist: gistOf(cmd) };
+}
+
 export function parseCall(code: string): Call {
   const raw = code.trim();
   const call = firstCall(raw);
@@ -112,21 +140,22 @@ export function parseCall(code: string): Call {
     // What each call was aimed at is what tells two programs apart: the
     // commands and paths, from the recorded source, never guessed.
     if (names.length > 1) {
-      const targets = [...raw.matchAll(/tools\.(\w+)\s*\(/g)].map((m) => {
+      const ops = [...raw.matchAll(/tools\.(\w+)\s*\(/g)].map((m) => {
         let i = m.index + m[0].length;
         while (i < raw.length && /\s/.test(raw[i])) i++;
         const s = readString(raw, i);
-        return s ? (m[1] === "bash" ? gistOf(s.value) : s.value.split("\n")[0]) : m[1];
+        return s ? (m[1] === "bash" ? describeBash(s.value) : { verb: "", gist: s.value.split("\n")[0] }) : { verb: "", gist: m[1] };
       });
-      const verb = names.every((n) => n === "bash") ? "Ran" : "Program";
-      return { verb, target: "", gist: [...new Set(targets)].join(" · "), body: raw, lang: "javascript", raw };
+      const verbs = [...new Set(ops.map((o) => o.verb))];
+      const verb = verbs.every(Boolean) ? verbs.map((v, i) => (i ? v.toLowerCase() : v)).join(" + ") : "Program";
+      return { verb, target: "", gist: [...new Set(ops.map((o) => o.gist))].join(" · "), body: raw, lang: "javascript", raw };
     }
     return { verb: "Code", target: "", gist: gistOf(raw), body: raw, lang: "javascript", raw };
   }
   const [a = "", b = ""] = call.args;
   switch (call.name) {
     case "bash":
-      return { verb: "Ran", target: a, gist: gistOf(a), body: a, lang: "bash", raw };
+      return { ...describeBash(a), target: a, body: a, lang: "bash", raw };
     case "write":
       return { verb: "Wrote", target: a, gist: a, body: b || raw, lang: langForPath(a), raw };
     case "patch":
