@@ -1023,8 +1023,8 @@ export function Back({ onBack }: { onBack?: () => void }) {
   );
 }
 
-export function Thread({ row, lines, stream = [], projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy }: {
-  row: Row; lines: Line[]; stream?: DeltaRun[]; projects: Project[]; busy: boolean; onBack?: () => void;
+export function Thread({ row, lines, loading = false, stream = [], projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy }: {
+  row: Row; lines: Line[]; loading?: boolean; stream?: DeltaRun[]; projects: Project[]; busy: boolean; onBack?: () => void;
   onSend: (t: string) => Promise<boolean> | void; onAnswer: (t: string) => Promise<boolean> | void; onInterrupt: () => void;
   onArchive: () => void; onRename: (t: string) => void; onContext?: () => void; onAck?: () => void;
   onModel: (m: string) => void; onEffort: (e: string) => void; onAssign: (p: string) => void;
@@ -1083,6 +1083,13 @@ export function Thread({ row, lines, stream = [], projects, onAck, onSend, onAns
   // Opening a different conversation starts at the bottom again.
   useEffect(() => { atBottom.current = true; }, [row.id]);
   const turns = useMemo(() => groupTurns(lines), [lines]);
+  // A fast read shows nothing at all; only a slow one earns a word.
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (!loading) { setSlow(false); return; }
+    const t = setTimeout(() => setSlow(true), 200);
+    return () => clearTimeout(t);
+  }, [loading]);
   const running = row.status === "running";
 
   // A long paste should be visible, not a two-row porthole you have to
@@ -1147,6 +1154,10 @@ export function Thread({ row, lines, stream = [], projects, onAck, onSend, onAns
       <RuntimeStrip row={row} lines={lines} />
 
       <div className="scroll transcript" ref={scroller} onScroll={onScroll}>
+        {loading && slow && <p className="meta-line transcript-state" role="status">Loading transcript…</p>}
+        {!loading && turns.length === 0 && !running && !row.ask && (
+          <p className="meta-line transcript-state">No recorded turns.</p>
+        )}
         {turns.map((t, i) => (
           <TurnView key={t.seq} turn={t}
             // The preview belongs to the turn that is still open, so it
@@ -1270,6 +1281,9 @@ export default function App() {
   // The catch-up cursor: the newest history seq on screen, read outside
   // any state updater.
   const lastSeq = useRef(0);
+  // Whose transcript is in hand. An empty list means "loading" until the
+  // first read for that session lands, and only then "nothing recorded".
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
   useEffect(() => { lastSeq.current = lines.length ? lines[lines.length - 1].seq : 0; }, [lines]);
   // Live fragments of the reply being written, newest last. Never
   // merged into `lines`: these carry no history seq and the recorded
@@ -1322,6 +1336,7 @@ export default function App() {
     api.session(selected).then((r) => {
       if (!live) return;
       setLines(r.entries);
+      setLoadedFor(selected);
       setRows((prev) => prev.map((x) => (x.id === r.session.id ? r.session : x)));
     }).catch((e) => setErr(String(e)));
 
@@ -1577,7 +1592,7 @@ export default function App() {
       ) : row && context ? (
         <ContextPage session={row.id} onBack={() => setContext(false)} />
       ) : row ? (
-        <Thread key={row.id} row={row} lines={lines} stream={stream} projects={projects} busy={busy} onBack={() => setPane("list")}
+        <Thread key={row.id} row={row} lines={lines} loading={loadedFor !== row.id} stream={stream} projects={projects} busy={busy} onBack={() => setPane("list")}
           onSend={(t) => act(() => api.prompt(row.id, t))}
           onAnswer={(t) => act(() => api.answer(row.id, t))}
           onInterrupt={() => act(() => api.interrupt(row.id))}

@@ -31,6 +31,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 /* .visually-hidden is absolute: without a positioned ancestor each one sat at its
    place deep in the transcript and stretched the document past the viewport. */
 .transcript{position:relative}
+.transcript-state{margin:auto 0;text-align:center}
 /* The sidebar's first screen is for sessions: a 44px brand row, one row
    of view tabs, the search, then the queue. */
 .brand{display:flex;align-items:center;gap:10px;height:44px;padding:0 16px;font-size:15px;font-weight:600;
