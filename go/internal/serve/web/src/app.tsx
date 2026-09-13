@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import { createPortal } from "react-dom";
 import { api, subscribe, type Change, type TurnLine } from "./api";
 import type { Line, Project, Row } from "./types";
-import { STATUS, StatusMark, Working, sessionSignal } from "./status";
+import { STATUS, StatusMark, Working, hasFailure, hasQuestion, sessionSignal } from "./status";
 import { ProjectsView } from "./projects";
 import { Select, type Option } from "./select";
 import { DialogHost, askText } from "./dialog";
@@ -96,7 +96,10 @@ function displayTitle(r: Row): string {
 /** Text cut to start at most `lead` characters before the hit, so an ellipsis never hides it. */
 function excerpt(text: string, at: number, lead: number): { text: string; at: number } {
   if (at <= lead) return { text, at };
-  return { text: "…" + text.slice(at - lead), at: lead + 1 };
+  // Cut at the word or path segment the hit sits in, when that is near.
+  const cut = Math.max(text.lastIndexOf(" ", at - 1), text.lastIndexOf("/", at - 1));
+  const from = cut >= 0 && at - cut <= lead + 12 ? cut + 1 : at - lead;
+  return { text: "…" + text.slice(from), at: at - from + 1 };
 }
 
 /** A media query as state, following the window as it changes. */
@@ -167,8 +170,10 @@ const ICONS = {
   chevron: <path d="M9 6l6 6-6 6" />,
 };
 
-export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal }: {
+export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
+  /** The fleet's freshness: when the list last loaded (null before), and why the last refresh failed. */
+  loadedAt?: number | null; loadErr?: string | null; onRetry?: () => void;
   /** Whether the rows hold archived sessions yet, once the section is open. */
   archivedState?: "loading" | "failed" | "ready"; onRetryArchived?: () => void;
   /** Open a session at one turn of its log. */
@@ -191,8 +196,8 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
 }) {
   // Status lives in the glyphs and the order; the sections are only
   // where a session ran, and whether it is still recent.
-  // Runs nobody started by hand fold into Background, even when one
-  // needs attention: they are not the person's work.
+  // Runs nobody started by hand fold into Background, unless one needs
+  // you: then it sits with the recent work, where it cannot get lost.
   const { recent, inactive, background, archived } = useMemo(() => {
     const now = Date.now();
     const recent: Row[] = [], inactive: Row[] = [], background: Row[] = [], archived: Row[] = [];
@@ -202,7 +207,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
       // with New), or when a search asks for it.
       if (r.empty && !r.live && r.id !== selected && !query) continue;
       if (r.archived) archived.push(r);
-      else if (r.background) background.push(r);
+      else if (r.background && sessionSignal(r) > 0) background.push(r);
       else if (sessionSignal(r) < 2 || now - Date.parse(r.lastAt) < INACTIVE_MS) recent.push(r);
       else inactive.push(r);
     }
@@ -292,6 +297,17 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
   };
 
   const [archFolded, setArchFolded] = useState(false);
+  // Showing archived from anywhere (the palette too) shows the section open.
+  useEffect(() => { if (showArchived) setArchFolded(false); }, [showArchived]);
+
+  // A first load says so only once it is slow enough to notice.
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (loadedAt !== null) return;
+    const t = setTimeout(() => setSlow(true), 200);
+    return () => clearTimeout(t);
+  }, [loadedAt]);
+  const searchBtn = useRef<HTMLButtonElement>(null);
 
   // A long log shows its last turns; the rest wait behind one line.
   const [allTurns, setAllTurns] = useState<Set<string>>(() => new Set());
@@ -305,6 +321,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     const pick = (stop.current && items.includes(stop.current) ? stop.current : null)
       ?? items.find((el) => el.classList.contains("row-on")) ?? items[0];
     for (const el of items) el.tabIndex = el === pick ? 0 : -1;
+    stop.current = pick ?? null;
   });
 
   // "/" opens search from anywhere that is not taking typing.
@@ -337,7 +354,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     onQuery("");
     const path = r.repo || r.cwd;
     setWsFolded((cur) => { const next = new Set([...cur].filter((k) => !k.endsWith(":" + path))); writeSet("bough:ws-folded", next); return next; });
-    const sec = r.background ? "background" : sessionSignal(r) < 2 || Date.now() - Date.parse(r.lastAt) < INACTIVE_MS ? "" : "inactive";
+    const sec = r.background && sessionSignal(r) > 0 ? "background" : sessionSignal(r) < 2 || Date.now() - Date.parse(r.lastAt) < INACTIVE_MS ? "" : "inactive";
     if (sec) setUnfolded((cur) => { const next = new Set(cur).add(sec); writeSet("bough:unfolded", next); return next; });
     requestAnimationFrame(() => {
       const el = document.querySelector<HTMLElement>(`.sidebar button.row[data-id="${r.id}"]`);
@@ -404,16 +421,17 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
   };
 
   const q = query.trim().toLowerCase();
-  const session = (r: Row) => {
+  // `twin`: a sibling row reads the same, so this one adds its id tail.
+  const session = (r: Row, twin = false) => {
     // A search hides the logs: they are not what matched.
     const open = Boolean(r.turns) && expanded.has(r.id) && !q;
     const log = logs[r.id];
     const name = plainTitle(r.title);
     const on = r.id === selected;
     // A recorded failure outranks the lifecycle: finished is not fine.
-    const failed = r.trouble || (r.testsFailed ? "tests failed" : "");
+    const failed = r.trouble || (r.testsFailed ? "tests failed" : "") || (hasFailure(r) ? "failed" : "");
     // A failure and a pending ask are both news: say both.
-    const asking = r.status === "needs-you" || Boolean(r.ask);
+    const asking = hasQuestion(r);
     const why = failed
       ? `${capital(failed)}${asking ? "; waiting for your answer" : failed === "tests failed" ? `; agent ${(STATUS[r.status]?.label ?? r.status).toLowerCase()}` : ""}`
       : STATUS[r.status]?.label ?? r.status;
@@ -430,7 +448,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     return (
       <div key={r.id} className="session">
         <div className={"row-wrap" + (open ? " row-open" : "")}>
-          <button onClick={() => onSelect(r.id)} data-id={r.id}
+          <button role="treeitem" onClick={() => onSelect(r.id)} data-id={r.id}
                   onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
                   onFocus={(e) => peek(r, e.currentTarget)} onBlur={unpeek}
                   aria-describedby={card?.id === r.id ? "row-card" : undefined}
@@ -444,7 +462,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
                 : <StatusMark status={r.status} size={16} bare />}
             </span>
             {title
-              ? <span className="row-title" title={shown !== title ? title : undefined}>{marked(shown, q)}</span>
+              ? <><span className="row-title" title={shown !== title ? title : undefined}>{marked(shown, q)}</span>{twin && <span className="mono row-id">{r.id.slice(-6)}</span>}</>
               // No title: the id tail alone tells rows apart.
               : <span className="row-title mono row-untitled">{r.id.slice(-6)}</span>}
             {r.jobs && r.jobs.length > 0 && (
@@ -453,7 +471,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
               </span>
             )}
             {/* Touch has no hover card: a phone reads status and age off the row. */}
-            <span className={"num row-meta" + (failed ? " row-meta-bad" : r.status === "needs-you" ? " row-meta-ask" : "")} aria-hidden="true">
+            <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : "") + (failed || asking || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
               {label ? `${label} · ` : ""}{ago(r.lastAt)}
             </span>
           </button>
@@ -485,7 +503,8 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
                   <span className="num turn-n">{l.turn}</span>
                   {/* A recorded test run says what happened first; narration only where nothing was recorded. */}
                   {l.test && <span className={"turn-result" + (l.test.exit ? " turn-result-bad" : "")}>{l.test.exit ? `Tests failed · exit ${l.test.exit}` : "Tests passed"}</span>}
-                  <span className="turn-text">{l.test ? l.test.cmd : l.text.replace(/^you (asked|said|wanted)( to| for| that)?\s+/i, "").replace(/^./, (c) => c.toUpperCase())}</span>
+                  {/* Narration is the agent's note, not a status: dimmed so it never reads as one. */}
+                  <span className={"turn-text" + (l.test ? "" : " turn-note")}>{l.test ? l.test.cmd : l.text.replace(/^you (asked|said|wanted)( to| for| that)?\s+/i, "").replace(/^./, (c) => c.toUpperCase())}</span>
                 </button>
               </li>
             )) : log ? (
@@ -501,16 +520,18 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     const key = `${sec}:${list[0].repo || list[0].cwd}`;
     const open = !(searchOn ? searchFolds : wsFolded).has(key);
     const urgent = list.filter((r) => sessionSignal(r) === 0);
+    const seen = new Map<string, number>();
+    for (const r of list) seen.set(displayTitle(r), (seen.get(displayTitle(r)) ?? 0) + 1);
     return (
       <div key={key} className="ws">
-        <button className="ws-head" aria-expanded={open} onClick={() => toggleWs(key)} title={list[0].repo || list[0].cwd}>
+        <button className="ws-head" role="treeitem" aria-expanded={open} onClick={() => toggleWs(key)} title={list[0].repo || list[0].cwd}>
           <Icon d={ICONS.chevron} size={12} /><Icon d={ICONS.folder} size={15} /><span className="ws-name">{ws}</span>
           {/* Folded, a group still says when something in it needs you. */}
           {!open && (urgent.length
-            ? <span className={"num sec-count sec-count-" + (urgent.some((r) => r.trouble || r.testsFailed) ? "trouble" : "needs-you")}>{urgent.length} need{urgent.length === 1 ? "s" : ""} you</span>
+            ? <span className={"num sec-count sec-count-" + (urgent.some(hasFailure) ? "trouble" : "needs-you")}>{urgent.length} need{urgent.length === 1 ? "s" : ""} you</span>
             : <span className="num sec-count">{list.length}</span>)}
         </button>
-        {open && list.map(session)}
+        {open && <div role="group">{list.map((r) => session(r, (seen.get(displayTitle(r)) ?? 0) > 1))}</div>}
       </div>
     );
   });
@@ -518,12 +539,12 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
   // A section folds, during a search too, which starts with every match open.
   const section = (key: string, label: string, open: boolean, toggle: () => void, count: React.ReactNode, body: React.ReactNode, alert?: "trouble" | "needs-you") => (
     <div className="sec">
-      <button className="sec-fold" aria-expanded={open} onClick={toggle} aria-controls={`sec-${key}`}>
+      <button className="sec-fold" role="treeitem" aria-expanded={open} onClick={toggle} aria-controls={`sec-${key}`}>
         <Icon d={ICONS.chevron} size={12} />
         <span>{label}</span>
         <span className="ws-rule" />{count !== null && <span className={"num sec-count" + (alert ? " sec-count-" + alert : "")}>{count}</span>}
       </button>
-      {open && <div className="sec-body" id={`sec-${key}`}>{body}</div>}
+      {open && <div className="sec-body" role="group" id={`sec-${key}`}>{body}</div>}
     </div>
   );
 
@@ -539,7 +560,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
       {!folded && <>
         <button className="side-icon" onClick={() => window.history.back()} aria-label="Back" title="Back"><Icon d={ICONS.back} /></button>
         <button className="side-icon" onClick={() => window.history.forward()} aria-label="Forward" title="Forward"><Icon d={ICONS.forward} /></button>
-        <button className={"side-icon" + (showSearch ? " side-icon-on" : "")} aria-expanded={showSearch} aria-controls="q"
+        <button ref={searchBtn} className={"side-icon" + (showSearch ? " side-icon-on" : "")} aria-expanded={showSearch} aria-controls="q"
                 onClick={() => { if (showSearch) { onQuery(""); setSearching(false); } else setSearching(true); }}
                 aria-label="Search sessions" title="Search sessions (/)"><Icon d={ICONS.search} /></button>
         {onNew && (
@@ -556,7 +577,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
   const total = recent.length + inactive.length + background.length + archived.length;
   // While something in Background needs you, its count says how many, not the total.
   const bgUrgent = background.filter((r) => sessionSignal(r) === 0);
-  const bgAlert = background.some((r) => r.trouble || r.testsFailed) ? "trouble" : bgUrgent.length ? "needs-you" : undefined;
+  const bgAlert = background.some(hasFailure) ? "trouble" : bgUrgent.length ? "needs-you" : undefined;
   const foldOpen = (key: string, open: boolean) => (searchOn ? !searchFolds.has(key) : open);
   const foldToggle = (key: string, toggle: () => void) => () => (searchOn ? setSearchFolds((cur) => flip(cur, key)) : toggle());
   const cardRow = card ? rows.find((r) => r.id === card.id) : undefined;
@@ -583,7 +604,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
           <input id="q" ref={searchRef} className="field" autoComplete="off" value={query} placeholder="Search sessions"
                  onChange={(e) => onQuery(e.target.value)}
                  onKeyDown={(e) => {
-                   if (e.key === "Escape") { e.preventDefault(); onQuery(""); setSearching(false); return; }
+                   if (e.key === "Escape") { e.preventDefault(); onQuery(""); setSearching(false); searchBtn.current?.focus(); return; }
                    // Down from the search lands on the first match.
                    if (e.key !== "ArrowDown") return;
                    const first = document.querySelector<HTMLElement>(".sidebar button.row");
@@ -591,7 +612,14 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
                  }} />
         </div>
       )}
-      <div className="scroll" ref={treeRef} onScroll={() => { clearTimeout(peekTimer.current); setCard(null); }} onKeyDown={walk}
+      {/* Only on trouble: a slow first load, or a list that stopped refreshing. */}
+      {loadErr ? (
+        <p className="side-fresh" role="status">
+          {loadedAt === null ? "Sessions unavailable" : `Updates delayed · ${ago(new Date(loadedAt).toISOString())}`}
+          {onRetry && <button className="link" onClick={onRetry}>Retry</button>}
+        </p>
+      ) : loadedAt === null && slow && <p className="side-fresh" role="status">Loading sessions…</p>}
+      <div className="scroll" role="tree" aria-label="Sessions" ref={treeRef} onScroll={() => { clearTimeout(peekTimer.current); setCard(null); }} onKeyDown={walk}
            onFocus={(e) => {
              const t = e.target as HTMLElement;
              if (!t.matches(TREE_ITEMS)) return;
@@ -615,7 +643,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
           showArchived && archivedState === "ready" ? archived.length : null,
           archivedState === "loading" ? <p className="list-none">Loading archived…</p>
           : archivedState === "failed" ? <p className="list-none">Couldn’t load archived · <button className="link" onClick={onRetryArchived}>Retry</button></p>
-          : archived.length ? workspaces(byWorkspace(archived), "archived") : <p className="list-none">Nothing archived.</p>)}
+          : archived.length ? workspaces(byWorkspace(archived), "archived") : <p className="list-none">{q ? "No archived matches." : "Nothing archived."}</p>)}
       </div>
       {onView && (
         <nav className="side-nav" aria-label="Views">
@@ -1847,7 +1875,9 @@ function ControlOverview({ rows, onReveal, loadedAt, loadErr, onRetry }: {
   // The sidebar's own rule (sessionSignal): a failure outranks "done".
   const live = rows.filter((r) => !r.archived && !(r.empty && !r.live));
   const needs = live.filter((r) => sessionSignal(r) === 0).sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt));
-  const failures = needs.filter((r) => r.trouble || r.testsFailed).length;
+  const failed = needs.filter(hasFailure);
+  const failures = failed.length;
+  const questions = needs.filter(hasQuestion).length;
   const running = live.filter((r) => !r.background && sessionSignal(r) === 1).length;
   return (
     <div className="ov">
@@ -1865,10 +1895,10 @@ function ControlOverview({ rows, onReveal, loadedAt, loadErr, onRetry }: {
         )}
         {needs.length > 0 ? (
           <p className="ov-none" role="status">
-            <button className="link ov-point" onClick={() => onReveal(needs[0].id)}>
-              {failures ? `${failures} unresolved ${failures === 1 ? "failure" : "failures"}` : `${needs.length} ${needs.length === 1 ? "needs" : "need"} you`}
+            <button className="link ov-point" onClick={() => onReveal((failed[0] ?? needs[0]).id)}>
+              {failures ? `${failures} unresolved ${failures === 1 ? "failure" : "failures"}` : `${questions} waiting for you`}
             </button>
-            {failures > 0 && needs.length > failures && ` · ${needs.length - failures} waiting for you`}
+            {failures > 0 && questions > 0 && ` · ${questions} waiting for you`}
             {running > 0 && ` · ${running} running`}
           </p>
         ) : !loadErr && (
@@ -2556,6 +2586,7 @@ export default function App() {
     let live = true;
     // Never show one session's transcript under another's header while loading.
     setLines([]);
+    setLoadedFor(null);
     lastSeq.current = 0; // the cursor belongs to the session just left
     setLoadFail(null); setPaused(undefined);
     // Its failure is the transcript's own state, with a retry, not a toast.
@@ -2735,6 +2766,19 @@ export default function App() {
     if (window.location.hash !== "#/") window.history.pushState(null, "", "#/");
   }, []);
 
+  // Arriving at Home on a desktop opens the session that most needs you,
+  // else the most recent, once: an empty page beside the list said nothing.
+  // Opening does not mark anything seen.
+  const arrived = useRef(false);
+  useEffect(() => {
+    if (arrived.current || loadedAt === null) return;
+    arrived.current = true;
+    if (window.location.hash.replace(/^#\/?/, "") !== "" || window.matchMedia?.("(max-width:720px)").matches) return;
+    const top = rows.filter((r) => !r.archived && !r.empty)
+      .sort((a, b) => sessionSignal(a) - sessionSignal(b) || Number(Boolean(a.background)) - Number(Boolean(b.background)) || Date.parse(b.lastAt) - Date.parse(a.lastAt))[0];
+    if (top) { setSelected(top.id); setPane("thread"); }
+  }, [loadedAt, rows]);
+
   // The session last opened, so the list comes back with your place in it.
   const [lastId, setLastId] = useState<string | null>(null);
   // A turn picked from a session's log, for its thread to scroll to.
@@ -2856,7 +2900,8 @@ export default function App() {
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)}
                archivedState={!archived || rowsAll ? "ready" : loadErr ? "failed" : "loading"} onRetryArchived={refresh}
                onAck={(id) => act(() => api.ack(id))}
-               onShowList={() => setPane("list")} reveal={reveal} />
+               onShowList={() => setPane("list")} reveal={reveal}
+               loadedAt={loadedAt} loadErr={loadErr} onRetry={refresh} />
       {view === "wiki" ? (
         <WikiPage route={wikiRoute} onRoute={goWiki} onBack={goList} onOpenSession={openSession}
                   onSearch={(text) => { setPalQuery(text.replace(/\s+/g, " ").slice(0, 60)); setPalette(true); }} />
@@ -2892,7 +2937,7 @@ export default function App() {
       ) : (
         <div className={"thread" + (selected ? " empty" : "")}>
           {!selected ? (
-            <ControlOverview rows={rows} onReveal={(id) => { setPane("list"); setReveal({ id, at: Date.now() }); }} loadedAt={loadedAt} loadErr={loadErr} onRetry={refresh} />
+            <ControlOverview rows={rows} onReveal={(id) => { setPane("list"); setQuery(""); setReveal({ id, at: Date.now() }); }} loadedAt={loadedAt} loadErr={loadErr} onRetry={refresh} />
           ) : rows.length > 0 && (
             // A link to a session this list does not hold.
             <div>

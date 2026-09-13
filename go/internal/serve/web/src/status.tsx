@@ -6,7 +6,17 @@ import type { Row, Status } from "./types";
  * Seen only changes how loud a row looks, never where it ranks.
  */
 export function sessionSignal(r: Row): 0 | 1 | 2 {
-  return r.trouble || r.testsFailed || r.status === "needs-you" ? 0 : r.status === "running" ? 1 : 2;
+  return hasFailure(r) || hasQuestion(r) ? 0 : r.status === "running" ? 1 : 2;
+}
+
+/** Red: a recorded failure, seen or not, or a turn that ended in error. */
+export function hasFailure(r: Row): boolean {
+  return Boolean(r.trouble || r.testsFailed || r.status === "error");
+}
+
+/** Amber: the session is waiting on an answer. */
+export function hasQuestion(r: Row): boolean {
+  return r.status === "needs-you" || Boolean(r.ask);
 }
 
 /**
