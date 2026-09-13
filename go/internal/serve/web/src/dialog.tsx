@@ -18,13 +18,38 @@ type Req =
 
 let push: ((r: Req) => void) | null = null;
 
+/** The part of the page actually visible: a phone keyboard shrinks it and pans it. */
+export interface Visible { top: number; left: number; width: number; height: number }
+
+export function visible(): Visible {
+  const vv = typeof window !== "undefined" ? window.visualViewport : null;
+  return vv ? { top: vv.offsetTop, left: vv.offsetLeft, width: vv.width, height: vv.height }
+    : { top: 0, left: 0, width: innerWidth, height: innerHeight };
+}
+
+/** Calls back whenever the visible area resizes or pans; one subscription per overlay. */
+export function useVisible(on: boolean, changed: () => void) {
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!on || !vv) return;
+    vv.addEventListener("resize", changed);
+    vv.addEventListener("scroll", changed);
+    return () => { vv.removeEventListener("resize", changed); vv.removeEventListener("scroll", changed); };
+  }, [on, changed]);
+}
+
 // Overlays size to what is visible, so a phone keyboard never hides a
-// dialog's buttons: --vvh is the visual viewport's height, kept current.
+// dialog's buttons: --vvh/--vvt are the visible height and its offset.
 if (typeof window !== "undefined" && window.visualViewport) {
   const vv = window.visualViewport;
-  const set = () => document.documentElement.style.setProperty("--vvh", `${Math.round(vv.height)}px`);
+  const set = () => {
+    const v = visible();
+    document.documentElement.style.setProperty("--vvh", `${Math.round(v.height)}px`);
+    document.documentElement.style.setProperty("--vvt", `${Math.round(v.top)}px`);
+  };
   set();
   vv.addEventListener("resize", set);
+  vv.addEventListener("scroll", set);
 }
 
 /**
@@ -152,7 +177,7 @@ export function DialogHost() {
                  aria-labelledby="dlg-title" readOnly={saving} aria-invalid={failed ? true : undefined}
                  aria-describedby={failed ? "dlg-err" : undefined}
                  onChange={(e) => setText(e.target.value)}
-                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } }} />
+                 onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } }} />
         )}
         {failed && <p id="dlg-err" className="dlg-err" role="alert">Not saved: {failed}</p>}
         <div className="dlg-actions">

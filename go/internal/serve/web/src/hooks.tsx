@@ -85,6 +85,9 @@ const clock = (iso: string) =>
   new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 const when = (iso: string | null, never: string) => (iso ? clock(iso) : never);
 const hms = (iso: string) => new Date(iso).toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+/** An audit timestamp: date, time to the second, and the zone's offset. */
+const stamp = (iso: string) => new Date(iso).toLocaleString([], { year: "numeric", month: "short", day: "numeric",
+  hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit", timeZoneName: "shortOffset" });
 const day = (iso: string) => new Date(iso).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
 
 /** A fire nobody needs to read twice: it passed, and said nothing. */
@@ -435,7 +438,9 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
     ...rules.map((r) => !isOff(offId("rule", r.id), r.off)),
     ...plugins.map((p) => p.present && !isOff(offId("plugin", p.id), p.off)),
   ].filter(Boolean).length;
-  const broken = watchers.filter((w) => w.failing).length + hooks.filter((h) => h.failing).length;
+  // Only what is on: a failing hook that is off or shadowed runs nothing.
+  const broken = watchers.filter((w) => w.failing && !isOff(offId("watcher", w.id), w.off)).length
+    + hooks.filter((h) => h.failing && !h.shadowed && !isOff(offId("hook", h.id), h.off)).length;
   // The server's own `off` is the fallback, not `false`: a toggle made
   // in this tab wins, but anything already off stays counted.
   const offCount = [
@@ -463,7 +468,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
 
   return (
     <div className="thread">
-      <header className="thread-head">
+      <header className="thread-head page-head">
         <Back onBack={onBack} />
         <div className="head-main">
           <h1>Hooks</h1>
@@ -487,10 +492,10 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
           <span><span className="hk2-sum-n">{offCount}</span>{" "}
             <span className="hk2-sum-lab">turned off</span></span>
           <span><span className="hk2-sum-n">{recent.length}</span>{" "}
-            <span className="hk2-sum-lab">decisions recorded</span></span>
+            <span className="hk2-sum-lab">events recorded</span></span>
         </div>
         {recent.length === 0
-          ? <EmptySection title="Recent decisions">A hook that passes a call through is not recorded — only one that blocks, denies, rewrites, throws, or leaves a note lands here.</EmptySection>
+          ? <EmptySection title="Recent decisions">Nothing recorded yet. Every time a hook runs — passing a call through, blocking, rewriting, throwing or leaving a note — it lands here.</EmptySection>
           : (
         <section className="proj">
           <div className="proj-head">
@@ -515,17 +520,16 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
                   <span className="hk-chev" aria-hidden="true">›</span>
                 </summary>
                 <div className="hk-fold-body">
+                  {/* On a phone the row keeps time, session and decision; the rest is here. */}
                   <p className="hk-when hk-tech">
-                    {f.session && <><a className="link" href={`#/s/${f.session}`}>{titles[f.session] || f.session.slice(0, 8)}</a> · </>}
-                    <span className="mono">{f.event}</span>{n === 1 && <> · <span className="num">{f.ms}ms</span></>}
+                    <span className="mono">{f.name}</span> · <span className="mono">{f.event}</span>
+                    {f.session && <> · <span className="mono">{f.session}</span></>}
                   </p>
-                  {n > 1 && (
-                    <ul className="hk-runs">
-                      {all.map((x, j) => (
-                        <li key={j} className="num hk-when">{hms(x.at)} · {x.ms}ms</li>
-                      ))}
-                    </ul>
-                  )}
+                  <ul className="hk-runs">
+                    {all.map((x, j) => (
+                      <li key={j} className="num hk-when">{stamp(x.at)} · {x.ms}ms</li>
+                    ))}
+                  </ul>
                 </div>
                 </details>
                 {f.notice && (

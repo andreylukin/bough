@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useModal } from "./dialog";
 import type { Row } from "./types";
 import { plainTitle } from "./render";
+import { shownStatus } from "./status";
 
 /**
  * ⌘K. With 150 conversations the sidebar is a scroll, not an index —
@@ -160,6 +161,20 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     // Same-named sessions are told apart under the active row: branch,
     // age, and the line the full-text search matched, when it did.
     const foundBy = new Map(found.map((h) => [h.id, h]));
+    // One candidate per session, whether its title or its text matched:
+    // a text-only hit ranks below any title match but inside the same cap.
+    const byId = new Map(sessions.map((x) => [x.r.id, x]));
+    for (const h of found) {
+      const r = rows.find((x) => x.id === h.id);
+      if (!r || byId.has(h.id)) continue;
+      byId.set(h.id, { r, title: plainTitle(r.title) || plainTitle(h.title) || "Untitled session", s: 50 });
+    }
+    const cands = [...byId.values()].sort((a, b) => b.s - a.s);
+    // Titles that repeat carry the id's tail, the one thing always different.
+    const twice = new Set<string>();
+    const seenTitle = new Set<string>();
+    const same = (t: string) => t.toLowerCase();
+    for (const { title } of cands) (seenTitle.has(same(title)) ? twice : seenTitle).add(same(title));
     const detailFor = (r: Row, title: string) => {
       const h = foundBy.get(r.id);
       const line = evidence(h, title, needle);
@@ -170,11 +185,12 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     // in one kind never leapfrogs a strong one in the other.
     const ranked = [
       ...cmds.map((x) => ({ s: x.s, c: x.c })),
-      ...sessions.slice(0, 30).map(({ r, title, s }) => ({ s, c: {
+      ...cands.map(({ r, title, s }) => ({ s, c: {
         id: "s:" + r.id,
         label: title,
-        hint: [(r.repo || foundBy.get(r.id)?.repo)?.split("/").pop(), r.testsFailed ? "tests failed" : r.status].filter(Boolean).join(" · "),
-        group: "Conversations",
+        hint: [(r.repo || foundBy.get(r.id)?.repo)?.split("/").pop(), r.testsFailed ? "tests failed" : shownStatus(r) === "error" ? "failed" : r.status,
+               twice.has(same(title)) ? r.id.slice(-6) : ""].filter(Boolean).join(" · "),
+        group: s === 50 ? "Found in the conversation" : "Conversations",
         detail: detailFor(r, title),
         run: () => onOpenSession(r.id),
       } as Command })),
@@ -195,30 +211,27 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
         });
       }
     }
-    // Full-text results for sessions the title match already found are
-    // not new information; the rest come after, each showing the line
-    // that matched so you can tell why it is here.
+    // A text hit on a session the list does not hold (archived, hidden)
+    // still opens, showing the line that matched.
     const seen = new Set(all.map((c) => c.id));
     for (const h of found) {
       if (seen.has("s:" + h.id)) continue;
-      const r = rows.find((x) => x.id === h.id);
       const label = plainTitle(h.title) || "Untitled session";
-      const line = evidence(h, label, needle);
       all.push({
         id: "s:" + h.id,
         label,
-        hint: [(h.repo || r?.repo)?.split("/").pop(), r ? (r.testsFailed ? "tests failed" : r.status) : ""].filter(Boolean).join(" · ")
-          || `${h.hits} matches`,
+        hint: [h.repo?.split("/").pop(), h.id.slice(-6)].filter(Boolean).join(" · "),
         group: "Found in the conversation",
-        detail: [[h.branch || r?.branch, r?.lastAt ? agoShort(r.lastAt) : ""].filter(Boolean).join(" · "), line]
-          .filter(Boolean).join("\n") || undefined,
+        detail: [h.branch, evidence(h, label, needle)].filter(Boolean).join("\n") || undefined,
         run: () => onOpenSession(h.id),
       });
     }
+    // Capped first; Start is added after, so a long result list never hides it.
+    const capped = all.slice(0, 40);
     // Last, always explicit: typing never starts anything by itself.
     const typed = q.trim();
     if (onStart && typed.length >= 2 && !typed.includes(":")) {
-      all.push({
+      capped.push({
         id: "start:" + typed,
         label: `Start a conversation: “${typed}”`,
         hint: "sends it as the first message",
@@ -226,7 +239,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
         run: () => onStart(typed),
       });
     }
-    return all.slice(0, 40);
+    return capped;
   }, [q, rows, commands, onOpenSession, found, onStart, pages, onOpenWikiPage]);
 
   useEffect(() => { setAt(0); }, [q]);
@@ -243,7 +256,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     if (e.key === "Escape") { e.preventDefault(); close(); return; }
     if (e.key === "ArrowDown") { e.preventDefault(); setAt((i) => Math.min(i + 1, hits.length - 1)); return; }
     if (e.key === "ArrowUp") { e.preventDefault(); setAt((i) => Math.max(i - 1, 0)); return; }
-    if (e.key === "Enter") { e.preventDefault(); if (hits[at]) pick(hits[at]); }
+    if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); if (hits[at]) pick(hits[at]); }
   };
 
   let lastGroup = "";

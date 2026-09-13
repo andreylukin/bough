@@ -1260,6 +1260,44 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .wk-where,.wk-run-meta{margin-inline-start:0}
   .wk-inferred{margin-inline-start:0}
 }
+
+/* Pages (Context, Hooks, Projects): one short head, no empty budget row. */
+.thread-head.page-head{grid-template-rows:36px;grid-template-areas:"back main side";min-height:48px;padding-block:6px}
+.page-head~.proj-body{gap:16px}
+.ctx-lede{display:flex;flex-wrap:wrap;gap:2px 16px;max-width:none;line-height:18px}
+.ctx-usage{color:var(--text-2)}
+.proj-open{display:flex;align-items:baseline;gap:14px}
+.proj-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.sel-cols{flex:none;display:flex;justify-content:space-between;align-items:center;height:24px;padding:0 38px 0 14px;
+          font-size:11px;font-weight:600;color:var(--text-3);border-bottom:1px solid var(--line)}
+.sel-foot{flex:none;padding:8px 12px;font-size:12px;line-height:18px;color:var(--text-2);border-top:1px solid var(--line-strong)}
+.sel-foot-unit{color:var(--text-3)}
+.dlg-scrim{top:var(--vvt,0px)}
+.hk-fold:not(.hk-group) .hk-chev{visibility:visible}
+.hk-fold:not(.hk-group)>summary{cursor:pointer}
+.ov-fails{display:flex;flex-direction:column;max-width:720px}
+.ov-fail{display:flex;align-items:center;gap:12px;min-height:40px;border-bottom:1px solid var(--line);font-size:13px;color:var(--text-2)}
+.ov-fail-what{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);color:var(--text-1)}
+.ov-fail-exit{color:#EF9A9A;font-weight:500}
+.ov-fail .btn{height:32px;flex-shrink:0}
+@media (max-width:720px){
+  .thread-head.page-head{grid-template-columns:44px minmax(0,1fr) auto;grid-template-rows:56px;grid-template-areas:none;gap:0 8px;padding-block:0;min-height:56px}
+  .thread-head.page-head>*{grid-area:auto;grid-row:1}
+  .page-head>.head-side,.proj-page-head>.head-side{display:flex}
+  .proj-page-head>.head-side>.btn-primary{grid-row:auto;grid-column:auto}
+  .pal{inset-block-start:calc(var(--vvt,0px) + 16px)}
+  .proj-row{flex-wrap:nowrap;gap:8px;min-height:64px;padding-block:6px}
+  .proj-row>.proj-open{flex:1 1 0;flex-direction:column;align-items:flex-start;gap:4px}
+  .proj-row>.proj-open~*:not(.proj-move){margin-inline-start:0}
+  .proj-title{max-width:100%;font-size:14px;line-height:20px}
+  .proj-open .proj-when{line-height:16px}
+  .proj-move .sel-btn{max-width:12ch}
+  .hk-main>.hk-name{display:none}
+  .hk-main>a.hk-sess{display:block;grid-column:2;grid-row:1;min-width:0;font:500 13px/18px var(--sans);color:#DDE3DE}
+  .ov-fail{min-height:64px;flex-wrap:wrap;gap:4px 12px;padding-block:8px}
+  .ov-fail-what{flex-basis:100%}
+  .ov-fail .btn{height:44px;margin-inline-start:auto}
+}
 </style>
 </head>
 <body>

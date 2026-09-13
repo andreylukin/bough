@@ -6,7 +6,7 @@ const noop = () => {};
 const meta: Meta<typeof ProjectsView> = {
   title: "Projects/ProjectsView",
   component: ProjectsView,
-  args: { onOpen: noop, onAssign: noop, onAssignMany: async () => {}, onCreate: async () => ({ id: "p" }), onRename: async () => {}, onDelete: noop },
+  args: { onOpen: noop, onAssign: noop, onAssignMany: async () => [], onCreate: async () => ({ id: "p" }), onRename: async () => {}, onDelete: noop },
   decorators: [(Story) => <div className="app" style={{ height: "100vh" }}><Story /></div>],
 };
 export default meta;

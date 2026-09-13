@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Project, Row } from "./types";
-import { StatusMark } from "./status";
+import { StatusMark, shownStatus } from "./status";
 import { plainTitle, untitled } from "./render";
 import { Back } from "./app";
 import { Select } from "./select";
@@ -9,21 +9,26 @@ import { askConfirm, askText } from "./dialog";
 const clock = (iso: string) =>
   new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
-function Conversation({ row, projects, onOpen, onAssign, picked, onPick }: {
+function Conversation({ row, projects, onOpen, onAssign, picked, onPick, locked }: {
   row: Row; projects: Project[];
   onOpen: (id: string) => void; onAssign: (id: string, project: string) => void;
   picked: boolean; onPick: (id: string) => void;
+  /** A bulk move is running: the selection it snapshotted cannot change under it. */
+  locked: boolean;
 }) {
   const title = plainTitle(row.title) || untitled(row.id);
   return (
     <div className={"proj-row" + (picked ? " proj-picked" : "")}>
       <label className="proj-check">
-        <input type="checkbox" checked={picked} onChange={() => onPick(row.id)} />
+        <input type="checkbox" checked={picked} disabled={locked} onChange={() => onPick(row.id)} />
         <span className="visually-hidden">Select {title}</span>
       </label>
-      <button className="proj-open" onClick={() => onOpen(row.id)}>{title}</button>
-      <StatusMark status={row.status} />
-      <span className="num proj-when">{clock(row.modified)}</span>
+      {/* Title and when in one target, so a phone row is two short lines, not three. */}
+      <button className="proj-open" onClick={() => onOpen(row.id)}>
+        <span className="proj-title">{title}</span>
+        <span className="num proj-when">{clock(row.modified)}</span>
+      </button>
+      <StatusMark status={shownStatus(row)} />
       {/* With no project to move to, a one-option menu is a dead end. */}
       {projects.length > 0 && (
         <div className="proj-move">
@@ -127,8 +132,8 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
   onOpen: (id: string) => void;
   onBack?: () => void;
   onAssign: (id: string, project: string) => void;
-  /** Resolves false (or rejects) when the move did not happen. */
-  onAssignMany: (ids: string[], project: string) => Promise<unknown>;
+  /** Resolves to the ids that did not move. */
+  onAssignMany: (ids: string[], project: string) => Promise<string[]>;
   onCreate: (name: string) => Promise<{ id: string }>;
   onRename: (id: string, name: string) => Promise<void>;
   onDelete: (id: string) => void;
@@ -156,7 +161,9 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
   const unassigned = byProject.get("") ?? [];
   const unassignedAll = useMemo(() => new Set(rows.filter((r) => !r.project).map((r) => r.id)), [rows]);
 
-  const pickMany = (ids: string[], on: boolean) => setSelected((prev) => {
+  // While a move runs its selection is locked: a second move cannot overlap it.
+  const [moving, setMoving] = useState(false);
+  const pickMany = (ids: string[], on: boolean) => moving || setSelected((prev) => {
     const next = new Set(prev);
     for (const id of ids) on ? next.add(id) : next.delete(id);
     return next;
@@ -164,35 +171,42 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
   const pick = (id: string) => pickMany([id], !selected.has(id));
   const ids = [...selected];
 
-  // A move that failed stays on the bar with a Retry, and a retry after
-  // "New project…" reuses the project already made instead of a second one.
-  const [failed, setFailed] = useState<string | null>(null);
+  // What moved leaves the selection; what did not stays selected, with a
+  // Retry. A retry inside one "New project…" reuses the project it made.
+  const [failed, setFailed] = useState<{ project: string; n: number } | null>(null);
   const made = useRef<string | null>(null);
   const assign = async (project: string) => {
-    setFailed(null);
-    let ok = false;
-    try { ok = (await onAssignMany(ids, project)) !== false; } catch { ok = false; }
-    if (!ok) { setFailed(project); return false; }
-    setSelected(new Set()); made.current = null;
+    const batch = [...selected];
+    setFailed(null); setMoving(true);
+    let left: string[];
+    try { left = await onAssignMany(batch, project); } catch { left = batch; }
+    setMoving(false);
+    setSelected(new Set(left));
+    if (left.length) { setFailed({ project, n: left.length }); return false; }
     return true;
   };
 
-  const createProject = () => askText("New project", { placeholder: "What is this work?", action: "Create",
-    onSubmit: async (name) => {
-      const id = made.current ?? (await onCreate(name)).id;
-      made.current = ids.length ? id : null;
-      // With a selection, the new project is where it goes.
-      if (ids.length && !(await assign(id))) throw new Error("the project exists, but the conversations did not move");
-    } });
+  const createProject = async () => {
+    made.current = null;
+    await askText("New project", { placeholder: "What is this work?", action: "Create",
+      onSubmit: async (name) => {
+        const id = made.current ?? (await onCreate(name)).id;
+        made.current = id;
+        // With a selection, the new project is where it goes.
+        if (ids.length && !(await assign(id))) throw new Error("the project exists, but some conversations did not move");
+      } });
+    // Done or cancelled, the next creation is a new project.
+    made.current = null;
+  };
 
   const list = (rs: Row[]) => rs.map((r) => (
     <Conversation key={r.id} row={r} projects={projects} onOpen={onOpen} onAssign={onAssign}
-                  picked={selected.has(r.id)} onPick={pick} />
+                  picked={selected.has(r.id)} onPick={pick} locked={moving} />
   ));
 
   return (
     <div className="thread">
-      <header className="thread-head proj-page-head">
+      <header className="thread-head page-head proj-page-head">
         <Back onBack={onBack} />
         <div className="head-main">
           <h1>Projects</h1>
@@ -257,24 +271,24 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
       </div>
 
       {ids.length > 0 && (
-        <div className="rp-bar" role="region" aria-label="Selected conversations">
-          <span className="num rp-count">{ids.length} selected</span>
+        <div className="rp-bar" role="region" aria-label="Selected conversations" aria-busy={moving || undefined}>
+          <span className="num rp-count">{moving ? `Moving ${ids.length}…` : `${ids.length} selected`}</span>
           {projects.length > 0 && (
             <>
               <Select label="Project" value={target} align="start"
                       options={[{ value: "", label: "Choose a project" }, ...projects.map((p) => ({ value: p.id, label: p.name }))]}
                       onChange={setTarget} />
-              <button className="btn btn-primary" disabled={!target}
+              <button className="btn btn-primary" disabled={!target || moving}
                       onClick={() => { void assign(target); }}>Assign</button>
             </>
           )}
           {failed && (
             <span className="err rp-err" role="alert">
-              Not moved <button className="link" onClick={() => { void assign(failed); }}>Retry</button>
+              {failed.n} not moved <button className="link" disabled={moving} onClick={() => { void assign(failed.project); }}>Retry</button>
             </span>
           )}
-          <button className="btn" onClick={() => { void createProject(); }}>New project…</button>
-          <button className="btn rp-clear" onClick={() => setSelected(new Set())}>Clear</button>
+          <button className="btn" disabled={moving} onClick={() => { void createProject(); }}>New project…</button>
+          <button className="btn rp-clear" disabled={moving} onClick={() => { setSelected(new Set()); setFailed(null); }}>Clear</button>
         </div>
       )}
     </div>

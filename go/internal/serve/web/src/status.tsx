@@ -14,6 +14,11 @@ export function hasFailure(r: Row): boolean {
   return Boolean(r.trouble || r.testsFailed || r.status === "error");
 }
 
+/** The status a list shows: a recorded failure outranks "Done", as in the sidebar. */
+export function shownStatus(r: Row): Status {
+  return hasFailure(r) && !hasQuestion(r) ? "error" : r.status;
+}
+
 /** Amber: the session is waiting on an answer. */
 export function hasQuestion(r: Row): boolean {
   return r.status === "needs-you" || Boolean(r.ask);

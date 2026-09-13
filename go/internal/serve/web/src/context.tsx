@@ -108,8 +108,17 @@ function SkillRow({ s, off, setOff, onOff }: {
   );
 }
 
-export function ContextView({ data, onBack, load = hooksApi.read, save = hooksApi.write, setOff = setOffApi }: {
+/** "49,210 / 1,050,000 tokens · 1,000,790 remaining", or says what is not known. */
+function usageLine(used?: number, limit?: number): string {
+  if (!used) return "Context usage unavailable";
+  if (!limit) return `Last input ${used.toLocaleString()} tokens · limit unknown`;
+  return `${used.toLocaleString()} / ${limit.toLocaleString()} tokens · ${Math.max(0, limit - used).toLocaleString()} remaining`;
+}
+
+export function ContextView({ data, onBack, load = hooksApi.read, save = hooksApi.write, setOff = setOffApi, used, limit }: {
   data: ContextData; onBack?: () => void; load?: Load; save?: Save; setOff?: SetOff;
+  /** Input tokens the last finished turn reported, and the model's window from the catalogue. */
+  used?: number; limit?: number;
 }) {
   const { cwd, rules, contextFiles, skills } = data;
   const { isOff, mark } = useOffs();
@@ -118,7 +127,7 @@ export function ContextView({ data, onBack, load = hooksApi.read, save = hooksAp
 
   return (
     <div className="thread">
-      <header className="thread-head">
+      <header className="thread-head page-head">
         <Back onBack={onBack} />
         <div className="head-main">
           <h1>Context</h1>
@@ -127,7 +136,10 @@ export function ContextView({ data, onBack, load = hooksApi.read, save = hooksAp
       </header>
 
       <div className="scroll proj-body">
-        <p className="ctx-lede">Disabling anything here disables it in every session.</p>
+        <p className="ctx-lede">
+          <span className="num ctx-usage">{usageLine(used, limit)}</span>
+          <span>Disabling anything here disables it in every session.</span>
+        </p>
 
         {found.length === 0 && missing.length === 0
           ? (
@@ -201,8 +213,16 @@ export function ContextView({ data, onBack, load = hooksApi.read, save = hooksAp
 }
 
 /** The live view: reads the session's context once, and on reopen. */
-export function ContextPage({ session, onBack }: { session: string; onBack?: () => void }) {
+export function ContextPage({ session, model, used, onBack }: { session: string; model?: string; used?: number; onBack?: () => void }) {
   const [data, setData] = useState<ContextData | null>(null);
+  const [limit, setLimit] = useState<number | undefined>();
+  useEffect(() => {
+    if (!model) { setLimit(undefined); return; }
+    fetch("/api/models").then((r) => r.json())
+      .then((c: { providers?: { models?: { id: string; context?: number }[] }[] }) =>
+        setLimit(c.providers?.flatMap((p) => p.models ?? []).find((m) => m.id === model)?.context))
+      .catch(() => setLimit(undefined));
+  }, [model]);
   const [err, setErr] = useState("");
 
   const refresh = useCallback(() => {
@@ -213,7 +233,7 @@ export function ContextPage({ session, onBack }: { session: string; onBack?: () 
   useEffect(() => { refresh(); }, [refresh]);
 
   if (!data) return <Pending title="Context" what="context" err={err} onBack={onBack} onRetry={refresh} />;
-  return <ContextView data={data} onBack={onBack} />;
+  return <ContextView data={data} onBack={onBack} used={used} limit={limit} />;
 }
 
 /** Loading or failed: the header and Back stay, so the page is never a dead end. */
@@ -222,7 +242,7 @@ export function Pending({ title, what, err, onBack, onRetry }: {
 }) {
   return (
     <div className="thread">
-      <header className="thread-head">
+      <header className="thread-head page-head">
         <Back onBack={onBack} />
         <div className="head-main"><h1>{title}</h1></div>
       </header>

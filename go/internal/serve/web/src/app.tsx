@@ -1385,7 +1385,7 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext }: { row: Row; li
           : switched ? "The model changed after this input was read; headroom shows once the new model answers"
           : `${row.model} has no context window in the catalogue`;
         const body = <>
-          <span className="rt-label">Context{limit ? "" : " · last input"}</span>
+          <span className="rt-label">{limit ? "Context" : "Last input"}</span>
           <span className="num rt-value">{tokenCount(u.lastIn)}{limit ? ` · ${tokenCount(Math.max(0, limit - u.lastIn))} left` : ""}</span>
           {pct !== undefined && (
             <span className="rt-bar" role="meter" aria-label="Context used" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
@@ -1883,6 +1883,12 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
         // it thinks, side by side, on every screen.
         <div className="ctl ctl-run">
           <Select label="Model" value={row.model ?? ""} options={models} searchable align="end" note="Applies to the next turn"
+                  detailHeading="Context tokens"
+                  footer={(o) => {
+                    const m = o && cat?.providers.flatMap((p) => p.models ?? []).find((x) => x.id === o.value);
+                    const price = (n?: number) => (n ? `$${+n.toFixed(2)}` : "Unavailable");
+                    return m ? <>Input {price(m.input)} · Output {price(m.output)} <span className="sel-foot-unit">per 1M tokens</span></> : "Price unavailable";
+                  }}
                   onChange={(v) => (v ? onModel(v) : undefined)} />
           {efforts.length > 0 && (
             <Select label="Effort" value={row.effort ?? ""} align="end" note="Applies to the next turn" onChange={(v) => (v ? onEffort(v) : undefined)}
@@ -1906,16 +1912,32 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
  * Home: the sidebar is the one list of sessions, so Home lists none. It
  * says how many need you and points at the first such row there.
  */
-function ControlOverview({ rows, onReveal, loadedAt, loadErr, onRetry }: {
+function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onRetry }: {
   rows: Row[]; onReveal: (id: string) => void; loadedAt: number | null; loadErr: string | null; onRetry: () => void;
+  /** Open the session at the failing call, when its transcript names one. */
+  onOpenFailure: (id: string, seq?: number) => void;
 }) {
   // The sidebar's own rule (sessionSignal): a failure outranks "done".
   const live = rows.filter((r) => !r.archived && !(r.empty && !r.live));
   const needs = live.filter((r) => sessionSignal(r) === 0).sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt));
-  const failed = needs.filter(hasFailure);
-  const failures = failed.length;
-  const questions = needs.filter(hasQuestion).length;
+  const failed = needs.filter(hasFailure).slice(0, 5);
+  const questions = needs.filter(hasQuestion);
   const running = live.filter((r) => !r.background && sessionSignal(r) === 1).length;
+  // The evidence behind each failure: the failing test call and its exit,
+  // read from the transcript. A failure with no test call says its trouble.
+  const [evid, setEvid] = useState<Record<string, { cmd: string; exit?: number; seq: number; at: string }>>({});
+  const key = failed.map((r) => r.id + r.lastAt).join();
+  useEffect(() => {
+    let on = true;
+    for (const r of failed) {
+      api.session(r.id).then((d) => {
+        const t = lastTestRun(d.entries ?? [], false);
+        if (on && t?.state === "failed") setEvid((m) => ({ ...m, [r.id]: { cmd: t.cmd, exit: t.exit, seq: t.seq, at: t.at } }));
+      }).catch(() => {});
+    }
+    return () => { on = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
   return (
     <div className="ov">
       <header className="ov-head">
@@ -1931,13 +1953,30 @@ function ControlOverview({ rows, onReveal, loadedAt, loadErr, onRetry }: {
           </p>
         )}
         {needs.length > 0 ? (
-          <p className="ov-none" role="status">
-            <button className="link ov-point" onClick={() => onReveal((failed[0] ?? needs[0]).id)}>
-              {failures ? `${failures} unresolved ${failures === 1 ? "failure" : "failures"}` : `${questions} waiting for you`}
-            </button>
-            {failures > 0 && questions > 0 && ` · ${questions} waiting for you`}
-            {running > 0 && ` · ${running} running`}
-          </p>
+          <>
+            {failed.length > 0 && (
+              <div className="ov-fails" role="list" aria-label="Unresolved failures">
+                {failed.map((r) => {
+                  const e = evid[r.id];
+                  return (
+                    <div key={r.id} className="ov-fail" role="listitem">
+                      {/* The failing call when the transcript names one; else the only identity there is. */}
+                      <span className="ov-fail-what" title={plainTitle(r.title) || r.id}>{e?.cmd ?? `${plainTitle(r.title) || untitled(r.id)} · ${r.trouble || (r.testsFailed ? "tests failed" : "failed")}`}</span>
+                      {e?.exit !== undefined && <span className="num ov-fail-exit">exit {e.exit}</span>}
+                      <span className="num">{r.repo?.split("/").pop()}</span>
+                      <span className="num">{ago(e?.at ?? r.lastAt)} ago</span>
+                      <button className="btn" onClick={() => onOpenFailure(r.id, e?.seq)}>Open failure</button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {questions.length > 0 && (
+              <p className="ov-none" role="status">
+                <button className="link ov-point" onClick={() => onReveal(questions[0].id)}>{questions.length} waiting for you</button>
+              </p>
+            )}
+          </>
         ) : !loadErr && (
           <p className="ov-none" role="status">{loadedAt === null ? "Loading sessions…" : `Nothing needs your attention.${running ? ` ${running} running.` : ""}`}</p>
         )}
@@ -1981,7 +2020,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   /** The small model's live label for the running turn; never recorded. */
   activity?: string; projects: Project[]; busy: boolean; onBack?: () => void;
   /** Scroll to this turn (1-based) once it is on screen; `at` makes a repeat click count. */
-  jump?: { turn: number; at: number } | null;
+  jump?: { turn: number; at: number; seq?: number } | null;
   onSend: (t: string) => Promise<string | null> | void; onAnswer: (t: string, ask?: string) => Promise<string | null> | void; onInterrupt: () => Promise<boolean> | void;
   onArchive: () => void; onRename: (t: string) => Promise<void>; onContext?: () => void; onAck?: () => void;
   onModel: (m: string) => Promise<boolean> | void; onEffort: (e: string) => Promise<boolean> | void; onAssign: (p: string) => void;
@@ -2118,11 +2157,13 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   const jumped = useRef(0);
   useEffect(() => {
     if (!jump || loading || jumped.current === jump.at) return;
-    const el = scroller.current?.querySelector<HTMLElement>(`.turn[data-turn="${jump.turn}"]`);
+    // A failure lands on its call, with every fold around it opened.
+    const el = scroller.current?.querySelector<HTMLElement>(jump.seq ? `[data-seq="${jump.seq}"]` : `.turn[data-turn="${jump.turn}"]`);
     if (!el) return;
     jumped.current = jump.at;
     atBottom.current = false;
-    el.scrollIntoView({ block: "start" });
+    for (let d: HTMLElement | null = el; d; d = d.parentElement?.closest("details") ?? null) if (d instanceof HTMLDetailsElement) d.open = true;
+    el.scrollIntoView({ block: jump.seq ? "center" : "start" });
     el.classList.remove("turn-flash");
     void el.offsetWidth;
     el.classList.add("turn-flash");
@@ -2862,7 +2903,7 @@ export default function App() {
   // The session last opened, so the list comes back with your place in it.
   const [lastId, setLastId] = useState<string | null>(null);
   // A turn picked from a session's log, for its thread to scroll to.
-  const [jump, setJump] = useState<{ id: string; turn: number; at: number } | null>(null);
+  const [jump, setJump] = useState<{ id: string; turn: number; at: number; seq?: number } | null>(null);
   useEffect(() => { if (selected) setLastId(selected); }, [selected]);
 
   // Esc leaves a session for the list, unless something nearer owns it:
@@ -2995,10 +3036,15 @@ export default function App() {
           onAssign={(id, p) => act(() => api.assign(id, p))}
           onCreate={async (name) => { const p = await api.newProject(name); await refresh(); return p; }}
           onRename={async (id, name) => { await api.renameProject(id, name); await refresh(); }}
-          onAssignMany={(ids, p) => act(() => Promise.all(ids.map((id) => api.assign(id, p))))}
+          onAssignMany={async (ids, p) => {
+            // Per session: what moved is done, what did not stays selected there.
+            const out = await Promise.allSettled(ids.map((id) => api.assign(id, p)));
+            await refresh();
+            return ids.filter((_, i) => out[i].status === "rejected");
+          }}
           onDelete={(id) => act(() => api.deleteProject(id))} />
       ) : row && context ? (
-        <ContextPage session={row.id} onBack={() => setContext(false)} />
+        <ContextPage session={row.id} model={row.model} used={loadedFor === row.id ? sessionUsage(lines)?.lastIn : undefined} onBack={() => setContext(false)} />
       ) : row ? (
         <Thread key={row.id} row={row} lines={lines} jump={jump?.id === row.id ? jump : null} loading={loadedFor !== row.id} loadError={loadFail ?? undefined} paused={paused}
           onRetry={() => (loadedFor === row.id ? retryRef.current() : setLoadTry((n) => n + 1))} stream={stream} activity={activity} projects={projects} busy={busy || Boolean(locked[row.id])} onBack={goList}
@@ -3017,7 +3063,7 @@ export default function App() {
       ) : (
         <div className={"thread" + (selected ? " empty" : "")}>
           {!selected ? (
-            <ControlOverview rows={rows} onReveal={(id) => { setPane("list"); setQuery(""); setReveal({ id, at: Date.now() }); }} loadedAt={loadedAt} loadErr={loadErr} onRetry={refresh} />
+            <ControlOverview rows={rows} onOpenFailure={(id, seq) => { openSession(id); if (seq) setJump({ id, turn: 0, seq, at: Date.now() }); }} onReveal={(id) => { setPane("list"); setQuery(""); setReveal({ id, at: Date.now() }); }} loadedAt={loadedAt} loadErr={loadErr} onRetry={refresh} />
           ) : rows.length > 0 && (
             // A link to a session this list does not hold.
             <div>

@@ -1,4 +1,5 @@
-import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useVisible, visible } from "./dialog";
 
 /** One choosable value. Options sharing a `group` sit under one heading. */
 export interface Option { value: string; label: string; detail?: string; group?: string; /** What the closed button shows, when shorter than the label. */ short?: string }
@@ -16,7 +17,7 @@ export interface Option { value: string; label: string; detail?: string; group?:
  * Keyboard: ↓/↑/Enter/Space open it; inside, ↓↑ move, Enter picks,
  * Esc closes and gives focus back to the button.
  */
-export function Select({ value, options, onChange, label, placeholder = "Choose", searchable = false, align = "start", note }: {
+export function Select({ value, options, onChange, label, placeholder = "Choose", searchable = false, align = "start", note, detailHeading, footer }: {
   value: string;
   options: Option[];
   /** A promise that resolves false (or rejects) is a save that failed: the button says so and offers the retry. */
@@ -28,6 +29,10 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
   align?: "start" | "end";
   /** A line above the options saying when the choice takes effect. */
   note?: string;
+  /** Names the detail column, when options carry one. */
+  detailHeading?: string;
+  /** A fixed line under the list about the highlighted option. */
+  footer?: (o: Option | undefined) => React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -91,9 +96,7 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
 
   // Placed against the viewport: 4px from the button, 8px from every
   // edge, flipped above when there is more room there.
-  useLayoutEffect(() => {
-    if (!open) return;
-    const place = () => {
+  const place = useCallback(() => {
       if (!btn.current || !pop.current) return;
       const b = btn.current.getBoundingClientRect();
       // Fixed, so a percentage min-width would mean the viewport's.
@@ -101,20 +104,23 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
       pop.current.style.minWidth = `${minWidth}px`;
       const w = pop.current.offsetWidth;
       const h = pop.current.scrollHeight;
-      const vh = window.visualViewport?.height ?? innerHeight;
-      const below = vh - b.bottom - 12, above = b.top - 12;
+      // Against what is visible: a keyboard both shrinks and pans the page.
+      const v = visible();
+      const below = v.top + v.height - b.bottom - 12, above = b.top - v.top - 12;
       const up = h > below && above > below;
       let left = align === "end" ? b.right - w : b.left;
       left = Math.max(8, Math.min(left, innerWidth - 8 - w));
-      setPos({ position: "fixed", minWidth, left, right: "auto", top: up ? Math.max(8, b.top - 4 - Math.min(h, above)) : b.bottom + 4,
+      setPos({ position: "fixed", minWidth, left, right: "auto", top: up ? Math.max(v.top + 8, b.top - 4 - Math.min(h, above)) : b.bottom + 4,
                maxHeight: up ? above : below });
-    };
+  }, [align]);
+  useVisible(open, place);
+  useLayoutEffect(() => {
+    if (!open) return;
     place();
     addEventListener("resize", place);
     addEventListener("scroll", place, true);
-    window.visualViewport?.addEventListener("resize", place);
-    return () => { removeEventListener("resize", place); removeEventListener("scroll", place, true); window.visualViewport?.removeEventListener("resize", place); };
-  }, [open, align, shown.length]);
+    return () => { removeEventListener("resize", place); removeEventListener("scroll", place, true); };
+  }, [open, place, shown.length]);
 
   // A click anywhere else closes it, as a menu does.
   useEffect(() => {
@@ -133,7 +139,7 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
     }
     if (e.key === "ArrowDown") { e.preventDefault(); setAt((i) => Math.min(i + 1, shown.length - 1)); }
     else if (e.key === "ArrowUp") { e.preventDefault(); setAt((i) => Math.max(i - 1, 0)); }
-    else if (e.key === "Enter") { e.preventDefault(); if (shown[at]) pick(shown[at]); }
+    else if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); if (shown[at]) pick(shown[at]); }
     else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); hide(true); }
     else if (e.key === "Tab") hide(false);
   };
@@ -165,6 +171,7 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
                    onChange={(e) => { setQ(e.target.value); setAt(0); }} />
           )}
           {note && <p className="sel-note">{note}</p>}
+          {detailHeading && <div className="sel-cols" aria-hidden="true"><span>{label}</span><span>{detailHeading}</span></div>}
           <div className="sel-list" role="listbox" id={listId} aria-label={label} ref={list}>
             {shown.map((o, i) => (
               <Fragment key={(o.group ?? "") + ":" + o.value}>
@@ -174,7 +181,7 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
                         className={"sel-item" + (i === at ? " sel-on" : "")}
                         onMouseEnter={() => setAt(i)} onClick={() => pick(o)}>
                   <span className="sel-label">{o.label}</span>
-                  {o.detail && <span className="num sel-detail" title="Context window">{o.detail}</span>}
+                  {o.detail && <span className="num sel-detail" title={detailHeading}>{o.detail}</span>}
                   <svg className="sel-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
                        style={{ visibility: o.value === value ? "visible" : "hidden" }}>
@@ -185,6 +192,7 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
             ))}
             {shown.length === 0 && <p className="sel-empty">Nothing matches “{q}”</p>}
           </div>
+          {footer && <div className="sel-foot" role="status">{footer(shown[at])}</div>}
         </div>
       )}
     </div>
