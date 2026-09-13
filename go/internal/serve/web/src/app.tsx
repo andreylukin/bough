@@ -1534,8 +1534,6 @@ function ControlOverview({ rows, onOpen }: { rows: Row[]; onOpen: (id: string) =
   const live = rows.filter((r) => !r.archived && !(r.empty && !r.live));
   const needs = live.filter((r) => r.trouble || r.status === "needs-you");
   const running = live.filter((r) => !needs.includes(r) && !r.background && r.status === "running");
-  const recent = needs.length || running.length ? [] :
-    live.filter((r) => !r.background).sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt)).slice(0, 3);
   const group = (label: string, list: Row[]) => list.length > 0 && (
     <section className="ov-group" aria-label={label}>
       <h2 className="ov-label">{label}</h2>
@@ -1543,7 +1541,7 @@ function ControlOverview({ rows, onOpen }: { rows: Row[]; onOpen: (id: string) =
         <button key={r.id} className="ov-row" onClick={() => onOpen(r.id)}>
           <span className="ov-title">{plainTitle(r.title) || untitled(r.id)}</span>
           <span className="ov-why">
-            {r.trouble ? <span className="status head-trouble"><StatusMark status="error" bare />{capital(r.trouble)}</span>
+            {r.trouble || r.testsFailed ? <span className="status head-trouble"><StatusMark status="error" bare />{capital(r.trouble || "tests failed")}</span>
               : <StatusMark status={r.status} />}
             {r.repo && <span className="mono">{r.repo.split("/").pop()}</span>}
             <span className="num">{ago(r.lastAt)} ago</span>
@@ -1561,12 +1559,9 @@ function ControlOverview({ rows, onOpen }: { rows: Row[]; onOpen: (id: string) =
       <div className="scroll ov-body">
         {group("Needs you", needs)}
         {group("Running", running)}
-        {recent.length > 0 && (
-          <>
-            <p className="ov-none">Nothing needs your attention.</p>
-            {group("Recent", recent)}
-          </>
-        )}
+        {/* No "Recent" list: the sidebar already lists every session, and a
+            second copy here disagreed with it about failed tests. */}
+        {!needs.length && !running.length && <p className="ov-none">Nothing needs your attention.</p>}
       </div>
     </div>
   );
