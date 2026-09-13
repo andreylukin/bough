@@ -3,6 +3,8 @@ import { api, subscribe } from "./api";
 import type { Line, Project, Row } from "./types";
 import { StatusMark, Working } from "./status";
 import { ProjectsView } from "./projects";
+import { Select, type Option } from "./select";
+import { DialogHost, askText } from "./dialog";
 import { Markdown, codeLabel, doneSummary, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, plainTitle, stepCount, stripRunFences, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath } from "./code";
 import { SkillPicker } from "./skills";
@@ -656,40 +658,39 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
     fetch("/api/models").then((r) => r.json()).then(setCat).catch(() => setCat(null));
   }, []);
 
+  // A session that has not answered yet genuinely has no model to name;
+  // one running a model the catalogue does not list still shows it.
+  const models: Option[] = [{ value: "", label: "Default model" }];
+  for (const p of cat?.providers ?? []) {
+    for (const m of p.models ?? []) {
+      models.push({ value: m.id, label: m.id, group: p.plugin.replace(/^llm-/, ""),
+                    detail: m.context ? `${Math.round(m.context / 1000)}k` : undefined });
+    }
+  }
+  if (row.model && !models.some((o) => o.value === row.model)) {
+    models.push({ value: row.model, label: row.model, group: "In use" });
+  }
+
   return (
     <div className="controls">
-      {only !== "rest" && <label className="ctl">
-        <span className="ctl-label">Model</span>
-        <select value={row.model ?? ""} onChange={(e) => e.target.value && onModel(e.target.value)}>
-          {/* A session that has not answered yet genuinely has no model
-              to name; everything else says the one that is answering. */}
-          <option value="">{row.model ? row.model : "Default model"}</option>
-          {cat?.providers.map((p) => (
-            <optgroup key={p.plugin} label={p.plugin.replace(/^llm-/, "")}>
-              {(p.models ?? []).map((m) => (
-                <option key={p.plugin + m.id} value={m.id}>
-                  {m.id}{m.context ? ` — ${Math.round(m.context / 1000)}k` : ""}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-      </label>}
+      {only !== "rest" && (
+        <div className="ctl">
+          <span className="ctl-label">Model</span>
+          <Select label="Model" value={row.model ?? ""} options={models} searchable align="end"
+                  onChange={(v) => v && onModel(v)} />
+        </div>
+      )}
       {only !== "model" && <>
-      <label className="ctl">
-        <span className="ctl-label">Project</span>
-        <select value={row.project ?? ""} onChange={(e) => onAssign(e.target.value)}>
-          <option value="">Unassigned</option>
-          {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-      </label>
-      <label className="ctl">
-        <span className="ctl-label">Thinking</span>
-        <select value={row.effort ?? ""} onChange={(e) => e.target.value && onEffort(e.target.value)}>
-          <option value="">{row.effort ? row.effort : "default"}</option>
-          {(cat?.efforts ?? []).map((e) => <option key={e} value={e}>{e}</option>)}
-        </select>
-      </label>
+        <div className="ctl">
+          <span className="ctl-label">Project</span>
+          <Select label="Project" value={row.project ?? ""} align="end" onChange={onAssign}
+                  options={[{ value: "", label: "Unassigned" }, ...projects.map((p) => ({ value: p.id, label: p.name }))]} />
+        </div>
+        <div className="ctl">
+          <span className="ctl-label">Thinking</span>
+          <Select label="Thinking" value={row.effort ?? ""} align="end" onChange={(v) => v && onEffort(v)}
+                  options={[{ value: "", label: "Default" }, ...(cat?.efforts ?? []).map((e) => ({ value: e, label: e }))]} />
+        </div>
       </>}
     </div>
   );
@@ -805,8 +806,9 @@ export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, on
         <div className="head-extra">
           <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="rest" />
           <div className="head-actions">
-            <button className="btn" onClick={() => {
-              const t = prompt("Rename session", plainTitle(row.title));
+            <button className="btn" onClick={async () => {
+              // Empty is allowed: it hands the title back to the session.
+              const t = await askText("Rename session", { initial: plainTitle(row.title), action: "Rename", allowEmpty: true });
               if (t !== null) onRename(t);
             }}>Rename</button>
             <button className="btn" onClick={onArchive}>{row.archived ? "Unarchive" : "Archive"}</button>
@@ -1141,7 +1143,10 @@ export default function App() {
       run: () => start(row.cwd, ""),
     }] : []),
     { id: "new:project", group: "Start", label: "New project…",
-      run: () => { const n = prompt("Name the project"); if (n?.trim()) act(() => api.newProject(n.trim())); } },
+      run: async () => {
+        const n = await askText("New project", { placeholder: "What is this work?", action: "Create" });
+        if (n) act(() => api.newProject(n));
+      } },
     { id: "go:sessions", group: "Go to", label: "Conversations",
       run: () => { setView("sessions"); setContext(false); setPane("thread"); } },
     { id: "go:projects", group: "Go to", label: "Projects",
@@ -1208,6 +1213,7 @@ export default function App() {
           </div>
         </div>
       )}
+      <DialogHost />
       {err && <div className="toast" role="status">{err}</div>}
     </div>
   );

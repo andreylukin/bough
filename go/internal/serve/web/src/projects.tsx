@@ -3,6 +3,8 @@ import type { Project, Row } from "./types";
 import { StatusMark } from "./status";
 import { plainTitle } from "./render";
 import { Back } from "./app";
+import { Select } from "./select";
+import { askConfirm, askText } from "./dialog";
 
 const clock = (iso: string) =>
   new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -18,13 +20,11 @@ function Conversation({ row, projects, onOpen, onAssign }: {
       </button>
       <StatusMark status={row.status} />
       <span className="num proj-when">{clock(row.modified)}</span>
-      <label className="proj-move">
-        <span className="visually-hidden">Move to project</span>
-        <select value={row.project ?? ""} onChange={(e) => onAssign(row.id, e.target.value)}>
-          <option value="">Unassigned</option>
-          {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-      </label>
+      <div className="proj-move">
+        <Select label="Move to project" value={row.project ?? ""} align="end"
+                onChange={(p) => onAssign(row.id, p)}
+                options={[{ value: "", label: "Unassigned" }, ...projects.map((p) => ({ value: p.id, label: p.name }))]} />
+      </div>
     </div>
   );
 }
@@ -201,9 +201,9 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onCreat
           </span>
         </div>
         <div className="head-side">
-          <button className="btn btn-primary" onClick={() => {
-            const name = prompt("Name this project");
-            if (name?.trim()) onCreate(name.trim());
+          <button className="btn btn-primary" onClick={async () => {
+            const name = await askText("New project", { placeholder: "What is this work?", action: "Create" });
+            if (name) onCreate(name);
           }}>New project</button>
         </div>
       </header>
@@ -226,14 +226,15 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onCreat
                 <span className="num proj-count">
                   {list.length} {list.length === 1 ? "conversation" : "conversations"}
                 </span>
-                <button className="link" onClick={() => {
-                  const name = prompt("Rename project", p.name);
-                  if (name?.trim()) onRename(p.id, name.trim());
+                <button className="link" onClick={async () => {
+                  const name = await askText("Rename project", { initial: p.name, action: "Rename" });
+                  if (name) onRename(p.id, name);
                 }}>Rename</button>
-                <button className="link" onClick={() => {
-                  if (confirm(`Delete “${p.name}”? Its ${list.length} conversation${list.length === 1 ? "" : "s"} stay, unassigned.`)) {
-                    onDelete(p.id);
-                  }
+                <button className="link" onClick={async () => {
+                  const ok = await askConfirm(`Delete “${p.name}”?`,
+                    `Its ${list.length} conversation${list.length === 1 ? "" : "s"} stay, unassigned.`,
+                    { action: "Delete project", danger: true });
+                  if (ok) onDelete(p.id);
                 }}>Delete</button>
               </div>
               {list.length === 0
