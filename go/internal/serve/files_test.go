@@ -3,7 +3,9 @@ package serve
 import (
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -56,18 +58,63 @@ func TestFilesSkipsMachineDirectories(t *testing.T) {
 	}
 }
 
-// A query is required: listing a home directory does not answer
-// "which file", and the walk is not free.
-func TestFilesNeedsAQuery(t *testing.T) {
+// A bare "@" lists the top of the directory — one level down, never the
+// whole tree — so the picker opens with something in it.
+func TestFilesBareQueryListsTheTop(t *testing.T) {
 	t.Parallel()
+	base := t.TempDir()
+	touchFile(t, filepath.Join(base, "readme.md"))
+	touchFile(t, filepath.Join(base, "src", "main.go"))
+	touchFile(t, filepath.Join(base, "src", "deep", "buried.go"))
+
+	got := map[string]bool{}
+	for _, h := range findFiles(base, "") {
+		got[h.Path] = true
+	}
+	for _, want := range []string{"readme.md", "src", "src/main.go"} {
+		if !got[want] {
+			t.Errorf("bare query missing %q; got %v", want, got)
+		}
+	}
+	if got["src/deep/buried.go"] {
+		t.Errorf("bare query descended past one level: %v", got)
+	}
+
 	f := newAPI(t)
 	f.api.home = f.home
 	code, body := f.do(t, "GET", "/api/files?q=", "")
 	if code != http.StatusOK {
 		t.Fatalf("GET /api/files = %d", code)
 	}
-	list, ok := body["files"].([]any)
-	if !ok || len(list) != 0 {
-		t.Errorf("files = %#v, want an empty list", body["files"])
+	if _, ok := body["files"].([]any); !ok {
+		t.Errorf("files = %#v, want a list", body["files"])
+	}
+}
+
+// In a repository, what git ignores is not what @ is reaching for: an
+// ignored export used to outrank the real source.
+func TestFilesRespectGitignore(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	base := t.TempDir()
+	if out, err := exec.Command("git", "-C", base, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(base, ".gitignore"), []byte("export/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	touchFile(t, filepath.Join(base, "export", "App.js"))
+	touchFile(t, filepath.Join(base, "web", "src", "app.tsx"))
+
+	got := findFiles(base, "app")
+	if len(got) == 0 || got[0].Path != "web/src/app.tsx" {
+		t.Fatalf("got %v, want web/src/app.tsx first", got)
+	}
+	for _, h := range got {
+		if strings.HasPrefix(h.Path, "export") {
+			t.Errorf("ignored path %q offered", h.Path)
+		}
 	}
 }

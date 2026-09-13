@@ -11,11 +11,15 @@ package serve
 // and takes nine seconds.
 
 import (
+	"context"
 	"net/http"
 	"os"
+	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
@@ -52,8 +56,9 @@ type fileHit struct {
 }
 
 // files answers the @ picker: paths under a session's directory that
-// match a query. Needs a query — listing a home directory is not a
-// useful answer to "which file".
+// match a query. An empty query is a bare "@": it lists the top of the
+// directory, one level down, so the picker has something to show the
+// moment it opens.
 func (a *API) files(w http.ResponseWriter, r *http.Request) {
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	base := a.home
@@ -62,7 +67,7 @@ func (a *API) files(w http.ResponseWriter, r *http.Request) {
 			base = info.Cwd
 		}
 	}
-	if q == "" || base == "" {
+	if base == "" {
 		writeJSON(w, http.StatusOK, map[string]any{"files": []fileHit{}})
 		return
 	}
@@ -80,8 +85,18 @@ func (a *API) files(w http.ResponseWriter, r *http.Request) {
 // "shallow results only" rather than "results from one arbitrary
 // subtree".
 func findFiles(base, q string) []fileHit {
+	// Inside a repository, git already knows which files are the
+	// project's: an ignored export or build tree was outranking the real
+	// source ("@app" answered with ds-bundle/ before anything in src).
+	if paths, ok := gitFiles(base); ok {
+		return rankHits(gitHits(paths, q))
+	}
 	var hits []fileHit
 	seen := 0
+	depthCap := fileDepthCap
+	if q == "" {
+		depthCap = 1 // a bare "@" lists the top, not the whole tree
+	}
 	queue := []string{""} // relative dirs, shallowest first
 
 	for len(queue) > 0 && seen < fileWalkCap {
@@ -104,7 +119,7 @@ func findFiles(base, q string) []fileHit {
 				if skipDir[name] || strings.HasPrefix(name, ".") || vendorPath(filepath.ToSlash(rel)) {
 					continue
 				}
-				if strings.Count(rel, string(os.PathSeparator)) < fileDepthCap {
+				if strings.Count(rel, string(os.PathSeparator)) < depthCap {
 					queue = append(queue, rel)
 				}
 			}
@@ -116,6 +131,64 @@ func findFiles(base, q string) []fileHit {
 			}
 		}
 	}
+	return rankHits(hits)
+}
+
+// gitFiles lists what git shows for base — tracked files plus untracked
+// ones that are not ignored — relative to base. ok is false outside a
+// work tree, or when git is missing or slow, and the walk takes over.
+func gitFiles(base string) ([]string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "-C", base, "ls-files",
+		"--cached", "--others", "--exclude-standard", "-z").Output()
+	if err != nil {
+		return nil, false
+	}
+	var paths []string
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, true
+}
+
+// gitHits matches git's file list, and the directories it implies,
+// against a query the same way the walk does.
+func gitHits(paths []string, q string) []fileHit {
+	var hits []fileHit
+	dirs := map[string]bool{}
+	add := func(p string, dir bool) {
+		depth := strings.Count(p, "/")
+		if q == "" && depth > 1 {
+			return
+		}
+		if r := matchPath(strings.ToLower(p), strings.ToLower(path.Base(p)), q); r >= 0 {
+			rank := r*10 - depth
+			// Tracked build output (an embedded dist/app.js) is still
+			// reachable, but the source it was built from comes first.
+			for _, seg := range strings.Split(p, "/") {
+				if skipDir[seg] {
+					rank -= 100
+					break
+				}
+			}
+			hits = append(hits, fileHit{Path: p, Dir: dir, rank: rank})
+		}
+	}
+	for _, p := range paths {
+		for d := path.Dir(p); d != "." && !dirs[d]; d = path.Dir(d) {
+			dirs[d] = true
+			add(d, true)
+		}
+		add(p, false)
+	}
+	return hits
+}
+
+// rankHits orders matches best-first and keeps the top fileHitCap.
+func rankHits(hits []fileHit) []fileHit {
 	sort.SliceStable(hits, func(i, j int) bool {
 		if hits[i].rank != hits[j].rank {
 			return hits[i].rank > hits[j].rank

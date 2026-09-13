@@ -119,6 +119,25 @@ func TestStatusOf(t *testing.T) {
 			wantAsk: &Ask{ID: "q1", Text: "which?", Options: []string{"a", "b"}, Seq: 2},
 		},
 		{
+			name: "a timed-out ask stops waiting once its block returns",
+			entries: entries(
+				ent(1, "input", text("hi")),
+				ask(2, "q1"),
+				ent(3, "result", text("error: GoError: ask: no answer after 10m0s")),
+			),
+			want: StatusInterrupted,
+		},
+		{
+			name: "a timed-out ask in a live turn is running, not waiting",
+			entries: entries(
+				ent(1, "input", text("hi")),
+				ask(2, "q1"),
+				ent(3, "result", text("error: GoError: ask: no answer after 10m0s")),
+			),
+			alive: true,
+			want:  StatusRunning,
+		},
+		{
 			name: "a closed turn cannot still be waiting on you",
 			entries: entries(
 				ent(1, "input", text("hi")),

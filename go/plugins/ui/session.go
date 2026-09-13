@@ -71,9 +71,12 @@ func (m *model) replay() {
 			continue
 		}
 		switch e.Kind {
-		case "meta", "undo":
+		case "meta", "undo", "hook":
 			// session bookkeeping (cwd, a /undo's revert record —
-			// its system row follows), nothing to render
+			// its system row follows; a hook fire, the control room's
+			// ledger — any notice it carried was recorded as its own
+			// system row), nothing to render. A live session never
+			// draws hook entries, so a resumed one must not either.
 		case "input":
 			// What was TYPED, not the message that was sent: an
 			// injected skill's whole SKILL.md is appended to the

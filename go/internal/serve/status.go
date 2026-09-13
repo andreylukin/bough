@@ -84,6 +84,13 @@ func StatusOf(entries []history.Entry, childAlive bool) (Status, *Ask) {
 			if pending != nil && pending.ID == str(e.Data["id"]) {
 				pending = nil
 			}
+		case "result":
+			// tools.ask blocks the block that called it, so that block's
+			// result is only recorded once the ask has returned —
+			// answered, timed out or cancelled. A timeout records no
+			// answer, and without this the session said "Waiting for
+			// you" with live buttons for a question nobody was waiting on.
+			pending = nil
 		case "done", "cancelled":
 			open = false
 			lastClose = e.Kind

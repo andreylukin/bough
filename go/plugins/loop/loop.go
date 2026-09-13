@@ -1171,16 +1171,11 @@ func (r *runner) fire(ctx context.Context, event string, payload map[string]any,
 	// session with no hooks installed pays nothing.
 	if d, ok := r.hooks.(fireDrainer); ok && r.hist != nil {
 		for _, rec := range d.TakeFireRecords() {
-			// Only a fire that decided something is worth keeping. The
-			// rules row registers a hook on post-result, so it fires on
-			// EVERY tool result; recording those too put a hook entry
-			// between every block of every transcript. A notice or a
-			// truncation counts as something decided: the notice exists
-			// only to be shown, and a shortened result must not be a
-			// mystery.
-			if rec["decision"] == "" && rec["error"] == "" && rec["notice"] == nil && rec["truncated"] == nil {
-				continue
-			}
+			// Every fire, including the ones that passed through: the
+			// control room shows what fired on each turn. Pass-throughs
+			// were once dropped because the transcript drew a line per
+			// entry between every block; it now folds a turn's fires
+			// into one collapsed row, so the ledger costs no screen.
 			r.hist.Append("hook", rec)
 		}
 	}

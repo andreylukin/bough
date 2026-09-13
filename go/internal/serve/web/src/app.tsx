@@ -3,7 +3,7 @@ import { api, subscribe } from "./api";
 import type { Line, Project, Row } from "./types";
 import { StatusMark, Working } from "./status";
 import { ProjectsView } from "./projects";
-import { Markdown, codeLabel, doneSummary, groupSubs, groupTurns, isQuiet, plainTitle, stepCount, stripRunFences, type Item, type SubAgent, type Turn, lineCount } from "./render";
+import { Markdown, codeLabel, doneSummary, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, plainTitle, stepCount, stripRunFences, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath } from "./code";
 import { SkillPicker } from "./skills";
 import { Mentions, triggerAt, type Trigger } from "./mention";
@@ -41,6 +41,11 @@ function shortPath(p: string, home: string): string {
   return home && p.startsWith(home) ? "~" + p.slice(home.length) : p;
 }
 
+/** Five "Untitled session" rows are indistinguishable; an id tail is not. */
+function untitled(id: string): string {
+  return "Session " + id.slice(-6);
+}
+
 /** ⌘ on a Mac, Ctrl everywhere else. */
 function modKey(): string {
   return typeof navigator !== "undefined" && /Mac|iP/.test(navigator.platform) ? "\u2318" : "Ctrl+";
@@ -51,15 +56,23 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
   query: string; onQuery: (q: string) => void; showArchived: boolean; onToggleArchived: () => void;
   view: View; onView: (v: View) => void;
 }) {
+  // A control room lists what needs you first, then what is moving;
+  // only settled sessions fall back to the day they last changed.
   const groups = useMemo(() => {
     const out = new Map<string, Row[]>();
     for (const r of rows) {
-      const k = bucket(r.modified);
+      const k = r.status === "needs-you" ? "Needs you" : r.status === "running" ? "Running" : bucket(r.modified);
       if (!out.has(k)) out.set(k, []);
       out.get(k)!.push(r);
     }
-    return [...out.entries()];
+    const rank = (k: string) => (k === "Needs you" ? 0 : k === "Running" ? 1 : 2);
+    return [...out.entries()].sort((a, b) => rank(a[0]) - rank(b[0]));
   }, [rows]);
+  // Opening a session from a link or the palette can pick a row far down
+  // the list; bring it into view once, not on every live update.
+  useEffect(() => {
+    document.querySelector(".sidebar .row-on")?.scrollIntoView({ block: "nearest" });
+  }, [selected]);
 
   return (
     <div className="sidebar">
@@ -98,16 +111,20 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
                       className={"row" + (r.id === selected ? " row-on" : "")}
                       aria-current={r.id === selected ? "true" : undefined}>
                 <span className="row-line">
-                  <span className="row-title">{plainTitle(r.title) || "Untitled session"}</span>
+                  <span className="row-title">{plainTitle(r.title) || untitled(r.id)}</span>
                   <span className="num">{clock(r.modified)}</span>
                 </span>
                 <span className="row-meta">
                   <StatusMark status={r.status} />
-                  {(r.repo || r.branch) && (
+                  {r.repo || r.branch ? (
                     <span className="mono">
                       {r.repo?.split("/").pop()}
                       {r.branch && <span style={{ color: "var(--line-strong)" }}>/</span>}{r.branch}
                     </span>
+                  ) : plainTitle(r.title) && (
+                    // Two sessions can share a title; with no repo to tell
+                    // them apart, the id tail does.
+                    <span className="mono">{r.id.slice(-6)}</span>
                   )}
                 </span>
               </button>
@@ -420,24 +437,167 @@ export function SubRun({ agents }: { agents: SubAgent[] }) {
   );
 }
 
+/** A result's text minus the code history prefixes onto it. */
+function resultBody(l: Line): string {
+  const code = str(l.data?.code);
+  return code && l.text.startsWith(code) ? l.text.slice(code.length).trimStart() : l.text;
+}
+
+/**
+ * A run of tool calls as one row: how many, the last thing it did, and
+ * whether any failed. Opened, each call is its own block again.
+ */
+export function ToolRun({ lines, codes }: { lines: Line[]; codes: string[] }) {
+  // Pair each call with the result recorded for it: one row per thing
+  // done, not a "Ran" row and a "Result" row saying half each.
+  const rows: React.ReactNode[] = [];
+  let calls = 0, failed = 0, last = "";
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (l.kind === "code") {
+      const next = lines[i + 1];
+      const result = next?.kind === "result" ? next : undefined;
+      if (result) i++;
+      calls++;
+      if (result && /^error\b/i.test(resultBody(result))) failed++;
+      last = firstLine(parseCall(l.text).gist);
+      rows.push(<ToolCall key={l.seq} code={l} result={result} />);
+    } else {
+      rows.push(<Entry key={l.seq} line={l} codes={codes} />);
+    }
+  }
+  if (calls < 2) return <>{rows}</>;
+  return (
+    <details className="block toolrun">
+      <summary>
+        <span className="block-label">{calls} tool calls</span>
+        <span className="mono block-detail">{last}</span>
+        {failed > 0 && <span className="num toolrun-failed">{failed} failed</span>}
+      </summary>
+      <div className="toolrun-body">{rows}</div>
+    </details>
+  );
+}
+
+/**
+ * One call and what came back, as a single row. The summary says what
+ * was done and how much it printed; opened, the program and its output
+ * sit together, with the raw call one level further in.
+ */
+export function ToolCall({ code, result }: { code: Line; result?: Line }) {
+  const call = useMemo(() => parseCall(code.text), [code.text]);
+  const out = result ? resultBody(result) : "";
+  const failed = /^error\b/i.test(out);
+  // A question nobody answered is an outcome, not an exception to parse.
+  const timedOut = /ask: no answer after (\S+)/.exec(out);
+  return (
+    <details className={"block" + (failed ? " block-failed" : "")}>
+      <summary>
+        <span className="block-label">{timedOut ? "Question timed out" : call.verb}</span>
+        <span className="mono block-detail">{timedOut ? timedOut[1] : firstLine(call.gist)}</span>
+        {result && <span className="num block-lines">{lineCount((out || "(no output)").split("\n").length)}</span>}
+        <CopyButton text={out || call.body || call.raw} what={result ? "output" : call.verb.toLowerCase() + " block"} />
+      </summary>
+      <div className="block-body">
+        {call.body && <Code text={call.body} lang={call.lang} />}
+        {result && <Code text={out || "(no output)"} lang={resultLang(result)} />}
+        {call.body !== call.raw && (
+          <details className="block-inner">
+            <summary><span className="block-label">The call</span></summary>
+            <Code text={call.raw} lang="javascript" />
+          </details>
+        )}
+      </div>
+    </details>
+  );
+}
+
+/**
+ * Every hook and rule that fired in a turn, as one quiet row. They fire
+ * on every tool call, so inline they drowned the transcript; folded,
+ * the count says whether anything happened and the ledger is one click in.
+ */
+export function TurnHooks({ lines }: { lines: Line[] }) {
+  const fires = lines.filter((l) => l.kind === "hook");
+  if (!fires.length) return null;
+  const decided = fires.filter((l) => str(l.data?.decision)).length;
+  const errored = fires.filter((l) => str(l.data?.error)).length;
+  const rules = new Set<string>();
+  for (const l of fires) {
+    const n = str(l.data?.notice);
+    if (n.startsWith("applied ")) n.slice(8).split(", ").forEach((r) => rules.add(r));
+  }
+  const parts = [`${fires.length} fired`];
+  if (rules.size) parts.push(`${rules.size} ${rules.size === 1 ? "rule" : "rules"} applied`);
+  if (decided) parts.push(`${decided} decided`);
+  return (
+    <details className="block turn-hooks">
+      <summary>
+        <span className="block-label">Hooks</span>
+        <span className="block-detail">{parts.join(" · ")}</span>
+        {errored > 0 && <span className="num toolrun-failed">{errored} errored</span>}
+      </summary>
+      <div className="turn-hooks-body">
+        {fires.map((l) => {
+          const d = l.data ?? {};
+          const err = str(d.error), decision = str(d.decision), notice = str(d.notice);
+          return (
+            <p key={l.seq} className="hook-line">
+              <span className="mono">{str(d.name)}</span>{" · "}{str(d.event)}{" · "}
+              <span className={err ? "hook-bad" : decision ? "hook-act" : "hook-why"}>
+                {err ? "errored" : decision || "passed"}
+              </span>
+              {notice && <span className="hook-why"> — {notice}</span>}
+              {err && <span className="hook-why"> {err}</span>}
+              {typeof d.ms === "number" && <span className="num hook-why"> · {d.ms} ms</span>}
+            </p>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
 export function TurnView({ turn, tail }: { turn: Turn; tail?: React.ReactNode }) {
   const summary = turn.done ? doneSummary(turn.done) : "";
   const codes = turn.body.filter((l) => l.kind === "code" || l.kind === "sub:code").map((l) => l.text);
-  const items = useMemo<Item[]>(() => groupSubs(turn.body), [turn.body]);
+  const hooks = useMemo(() => turn.body.filter(isHookLine), [turn.body]);
+  const items = useMemo<Item[]>(
+    () => groupTools(groupSubs(turn.body.filter((l) => !isHookLine(l))), codes),
+    // codes is derived from turn.body on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [turn.body]);
+  // The loop appends "[skill: name]\n<SKILL.md>" blocks to the prompt a
+  // skill was invoked from. What you typed is the part before them.
+  const [said, ...skills] = (turn.prompt?.text ?? "").split(/\n+(?=\[skill: [^\]\n]+\]\n)/);
   return (
     <section className="turn">
       {turn.prompt && (
         <div className="prompt">
           <span className="mono prompt-mark">&gt;</span>
-          <p>{turn.prompt.text}</p>
+          <div className="prompt-text">
+            <p>{said}</p>
+            {skills.map((s, i) => {
+              const [head, ...body] = s.split("\n");
+              return (
+                <details key={i} className="block prompt-skill">
+                  <summary><span className="block-label">Skill · {head.slice(8, -1).trim()}</span></summary>
+                  <pre>{body.join("\n")}</pre>
+                </details>
+              );
+            })}
+          </div>
           <span className="num prompt-time">{clock(turn.prompt.at)}</span>
         </div>
       )}
       <div className="turn-body">
         {items.map((it) => it.kind === "sub"
           ? <SubRun key={"sub" + it.seq} agents={it.agents} />
+          : it.kind === "tools"
+          ? <ToolRun key={"tools" + it.seq} lines={it.lines} codes={codes} />
           : <Entry key={it.seq} line={it.line} codes={codes} />)}
         {tail}
+        <TurnHooks lines={hooks} />
       </div>
       {turn.done && (
         <div className="turn-done">
@@ -485,9 +645,11 @@ export function StreamView({ runs }: { runs: DeltaRun[] }) {
 interface ModelInfo { id: string; context?: number; efforts?: string[]; input?: number; output?: number }
 interface ProviderInfo { plugin: string; models?: ModelInfo[] }
 
-export function Controls({ row, projects, onModel, onEffort, onAssign }: {
+export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
   row: Row; projects: Project[];
   onModel: (m: string) => void; onEffort: (e: string) => void; onAssign: (p: string) => void;
+  /** Render just the model picker, or everything but it. */
+  only?: "model" | "rest";
 }) {
   const [cat, setCat] = useState<{ providers: ProviderInfo[]; efforts: string[] } | null>(null);
   useEffect(() => {
@@ -496,12 +658,12 @@ export function Controls({ row, projects, onModel, onEffort, onAssign }: {
 
   return (
     <div className="controls">
-      <label className="ctl">
+      {only !== "rest" && <label className="ctl">
         <span className="ctl-label">Model</span>
         <select value={row.model ?? ""} onChange={(e) => e.target.value && onModel(e.target.value)}>
           {/* A session that has not answered yet genuinely has no model
               to name; everything else says the one that is answering. */}
-          <option value="">{row.model ? row.model : "not set yet"}</option>
+          <option value="">{row.model ? row.model : "Default model"}</option>
           {cat?.providers.map((p) => (
             <optgroup key={p.plugin} label={p.plugin.replace(/^llm-/, "")}>
               {(p.models ?? []).map((m) => (
@@ -512,7 +674,8 @@ export function Controls({ row, projects, onModel, onEffort, onAssign }: {
             </optgroup>
           ))}
         </select>
-      </label>
+      </label>}
+      {only !== "model" && <>
       <label className="ctl">
         <span className="ctl-label">Project</span>
         <select value={row.project ?? ""} onChange={(e) => onAssign(e.target.value)}>
@@ -527,6 +690,7 @@ export function Controls({ row, projects, onModel, onEffort, onAssign }: {
           {(cat?.efforts ?? []).map((e) => <option key={e} value={e}>{e}</option>)}
         </select>
       </label>
+      </>}
     </div>
   );
 }
@@ -555,6 +719,17 @@ export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, on
   // button: they change rarely, and the thread is what the screen is for.
   const [more, setMore] = useState(false);
   const end = useRef<HTMLDivElement>(null);
+  const ask = useRef<HTMLDivElement>(null);
+  // The reminder above the composer is for a question scrolled out of
+  // sight; with the question itself on screen it only repeats it.
+  const [askSeen, setAskSeen] = useState(false);
+  useEffect(() => {
+    const el = ask.current, root = scroller.current;
+    if (!el || !root) { setAskSeen(false); return; }
+    const io = new IntersectionObserver(([e]) => setAskSeen(e.isIntersecting), { root, threshold: 0.5 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [row.ask?.text]);
   const composer = useRef<HTMLTextAreaElement>(null);
   // A paste fires no keydown, so anything that reads the caret off a
   // key event is stale for exactly one change. Worse, the pasted text
@@ -607,7 +782,7 @@ export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, on
       <header className="thread-head" data-more={more ? "1" : "0"}>
         <Back onBack={onBack} />
         <div className="head-main">
-          <h1 title={row.title}>{plainTitle(row.title) || "Untitled session"}</h1>
+          <h1 title={row.title}>{plainTitle(row.title) || untitled(row.id)}</h1>
           {(row.repo || row.branch) && (
             <span className="mono head-repo">
               {row.repo?.split("/").pop()}
@@ -624,14 +799,17 @@ export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, on
           </svg>
         </button>
         <div className="head-side">
-          <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} />
+          <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" />
+          {onContext && <div className="head-actions"><button className="btn" onClick={onContext}>Context</button></div>}
+        </div>
+        <div className="head-extra">
+          <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="rest" />
           <div className="head-actions">
             <button className="btn" onClick={() => {
               const t = prompt("Rename session", plainTitle(row.title));
               if (t !== null) onRename(t);
             }}>Rename</button>
             <button className="btn" onClick={onArchive}>{row.archived ? "Unarchive" : "Archive"}</button>
-            {onContext && <button className="btn" onClick={onContext}>Context</button>}
           </div>
         </div>
       </header>
@@ -653,13 +831,15 @@ export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, on
           <div className="turn"><div className="turn-body"><StreamView runs={stream} /><Working /></div></div>
         )}
         {row.ask && (
-          <div className="ask">
+          <div className="ask" ref={ask}>
             <StatusMark status="needs-you" size={16} />
-            <p className="ask-q">{row.ask.text}</p>
+            {/* Questions carry paths and commands in backticks; raw, they read as noise. */}
+            <div className="ask-q"><Markdown text={row.ask.text} /></div>
             {row.ask.options.length > 0 && (
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {/* Equal alternatives, so none of them is dressed as the primary action. */}
                 {row.ask.options.map((o) => (
-                  <button key={o} className="btn btn-primary" onClick={() => onAnswer(o)}>{o}</button>
+                  <button key={o} className="btn" onClick={() => onAnswer(o)}>{o}</button>
                 ))}
               </div>
             )}
@@ -669,6 +849,19 @@ export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, on
       </div>
 
       <div className="composer-wrap">
+        {row.ask && !askSeen && (
+          <div className="ask-bar">
+            <p><strong>Needs your answer.</strong> {row.ask.text}</p>
+            <button className="btn" onClick={() => {
+              // Land on the answer, not just near it: the first option if
+              // there are any, otherwise the composer the answer is typed in.
+              ask.current?.scrollIntoView({ block: "center" });
+              (ask.current?.querySelector("button") ?? composer.current)?.focus({ preventScroll: true });
+            }}>
+              Answer question
+            </button>
+          </div>
+        )}
         <div className="composer">
           <Mentions trigger={trigger} session={row.id}
             onPick={(t, value) => {
@@ -682,7 +875,7 @@ export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, on
               requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(caret, caret); });
             }}
             onClose={() => setTrigger(null)} />
-          <textarea id="composer" ref={composer} value={draft} rows={2}
+          <textarea id="composer" ref={composer} value={draft} rows={1}
             aria-label="Message"
             placeholder={row.ask ? "Answer the question above"
               : running ? "Send a message — it steers the turn already running"
@@ -1007,8 +1200,11 @@ export default function App() {
       ) : (
         <div className="thread empty">
           <div>
-            <h1>No session open</h1>
-            <p>Pick a session on the left to watch it, steer it, or answer what it is waiting on.</p>
+            <h1>Choose a session</h1>
+            <p>Pick one on the left to watch it, steer it, or answer what it is waiting on.</p>
+            {visible.length > 0 && (
+              <button className="btn" onClick={() => openSession(visible[0].id)}>Open most recent</button>
+            )}
           </div>
         </div>
       )}

@@ -132,7 +132,50 @@ export interface SubAgent {
  */
 export type Item =
   | { kind: "line"; seq: number; line: Line }
-  | { kind: "sub"; seq: number; agents: SubAgent[] };
+  | { kind: "sub"; seq: number; agents: SubAgent[] }
+  | { kind: "tools"; seq: number; lines: Line[] };
+
+const TOOL = new Set(["code", "result", "job"]);
+
+/**
+ * Several tool calls in a row are one thing the agent did. Shown as a
+ * row per call and a row per result, twenty steps of exploring were a
+ * wall of equally weighted pills burying the reply after them. A run
+ * of two or more calls folds into one item; opened, it lists the calls,
+ * and each call still opens onto its output — collapse in levels.
+ * A reply that was only the program it ran renders as nothing, so it
+ * does not break a run.
+ */
+export function groupTools(items: Item[], codes: string[]): Item[] {
+  const out: Item[] = [];
+  let run: Line[] = [];
+  const flush = () => {
+    // Even a single call is emitted as a run: the renderer pairs a call
+    // with its output, and only wraps runs of two or more in a header.
+    if (run.some((l) => l.kind === "code")) out.push({ kind: "tools", seq: run[0].seq, lines: run });
+    else for (const l of run) out.push({ kind: "line", seq: l.seq, line: l });
+    run = [];
+  };
+  for (const it of items) {
+    if (it.kind === "line" && TOOL.has(it.line.kind)) { run.push(it.line); continue; }
+    // Reasoning between calls is part of the same stretch of work: a
+    // "Thinking" row before every call split every run into singles.
+    if (it.kind === "line" && it.line.kind === "thinking") { run.push(it.line); continue; }
+    if (it.kind === "line" && it.line.kind === "assistant" && !stripRunFences(it.line.text, codes)) continue;
+    // An ask sits between the call that asked and that call's result; it
+    // renders as its own card, so it must not split the pair or the run.
+    if (it.kind === "line" && it.line.kind === "ask") continue;
+    flush();
+    out.push(it);
+  }
+  flush();
+  return out;
+}
+
+/** Hook fires, and the "hook <event>: notice" lines they emit, belong in the turn's hooks row. */
+export function isHookLine(l: Line): boolean {
+  return l.kind === "hook" || (l.kind === "system" && l.text.startsWith("hook "));
+}
 
 function readStr(v: unknown): string {
   return typeof v === "string" ? v : typeof v === "number" ? String(v) : "";

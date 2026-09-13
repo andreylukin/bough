@@ -196,6 +196,21 @@ func TestFireIsRecordedToHistory(t *testing.T) {
 	}
 }
 
+// A hook that decided nothing still fired, and the turn's hooks row
+// counts it: a pass-through is recorded like any other fire.
+func TestPassThroughFireIsRecorded(t *testing.T) {
+	r, _ := mcphooksinitjsRunner(t, map[string]string{
+		"post-result/quiet.js": `return {}`,
+	}, "```js\nconsole.log(1)\n```", "done")
+	mcphooksinitjsRun(t, r, "go")
+	for _, f := range mcphooksinitjsFires(r) {
+		if f["name"] == "quiet.js" && f["decision"] == "" {
+			return
+		}
+	}
+	t.Fatalf("pass-through fire not recorded; got %v", mcphooksinitjsFires(r))
+}
+
 // A session with no hooks installed must not pay for the ledger: no
 // hook ran, so nothing is written.
 func TestNoHooksWritesNothing(t *testing.T) {

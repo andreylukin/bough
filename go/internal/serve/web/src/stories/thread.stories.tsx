@@ -27,8 +27,8 @@ export const Empty: S = {
   render: () => (
     <div className="thread empty">
       <div>
-        <h1>No session open</h1>
-        <p>Pick a session on the left to watch it, steer it, or answer what it is waiting on.</p>
+        <h1>Choose a session</h1>
+        <p>Pick one on the left to watch it, steer it, or answer what it is waiting on.</p>
       </div>
     </div>
   ),

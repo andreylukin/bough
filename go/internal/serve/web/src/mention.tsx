@@ -75,7 +75,9 @@ function useSkills(on: boolean): Choice[] {
 function useFiles(on: boolean, token: string, session: string): Choice[] {
   const [hits, setHits] = useState<FileRow[]>([]);
   useEffect(() => {
-    if (!on || token.length < 1) { setHits([]); return; }
+    // A bare "@" asks too: the server answers it with the files nearest
+    // the top of the project, so the picker opens the moment you type it.
+    if (!on) { setHits([]); return; }
     let live = true;
     const t = setTimeout(() => {
       fetch(`/api/files?q=${encodeURIComponent(token)}&session=${encodeURIComponent(session)}`)
@@ -125,10 +127,17 @@ export function Mentions({ trigger, session, onPick, onClose }: {
     if (!trigger) return;
     const h = (e: KeyboardEvent) => {
       if (!hits.length) return;
-      if (e.key === "ArrowDown") { e.preventDefault(); setAt((i) => Math.min(i + 1, hits.length - 1)); }
-      else if (e.key === "ArrowUp") { e.preventDefault(); setAt((i) => Math.max(i - 1, 0)); }
-      else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); onPick(trigger, hits[at].value); }
-      else if (e.key === "Escape") { e.preventDefault(); onClose(); }
+      const own = ["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key);
+      if (!own || e.isComposing) return;
+      // Stop the key here. Picking closes the picker synchronously, so by
+      // the time the composer's own handler saw this Enter the trigger was
+      // already gone and it sent the message: Enter picked AND sent.
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "ArrowDown") setAt((i) => Math.min(i + 1, hits.length - 1));
+      else if (e.key === "ArrowUp") setAt((i) => Math.max(i - 1, 0));
+      else if (e.key === "Enter" || e.key === "Tab") onPick(trigger, hits[at].value);
+      else onClose();
     };
     const el = document.getElementById("composer");
     el?.addEventListener("keydown", h, true);
@@ -136,16 +145,47 @@ export function Mentions({ trigger, session, onPick, onClose }: {
   }, [trigger, hits, at, onPick, onClose]);
 
   if (!trigger || hits.length === 0) return null;
+  const isFiles = trigger.kind === "@";
   return (
-    <div className="mention" role="listbox" aria-label={trigger.kind === "/" ? "Skills" : "Files"} ref={box}>
-      {hits.map((c, i) => (
-        <button key={c.value} role="option" aria-selected={i === at} data-at={i === at ? 1 : 0}
-                className={"mention-item" + (i === at ? " mention-on" : "")}
-                onMouseEnter={() => setAt(i)} onClick={() => onPick(trigger, c.value)}>
-          <span className="mono mention-name">{c.label}</span>
-          {c.hint && <span className="mention-hint">{c.hint}</span>}
-        </button>
-      ))}
+    <div className="mention" ref={box}>
+      <div className="mention-list" role="listbox" aria-label={isFiles ? "Files" : "Skills"}>
+        {hits.map((c, i) => {
+          // A path scans by its name, not its directories: the name leads,
+          // the folder it lives in follows, dimmed.
+          const slash = c.value.lastIndexOf("/");
+          const name = isFiles && slash >= 0 ? c.value.slice(slash + 1) : c.label;
+          const dir = isFiles && slash >= 0 ? c.value.slice(0, slash) : "";
+          const isDir = isFiles && c.hint === "directory";
+          return (
+            <button key={c.value} role="option" aria-selected={i === at} data-at={i === at ? 1 : 0}
+                    className={"mention-item" + (i === at ? " mention-on" : "")}
+                    onMouseDown={(e) => e.preventDefault() /* keep the composer focused */}
+                    onMouseEnter={() => setAt(i)} onClick={() => onPick(trigger, c.value)}>
+              {isFiles && <MentionGlyph dir={isDir} />}
+              <span className={"mention-name" + (isFiles ? "" : " mono")}>{name}{isDir ? "/" : ""}</span>
+              {dir && <span className="mono mention-dir">{dir}</span>}
+              {!isFiles && c.hint && <span className="mention-hint">{c.hint}</span>}
+            </button>
+          );
+        })}
+      </div>
+      <div className="mention-foot" aria-hidden="true">
+        <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+        <span><kbd>↵</kbd> insert</span>
+        <span><kbd>esc</kbd> close</span>
+      </div>
     </div>
+  );
+}
+
+/** File or folder, stroked in currentColor like the status glyphs. */
+function MentionGlyph({ dir }: { dir: boolean }) {
+  return (
+    <svg className="mention-glyph" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {dir
+        ? <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4.2l2 2.2h8.8A1.5 1.5 0 0 1 21 9.7v8.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z" />
+        : <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></>}
+    </svg>
   );
 }
