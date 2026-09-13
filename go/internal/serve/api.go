@@ -29,6 +29,9 @@ type API struct {
 	// when it refuses to: watchers are shell, and a non-loopback bind
 	// means no engine at all).
 	watch *watch.Engine
+	// ingest starts a wiki ingest (spawnIngest). A field so a test can
+	// see the call without running a model.
+	ingest func(only string) error
 }
 
 // Row is one session as the wire sees it: what history knows, what the
@@ -52,6 +55,10 @@ type Row struct {
 	Effort string `json:"effort,omitempty"`
 	// Project is the grouping this conversation was put in, by id.
 	Project string `json:"project,omitempty"`
+	// Jobs are the background jobs still running; Cache is the prompt
+	// cache after the last turn that reported one.
+	Jobs  []Job  `json:"jobs,omitempty"`
+	Cache *Cache `json:"cache,omitempty"`
 }
 
 // maxBody caps every request body: the API takes prompts and titles,
@@ -67,6 +74,7 @@ const heartbeat = 15 * time.Second
 func NewAPI(sup *Supervisor) *API {
 	home, _ := os.UserHomeDir()
 	a := &API{sup: sup, mux: http.NewServeMux(), home: home}
+	a.ingest = a.spawnIngest
 	a.mux.HandleFunc("GET /api/health", a.health)
 	a.mux.HandleFunc("GET /api/sessions", a.listSessions)
 	a.mux.HandleFunc("POST /api/sessions", a.createSession)
@@ -97,6 +105,17 @@ func NewAPI(sup *Supervisor) *API {
 	a.mux.HandleFunc("DELETE /api/projects/{id}", a.deleteProject)
 	a.mux.HandleFunc("POST /api/sessions/{id}/project", a.assignProject)
 	a.mux.HandleFunc("GET /api/sessions/{id}/events", a.events)
+	a.mux.HandleFunc("GET /api/wiki", a.wikiIndex)
+	a.mux.HandleFunc("GET /api/wiki/page", a.wikiPage)
+	a.mux.HandleFunc("PUT /api/wiki/page", a.putWikiPage)
+	a.mux.HandleFunc("GET /api/wiki/history", a.wikiHistory)
+	a.mux.HandleFunc("GET /api/wiki/source", a.wikiSource)
+	a.mux.HandleFunc("GET /api/wiki/review", a.wikiReview)
+	a.mux.HandleFunc("POST /api/wiki/claim", a.wikiClaim)
+	a.mux.HandleFunc("GET /api/wiki/activity", a.wikiActivity)
+	a.mux.HandleFunc("POST /api/wiki/check", a.wikiCheck)
+	a.mux.HandleFunc("GET /api/wiki/search", a.wikiSearch)
+	a.mux.HandleFunc("POST /api/wiki/ingest", a.wikiIngest)
 	// The UI, on EXACT paths only. A catch-all "GET /" would match a
 	// wrong-method request to a real API route (GET on a POST-only
 	// path), and ServeMux then serves the page instead of the 405 it
@@ -400,6 +419,8 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 		Model:    model,
 		Effort:   meta.Effort,
 		Project:  meta.Project,
+		Jobs:     RunningJobs(entries, live),
+		Cache:    LastCache(entries),
 	}
 }
 

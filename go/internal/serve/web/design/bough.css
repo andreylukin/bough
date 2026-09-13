@@ -189,6 +189,15 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .rt-bar{width:64px;height:4px;border-radius:2px;background:var(--raised);overflow:hidden}
 .rt-bar>span{display:block;height:100%;background:var(--accent)}
 .rt-bar>.rt-hot{background:var(--amber)}
+.rt-cache-hot .rt-value{color:var(--accent)}
+.rt-cache-cold .rt-value{color:var(--amber)}
+.rt-jobs{position:relative}
+.rt-jobs>summary{list-style:none;cursor:pointer;display:inline-flex;gap:6px}
+.rt-jobs>summary::-webkit-details-marker{display:none}
+.rt-pop{position:absolute;top:calc(100% + 6px);left:0;z-index:20;margin:0;padding:6px 10px;list-style:none;min-width:260px;max-width:480px;
+  background:var(--raised);border:1px solid var(--line);border-radius:8px;display:flex;flex-direction:column;gap:4px}
+.rt-pop li{display:flex;gap:12px;justify-content:space-between}
+.rt-job-cmd{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 .say{display:flex;flex-direction:column;gap:8px;max-width:78ch}
 .say-who{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text-2)}
@@ -454,6 +463,8 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .composer textarea:focus{outline:none}
 .composer textarea::placeholder{color:var(--text-3)}
 .hint{font-size:12px;color:var(--text-3)}
+.composer:not(:focus-within) .hint{visibility:hidden}
+.row-jobs{color:var(--accent)}
 .btn{font:13px var(--sans);color:var(--text-2);background:none;border:1px solid var(--line-strong);
      border-radius:6px;padding:6px 12px;cursor:pointer}
 .btn:hover{color:var(--text-1)}
@@ -676,7 +687,6 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
    happened. */
 .subrun{display:flex;flex-direction:column;gap:8px;padding-inline-start:14px;
         border-inline-start:2px solid var(--line-strong)}
-.subrun-head{margin:0;font-size:12px;color:var(--text-3)}
 .sub{background:var(--surface);border-radius:8px;overflow:hidden}
 .sub>summary{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 14px;cursor:pointer;
              list-style:none;min-height:36px}

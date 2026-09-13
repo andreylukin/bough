@@ -95,12 +95,9 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
                 onClick={() => onView("hooks")}>Hooks</button>
       </nav>
       <div className="session-search">
-        <label htmlFor="q" className="field-label">
-          Search sessions
-          {/* A palette nobody knows about is not a feature. */}
-          <span className="pal-key" aria-hidden="true">{modKey()}K</span>
-        </label>
-        <input id="q" className="field" value={query} placeholder="Title, repo or branch"
+        {/* The placeholder names the field; a visible label above it said it twice. */}
+        <label htmlFor="q" className="visually-hidden">Search sessions</label>
+        <input id="q" className="field" value={query} placeholder={`Search sessions · ${modKey()}K for commands`}
                onChange={(e) => onQuery(e.target.value)} />
       </div>
       <div className="scroll" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -127,7 +124,13 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
                   </span>
                 </span>
                 <span className="row-meta">
-                  <StatusMark status={r.status} />
+                  {/* The time beside the title already says "Waiting" or "Running". */}
+                  <StatusMark status={r.status} bare={r.status === "needs-you" || r.status === "running"} />
+                  {r.jobs && r.jobs.length > 0 && (
+                    <span className="num row-jobs" title={r.jobs.map((j) => j.cmd).join("\n")}>
+                      {r.jobs.length} {r.jobs.length === 1 ? "job" : "jobs"}
+                    </span>
+                  )}
                   {r.ask ? (
                     // What the session is waiting on, not an id: the row
                     // should say what answering it means.
@@ -445,9 +448,6 @@ export function SubAgentView({ agent }: { agent: SubAgent }) {
 export function SubRun({ agents }: { agents: SubAgent[] }) {
   return (
     <div className="subrun">
-      <p className="subrun-head">
-        {agents.length === 1 ? "A subagent worked on this" : `${agents.length} subagents worked on this`}
-      </p>
       {agents.map((a) => <SubAgentView key={a.worker + ":" + a.seq} agent={a} />)}
     </div>
   );
@@ -491,9 +491,8 @@ export function ToolRun({ lines, codes }: { lines: Line[]; codes: string[] }) {
         <span className="block-label">{calls} tool calls</span>
         {/* Recorded time leads when every call has it; a run from before
             the loop recorded durations still names its last command. */}
-        {timed === calls
-          ? <span className="num block-detail">{duration(totalMs)} running</span>
-          : <span className="mono block-detail">{last}</span>}
+        <span className="mono block-detail">{last}</span>
+        {timed === calls && <span className="num tool-meta">{duration(totalMs)}</span>}
         {failed > 0 && <span className="num toolrun-failed">{failed} failed</span>}
       </summary>
       <div className="toolrun-body">{rows}</div>
@@ -608,7 +607,6 @@ function TurnFooter({ turn }: { turn: Turn }) {
   if (u) {
     facts.push(`${tokenCount(u.in)} in · ${tokenCount(u.out)} out`);
     if (u.cost !== undefined) facts.push(money(u.cost));
-    if (u.lastIn) facts.push(`context ${tokenCount(u.lastIn)}`);
   }
   return (
     <div className="turn-foot">
@@ -658,22 +656,70 @@ function RuntimeStrip({ row, lines }: { row: Row; lines: Line[] }) {
           )}
         </span>
       )}
-      {u && (
-        <span className="rt">
-          <span className="rt-label">Tokens</span>
-          <span className="num rt-value">{tokenCount(u.in)} in · {tokenCount(u.out)} out</span>
-        </span>
-      )}
       {u?.cost !== undefined && (
-        <span className="rt"><span className="rt-label">Cost</span><span className="num rt-value">{money(u.cost)}</span></span>
-      )}
-      {row.model && (
-        <span className="rt">
-          <span className="rt-label">Model</span>
-          <span className="mono rt-value">{row.model}{row.effort ? ` · ${effortLabel(row.effort)}` : ""}</span>
+        // Tokens in/out ride on the cost's tooltip: the price is the figure
+        // a person acts on. The model is named once, in the header picker.
+        <span className="rt" title={`${u.in.toLocaleString()} tokens in · ${u.out.toLocaleString()} out`}>
+          <span className="rt-label">Cost</span><span className="num rt-value">{money(u.cost)}</span>
         </span>
       )}
+      {row.cache && <CacheChip cache={row.cache} model={row.model} />}
+      {row.jobs && row.jobs.length > 0 && <JobsChip jobs={row.jobs} />}
     </div>
+  );
+}
+
+/** Now, re-read every second while `on`. */
+function useNow(on: boolean): number {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!on) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [on]);
+  return now;
+}
+
+/**
+ * Whether the next turn re-reads the conversation from the provider's
+ * prompt cache (a tenth of the price) or pays full input again. The
+ * window opens when a turn ends and the countdown says how long is left.
+ */
+function CacheChip({ cache, model }: { cache: NonNullable<Row["cache"]>; model?: string }) {
+  const end = Date.parse(cache.at) + cache.ttl * 1000;
+  const now = useNow(end > Date.now());
+  const left = Math.max(0, Math.round((end - now) / 1000));
+  const hit = cache.in ? Math.round((cache.read / cache.in) * 100) : 0;
+  const provider = model?.split("/")[0]?.replace(/^~/, "") || "provider";
+  return (
+    <span className={"rt" + (left ? " rt-cache-hot" : " rt-cache-cold")}
+          title={`${provider} prompt cache · last turn read ${tokenCount(cache.read)} of ${tokenCount(cache.in)} input tokens from it (${hit}%), wrote ${tokenCount(cache.write)}`}>
+      <span className="rt-label">Cache</span>
+      <span className="num rt-value">
+        {left ? `hot · ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "cold"}
+      </span>
+    </span>
+  );
+}
+
+/** Background jobs still running, one click from their commands. */
+function JobsChip({ jobs }: { jobs: NonNullable<Row["jobs"]> }) {
+  const now = useNow(true);
+  return (
+    <details className="rt rt-jobs">
+      <summary>
+        <span className="rt-label">Jobs</span>
+        <span className="num rt-value">{jobs.length} running</span>
+      </summary>
+      <ul className="rt-pop">
+        {jobs.map((j) => (
+          <li key={j.id}>
+            <span className="mono rt-job-cmd" title={j.cmd}>{j.cmd}</span>
+            <span className="num rt-label">{duration(now - Date.parse(j.started))}</span>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -850,7 +896,7 @@ export function Back({ onBack }: { onBack?: () => void }) {
 
 export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy }: {
   row: Row; lines: Line[]; stream?: DeltaRun[]; projects: Project[]; busy: boolean; onBack?: () => void;
-  onSend: (t: string) => void; onAnswer: (t: string) => void; onInterrupt: () => void;
+  onSend: (t: string) => Promise<boolean> | void; onAnswer: (t: string) => Promise<boolean> | void; onInterrupt: () => void;
   onArchive: () => void; onRename: (t: string) => void; onContext?: () => void;
   onModel: (m: string) => void; onEffort: (e: string) => void; onAssign: (p: string) => void;
 }) {
@@ -911,11 +957,14 @@ export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, on
 
   const caretTrigger = (el: HTMLTextAreaElement) => setTrigger(triggerAt(el.value, el.selectionStart ?? 0));
 
-  const send = () => {
+  const send = async () => {
     const t = draft.trim();
-    if (!t) return;
+    // Enter reaches here even while the Send button is disabled.
+    if (!t || busy) return;
     setDraft("");
-    if (row.ask) onAnswer(t); else onSend(t);
+    // A send that failed gives the words back rather than losing them.
+    const ok = await (row.ask ? onAnswer(t) : onSend(t));
+    if (ok === false) setDraft((d) => d || t);
   };
 
   return (
@@ -1259,10 +1308,10 @@ export default function App() {
     }
   }, []);
 
-  const act = async (fn: () => Promise<unknown>) => {
+  const act = async (fn: () => Promise<unknown>): Promise<boolean> => {
     setBusy(true);
-    try { await fn(); setErr(null); }
-    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    try { await fn(); setErr(null); return true; }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); return false; }
     finally { setBusy(false); await refresh(); }
   };
 

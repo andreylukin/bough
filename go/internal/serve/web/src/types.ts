@@ -42,7 +42,15 @@ export interface Row {
   model?: string;
   effort?: string;
   project?: string;
+  /** Background jobs still running. */
+  jobs?: Job[];
+  /** The prompt cache after the last turn that reported one. */
+  cache?: Cache;
 }
+
+export interface Job { id: number; cmd: string; started: string }
+/** ttl is in seconds; read/write/in are the tokens of the turn ending at `at`. */
+export interface Cache { at: string; ttl: number; read: number; write: number; in: number }
 
 /** One transcript entry, from GET /api/sessions/{id}. */
 export interface Line {

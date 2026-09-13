@@ -65,7 +65,8 @@ export const STATUS: Record<Status, { label: string; tone: string; glyph: React.
   },
 };
 
-export function StatusMark({ status, size = 13 }: { status: Status; size?: number }) {
+/** `bare` drops the word where a neighbour already says it ("Waiting 8d"); it stays for screen readers. */
+export function StatusMark({ status, size = 13, bare }: { status: Status; size?: number; bare?: boolean }) {
   const s = STATUS[status] ?? STATUS.idle;
   // The one state that is still changing gets a moving mark. It turns
   // because the session is running, never on a timer of its own, so it
@@ -90,7 +91,7 @@ export function StatusMark({ status, size = 13 }: { status: Status; size?: numbe
       >
         {s.glyph}
       </svg>
-      <span style={{ fontSize: 12 }}>{s.label}</span>
+      <span className={bare ? "visually-hidden" : undefined} style={{ fontSize: 12 }}>{s.label}</span>
     </span>
   );
 }
