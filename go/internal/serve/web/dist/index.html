@@ -472,6 +472,34 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .thinking .block-detail{font-style:italic}
 /* Reasoning is not execution: no filled card, so tool calls carry the weight. */
 .block.thinking{background:none;border:1px solid var(--line)}
+/* Bookkeeping rows are one thin line: no card, muted 12px, detail on hover
+   (.thin-pop) and the full blocks one click in. */
+.block.thin{background:none;border:0;border-radius:0;overflow:visible}
+.block.thin>summary{gap:6px;padding:2px 4px;min-height:20px;font-size:12px;line-height:16px;border-radius:4px}
+.block.thin>summary:focus-visible{outline-offset:0}
+.block.thin>summary::before{width:8px}
+.block.thin>summary .block-label,.block.thin>summary .block-detail{font-size:12px;color:var(--text-3)}
+.block.thin>summary:hover .block-label,.block.thin>summary:hover .block-detail{color:var(--text-2)}
+.block.thin.block-failed>summary .block-label,.block.thin>summary .thin-failed{color:var(--red)}
+.block.thin>summary .block-detail{min-width:0}
+.block.thin>summary .tool-meta,.block.thin>summary .toolrun-failed{margin-left:0}
+.block.thin>summary .tool-meta::before,.block.thin>summary .toolrun-failed::before{content:"· ";color:var(--text-3)}
+.block.thin:not([open])>summary .copy-btn{display:none}
+.block.thin[open]>summary .copy-btn{margin-inline-start:auto;width:20px;height:20px}
+.block.thin>.block-body,.block.thin>pre,.block.thin>.think-body,.block.thin>.turn-hooks-body{
+  margin:4px 0 6px;border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow:hidden}
+.block.thin>.think-body{background:none;padding-top:10px}
+.block.thin.toolrun>.toolrun-body{gap:0;padding:2px 0 4px 10px;margin-inline-start:7px;border-top:0;border-left:1px solid var(--line);background:none}
+.turn-body>.block.thin+.block.thin{margin-top:-10px}
+.thin-pop{position:fixed;z-index:60;pointer-events:none;max-width:min(520px,calc(100vw - 32px));
+  display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:2px 10px;padding:6px 10px;
+  background:var(--raised);border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.18);
+  font-size:12px;line-height:18px;color:var(--text-2)}
+.thin-pop-row{display:contents}
+.thin-pop-cmd{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-1)}
+.thin-pop-row .num{color:var(--text-3);text-align:end;white-space:nowrap}
+.thin-pop-failed>span,.thin-pop-failed .num{color:var(--red)}
+@media (hover:none){.thin-pop{display:none}}
 
 /* markdown inside a reply */
 .md{color:var(--text-2)}
@@ -750,7 +778,7 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
    only thing carrying the state; the word beside it always is. */
 @keyframes bough-spin{to{transform:rotate(360deg)}}
 .spin-mark{transform-origin:50% 50%;animation:bough-spin 1.05s linear infinite}
-.working{display:flex;align-items:center;gap:8px;margin:2px 0 0;font-size:13px;color:var(--text-2)}
+.working{display:flex;align-items:center;gap:8px;margin:2px 0 0;padding-inline-start:4px;font-size:12px;line-height:16px;color:var(--text-2)}
 .working-dots{display:inline-flex;gap:3px}
 .working-dots i{width:3px;height:3px;border-radius:50%;background:var(--text-3);
                 animation:bough-pulse 1.2s ease-in-out infinite}

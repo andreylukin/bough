@@ -144,3 +144,26 @@ func TestHeadlessPlainDropsDeltas(t *testing.T) {
 		t.Fatalf("stdout = %q, want %q", s, want)
 	}
 }
+
+// The small model's live activity label reaches `bough serve` as its own
+// JSON line (the clearing "" included) and never shows in plain output.
+func TestHeadlessActivityJSONOnly(t *testing.T) {
+	var out bytes.Buffer
+	oldOut, oldJSON := hlOut, HeadlessJSON
+	defer func() { hlOut, HeadlessJSON = oldOut, oldJSON }()
+
+	hlOut, HeadlessJSON = &out, true
+	hlPrint(Event{Kind: "activity", Text: "running the test suite"})
+	hlPrint(Event{Kind: "activity", Text: ""})
+	want := `{"kind":"activity","text":"running the test suite"}` + "\n" + `{"kind":"activity","text":""}` + "\n"
+	if s := out.String(); s != want {
+		t.Fatalf("json stdout = %q, want %q", s, want)
+	}
+
+	out.Reset()
+	HeadlessJSON = false
+	hlPrint(Event{Kind: "activity", Text: "running the test suite"})
+	if s := out.String(); s != "" {
+		t.Fatalf("plain stdout = %q, want nothing", s)
+	}
+}

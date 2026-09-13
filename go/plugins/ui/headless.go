@@ -164,7 +164,9 @@ func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog h
 // to stderr and marks the run failed; everything else to stdout.
 func hlPrint(ev Event) {
 	switch ev.Kind {
-	case "assistant-delta", "thinking-delta":
+	case "assistant-delta", "thinking-delta", "activity":
+		// "activity" is the small model's live label for what the turn is
+		// doing ("" when it ends): a status line, same transport, same rule.
 		// Fragments of a reply that is still forming. Plain headless is
 		// read by humans and by the bench harness, so a token per line
 		// would ruin it: drop them there, as before. Under --json each
@@ -178,7 +180,7 @@ func hlPrint(ev Event) {
 		return
 	}
 	switch ev.Kind {
-	case "title", "context", "activity":
+	case "title", "context":
 		// Bookkeeping around the turn, not the turn's output: a script
 		// (and the benchmark harness) reads these lines as results.
 		return
