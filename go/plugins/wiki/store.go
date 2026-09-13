@@ -362,7 +362,7 @@ func (r *resolver) resolve(pg *Page) {
 }
 
 func excerpt(text string, maxLines int) string {
-	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	lines := strings.Split(strings.Trim(text, "\n"), "\n")
 	extra := 0
 	if len(lines) > maxLines {
 		extra = len(lines) - maxLines
@@ -962,7 +962,10 @@ func (s *Store) runs(now time.Time) []IngestRun {
 			switch e.Kind {
 			case "input":
 				if run.Command == "" {
-					run.Command, _ = e.Data["text"].(string)
+					// The loop records the slash command with the skill it
+					// expanded to appended; the command is the first line.
+					text, _ := e.Data["text"].(string)
+					run.Command, _, _ = strings.Cut(strings.TrimSpace(text), "\n")
 				}
 				open = true
 			case "done":

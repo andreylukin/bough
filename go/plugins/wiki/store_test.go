@@ -243,7 +243,7 @@ func TestActivity(t *testing.T) {
 	s, _ := storeFixture(t)
 	now := time.Date(2026, 9, 10, 18, 0, 0, 0, time.UTC)
 	writeSession(t, s.p.hist, "run1", s.p.wiki, now.Add(-time.Hour), []entry{
-		{Seq: 2, Kind: "input", Data: map[string]any{"text": "/llm-wiki ingest s1"}},
+		{Seq: 2, Kind: "input", Data: map[string]any{"text": "/llm-wiki ingest s1\n\n[skill: llm-wiki]\n---\nname: llm-wiki"}},
 		{Seq: 3, Kind: "done", Data: map[string]any{"files": []any{"log.md", "topics/go-testing/ghost.md"},
 			"usage": map[string]any{"cost": 0.25}}},
 	})

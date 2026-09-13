@@ -461,6 +461,11 @@ export function WikiSourcePane({ source, error, onClose, onOpenSession, onOpenPa
   onOpenSession?: (id: string) => void;
   onOpenPage: (path: string) => void;
 }) {
+  // The cited entry sits among its neighbours; bring it into view, since
+  // an entry before it can be a screen of tool output on its own.
+  useEffect(() => {
+    document.querySelector(".wk-src .wk-ent-on")?.scrollIntoView({ block: "center" });
+  }, [source?.session.id, source?.seq]);
   return (
     <section className="wk-src" aria-label="Cited entry">
       <div className="wk-src-head">
