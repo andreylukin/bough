@@ -64,15 +64,21 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
     if (refocus) btn.current?.focus();
   };
   const [save, setSave] = useState<{ value: string; state: "saving" | "failed" } | null>(null);
+  // The picker stays open while a save is in flight and closes only once
+  // it lands; a failure is said in the picker, beside the choice.
   const commit = (v: string) => {
     const r = onChange(v);
-    if (!(r instanceof Promise)) return;
+    if (!(r instanceof Promise)) { hide(true); return; }
     setSave({ value: v, state: "saving" });
-    r.then((ok) => setSave(ok === false ? { value: v, state: "failed" } : null), () => setSave({ value: v, state: "failed" }));
+    r.then((ok) => {
+      if (ok === false) { setSave({ value: v, state: "failed" }); return; }
+      setSave(null);
+      hide(true);
+    }, () => setSave({ value: v, state: "failed" }));
   };
   const pick = (o: Option) => {
-    hide(true);
     if (o.value !== value) commit(o.value);
+    else hide(true);
   };
 
   useEffect(() => {

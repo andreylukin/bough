@@ -8,6 +8,7 @@ import { Select, type Option } from "./select";
 import { DialogHost, askText } from "./dialog";
 import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath } from "./code";
+import { finishedJobs, lastTestRun } from "./runs";
 import { SkillPicker } from "./skills";
 import { Mentions, triggerAt, type Trigger } from "./mention";
 import { HooksPage } from "./hooks";
@@ -1376,8 +1377,8 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext }: { row: Row; li
           : switched ? "The model changed after this input was read; headroom shows once the new model answers"
           : `${row.model} has no context window in the catalogue`;
         const body = <>
-          {limit && <span className="rt-label">Context</span>}
-          <span className="num rt-value">{tokenCount(u.lastIn)}{limit ? ` · ${tokenCount(Math.max(0, limit - u.lastIn))} left` : " in"}</span>
+          <span className="rt-label">Context{limit ? "" : " · last input"}</span>
+          <span className="num rt-value">{tokenCount(u.lastIn)}{limit ? ` · ${tokenCount(Math.max(0, limit - u.lastIn))} left` : ""}</span>
           {pct !== undefined && (
             <span className="rt-bar" role="meter" aria-label="Context used" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
               <span className={pct >= 80 ? "rt-hot" : undefined} style={{ width: `${pct}%` }} />
@@ -1389,14 +1390,14 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext }: { row: Row; li
           : <Tip tip={tip}>{body}</Tip>;
       })()}
       {u?.cost !== undefined && (
-        <span className="rt" title={`${u.in.toLocaleString()} tokens in · ${u.out.toLocaleString()} out`}>
-          <span className="num rt-value">{money(u.cost)}</span><span className="num rt-label">{tokenCount(u.in + u.out)} tok</span>
-        </span>
+        <Tip tip={`Session cost: ${u.in.toLocaleString()} tokens in · ${u.out.toLocaleString()} out`}>
+          <span className="rt-label">Cost</span><span className="num rt-value">{money(u.cost)}</span>
+        </Tip>
       )}
-      <ChangesChip id={row.id} tick={lines.length} />
-      <TestsChip lines={lines} />
+      <ChangesChip row={row} tick={lines.length} />
+      <TestsChip lines={lines} running={row.status === "running"} />
       {row.cache && <CacheChip cache={row.cache} model={row.model} />}
-      {row.jobs && row.jobs.length > 0 && <JobsChip session={row.id} jobs={row.jobs} />}
+      <JobsChip session={row.id} jobs={row.jobs ?? []} lines={lines} />
     </div>
   );
 }
@@ -1436,8 +1437,9 @@ function usePopovers(root: React.RefObject<HTMLElement | null>) {
  * reading, clean, not a repository, or a failed read (the last result
  * kept and marked stale). A file opens its diff.
  */
-function ChangesChip({ id, tick }: { id: string; tick: number }) {
-  const [state, setState] = useState<{ files: Change[] | null; repo: boolean; failed: boolean; at?: number }>({ files: null, repo: true, failed: false });
+function ChangesChip({ row, tick }: { row: Row; tick: number }) {
+  const id = row.id;
+  const [state, setState] = useState<{ files: Change[] | null; repo: boolean; failed: boolean; at?: number; seen?: number }>({ files: null, repo: true, failed: false });
   const [nonce, setNonce] = useState(0);
   const [diff, setDiff] = useState<{ path: string; sig: string; text: string | null; failed?: boolean } | null>(null);
   useEffect(() => {
@@ -1445,7 +1447,7 @@ function ChangesChip({ id, tick }: { id: string; tick: number }) {
     // A hand edit or another session changes the tree without a transcript
     // entry, so it is re-read on a timer too.
     const read = () => api.changes(id)
-      .then((r) => { if (live) setState({ files: r.files, repo: r.repo, failed: false, at: Date.now() }); })
+      .then((r) => { if (live) setState((s) => ({ files: r.files, repo: r.repo, failed: false, at: Date.now(), seen: r.repo ? Date.now() : s.seen })); })
       .catch(() => { if (live) setState((s) => ({ ...s, failed: true })); });
     read();
     const t = setInterval(read, 10_000);
@@ -1458,29 +1460,27 @@ function ChangesChip({ id, tick }: { id: string; tick: number }) {
     api.diff(id, path).then((text) => setDiff((d) => d?.path === path ? { path, sig, text } : d),
       () => setDiff((d) => d?.path === path ? { path, sig, text: null, failed: true } : d));
   };
-  const { files, repo, failed, at } = state;
-  // What was measured and when: the working tree's git status, stamped.
-  const read = at ? `git status of the working tree, read ${clock(new Date(at).toISOString())}` : undefined;
+  const { files, repo, failed, at, seen } = state;
   if (files === null && !failed) return <span className="rt"><span className="rt-label">Changes…</span></span>;
-  if (files === null) return <button className="rt rt-link" onClick={() => setNonce((n) => n + 1)}><span className="rt-label">Changes</span><span className="rt-value rt-stale">unavailable · Retry</span></button>;
-  if (!repo) return <span className="rt" title="The session's folder is not a git repository"><span className="rt-label">Changes</span><span className="rt-value rt-stale">unavailable</span></span>;
-  if (!files.length) return (
-    <span className="rt" title={failed ? `The last refresh failed · ${read}` : read}>
-      <span className="rt-label">Changes</span><span className={"rt-value" + (failed ? " rt-stale" : "")}>{failed ? "clean · stale" : "clean"}</span>
-    </span>
-  );
-  const add = files.reduce((n, f) => n + Math.max(0, f.add), 0);
-  const del = files.reduce((n, f) => n + Math.max(0, f.del), 0);
+  const add = (files ?? []).reduce((n, f) => n + Math.max(0, f.add), 0);
+  const del = (files ?? []).reduce((n, f) => n + Math.max(0, f.del), 0);
+  // One disclosure in every state: what was read, where, and when.
+  const value = files === null ? "unavailable"
+    : !repo ? "not a Git repository"
+    : !files.length ? "clean"
+    : null;
   return (
     <details className="rt rt-jobs" onToggle={(e) => { if (!e.currentTarget.open) setDiff(null); }}>
-      <summary title={read} aria-label={`Changes: ${files.length} files, ${add} added, ${del} removed${failed ? ", stale" : ""}`}>
+      <summary aria-label={`Working-tree changes: ${value ?? `${files!.length} files, ${add} added, ${del} removed`}${failed ? ", stale" : ""}`}>
         <span className="rt-label">Changes</span>
-        <span className={"num rt-value" + (failed ? " rt-stale" : "")}>{files.length} <span className="rt-add">+{add}</span> <span className="rt-del">−{del}</span></span>
+        {value ? <span className={"rt-value" + (value === "clean" ? "" : " rt-stale")}>{value}</span>
+          : <span className="num rt-value">{files!.length} <span className="rt-add">+{add}</span> <span className="rt-del">−{del}</span></span>}
+        {failed && files !== null && <span className="rt-label">· stale</span>}
       </summary>
       {diff ? (
         <div className="rt-pop rt-diff">
           <button className="head-pop-item rt-back" aria-label="Back to files" onClick={() => setDiff(null)}>← Back to files · <span className="mono">{diff.path}</span></button>
-          {diff.text !== null && sigOf(files.find((f) => f.path === diff.path)) !== diff.sig && (
+          {diff.text !== null && sigOf(files?.find((f) => f.path === diff.path)) !== diff.sig && (
             <button className="btn rt-stop" onClick={() => open(diff.path)}>File changed since opened · Reload</button>
           )}
           {diff.text !== null ?<pre className="mono rt-diff-body">{diff.text.split("\n").map((l, i) => (
@@ -1490,12 +1490,19 @@ function ChangesChip({ id, tick }: { id: string; tick: number }) {
             : <p className="rt-label">Reading diff…</p>}
         </div>
       ) : (
-        <ul className="rt-pop">
+        <ul className="rt-pop rt-changes">
+          <li className="rt-pop-head">
+            <span>Working-tree changes</span>
+            <span className="mono rt-label rt-job-cmd" title={row.cwd}>{row.cwd}{row.branch ? ` · ${row.branch}` : ""}</span>
+            <span className="rt-label">{at ? `Read ${clock(new Date(at).toISOString())}` : "Not read yet"} · current working tree, not this session’s edits</span>
+          </li>
           {failed && (
-            <li><span className="rt-label">Stale: the last refresh failed</span>
+            <li><span className="rt-label">{files === null ? "Couldn’t read git status" : "Stale: the last refresh failed"}</span>
               <button className="btn rt-stop" onClick={() => setNonce((n) => n + 1)}>Retry</button></li>
           )}
-          {files.map((f) => (
+          {files !== null && !repo && <li className="rt-label">Not a Git repository{seen ? ` · last seen as one ${clock(new Date(seen).toISOString())}` : ""}</li>}
+          {files !== null && repo && !files.length && <li className="rt-label">No uncommitted changes</li>}
+          {(files ?? []).map((f) => (
             <li key={f.path}>
               <button className="rt-link rt-file" title={f.path} onClick={() => open(f.path)}>
                 <span className="mono rt-job-cmd">{f.path}</span>
@@ -1513,41 +1520,31 @@ function ChangesChip({ id, tick }: { id: string; tick: number }) {
   );
 }
 
-/** A command that runs a test suite, by the runners people actually type. */
-const TEST_CMD = /\b(go test|(?:npm|pnpm|yarn|bun)(?: run)? test|pytest|cargo (?:test|nextest)|vitest|jest|make (?:test|check)|mvn test|gradle test|rspec|phpunit)\b/;
-
 /**
  * The last test run and how it ended, from the exit code the loop
  * recorded on its result — never from what the reply said about it.
  * Absent when the session ran no tests, or ran them before exit codes
  * were recorded.
  */
-function TestsChip({ lines }: { lines: Line[] }) {
-  const last = useMemo(() => {
-    for (let i = lines.length - 1; i > 0; i--) {
-      const r = lines[i], c = lines[i - 1];
-      if (r.kind !== "result" || c.kind !== "code" || typeof r.data?.exit !== "number") continue;
-      const call = parseCall(c.text);
-      if (call.verb === "Ran" && TEST_CMD.test(call.target)) return { cmd: call.gist, exit: r.data.exit as number, at: r.at, seq: r.seq };
-    }
-    return null;
-  }, [lines]);
+function TestsChip({ lines, running }: { lines: Line[]; running: boolean }) {
+  const last = useMemo(() => lastTestRun(lines, running), [lines, running]);
   if (!last) return null;
-  const failed = last.exit !== 0;
+  const failed = last.state === "failed";
+  const word = { passed: "passed", failed: "failed", running: "running…", unrecorded: "not recorded" }[last.state];
   return (
     // The chip is a way to the evidence, not a second copy of it: it opens
     // the call in the transcript (and the run folding it) and lands there.
-    <button className="rt rt-link" title={`${last.cmd} · exit ${last.exit} · ${new Date(last.at).toLocaleString()}`}
+    <button className="rt rt-link" title={`${last.cmd}${last.exit !== undefined ? ` · exit ${last.exit}` : last.state === "unrecorded" ? " · no exit code was recorded" : ""} · ${new Date(last.at).toLocaleString()} · show in transcript`}
             onClick={() => {
-              const el = document.querySelector<HTMLDetailsElement>(`details.block[data-seq="${last.seq}"]`);
+              const el = document.querySelector<HTMLElement>(`details.block[data-seq="${last.seq}"]`);
               if (!el) return;
-              for (let d: HTMLElement | null = el; d; d = d.parentElement?.closest("details") ?? null) (d as HTMLDetailsElement).open = true;
+              for (let d: HTMLElement | null = el; d; d = d.parentElement?.closest("details") ?? null) if (d instanceof HTMLDetailsElement) d.open = true;
               el.scrollIntoView({ block: "center" });
-              el.querySelector("summary")?.focus();
+              (el.querySelector<HTMLElement>("summary,button") ?? el).focus();
             }}>
       <span className="rt-label">Tests</span>
-      <span className={"num rt-value " + (failed ? "rt-del" : "rt-add")}>{failed && <span aria-hidden="true" className="rt-mark"><StatusMark status="error" bare /></span>}{failed ? "failed" : "passed"}</span>
-      <span className="num rt-label">{ago(last.at)} ago</span>
+      <span className={"num rt-value " + (failed ? "rt-del" : last.state === "passed" ? "rt-add" : "rt-stale")}>{failed && <span aria-hidden="true" className="rt-mark"><StatusMark status="error" bare /></span>}{word}</span>
+      {last.state !== "running" && <span className="num rt-label">{ago(last.at)} ago</span>}
     </button>
   );
 }
@@ -1586,7 +1583,7 @@ function CacheChip({ cache, model }: { cache: NonNullable<Row["cache"]>; model?:
   return (
     <Tip className="rt-cache-hot"
          tip={`Estimate: ${provider}'s documented cache window since the last turn ended, not a measured hit. Last turn read ${tokenCount(cache.read)} of ${tokenCount(cache.in)} input tokens from the cache (${hit}%), wrote ${tokenCount(cache.write)}`}>
-      <span className="rt-label">TTL</span>
+      <span className="rt-label">Cache TTL</span>
       <span className="num rt-value">
         ~{Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}
       </span>
@@ -1613,32 +1610,64 @@ function Tip({ tip, label, className, children }: { tip: string; /** The accessi
   );
 }
 
-/** Background jobs still running, one click from their commands. */
-function JobsChip({ session, jobs }: { session: string; jobs: NonNullable<Row["jobs"]> }) {
-  const now = useNow(true);
+/**
+ * Background jobs: running ones one click from their command and Stop,
+ * finished ones (the last hour) with their exit and output until dismissed.
+ */
+function JobsChip({ session, jobs, lines }: { session: string; jobs: NonNullable<Row["jobs"]>; lines: Line[] }) {
+  const now = useNow(jobs.length > 0);
   // A stop is asked of the child and lands when the job's own entry does;
   // until then the row says so, and a refused ask says that instead.
   const [stop, setStop] = useState<Record<number, "stopping" | "failed">>({});
+  const [shown, setShown] = useState<string | null>(null);
+  const [dismissed, setDismissed] = useState(0);
+  const done = useMemo(() => finishedJobs(lines).filter((j) => j.seq > dismissed && Date.now() - Date.parse(j.at) < 3_600_000 && !jobs.some((r) => r.id === j.id)), [lines, dismissed, jobs]);
   const kill = (id: number) => {
     setStop((m) => ({ ...m, [id]: "stopping" }));
     api.killJob(session, id).catch(() => setStop((m) => ({ ...m, [id]: "failed" })));
   };
+  if (!jobs.length && !done.length) return null;
+  const failed = done.some((j) => j.exit !== "exited 0");
   return (
     <details className="rt rt-jobs">
       <summary>
         <span className="rt-label">Jobs</span>
-        <span className="num rt-value">{jobs.length} running</span>
+        <span className={"num rt-value" + (!jobs.length && failed ? " rt-del" : "")}>
+          {jobs.length ? `${jobs.length} running` : `${done.length} finished${failed ? " · failed" : ""}`}
+        </span>
       </summary>
-      <ul className="rt-pop">
-        {jobs.map((j) => (
-          <li key={j.id}>
-            <span className="mono rt-job-cmd" title={j.cmd}>{j.cmd}</span>
-            <span className="num rt-label">{duration(now - Date.parse(j.started))}</span>
-            <button className="btn rt-stop" disabled={stop[j.id] === "stopping"} onClick={() => kill(j.id)}>
-              {stop[j.id] === "stopping" ? "Stopping…" : stop[j.id] === "failed" ? "Couldn’t stop · Retry" : "Stop"}
-            </button>
-          </li>
-        ))}
+      <ul className="rt-pop rt-jobs-pop">
+        {jobs.map((j) => {
+          const key = `r${j.id}`;
+          return (
+            <li key={key} className="rt-job">
+              <button type="button" className="rt-link rt-job-row" aria-expanded={shown === key} onClick={() => setShown((v) => v === key ? null : key)}>
+                <span className="mono rt-job-cmd">{j.cmd}</span>
+                <span className="num rt-label">running · {duration(now - Date.parse(j.started))}</span>
+              </button>
+              <button className="btn rt-stop" disabled={stop[j.id] === "stopping"} onClick={() => kill(j.id)}>
+                {stop[j.id] === "stopping" ? "Stopping…" : stop[j.id] === "failed" ? "Couldn’t stop · Retry" : "Stop"}
+              </button>
+              {shown === key && <pre className="mono rt-job-out">{j.cmd}</pre>}
+            </li>
+          );
+        })}
+        {done.map((j) => {
+          const key = `d${j.seq}`;
+          const bad = j.exit !== "exited 0";
+          return (
+            <li key={key} className="rt-job">
+              <button type="button" className="rt-link rt-job-row" aria-expanded={shown === key} onClick={() => setShown((v) => v === key ? null : key)}>
+                <span className="mono rt-job-cmd">{j.cmd}</span>
+                <span className={"num " + (bad ? "rt-del" : "rt-label")}>{j.exit}{j.took ? ` · ${j.took}` : ""}</span>
+              </button>
+              {shown === key && <pre className="mono rt-job-out">{j.cmd + "\n\n" + (j.output || "No output")}</pre>}
+            </li>
+          );
+        })}
+        {done.length > 0 && (
+          <li><button className="btn rt-stop" onClick={() => setDismissed(done[done.length - 1].seq)}>Dismiss finished</button></li>
+        )}
       </ul>
     </details>
   );
@@ -1970,6 +1999,9 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   // under More rather than pushing the transcript down.
   const [more, setMore] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
+  // Opened from the keyboard, focus lands on the first control; opened by
+  // pointer, on the dialog itself, so nothing looks preselected.
+  const moreByKey = useRef(false);
   const closeMore = useCallback((refocus: boolean) => {
     setMore(false);
     if (refocus) moreRef.current?.querySelector<HTMLButtonElement>("button.more")?.focus();
@@ -1997,7 +2029,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
       pop.style.maxHeight = `${Math.max(0, bottom - pop.getBoundingClientRect().top - 12)}px`;
     };
     fit();
-    pop.querySelector<HTMLElement>("button,input")?.focus();
+    (moreByKey.current ? pop.querySelector<HTMLElement>("button,input") ?? pop : pop).focus();
     window.visualViewport?.addEventListener("resize", fit);
     return () => window.visualViewport?.removeEventListener("resize", fit);
   }, [more]);
@@ -2276,20 +2308,20 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
           <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" />
           <div className="head-more" ref={moreRef}>
             <button className="more" aria-label="Session settings" aria-expanded={more} aria-controls={"more-" + row.id}
-                    onClick={() => setMore((v) => !v)}>
+                    onClick={(e) => { moreByKey.current = e.detail === 0; setMore((v) => !v); }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
                    strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" />
               </svg>
             </button>
             {more && (
-              <div className="head-pop" role="dialog" aria-label="Session settings" id={"more-" + row.id} onKeyDown={(e) => {
-                // Tab stays inside the open settings.
+              <div className="head-pop" role="dialog" aria-label="Session settings" id={"more-" + row.id} tabIndex={-1} onKeyDown={(e) => {
+                // Non-modal: tabbing past either end closes it, back on Settings.
                 if (e.key !== "Tab") return;
                 const all = [...e.currentTarget.querySelectorAll<HTMLElement>("button,input")].filter((el) => el.offsetParent);
                 const first = all[0], last = all[all.length - 1];
-                if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
-                else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+                const here = document.activeElement;
+                if ((e.shiftKey && (here === first || here === e.currentTarget)) || (!e.shiftKey && here === last)) { e.preventDefault(); closeMore(true); }
               }}>
                 <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="rest" />
                 <button className="head-pop-item" onClick={async () => {

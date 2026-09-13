@@ -314,7 +314,18 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .rt-pop li{align-items:center}
 .rt-stale{color:var(--text-3)}
 .rt-mark{display:inline-flex;margin-inline-end:4px;vertical-align:-2px}
-.rt-diff{width:min(480px,calc(100vw - 32px));max-width:none;padding:4px}
+.rt-diff{width:min(760px,calc(100vw - 24px));max-width:none;padding:4px}
+.rt-pop li.rt-pop-head{flex-direction:column;align-items:stretch;gap:2px;padding-block:4px;border-bottom:1px solid var(--line);margin-bottom:2px}
+.rt-pop-head>span{min-width:0}
+.rt-changes{width:min(420px,calc(100vw - 24px))}
+.rt-jobs-pop{width:min(480px,calc(100vw - 24px));max-height:min(420px,60vh);overflow-y:auto}
+.rt-job-row>.num{white-space:nowrap;flex-shrink:0}
+.rt-pop li.rt-job{flex-wrap:wrap;gap:4px 8px}
+.rt-job-row{flex:1;min-width:0;min-height:36px;align-items:center;justify-content:space-between;gap:12px;text-align:start}
+.rt-job-out{flex-basis:100%;margin:0;padding:6px 8px;max-height:160px;overflow:auto;font-size:12px;line-height:17px;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--surface);border-radius:6px}
+@media (max-width:720px),(pointer:coarse){.rt-job-row{min-height:44px}}
+.head-pop:focus{outline:none}
+.rt-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .rt-back{gap:8px;height:32px;color:var(--text-2)}
 .rt-diff-body{margin:0;padding:6px 8px;max-height:min(420px,60vh);overflow:auto;font-size:12px;line-height:17px;white-space:pre}
 .rt-diff-body>span{display:block}
