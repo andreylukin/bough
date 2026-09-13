@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
 
 /**
  * Asking for a name, or whether to go ahead.
@@ -35,12 +36,38 @@ export function askConfirm(title: string, body: string, opts: { action?: string;
   });
 }
 
+/**
+ * What aria-modal promises but does not do: Tab cycles inside the box,
+ * and everything else on the page is inert while it is up. The modal is
+ * portalled to <body>, so every other child of <body> is the background.
+ */
+export function useModal(box: RefObject<HTMLElement | null>, active: boolean) {
+  useEffect(() => {
+    if (!active) return;
+    const layer = [...document.body.children].find((c) => box.current && c.contains(box.current));
+    const others = [...document.body.children].filter((c) => c !== layer && !(c as HTMLElement).inert) as HTMLElement[];
+    for (const o of others) o.inert = true;
+    const tab = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || !box.current) return;
+      const f = [...box.current.querySelectorAll<HTMLElement>("button:not([disabled]),input,textarea,select,[tabindex]:not([tabindex='-1'])")];
+      if (f.length === 0) return;
+      const first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", tab);
+    return () => { for (const o of others) o.inert = false; document.removeEventListener("keydown", tab); };
+  }, [box, active]);
+}
+
 export function DialogHost() {
   const [req, setReq] = useState<Req | null>(null);
   const [text, setText] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const ok = useRef<HTMLButtonElement>(null);
   const opener = useRef<HTMLElement | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  useModal(box, req !== null);
 
   useEffect(() => {
     push = (r) => {
@@ -75,9 +102,9 @@ export function DialogHost() {
     finish(req.kind === "text" ? text.trim() : true);
   };
 
-  return (
+  return createPortal(
     <div className="dlg-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) dismiss(); }}>
-      <div className="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-title"
+      <div ref={box} className="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-title"
            onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); dismiss(); } }}>
         <h2 id="dlg-title" className="dlg-title">{req.title}</h2>
         {req.kind === "confirm" && <p className="dlg-body">{req.body}</p>}
@@ -93,6 +120,7 @@ export function DialogHost() {
                   disabled={empty} onClick={submit}>{req.action}</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

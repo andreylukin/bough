@@ -59,21 +59,29 @@ export const contextApi = {
  */
 function FileRow({ f }: { f: ContextFile }) {
   return (
-    <div className="proj-row hk-row">
-      <div className="hk-main">
+    <details className="proj-row hk-row ctx-file">
+      <summary className="hk-main">
         <span className="mono hk-name">{base(f.path)}</span>
-        {f.found
-          ? f.dropped > 0
-            ? (
-              <span className="hk-when">
-                {f.dropped} {f.dropped === 1 ? "section" : "sections"} dropped, identical to {base(f.same)}
-              </span>
-            )
-            : <span className="hk-when">In full</span>
-          : <span className="hk-state hk-offword">Not there — nothing is read from it</span>}
-      </div>
+        {f.dropped > 0
+          ? (
+            <span className="hk-when">
+              {f.dropped} {f.dropped === 1 ? "section" : "sections"} dropped, identical to {base(f.same)}
+            </span>
+          )
+          : <span className="hk-when">In full</span>}
+      </summary>
       <p className="mono hk-path">{f.path}</p>
-    </div>
+    </details>
+  );
+}
+
+/** A section with nothing in it: one line, the how-to behind a click. */
+export function EmptySection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <details className="proj-empty ctx-empty">
+      <summary><span className="proj-empty-title">{title}</span> <span className="link">How to add</span></summary>
+      <p>{children}</p>
+    </details>
   );
 }
 
@@ -99,6 +107,8 @@ export function ContextView({ data, onBack, load = hooksApi.read, save = hooksAp
 }) {
   const { cwd, rules, contextFiles, skills } = data;
   const { isOff, mark } = useOffs();
+  const found = contextFiles.filter((f) => f.found);
+  const missing = contextFiles.filter((f) => !f.found);
 
   return (
     <div className="thread">
@@ -125,12 +135,11 @@ export function ContextView({ data, onBack, load = hooksApi.read, save = hooksAp
           </div>
           {rules.length === 0
             ? (
-              <div className="proj-empty">
-                <p className="proj-empty-title">No rules apply here</p>
-                <p>Write a <code className="mono">.md</code> file in <code className="mono">~/.claude/rules</code> to have
+              <EmptySection title="No rules apply here">
+                Write a <code className="mono">.md</code> file in <code className="mono">~/.claude/rules</code> to have
                    it apply everywhere, or in <code className="mono">.claude/rules</code> under
-                   <code className="mono"> {cwd}</code> to have it apply to this repo alone.</p>
-              </div>
+                   <code className="mono"> {cwd}</code> to have it apply to this repo alone.
+              </EmptySection>
             )
             : rules.map((r) => (
               <RuleRow key={r.id} r={r} load={load} save={save} setOff={setOff}
@@ -143,16 +152,21 @@ export function ContextView({ data, onBack, load = hooksApi.read, save = hooksAp
             <h2>Context files</h2>
             <span className="num proj-count">read from this directory up</span>
           </div>
-          {contextFiles.length === 0
+          {found.length === 0
             ? (
-              <div className="proj-empty">
-                <p className="proj-empty-title">No context files</p>
-                <p>bough reads <code className="mono">AGENTS.md</code> and <code className="mono">CLAUDE.md</code> from
+              <EmptySection title="No context files">
+                bough reads <code className="mono">AGENTS.md</code> and <code className="mono">CLAUDE.md</code> from
                    <code className="mono"> {cwd}</code> and every directory above it. Write one to tell every session here
-                   what it should know.</p>
-              </div>
+                   what it should know.
+              </EmptySection>
             )
-            : contextFiles.map((f) => <FileRow key={f.path} f={f} />)}
+            : found.map((f) => <FileRow key={f.path} f={f} />)}
+          {missing.length > 0 && (
+            <details className="ctx-missing">
+              <summary>{missing.length} {missing.length === 1 ? "file" : "files"} not found</summary>
+              {missing.map((f) => <p key={f.path} className="mono hk-path">{f.path}</p>)}
+            </details>
+          )}
         </section>
 
         <section className="proj">
@@ -164,12 +178,11 @@ export function ContextView({ data, onBack, load = hooksApi.read, save = hooksAp
           </div>
           {skills.length === 0
             ? (
-              <div className="proj-empty">
-                <p className="proj-empty-title">No skills reachable</p>
-                <p>A skill is a <code className="mono">SKILL.md</code> folder under
+              <EmptySection title="No skills reachable">
+                A skill is a <code className="mono">SKILL.md</code> folder under
                    <code className="mono"> ~/.claude/skills</code>, or one a plugin brings with it. Add one and it can be
-                   run from the composer as <code className="mono">/name</code>.</p>
-              </div>
+                   run from the composer as <code className="mono">/name</code>.
+              </EmptySection>
             )
             : skills.map((s) => (
               <SkillRow key={s.id} s={s} setOff={setOff} off={isOff(s.id, s.off)} onOff={mark(s.id)} />
@@ -192,15 +205,25 @@ export function ContextPage({ session, onBack }: { session: string; onBack?: () 
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  if (!data) {
-    return (
-      <div className="thread empty">
-        <div>
-          <h1>{err ? "Context did not load" : "Loading context…"}</h1>
-          {err && <p>{err}</p>}
-        </div>
-      </div>
-    );
-  }
+  if (!data) return <Pending title="Context" what="context" err={err} onBack={onBack} onRetry={refresh} />;
   return <ContextView data={data} onBack={onBack} />;
+}
+
+/** Loading or failed: the header and Back stay, so the page is never a dead end. */
+export function Pending({ title, what, err, onBack, onRetry }: {
+  title: string; what: string; err: string; onBack?: () => void; onRetry: () => void;
+}) {
+  return (
+    <div className="thread">
+      <header className="thread-head">
+        <Back onBack={onBack} />
+        <div className="head-main"><h1>{title}</h1></div>
+      </header>
+      <div className="scroll proj-body">
+        {err
+          ? <p className="err">{title} did not load: {err} <button className="link" onClick={onRetry}>Retry</button></p>
+          : <p className="proj-none">Loading {what}…</p>}
+      </div>
+    </div>
+  );
 }

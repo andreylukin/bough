@@ -184,12 +184,13 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .sel-pop:has(.sel-search){width:min(360px,calc(100vw - 32px))}
 .sel-start{inset-inline-start:0}
 .sel-end{inset-inline-end:0}
-.sel-search{font:13px var(--sans);color:var(--text-1);background:var(--surface);border:none;
+.sel-search{flex:none;height:40px;font:13px var(--sans);color:var(--text-1);background:var(--surface);border:none;
             border-bottom:1px solid var(--line);padding:10px 12px;width:100%}
 .sel-search::placeholder{color:var(--text-3)}
 .sel-search:focus{outline:none}
 .sel-search:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-.sel-list{max-height:min(320px,50vh);overflow-y:auto;padding:4px}
+.sel-list{flex:1 1 auto;min-height:0;max-height:min(320px,50vh);overflow-y:auto;padding:4px}
+@media (max-width:600px){.sel-pop,.sel-pop:has(.sel-search){width:calc(100vw - 16px);max-width:none}}
 .sel-group{padding:8px 10px 4px;font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--text-3)}
 .sel-item{display:flex;align-items:center;gap:10px;width:100%;min-height:34px;padding:0 10px;text-align:start;
           font:13px var(--sans);color:var(--text-2);background:none;border:0;border-radius:6px;cursor:pointer}
@@ -694,7 +695,7 @@ button.toast{font:13px/1.45 var(--sans);text-align:start;cursor:pointer}
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 /* Dialogs: asked in the page's own voice, not the browser's grey sheet. */
 .dlg-scrim{position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:16px;background:rgb(0 0 0/.55)}
-.dlg{width:min(420px,100%);display:flex;flex-direction:column;gap:14px;padding:20px;
+.dlg{width:min(420px,calc(100vw - 32px));display:flex;flex-direction:column;gap:12px;padding:20px;
      background:var(--raised);border:1px solid var(--line-strong);border-radius:12px;
      box-shadow:0 1px 2px rgb(0 0 0/.4),0 16px 40px rgb(0 0 0/.5)}
 .dlg-title{margin:0;font-size:16px;font-weight:600;line-height:1.3;color:var(--text-1)}
@@ -711,7 +712,17 @@ input[type="checkbox"]::before{content:"";width:10px;height:10px;background:var(
                                transition:transform 100ms;clip-path:polygon(14% 44%,0 65%,50% 100%,100% 16%,80% 0,43% 62%)}
 input[type="checkbox"]:checked{background:var(--accent);border-color:var(--accent)}
 input[type="checkbox"]:checked::before{transform:scale(1)}
-@media (max-width:720px){.dlg-input{font-size:16px}}
+@media (max-width:720px){.dlg-input{font-size:16px}.dlg-actions .btn{min-height:44px}}
+/* Context and Hooks: empty sections and missing files fold to one line. */
+.ctx-empty>summary,.ctx-missing>summary,.ctx-file>summary,.rp-group>summary{cursor:pointer;list-style:none}
+.ctx-empty>summary::-webkit-details-marker,.ctx-missing>summary::-webkit-details-marker,
+.ctx-file>summary::-webkit-details-marker,.rp-group>summary::-webkit-details-marker{display:none}
+.ctx-empty>summary{display:flex;align-items:baseline;gap:10px;min-height:36px}
+.ctx-empty .proj-empty-title{margin:0;font-size:13px;font-weight:500;color:var(--text-3)}
+.ctx-empty>p{margin:0 0 8px}
+.ctx-file>summary{min-height:36px}
+.ctx-missing{color:var(--text-3);font-size:12px}
+.ctx-missing>summary{min-height:32px;display:flex;align-items:center}
 /* skills picker */
 .skills-anchor{position:static}
 .skills-scrim{position:fixed;inset:0;z-index:20}

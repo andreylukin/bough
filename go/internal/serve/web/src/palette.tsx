@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useModal } from "./dialog";
 import type { Row } from "./types";
 import { plainTitle } from "./render";
 
@@ -72,27 +74,32 @@ interface SearchHit { id: string; title: string; repo: string; branch: string; h
  * a command — so the palette asks the server to search the bodies too.
  * Local matching answers instantly and this fills in behind it.
  */
-function useFullText(q: string, open: boolean): SearchHit[] {
+type SearchState = "idle" | "loading" | "error";
+
+function useFullText(q: string, open: boolean): { hits: SearchHit[]; state: SearchState } {
   const [hits, setHits] = useState<SearchHit[]>([]);
+  const [state, setState] = useState<SearchState>("idle");
   useEffect(() => {
     const needle = q.trim();
     // A sentence is not a search. Every term has to appear somewhere in
     // a session, and "to" and "the" appear in all of them — so asking
     // for one matched everything and buried the thing you were plainly
     // trying to do, which was start it.
-    if (!open || needle.length < 2 || isSentence(needle)) { setHits([]); return; }
+    if (!open || needle.length < 2 || isSentence(needle)) { setHits([]); setState("idle"); return; }
+    setState("loading");
     // Debounced: this reads every transcript, and the box is typed into
     // one character at a time.
     let live = true;
     const t = setTimeout(() => {
       fetch("/api/search?q=" + encodeURIComponent(needle))
-        .then((r) => r.json())
-        .then((d) => { if (live) setHits(d.hits ?? []); })
-        .catch(() => { if (live) setHits([]); });
+        .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+        .then((d) => { if (live) { setHits(d.hits ?? []); setState("idle"); } })
+        // A failed search is not "no matches": say so.
+        .catch(() => { if (live) { setHits([]); setState("error"); } });
     }, 180);
     return () => { live = false; clearTimeout(t); };
   }, [q, open]);
-  return hits;
+  return { hits, state };
 }
 
 /** Four words or more reads as something to say, not something to find. */
@@ -118,6 +125,8 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
   const field = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  useModal(box, open);
 
   useEffect(() => {
     if (!open) return;
@@ -127,7 +136,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     field.current?.focus();
   }, [open, initialQuery]);
 
-  const found = useFullText(q, open);
+  const { hits: found, state: searching } = useFullText(q, open);
   const pages = useWikiHits(q, open, Boolean(onOpenWikiPage));
 
   const hits = useMemo(() => {
@@ -143,16 +152,21 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
       // With no query, commands only: a list of 150 titles is the
       // sidebar again, and the palette is for aiming at one.
       .filter((x) => (needle ? x.s >= 0 : false));
-    const all: Command[] = [
-      ...cmds.sort((a, b) => b.s - a.s).map((x) => x.c),
-      ...sessions.sort((a, b) => b.s - a.s).slice(0, 30).map(({ r, title }) => ({
+    cmds.sort((a, b) => b.s - a.s);
+    sessions.sort((a, b) => b.s - a.s);
+    const cmdList = cmds.map((x) => x.c);
+    const sessionList: Command[] = sessions.slice(0, 30).map(({ r, title }) => ({
         id: "s:" + r.id,
         label: title,
         hint: [r.repo?.split("/").pop(), r.status].filter(Boolean).join(" · "),
         group: "Conversations",
         run: () => onOpenSession(r.id),
-      })),
-    ];
+      }));
+    // Whichever block holds the better match leads: a title containing
+    // "test" beats a command whose letters merely occur in order.
+    const all: Command[] = (sessions[0]?.s ?? -1) > (cmds[0]?.s ?? -1)
+      ? [...sessionList, ...cmdList]
+      : [...cmdList, ...sessionList];
     // A wiki page carries the claim that matched: the point of the wiki
     // is the join between a page and the entry behind it, and a title
     // alone does not show which is which.
@@ -225,8 +239,8 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
   };
 
   let lastGroup = "";
-  return (
-    <>
+  return createPortal(
+    <div ref={box} style={{ display: "contents" }}>
       <div className="pal-scrim" onClick={close} />
       <div className="pal" role="dialog" aria-modal="true" aria-label="Quick access">
         <input ref={field} className="pal-field" value={q} onChange={(e) => setQ(e.target.value)}
@@ -251,15 +265,17 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
               </div>
             );
           })}
-          {hits.length === 0 && (
+          {searching === "error" && <p className="pal-none">Searching conversation text failed; only titles are matched.</p>}
+          {searching === "loading" && hits.length === 0 && <p className="pal-none">Searching conversation text…</p>}
+          {hits.length === 0 && searching === "idle" && (
             <p className="pal-none">
               {q.trim() ? `Nothing matches “${q.trim()}”.` : "Type to search your conversations."}
             </p>
           )}
         </div>
       </div>
-    </>
-  );
+    </div>
+  , document.body);
 }
 
 /** One matching line, short enough to sit on a row. */

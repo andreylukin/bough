@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Back } from "./app";
+import { EmptySection, Pending } from "./context";
 
 // The hooks wire types live here, not in types.ts: they are read by this
 // view and nothing else, and GET /api/hooks always sends every field.
@@ -436,11 +437,6 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
         <Back onBack={onBack} />
         <div className="head-main">
           <h1>Hooks</h1>
-          <span className="head-repo">
-            {broken > 0
-              ? `${broken} failing`
-              : `${watchers.length} ${watchers.length === 1 ? "watcher" : "watchers"}, ${hooks.length} ${hooks.length === 1 ? "hook" : "hooks"}`}
-          </span>
         </div>
       </header>
 
@@ -448,8 +444,8 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
         {/* What needs attention, before any list: on a page of five
             sections the counts are the only thing most visits need. */}
         <div className="hk2-sum">
-          <span><span className="hk2-sum-n">{watchers.length + hooks.length + rules.length + plugins.length}</span>{" "}
-            <span className="hk2-sum-lab">things in force</span></span>
+          <span><span className="hk2-sum-n">{watchers.length + hooks.length + rules.length + plugins.length - offCount}</span>{" "}
+            <span className="hk2-sum-lab">active</span></span>
           <span><span className={"hk2-sum-n" + (broken ? " hk2-bad" : "")}>{broken}</span>{" "}
             <span className="hk2-sum-lab">failing</span></span>
           <span><span className="hk2-sum-n">{offCount}</span>{" "}
@@ -459,6 +455,36 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
         </div>
         <section className="proj">
           <div className="proj-head">
+            <h2>Recent decisions</h2>
+            <span className="num proj-count">newest first</span>
+          </div>
+          {recent.length === 0
+            ? <p className="proj-none">No hook has decided anything yet. A hook that runs and passes the call through is not recorded — only one that blocks, denies, rewrites, throws, or leaves a note lands here.</p>
+            : recent.map((f, i) => (
+              <div key={`${f.at}-${f.name}-${i}`} className="proj-row hk-row">
+                <div className="hk-main">
+                  <span className="num hk-when hk-time">{clock(f.at)}</span>
+                  <span className="mono hk-name">{f.name}</span>
+                  {f.session && <a className="link mono hk-when" href={`#/s/${f.session}`}>{f.session.slice(0, 8)}</a>}
+                  <span className="mono hk-when">{f.event}</span>
+                  <span className="num hk-when">{f.ms}ms</span>
+                  <Decision fire={f} />
+                </div>
+                {f.notice && (
+                  /* A notice never reached the model; this is the only
+                     place it survives after the turn scrolls away. */
+                  <p className="hk-notice">{f.notice}</p>
+                )}
+                {f.truncated?.length > 0 && (
+                  <p className="hk-notice hk-cut">
+                    Truncated at the 10,000-character cap: {f.truncated.join(", ")}
+                  </p>
+                )}
+              </div>
+            ))}
+        </section>
+        <section className="proj">
+          <div className="proj-head">
             <h2>Watchers</h2>
             <span className="num proj-count">
               {watchers.length} {watchers.length === 1 ? "watcher" : "watchers"}
@@ -466,12 +492,9 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
           </div>
           {watchers.length === 0
             ? (
-              <div className="proj-empty">
-                <p className="proj-empty-title">No watchers running</p>
-                <p>A watcher is a <code className="mono">.js</code> file in <code className="mono">~/.bough/watchers</code> that
+              <EmptySection title="No watchers running">A watcher is a <code className="mono">.js</code> file in <code className="mono">~/.bough/watchers</code> that
                    bough runs on an interval and that can wake a session. Drop one in — say
-                   <code className="mono"> ci.js</code> — and it shows up here on the next tick.</p>
-              </div>
+                   <code className="mono"> ci.js</code> — and it shows up here on the next tick.</EmptySection>
             )
             : watchers.map((w) => (
               <WatcherRow key={w.path} w={w} load={load} save={save} setOff={setOff}
@@ -489,12 +512,9 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
           </div>
           {byEvent.length === 0
             ? (
-              <div className="proj-empty">
-                <p className="proj-empty-title">No hooks installed</p>
-                <p>A hook is a <code className="mono">.js</code> file in <code className="mono">~/.bough/hooks</code> (yours
+              <EmptySection title="No hooks installed">A hook is a <code className="mono">.js</code> file in <code className="mono">~/.bough/hooks</code> (yours
                    everywhere) or <code className="mono">.bough/hooks</code> in a repo (that repo only). The file name is the
-                   hook name; the event it listens for comes from the file itself.</p>
-              </div>
+                   hook name; the event it listens for comes from the file itself.</EmptySection>
             )
             : byEvent.map(([event, list]) => (
               <div key={event} className="hk-event">
@@ -516,13 +536,10 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
           </div>
           {rules.length === 0
             ? (
-              <div className="proj-empty">
-                <p className="proj-empty-title">No rules in force</p>
-                <p>A rule is a <code className="mono">.md</code> file in <code className="mono">~/.claude/rules</code> (every
+              <EmptySection title="No rules in force">A rule is a <code className="mono">.md</code> file in <code className="mono">~/.claude/rules</code> (every
                    repo) or <code className="mono">.claude/rules</code> in a repo (that repo only). Write one — say
                    <code className="mono"> python-standards.md</code> — and it appears here, and in the Context panel of
-                   every session it applies to.</p>
-              </div>
+                   every session it applies to.</EmptySection>
             )
             : (
               <>
@@ -557,47 +574,15 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
           </div>
           {plugins.length === 0
             ? (
-              <div className="proj-empty">
-                <p className="proj-empty-title">No plugins installed</p>
-                <p>A plugin comes from a marketplace listed in <code className="mono">~/.claude/settings.json</code> and
+              <EmptySection title="No plugins installed">A plugin comes from a marketplace listed in <code className="mono">~/.claude/settings.json</code> and
                    brings skills and slash commands with it. Add a marketplace and install one — say
-                   <code className="mono"> uni-common</code> — and everything it contributes is listed here.</p>
-              </div>
+                   <code className="mono"> uni-common</code> — and everything it contributes is listed here.</EmptySection>
             )
             : plugins.map((p) => (
               <PluginRow key={p.id} p={p} setOff={setOff} off={isOff(p.id, p.off)} onOff={mark(p.id)} />
             ))}
         </section>
 
-        <section className="proj">
-          <div className="proj-head">
-            <h2>Recent decisions</h2>
-            <span className="num proj-count">newest first</span>
-          </div>
-          {recent.length === 0
-            ? <p className="proj-none">No hook has decided anything yet. A hook that runs and passes the call through is not recorded — only one that blocks, denies, rewrites, throws, or leaves a note lands here.</p>
-            : recent.map((f, i) => (
-              <div key={`${f.at}-${f.name}-${i}`} className="proj-row hk-row">
-                <div className="hk-main">
-                  <span className="num hk-when hk-time">{clock(f.at)}</span>
-                  <span className="mono hk-name">{f.name}</span>
-                  <span className="mono hk-when">{f.event}</span>
-                  <span className="num hk-when">{f.ms}ms</span>
-                  <Decision fire={f} />
-                </div>
-                {f.notice && (
-                  /* A notice never reached the model; this is the only
-                     place it survives after the turn scrolls away. */
-                  <p className="hk-notice">{f.notice}</p>
-                )}
-                {f.truncated?.length > 0 && (
-                  <p className="hk-notice hk-cut">
-                    Truncated at the 10,000-character cap: {f.truncated.join(", ")}
-                  </p>
-                )}
-              </div>
-            ))}
-        </section>
       </div>
     </div>
   );
@@ -615,15 +600,6 @@ export function HooksPage({ onBack }: { onBack?: () => void }) {
 
   useEffect(() => { refresh(); const t = setInterval(refresh, POLL_MS); return () => clearInterval(t); }, [refresh]);
 
-  if (!data) {
-    return (
-      <div className="thread empty">
-        <div>
-          <h1>{err ? "Hooks did not load" : "Loading hooks…"}</h1>
-          {err && <p>{err}</p>}
-        </div>
-      </div>
-    );
-  }
+  if (!data) return <Pending title="Hooks" what="hooks" err={err} onBack={onBack} onRetry={refresh} />;
   return <HooksView data={data} onBack={onBack} />;
 }

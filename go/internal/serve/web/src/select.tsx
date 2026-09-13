@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 /** One choosable value. Options sharing a `group` sit under one heading. */
 export interface Option { value: string; label: string; detail?: string; group?: string; /** What the closed button shows, when shorter than the label. */ short?: string }
@@ -34,6 +34,8 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
   const root = useRef<HTMLDivElement>(null);
   const btn = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<React.CSSProperties>({});
   const current = options.find((o) => o.value === value);
   const id = useId();
   const listId = id + "-list";
@@ -43,13 +45,17 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
 
   const shown = useMemo(() => {
     const t = q.trim().toLowerCase();
-    if (!t) return options;
+    // The current value leads, once, so it never hides mid-list.
+    if (!t) {
+      const cur = options.find((o) => o.value === value);
+      return cur ? [{ ...cur, group: cur.group ? "Current" : undefined }, ...options.filter((o) => o !== cur)] : options;
+    }
     return options.filter((o) => `${o.label} ${o.detail ?? ""} ${o.group ?? ""}`.toLowerCase().includes(t));
-  }, [options, q]);
+  }, [options, q, value]);
 
   const show = () => {
     setQ("");
-    setAt(Math.max(0, options.findIndex((o) => o.value === value)));
+    setAt(0);
     setOpen(true);
   };
   const hide = (refocus: boolean) => {
@@ -68,6 +74,31 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
     if (at === 0) list.current?.scrollTo({ top: 0 });
     else list.current?.querySelector('[data-at="1"]')?.scrollIntoView({ block: "nearest" });
   }, [at, open, shown.length]);
+
+  // Placed against the viewport: 4px from the button, 8px from every
+  // edge, flipped above when there is more room there.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      if (!btn.current || !pop.current) return;
+      const b = btn.current.getBoundingClientRect();
+      // Fixed, so a percentage min-width would mean the viewport's.
+      const minWidth = Math.min(Math.max(b.width, 220), innerWidth - 16);
+      pop.current.style.minWidth = `${minWidth}px`;
+      const w = pop.current.offsetWidth;
+      const h = pop.current.scrollHeight;
+      const below = innerHeight - b.bottom - 12, above = b.top - 12;
+      const up = h > below && above > below;
+      let left = align === "end" ? b.right - w : b.left;
+      left = Math.max(8, Math.min(left, innerWidth - 8 - w));
+      setPos({ position: "fixed", minWidth, left, right: "auto", top: up ? Math.max(8, b.top - 4 - Math.min(h, above)) : b.bottom + 4,
+               maxHeight: up ? above : below });
+    };
+    place();
+    addEventListener("resize", place);
+    addEventListener("scroll", place, true);
+    return () => { removeEventListener("resize", place); removeEventListener("scroll", place, true); };
+  }, [open, align, shown.length]);
 
   // A click anywhere else closes it, as a menu does.
   useEffect(() => {
@@ -106,7 +137,7 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
         </svg>
       </button>
       {open && (
-        <div className={"sel-pop sel-" + align}>
+        <div ref={pop} style={pos} className={"sel-pop sel-" + align}>
           {searchable && (
             <input className="sel-search" autoFocus value={q} placeholder={`Search ${label.toLowerCase()}`}
                    aria-label={`Search ${label.toLowerCase()}`} role="combobox" aria-expanded="true"
@@ -123,7 +154,7 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
                         className={"sel-item" + (i === at ? " sel-on" : "")}
                         onMouseEnter={() => setAt(i)} onClick={() => pick(o)}>
                   <span className="sel-label">{o.label}</span>
-                  {o.detail && <span className="num sel-detail">{o.detail}</span>}
+                  {o.detail && <span className="num sel-detail" title="Context window">{o.detail}</span>}
                   <svg className="sel-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
                        style={{ visibility: o.value === value ? "visible" : "hidden" }}>

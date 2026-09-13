@@ -48,7 +48,7 @@ interface RepoGroup { repo: string; count: number; sessions: string[] }
  * checkout, not a thing you are doing — so repos are picked in groups
  * and the project is named by the person, not the path.
  */
-function ByRepo() {
+function ByRepo({ unassigned }: { unassigned: number }) {
   const [groups, setGroups] = useState<RepoGroup[] | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [name, setName] = useState("");
@@ -96,23 +96,19 @@ function ByRepo() {
   };
 
   if (groups === null || groups.length === 0) return null;
-  const total = groups.reduce((n, g) => n + g.count, 0);
+  // Unique sessions: one conversation can touch more than one repo.
+  const total = new Set(groups.flatMap((g) => g.sessions)).size;
   const picking = chosen.length > 0;
   const covered = groups.filter((g) => picked.has(g.repo)).reduce((n, g) => n + g.count, 0);
 
   return (
-    <section className="proj">
-      <div className="proj-head">
-        <h2>Group by repo</h2>
+    <details className="proj rp-group">
+      <summary className="proj-head">
+        <h2>Group unassigned by repo</h2>
         <span className="num proj-count">
-          {total} unfiled {total === 1 ? "conversation" : "conversations"} across{" "}
-          {groups.length} {groups.length === 1 ? "repo" : "repos"}
+          {total} of {unassigned} have an inferred repo, across {groups.length} {groups.length === 1 ? "repo" : "repos"}
         </span>
-      </div>
-      <p className="proj-none">
-        Read from the paths each conversation actually worked in. Pick the repos that belong
-        to one area of work and name it — a project can hold several repos.
-      </p>
+      </summary>
       {err && <p className="err">{err}</p>}
 
       {groups.map((g) => (
@@ -146,7 +142,7 @@ function ByRepo() {
           </button>
         </div>
       )}
-    </section>
+    </details>
   );
 }
 
@@ -212,13 +208,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onCreat
       </header>
 
       <div className="scroll proj-body">
-        <ByRepo />
-        {projects.length === 0 && (
-          <div className="proj-empty">
-            <p className="proj-empty-title">No projects yet</p>
-            <p>A project groups conversations you think of together — one service, one incident, one migration. A conversation can sit in one, or none.</p>
-          </div>
-        )}
+        <ByRepo unassigned={unassigned.length} />
 
         {projects.map((p) => {
           const list = byProject.get(p.id) ?? [];
