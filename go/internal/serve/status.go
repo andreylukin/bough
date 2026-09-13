@@ -105,7 +105,12 @@ func StatusOf(entries []history.Entry, childAlive bool) (Status, *Ask) {
 	}
 
 	switch {
-	case pending != nil:
+	// A question only waits on you while the child that asked it is alive
+	// to hear the answer. One left behind by a child that is gone — a
+	// crash, a restart, a session from last week — is resolved: an answer
+	// would reach a fresh process that never asked, so it falls through
+	// to the open turn it interrupted.
+	case pending != nil && childAlive:
 		return StatusNeedsYou, pending
 	case open && childAlive:
 		return StatusRunning, nil

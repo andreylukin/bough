@@ -45,6 +45,13 @@ func TestStatusOf(t *testing.T) {
 			want:    StatusRunning,
 		},
 		{
+			// Left behind by a child that is gone: nobody is listening for
+			// the answer, so it no longer waits on you.
+			name:    "a question from a dead child is resolved",
+			entries: entries(ent(1, "input", text("hi")), ask(2, "q1")),
+			want:    StatusInterrupted,
+		},
+		{
 			name:    "open turn with no child is interrupted",
 			entries: entries(ent(1, "input", text("hi")), ent(2, "assistant", text("working"))),
 			want:    StatusInterrupted,
