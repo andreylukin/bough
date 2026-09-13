@@ -126,18 +126,19 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 /* thinking is prose, not a program: sans, wrapped, and a measure that
    does not run the full width of a wide window */
 .block-failed .block-label{color:var(--red)}
-/* A block and its copy control. The button lives outside the <details>
-   so it survives the block being closed — copying a command without
-   opening it is the common case. Quiet until wanted, but always in the
-   DOM and always reachable by keyboard: a control that appears only on
+/* The copy control rides the block's own header row, on the trailing
+   edge, so it is there whether the block is open or shut without
+   costing a row of its own. Quiet until wanted, but always in the DOM
+   and always reachable by keyboard: a control that appears only on
    hover does not exist on a touchscreen. */
-.block-wrap{display:flex;flex-direction:column}
-.block-foot{display:flex;justify-content:flex-end;margin-top:2px}
 .copy-btn{font:11px var(--mono);color:var(--text-3);background:none;
           border:1px solid transparent;border-radius:5px;padding:2px 8px;
-          min-height:24px;cursor:pointer;opacity:.5;
+          min-height:24px;cursor:pointer;opacity:0;flex-shrink:0;
           transition-property:opacity,color,border-color;transition-duration:120ms}
-.block-wrap:hover .copy-btn,.copy-btn:focus-visible{opacity:1}
+.block-lines+.copy-btn{margin-inline-start:10px}
+/* With no line count to follow, the button takes the trailing edge. */
+.block-detail+.copy-btn{margin-inline-start:auto}
+.block:hover .copy-btn,.copy-btn:focus-visible{opacity:1}
 .copy-btn:hover{color:var(--text-1);border-color:var(--line-strong)}
 @media (hover:none){.copy-btn{opacity:1}}
 

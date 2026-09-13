@@ -164,13 +164,17 @@ function CopyButton({ text, what }: { text: string; what: string }) {
   };
 
   return (
-    <div className="block-foot">
-      <button className="copy-btn" onClick={copy} aria-label={`Copy ${what}`}>
+    <button className="copy-btn" onClick={(e) => {
+      // It sits inside the <summary>, so a click would toggle the block
+      // as well as copy it. Stop both: this is its own control.
+      e.preventDefault();
+      e.stopPropagation();
+      copy();
+    }} aria-label={`Copy ${what}`}>
         {/* The word changes, not just a colour: a state carried by
             colour alone says nothing to half the people reading it. */}
-        {done ? "Copied" : "Copy"}
-      </button>
-    </div>
+      {done ? "Copied" : "Copy"}
+    </button>
   );
 }
 
@@ -181,12 +185,12 @@ export function CodeBlock({ line }: { line: Line }) {
   // point of the list is to be scanned, and an open block for every one
   // of them buries the reply that follows.
   return (
-    <div className="block-wrap">
     <details className="block">
       <summary>
         <span className="block-label">{call.verb}</span>
         <span className="mono block-detail">{firstLine(call.gist)}</span>
         {lines > 1 && <span className="num block-lines">{lineCount(lines)}</span>}
+        <CopyButton text={call.body || call.raw} what={call.verb.toLowerCase() + " block"} />
       </summary>
       <div className="block-body">
         {call.body && <Code text={call.body} lang={call.lang} />}
@@ -200,8 +204,6 @@ export function CodeBlock({ line }: { line: Line }) {
         )}
       </div>
     </details>
-    <CopyButton text={call.body || call.raw} what={call.verb.toLowerCase() + " block"} />
-    </div>
   );
 }
 
@@ -221,19 +223,17 @@ export function ResultBlock({ line }: { line: Line }) {
   const lines = (body || "(no output)").split("\n");
   const head = lines.find((l) => l.trim()) ?? "";
   return (
-    <div className="block-wrap">
     <details className="block">
       <summary>
         <span className="block-label">Result</span>
         <span className="mono block-detail">{head.slice(0, 90)}</span>
         <span className="num block-lines">{lineCount(lines.length)}</span>
+        <CopyButton text={body} what="output" />
       </summary>
       <div className="block-body">
         <Code text={body || "(no output)"} lang={resultLang(line)} />
       </div>
     </details>
-    <CopyButton text={body} what="output" />
-    </div>
   );
 }
 
