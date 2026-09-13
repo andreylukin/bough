@@ -9,6 +9,7 @@ import { DialogHost, askText } from "./dialog";
 import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath } from "./code";
 import { finishedJobs, lastTestRun } from "./runs";
+import { capped } from "./code";
 import { SkillPicker } from "./skills";
 import { Mentions, triggerAt, type Trigger } from "./mention";
 import { HooksPage } from "./hooks";
@@ -966,7 +967,7 @@ export function SubAgentView({ agent, live }: { agent: SubAgent; live: boolean }
   return (
     <details className={"sub " + st.cls} open={agent.status === "error"}>
       <summary>
-        <span className="sub-task">{task}</span>
+        <span className="sub-task" title={agent.task || undefined}>{task}</span>
         <span className="num sub-tag">Subagent {agent.worker}</span>
         <span className="sub-state">
           {working && (
@@ -1171,8 +1172,8 @@ export function ToolRun({ lines, codes }: { lines: Line[]; codes: string[] }) {
   return (
     <details className="block thin toolrun" ref={box}>
       <summary {...handlers}>
-        <span className={"block-label" + (failed ? " thin-failed" : "")}>{verbs.join(" + ")}</span>
-        <span className="mono block-detail">{targets.join(" · ")}</span>
+        <span className={"block-label" + (failed ? " thin-failed" : "")}>{capped(verbs, 2, " + ")}</span>
+        <span className="mono block-detail">{capped(targets, 1, " · ")}</span>
         <span className="num tool-meta">{calls} calls{timed ? ` · ${duration(totalMs)}` : ""}</span>
         {failed > 0 && <button type="button" className="link num toolrun-failed" onClick={openFailed}>{failed} failed</button>}
       </summary>
@@ -1253,7 +1254,11 @@ const DECIDED: Record<string, string> = { block: "blocked", deny: "denied", allo
 
 export function TurnHooks({ lines }: { lines: Line[] }) {
   const fires = lines.filter((l) => l.kind === "hook");
-  if (!fires.length) return null;
+  // A "hook <event>: notice" line a fire already carries is that fire,
+  // said twice; one no fire carries is shown once, here.
+  const carried = new Set(fires.map((l) => str(l.data?.notice)).filter(Boolean));
+  const loose = lines.filter((l) => l.kind === "system" && !carried.has(l.text.replace(/^hook [^:]*:\s*/, "")));
+  if (!fires.length && !loose.length) return null;
   // What the decisions were ("1 blocked"), not that there were some.
   const outcomes = new Map<string, number>();
   for (const l of fires) {
@@ -1266,14 +1271,16 @@ export function TurnHooks({ lines }: { lines: Line[] }) {
     const n = str(l.data?.notice);
     if (n.startsWith("applied ")) n.slice(8).split(", ").forEach((r) => rules.add(r));
   }
-  const parts = [`${fires.length} fired`];
-  for (const [d, n] of outcomes) parts.push(`${n} ${DECIDED[d] ?? d}`);
+  const parts = [`${fires.length || loose.length} ${fires.length ? "fired" : "notices"}`];
+  const bad: string[] = [];
+  for (const [d, n] of outcomes) (d === "block" || d === "deny" ? bad : parts).push(`${n} ${DECIDED[d] ?? d}`);
   if (rules.size) parts.push(`${rules.size} ${rules.size === 1 ? "rule" : "rules"} applied`);
   return (
     <details className="block thin turn-hooks">
       <summary>
         <span className="block-label">Hooks</span>
         <span className="block-detail">{parts.join(" · ")}</span>
+        {bad.length > 0 && <span className="num toolrun-failed">{bad.join(" · ")}</span>}
         {errored > 0 && <span className="num toolrun-failed">{errored} errored</span>}
       </summary>
       <div className="turn-hooks-body">
@@ -1292,6 +1299,7 @@ export function TurnHooks({ lines }: { lines: Line[] }) {
             </p>
           );
         })}
+        {loose.map((l) => <p key={l.seq} className="hook-line hook-why">{l.text}</p>)}
       </div>
     </details>
   );

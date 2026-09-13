@@ -147,8 +147,8 @@ export function parseCall(code: string): Call {
         return s ? (m[1] === "bash" ? describeBash(s.value) : { verb: "", gist: s.value.split("\n")[0] }) : { verb: "", gist: m[1] };
       });
       const verbs = [...new Set(ops.map((o) => o.verb))];
-      const verb = verbs.every(Boolean) ? verbs.map((v, i) => (i ? v.toLowerCase() : v)).join(" + ") : "Program";
-      return { verb, target: "", gist: [...new Set(ops.map((o) => o.gist))].join(" · "), body: raw, lang: "javascript", raw };
+      const verb = verbs.every(Boolean) ? capped(verbs.map((v, i) => (i ? v.toLowerCase() : v)), 2, " + ") : "Program";
+      return { verb, target: "", gist: capped([...new Set(ops.map((o) => o.gist))], 1, " · "), body: raw, lang: "javascript", raw };
     }
     return { verb: "Code", target: "", gist: gistOf(raw), body: raw, lang: "javascript", raw };
   }
@@ -164,12 +164,23 @@ export function parseCall(code: string): Call {
       return { verb: "Read", target: a, gist: a, body: "", lang: "", raw };
     case "spawn":
     case "spawnAll":
-      return { verb: "Spawned subagents", target: "", gist: gistOf(raw), body: raw, lang: "javascript", raw };
+      return { verb: "Delegate", target: "", gist: agents(raw), body: raw, lang: "javascript", raw };
     case "ask":
       return { verb: "Asked you", target: a, gist: a, body: "", lang: "", raw };
     default:
       return { verb: call.name, target: a, gist: gistOf(a || raw), body: raw, lang: "javascript", raw };
   }
+}
+
+/** The first `keep` names, then "+N" for the rest: a line names the work, the hover lists it. */
+export function capped(names: string[], keep: number, sep: string): string {
+  return names.length > keep ? `${names.slice(0, keep).join(sep)} +${names.length - keep}` : names.join(sep);
+}
+
+/** "N agents" from the tasks the call lists; nothing when they are built at run time. */
+function agents(raw: string): string {
+  const n = [...raw.matchAll(/\b(?:task|prompt)\s*:/g)].length || (/\btools\.spawn\s*\(/.test(raw) ? 1 : 0);
+  return n ? `${n} ${n === 1 ? "agent" : "agents"}` : "";
 }
 
 /** Highlighted source. Falls back to plain text when the language is unknown. */

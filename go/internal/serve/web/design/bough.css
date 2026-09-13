@@ -247,7 +247,8 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .transcript:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 /* Left-aligned under the header, as wide as a wide window allows:
    commands, output and tables use the width; prose keeps a measure. */
-.transcript>*{width:100%;max-width:1088px;margin-inline:0}
+.transcript>*{width:100%;max-width:960px;margin-inline:0}
+.transcript .prompt{max-width:none}
 .transcript .say{max-width:none}
 /* Prose keeps its measure; a table takes the column's full width. */
 .say>:not(.md),.say>.md>:not(.md-table){max-width:80ch}
@@ -599,7 +600,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .turn-hooks{background:none;border:1px solid var(--line)}
 .turn-hooks>summary{padding:5px 12px}
 .turn-hooks>summary .block-label,.turn-hooks>summary .block-detail{font-size:12px;color:var(--text-3)}
-.turn-hooks-body{padding:8px 12px 4px;border-top:1px solid var(--line)}
+.turn-hooks-body{max-height:min(280px,35dvh);overflow:auto;padding:8px 12px 4px;border-top:1px solid var(--line)}
 .turn-hooks-body .hook-line{margin:0 0 6px;overflow-wrap:anywhere}
 .thinking pre{color:var(--text-3);font:13px/1.65 var(--sans);white-space:pre-wrap;
               text-indent:0;padding-inline-start:14px;max-width:78ch}
@@ -674,6 +675,9 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .md-table::after{content:"";position:absolute;inset-block:0;right:0;width:40px;pointer-events:none;
   background:linear-gradient(to right,transparent,var(--bg))}
 .md-table[data-end]::after{display:none}
+@media (max-width:720px){.md-table table{min-width:640px}.md-table th,.md-table td{padding:8px;font-size:13px;line-height:18px}
+  .md-table th:first-child,.md-table td:first-child{position:sticky;left:0;width:112px;min-width:112px;background:var(--bg);z-index:1}
+  .md-table code{white-space:nowrap}}
 .md table{border-collapse:collapse;margin:0;font-size:14px;display:table}
 .md th,.md td{border:1px solid var(--line);padding:6px 10px;text-align:start;vertical-align:top}
 .md th{color:var(--text-1);font-weight:600}
@@ -692,7 +696,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 /* The composer shares the transcript's column, so what you type
    lines up with what you are reading. */
 .composer-wrap{position:relative;flex-shrink:0;padding:8px 24px 12px}
-.composer-wrap>*{width:100%;max-width:1088px;margin-inline:0}
+.composer-wrap>*{width:100%;max-width:960px;margin-inline:0}
 .send-failed{margin-bottom:8px;padding-inline:12px;line-height:18px;color:var(--text-2);font-size:13px;
              display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;column-gap:8px}
 .send-failed>details{min-width:0}
