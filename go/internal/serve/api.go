@@ -376,6 +376,15 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 	if title == "" {
 		title = in.Title
 	}
+	// meta.Model is only set when the model was changed FROM here, so a
+	// session left on its configured model reported nothing and the
+	// picker could only say "as configured" — which names no model and
+	// tells you nothing. Every assistant entry records the model that
+	// answered, so the session says what it is actually running.
+	model := meta.Model
+	if model == "" {
+		model = lastModel(entries)
+	}
 	return Row{
 		ID:       in.ID,
 		Title:    title,
@@ -388,10 +397,24 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 		Entries:  in.Entries,
 		Modified: in.ModTime,
 		Ask:      ask,
-		Model:    meta.Model,
+		Model:    model,
 		Effort:   meta.Effort,
 		Project:  meta.Project,
 	}
+}
+
+// lastModel is the model that answered most recently, or "" for a
+// session that has not had a reply yet.
+func lastModel(entries []history.Entry) string {
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Kind != "assistant" {
+			continue
+		}
+		if m, ok := entries[i].Data["model"].(string); ok && m != "" {
+			return m
+		}
+	}
+	return ""
 }
 
 // writeRow re-reads the session so the reply reflects the state after

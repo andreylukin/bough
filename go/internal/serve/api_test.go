@@ -489,3 +489,27 @@ func TestHealthCarriesHome(t *testing.T) {
 		t.Errorf("home = %v, want %q", body["home"], f.home)
 	}
 }
+
+// "as configured" named no model and told the reader nothing. A model
+// is only in meta when it was changed from the control room, but every
+// assistant entry records the model that answered.
+func TestRowReportsTheModelThatAnswered(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	now := time.Now()
+	f.seed(t, "01a00000-0000-7000-8000-0000000model1",
+		history.Entry{Seq: 1, At: now, Kind: "meta", Data: map[string]any{"cwd": f.home}},
+		history.Entry{Seq: 2, At: now, Kind: "input", Data: map[string]any{"text": "hi"}},
+		history.Entry{Seq: 3, At: now, Kind: "assistant", Data: map[string]any{
+			"text": "hello", "model": "gpt-6-astra"}},
+		history.Entry{Seq: 4, At: now, Kind: "done", Data: nil},
+	)
+	code, body := f.do(t, "GET", "/api/sessions/01a00000-0000-7000-8000-0000000model1", "")
+	if code != http.StatusOK {
+		t.Fatalf("GET = %d", code)
+	}
+	sess, _ := body["session"].(map[string]any)
+	if sess["model"] != "gpt-6-astra" {
+		t.Errorf("model = %v, want the model that actually answered", sess["model"])
+	}
+}

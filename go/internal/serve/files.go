@@ -11,7 +11,6 @@ package serve
 // and takes nine seconds.
 
 import (
-	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -26,11 +25,23 @@ const (
 )
 
 // skipDir is the directories worth never descending into: they are
-// enormous, machine-written, and never what @ is reaching for.
+// enormous, machine-written, and never what @ is reaching for. The
+// Go module cache alone holds hundreds of thousands of vendored files
+// and was swallowing the whole walk on a real machine.
 var skipDir = map[string]bool{
 	".git": true, "node_modules": true, "vendor": true, "target": true,
 	"dist": true, "build": true, ".venv": true, "venv": true,
-	"__pycache__": true, ".next": true, ".cache": true, "Library": true,
+	"__pycache__": true, ".next": true, ".cache": true,
+	"Library": true, "Applications": true, "Downloads": true,
+	"Pictures": true, "Music": true, "Movies": true, "Trash": true,
+	".cargo": true, ".rustup": true, ".npm": true, ".gradle": true, ".m2": true,
+}
+
+// vendorPath is a relative directory that is somebody else's code even
+// though its own name is innocent: ~/go/pkg/mod is the one that
+// mattered here.
+func vendorPath(rel string) bool {
+	return rel == "go/pkg" || strings.HasPrefix(rel, "go/pkg/")
 }
 
 // fileHit is one path, relative to the directory searched.
@@ -58,37 +69,53 @@ func (a *API) files(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"files": findFiles(base, q)})
 }
 
+// findFiles searches breadth-first, on purpose.
+//
+// filepath.WalkDir is depth-first, so on a real home directory it dove
+// into the first large tree it met and spent the whole entry budget
+// there — every result came back from the Go module cache and the
+// repositories the person actually works in were never reached. Going
+// a level at a time means the budget is spent near the top, which is
+// where the answer almost always is, and running out degrades to
+// "shallow results only" rather than "results from one arbitrary
+// subtree".
 func findFiles(base, q string) []fileHit {
 	var hits []fileHit
 	seen := 0
-	_ = filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
+	queue := []string{""} // relative dirs, shallowest first
+
+	for len(queue) > 0 && seen < fileWalkCap {
+		dir := queue[0]
+		queue = queue[1:]
+		entries, err := os.ReadDir(filepath.Join(base, dir))
 		if err != nil {
-			return nil // an unreadable directory is not the picker's problem
+			continue // an unreadable directory is not the picker's problem
 		}
-		if seen++; seen > fileWalkCap {
-			return fs.SkipAll
-		}
-		rel, rerr := filepath.Rel(base, p)
-		if rerr != nil || rel == "." {
-			return nil
-		}
-		name := d.Name()
-		if d.IsDir() {
-			if skipDir[name] || (strings.HasPrefix(name, ".") && name != ".") {
-				return fs.SkipDir
+		for _, d := range entries {
+			if seen++; seen > fileWalkCap {
+				break
 			}
-			if strings.Count(rel, string(os.PathSeparator)) >= fileDepthCap {
-				return fs.SkipDir
+			name := d.Name()
+			rel := name
+			if dir != "" {
+				rel = dir + string(os.PathSeparator) + name
+			}
+			if d.IsDir() {
+				if skipDir[name] || strings.HasPrefix(name, ".") || vendorPath(filepath.ToSlash(rel)) {
+					continue
+				}
+				if strings.Count(rel, string(os.PathSeparator)) < fileDepthCap {
+					queue = append(queue, rel)
+				}
+			}
+			slash := filepath.ToSlash(rel)
+			if r := matchPath(strings.ToLower(slash), strings.ToLower(name), q); r >= 0 {
+				// Depth is a tiebreaker, not a filter: a file near the
+				// top is more likely to be the one meant.
+				hits = append(hits, fileHit{Path: slash, Dir: d.IsDir(), rank: r*10 - strings.Count(slash, "/")})
 			}
 		}
-		if rank := matchPath(strings.ToLower(rel), strings.ToLower(name), q); rank >= 0 {
-			hits = append(hits, fileHit{Path: filepath.ToSlash(rel), Dir: d.IsDir(), rank: rank})
-		}
-		return nil
-	})
-	// Best first, then shortest: a match on the file's own name beats
-	// one buried in its directories, and a short path is more likely to
-	// be the thing meant.
+	}
 	sort.SliceStable(hits, func(i, j int) bool {
 		if hits[i].rank != hits[j].rank {
 			return hits[i].rank > hits[j].rank

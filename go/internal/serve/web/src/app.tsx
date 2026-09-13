@@ -428,7 +428,9 @@ export function Controls({ row, projects, onModel, onEffort, onAssign }: {
       <label className="ctl">
         <span className="ctl-label">Model</span>
         <select value={row.model ?? ""} onChange={(e) => e.target.value && onModel(e.target.value)}>
-          <option value="">{row.model ? row.model : "as configured"}</option>
+          {/* A session that has not answered yet genuinely has no model
+              to name; everything else says the one that is answering. */}
+          <option value="">{row.model ? row.model : "not set yet"}</option>
           {cat?.providers.map((p) => (
             <optgroup key={p.plugin} label={p.plugin.replace(/^llm-/, "")}>
               {(p.models ?? []).map((m) => (
