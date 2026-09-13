@@ -58,6 +58,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
            text-overflow:ellipsis;min-width:0}
 .row-on .row-title{color:var(--text-1)}
 .sidebar-foot{border-top:1px solid var(--line);padding:12px 20px}
+.head-ack{height:26px;padding:0 10px;font-size:12px;flex-shrink:0}
 .brand-new{margin-inline-start:auto;height:28px;padding:0 10px;font-size:12px}
 .link{background:none;border:0;padding:0;color:var(--text-3);font:12px var(--sans);cursor:pointer}
 .link:hover{color:var(--text-1)}

@@ -72,7 +72,9 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
   const groups = useMemo(() => {
     const out = new Map<string, Row[]>();
     for (const r of rows) {
-      const k = r.status === "needs-you" ? "Needs you" : r.status === "running" ? "Running" : bucket(r.modified);
+      // A failure you have not seen is as much "yours" as a question; once
+      // marked seen it falls back to the day it happened.
+      const k = r.status === "needs-you" || r.trouble ? "Needs you" : r.status === "running" ? "Running" : bucket(r.modified);
       if (!out.has(k)) out.set(k, []);
       out.get(k)!.push(r);
     }
@@ -1001,10 +1003,10 @@ export function Back({ onBack }: { onBack?: () => void }) {
   );
 }
 
-export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy }: {
+export function Thread({ row, lines, stream = [], projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy }: {
   row: Row; lines: Line[]; stream?: DeltaRun[]; projects: Project[]; busy: boolean; onBack?: () => void;
   onSend: (t: string) => Promise<boolean> | void; onAnswer: (t: string) => Promise<boolean> | void; onInterrupt: () => void;
-  onArchive: () => void; onRename: (t: string) => void; onContext?: () => void;
+  onArchive: () => void; onRename: (t: string) => void; onContext?: () => void; onAck?: () => void;
   onModel: (m: string) => void; onEffort: (e: string) => void; onAssign: (p: string) => void;
 }) {
   // One draft per session: switching away and back keeps what you were
@@ -1097,6 +1099,7 @@ export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, on
             </span>
           )}
           <StatusMark status={row.status} />
+          {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
         </div>
         <button className="more" aria-label="Session settings" aria-expanded={more}
                 onClick={() => setMore((v) => !v)}>
@@ -1541,7 +1544,8 @@ export default function App() {
           onModel={(m) => act(() => api.model(row.id, m))}
           onEffort={(e) => act(() => api.effort(row.id, e))}
           onAssign={(p) => act(() => api.assign(row.id, p))}
-          onContext={() => setContext(true)} />
+          onContext={() => setContext(true)}
+          onAck={() => act(() => api.ack(row.id))} />
       ) : (
         <div className="thread empty">
           <div>

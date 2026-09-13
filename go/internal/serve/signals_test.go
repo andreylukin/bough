@@ -2,6 +2,7 @@ package serve
 
 import (
 	"testing"
+	"time"
 
 	"github.com/andreylukin/bough/plugins/history"
 )
@@ -41,6 +42,27 @@ func TestLastCache(t *testing.T) {
 	c := LastCache(entries(usage(1, 800), usage(2, 0), ent(3, "input", text("hi"))), "anthropic/claude-sonnet-5")
 	if c == nil || c.Read != 800 || c.At != ent(1, "", nil).At {
 		t.Fatalf("cache = %+v, want the turn that reported one", c)
+	}
+}
+
+func TestTroubled(t *testing.T) {
+	t.Parallel()
+	es := entries(ent(1, "input", text("hi")), ent(2, "error", text("boom")))
+	now := es[1].At.Add(time.Hour)
+	if !Troubled(StatusError, es, 0, now) {
+		t.Fatal("an unseen failure needs a person")
+	}
+	if Troubled(StatusError, es, 2, now) {
+		t.Fatal("a failure marked seen does not")
+	}
+	if !Troubled(StatusInterrupted, append(es, ent(3, "input", text("again"))), 2, now) {
+		t.Fatal("something recorded after the ack resurfaces")
+	}
+	if Troubled(StatusStopped, es, 0, now) || Troubled(StatusDone, es, 0, now) {
+		t.Fatal("a stop on purpose or a finished turn is not trouble")
+	}
+	if Troubled(StatusError, es, 0, now.Add(8*24*time.Hour)) {
+		t.Fatal("a failure older than the window is history, not a queue item")
 	}
 }
 

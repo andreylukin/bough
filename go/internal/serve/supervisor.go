@@ -52,6 +52,10 @@ type SessionMeta struct {
 	// "" is ungrouped, which is the normal state — a session is never
 	// forced into one.
 	Project string `json:"project,omitempty"`
+	// Ack is the last history seq a person marked seen. A failure or an
+	// unexpected interruption recorded after it still needs them; one at
+	// or before it has been dealt with. A later failure resurfaces.
+	Ack int64 `json:"ack,omitempty"`
 }
 
 // Project is a named grouping of sessions. It exists independently of
@@ -903,6 +907,24 @@ func (s *Supervisor) SetArchived(id string, archived bool) error {
 	defer s.mu.Unlock()
 	m := s.meta[id]
 	m.Archived = archived
+	s.meta[id] = m
+	return s.saveMetaLocked()
+}
+
+// Acknowledge marks everything the session has recorded so far as seen.
+func (s *Supervisor) Acknowledge(id string) error {
+	entries, err := s.Entries(id)
+	if err != nil {
+		return err
+	}
+	var last int64
+	if n := len(entries); n > 0 {
+		last = entries[n-1].Seq
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.meta[id]
+	m.Ack = last
 	s.meta[id] = m
 	return s.saveMetaLocked()
 }

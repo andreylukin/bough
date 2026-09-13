@@ -31,6 +31,8 @@ export const api = {
   changes: (id: string) => req<{ repo: boolean; files: Change[] }>(`/api/sessions/${id}/changes`),
   /** Ask the session to stop one of its background jobs. */
   killJob: (id: string, job: number) => post(`/api/sessions/${id}/jobs/${job}/kill`),
+  /** Mark what a session has recorded so far as seen, taking it out of Needs you. */
+  ack: (id: string) => post(`/api/sessions/${id}/ack`),
 
   /** Where a new session starts, from the server that knows. */
   home: () => req<{ home: string }>("/api/health").then((r) => r.home ?? ""),

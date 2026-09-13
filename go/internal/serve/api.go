@@ -59,6 +59,8 @@ type Row struct {
 	// cache after the last turn that reported one.
 	Jobs  []Job  `json:"jobs,omitempty"`
 	Cache *Cache `json:"cache,omitempty"`
+	// Trouble: failed or interrupted, and not yet marked seen.
+	Trouble bool `json:"trouble,omitempty"`
 }
 
 // maxBody caps every request body: the API takes prompts and titles,
@@ -85,6 +87,7 @@ func NewAPI(sup *Supervisor) *API {
 	a.mux.HandleFunc("POST /api/sessions/{id}/rename", a.rename)
 	a.mux.HandleFunc("POST /api/sessions/{id}/archive", a.archive)
 	a.mux.HandleFunc("POST /api/sessions/{id}/unarchive", a.unarchive)
+	a.mux.HandleFunc("POST /api/sessions/{id}/ack", a.ack)
 	a.mux.HandleFunc("POST /api/sessions/{id}/model", a.setModel)
 	a.mux.HandleFunc("POST /api/sessions/{id}/effort", a.setEffort)
 	a.mux.HandleFunc("GET /api/search", a.search)
@@ -298,6 +301,11 @@ func (a *API) unarchive(w http.ResponseWriter, r *http.Request) {
 	a.metaVerb(w, id, func() error { return a.sup.SetArchived(id, false) })
 }
 
+func (a *API) ack(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	a.metaVerb(w, id, func() error { return a.sup.Acknowledge(id) })
+}
+
 func (a *API) metaVerb(w http.ResponseWriter, id string, fn func() error) {
 	if _, ok := a.info(id); !ok {
 		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: unknown session %q", id))
@@ -423,6 +431,7 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 		Project:  meta.Project,
 		Jobs:     RunningJobs(entries, live),
 		Cache:    LastCache(entries, model),
+		Trouble:  Troubled(st, entries, meta.Ack, time.Now()),
 	}
 }
 

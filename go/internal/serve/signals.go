@@ -56,6 +56,22 @@ func RunningJobs(entries []history.Entry, childAlive bool) []Job {
 	return out
 }
 
+// troubleWindow bounds how old an unseen failure can be and still ask for
+// attention: without it every failure ever recorded floods Needs you the
+// first time the feature is on. A week covers a weekend away.
+const troubleWindow = 7 * 24 * time.Hour
+
+// Troubled says whether a session's outcome still needs a person: it
+// failed or was interrupted (not stopped on purpose), within the window,
+// and recorded something after the last time it was marked seen.
+func Troubled(st Status, entries []history.Entry, ack int64, now time.Time) bool {
+	if (st != StatusError && st != StatusInterrupted) || len(entries) == 0 {
+		return false
+	}
+	last := entries[len(entries)-1]
+	return last.Seq > ack && now.Sub(last.At) < troubleWindow
+}
+
 // cacheTTLFor is how long a provider keeps a used prompt prefix, as its
 // docs state it: Anthropic's default ephemeral cache is five minutes;
 // OpenAI keeps prefixes for at least 30 minutes on GPT-5.6 and later
