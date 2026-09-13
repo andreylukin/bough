@@ -159,7 +159,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
                color:var(--text-2);background:none;border:0;border-radius:6px;cursor:pointer}
 .head-pop-item:hover{background:var(--sel);color:var(--text-1)}
 /* Model, effort, cache and Context move into settings only on a phone. */
-.head-pop-phone,.rt-run{display:none}
+.head-pop-phone,.runtime-strip .rt-run{display:none}
 .head-pop-cache{padding:4px 10px 8px;font-size:12px}
 @media (pointer:coarse){.head-pop-item{height:44px}}
 .more{display:inline-flex;flex-shrink:0;width:32px;height:32px;align-items:center;justify-content:center;
@@ -817,7 +817,7 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .head-side>.controls,.head-context,.runtime-strip .rt-cache-hot,.runtime-strip .rt-cache-cold{display:none}
   .back,.head-more>.more{width:44px;height:44px}
   .thread-head>.runtime-strip{padding:0 4px;gap:0 14px;font-variant-numeric:tabular-nums}
-  .rt-run{display:inline-flex;flex-basis:100%;min-height:24px;gap:8px}
+  .runtime-strip .rt-run{display:inline-flex;flex-basis:100%;min-height:24px;gap:8px}
   div.head-pop-phone{display:flex;flex-direction:column}
   button.head-pop-phone{display:flex;flex-direction:row}
   .head-pop .ctl-run{flex-direction:column;align-items:stretch;gap:8px}
