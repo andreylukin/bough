@@ -8,3 +8,8 @@ export * from "./src/projects";
 export * from "./src/skills";
 export * from "./src/status";
 export * from "./src/render";
+export * from "./src/code";
+export * from "./src/hooks";
+export * from "./src/context";
+export * from "./src/mention";
+export * from "./src/palette";

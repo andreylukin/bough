@@ -12,7 +12,8 @@
   "titleMap": {
     "Transcript": "TurnView",
     "Shell": "App",
-    "Foundations": null
+    "Foundations": null,
+    "Live": "StreamView"
   },
   "overrides": {
     "App": {

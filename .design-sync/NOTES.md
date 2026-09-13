@@ -107,3 +107,19 @@ final bundle (14:12) picked that change up. Consequences:
 Fix on the next sync, once that work has landed: add `export * from "./hooks"`
 to `ds-entry.ts`, rebuild `.design-sync/sb-reference`, re-run the driver. Both
 components will re-grade (their sources moved), which is correct.
+
+## Drift found on the 2026-09-12 re-sync
+
+- **The barrel had fallen five modules behind the stories.** It re-exported
+  app/projects/skills/status/render while the stories imported context,
+  hooks, mention and palette too — each of which would have rendered as an
+  undefined component. This is exactly the failure the header warns about,
+  and it happened within a day. `bun run typecheck` (added in the web
+  package) now type-checks src AND stories together, which is the cheapest
+  thing that would have caught it.
+- **`Sidebar` and `Entry` had lost their `export`** entirely when app.tsx
+  was rewritten, so Navigation/Sidebar and the transcript family were
+  broken at the source, not just in the barrel.
+- **`Live` added to titleMap** → `StreamView`. thread/live.stories.tsx
+  showcases the live half of a turn (StreamView, SubRun, Working); StreamView
+  is the composed one, the same reasoning as Transcript → TurnView.
