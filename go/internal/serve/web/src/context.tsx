@@ -60,7 +60,7 @@ export const contextApi = {
 function FileRow({ f }: { f: ContextFile }) {
   return (
     <details className="proj-row hk-row ctx-file">
-      <summary className="hk-main">
+      <summary className="ctx-file-main">
         <span className="mono hk-name">{base(f.path)}</span>
         {f.dropped > 0
           ? (
@@ -75,13 +75,19 @@ function FileRow({ f }: { f: ContextFile }) {
   );
 }
 
-/** A section with nothing in it: one line, the how-to behind a click. */
-export function EmptySection({ title, children }: { title: string; children: React.ReactNode }) {
+/** A section with nothing in it: its name, "none", and the how-to behind a click — one row. */
+export function EmptySection({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
-    <details className="proj-empty ctx-empty">
-      <summary><span className="proj-empty-title">{title}</span> <span className="link">How to add</span></summary>
-      <p>{children}</p>
-    </details>
+    <section className="proj">
+      {children
+        ? (
+          <details className="proj-empty ctx-empty">
+            <summary><h2 className="proj-empty-title">{title}</h2> <span className="ctx-none">none</span> <span className="link">How to add</span></summary>
+            <p>{children}</p>
+          </details>
+        )
+        : <div className="proj-empty ctx-empty"><div className="ctx-empty-row"><h2 className="proj-empty-title">{title}</h2> <span className="ctx-none">none</span></div></div>}
+    </section>
   );
 }
 
@@ -121,73 +127,74 @@ export function ContextView({ data, onBack, load = hooksApi.read, save = hooksAp
       </header>
 
       <div className="scroll proj-body">
-        <p className="ctx-lede">
-          Everything below is in force for this conversation, resolved against
-          <code className="mono"> {cwd}</code>. Turning something off here leaves it listed, off, for every session.
-        </p>
+        <p className="ctx-lede">Disabling anything here disables it in every session.</p>
 
-        <section className="proj">
-          <div className="proj-head">
-            <h2>Rules</h2>
-            <span className="num proj-count">
-              {rules.length} {rules.length === 1 ? "rule" : "rules"} apply here
-            </span>
-          </div>
-          {rules.length === 0
-            ? (
-              <EmptySection title="No rules apply here">
-                Write a <code className="mono">.md</code> file in <code className="mono">~/.claude/rules</code> to have
-                   it apply everywhere, or in <code className="mono">.claude/rules</code> under
-                   <code className="mono"> {cwd}</code> to have it apply to this repo alone.
-              </EmptySection>
-            )
-            : rules.map((r) => (
-              <RuleRow key={r.id} r={r} load={load} save={save} setOff={setOff}
-                       off={isOff(r.id, r.off)} onOff={mark(r.id)} />
-            ))}
-        </section>
-
-        <section className="proj">
-          <div className="proj-head">
-            <h2>Context files</h2>
-            <span className="num proj-count">read from this directory up</span>
-          </div>
-          {found.length === 0
-            ? (
-              <EmptySection title="No context files">
-                bough reads <code className="mono">AGENTS.md</code> and <code className="mono">CLAUDE.md</code> from
-                   <code className="mono"> {cwd}</code> and every directory above it. Write one to tell every session here
-                   what it should know.
-              </EmptySection>
-            )
-            : found.map((f) => <FileRow key={f.path} f={f} />)}
-          {missing.length > 0 && (
-            <details className="ctx-missing">
-              <summary>{missing.length} {missing.length === 1 ? "file" : "files"} not found</summary>
-              {missing.map((f) => <p key={f.path} className="mono hk-path">{f.path}</p>)}
-            </details>
+        {found.length === 0 && missing.length === 0
+          ? (
+            <EmptySection title="Context files">
+              bough reads <code className="mono">AGENTS.md</code> and <code className="mono">CLAUDE.md</code> from
+                 this directory and every one above it.
+            </EmptySection>
+          )
+          : (
+            <section className="proj">
+              <div className="proj-head">
+                <h2>Context files</h2>
+                <span className="num proj-count">read from this directory up</span>
+              </div>
+              {found.map((f) => <FileRow key={f.path} f={f} />)}
+              {missing.length > 0 && (
+                <details className="ctx-missing">
+                  <summary>{missing.length} {missing.length === 1 ? "file" : "files"} not found</summary>
+                  {missing.map((f) => <p key={f.path} className="mono hk-path">{f.path}</p>)}
+                </details>
+              )}
+            </section>
           )}
-        </section>
 
-        <section className="proj">
-          <div className="proj-head">
-            <h2>Skills</h2>
-            <span className="num proj-count">
-              {skills.length} {skills.length === 1 ? "skill" : "skills"}
-            </span>
-          </div>
-          {skills.length === 0
-            ? (
-              <EmptySection title="No skills reachable">
-                A skill is a <code className="mono">SKILL.md</code> folder under
-                   <code className="mono"> ~/.claude/skills</code>, or one a plugin brings with it. Add one and it can be
-                   run from the composer as <code className="mono">/name</code>.
-              </EmptySection>
-            )
-            : skills.map((s) => (
-              <SkillRow key={s.id} s={s} setOff={setOff} off={isOff(s.id, s.off)} onOff={mark(s.id)} />
-            ))}
-        </section>
+        {rules.length === 0
+          ? (
+            <EmptySection title="Rules">
+              Write a <code className="mono">.md</code> file in <code className="mono">~/.claude/rules</code> to have
+                 it apply everywhere, or in <code className="mono">.claude/rules</code> in this repo to have it apply here alone.
+            </EmptySection>
+          )
+          : (
+            <section className="proj">
+              <div className="proj-head">
+                <h2>Rules</h2>
+                <span className="num proj-count">
+                  {rules.length} {rules.length === 1 ? "rule" : "rules"} apply here
+                </span>
+              </div>
+              {rules.map((r) => (
+                <RuleRow key={r.id} r={r} load={load} save={save} setOff={setOff}
+                         off={isOff(r.id, r.off)} onOff={mark(r.id)} />
+              ))}
+            </section>
+          )}
+
+        {skills.length === 0
+          ? (
+            <EmptySection title="Skills">
+              A skill is a <code className="mono">SKILL.md</code> folder under
+                 <code className="mono"> ~/.claude/skills</code>, or one a plugin brings with it. Add one and it can be
+                 run from the composer as <code className="mono">/name</code>.
+            </EmptySection>
+          )
+          : (
+            <section className="proj">
+              <div className="proj-head">
+                <h2>Skills</h2>
+                <span className="num proj-count">
+                  {skills.length} {skills.length === 1 ? "skill" : "skills"}
+                </span>
+              </div>
+              {skills.map((s) => (
+                <SkillRow key={s.id} s={s} setOff={setOff} off={isOff(s.id, s.off)} onOff={mark(s.id)} />
+              ))}
+            </section>
+          )}
       </div>
     </div>
   );

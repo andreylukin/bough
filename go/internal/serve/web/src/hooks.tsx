@@ -161,7 +161,7 @@ export function OffToggle({ id, off, what, setOff, onChange }: {
   return (
     <>
       <button className="hk-offbtn hk-act" disabled={busy} onClick={flip}>
-        {off ? "Turn back on" : "Turn off"}
+        {off ? "Enable globally" : "Disable globally"}
         <span className="visually-hidden"> {what}</span>
       </button>
       {err && <span className="hk-state hk-bad">Did not save — {err}</span>}
@@ -429,6 +429,12 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
     return [...m.entries()];
   }, [hooks]);
 
+  const active = [
+    ...watchers.map((w) => !isOff(offId("watcher", w.id), w.off)),
+    ...hooks.map((h) => !h.shadowed && !isOff(offId("hook", h.id), h.off)),
+    ...rules.map((r) => !isOff(offId("rule", r.id), r.off)),
+    ...plugins.map((p) => p.present && !isOff(offId("plugin", p.id), p.off)),
+  ].filter(Boolean).length;
   const broken = watchers.filter((w) => w.failing).length + hooks.filter((h) => h.failing).length;
   // The server's own `off` is the fallback, not `false`: a toggle made
   // in this tab wins, but anything already off stays counted.
@@ -445,12 +451,12 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
   // Runs of identical quiet fires fold to one row with ×N; anything that
   // decided, errored or left a note always keeps its own row.
   const runs = useMemo(() => {
-    const out: { f: Fire; n: number; key: string }[] = [];
+    const out: { f: Fire; n: number; key: string; all: Fire[] }[] = [];
     recent.forEach((f, i) => {
       const last = out[out.length - 1];
       if (last && quiet(f) && quiet(last.f) && last.f.name === f.name && last.f.event === f.event
-          && last.f.session === f.session && day(last.f.at) === day(f.at)) { last.n++; return; }
-      out.push({ f, n: 1, key: `${f.at}-${f.name}-${i}` });
+          && last.f.session === f.session && day(last.f.at) === day(f.at)) { last.n++; last.all.push(f); return; }
+      out.push({ f, n: 1, key: `${f.at}-${f.name}-${i}`, all: [f] });
     });
     return out;
   }, [recent]);
@@ -474,7 +480,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
         {/* What needs attention, before any list: on a page of five
             sections the counts are the only thing most visits need. */}
         <div className="hk2-sum">
-          <span><span className="hk2-sum-n">{watchers.length + hooks.length + rules.length + plugins.length - offCount}</span>{" "}
+          <span><span className="hk2-sum-n">{active}</span>{" "}
             <span className="hk2-sum-lab">active</span></span>
           <span><span className={"hk2-sum-n" + (broken ? " hk2-bad" : "")}>{broken}</span>{" "}
             <span className="hk2-sum-lab">failing</span></span>
@@ -483,17 +489,21 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
           <span><span className="hk2-sum-n">{recent.length}</span>{" "}
             <span className="hk2-sum-lab">decisions recorded</span></span>
         </div>
+        {recent.length === 0
+          ? <EmptySection title="Recent decisions">A hook that passes a call through is not recorded — only one that blocks, denies, rewrites, throws, or leaves a note lands here.</EmptySection>
+          : (
         <section className="proj">
           <div className="proj-head">
             <h2>Recent decisions</h2>
             <span className="num proj-count">newest first</span>
           </div>
-          {recent.length === 0
-            ? <p className="proj-none">No hook has decided anything yet. A hook that runs and passes the call through is not recorded — only one that blocks, denies, rewrites, throws, or leaves a note lands here.</p>
-            : runs.map(({ f, n, key }, i) => (
+          {runs.map(({ f, n, key, all }, i) => (
               <div key={key} className="hk-fire">
                 {(i === 0 || day(runs[i - 1].f.at) !== day(f.at)) && <h3 className="hk-day">{day(f.at)}</h3>}
-                <div className="hk-main" title={new Date(f.at).toString()}>
+                {/* The row opens: a folded run lists every fire in it, and on a
+                    phone the event and timing live here instead of the row. */}
+                <details className={"hk-fold" + (n > 1 ? " hk-group" : "")}>
+                <summary className="hk-main" title={new Date(f.at).toString()}>
                   <span className="num hk-when hk-time">{hms(f.at)}</span>
                   <span className="mono hk-name">{f.name}</span>
                   {f.session
@@ -502,7 +512,22 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
                   <span className="mono hk-when">{f.event}</span>
                   <span className="num hk-when">{f.ms}ms</span>
                   <span className="hk-dec"><Decision fire={f} />{n > 1 && <span className="num hk-when"> ×{n}</span>}</span>
+                  <span className="hk-chev" aria-hidden="true">›</span>
+                </summary>
+                <div className="hk-fold-body">
+                  <p className="hk-when hk-tech">
+                    {f.session && <><a className="link" href={`#/s/${f.session}`}>{titles[f.session] || f.session.slice(0, 8)}</a> · </>}
+                    <span className="mono">{f.event}</span>{n === 1 && <> · <span className="num">{f.ms}ms</span></>}
+                  </p>
+                  {n > 1 && (
+                    <ul className="hk-runs">
+                      {all.map((x, j) => (
+                        <li key={j} className="num hk-when">{hms(x.at)} · {x.ms}ms</li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
+                </details>
                 {f.notice && (
                   /* A notice never reached the model; this is the only
                      place it survives after the turn scrolls away. */
@@ -516,6 +541,12 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
               </div>
             ))}
         </section>
+          )}
+        {watchers.length === 0 ? (
+              <EmptySection title="Watchers">A watcher is a <code className="mono">.js</code> file in <code className="mono">~/.bough/watchers</code> that
+                   bough runs on an interval and that can wake a session. Drop one in — say
+                   <code className="mono"> ci.js</code> — and it shows up here on the next tick.</EmptySection>
+        ) : (
         <section className="proj">
           <div className="proj-head">
             <h2>Watchers</h2>
@@ -523,18 +554,18 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
               {watchers.length} {watchers.length === 1 ? "watcher" : "watchers"}
             </span>
           </div>
-          {watchers.length === 0
-            ? (
-              <EmptySection title="No watchers running">A watcher is a <code className="mono">.js</code> file in <code className="mono">~/.bough/watchers</code> that
-                   bough runs on an interval and that can wake a session. Drop one in — say
-                   <code className="mono"> ci.js</code> — and it shows up here on the next tick.</EmptySection>
-            )
-            : watchers.map((w) => (
+          {watchers.map((w) => (
               <WatcherRow key={w.path} w={w} load={load} save={save} setOff={setOff}
                           off={isOff(offId("watcher", w.id), w.off)} onOff={mark(offId("watcher", w.id))} />
             ))}
         </section>
+        )}
 
+        {byEvent.length === 0 ? (
+              <EmptySection title="Hooks">A hook is a <code className="mono">.js</code> file in <code className="mono">~/.bough/hooks</code> (yours
+                   everywhere) or <code className="mono">.bough/hooks</code> in a repo (that repo only). The file name is the
+                   hook name; the event it listens for comes from the file itself.</EmptySection>
+        ) : (
         <section className="proj">
           <div className="proj-head">
             <h2>Hooks</h2>
@@ -543,13 +574,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
               {byEvent.length === 1 ? "event" : "events"}
             </span>
           </div>
-          {byEvent.length === 0
-            ? (
-              <EmptySection title="No hooks installed">A hook is a <code className="mono">.js</code> file in <code className="mono">~/.bough/hooks</code> (yours
-                   everywhere) or <code className="mono">.bough/hooks</code> in a repo (that repo only). The file name is the
-                   hook name; the event it listens for comes from the file itself.</EmptySection>
-            )
-            : byEvent.map(([event, list]) => (
+          {byEvent.map(([event, list]) => (
               <div key={event} className="hk-event">
                 <h3 className="mono hk-event-name">{event}</h3>
                 {list.map((h) => (
@@ -559,7 +584,14 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
               </div>
             ))}
         </section>
+        )}
 
+        {rules.length === 0 ? (
+              <EmptySection title="Rules">A rule is a <code className="mono">.md</code> file in <code className="mono">~/.claude/rules</code> (every
+                   repo) or <code className="mono">.claude/rules</code> in a repo (that repo only). Write one — say
+                   <code className="mono"> python-standards.md</code> — and it appears here, and in the Context panel of
+                   every session it applies to.</EmptySection>
+        ) : (
         <section className="proj">
           <div className="proj-head">
             <h2>Rules</h2>
@@ -567,14 +599,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
               {rules.length} {rules.length === 1 ? "rule" : "rules"}
             </span>
           </div>
-          {rules.length === 0
-            ? (
-              <EmptySection title="No rules in force">A rule is a <code className="mono">.md</code> file in <code className="mono">~/.claude/rules</code> (every
-                   repo) or <code className="mono">.claude/rules</code> in a repo (that repo only). Write one — say
-                   <code className="mono"> python-standards.md</code> — and it appears here, and in the Context panel of
-                   every session it applies to.</EmptySection>
-            )
-            : (
+          {(
               <>
                 <div className="hk-event">
                   <h3 className="hk-event-name">Home — every repo</h3>
@@ -597,7 +622,13 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
               </>
             )}
         </section>
+        )}
 
+        {plugins.length === 0 ? (
+              <EmptySection title="Plugins">A plugin comes from a marketplace listed in <code className="mono">~/.claude/settings.json</code> and
+                   brings skills and slash commands with it. Add a marketplace and install one — say
+                   <code className="mono"> uni-common</code> — and everything it contributes is listed here.</EmptySection>
+        ) : (
         <section className="proj">
           <div className="proj-head">
             <h2>Plugins</h2>
@@ -605,16 +636,11 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
               {plugins.length} {plugins.length === 1 ? "plugin" : "plugins"}
             </span>
           </div>
-          {plugins.length === 0
-            ? (
-              <EmptySection title="No plugins installed">A plugin comes from a marketplace listed in <code className="mono">~/.claude/settings.json</code> and
-                   brings skills and slash commands with it. Add a marketplace and install one — say
-                   <code className="mono"> uni-common</code> — and everything it contributes is listed here.</EmptySection>
-            )
-            : plugins.map((p) => (
+          {plugins.map((p) => (
               <PluginRow key={p.id} p={p} setOff={setOff} off={isOff(offId("plugin", p.id), p.off)} onOff={mark(offId("plugin", p.id))} />
             ))}
         </section>
+        )}
 
       </div>
     </div>

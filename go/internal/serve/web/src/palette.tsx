@@ -79,9 +79,12 @@ type SearchState = "idle" | "loading" | "error";
 function useFullText(q: string, open: boolean): { hits: SearchHit[]; state: SearchState } {
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [state, setState] = useState<SearchState>("idle");
+  // Hits belong to the query that asked for them; an older query's
+  // answer never sits under a newer one while it is still loading.
+  const [forQ, setForQ] = useState("");
   useEffect(() => {
     const needle = q.trim();
-    if (!open || needle.length < 2) { setHits([]); setState("idle"); return; }
+    if (!open || needle.length < 2) { setHits([]); setForQ(""); setState("idle"); return; }
     setState("loading");
     // Debounced: this reads every transcript, and the box is typed into
     // one character at a time.
@@ -89,13 +92,13 @@ function useFullText(q: string, open: boolean): { hits: SearchHit[]; state: Sear
     const t = setTimeout(() => {
       fetch("/api/search?q=" + encodeURIComponent(needle))
         .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
-        .then((d) => { if (live) { setHits(d.hits ?? []); setState("idle"); } })
+        .then((d) => { if (live) { setHits(d.hits ?? []); setForQ(needle); setState("idle"); } })
         // A failed search is not "no matches": say so.
-        .catch(() => { if (live) { setHits([]); setState("error"); } });
+        .catch(() => { if (live) { setHits([]); setForQ(needle); setState("error"); } });
     }, 180);
     return () => { live = false; clearTimeout(t); };
   }, [q, open]);
-  return { hits, state };
+  return { hits: forQ === q.trim() ? hits : [], state };
 }
 
 export function Palette({ open, onClose, rows, commands, onOpenSession, onStart, onOpenWikiPage, initialQuery = "" }: {
@@ -118,6 +121,15 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
   const opener = useRef<Element | null>(null);
   const box = useRef<HTMLDivElement>(null);
   useModal(box, open);
+
+  // Focus goes back to the opener only once the palette is gone and the
+  // page behind it is no longer inert.
+  useEffect(() => {
+    if (open) return;
+    const el = opener.current as HTMLElement | null;
+    opener.current = null;
+    if (el?.isConnected && !document.querySelector("[aria-modal='true']")) el.focus?.();
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -142,13 +154,16 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
       })
       // With no query, commands only: a list of 150 titles is the
       // sidebar again, and the palette is for aiming at one.
-      .filter((x) => (needle ? x.s >= 0 : false));
+      .filter((x) => (needle ? x.s >= 0 : false))
+      // Best first, then the cap: slicing first dropped strong matches.
+      .sort((a, b) => b.s - a.s);
     // Same-named sessions are told apart under the active row: branch,
     // age, and the line the full-text search matched, when it did.
     const foundBy = new Map(found.map((h) => [h.id, h]));
-    const detailFor = (r: Row) => {
-      const line = foundBy.get(r.id)?.lines[0];
-      return [[r.branch, r.lastAt ? agoShort(r.lastAt) : ""].filter(Boolean).join(" · "), line ? trimLine(line.text) : ""]
+    const detailFor = (r: Row, title: string) => {
+      const h = foundBy.get(r.id);
+      const line = evidence(h, title, needle);
+      return [[r.branch || h?.branch, r.lastAt ? agoShort(r.lastAt) : ""].filter(Boolean).join(" · "), line]
         .filter(Boolean).join("\n") || undefined;
     };
     // One relevance order across commands and titles, so a weak match
@@ -158,9 +173,9 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
       ...sessions.slice(0, 30).map(({ r, title, s }) => ({ s, c: {
         id: "s:" + r.id,
         label: title,
-        hint: [r.repo?.split("/").pop(), r.testsFailed ? "tests failed" : r.status].filter(Boolean).join(" · "),
+        hint: [(r.repo || foundBy.get(r.id)?.repo)?.split("/").pop(), r.testsFailed ? "tests failed" : r.status].filter(Boolean).join(" · "),
         group: "Conversations",
-        detail: detailFor(r),
+        detail: detailFor(r, title),
         run: () => onOpenSession(r.id),
       } as Command })),
     ].sort((a, b) => b.s - a.s);
@@ -186,15 +201,16 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     const seen = new Set(all.map((c) => c.id));
     for (const h of found) {
       if (seen.has("s:" + h.id)) continue;
-      const line = h.lines[0];
       const r = rows.find((x) => x.id === h.id);
+      const label = plainTitle(h.title) || "Untitled session";
+      const line = evidence(h, label, needle);
       all.push({
         id: "s:" + h.id,
-        label: plainTitle(h.title) || "Untitled session",
-        hint: [h.repo?.split("/").pop(), r ? (r.testsFailed ? "tests failed" : r.status) : ""].filter(Boolean).join(" · ")
+        label,
+        hint: [(h.repo || r?.repo)?.split("/").pop(), r ? (r.testsFailed ? "tests failed" : r.status) : ""].filter(Boolean).join(" · ")
           || `${h.hits} matches`,
         group: "Found in the conversation",
-        detail: [[h.branch, r?.lastAt ? agoShort(r.lastAt) : ""].filter(Boolean).join(" · "), line ? trimLine(line.text) : ""]
+        detail: [[h.branch || r?.branch, r?.lastAt ? agoShort(r.lastAt) : ""].filter(Boolean).join(" · "), line]
           .filter(Boolean).join("\n") || undefined,
         run: () => onOpenSession(h.id),
       });
@@ -220,11 +236,8 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
 
   if (!open) return null;
 
-  const close = () => {
-    onClose();
-    (opener.current as HTMLElement | null)?.focus?.();
-  };
-  const pick = (c: Command) => { onClose(); c.run(); };
+  const close = () => onClose();
+  const pick = (c: Command) => { opener.current = null; onClose(); c.run(); };
 
   const keys = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") { e.preventDefault(); close(); return; }
@@ -268,7 +281,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
         </div>
         {/* Never scrolls away: a failed text search is not hidden under the list. */}
         <div className="pal-foot" role="status">
-          <span className="num">{hits.length} {hits.length === 1 ? "result" : "results"}</span>
+          <span className="num">{hits.length} shown</span>
           {searching === "loading" && <span>Searching text…</span>}
           {searching === "error" && <span className="pal-foot-bad">Text search failed · titles only</span>}
           <span className="pal-foot-keys">↑↓ move · ↵ open · esc close</span>
@@ -283,10 +296,22 @@ function agoShort(iso: string): string {
   return m < 60 ? `${m}m ago` : m < 2880 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`;
 }
 
-/** One matching line, short enough to sit on a row. */
-function trimLine(text: string): string {
+/** One matching line, short enough to sit on a row, cut around the match. */
+function trimLine(text: string, needle = ""): string {
   const t = text.replace(/\s+/g, " ").trim();
-  return t.length > 90 ? t.slice(0, 90) + "…" : t;
+  if (t.length <= 90) return t;
+  const i = needle ? t.toLowerCase().indexOf(needle) : -1;
+  const from = i < 0 ? 0 : Math.max(0, Math.min(i - 40, t.length - 90));
+  return (from > 0 ? "…" : "") + t.slice(from, from + 90) + (from + 90 < t.length ? "…" : "");
+}
+
+/** The first matched line that says something the title does not. */
+function evidence(h: SearchHit | undefined, title: string, needle: string): string {
+  // Titles drop markdown and punctuation; compare letters and digits only.
+  const norm = (x: string) => x.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  const t = norm(title);
+  const line = h?.lines.find((l) => { const n = norm(l.text); return n && !n.startsWith(t) && !t.startsWith(n); });
+  return line ? trimLine(line.text, needle) : "";
 }
 
 /** ⌘K on a Mac, Ctrl+K elsewhere, and never inside a text field. */

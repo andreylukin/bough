@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Project, Row } from "./types";
 import { StatusMark } from "./status";
 import { plainTitle, untitled } from "./render";
@@ -69,8 +69,9 @@ function ByRepo({ unassigned, selected, onPickMany }: {
     );
   }
   if (groups.length === 0) return null;
-  // Unique sessions: one conversation can touch more than one repo.
-  const total = new Set(groups.flatMap((g) => g.sessions)).size;
+  // Unique unassigned sessions: one conversation can touch more than one
+  // repo, and one already filed is not coverage of the unassigned ones.
+  const total = new Set(groups.flatMap((g) => g.sessions).filter((id) => unassigned.has(id))).size;
 
   return (
     <details className="proj rp-group">
@@ -126,6 +127,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
   onOpen: (id: string) => void;
   onBack?: () => void;
   onAssign: (id: string, project: string) => void;
+  /** Resolves false (or rejects) when the move did not happen. */
   onAssignMany: (ids: string[], project: string) => Promise<unknown>;
   onCreate: (name: string) => Promise<{ id: string }>;
   onRename: (id: string, name: string) => Promise<void>;
@@ -162,11 +164,25 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
   const pick = (id: string) => pickMany([id], !selected.has(id));
   const ids = [...selected];
 
+  // A move that failed stays on the bar with a Retry, and a retry after
+  // "New project…" reuses the project already made instead of a second one.
+  const [failed, setFailed] = useState<string | null>(null);
+  const made = useRef<string | null>(null);
+  const assign = async (project: string) => {
+    setFailed(null);
+    let ok = false;
+    try { ok = (await onAssignMany(ids, project)) !== false; } catch { ok = false; }
+    if (!ok) { setFailed(project); return false; }
+    setSelected(new Set()); made.current = null;
+    return true;
+  };
+
   const createProject = () => askText("New project", { placeholder: "What is this work?", action: "Create",
     onSubmit: async (name) => {
-      const p = await onCreate(name);
+      const id = made.current ?? (await onCreate(name)).id;
+      made.current = ids.length ? id : null;
       // With a selection, the new project is where it goes.
-      if (ids.length) { await onAssignMany(ids, p.id); setSelected(new Set()); }
+      if (ids.length && !(await assign(id))) throw new Error("the project exists, but the conversations did not move");
     } });
 
   const list = (rs: Row[]) => rs.map((r) => (
@@ -249,8 +265,13 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
                       options={[{ value: "", label: "Choose a project" }, ...projects.map((p) => ({ value: p.id, label: p.name }))]}
                       onChange={setTarget} />
               <button className="btn btn-primary" disabled={!target}
-                      onClick={() => { void onAssignMany(ids, target).then(() => setSelected(new Set())); }}>Assign</button>
+                      onClick={() => { void assign(target); }}>Assign</button>
             </>
+          )}
+          {failed && (
+            <span className="err rp-err" role="alert">
+              Not moved <button className="link" onClick={() => { void assign(failed); }}>Retry</button>
+            </span>
           )}
           <button className="btn" onClick={() => { void createProject(); }}>New project…</button>
           <button className="btn rp-clear" onClick={() => setSelected(new Set())}>Clear</button>

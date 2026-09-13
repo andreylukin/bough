@@ -18,6 +18,15 @@ type Req =
 
 let push: ((r: Req) => void) | null = null;
 
+// Overlays size to what is visible, so a phone keyboard never hides a
+// dialog's buttons: --vvh is the visual viewport's height, kept current.
+if (typeof window !== "undefined" && window.visualViewport) {
+  const vv = window.visualViewport;
+  const set = () => document.documentElement.style.setProperty("--vvh", `${Math.round(vv.height)}px`);
+  set();
+  vv.addEventListener("resize", set);
+}
+
 /**
  * The trimmed text entered, or null if the dialog was dismissed. With
  * onSubmit the dialog stays open until it resolves, so closing means it
@@ -54,7 +63,9 @@ export function useModal(box: RefObject<HTMLElement | null>, active: boolean) {
     for (const o of others) o.inert = true;
     const tab = (e: KeyboardEvent) => {
       if (e.key !== "Tab" || !box.current) return;
-      const f = [...box.current.querySelectorAll<HTMLElement>("button:not([disabled]),input,textarea,select,[tabindex]:not([tabindex='-1'])")];
+      // Only what Tab can actually reach: enabled, and not taken out of order.
+      const f = [...box.current.querySelectorAll<HTMLElement>("button,input,textarea,select,a[href],[tabindex]")]
+        .filter((el) => el.tabIndex >= 0 && !(el as HTMLButtonElement).disabled && el.getClientRects().length > 0);
       if (f.length === 0) return;
       const first = f[0], last = f[f.length - 1];
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
@@ -138,7 +149,7 @@ export function DialogHost() {
         {req.kind === "confirm" && <p className="dlg-body">{req.body}</p>}
         {req.kind === "text" && (
           <input ref={input} className="field dlg-input" value={text} placeholder={req.placeholder}
-                 aria-labelledby="dlg-title" aria-invalid={failed ? true : undefined}
+                 aria-labelledby="dlg-title" readOnly={saving} aria-invalid={failed ? true : undefined}
                  aria-describedby={failed ? "dlg-err" : undefined}
                  onChange={(e) => setText(e.target.value)}
                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } }} />

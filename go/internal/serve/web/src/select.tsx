@@ -95,7 +95,8 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
       pop.current.style.minWidth = `${minWidth}px`;
       const w = pop.current.offsetWidth;
       const h = pop.current.scrollHeight;
-      const below = innerHeight - b.bottom - 12, above = b.top - 12;
+      const vh = window.visualViewport?.height ?? innerHeight;
+      const below = vh - b.bottom - 12, above = b.top - 12;
       const up = h > below && above > below;
       let left = align === "end" ? b.right - w : b.left;
       left = Math.max(8, Math.min(left, innerWidth - 8 - w));
@@ -105,7 +106,8 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
     place();
     addEventListener("resize", place);
     addEventListener("scroll", place, true);
-    return () => { removeEventListener("resize", place); removeEventListener("scroll", place, true); };
+    window.visualViewport?.addEventListener("resize", place);
+    return () => { removeEventListener("resize", place); removeEventListener("scroll", place, true); window.visualViewport?.removeEventListener("resize", place); };
   }, [open, align, shown.length]);
 
   // A click anywhere else closes it, as a menu does.
