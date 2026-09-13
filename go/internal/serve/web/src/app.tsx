@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from "react-dom";
 import { api, subscribe, type Change, type TurnLine } from "./api";
 import type { Line, Project, Row } from "./types";
-import { StatusMark, Working } from "./status";
+import { STATUS, StatusMark, Working } from "./status";
 import { ProjectsView } from "./projects";
 import { Select, type Option } from "./select";
 import { DialogHost, askText } from "./dialog";
@@ -19,15 +19,6 @@ export type View = "sessions" | "projects" | "hooks" | "wiki";
 
 const POLL_MS = 4000; // sessions we are not streaming still change status
 
-function bucket(iso: string): string {
-  const d = new Date(iso), now = new Date();
-  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const days = Math.round((day(now) - day(d)) / 86_400_000);
-  if (days <= 0) return "Today";
-  if (days === 1) return "Yesterday";
-  if (days <= 7) return "Earlier this week";
-  return "Older";
-}
 const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 
@@ -69,10 +60,59 @@ const writeSet = (key: string, s: Set<string>) => {
   try { localStorage.setItem(key, JSON.stringify([...s].slice(-200))); } catch { /* storage off */ }
 };
 
+/** Sessions untouched this long leave their workspace for the Inactive section. */
+const INACTIVE_MS = 72 * 3_600_000;
+
+/** Where a session ran, as the sidebar names it: the repo, else the folder. */
+function workspaceOf(r: Row): string {
+  return r.repo?.split("/").filter(Boolean).pop() || r.cwd.split("/").filter(Boolean).pop() || "/";
+}
+
+/** What needs you, then what is moving, then the most recent. */
+function byUrgency(a: Row, b: Row): number {
+  const rank = (r: Row) => (r.status === "needs-you" || r.trouble ? 0 : r.status === "running" ? 1 : 2);
+  return rank(a) - rank(b) || Date.parse(b.modified) - Date.parse(a.modified);
+}
+
+/** Rows under their workspace, workspaces by their latest activity. */
+function byWorkspace(rows: Row[]): [string, Row[]][] {
+  const out = new Map<string, Row[]>();
+  for (const r of rows) {
+    const k = workspaceOf(r);
+    if (!out.has(k)) out.set(k, []);
+    out.get(k)!.push(r);
+  }
+  const latest = (list: Row[]) => Math.max(...list.map((r) => Date.parse(r.modified)));
+  return [...out.entries()]
+    .map(([k, list]) => [k, list.sort(byUrgency)] as [string, Row[]])
+    .sort((a, b) => latest(b[1]) - latest(a[1]));
+}
+
+/** A 24-box stroked icon in currentColor, the status glyphs' idiom. */
+function Icon({ d, size = 18 }: { d: React.ReactNode; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
+         strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>
+  );
+}
+const ICONS = {
+  panel: <><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M9.5 4.5v15" /></>,
+  back: <path d="M19 12H5m6-6l-6 6 6 6" />,
+  forward: <path d="M5 12h14m-6-6l6 6-6 6" />,
+  search: <><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4.3-4.3" /></>,
+  compose: <><path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6" /><path d="M17.5 3.5a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z" /></>,
+  folder: <path d="M3.5 7a1.5 1.5 0 0 1 1.5-1.5h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8.5a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 17.5z" />,
+  projects: <><rect x="3.5" y="7.5" width="13" height="12" rx="1.5" /><path d="M7.5 4.5h11a2 2 0 0 1 2 2v9" /></>,
+  hooks: <path d="M13 3L5 13.5h6L10 21l8-10.5h-6z" />,
+  wiki: <><path d="M4.5 5.5A1.5 1.5 0 0 1 6 4h13.5v14H6a1.5 1.5 0 0 0-1.5 1.5z" /><path d="M4.5 19.5A1.5 1.5 0 0 0 6 21h13.5v-3" /><path d="M9 8.5h6" /></>,
+  chevron: <path d="M9 6l6 6-6 6" />,
+};
+
 export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, showArchived, onToggleArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
   /** Open a session at one turn of its log. */
   onTurn?: (id: string, turn: number) => void;
+  /** showArchived is the Archived section being open: the rows then include archived ones. */
   query: string; onQuery: (q: string) => void; showArchived: boolean; onToggleArchived: () => void;
   view?: View; onView?: (v: View) => void;
   /** Claims the wiki's review is waiting on; shown beside the nav item. */
@@ -84,30 +124,40 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
   /** Whether the list is on screen; coming back to it puts focus on the row you left. */
   active?: boolean;
 }) {
-  // A control room lists what needs you first, then what is moving;
-  // only settled sessions fall back to the day they last changed.
-  const groups = useMemo(() => {
-    const out = new Map<string, Row[]>();
+  // Status lives in the glyphs and the order; the sections are only
+  // where a session ran, and whether it is still recent.
+  const { recent, inactive, archived } = useMemo(() => {
+    const now = Date.now();
+    const recent: Row[] = [], inactive: Row[] = [], archived: Row[] = [];
     for (const r of rows) {
-      // A failure you have not seen is as much "yours" as a question; once
-      // marked seen it falls back to the day it happened.
-      const k = r.status === "needs-you" || r.trouble ? "Needs you" : r.status === "running" ? "Running" : bucket(r.modified);
-      if (!out.has(k)) out.set(k, []);
-      out.get(k)!.push(r);
+      if (r.archived) archived.push(r);
+      else if (r.status === "needs-you" || r.status === "running" || r.trouble || now - Date.parse(r.modified) < INACTIVE_MS) recent.push(r);
+      else inactive.push(r);
     }
-    const rank = (k: string) => (k === "Needs you" ? 0 : k === "Running" ? 1 : 2);
-    return [...out.entries()].sort((a, b) => rank(a[0]) - rank(b[0]));
+    return { recent: byWorkspace(recent), inactive, archived };
   }, [rows]);
 
-  // Settled history folds by day, and stays folded across reloads. What
-  // needs you and what is running never fold: they are the point of the list.
-  const [folded, setFolded] = useState<Set<string>>(() => readSet("bough:folded"));
-  const toggleFold = (name: string) => setFolded((cur) => {
+  // Inactive stays shut until asked, and the way you left it across reloads.
+  const [unfolded, setUnfolded] = useState<Set<string>>(() => readSet("bough:unfolded"));
+  const toggleFold = (name: string) => setUnfolded((cur) => {
     const next = new Set(cur);
     if (next.has(name)) next.delete(name); else next.add(name);
-    writeSet("bough:folded", next);
+    writeSet("bough:unfolded", next);
     return next;
   });
+
+  // On a desktop the whole sidebar folds away to a rail, and stays folded.
+  const [closed, setClosed] = useState(() => { try { return localStorage.getItem("bough:side-closed") === "1"; } catch { return false; } });
+  const setSide = (c: boolean) => {
+    setClosed(c);
+    try { localStorage.setItem("bough:side-closed", c ? "1" : "0"); } catch { /* storage off */ }
+  };
+
+  // Search sits behind the toolbar; a filter in force keeps it open.
+  const [searching, setSearching] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const showSearch = searching || Boolean(query);
+  useEffect(() => { if (searching) searchRef.current?.focus(); }, [searching]);
 
   // A session's turn log, one line a turn, opens under its row. The open
   // session shows its own; the rest stay shut until asked, and stay the
@@ -140,7 +190,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
 
   // What a session is about, on hover or focus: the title names it, the
   // summary says where it stands. One card for the whole list, fixed to
-  // the viewport under the title, because the list scrolls and would clip
+  // the viewport beside the row, because the list scrolls and would clip
   // anything hung off a row. It waits a beat so skimming does not flash it.
   const [card, setCard] = useState<{ id: string; text: string; top: number; left: number } | null>(null);
   const peekTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -172,11 +222,11 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
   }, [active, selected]);
 
   // The tree by keyboard: up and down walk what is visible, right opens
-  // a day or a log (or steps into it), left shuts it (or steps out);
+  // a section or a log (or steps into it), left shuts it (or steps out);
   // Enter opens a session or jumps to a turn.
   const walk = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(e.key)) return;
-    const items = [...e.currentTarget.querySelectorAll<HTMLElement>("button.group-fold, button.row, button.turn-line")];
+    const items = [...e.currentTarget.querySelectorAll<HTMLElement>("button.sec-fold, button.row, button.turn-line")];
     if (!items.length) return;
     const at = document.activeElement as HTMLElement | null;
     const cur = at?.closest(".row-wrap")?.querySelector<HTMLElement>("button.row") ?? at;
@@ -190,7 +240,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     }
     if (!cur) return;
     const right = e.key === "ArrowRight";
-    if (cur.classList.contains("group-fold")) {
+    if (cur.classList.contains("sec-fold")) {
       if (cur.getAttribute("aria-expanded") === String(!right)) cur.click();
       return;
     }
@@ -206,24 +256,148 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
       if (twist && !open) setOpen(id, true);
       else if (open) go(session?.querySelector<HTMLElement>("button.turn-line"));
     } else if (open) setOpen(id, false);
-    else go(cur.closest(".group")?.querySelector<HTMLElement>("button.group-fold"));
+    else go(cur.closest(".sec")?.querySelector<HTMLElement>("button.sec-fold"));
   };
 
+  const session = (r: Row) => {
+    const open = Boolean(r.turns) && expanded.has(r.id);
+    const log = logs[r.id]?.lines;
+    const name = plainTitle(r.title);
+    const on = r.id === selected;
+    const why = r.trouble ? capital(r.trouble) : STATUS[r.status]?.label ?? r.status;
+    return (
+      <div key={r.id} className="session">
+        <div className={"row-wrap" + (open ? " row-open" : "")}>
+          <button onClick={() => onSelect(r.id)} data-id={r.id}
+                  onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
+                  onFocus={(e) => peek(r, e.currentTarget)} onBlur={unpeek}
+                  aria-describedby={card?.id === r.id ? "row-card" : undefined}
+                  className={"row" + (on ? " row-on" : "") + (r.turns ? " row-has-log" : "") + (r.trouble && onAck ? " row-has-ack" : "")}
+                  aria-current={on ? "true" : undefined}
+                  title={`${why} · ${ago(r.modified)} ago${r.branch ? ` · ${r.branch}` : ""}`}>
+            {/* A failure you have not seen is a red mark; the reason is its label. */}
+            <span className="row-mark">
+              {r.trouble ? <StatusMark status="error" size={14} bare /> : <StatusMark status={r.status} size={14} bare />}
+              <span className="visually-hidden">{why}: </span>
+            </span>
+            {r.ask && name && askSaysTitle(r.ask.text, name)
+              ? <span className="row-title" title={r.ask.text}>{plainTitle(r.ask.text)}</span>
+              : name
+              ? <span className="row-title">{name}</span>
+              // No title: the id tail alone tells rows apart.
+              : <span className="row-title mono row-untitled">{r.id.slice(-6)}</span>}
+            {r.jobs && r.jobs.length > 0 && (
+              <span className="num row-jobs" title={r.jobs.map((j) => j.cmd).join("\n")}>
+                {r.jobs.length}<span className="visually-hidden"> {r.jobs.length === 1 ? "job" : "jobs"}</span>
+              </span>
+            )}
+          </button>
+          {/* The disclosure and Seen are siblings of the row, not inside
+              it: a button in a button is invalid and would open it too. */}
+          {r.trouble && onAck && (
+            <button className="btn row-ack" onClick={() => onAck(r.id)} aria-label={`Mark ${name || "session"} seen`}>Seen</button>
+          )}
+          {r.turns ? (
+            <button className="row-twist" tabIndex={-1} aria-expanded={open} aria-controls={`turns-${r.id}`}
+                    aria-label={`${open ? "Hide" : "Show"} turn log of ${name || "session"}`}
+                    onClick={() => setOpen(r.id, !open)}><Icon d={ICONS.chevron} size={14} /></button>
+          ) : null}
+        </div>
+        {open && (
+          <ol id={`turns-${r.id}`} className="turns" aria-label={`Turns of ${name || "session"}`}>
+            {log ? log.map((l) => (
+              <li key={l.turn}>
+                <button className="turn-line" title={l.text} onClick={() => onTurn?.(r.id, l.turn)}>
+                  <span className="num turn-n">{l.turn}</span><span className="turn-text">{l.text}</span>
+                </button>
+              </li>
+            )) : <li className="turn-wait">Loading…</li>}
+          </ol>
+        )}
+      </div>
+    );
+  };
+
+  const workspaces = (groups: [string, Row[]][]) => groups.map(([ws, list]) => (
+    <div key={ws} className="ws">
+      <div className="ws-head"><Icon d={ICONS.folder} size={15} /><span className="ws-name">{ws}</span><span className="ws-rule" /></div>
+      {list.map(session)}
+    </div>
+  ));
+
+  // A section folds; a search shows every match, folded or not.
+  const section = (key: string, label: string, open: boolean, toggle: () => void, count: number | null, body: React.ReactNode) => (
+    <div className="sec">
+      <button className="sec-fold" aria-expanded={open} onClick={toggle}>
+        <span>{label}</span><span className="ws-rule" />{count !== null && <span className="num sec-count">{count}</span>}
+      </button>
+      {open && <div className="sec-body" id={`sec-${key}`}>{body}</div>}
+    </div>
+  );
+
+  const toolbar = (
+    <div className="side-bar">
+      <button className="side-icon side-collapse" onClick={() => setSide(!closed)} aria-expanded={!closed}
+              aria-label={closed ? "Show sidebar" : "Hide sidebar"} title={closed ? "Show sidebar" : "Hide sidebar"}>
+        <Icon d={ICONS.panel} />
+      </button>
+      {!closed && <>
+        <button className="side-icon" onClick={() => window.history.back()} aria-label="Back" title="Back"><Icon d={ICONS.back} /></button>
+        <button className="side-icon" onClick={() => window.history.forward()} aria-label="Forward" title="Forward"><Icon d={ICONS.forward} /></button>
+        <button className={"side-icon" + (showSearch ? " side-icon-on" : "")} aria-expanded={showSearch} aria-controls="q"
+                onClick={() => { if (showSearch) { onQuery(""); setSearching(false); } else setSearching(true); }}
+                aria-label="Search sessions" title={`Search sessions (${modKey()}K for everything)`}><Icon d={ICONS.search} /></button>
+        {onNew && (
+          <button className="side-new" onClick={onNew} aria-label="New conversation" title={`New conversation (${modKey()}K)`}>
+            <Icon d={ICONS.compose} />
+          </button>
+        )}
+      </>}
+    </div>
+  );
+
+  // A phone has no room to fold the list into: there the list is the pane.
+  if (closed && !window.matchMedia?.("(max-width:720px)").matches) return <div className="sidebar sidebar-closed">{toolbar}</div>;
+
+  const total = recent.length + inactive.length + archived.length;
   return (
     <div className="sidebar">
       {card && (
         <div id="row-card" className="row-card" role="tooltip" style={{ top: card.top, left: card.left }}>{card.text}</div>
       )}
-      <div className="brand"><Sprout /><span>bough</span>
-        {onNew && <button className="btn brand-new" onClick={onNew} title={`New conversation (${modKey()}K)`}>New</button>}
+      {toolbar}
+      {showSearch && (
+        <div className="session-search">
+          <label htmlFor="q" className="visually-hidden">Search sessions</label>
+          <input id="q" ref={searchRef} className="field" value={query} placeholder="Search sessions"
+                 onChange={(e) => onQuery(e.target.value)}
+                 onKeyDown={(e) => {
+                   if (e.key === "Escape") { e.preventDefault(); onQuery(""); setSearching(false); return; }
+                   // Down from the search lands on the first match.
+                   if (e.key !== "ArrowDown") return;
+                   const first = document.querySelector<HTMLElement>(".sidebar button.row");
+                   if (first) { e.preventDefault(); first.focus(); }
+                 }} />
+        </div>
+      )}
+      <div className="scroll" onScroll={unpeek} onKeyDown={walk}>
+        {total === 0 && !showArchived && (
+          <p className="list-none">{query ? `No sessions match “${query}”.` : "No sessions yet."}</p>
+        )}
+        {workspaces(recent)}
+        {section("inactive", "Inactive last 72h", Boolean(query) || unfolded.has("inactive"), () => toggleFold("inactive"),
+          inactive.length, workspaces(byWorkspace(inactive)))}
+        {section("archived", "Archived", showArchived, onToggleArchived, showArchived ? archived.length : null,
+          archived.length ? workspaces(byWorkspace(archived)) : <p className="list-none">Nothing archived.</p>)}
       </div>
       {onView && (
-        <nav className="nav" aria-label="Views">
-          {([["sessions", "Sessions"], ["projects", "Projects"], ["hooks", "Hooks"], ["wiki", "Wiki"]] as const).map(([v, label]) => (
-            <button key={v} className={"nav-item" + (view === v ? " nav-on" : "")}
+        <nav className="side-nav" aria-label="Views">
+          {([["projects", "Projects", ICONS.projects], ["hooks", "Hooks", ICONS.hooks], ["wiki", "Wiki", ICONS.wiki]] as const).map(([v, label, icon]) => (
+            <button key={v} className={"side-nav-item" + (view === v ? " side-nav-on" : "")}
                     aria-current={view === v ? "page" : undefined}
                     onClick={() => onView(v)}>
-              {label}
+              <Icon d={icon} size={20} />
+              <span>{label}</span>
               {v === "wiki" && wikiFlags > 0 && (
                 <span className="nav-count" title={`${wikiFlags} claims to review`}>
                   {wikiFlags}<span className="visually-hidden"> claims to review</span>
@@ -232,127 +406,6 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
             </button>
           ))}
         </nav>
-      )}
-      <div className="session-search">
-        <label htmlFor="q" className="visually-hidden">Search sessions</label>
-        <input id="q" className="field" value={query} placeholder="Search sessions"
-               onChange={(e) => onQuery(e.target.value)}
-               onKeyDown={(e) => {
-                 // Down from the search lands on the first match.
-                 if (e.key !== "ArrowDown") return;
-                 const first = document.querySelector<HTMLElement>(".sidebar button.row");
-                 if (first) { e.preventDefault(); first.focus(); }
-               }} />
-        <span className="search-hint" aria-hidden="true">{modKey()}K</span>
-      </div>
-      <div className="scroll" onScroll={unpeek} onKeyDown={walk}>
-        {groups.length === 0 && (
-          <p className="list-none">
-            {query ? `No sessions match “${query}”.` : "No sessions yet."}
-          </p>
-        )}
-        {groups.map(([name, list]) => {
-          const act = name === "Needs you" || name === "Running";
-          return (
-          <div key={name} className="group">
-            {act ? (
-              <div className="group-head">{name}<span className="num group-count">{list.length}</span></div>
-            ) : (
-              // A search shows every match, folded group or not.
-              <button className="group-head group-fold" aria-expanded={Boolean(query) || !folded.has(name)}
-                      onClick={() => toggleFold(name)}>
-                {name}<span className="num group-count">{list.length}</span>
-              </button>
-            )}
-            {(query || !folded.has(name) || act) && list.map((r) => {
-              const open = Boolean(r.turns) && expanded.has(r.id);
-              const log = logs[r.id]?.lines;
-              const name = plainTitle(r.title);
-              return (
-              <div key={r.id} className="session">
-              <div className="row-wrap">
-              {r.turns ? (
-                // The disclosure and Seen are siblings of the row, not inside
-                // it: a button in a button is invalid and would open it too.
-                // Arrows reach the log from the row, so Tab skips this.
-                <button className="row-twist" tabIndex={-1} aria-expanded={open} aria-controls={`turns-${r.id}`}
-                        aria-label={`${open ? "Hide" : "Show"} turn log of ${name || "session"}`}
-                        onClick={() => setOpen(r.id, !open)} />
-              ) : null}
-              {r.trouble && onAck && (
-                <button className="btn row-ack" onClick={() => onAck(r.id)} aria-label={`Mark ${name || "session"} seen`}>Seen</button>
-              )}
-              <button onClick={() => onSelect(r.id)} data-id={r.id}
-                      onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
-                      onFocus={(e) => peek(r, e.currentTarget)} onBlur={unpeek}
-                      aria-describedby={card?.id === r.id ? "row-card" : undefined}
-                      className={"row" + (act ? " row-act" : " row-settled") + (r.id === selected ? " row-on" : "")}
-                      aria-current={r.id === selected ? "true" : undefined}>
-                <span className="row-line">
-                  {r.ask && name && askSaysTitle(r.ask.text, name)
-                    // The ask already says what the title would.
-                    ? <span className="row-title row-ask" title={r.ask.text}>{plainTitle(r.ask.text)}</span>
-                    : name
-                    ? <span className="row-title">{name}</span>
-                    // No title: the id tail alone tells rows apart.
-                    : <span className="row-title mono row-untitled">{r.id.slice(-6)}</span>}
-                  {/* A session that needs you or is moving is measured in how
-                      long; its group already says which. */}
-                  <span className="num" title={new Date(r.modified).toLocaleString()}>
-                    {act ? ago(r.modified) : clock(r.modified)}
-                  </span>
-                </span>
-                <span className="row-meta">
-                  {r.trouble ? (
-                    // "Done" in a queue of trouble says nothing; the reason does.
-                    <span className="row-trouble" title={capital(r.trouble)}>{capital(r.trouble)}</span>
-                  ) : (
-                    <StatusMark status={r.status} bare={r.status === "needs-you" || r.status === "running"} />
-                  )}
-                  {r.jobs && r.jobs.length > 0 && (
-                    <span className="num row-jobs" title={r.jobs.map((j) => j.cmd).join("\n")}>
-                      {r.jobs.length} {r.jobs.length === 1 ? "job" : "jobs"}
-                    </span>
-                  )}
-                  {r.ask && !(name && askSaysTitle(r.ask.text, name)) ? (
-                    // What the session is waiting on: answering it is what the row is for.
-                    <span className="row-ask" title={r.ask.text}>{plainTitle(r.ask.text)}</span>
-                  ) : (
-                    <span className="mono" title={r.cwd}>
-                      {r.repo || r.branch ? (
-                        <>{r.repo?.split("/").pop()}{r.branch && <span style={{ color: "var(--line-strong)" }}>/</span>}{r.branch}</>
-                      ) : (
-                        // With no repo, the folder it ran in tells two sessions apart.
-                        r.cwd ? r.cwd.split("/").filter(Boolean).pop() || "/" : "–"
-                      )}
-                    </span>
-                  )}
-                </span>
-              </button>
-              </div>
-              {open && (
-                <ol id={`turns-${r.id}`} className="turns" aria-label={`Turns of ${name || "session"}`}>
-                  {log ? log.map((l) => (
-                    <li key={l.turn}>
-                      <button className="turn-line" title={l.text} onClick={() => onTurn?.(r.id, l.turn)}>
-                        <span className="num turn-n">{l.turn}</span><span className="turn-text">{l.text}</span>
-                      </button>
-                    </li>
-                  )) : <li className="turn-wait">Loading…</li>}
-                </ol>
-              )}
-              </div>
-              );
-            })}
-          </div>
-          );
-        })}
-      </div>
-      {/* Showing archived lives in the palette; once shown, the way back stays in view. */}
-      {showArchived && (
-        <div className="sidebar-foot">
-          <button className="link" onClick={onToggleArchived}>Hide archived</button>
-        </div>
       )}
     </div>
   );
