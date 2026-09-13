@@ -4,7 +4,7 @@ import { projects, rows, turn } from "./fixtures";
 
 const noop = () => {};
 const handlers = {
-  onSend: noop, onAnswer: noop, onInterrupt: noop, onArchive: noop, onRename: noop,
+  onSend: noop, onAnswer: noop, onInterrupt: noop, onArchive: noop, onRename: async () => {},
   onModel: noop, onEffort: noop, onAssign: noop,
 };
 

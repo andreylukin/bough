@@ -23,10 +23,10 @@ function Shell({ selected: initial = "s2", pane: initialPane = "thread" }: { sel
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)} />
       {view === "projects" ? (
         <ProjectsView projects={projects} rows={rows} onOpen={(id) => { setSelected(id); setView("sessions"); }} onBack={() => setPane("list")}
-                      onAssign={noop} onCreate={noop} onRename={noop} onDelete={noop} />
+                      onAssign={noop} onAssignMany={async () => {}} onCreate={async () => ({ id: "p" })} onRename={async () => {}} onDelete={noop} />
       ) : row ? (
         <Thread row={row} lines={turn} projects={projects} busy={false} onBack={() => setPane("list")}
-                onSend={noop} onAnswer={noop} onInterrupt={noop} onArchive={noop} onRename={noop}
+                onSend={noop} onAnswer={noop} onInterrupt={noop} onArchive={noop} onRename={async () => {}}
                 onModel={noop} onEffort={noop} onAssign={noop} />
       ) : (
         <div className="thread empty"><div>

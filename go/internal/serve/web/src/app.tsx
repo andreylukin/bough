@@ -1735,7 +1735,10 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
  * need you or are running are listed (Background ones included when
  * they are in trouble); the sidebar already holds everything else.
  */
-function ControlOverview({ rows, onOpen }: { rows: Row[]; onOpen: (id: string) => void }) {
+function ControlOverview({ rows, onOpen, loadedAt, loadErr, onRetry }: {
+  rows: Row[]; onOpen: (id: string) => void; loadedAt: number | null; loadErr: string | null; onRetry: () => void;
+}) {
+  // The sidebar's own rule (sessionSignal): a failure outranks "done".
   const live = rows.filter((r) => !r.archived && !(r.empty && !r.live));
   const needs = live.filter((r) => sessionSignal(r) === 0);
   const running = live.filter((r) => !r.background && sessionSignal(r) === 1);
@@ -1744,13 +1747,14 @@ function ControlOverview({ rows, onOpen }: { rows: Row[]; onOpen: (id: string) =
       <h2 className="ov-label">{label}</h2>
       {list.map((r) => (
         <button key={r.id} className="ov-row" onClick={() => onOpen(r.id)}>
+          {r.trouble || r.testsFailed ? <StatusMark status="error" bare /> : <StatusMark status={r.status} bare />}
           <span className="ov-title">{plainTitle(r.title) || untitled(r.id)}</span>
-          <span className="ov-why">
-            {r.trouble || r.testsFailed ? <span className="status head-trouble"><StatusMark status="error" bare />{capital(r.trouble || "tests failed")}</span>
-              : <StatusMark status={r.status} />}
-            {r.repo && <span className="mono">{r.repo.split("/").pop()}</span>}
-            <span className="num">{ago(r.lastAt)} ago</span>
+          <span className={"ov-why" + (r.trouble || r.testsFailed ? " head-trouble" : "")}>
+            {capital(r.trouble || (r.testsFailed ? "tests failed" : STATUS[r.status]?.label ?? r.status))}
           </span>
+          {r.repo && <span className="mono ov-meta">{r.repo.split("/").pop()}</span>}
+          <span className="num ov-meta">{ago(r.lastAt)} ago</span>
+          <span className="ov-open" aria-hidden="true">Open</span>
         </button>
       ))}
     </section>
@@ -1762,11 +1766,20 @@ function ControlOverview({ rows, onOpen }: { rows: Row[]; onOpen: (id: string) =
         <span className="ov-hint">{modKey()}K to start a session</span>
       </header>
       <div className="scroll ov-body">
+        {/* Lists are only as current as the last refresh, and say so. */}
+        {loadErr && (
+          <p className="ov-stale" role="status">
+            {loadedAt === null ? "Status unavailable" : `Stale · last updated ${ago(new Date(loadedAt).toISOString())} ago`}
+            <button className="link" onClick={onRetry}>Retry</button>
+          </p>
+        )}
         {group("Needs you", needs)}
         {group("Running", running)}
         {/* No "Recent" list: the sidebar already lists every session, and a
             second copy here disagreed with it about failed tests. */}
-        {!needs.length && !running.length && <p className="ov-none">Nothing needs your attention.</p>}
+        {!needs.length && !running.length && !loadErr && (
+          <p className="ov-none" role="status">{loadedAt === null ? "Loading sessions…" : "Nothing needs your attention."}</p>
+        )}
       </div>
     </div>
   );
@@ -1799,7 +1812,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   /** Scroll to this turn (1-based) once it is on screen; `at` makes a repeat click count. */
   jump?: { turn: number; at: number } | null;
   onSend: (t: string) => Promise<string | null> | void; onAnswer: (t: string, ask?: string) => Promise<string | null> | void; onInterrupt: () => Promise<boolean> | void;
-  onArchive: () => void; onRename: (t: string) => void; onContext?: () => void; onAck?: () => void;
+  onArchive: () => void; onRename: (t: string) => Promise<void>; onContext?: () => void; onAck?: () => void;
   onModel: (m: string) => Promise<boolean> | void; onEffort: (e: string) => Promise<boolean> | void; onAssign: (p: string) => void;
 }) {
   // One draft per session: switching away and back keeps what you were
@@ -2125,8 +2138,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
                 <button className="head-pop-item" onClick={async () => {
                   closeMore(false);
                   // Empty is allowed: it hands the title back to the session.
-                  const t = await askText("Rename session", { initial: plainTitle(row.title), action: "Rename", allowEmpty: true });
-                  if (t !== null) onRename(t);
+                  await askText("Rename session", { initial: plainTitle(row.title), action: "Rename", allowEmpty: true, onSubmit: onRename });
                 }}>Rename</button>
                 <button className="head-pop-item" onClick={() => { closeMore(true); onArchive(); }}>{row.archived ? "Unarchive" : "Archive"}</button>
               </div>
@@ -2344,6 +2356,8 @@ export default function App() {
   // clear it before it could be read.
   const [err, setErr] = useState<string | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  // When the list last refreshed; null until the first read lands.
+  const [loadedAt, setLoadedAt] = useState<number | null>(null);
   const [view, setView] = useState<View>("sessions");
   const [projects, setProjects] = useState<Project[]>([]);
   // Only a narrow window reads this (see the 720px media query): a
@@ -2368,7 +2382,7 @@ export default function App() {
   const refresh = useCallback(async () => {
     try {
       const [rs, ps] = await Promise.all([api.sessions(archived), api.projects()]);
-      setRows(rs); setProjects(ps); setLoadErr(null); setRowsAll(archived);
+      setRows(rs); setProjects(ps); setLoadErr(null); setRowsAll(archived); setLoadedAt(Date.now());
     } catch (e) { setLoadErr(e instanceof Error ? e.message : String(e)); }
   }, [archived]);
 
@@ -2677,15 +2691,16 @@ export default function App() {
         <WikiPage route={wikiRoute} onRoute={goWiki} onBack={goList} onOpenSession={openSession}
                   onSearch={(text) => { setPalQuery(text.replace(/\s+/g, " ").slice(0, 60)); setPalette(true); }} />
       ) : view === "hooks" ? (
-        <HooksPage onBack={goList} />
+        <HooksPage onBack={goList} rows={rows} />
       ) : view === "projects" ? (
         <ProjectsView
           projects={projects} rows={rows}
           onOpen={openSession}
           onBack={goList}
           onAssign={(id, p) => act(() => api.assign(id, p))}
-          onCreate={(name) => act(() => api.newProject(name))}
-          onRename={(id, name) => act(() => api.renameProject(id, name))}
+          onCreate={async (name) => { const p = await api.newProject(name); await refresh(); return p; }}
+          onRename={async (id, name) => { await api.renameProject(id, name); await refresh(); }}
+          onAssignMany={(ids, p) => act(() => Promise.all(ids.map((id) => api.assign(id, p))))}
           onDelete={(id) => act(() => api.deleteProject(id))} />
       ) : row && context ? (
         <ContextPage session={row.id} onBack={() => setContext(false)} />
@@ -2696,7 +2711,7 @@ export default function App() {
           onAnswer={(t, ask) => deliverTo(() => api.answer(row.id, t, ask))}
           onInterrupt={() => act(() => api.interrupt(row.id))}
           onArchive={() => act(() => (row.archived ? api.unarchive(row.id) : api.archive(row.id)))}
-          onRename={(t) => act(() => api.rename(row.id, t))}
+          onRename={async (t) => { await api.rename(row.id, t); await refresh(); }}
           onModel={(m) => act(() => api.model(row.id, m))}
           onEffort={(e) => act(() => api.effort(row.id, e))}
           onAssign={(p) => act(() => api.assign(row.id, p))}
@@ -2705,7 +2720,7 @@ export default function App() {
       ) : (
         <div className={"thread" + (selected ? " empty" : "")}>
           {!selected ? (
-            <ControlOverview rows={rows} onOpen={openSession} />
+            <ControlOverview rows={rows} onOpen={openSession} loadedAt={loadedAt} loadErr={loadErr} onRetry={refresh} />
           ) : rows.length > 0 && (
             // A link to a session this list does not hold.
             <div>

@@ -7,7 +7,7 @@ import { openTurn, projects, rows, streamRuns, subTurn } from "./fixtures";
 
 const noop = () => {};
 const handlers = {
-  onSend: noop, onAnswer: noop, onInterrupt: noop, onArchive: noop, onRename: noop,
+  onSend: noop, onAnswer: noop, onInterrupt: noop, onArchive: noop, onRename: async () => {},
   onModel: noop, onEffort: noop, onAssign: noop,
 };
 const shell = (Story: () => React.ReactNode) => (

@@ -27,7 +27,7 @@ function useWikiHits(q: string, open: boolean, on: boolean): WikiHit[] {
   const [hits, setHits] = useState<WikiHit[]>([]);
   useEffect(() => {
     const needle = q.trim();
-    if (!on || !open || needle.length < 2 || isSentence(needle)) { setHits([]); return; }
+    if (!on || !open || needle.length < 2) { setHits([]); return; }
     let live = true;
     const t = setTimeout(() => {
       fetch("/api/wiki/search?q=" + encodeURIComponent(needle))
@@ -81,11 +81,7 @@ function useFullText(q: string, open: boolean): { hits: SearchHit[]; state: Sear
   const [state, setState] = useState<SearchState>("idle");
   useEffect(() => {
     const needle = q.trim();
-    // A sentence is not a search. Every term has to appear somewhere in
-    // a session, and "to" and "the" appear in all of them — so asking
-    // for one matched everything and buried the thing you were plainly
-    // trying to do, which was start it.
-    if (!open || needle.length < 2 || isSentence(needle)) { setHits([]); setState("idle"); return; }
+    if (!open || needle.length < 2) { setHits([]); setState("idle"); return; }
     setState("loading");
     // Debounced: this reads every transcript, and the box is typed into
     // one character at a time.
@@ -100,11 +96,6 @@ function useFullText(q: string, open: boolean): { hits: SearchHit[]; state: Sear
     return () => { live = false; clearTimeout(t); };
   }, [q, open]);
   return { hits, state };
-}
-
-/** Four words or more reads as something to say, not something to find. */
-function isSentence(q: string): boolean {
-  return q.trim().split(/\s+/).length >= 4;
 }
 
 export function Palette({ open, onClose, rows, commands, onOpenSession, onStart, onOpenWikiPage, initialQuery = "" }: {
@@ -152,21 +143,28 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
       // With no query, commands only: a list of 150 titles is the
       // sidebar again, and the palette is for aiming at one.
       .filter((x) => (needle ? x.s >= 0 : false));
-    cmds.sort((a, b) => b.s - a.s);
-    sessions.sort((a, b) => b.s - a.s);
-    const cmdList = cmds.map((x) => x.c);
-    const sessionList: Command[] = sessions.slice(0, 30).map(({ r, title }) => ({
+    // Same-named sessions are told apart under the active row: branch,
+    // age, and the line the full-text search matched, when it did.
+    const foundBy = new Map(found.map((h) => [h.id, h]));
+    const detailFor = (r: Row) => {
+      const line = foundBy.get(r.id)?.lines[0];
+      return [[r.branch, r.lastAt ? agoShort(r.lastAt) : ""].filter(Boolean).join(" · "), line ? trimLine(line.text) : ""]
+        .filter(Boolean).join("\n") || undefined;
+    };
+    // One relevance order across commands and titles, so a weak match
+    // in one kind never leapfrogs a strong one in the other.
+    const ranked = [
+      ...cmds.map((x) => ({ s: x.s, c: x.c })),
+      ...sessions.slice(0, 30).map(({ r, title, s }) => ({ s, c: {
         id: "s:" + r.id,
         label: title,
-        hint: [r.repo?.split("/").pop(), r.status].filter(Boolean).join(" · "),
+        hint: [r.repo?.split("/").pop(), r.testsFailed ? "tests failed" : r.status].filter(Boolean).join(" · "),
         group: "Conversations",
+        detail: detailFor(r),
         run: () => onOpenSession(r.id),
-      }));
-    // Whichever block holds the better match leads: a title containing
-    // "test" beats a command whose letters merely occur in order.
-    const all: Command[] = (sessions[0]?.s ?? -1) > (cmds[0]?.s ?? -1)
-      ? [...sessionList, ...cmdList]
-      : [...cmdList, ...sessionList];
+      } as Command })),
+    ].sort((a, b) => b.s - a.s);
+    const all: Command[] = ranked.map((x) => x.c);
     // A wiki page carries the claim that matched: the point of the wiki
     // is the join between a page and the entry behind it, and a title
     // alone does not show which is which.
@@ -189,31 +187,28 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     for (const h of found) {
       if (seen.has("s:" + h.id)) continue;
       const line = h.lines[0];
+      const r = rows.find((x) => x.id === h.id);
       all.push({
         id: "s:" + h.id,
         label: plainTitle(h.title) || "Untitled session",
-        hint: line ? trimLine(line.text) : `${h.hits} matches`,
+        hint: [h.repo?.split("/").pop(), r ? (r.testsFailed ? "tests failed" : r.status) : ""].filter(Boolean).join(" · ")
+          || `${h.hits} matches`,
         group: "Found in the conversation",
+        detail: [[h.branch, r?.lastAt ? agoShort(r.lastAt) : ""].filter(Boolean).join(" · "), line ? trimLine(line.text) : ""]
+          .filter(Boolean).join("\n") || undefined,
         run: () => onOpenSession(h.id),
       });
     }
-    // Last, never first: what you typed is usually the name of
-    // something that exists. It is offered once nothing obvious
-    // matched, or at the end when something did.
+    // Last, always explicit: typing never starts anything by itself.
     const typed = q.trim();
     if (onStart && typed.length >= 2 && !typed.includes(":")) {
-      const startHere: Command = {
+      all.push({
         id: "start:" + typed,
         label: `Start a conversation: “${typed}”`,
         hint: "sends it as the first message",
         group: "Start",
         run: () => onStart(typed),
-      };
-      // A sentence leads; a word or two follows whatever it matched,
-      // because a short query is usually the name of something that
-      // already exists.
-      if (isSentence(typed)) all.unshift(startHere);
-      else all.push(startHere);
+      });
     }
     return all.slice(0, 40);
   }, [q, rows, commands, onOpenSession, found, onStart, pages, onOpenWikiPage]);
@@ -254,7 +249,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
             return (
               <div key={c.id}>
                 {head && <p className="pal-group">{head}</p>}
-                <button id={"pal-" + c.id} role="option" aria-selected={i === at}
+                <button id={"pal-" + c.id} role="option" aria-selected={i === at} tabIndex={-1}
                         data-at={i === at ? 1 : 0}
                         className={"pal-item" + (i === at ? " pal-on" : "")}
                         onMouseEnter={() => setAt(i)} onClick={() => pick(c)}>
@@ -265,17 +260,27 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
               </div>
             );
           })}
-          {searching === "error" && <p className="pal-none">Searching conversation text failed; only titles are matched.</p>}
-          {searching === "loading" && hits.length === 0 && <p className="pal-none">Searching conversation text…</p>}
           {hits.length === 0 && searching === "idle" && (
             <p className="pal-none">
               {q.trim() ? `Nothing matches “${q.trim()}”.` : "Type to search your conversations."}
             </p>
           )}
         </div>
+        {/* Never scrolls away: a failed text search is not hidden under the list. */}
+        <div className="pal-foot" role="status">
+          <span className="num">{hits.length} {hits.length === 1 ? "result" : "results"}</span>
+          {searching === "loading" && <span>Searching text…</span>}
+          {searching === "error" && <span className="pal-foot-bad">Text search failed · titles only</span>}
+          <span className="pal-foot-keys">↑↓ move · ↵ open · esc close</span>
+        </div>
       </div>
     </div>
   , document.body);
+}
+
+function agoShort(iso: string): string {
+  const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  return m < 60 ? `${m}m ago` : m < 2880 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`;
 }
 
 /** One matching line, short enough to sit on a row. */

@@ -12,19 +12,24 @@ import { createPortal } from "react-dom";
  */
 type Req =
   | { kind: "text"; title: string; initial: string; placeholder?: string; action: string; allowEmpty: boolean;
-      resolve: (v: string | null) => void }
+      onSubmit?: (v: string) => Promise<void>; resolve: (v: string | null) => void }
   | { kind: "confirm"; title: string; body: string; action: string; danger: boolean;
       resolve: (v: boolean) => void };
 
 let push: ((r: Req) => void) | null = null;
 
-/** The trimmed text entered, or null if the dialog was dismissed. */
-export function askText(title: string, opts: { initial?: string; placeholder?: string; action?: string; allowEmpty?: boolean } = {}): Promise<string | null> {
+/**
+ * The trimmed text entered, or null if the dialog was dismissed. With
+ * onSubmit the dialog stays open until it resolves, so closing means it
+ * was saved; a rejection keeps the draft and shows why.
+ */
+export function askText(title: string, opts: { initial?: string; placeholder?: string; action?: string; allowEmpty?: boolean;
+  onSubmit?: (v: string) => Promise<void> } = {}): Promise<string | null> {
   return new Promise((resolve) => {
     // Rendered outside the app (a story, a test) there is no host.
     if (!push) { resolve(window.prompt(title, opts.initial ?? "")); return; }
     push({ kind: "text", title, initial: opts.initial ?? "", placeholder: opts.placeholder,
-           action: opts.action ?? "Save", allowEmpty: opts.allowEmpty ?? false, resolve });
+           action: opts.action ?? "Save", allowEmpty: opts.allowEmpty ?? false, onSubmit: opts.onSubmit, resolve });
   });
 }
 
@@ -63,6 +68,8 @@ export function useModal(box: RefObject<HTMLElement | null>, active: boolean) {
 export function DialogHost() {
   const [req, setReq] = useState<Req | null>(null);
   const [text, setText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const ok = useRef<HTMLButtonElement>(null);
   const opener = useRef<HTMLElement | null>(null);
@@ -73,10 +80,21 @@ export function DialogHost() {
     push = (r) => {
       opener.current = document.activeElement as HTMLElement | null;
       setText(r.kind === "text" ? r.initial : "");
+      setSaving(false); setFailed("");
       setReq(r);
     };
     return () => { push = null; };
   }, []);
+
+  // Back to whatever asked, once the page behind is no longer inert
+  // (useModal's cleanup runs on this same commit), and never away from
+  // a dialog opened in the meantime.
+  useEffect(() => {
+    if (req) return;
+    const el = opener.current;
+    opener.current = null;
+    if (el?.isConnected && !document.querySelector("[aria-modal='true']")) el.focus?.();
+  }, [req]);
 
   useEffect(() => {
     if (!req) return;
@@ -88,36 +106,50 @@ export function DialogHost() {
 
   if (!req) return null;
 
-  const dismiss = () => finish(req.kind === "text" ? null : false);
+  const dismiss = () => { if (!saving) finish(req.kind === "text" ? null : false); };
   const finish = (result: string | null | boolean) => {
     const r = req;
     setReq(null);
-    opener.current?.focus?.(); // back to whatever asked
     if (r.kind === "text") r.resolve(result as string | null);
     else r.resolve(result as boolean);
   };
-  const empty = req.kind === "text" && !req.allowEmpty && !text.trim();
-  const submit = () => {
-    if (empty) return;
-    finish(req.kind === "text" ? text.trim() : true);
+  // Blank is allowed where it means something (a session title handed
+  // back); the same text again is not a change worth a request.
+  const blocked = req.kind === "text" && (
+    (!req.allowEmpty && !text.trim()) || (text.trim() === req.initial.trim() && text.trim() !== ""));
+  const submit = async () => {
+    if (blocked || saving) return;
+    if (req.kind !== "text") { finish(true); return; }
+    const v = text.trim();
+    if (req.onSubmit) {
+      setSaving(true); setFailed("");
+      try { await req.onSubmit(v); }
+      catch (e) { setFailed(e instanceof Error ? e.message : String(e)); setSaving(false); return; }
+      setSaving(false);
+    }
+    finish(v);
   };
 
   return createPortal(
     <div className="dlg-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) dismiss(); }}>
-      <div ref={box} className="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-title"
+      <div ref={box} className="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-title" aria-busy={saving || undefined}
            onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); dismiss(); } }}>
         <h2 id="dlg-title" className="dlg-title">{req.title}</h2>
         {req.kind === "confirm" && <p className="dlg-body">{req.body}</p>}
         {req.kind === "text" && (
           <input ref={input} className="field dlg-input" value={text} placeholder={req.placeholder}
-                 aria-labelledby="dlg-title"
+                 aria-labelledby="dlg-title" aria-invalid={failed ? true : undefined}
+                 aria-describedby={failed ? "dlg-err" : undefined}
                  onChange={(e) => setText(e.target.value)}
                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } }} />
         )}
+        {failed && <p id="dlg-err" className="dlg-err" role="alert">Not saved: {failed}</p>}
         <div className="dlg-actions">
-          <button className="btn" onClick={dismiss}>Cancel</button>
+          <button className="btn" onClick={dismiss} disabled={saving}>Cancel</button>
           <button ref={ok} className={"btn " + (req.kind === "confirm" && req.danger ? "btn-danger" : "btn-primary")}
-                  disabled={empty} onClick={submit}>{req.action}</button>
+                  disabled={blocked || saving} onClick={submit}>
+            {saving ? req.action.replace(/e?$/, "ing…") : req.action}
+          </button>
         </div>
       </div>
     </div>,

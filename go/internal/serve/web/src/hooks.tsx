@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Back } from "./app";
 import { EmptySection, Pending } from "./context";
+import { plainTitle } from "./render";
 
 // The hooks wire types live here, not in types.ts: they are read by this
 // view and nothing else, and GET /api/hooks always sends every field.
@@ -83,6 +84,11 @@ export interface HooksData {
 const clock = (iso: string) =>
   new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 const when = (iso: string | null, never: string) => (iso ? clock(iso) : never);
+const hms = (iso: string) => new Date(iso).toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const day = (iso: string) => new Date(iso).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+
+/** A fire nobody needs to read twice: it passed, and said nothing. */
+const quiet = (f: Fire) => !f.decision && !f.error && !f.notice && !(f.truncated?.length > 0);
 
 const POLL_MS = 5000; // a watcher that just fired should not need a reload
 
@@ -401,8 +407,14 @@ export function useOffs() {
   return { isOff, mark };
 }
 
-export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.write, dryrun = hooksApi.dryrun, setOff = setOffApi }: {
+export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.write, dryrun = hooksApi.dryrun, setOff = setOffApi,
+  titles = {}, stale, onRetry }: {
   data: HooksData; onBack?: () => void; load?: Load; save?: Save; dryrun?: DryRun; setOff?: SetOff;
+  /** Session id to a short title, so a fire names the work, not an id. */
+  titles?: Record<string, string>;
+  /** Set when the latest refresh failed: when the data on screen was read. */
+  stale?: { at: number; err: string };
+  onRetry?: () => void;
 }) {
   const { hooks, watchers, fires, rules, plugins } = data;
   const { isOff, mark } = useOffs();
@@ -430,6 +442,18 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
     () => [...fires].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)),
     [fires],
   );
+  // Runs of identical quiet fires fold to one row with ×N; anything that
+  // decided, errored or left a note always keeps its own row.
+  const runs = useMemo(() => {
+    const out: { f: Fire; n: number; key: string }[] = [];
+    recent.forEach((f, i) => {
+      const last = out[out.length - 1];
+      if (last && quiet(f) && quiet(last.f) && last.f.name === f.name && last.f.event === f.event
+          && last.f.session === f.session && day(last.f.at) === day(f.at)) { last.n++; return; }
+      out.push({ f, n: 1, key: `${f.at}-${f.name}-${i}` });
+    });
+    return out;
+  }, [recent]);
 
   return (
     <div className="thread">
@@ -441,6 +465,12 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
       </header>
 
       <div className="scroll proj-body">
+        {stale && (
+          <p className="hk-stale" role="status">
+            Stale · last updated {new Date(stale.at).toLocaleTimeString([], { hour12: false })} · {stale.err}
+            {onRetry && <button className="link" onClick={onRetry}>Retry</button>}
+          </p>
+        )}
         {/* What needs attention, before any list: on a page of five
             sections the counts are the only thing most visits need. */}
         <div className="hk2-sum">
@@ -460,15 +490,18 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
           </div>
           {recent.length === 0
             ? <p className="proj-none">No hook has decided anything yet. A hook that runs and passes the call through is not recorded — only one that blocks, denies, rewrites, throws, or leaves a note lands here.</p>
-            : recent.map((f, i) => (
-              <div key={`${f.at}-${f.name}-${i}`} className="proj-row hk-row">
-                <div className="hk-main">
-                  <span className="num hk-when hk-time">{clock(f.at)}</span>
+            : runs.map(({ f, n, key }, i) => (
+              <div key={key} className="hk-fire">
+                {(i === 0 || day(runs[i - 1].f.at) !== day(f.at)) && <h3 className="hk-day">{day(f.at)}</h3>}
+                <div className="hk-main" title={new Date(f.at).toString()}>
+                  <span className="num hk-when hk-time">{hms(f.at)}</span>
                   <span className="mono hk-name">{f.name}</span>
-                  {f.session && <a className="link mono hk-when" href={`#/s/${f.session}`}>{f.session.slice(0, 8)}</a>}
+                  {f.session
+                    ? <a className="link hk-when hk-sess" href={`#/s/${f.session}`} title={f.session}>{titles[f.session] || f.session.slice(0, 8)}</a>
+                    : <span />}
                   <span className="mono hk-when">{f.event}</span>
                   <span className="num hk-when">{f.ms}ms</span>
-                  <Decision fire={f} />
+                  <span className="hk-dec"><Decision fire={f} />{n > 1 && <span className="num hk-when"> ×{n}</span>}</span>
                 </div>
                 {f.notice && (
                   /* A notice never reached the model; this is the only
@@ -498,7 +531,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
             )
             : watchers.map((w) => (
               <WatcherRow key={w.path} w={w} load={load} save={save} setOff={setOff}
-                          off={isOff(w.id, w.off)} onOff={mark(w.id)} />
+                          off={isOff(offId("watcher", w.id), w.off)} onOff={mark(offId("watcher", w.id))} />
             ))}
         </section>
 
@@ -521,7 +554,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
                 <h3 className="mono hk-event-name">{event}</h3>
                 {list.map((h) => (
                   <HookRow key={h.path} h={h} load={load} save={save} dryrun={dryrun} setOff={setOff}
-                           off={isOff(h.id, h.off)} onOff={mark(h.id)} />
+                           off={isOff(offId("hook", h.id), h.off)} onOff={mark(offId("hook", h.id))} />
                 ))}
               </div>
             ))}
@@ -549,7 +582,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
                     ? <p className="proj-none">Nothing in <code className="mono">~/.claude/rules</code> yet.</p>
                     : homeRules.map((r) => (
                       <RuleRow key={r.id} r={r} load={load} save={save} setOff={setOff}
-                               off={isOff(r.id, r.off)} onOff={mark(r.id)} />
+                               off={isOff(offId("rule", r.id), r.off)} onOff={mark(offId("rule", r.id))} />
                     ))}
                 </div>
                 <div className="hk-event">
@@ -558,7 +591,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
                     ? <p className="proj-none">No repo checked out here adds rules of its own.</p>
                     : repoRules.map((r) => (
                       <RuleRow key={r.id} r={r} load={load} save={save} setOff={setOff}
-                               off={isOff(r.id, r.off)} onOff={mark(r.id)} />
+                               off={isOff(offId("rule", r.id), r.off)} onOff={mark(offId("rule", r.id))} />
                     ))}
                 </div>
               </>
@@ -579,7 +612,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
                    <code className="mono"> uni-common</code> — and everything it contributes is listed here.</EmptySection>
             )
             : plugins.map((p) => (
-              <PluginRow key={p.id} p={p} setOff={setOff} off={isOff(p.id, p.off)} onOff={mark(p.id)} />
+              <PluginRow key={p.id} p={p} setOff={setOff} off={isOff(offId("plugin", p.id), p.off)} onOff={mark(offId("plugin", p.id))} />
             ))}
         </section>
 
@@ -589,17 +622,19 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
 }
 
 /** The live view: polls GET /api/hooks and hands the result to HooksView. */
-export function HooksPage({ onBack }: { onBack?: () => void }) {
+export function HooksPage({ onBack, rows = [] }: { onBack?: () => void; rows?: { id: string; title?: string }[] }) {
   const [data, setData] = useState<HooksData | null>(null);
   const [err, setErr] = useState("");
+  const [at, setAt] = useState(0);
+  const titles = useMemo(() => Object.fromEntries(rows.map((r) => [r.id, plainTitle(r.title ?? "")])), [rows]);
 
   const refresh = useCallback(() => {
-    hooksApi.all().then((d) => { setData(d); setErr(""); })
+    hooksApi.all().then((d) => { setData(d); setErr(""); setAt(Date.now()); })
       .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
   }, []);
 
   useEffect(() => { refresh(); const t = setInterval(refresh, POLL_MS); return () => clearInterval(t); }, [refresh]);
 
   if (!data) return <Pending title="Hooks" what="hooks" err={err} onBack={onBack} onRetry={refresh} />;
-  return <HooksView data={data} onBack={onBack} />;
+  return <HooksView data={data} onBack={onBack} titles={titles} stale={err ? { at, err } : undefined} onRetry={refresh} />;
 }
