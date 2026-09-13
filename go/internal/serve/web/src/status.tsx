@@ -50,13 +50,7 @@ export const STATUS: Record<Status, { label: string; tone: string; glyph: React.
   interrupted: {
     label: "Interrupted",
     tone: "var(--text-2)",
-    glyph: (
-      <>
-        <path d="M12 4.5L21 19H3z" />
-        <path d="M12 10v4" />
-        <path d="M12 16.5h.01" />
-      </>
-    ),
+    glyph: <path d="M9 6.5v11M15 6.5v11" />,
   },
   idle: {
     label: "Idle",

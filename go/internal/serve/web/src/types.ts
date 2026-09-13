@@ -56,6 +56,8 @@ export interface Row {
   cache?: Cache;
   /** Why this session needs you ("failed", "interrupted", "tests failed"); absent once marked seen. */
   trouble?: string;
+  /** The last test run exited non-zero; stays after Seen, which is not a fix. */
+  testsFailed?: boolean;
   /** Lines in the session's running log (GET /api/sessions/{id}/turns); absent when none. */
   turns?: number;
 }

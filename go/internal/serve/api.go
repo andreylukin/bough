@@ -68,6 +68,9 @@ type Row struct {
 	// Trouble is why this session needs a person ("failed",
 	// "interrupted", "tests failed"), or "" once marked seen.
 	Trouble string `json:"trouble,omitempty"`
+	// TestsFailed is the last test run's recorded non-zero exit; unlike
+	// Trouble it outlives being marked seen, since seen is not fixed.
+	TestsFailed bool `json:"testsFailed,omitempty"`
 	// Turns counts the lines of the session's running log (GET .../turns).
 	Turns int `json:"turns,omitempty"`
 	// Background marks a run nobody started by hand (a wiki ingest, a
@@ -452,7 +455,9 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 		Jobs:     RunningJobs(entries, live),
 		Cache:    LastCache(entries, model),
 		Trouble:  Troubled(st, entries, meta.Ack, time.Now()),
-		Turns:    countTurns(entries),
+
+		TestsFailed: lastTestFailed(entries),
+		Turns:       countTurns(entries),
 
 		Background: in.Background,
 		Empty:      !hasInput(entries),

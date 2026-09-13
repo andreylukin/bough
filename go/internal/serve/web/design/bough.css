@@ -39,16 +39,17 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .row-wrap:hover>.row-twist,.row-wrap:focus-within>.row-twist,.row-twist[aria-expanded="true"]{opacity:1}
 .row-twist:hover{background:var(--line);color:var(--text-1)}
 @media (hover:none){.row-twist{opacity:1}}
-.turns{list-style:none;margin:0 0 6px;padding:0}
-.turn-line{display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 10px 0 8px;background:none;border:0;
-  border-radius:6px;font:13px/28px var(--sans);color:var(--text-3);text-align:start;cursor:pointer}
+/* The log hangs off the status column on a rule, so turns never line up with titles. */
+.turns{list-style:none;margin:0 0 6px 17px;padding:0 0 0 8px;border-left:1px solid #3c483f;max-height:168px;overflow-y:auto}
+.turn-line{display:flex;align-items:center;gap:6px;width:100%;height:28px;padding:0 8px 0 4px;background:none;border:0;
+  border-radius:6px;font:12px/18px var(--sans);color:var(--text-3);text-align:start;cursor:pointer}
 .turn-line:hover{background:var(--raised);color:var(--text-1)}
 .turn-line:focus-visible{outline-offset:-2px}
-.turn-n{flex-shrink:0;width:20px;text-align:end;color:var(--text-3);font-size:12px}
+.turn-n{flex-shrink:0;width:16px;text-align:end;color:var(--text-3);font-size:12px}
 .turn-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.turn-wait{padding-inline-start:36px;font-size:12px;line-height:28px;color:var(--text-3)}
+.turn-wait{padding-inline-start:26px;font-size:12px;line-height:28px;color:var(--text-3)}
 @media (pointer:coarse){.turn-line{height:40px}.row{height:44px}.row-twist{top:6px;width:32px;height:32px}}
-@media (prefers-reduced-motion:reduce){.row-twist svg{transition:none}}
+@media (prefers-reduced-motion:reduce){.row-twist svg,.sec-fold svg{transition:none}}
 /* A turn you jumped to says where it is, then lets go. */
 .turn{scroll-margin-top:12px}
 .turn-flash{animation:turn-flash 1.6s ease-out}
@@ -60,7 +61,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .transcript-state{margin:auto 0;text-align:center}
 /* The toolbar: sidebar, back, forward, search, and New set apart on the right. */
 .side-bar{flex-shrink:0;display:flex;align-items:center;justify-content:space-between;height:48px;padding:0 10px}
-.side-icon{display:grid;place-items:center;width:34px;height:34px;padding:0;background:none;border:0;border-radius:8px;
+.side-icon{display:grid;place-items:center;width:32px;height:32px;padding:0;background:none;border:0;border-radius:8px;
   color:var(--text-3);cursor:pointer}
 .side-icon:hover,.side-icon-on{color:var(--text-1);background:var(--raised)}
 .side-new{display:grid;place-items:center;width:38px;height:38px;padding:0;border:0;border-radius:50%;
@@ -76,26 +77,31 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 /* A workspace, and the sections below: a muted name and a thin rule filling the row. */
 .ws{display:flex;flex-direction:column}
 .ws-head,.sec-fold{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;color:var(--text-3);font:13px var(--sans)}
+.ws-head{height:28px;font:600 12px/16px var(--sans)}
 .ws-head svg{flex-shrink:0}
 .ws-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:70%}
 .ws-rule{flex:1 1 auto;min-width:16px;height:1px;background:var(--line)}
-.sec-fold{width:100%;background:none;border:0;border-radius:8px;cursor:pointer;text-align:start}
+.sec-fold{width:100%;height:30px;margin-top:8px;background:none;border:0;border-radius:8px;cursor:pointer;text-align:start}
+.sec-fold svg{flex-shrink:0;transition:transform .12s}
+.sec-fold[aria-expanded="true"] svg{transform:rotate(90deg)}
 .sec-fold:hover{color:var(--text-1)}
 .sec-fold[aria-expanded="true"]{color:var(--text-2)}
-.sec-count{color:var(--text-3)}
-.sec-alert{width:6px;height:6px;border-radius:50%;flex:none}
-.sec-alert-trouble{background:var(--red)}
-.sec-alert-needs-you{background:var(--amber)}
+.sec-count{color:var(--text-3);font-size:12px;font-variant-numeric:tabular-nums}
+.sec-count-trouble{color:var(--red)}
+.sec-count-needs-you{color:var(--amber)}
 .sec{margin-top:2px}
-@media (pointer:coarse){.sec-fold{height:44px}}
+@media (pointer:coarse){.sec-fold{height:44px}.side-icon{width:44px;height:44px}}
 /* A session: its status mark, its title, and a trailing count only when there is one. */
 .row{display:flex;align-items:center;gap:10px;width:100%;height:32px;text-align:start;padding:0 10px;
      background:none;border:0;border-radius:8px;color:inherit;font:inherit;cursor:pointer}
 .row-has-log{padding-inline-end:34px}
 .row-mark{display:grid;place-items:center;width:16px;flex-shrink:0}
-.row:hover{background:var(--raised)}
-.row:focus-visible{outline-offset:-2px}
-.row-on,.row-on:hover{background:var(--sel)}
+/* Hover, selected and focus each look different: a tint, a tint with a marker, a ring. */
+.row:hover{background:#232a25}
+.row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.row-on,.row-on:hover{background:#2d3a31;box-shadow:inset 2px 0 0 var(--accent)}
+.row-why{padding:0 10px 4px 36px;font-size:12px;line-height:16px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .row-title{font-size:15px;color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .row-wrap:hover>.row-has-ack .row-jobs,.row-wrap:focus-within>.row-has-ack .row-jobs{visibility:hidden}
 .head-ack{height:26px;padding:0 10px;font-size:12px;flex-shrink:0}

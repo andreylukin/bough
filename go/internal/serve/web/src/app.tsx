@@ -76,16 +76,32 @@ function byUrgency(a: Row, b: Row): number {
 
 /** Rows under their workspace, workspaces by their latest activity. */
 function byWorkspace(rows: Row[]): [string, Row[]][] {
+  // Grouped by the whole path, so two checkouts named alike stay apart;
+  // only then does a name take its parent to tell them apart.
   const out = new Map<string, Row[]>();
   for (const r of rows) {
-    const k = workspaceOf(r);
+    const k = r.repo || r.cwd;
     if (!out.has(k)) out.set(k, []);
     out.get(k)!.push(r);
   }
+  const names = new Map<string, number>();
+  for (const list of out.values()) names.set(workspaceOf(list[0]), (names.get(workspaceOf(list[0])) ?? 0) + 1);
+  const label = (r: Row) => {
+    const name = workspaceOf(r);
+    if ((names.get(name) ?? 0) < 2) return name;
+    return (r.repo || r.cwd).split("/").filter(Boolean).slice(-2).join("/");
+  };
   const latest = (list: Row[]) => Math.max(...list.map((r) => Date.parse(r.lastAt)));
-  return [...out.entries()]
-    .map(([k, list]) => [k, list.sort(byUrgency)] as [string, Row[]])
+  return [...out.values()]
+    .map((list) => [label(list[0]), list.sort(byUrgency)] as [string, Row[]])
     .sort((a, b) => latest(b[1]) - latest(a[1]));
+}
+
+/** The query's first match in text, marked. */
+function marked(text: string, q: string): React.ReactNode {
+  const i = q ? text.toLowerCase().indexOf(q) : -1;
+  if (i < 0) return text;
+  return <>{text.slice(0, i)}<mark className="hit">{text.slice(i, i + q.length)}</mark>{text.slice(i + q.length)}</>;
 }
 
 /** A 24-box stroked icon in currentColor, the status glyphs' idiom. */
@@ -166,22 +182,19 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
   const showSearch = searching || Boolean(query);
   useEffect(() => { if (searching) searchRef.current?.focus(); }, [searching]);
 
-  // A session's turn log, one line a turn, opens under its row. The open
-  // session shows its own; the rest stay shut until asked, and stay the
-  // way you left them across reloads.
-  const [expanded, setExpanded] = useState<Set<string>>(() => readSet("bough:turns-open"));
+  // A session's turn log, one line a turn, opens under its row when asked,
+  // one at a time: the transcript already shows the open session's turns.
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set([...readSet("bough:turns-open")].slice(-1)));
   const setOpen = useCallback((id: string, open: boolean) => setExpanded((cur) => {
     if (cur.has(id) === open) return cur;
-    const next = new Set(cur);
-    if (open) next.add(id); else next.delete(id);
+    const next = new Set(open ? [id] : []);
     writeSet("bough:turns-open", next);
     return next;
   }), []);
-  useEffect(() => { if (selected) setOpen(selected, true); }, [selected, setOpen]);
 
   // Fetched on first open, kept per session, and read again once the
   // session has changed since.
-  const [logs, setLogs] = useState<Record<string, { at: string; lines: TurnLine[] }>>({});
+  const [logs, setLogs] = useState<Record<string, { at: string; lines?: TurnLine[] }>>({});
   const fetching = useRef(new Set<string>());
   useEffect(() => {
     for (const r of rows) {
@@ -190,7 +203,8 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
       fetching.current.add(r.id);
       api.turns(r.id)
         .then((lines) => setLogs((m) => ({ ...m, [r.id]: { at, lines } })))
-        .catch(() => {})
+        // No lines at this version says it failed; Retry forgets it.
+        .catch(() => setLogs((m) => ({ ...m, [r.id]: { at } })))
         .finally(() => fetching.current.delete(r.id));
     }
   }, [rows, expanded, logs]);
@@ -266,12 +280,22 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     else go(cur.closest(".sec")?.querySelector<HTMLElement>("button.sec-fold"));
   };
 
+  const q = query.trim().toLowerCase();
   const session = (r: Row) => {
-    const open = Boolean(r.turns) && expanded.has(r.id);
-    const log = logs[r.id]?.lines;
+    // A search hides the logs: they are not what matched.
+    const open = Boolean(r.turns) && expanded.has(r.id) && !q;
+    const log = logs[r.id];
     const name = plainTitle(r.title);
     const on = r.id === selected;
-    const why = r.trouble ? capital(r.trouble) : STATUS[r.status]?.label ?? r.status;
+    // A recorded failure outranks the lifecycle: finished is not fine.
+    const failed = r.trouble || (r.testsFailed ? "tests failed" : "");
+    const why = failed
+      ? `${capital(failed)}${failed === "tests failed" ? `; agent ${(STATUS[r.status]?.label ?? r.status).toLowerCase()}` : ""}`
+      : STATUS[r.status]?.label ?? r.status;
+    // What matched when the title did not.
+    const reason = q && !name.toLowerCase().includes(q)
+      ? ([["branch", r.branch], ["repo", r.repo], ["path", r.cwd], ["id", r.id]] as const).find(([, v]) => v?.toLowerCase().includes(q))
+      : undefined;
     return (
       <div key={r.id} className="session">
         <div className={"row-wrap" + (open ? " row-open" : "")}>
@@ -284,14 +308,14 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
                   title={`${why} · ${ago(r.lastAt)} ago${r.branch ? ` · ${r.branch}` : ""}`}>
             {/* A failure you have not seen is a red mark; the reason is its label. */}
             <span className="row-mark">
-              {r.trouble
+              {failed
                 ? <span className="status"><svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{STATUS.error.glyph}</svg><span className="visually-hidden">{why}</span></span>
                 : <StatusMark status={r.status} size={16} bare />}
             </span>
             {r.ask && name && askSaysTitle(r.ask.text, name)
               ? <span className="row-title" title={r.ask.text}>{plainTitle(r.ask.text)}</span>
               : name
-              ? <span className="row-title">{name}</span>
+              ? <span className="row-title">{marked(name, q)}</span>
               // No title: the id tail alone tells rows apart.
               : <span className="row-title mono row-untitled">{r.id.slice(-6)}</span>}
             {r.jobs && r.jobs.length > 0 && (
@@ -311,15 +335,18 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
                     onClick={() => setOpen(r.id, !open)}><Icon d={ICONS.chevron} size={14} /></button>
           ) : null}
         </div>
+        {reason && <div className="row-why">{reason[0]}: {marked(reason[1]!, q)}</div>}
         {open && (
           <ol id={`turns-${r.id}`} className="turns" aria-label={`Turns of ${name || "session"}`}>
-            {log ? log.map((l) => (
+            {log?.lines ? log.lines.map((l) => (
               <li key={l.turn}>
-                <button className="turn-line" title={l.text} onClick={() => onTurn?.(r.id, l.turn)}>
+                <button className="turn-line" tabIndex={-1} title={l.text} onClick={() => onTurn?.(r.id, l.turn)}>
                   <span className="num turn-n">{l.turn}</span><span className="turn-text">{l.text.replace(/^you (asked|said|wanted)( to| for| that)?\s+/i, "").replace(/^./, (c) => c.toUpperCase())}</span>
                 </button>
               </li>
-            )) : <li className="turn-wait">Loading…</li>}
+            )) : log ? (
+              <li className="turn-wait">Couldn’t load turns · <button className="link" onClick={() => setLogs((m) => { const { [r.id]: _, ...rest } = m; return rest; })}>Retry</button></li>
+            ) : <li className="turn-wait">Loading…</li>}
           </ol>
         )}
       </div>
@@ -328,31 +355,33 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
 
   const workspaces = (groups: [string, Row[]][]) => groups.map(([ws, list]) => (
     <div key={ws} className="ws">
-      <div className="ws-head"><Icon d={ICONS.folder} size={15} /><span className="ws-name">{ws}</span><span className="ws-rule" /></div>
+      <div className="ws-head"><Icon d={ICONS.folder} size={15} /><span className="ws-name">{ws}</span></div>
       {list.map(session)}
     </div>
   ));
 
   // A section folds; a search shows every match, folded or not.
-  const section = (key: string, label: string, open: boolean, toggle: () => void, count: number | null, body: React.ReactNode, alert?: "trouble" | "needs-you") => (
+  const section = (key: string, label: string, open: boolean, toggle: () => void, count: React.ReactNode, body: React.ReactNode, alert?: "trouble" | "needs-you") => (
     <div className="sec">
       <button className="sec-fold" aria-expanded={open} onClick={toggle} aria-controls={`sec-${key}`}>
+        <Icon d={ICONS.chevron} size={12} />
         <span>{label}</span>
-        {alert && <span className={"sec-alert sec-alert-" + alert} title={alert === "trouble" ? "Something inside failed" : "Something inside needs you"}>
-          <span className="visually-hidden">{alert === "trouble" ? " (something failed)" : " (needs you)"}</span></span>}
-        <span className="ws-rule" />{count !== null && <span className="num sec-count">{count}</span>}
+        <span className="ws-rule" />{count !== null && <span className={"num sec-count" + (alert ? " sec-count-" + alert : "")}>{count}</span>}
       </button>
       {open && <div className="sec-body" id={`sec-${key}`}>{body}</div>}
     </div>
   );
 
+  // A phone has no room to fold the list into: there the list is the pane,
+  // and its toolbar stays whole whatever a desktop left saved.
+  const folded = closed && !window.matchMedia?.("(max-width:720px)").matches;
   const toolbar = (
     <div className="side-bar">
       <button className="side-icon side-collapse" onClick={() => setSide(!closed)} aria-expanded={!closed}
               aria-label={closed ? "Show sidebar" : "Hide sidebar"} title={closed ? "Show sidebar" : "Hide sidebar"}>
         <Icon d={ICONS.panel} />
       </button>
-      {!closed && <>
+      {!folded && <>
         <button className="side-icon" onClick={() => window.history.back()} aria-label="Back" title="Back"><Icon d={ICONS.back} /></button>
         <button className="side-icon" onClick={() => window.history.forward()} aria-label="Forward" title="Forward"><Icon d={ICONS.forward} /></button>
         <button className={"side-icon" + (showSearch ? " side-icon-on" : "")} aria-expanded={showSearch} aria-controls="q"
@@ -367,12 +396,12 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     </div>
   );
 
-  // A phone has no room to fold the list into: there the list is the pane.
-  if (closed && !window.matchMedia?.("(max-width:720px)").matches) return <div className="sidebar sidebar-closed">{toolbar}</div>;
+  if (folded) return <div className="sidebar sidebar-closed">{toolbar}</div>;
 
   const total = recent.length + inactive.length + background.length + archived.length;
-  const bgAlert = background.some((r) => r.trouble) ? "trouble"
-    : background.some((r) => r.status === "needs-you") ? "needs-you" : undefined;
+  // While something in Background needs you, its count says how many, not the total.
+  const bgUrgent = background.filter((r) => r.trouble || r.status === "needs-you");
+  const bgAlert = background.some((r) => r.trouble) ? "trouble" : bgUrgent.length ? "needs-you" : undefined;
   return (
     <div className="sidebar">
       {card && (
@@ -401,8 +430,9 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
         {inactive.length > 0 && section("inactive", "Inactive last 72h", Boolean(query) || unfolded.has("inactive"), () => toggleFold("inactive"),
           inactive.length, workspaces(byWorkspace(inactive)))}
         {background.length > 0 && section("background", "Background", Boolean(query) || unfolded.has("background"), () => toggleFold("background"),
-          background.length, workspaces(byWorkspace(background)), bgAlert)}
-        {section("archived", "Archived", showArchived, onToggleArchived, showArchived ? archived.length : null,
+          bgUrgent.length ? <span title={`${background.length} in all`}>{bgUrgent.length} need you</span> : background.length, workspaces(byWorkspace(background)), bgAlert)}
+        {/* Archived is not loaded until opened, so a search cannot have looked there. */}
+        {section("archived", q && !showArchived ? "Archived not searched · Include" : "Archived", showArchived, onToggleArchived, showArchived ? archived.length : null,
           archived.length ? workspaces(byWorkspace(archived)) : <p className="list-none">Nothing archived.</p>)}
       </div>
       {onView && (
