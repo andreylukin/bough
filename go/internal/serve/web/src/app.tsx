@@ -684,6 +684,7 @@ function RuntimeStrip({ row, lines }: { row: Row; lines: Line[] }) {
         </span>
       )}
       <ChangesChip id={row.id} tick={lines.length} />
+      <TestsChip lines={lines} />
       {row.cache && <CacheChip cache={row.cache} model={row.model} />}
       {row.jobs && row.jobs.length > 0 && <JobsChip session={row.id} jobs={row.jobs} />}
     </div>
@@ -733,6 +734,36 @@ function ChangesChip({ id, tick }: { id: string; tick: number }) {
   );
 }
 
+/** A command that runs a test suite, by the runners people actually type. */
+const TEST_CMD = /\b(go test|(?:npm|pnpm|yarn|bun)(?: run)? test|pytest|cargo (?:test|nextest)|vitest|jest|make (?:test|check)|mvn test|gradle test|rspec|phpunit)\b/;
+
+/**
+ * The last test run and how it ended, from the exit code the loop
+ * recorded on its result — never from what the reply said about it.
+ * Absent when the session ran no tests, or ran them before exit codes
+ * were recorded.
+ */
+function TestsChip({ lines }: { lines: Line[] }) {
+  const last = useMemo(() => {
+    for (let i = lines.length - 1; i > 0; i--) {
+      const r = lines[i], c = lines[i - 1];
+      if (r.kind !== "result" || c.kind !== "code" || typeof r.data?.exit !== "number") continue;
+      const call = parseCall(c.text);
+      if (call.verb === "Ran" && TEST_CMD.test(call.target)) return { cmd: call.gist, exit: r.data.exit as number, at: r.at };
+    }
+    return null;
+  }, [lines]);
+  if (!last) return null;
+  const failed = last.exit !== 0;
+  return (
+    <span className="rt" title={`${last.cmd} · exit ${last.exit} · ${new Date(last.at).toLocaleString()}`}>
+      <span className="rt-label">Tests</span>
+      <span className={"num rt-value " + (failed ? "rt-del" : "rt-add")}>{failed ? "failed" : "passed"}</span>
+      <span className="num rt-label">{ago(last.at)} ago</span>
+    </span>
+  );
+}
+
 /** Now, re-read every second while `on`. */
 function useNow(on: boolean): number {
   const [now, setNow] = useState(Date.now());
@@ -770,6 +801,13 @@ function CacheChip({ cache, model }: { cache: NonNullable<Row["cache"]>; model?:
 /** Background jobs still running, one click from their commands. */
 function JobsChip({ session, jobs }: { session: string; jobs: NonNullable<Row["jobs"]> }) {
   const now = useNow(true);
+  // A stop is asked of the child and lands when the job's own entry does;
+  // until then the row says so, and a refused ask says that instead.
+  const [stop, setStop] = useState<Record<number, "stopping" | "failed">>({});
+  const kill = (id: number) => {
+    setStop((m) => ({ ...m, [id]: "stopping" }));
+    api.killJob(session, id).catch(() => setStop((m) => ({ ...m, [id]: "failed" })));
+  };
   return (
     <details className="rt rt-jobs">
       <summary>
@@ -781,7 +819,9 @@ function JobsChip({ session, jobs }: { session: string; jobs: NonNullable<Row["j
           <li key={j.id}>
             <span className="mono rt-job-cmd" title={j.cmd}>{j.cmd}</span>
             <span className="num rt-label">{duration(now - Date.parse(j.started))}</span>
-            <button className="btn rt-stop" onClick={() => api.killJob(session, j.id).catch(() => {})}>Stop</button>
+            <button className="btn rt-stop" disabled={stop[j.id] === "stopping"} onClick={() => kill(j.id)}>
+              {stop[j.id] === "stopping" ? "Stopping…" : stop[j.id] === "failed" ? "Couldn’t stop · Retry" : "Stop"}
+            </button>
           </li>
         ))}
       </ul>
@@ -1003,6 +1043,9 @@ export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, on
   // during a streaming turn used to be impossible: every fragment
   // re-scrolled to the end and dragged you back down mid-sentence.
   const atBottom = useRef(true);
+  // Shown only while you have scrolled away from the end, so reading
+  // history during a live turn has a way back that does not yank you.
+  const [away, setAway] = useState(false);
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
@@ -1010,6 +1053,7 @@ export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, on
     // means by "at the bottom", and an exact test loses the stick the
     // moment a fragment arrives a pixel early.
     atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    setAway(!atBottom.current);
   };
   useEffect(() => {
     if (atBottom.current) end.current?.scrollIntoView({ block: "end" });
@@ -1114,6 +1158,12 @@ export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, on
       </div>
 
       <div className="composer-wrap">
+        {away && (
+          <button className="btn jump-latest" onClick={() => {
+            atBottom.current = true; setAway(false);
+            end.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+          }}>Jump to latest</button>
+        )}
         {row.ask && !askSeen && (
           <div className="ask-bar">
             <p><strong>Needs your answer.</strong> {row.ask.text}</p>
@@ -1473,7 +1523,7 @@ export default function App() {
       ) : view === "projects" ? (
         <ProjectsView
           projects={projects} rows={rows}
-          onOpen={(id) => { setSelected(id); setView("sessions"); }}
+          onOpen={openSession}
           onBack={() => setPane("list")}
           onAssign={(id, p) => act(() => api.assign(id, p))}
           onCreate={(name) => act(() => api.newProject(name))}
