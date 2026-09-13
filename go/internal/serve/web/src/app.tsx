@@ -43,6 +43,15 @@ function shortPath(p: string, home: string): string {
   return home && p.startsWith(home) ? "~" + p.slice(home.length) : p;
 }
 
+/** "8m", "3h", "2d": how long ago, as a sidebar reads it. */
+function ago(iso: string): string {
+  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+  if (s < 60) return "<1m";
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
+}
+
 /** ⌘ on a Mac, Ctrl everywhere else. */
 function modKey(): string {
   return typeof navigator !== "undefined" && /Mac|iP/.test(navigator.platform) ? "\u2318" : "Ctrl+";
@@ -109,7 +118,13 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
                       aria-current={r.id === selected ? "true" : undefined}>
                 <span className="row-line">
                   <span className="row-title">{plainTitle(r.title) || untitled(r.id)}</span>
-                  <span className="num">{clock(r.modified)}</span>
+                  {/* A session that needs you or is moving is measured in how
+                      long, not the wall-clock time it last changed. */}
+                  <span className="num" title={new Date(r.modified).toLocaleString()}>
+                    {r.status === "needs-you" ? `Waiting ${ago(r.modified)}`
+                      : r.status === "running" ? `Running ${ago(r.modified)}`
+                      : clock(r.modified)}
+                  </span>
                 </span>
                 <span className="row-meta">
                   <StatusMark status={r.status} />
