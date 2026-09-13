@@ -37,8 +37,8 @@ type API struct {
 // Row is one session as the wire sees it: what history knows, what the
 // supervisor knows (lease, rename, archive) and the derived status.
 type Row struct {
-	ID       string    `json:"id"`
-	Title    string    `json:"title"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
 	// Summary is a few sentences on what the session is about, written by
 	// the small model as the conversation grows; "" before it has one.
 	Summary  string    `json:"summary,omitempty"`
