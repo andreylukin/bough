@@ -622,16 +622,17 @@ function TurnFooter({ turn }: { turn: Turn }) {
   const failed = typeof exit === "number" && exit !== 0;
   const facts: string[] = [];
   if (turn.prompt?.at) facts.push(duration(Date.parse(done.at) - Date.parse(turn.prompt.at)));
-  if (u) {
-    facts.push(`${tokenCount(u.in)} in · ${tokenCount(u.out)} out`);
-    if (u.cost !== undefined) facts.push(money(u.cost));
-  }
+  // The strip above owns session totals; a turn says what it took, with
+  // its tokens on the price rather than as a third figure.
+  const tokens = u ? `${tokenCount(u.in)} in · ${tokenCount(u.out)} out` : "";
+  if (u?.cost !== undefined) facts.push(money(u.cost));
+  else if (u) facts.push(tokens);
   return (
     <div className="turn-foot">
       <span className={"turn-outcome" + (failed ? " turn-failed" : "")}>
         {done.kind === "cancelled" ? "Stopped" : failed ? `Finished · last command exit ${exit}` : "Finished"}
       </span>
-      {facts.map((f) => <span key={f} className="num">{f}</span>)}
+      {facts.map((f) => <span key={f} className="num" title={tokens || undefined}>{f}</span>)}
       {files.length > 0 && (
         <details className="turn-files">
           <summary>{files.length} {files.length === 1 ? "file" : "files"} changed</summary>
@@ -666,7 +667,7 @@ function RuntimeStrip({ row, lines }: { row: Row; lines: Line[] }) {
     <div className="runtime-strip">
       {u && (
         <span className="rt" title={limit ? `${u.lastIn.toLocaleString()} of ${limit.toLocaleString()} tokens` : undefined}>
-          <span className="rt-label">Context</span>
+          <span className="rt-label">{limit ? "Context" : "Last input"}</span>
           <span className="num rt-value">{tokenCount(u.lastIn)}{limit ? ` / ${contextSize(limit)}` : ""}</span>
           {pct !== undefined && (
             <span className="rt-bar" role="meter" aria-label="Context used" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
@@ -699,8 +700,13 @@ function ChangesChip({ id, tick }: { id: string; tick: number }) {
   const [files, setFiles] = useState<Change[]>([]);
   useEffect(() => {
     let live = true;
-    api.changes(id).then((r) => { if (live) setFiles(r.files); }).catch(() => { if (live) setFiles([]); });
-    return () => { live = false; };
+    // A hand edit or another session changes the tree without a transcript
+    // entry, so it is re-read on a timer too. A failed read keeps the last
+    // snapshot rather than claiming the tree is clean.
+    const read = () => api.changes(id).then((r) => { if (live) setFiles(r.files); }).catch(() => {});
+    read();
+    const t = setInterval(read, 10_000);
+    return () => { live = false; clearInterval(t); };
   }, [id, tick]);
   if (!files.length) return null;
   const add = files.reduce((n, f) => n + Math.max(0, f.add), 0);
@@ -1449,7 +1455,7 @@ export default function App() {
                onOpenWikiPage={(path) => goWiki({ at: "page", path })}
                onStart={home ? (text) => start(home, text) : undefined} />
       <Sidebar rows={visible} selected={selected}
-               onSelect={(id) => { setSelected(id); setContext(false); setView("sessions"); setPane("thread"); }}
+               onSelect={openSession}
                query={query} onQuery={setQuery} view={view} wikiFlags={wikiFlags}
                onView={(v) => { if (v === "wiki") goWiki({ at: "index" }); else { setView(v); setPane("thread"); } }}
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)}

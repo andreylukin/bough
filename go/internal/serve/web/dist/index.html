@@ -35,7 +35,10 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 /* sidebar */
 .sidebar{width:304px;flex-shrink:0;border-right:1px solid var(--line);background:var(--surface);
          display:flex;flex-direction:column}
-.sidebar .scroll{flex:1 1 0%;min-height:0;padding-bottom:16px}
+.sidebar .scroll{flex:1 1 0%;min-height:0;padding-bottom:16px;position:relative}
+/* .visually-hidden is absolute: without a positioned ancestor each one sat at its
+   place deep in the transcript and stretched the document past the viewport. */
+.transcript{position:relative}
 /* The sidebar's first screen is for sessions: a 44px brand row, one row
    of view tabs, the search, then the queue. */
 .brand{display:flex;align-items:center;gap:10px;height:44px;padding:0 16px;font-size:15px;font-weight:600;
@@ -68,7 +71,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .link:hover{color:var(--text-1)}
 
 /* thread chrome */
-.thread{flex-grow:1;display:flex;flex-direction:column;min-width:0}
+.thread{flex-grow:1;display:flex;flex-direction:column;min-width:0;position:relative}
 .thread.empty{align-items:center;justify-content:center;text-align:center;color:var(--text-3)}
 .thread.empty h1{font-size:20px;font-weight:600;color:var(--text-2);margin:0 0 8px}
 .thread.empty p{margin:0 auto 16px;max-width:46ch}
