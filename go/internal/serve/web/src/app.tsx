@@ -58,12 +58,14 @@ function modKey(): string {
   return typeof navigator !== "undefined" && /Mac|iP/.test(navigator.platform) ? "\u2318" : "Ctrl+";
 }
 
-export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived, onToggleArchived, view, onView, wikiFlags = 0 }: {
+export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived, onToggleArchived, view, onView, wikiFlags = 0, onNew }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
   query: string; onQuery: (q: string) => void; showArchived: boolean; onToggleArchived: () => void;
   view: View; onView: (v: View) => void;
   /** Claims the wiki's review is waiting on; shown beside the nav item. */
   wikiFlags?: number;
+  /** Starting work is the other half of a control room; it opens the palette's Start group. */
+  onNew?: () => void;
 }) {
   // A control room lists what needs you first, then what is moving;
   // only settled sessions fall back to the day they last changed.
@@ -85,7 +87,9 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
 
   return (
     <div className="sidebar">
-      <div className="brand"><Sprout /><span>bough</span></div>
+      <div className="brand"><Sprout /><span>bough</span>
+        {onNew && <button className="btn brand-new" onClick={onNew} title={`New conversation (${modKey()}K)`}>New</button>}
+      </div>
       <nav className="nav" aria-label="Views">
         <button className={"nav-item" + (view === "sessions" ? " nav-on" : "")}
                 aria-current={view === "sessions" ? "page" : undefined}
@@ -113,7 +117,7 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
         <input id="q" className="field" value={query} placeholder={`Search sessions · ${modKey()}K for commands`}
                onChange={(e) => onQuery(e.target.value)} />
       </div>
-      <div className="scroll" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div className="scroll" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {groups.length === 0 && (
           <p style={{ padding: "0 20px", color: "var(--text-3)", fontSize: 13 }}>
             {query ? `No sessions match “${query}”.` : "No sessions yet."}
@@ -164,11 +168,12 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
           </div>
         ))}
       </div>
-      <div className="sidebar-foot">
-        <button className="link" onClick={onToggleArchived}>
-          {showArchived ? "Hide archived" : "Show archived"}
-        </button>
-      </div>
+      {/* Showing archived lives in the palette; once shown, the way back stays in view. */}
+      {showArchived && (
+        <div className="sidebar-foot">
+          <button className="link" onClick={onToggleArchived}>Hide archived</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1446,7 +1451,8 @@ export default function App() {
                onSelect={(id) => { setSelected(id); setContext(false); setView("sessions"); setPane("thread"); }}
                query={query} onQuery={setQuery} view={view} wikiFlags={wikiFlags}
                onView={(v) => { if (v === "wiki") goWiki({ at: "index" }); else { setView(v); setPane("thread"); } }}
-               showArchived={archived} onToggleArchived={() => setArchived((v) => !v)} />
+               showArchived={archived} onToggleArchived={() => setArchived((v) => !v)}
+               onNew={() => setPalette(true)} />
       {view === "wiki" ? (
         <WikiPage route={wikiRoute} onRoute={goWiki} onBack={() => setPane("list")} onOpenSession={openSession}
                   onSearch={(text) => { setPalQuery(text.replace(/\s+/g, " ").slice(0, 60)); setPalette(true); }} />
