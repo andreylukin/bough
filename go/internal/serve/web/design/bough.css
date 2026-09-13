@@ -36,20 +36,24 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .sidebar{flex:1 1 0%;min-width:0;background:var(--bg);display:flex;flex-direction:column}
 .app[data-pane="list"] .thread{display:none}
 .app[data-pane="thread"] .sidebar{display:none}
-.sidebar .scroll{flex:1 1 0%;min-height:0;padding-bottom:16px;position:relative;display:flex;flex-direction:column;gap:10px}
+.sidebar .scroll{flex:1 1 0%;min-height:0;padding-bottom:16px;position:relative;display:flex;flex-direction:column;gap:4px}
 .group{display:flex;flex-direction:column}
 .list-none{padding:0 16px;color:var(--text-3);font-size:13px}
 /* Columns, shared by the head and every row so the eye runs down them. */
-.table-head,.row{display:grid;grid-template-columns:minmax(9rem,17rem) minmax(12rem,1fr) minmax(8rem,15rem) 8rem 6.5rem;
+.table-head,.row{display:grid;grid-template-columns:7.5rem minmax(12rem,1fr) minmax(8rem,15rem) 5rem;
                  column-gap:20px;align-items:center}
 .table-head{position:sticky;top:0;z-index:3;padding:8px 16px 6px 18px;background:var(--bg);border-bottom:1px solid var(--line);
             font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-3)}
 .table-when,.row-when{text-align:end}
-.row-status{display:flex;align-items:center;gap:7px;min-width:0;font-size:12px}
+.row-status{display:flex;align-items:center;gap:7px;min-width:0;overflow:hidden;font-size:12px}
 .row-where{min-width:0;font-size:12px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row-sep{color:var(--line-strong)}
-.row-activity{display:flex;gap:10px;font-size:12px;color:var(--text-3);white-space:nowrap;overflow:hidden}
+.row-main{display:flex;flex-direction:column;min-width:0}
+.row-line{display:flex;align-items:baseline;gap:10px;min-width:0}
+.row-hot,.row-cold,.row-jobs{flex-shrink:0;font-size:12px;white-space:nowrap}
 .row-hot{color:var(--accent)}
+.row-cold{color:var(--text-3)}
+.row-untitled{color:var(--text-3);font-size:13px}
 .row-when{font-size:12px;color:var(--text-3);white-space:nowrap}
 /* .visually-hidden is absolute: without a positioned ancestor each one sat at its
    place deep in the transcript and stretched the document past the viewport. */
@@ -60,20 +64,20 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .brand{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:600;letter-spacing:-.01em}
 .session-search{flex-shrink:0}
 .brand,.nav,.sidebar-foot{flex-shrink:0}
-.row-ask{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2)}
+.row-ask{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-3)}
 .group-count{margin-inline-start:6px;color:var(--text-3);font-weight:400}
 .field-label{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;font-size:12px;font-weight:500;color:var(--text-3);margin-bottom:6px}
 .field{width:100%;font:13px var(--sans);color:var(--text-1);background:var(--raised);
        border:1px solid var(--line-strong);border-radius:7px;padding:8px 11px}
 .field::placeholder{color:var(--text-3)}
-.group-head{font:600 12px/16px var(--sans);color:var(--text-3);padding:0 16px 6px}
+.group-head{display:flex;align-items:center;min-height:24px;font:600 12px/16px var(--sans);color:var(--text-3);padding:0 16px}
 .group-fold{display:flex;align-items:center;gap:6px;width:100%;min-height:24px;background:none;border:0;cursor:pointer;text-align:start}
 .group-fold::before{content:"›";font-family:var(--mono);transition:transform .12s;display:inline-block}
 .group-fold[aria-expanded="true"]::before{transform:rotate(90deg)}
 .group-fold:hover{color:var(--text-2)}
 @media (pointer:coarse){.group-fold{min-height:44px}}
 @media (prefers-reduced-motion:reduce){.group-fold::before{transition:none}}
-.row{width:100%;min-height:44px;text-align:start;padding:4px 16px;
+.row{width:100%;min-height:36px;text-align:start;padding:2px 16px;
      background:none;border:0;border-left:2px solid transparent;color:inherit;font:inherit;cursor:pointer}
 .row:hover{background:var(--raised)}
 .row:focus-visible{outline-offset:-2px;border-radius:0}
@@ -92,7 +96,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .thread.empty{align-items:center;justify-content:center;text-align:center;color:var(--text-3)}
 .thread.empty h1{font-size:20px;font-weight:600;color:var(--text-2);margin:0 0 8px}
 .thread.empty p{margin:0 auto 16px;max-width:46ch}
-.thread-head{flex-shrink:0;display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:14px 32px;
+.thread-head{flex-shrink:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px 20px;padding:8px 32px;
              border-bottom:1px solid var(--line)}
 .head-main{display:flex;align-items:baseline;gap:14px;min-width:0;flex:1 1 320px}
 .status{white-space:nowrap;flex-shrink:0}
@@ -211,8 +215,9 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .turn-files ul{margin:6px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:2px}
 .turn-files li{font-size:12px;color:var(--text-2);overflow-wrap:anywhere}
 /* The session's budget, always in view, and unboxed. */
-.runtime-strip{flex-shrink:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 20px;padding:6px 32px;
-               border-bottom:1px solid var(--line);font-size:12px;line-height:16px}
+/* It rides the thread head, beside the run setting: no band of its own. */
+.runtime-strip{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;font-size:12px;line-height:16px}
+.runtime-strip:empty{display:none}
 .rt{display:inline-flex;align-items:center;gap:6px;min-width:0}
 .rt-label{color:var(--text-3)}
 .rt-value{color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -519,7 +524,8 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
   opacity:0;pointer-events:none;background:var(--raised)}
 .row-wrap:hover>.row-ack,.row-wrap:focus-within>.row-ack{opacity:1;pointer-events:auto}
 @media (hover:none){.row-ack{opacity:1;pointer-events:auto;height:36px}}
-.row-trouble{color:var(--red);font-size:12px}
+.row-trouble{color:var(--red);font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.head-trouble{color:var(--red);font-size:12px}
 .row-jobs{color:var(--accent)}
 .btn{font:13px var(--sans);color:var(--text-2);background:none;border:1px solid var(--line-strong);
      border-radius:6px;padding:6px 12px;cursor:pointer}
@@ -628,21 +634,21 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .sidebar{background:var(--surface)}
   .table-head{display:none}
   /* Two lines: the title and when; then the state, where, and what is running. */
-  .row{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"title title when" "status where activity";
+  .row{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"title title when" "status where where";
        column-gap:10px;row-gap:2px;padding:7px 16px}
-  .row-title{grid-area:title}.row-when{grid-area:when}.row-status{grid-area:status;min-width:0;max-width:60vw}
-  .row-where{grid-area:where}.row-activity{grid-area:activity}
+  .row-main{grid-area:title}.row-when{grid-area:when}.row-status{grid-area:status;min-width:0;max-width:60vw}
+  .row-where{grid-area:where}
   .back{display:inline-flex}
   .thread-head{padding:10px 12px 10px 8px;gap:10px 8px;align-items:center}
   .head-main{flex:1 1 0;min-width:0;gap:10px;align-items:center}
   .head-main h1{font-size:17px;flex:0 1 auto}
   .head-repo{display:none}
   .thread-head>.more{width:36px;height:36px;order:0}
-  /* The run setting stays in view on a phone; the rest waits behind More. */
+  /* On a phone the header is the title and the budget; settings wait behind More. */
   .head-side{margin-left:0;flex-basis:100%;flex-direction:row;align-items:center;gap:8px}
-  .head-side .head-actions{display:none}
-  .thread-head[data-more="1"] .head-side .head-actions{display:flex}
-  .ctl-run .ctl-label{display:none}
+  /* The budget stays in view; the run setting waits behind More with the rest. */
+  .head-side .head-actions,.head-side .controls{display:none}
+  .thread-head[data-more="1"] .head-side .head-actions,.thread-head[data-more="1"] .head-side .controls{display:flex}
   .ctl-run .sel{flex:1 1 0}
   .ctl-run .sel-btn{height:36px}
   .head-extra{flex-direction:column;align-items:stretch;gap:10px}

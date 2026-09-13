@@ -195,7 +195,7 @@ export function Sidebar({ rows, selected, onSelect, query, showArchived, onToggl
       <div className="scroll" onScroll={unpeek} onKeyDown={walk}>
         {groups.length > 0 && (
           <div className="table-head" aria-hidden="true">
-            <span>Status</span><span>Session</span><span>Where</span><span>Activity</span><span className="table-when">Updated</span>
+            <span>Status</span><span>Session</span><span>Where</span><span className="table-when">Updated</span>
           </div>
         )}
         {groups.length === 0 && (
@@ -234,39 +234,40 @@ export function Sidebar({ rows, selected, onSelect, query, showArchived, onToggl
                 <span className="row-status">
                   {r.trouble ? (
                     // "Done" in a queue of trouble says nothing; the reason does.
-                    <><StatusMark status="error" bare /><span className="row-trouble">{capital(r.trouble)}</span></>
-                  ) : r.ask ? (
-                    // What the session is waiting on: the row should say what
-                    // answering it means. "Waiting" is in the time column.
-                    <><StatusMark status="needs-you" bare /><span className="row-ask" title={r.ask.text}>{plainTitle(r.ask.text)}</span></>
+                    <><StatusMark status="error" bare /><span className="row-trouble" title={capital(r.trouble)}>{capital(r.trouble)}</span></>
                   ) : (
                     <StatusMark status={r.status} bare={r.status === "needs-you" || r.status === "running"} />
                   )}
                 </span>
-                <span className="row-title">{plainTitle(r.title) || untitled(r.id)}</span>
+                <span className="row-main">
+                  <span className="row-line">
+                    {plainTitle(r.title)
+                      ? <span className="row-title">{plainTitle(r.title)}</span>
+                      // No title: the id tail alone tells rows apart; "Session" is the column.
+                      : <span className="row-title mono row-untitled">{r.id.slice(-6)}</span>}
+                    {r.jobs && r.jobs.length > 0 && (
+                      <span className="num row-jobs" title={r.jobs.map((j) => j.cmd).join("\n")}>
+                        {r.jobs.length} {r.jobs.length === 1 ? "job" : "jobs"}
+                      </span>
+                    )}
+                    {/* A cold cache only matters for the next turn, so settled rows say only when it is hot. */}
+                    {hot ? <span className="row-hot">cache hot</span> : hot === false && act && <span className="row-cold">cache cold</span>}
+                  </span>
+                  {/* What the session is waiting on: answering it is what the row is for. */}
+                  {r.ask && <span className="row-ask" title={r.ask.text}>{plainTitle(r.ask.text)}</span>}
+                </span>
                 <span className="mono row-where" title={r.cwd}>
                   {r.repo || r.branch ? (
                     <>{r.repo?.split("/").pop()}{r.branch && <span className="row-sep">/</span>}{r.branch}</>
-                  ) : r.cwd && (
+                  ) : (
                     // With no repo, the folder it ran in tells two sessions apart.
-                    r.cwd.split("/").filter(Boolean).pop() || "/"
+                    r.cwd ? r.cwd.split("/").filter(Boolean).pop() || "/" : "–"
                   )}
-                </span>
-                <span className="num row-activity">
-                  {r.jobs && r.jobs.length > 0 && (
-                    <span className="row-jobs" title={r.jobs.map((j) => j.cmd).join("\n")}>
-                      {r.jobs.length} {r.jobs.length === 1 ? "job" : "jobs"}
-                    </span>
-                  )}
-                  {/* A cold cache only matters for the next turn, so settled rows say only when it is hot. */}
-                  {hot ? <span className="row-hot">cache hot</span> : hot === false && act && <span>cache cold</span>}
                 </span>
                 {/* A session that needs you or is moving is measured in how
-                    long, not the wall-clock time it last changed. */}
+                    long; its group already says which. */}
                 <span className="num row-when" title={new Date(r.modified).toLocaleString()}>
-                  {r.status === "needs-you" ? `Waiting ${ago(r.modified)}`
-                    : r.status === "running" ? `Running ${ago(r.modified)}`
-                    : clock(r.modified)}
+                  {act ? ago(r.modified) : clock(r.modified)}
                 </span>
               </button>
               </div>
@@ -1092,7 +1093,6 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
         // What the next turn runs as is one setting: the model and how hard
         // it thinks, side by side, on every screen.
         <div className="ctl ctl-run">
-          <span className="ctl-label">Model</span>
           <Select label="Model" value={row.model ?? ""} options={models} searchable align="end"
                   onChange={(v) => v && onModel(v)} />
           {efforts.length > 0 && (
@@ -1240,7 +1240,10 @@ export function Thread({ row, lines, loading = false, stream = [], projects, onA
               {row.branch && <span style={{ color: "var(--line-strong)" }}>/</span>}{row.branch}
             </span>
           )}
-          <StatusMark status={row.status} />
+          {row.trouble ? (
+            // One status: the reason replaces "Done".
+            <span className="status head-trouble"><StatusMark status="error" bare />{capital(row.trouble)}</span>
+          ) : <StatusMark status={row.status} />}
           {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
         </div>
         <button className="more" aria-label="Session settings" aria-expanded={more}
@@ -1251,6 +1254,7 @@ export function Thread({ row, lines, loading = false, stream = [], projects, onA
           </svg>
         </button>
         <div className="head-side">
+          <RuntimeStrip row={row} lines={lines} />
           <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" />
           {onContext && <div className="head-actions"><button className="btn" onClick={onContext}>Context</button></div>}
         </div>
@@ -1266,7 +1270,6 @@ export function Thread({ row, lines, loading = false, stream = [], projects, onA
           </div>
         </div>
       </header>
-      <RuntimeStrip row={row} lines={lines} />
 
       <div className="scroll transcript" ref={scroller} onScroll={onScroll}>
         {loading && slow && <p className="meta-line transcript-state" role="status">Loading transcript…</p>}
@@ -1771,7 +1774,7 @@ export default function App() {
       ) : (
         // A link to a session this list does not hold (yet, while it loads).
         <div className="thread empty">
-          {rows.length > 0 && (
+          {rows.length > 0 && selected && (
             <div>
               <h1>Session not found</h1>
               <button className="btn" onClick={goList}>All sessions</button>
