@@ -40,6 +40,8 @@ export interface Row {
   archived: boolean;
   /** A run nobody started by hand (wiki ingest, bench, test); the sidebar folds these away. */
   background?: boolean;
+  /** Never sent a message: left out of the sidebar unless open, live or searched for. */
+  empty?: boolean;
   entries: number;
   modified: string;
   /** When the session last wrote an entry; recency reads this, not the file mtime. */

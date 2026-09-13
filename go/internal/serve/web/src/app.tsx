@@ -132,13 +132,17 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     const now = Date.now();
     const recent: Row[] = [], inactive: Row[] = [], background: Row[] = [], archived: Row[] = [];
     for (const r of rows) {
+      // A session opened and never sent a message holds nothing to go back
+      // to. It shows while it is open, while its child is up (one just made
+      // with New), or when a search asks for it.
+      if (r.empty && !r.live && r.id !== selected && !query) continue;
       if (r.archived) archived.push(r);
       else if (r.background) background.push(r);
       else if (r.status === "needs-you" || r.status === "running" || r.trouble || now - Date.parse(r.lastAt) < INACTIVE_MS) recent.push(r);
       else inactive.push(r);
     }
     return { recent: byWorkspace(recent), inactive, background, archived };
-  }, [rows]);
+  }, [rows, selected, query]);
 
   // Inactive stays shut until asked, and the way you left it across reloads.
   const [unfolded, setUnfolded] = useState<Set<string>>(() => readSet("bough:unfolded"));

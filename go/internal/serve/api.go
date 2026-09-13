@@ -73,6 +73,9 @@ type Row struct {
 	// Background marks a run nobody started by hand (a wiki ingest, a
 	// bench, a test); the sidebar folds these away.
 	Background bool `json:"background,omitempty"`
+	// Empty marks a session nobody has sent a message yet (opened, then
+	// left); the sidebar leaves these out unless one is open or live.
+	Empty bool `json:"empty,omitempty"`
 }
 
 // maxBody caps every request body: the API takes prompts and titles,
@@ -450,6 +453,7 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 		Turns:    countTurns(entries),
 
 		Background: in.Background,
+		Empty:      !hasInput(entries),
 	}
 }
 

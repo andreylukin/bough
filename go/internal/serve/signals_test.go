@@ -31,6 +31,16 @@ func TestRunningJobs(t *testing.T) {
 	}
 }
 
+func TestHasInput(t *testing.T) {
+	t.Parallel()
+	if hasInput(entries(ent(1, "meta", nil), ent(2, "command", text("/model x")))) {
+		t.Fatal("a session that only ran a command was never sent a message")
+	}
+	if !hasInput(entries(ent(1, "meta", nil), ent(2, "input", text("hi")))) {
+		t.Fatal("a session with an input has a message")
+	}
+}
+
 func TestLastCache(t *testing.T) {
 	t.Parallel()
 	usage := func(seq int64, read float64) history.Entry {

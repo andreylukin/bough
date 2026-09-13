@@ -61,6 +61,16 @@ func RunningJobs(entries []history.Entry, childAlive bool) []Job {
 // first time the feature is on. A week covers a weekend away.
 const troubleWindow = 7 * 24 * time.Hour
 
+// hasInput reports whether anyone ever sent the session a message.
+func hasInput(entries []history.Entry) bool {
+	for _, e := range entries {
+		if e.Kind == "input" {
+			return true
+		}
+	}
+	return false
+}
+
 // Troubled says why a session's outcome still needs a person, or "" when
 // it does not: it failed, was interrupted (not stopped on purpose), or its
 // last test run failed — within the window, and with something recorded
