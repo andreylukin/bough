@@ -1315,6 +1315,37 @@ export default function App() {
     // supervisor counter, transcript entries carry history seqs, and
     // merging the two silently drops events whose numbers collide.
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // A catch-up that fails used to wait for the next event, and the last
+    // event of a turn has no next one: the transcript stayed short with
+    // nothing saying so. Retry on a backoff until one lands.
+    let backoff = 4000;
+    const catchUp = () => {
+      setLines((prev) => {
+        const since = prev.length ? prev[prev.length - 1].seq : 0;
+        api.session(selected, since).then((r) => {
+          if (!live) return;
+          backoff = 4000;
+          setRows((rs) => rs.map((x) => (x.id === r.session.id ? r.session : x)));
+          if (!r.entries.length) return;
+          const drop = superseded;
+          superseded = 0;
+          // The recorded entries are in hand; the fragments they were
+          // built from go in the same commit, so the text is never
+          // absent for a frame and never shown twice.
+          setStream((cur) => { runs = Math.max(0, runs - drop); return cur.slice(drop); });
+          setLines((cur) => {
+            const seen = new Set(cur.map((l) => l.seq));
+            return [...cur, ...r.entries.filter((e) => !seen.has(e.seq))];
+          });
+        }).catch(() => {
+          if (!live) return;
+          clearTimeout(timer);
+          timer = setTimeout(catchUp, backoff);
+          backoff = Math.min(backoff * 2, 30_000);
+        });
+        return prev;
+      });
+    };
     const stop = subscribe(selected, (ev) => {
       if (ev.kind === "assistant-delta" || ev.kind === "thinking-delta") {
         const kind = ev.kind === "thinking-delta" ? "thinking" : "assistant";
@@ -1334,27 +1365,7 @@ export default function App() {
       }
       superseded = runs;
       clearTimeout(timer);
-      timer = setTimeout(() => {
-        setLines((prev) => {
-          const since = prev.length ? prev[prev.length - 1].seq : 0;
-          api.session(selected, since).then((r) => {
-            if (!live) return;
-            setRows((rs) => rs.map((x) => (x.id === r.session.id ? r.session : x)));
-            if (!r.entries.length) return;
-            const drop = superseded;
-            superseded = 0;
-            // The recorded entries are in hand; the fragments they were
-            // built from go in the same commit, so the text is never
-            // absent for a frame and never shown twice.
-            setStream((cur) => { runs = Math.max(0, runs - drop); return cur.slice(drop); });
-            setLines((cur) => {
-              const seen = new Set(cur.map((l) => l.seq));
-              return [...cur, ...r.entries.filter((e) => !seen.has(e.seq))];
-            });
-          }).catch(() => { /* the next event retries the catch-up */ });
-          return prev;
-        });
-      }, 120);
+      timer = setTimeout(catchUp, 120);
     });
     return () => { live = false; clearTimeout(timer); stop(); };
   }, [selected]);

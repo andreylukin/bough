@@ -65,11 +65,42 @@ const troubleWindow = 7 * 24 * time.Hour
 // failed or was interrupted (not stopped on purpose), within the window,
 // and recorded something after the last time it was marked seen.
 func Troubled(st Status, entries []history.Entry, ack int64, now time.Time) bool {
-	if (st != StatusError && st != StatusInterrupted) || len(entries) == 0 {
+	if len(entries) == 0 {
 		return false
 	}
 	last := entries[len(entries)-1]
-	return last.Seq > ack && now.Sub(last.At) < troubleWindow
+	if last.Seq <= ack || now.Sub(last.At) >= troubleWindow {
+		return false
+	}
+	// A turn can finish cleanly while the tests it ran failed: finishing
+	// is the lifecycle, the exit is the verdict.
+	return st == StatusError || st == StatusInterrupted || lastTestFailed(entries)
+}
+
+// testCmd matches a command that runs a test suite (the web view's
+// Tests chip uses the same list).
+var testCmd = regexp.MustCompile(`\b(go test|(?:npm|pnpm|yarn|bun)(?: run)? test|pytest|cargo (?:test|nextest)|vitest|jest|make (?:test|check)|mvn test|gradle test|rspec|phpunit)\b`)
+
+// lastTestFailed reports whether the most recent test command recorded a
+// non-zero exit on its result.
+func lastTestFailed(entries []history.Entry) bool {
+	for i := len(entries) - 1; i > 0; i-- {
+		r, c := entries[i], entries[i-1]
+		if r.Kind != "result" || c.Kind != "code" {
+			continue
+		}
+		exit, ok := r.Data["exit"].(float64)
+		if !ok {
+			if n, isInt := r.Data["exit"].(int); isInt {
+				exit, ok = float64(n), true
+			}
+		}
+		code, _ := c.Data["text"].(string)
+		if ok && testCmd.MatchString(code) {
+			return exit != 0
+		}
+	}
+	return false
 }
 
 // cacheTTLFor is how long a provider keeps a used prompt prefix, as its

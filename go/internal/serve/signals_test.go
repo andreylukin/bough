@@ -61,6 +61,20 @@ func TestTroubled(t *testing.T) {
 	if Troubled(StatusStopped, es, 0, now) || Troubled(StatusDone, es, 0, now) {
 		t.Fatal("a stop on purpose or a finished turn is not trouble")
 	}
+	ran := func(seq int64, cmd string, exit int) []history.Entry {
+		return entries(ent(seq, "code", text(`tools.bash("`+cmd+`")`)), ent(seq+1, "result", map[string]any{"text": "", "exit": exit}))
+	}
+	failing := append(ran(1, "go test ./...", 1), ent(3, "done", nil))
+	if !Troubled(StatusDone, failing, 0, now) {
+		t.Fatal("a finished turn whose tests failed needs a person")
+	}
+	fixed := append(failing, ran(4, "go test ./...", 0)...)
+	if Troubled(StatusDone, fixed, 0, now) {
+		t.Fatal("a later passing run clears it")
+	}
+	if Troubled(StatusDone, append(ran(1, "ls", 2), ent(3, "done", nil)), 0, now) {
+		t.Fatal("a failing non-test command is not a test failure")
+	}
 	if Troubled(StatusError, es, 0, now.Add(8*24*time.Hour)) {
 		t.Fatal("a failure older than the window is history, not a queue item")
 	}
