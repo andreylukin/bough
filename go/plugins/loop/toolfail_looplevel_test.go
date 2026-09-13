@@ -187,11 +187,8 @@ func TestLoopLevelFirstBlockFails(t *testing.T) {
 		if strings.HasPrefix(m.Content, toolOutputPrefix) {
 			res = m.Content
 		}
-		if m.Role == "assistant" && strings.Contains(m.Content, "It worked!") {
-			t.Fatalf("narration after the dropped block re-entered context: %q", m.Content)
-		}
 	}
-	if !strings.Contains(res, "error: ReferenceError") || !strings.Contains(res, "only the first of your 2") {
+	if !strings.Contains(res, "error: ReferenceError") || !strings.Contains(res, "after this one in your reply were not run") {
 		t.Fatalf("result fed %q", res)
 	}
 }

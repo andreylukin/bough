@@ -294,7 +294,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .composer{background:var(--surface);border:1px solid var(--line-strong);border-radius:9px;padding:13px 16px;
           display:flex;flex-direction:column;gap:12px}
 .composer textarea{width:100%;resize:vertical;background:none;border:0;color:var(--text-1);
-                   font:15px/1.5 var(--sans)}
+                   font:15px/1.5 var(--sans);max-height:34vh;overflow-y:auto}
 .composer:focus-within{border-color:var(--accent)}
 .composer textarea:focus{outline:none}
 .composer textarea::placeholder{color:var(--text-3)}
@@ -446,6 +446,68 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .ctx-lede{margin:0;max-width:70ch;font-size:13px;color:var(--text-3)}
 @media (max-width:720px){
   .hk-act{margin-inline-start:0}
+}
+
+/* A turn that is still running says so where the next words will land.
+   The mark turns because the session is running — the status is the
+   only clock. Under prefers-reduced-motion the blanket rule above
+   freezes every animation here, which is why each one is legible at
+   rest: a gapped ring, three dots, a solid block. Motion is never the
+   only thing carrying the state; the word beside it always is. */
+@keyframes bough-spin{to{transform:rotate(360deg)}}
+.spin-mark{transform-origin:50% 50%;animation:bough-spin 1.05s linear infinite}
+.working{display:flex;align-items:center;gap:8px;margin:2px 0 0;font-size:13px;color:var(--text-2)}
+.working-dots{display:inline-flex;gap:3px}
+.working-dots i{width:3px;height:3px;border-radius:50%;background:var(--text-3);
+                animation:bough-pulse 1.2s ease-in-out infinite}
+.working-dots i:nth-child(2){animation-delay:.16s}
+.working-dots i:nth-child(3){animation-delay:.32s}
+@keyframes bough-pulse{0%,100%{opacity:.35}50%{opacity:1}}
+
+/* Text that has not been recorded yet. It is deliberately not styled
+   as a different kind of thing — it is the same reply, a second early
+   — so the only mark is a caret at the end, which vanishes when the
+   recorded entry replaces it. */
+@keyframes bough-blink{50%{opacity:.25}}
+/* The caret has to sit at the end of the last line of prose, so it is
+   drawn by that line rather than placed beside the block — a sibling
+   element would drop to a row of its own under the flex column. */
+.stream-tip .md>:last-child::after{
+  content:"";display:inline-block;width:7px;height:.95em;vertical-align:-2px;margin-inline-start:3px;
+  background:var(--accent);animation:bough-blink 1s steps(1,end) infinite}
+.stream-think{padding-bottom:4px}
+.stream-think-head{display:flex;align-items:center;gap:10px;padding:9px 14px 4px}
+.stream-think-head .block-label{font-style:italic}
+
+/* Subagents. A subagent's code and results used to be dealt straight
+   into the parent's turn, which read as one agent doing two things at
+   once. The rail and the indent say "someone else did this", and one
+   card per worker keeps a run of interleaved steps as one thing that
+   happened. */
+.subrun{display:flex;flex-direction:column;gap:8px;padding-inline-start:14px;
+        border-inline-start:2px solid var(--line-strong)}
+.subrun-head{margin:0;font-size:12px;color:var(--text-3)}
+.sub{background:var(--surface);border-radius:8px;overflow:hidden}
+.sub>summary{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 14px;cursor:pointer;
+             list-style:none;min-height:36px}
+.sub>summary::-webkit-details-marker{display:none}
+.sub>summary::before{content:"\203a";color:var(--text-3);font-family:var(--mono);width:8px;flex-shrink:0}
+.sub[open]>summary::before{content:"\2304"}
+.sub-tag{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-2);
+         border:1px solid var(--line-strong);border-radius:999px;padding:1px 8px;flex-shrink:0}
+.sub-task{font-size:13px;color:var(--text-3);min-width:0;flex:1 1 16ch;
+          white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sub-state{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text-3);flex-shrink:0}
+.sub-failed .sub-state{color:var(--red)}
+.sub-failed .sub-tag{border-color:var(--red);color:var(--red)}
+.sub-live .sub-state{color:var(--text-2)}
+.sub-steps{font-size:12px;color:var(--text-3);flex-shrink:0}
+.sub-body{display:flex;flex-direction:column;gap:10px;padding:10px 14px 14px;
+          border-top:1px solid var(--line)}
+.sub-body .say{gap:6px}
+@media (max-width:720px){
+  .subrun{padding-inline-start:10px}
+  .sub-task{flex-basis:100%;order:3}
 }
 </style>
 </head>

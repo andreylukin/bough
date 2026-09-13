@@ -2,6 +2,9 @@ package ui
 
 import (
 	"bytes"
+	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -70,6 +73,73 @@ func TestHeadlessSteerMidTurnKeepsPendingBalanced(t *testing.T) {
 		t.Fatalf("hlPending = %d after the one done, want 0", n)
 	}
 	want := "[assistant] reply to a\n[steer] b\n[assistant] reply to b\n[done] \n"
+	if s := out.String(); s != want {
+		t.Fatalf("stdout = %q, want %q", s, want)
+	}
+}
+
+// Under --json a delta is its own line, tagged by kind, and the
+// finished reply still prints exactly once as a whole.
+func TestHeadlessJSONStreamsDeltas(t *testing.T) {
+	var out, errb bytes.Buffer
+	oldOut, oldErr, oldJSON := hlOut, hlErr, HeadlessJSON
+	hlOut, hlErr, HeadlessJSON = &out, &errb, true
+	defer func() {
+		hlOut, hlErr, HeadlessJSON = oldOut, oldErr, oldJSON
+		hlErrored.Store(false)
+	}()
+
+	hlPending.Add(1)
+	hlPrint(Event{Kind: "thinking-delta", Text: "hmm"})
+	hlPrint(Event{Kind: "assistant-delta", Text: "hi "})
+	hlPrint(Event{Kind: "assistant-delta", Text: "there"})
+	hlPrint(Event{Kind: "assistant", Text: "hi there"})
+	hlPrint(Event{Kind: "done"})
+
+	var kinds, texts []string
+	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		var obj struct{ Kind, Text string }
+		if err := json.Unmarshal([]byte(line), &obj); err != nil {
+			t.Fatalf("line %q: %v", line, err)
+		}
+		kinds = append(kinds, obj.Kind)
+		texts = append(texts, obj.Text)
+	}
+	wantKinds := []string{"thinking-delta", "assistant-delta", "assistant-delta", "assistant", "done"}
+	if !reflect.DeepEqual(kinds, wantKinds) {
+		t.Fatalf("kinds = %v, want %v", kinds, wantKinds)
+	}
+	if texts[3] != "hi there" {
+		t.Fatalf("assistant text = %q, want the whole reply", texts[3])
+	}
+	// Exactly one finished reply: a delta must not print as one too.
+	n := 0
+	for _, k := range kinds {
+		if k == "assistant" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d [assistant] lines, want 1", n)
+	}
+}
+
+// Plain headless (no --json) still drops every delta: that stream is
+// read by humans and by the bench harness.
+func TestHeadlessPlainDropsDeltas(t *testing.T) {
+	var out bytes.Buffer
+	oldOut, oldJSON := hlOut, HeadlessJSON
+	hlOut, HeadlessJSON = &out, false
+	defer func() { hlOut, HeadlessJSON = oldOut, oldJSON }()
+
+	hlPending.Add(1)
+	hlPrint(Event{Kind: "thinking-delta", Text: "hmm"})
+	hlPrint(Event{Kind: "assistant-delta", Text: "hi "})
+	hlPrint(Event{Kind: "assistant-delta", Text: "there"})
+	hlPrint(Event{Kind: "assistant", Text: "hi there"})
+	hlPrint(Event{Kind: "done"})
+
+	want := "[assistant] hi there\n[done] \n"
 	if s := out.String(); s != want {
 		t.Fatalf("stdout = %q, want %q", s, want)
 	}

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, subscribe } from "./api";
 import type { Line, Project, Row } from "./types";
-import { StatusMark } from "./status";
+import { StatusMark, Working } from "./status";
 import { ProjectsView } from "./projects";
-import { Markdown, codeLabel, doneSummary, groupTurns, isQuiet, plainTitle, stripRunFences, type Turn, lineCount } from "./render";
+import { Markdown, codeLabel, doneSummary, groupSubs, groupTurns, isQuiet, plainTitle, stepCount, stripRunFences, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath } from "./code";
 import { SkillPicker } from "./skills";
 import { Mentions, triggerAt, type Trigger } from "./mention";
@@ -223,15 +223,20 @@ function str(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
-function Entry({ line, codes }: { line: Line; codes: string[] }) {
+function Entry({ line, codes, nested }: { line: Line; codes: string[]; nested?: boolean }) {
   const k = line.kind;
   if (k === "assistant" || k === "sub:assistant") {
     const body = stripRunFences(line.text, codes);
     if (!body) return null; // the reply was only the program it ran
+    // Inside a subagent card the rail and the card's own header
+    // already say whose words these are; repeating "subagent" above
+    // every paragraph of a five-step run is noise.
     return (
       <div className="say">
-        <div className="say-who">{k === "assistant" ? <Sprout size={14} /> : <span className="sub-dot" />}
-          <span>{k === "assistant" ? "bough" : "subagent"}</span></div>
+        {!nested && (
+          <div className="say-who">{k === "assistant" ? <Sprout size={14} /> : <span className="sub-dot" />}
+            <span>{k === "assistant" ? "bough" : "subagent"}</span></div>
+        )}
         <Markdown text={body} />
       </div>
     );
@@ -287,9 +292,67 @@ function Entry({ line, codes }: { line: Line; codes: string[] }) {
   return <div className="meta-line">{line.text || k}</div>;
 }
 
-export function TurnView({ turn }: { turn: Turn }) {
+/* ---------------- subagents ---------------- */
+
+/** How a finished subagent is described: a word, a glyph, never a hue alone. */
+function subState(status: string): { word: string; cls: string } {
+  if (status === "error") return { word: "Failed", cls: "sub-failed" };
+  if (status === "ok") return { word: "Finished", cls: "sub-ok" };
+  return { word: "Working", cls: "sub-live" };
+}
+
+export function SubAgentView({ agent }: { agent: SubAgent }) {
+  const st = subState(agent.status);
+  const codes = agent.lines.filter((l) => l.kind === "sub:code").map((l) => l.text);
+  const task = firstLine(plainTitle(agent.task)) || "a subagent";
+  // A run that failed is the one you opened the thread to read, so it
+  // opens itself. The rest stay folded: the point of the card is that
+  // a subagent reads as one thing that happened.
+  return (
+    <details className={"sub " + st.cls} open={agent.status === "error"}>
+      <summary>
+        <span className="sub-tag">Subagent {agent.worker}</span>
+        <span className="sub-task">{task}</span>
+        <span className="sub-state">
+          {agent.status === "" && (
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                 strokeLinecap="round" className="spin-mark" aria-hidden="true">
+              <circle cx="12" cy="12" r="8.5" strokeDasharray="40 14" />
+            </svg>
+          )}
+          {st.word}
+        </span>
+        {agent.steps > 0 && <span className="num sub-steps">{stepCount(agent.steps)}</span>}
+      </summary>
+      <div className="sub-body">
+        {agent.lines.map((l) => <Entry key={l.seq} line={l} codes={codes} nested />)}
+        {agent.lines.length === 0 && <p className="meta-line">Nothing recorded yet.</p>}
+      </div>
+    </details>
+  );
+}
+
+/**
+ * One run of subagent work, spliced into the parent's turn. Several
+ * can be in flight at once and their entries interleave step by step,
+ * so they are dealt back into one card per agent — otherwise the
+ * transcript reads as one agent with a split personality.
+ */
+export function SubRun({ agents }: { agents: SubAgent[] }) {
+  return (
+    <div className="subrun">
+      <p className="subrun-head">
+        {agents.length === 1 ? "A subagent worked on this" : `${agents.length} subagents worked on this`}
+      </p>
+      {agents.map((a) => <SubAgentView key={a.worker + ":" + a.seq} agent={a} />)}
+    </div>
+  );
+}
+
+export function TurnView({ turn, tail }: { turn: Turn; tail?: React.ReactNode }) {
   const summary = turn.done ? doneSummary(turn.done) : "";
   const codes = turn.body.filter((l) => l.kind === "code" || l.kind === "sub:code").map((l) => l.text);
+  const items = useMemo<Item[]>(() => groupSubs(turn.body), [turn.body]);
   return (
     <section className="turn">
       {turn.prompt && (
@@ -300,7 +363,10 @@ export function TurnView({ turn }: { turn: Turn }) {
         </div>
       )}
       <div className="turn-body">
-        {turn.body.map((l) => <Entry key={l.seq} line={l} codes={codes} />)}
+        {items.map((it) => it.kind === "sub"
+          ? <SubRun key={"sub" + it.seq} agents={it.agents} />
+          : <Entry key={it.seq} line={it.line} codes={codes} />)}
+        {tail}
       </div>
       {turn.done && (
         <div className="turn-done">
@@ -308,6 +374,38 @@ export function TurnView({ turn }: { turn: Turn }) {
         </div>
       )}
     </section>
+  );
+}
+
+/* ---------------- live preview ---------------- */
+
+/**
+ * A fragment of a reply that has not been recorded yet. The server
+ * sends these coalesced every 50ms and never keeps them: they are a
+ * preview of an entry that does not exist, and the moment the real
+ * entry lands through the ?since= refetch the run that produced it is
+ * dropped. Nothing here is ever a source of truth.
+ */
+export interface DeltaRun { kind: "assistant" | "thinking"; text: string }
+
+export function StreamView({ runs }: { runs: DeltaRun[] }) {
+  if (!runs.length) return null;
+  return (
+    <>
+      {runs.map((r, i) => r.kind === "thinking" ? (
+        // Only the run still being written carries the caret; an
+        // earlier one is finished text waiting to be recorded.
+        <div key={i} className={"block thinking stream-think" + (i === runs.length - 1 ? " stream-tip" : "")}>
+          <div className="stream-think-head"><span className="block-label">Thinking</span></div>
+          <div className="think-body"><Markdown text={r.text} /></div>
+        </div>
+      ) : (
+        <div key={i} className={"say stream-say" + (i === runs.length - 1 ? " stream-tip" : "")}>
+          <div className="say-who"><Sprout size={14} /><span>bough</span></div>
+          <Markdown text={r.text} />
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -372,8 +470,8 @@ export function Back({ onBack }: { onBack?: () => void }) {
   );
 }
 
-export function Thread({ row, lines, projects, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy }: {
-  row: Row; lines: Line[]; projects: Project[]; busy: boolean; onBack?: () => void;
+export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy }: {
+  row: Row; lines: Line[]; stream?: DeltaRun[]; projects: Project[]; busy: boolean; onBack?: () => void;
   onSend: (t: string) => void; onAnswer: (t: string) => void; onInterrupt: () => void;
   onArchive: () => void; onRename: (t: string) => void; onContext?: () => void;
   onModel: (m: string) => void; onEffort: (e: string) => void; onAssign: (p: string) => void;
@@ -384,8 +482,28 @@ export function Thread({ row, lines, projects, onSend, onAnswer, onInterrupt, on
   // button: they change rarely, and the thread is what the screen is for.
   const [more, setMore] = useState(false);
   const end = useRef<HTMLDivElement>(null);
-  useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [lines.length]);
+  const composer = useRef<HTMLTextAreaElement>(null);
+  // A paste fires no keydown, so anything that reads the caret off a
+  // key event is stale for exactly one change. Worse, the pasted text
+  // itself can end in "@foo" or "/bar" and open a picker over a token
+  // nobody typed. The guard closes the picker for that one change and
+  // is lifted by the next real key.
+  const pasted = useRef(false);
+  const streamLen = stream.reduce((n, r) => n + r.text.length, 0);
+  useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [lines.length, streamLen]);
   const turns = useMemo(() => groupTurns(lines), [lines]);
+  const running = row.status === "running";
+
+  // A long paste should be visible, not a two-row porthole you have to
+  // drag open. Grow to the text and stop at a third of the window.
+  useEffect(() => {
+    const el = composer.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, Math.round(window.innerHeight / 3)) + "px";
+  }, [draft]);
+
+  const caretTrigger = (el: HTMLTextAreaElement) => setTrigger(triggerAt(el.value, el.selectionStart ?? 0));
 
   const send = () => {
     const t = draft.trim();
@@ -429,7 +547,21 @@ export function Thread({ row, lines, projects, onSend, onAnswer, onInterrupt, on
       </header>
 
       <div className="scroll transcript">
-        {turns.map((t) => <TurnView key={t.seq} turn={t} />)}
+        {turns.map((t, i) => (
+          <TurnView key={t.seq} turn={t}
+            // The preview belongs to the turn that is still open, so it
+            // sits where the recorded entry will appear and is replaced
+            // in place rather than jumping up the page.
+            tail={i === turns.length - 1 && !t.done ? (
+              <>
+                <StreamView runs={stream} />
+                {running && !row.ask && <Working label={stream.length && stream[stream.length - 1].kind === "thinking" ? "Thinking" : "Working"} />}
+              </>
+            ) : undefined} />
+        ))}
+        {running && (turns.length === 0 || turns[turns.length - 1].done) && !row.ask && (
+          <div className="turn"><div className="turn-body"><StreamView runs={stream} /><Working /></div></div>
+        )}
         {row.ask && (
           <div className="ask">
             <StatusMark status="needs-you" size={16} />
@@ -455,27 +587,38 @@ export function Thread({ row, lines, projects, onSend, onAnswer, onInterrupt, on
               const next = draft.slice(0, t.from) + t.kind + value + " " + draft.slice(t.to);
               setDraft(next);
               setTrigger(null);
-              const el = document.getElementById("composer") as HTMLTextAreaElement | null;
+              const el = composer.current;
               const caret = t.from + value.length + 2;
               requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(caret, caret); });
             }}
             onClose={() => setTrigger(null)} />
-          <textarea id="composer" value={draft} rows={2}
+          <textarea id="composer" ref={composer} value={draft} rows={2}
+            aria-label="Message"
             placeholder={row.ask ? "Answer the question above"
-              : row.status === "running" ? "Send a message — it steers the turn already running"
+              : running ? "Send a message — it steers the turn already running"
               : "Send a message to start the next turn"}
+            onPaste={() => { pasted.current = true; }}
             onChange={(e) => {
               setDraft(e.target.value);
-              setTrigger(triggerAt(e.target.value, e.target.selectionStart ?? 0));
+              // The change a paste produces carries a caret at the end
+              // of text nobody typed. Leave the picker shut rather than
+              // opening one over a pasted path or address.
+              if (pasted.current) { setTrigger(null); return; }
+              caretTrigger(e.currentTarget);
             }}
             onKeyUp={(e) => {
               // Moving the caret changes what is being typed, so the
               // picker follows arrows and clicks as well as letters.
-              const el = e.currentTarget;
-              setTrigger(triggerAt(el.value, el.selectionStart ?? 0));
+              // The keyup of the paste chord itself is not a caret move.
+              if (pasted.current) return;
+              caretTrigger(e.currentTarget);
             }}
-            onBlur={() => setTrigger(null)}
+            onClick={(e) => { pasted.current = false; caretTrigger(e.currentTarget); }}
+            onBlur={() => { pasted.current = false; setTrigger(null); }}
             onKeyDown={(e) => {
+              // The paste chord's own keydown comes before the paste, so
+              // the next keydown after one is a genuine later keystroke.
+              if (!(e.metaKey || e.ctrlKey)) pasted.current = false;
               // While the picker is up it owns Enter and the arrows.
               if (trigger && ["Enter", "Tab", "ArrowUp", "ArrowDown", "Escape"].includes(e.key)) return;
               if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
@@ -488,7 +631,7 @@ export function Thread({ row, lines, projects, onSend, onAnswer, onInterrupt, on
                 setDraft((d) => (d.trimStart().startsWith("/") ? d : `/${name} ${d.trimStart()}`));
                 document.getElementById("composer")?.focus();
               }} />
-              {row.status === "running" && <button className="btn" onClick={onInterrupt}>Stop</button>}
+              {running && <button className="btn" onClick={onInterrupt}>Stop</button>}
               <button className="btn btn-primary" onClick={send} disabled={busy || !draft.trim()}>Send</button>
             </div>
           </div>
@@ -502,6 +645,10 @@ export default function App() {
   const [rows, setRows] = useState<Row[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
+  // Live fragments of the reply being written, newest last. Never
+  // merged into `lines`: these carry no history seq and the recorded
+  // entry always supersedes them.
+  const [stream, setStream] = useState<DeltaRun[]>([]);
   const [query, setQuery] = useState("");
   const [archived, setArchived] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -533,11 +680,38 @@ export default function App() {
       setRows((prev) => prev.map((x) => (x.id === r.session.id ? r.session : x)));
     }).catch((e) => setErr(String(e)));
 
+    setStream([]);
+    // How many delta runs were already on screen when the last recorded
+    // event arrived. The server drains its delta buffer synchronously
+    // before it forwards a recorded entry, so every run up to this mark
+    // is part of what that entry contains — and only those are dropped
+    // when the refetch lands. Fragments that arrived after it are the
+    // beginning of the next entry and must survive.
+    let superseded = 0;
+    let runs = 0;
+
     // An event is a CHANGE SIGNAL, not a transcript line: Event.Seq is a
     // supervisor counter, transcript entries carry history seqs, and
     // merging the two silently drops events whose numbers collide.
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const stop = subscribe(selected, () => {
+    const stop = subscribe(selected, (ev) => {
+      if (ev.kind === "assistant-delta" || ev.kind === "thinking-delta") {
+        const kind = ev.kind === "thinking-delta" ? "thinking" : "assistant";
+        setStream((prev) => {
+          const n = prev.length;
+          let next: DeltaRun[];
+          if (n && prev[n - 1].kind === kind) {
+            next = prev.slice();
+            next[n - 1] = { kind, text: next[n - 1].text + ev.text };
+          } else {
+            next = [...prev, { kind, text: ev.text }];
+          }
+          runs = next.length;
+          return next;
+        });
+        return;
+      }
+      superseded = runs;
       clearTimeout(timer);
       timer = setTimeout(() => {
         setLines((prev) => {
@@ -546,6 +720,12 @@ export default function App() {
             if (!live) return;
             setRows((rs) => rs.map((x) => (x.id === r.session.id ? r.session : x)));
             if (!r.entries.length) return;
+            const drop = superseded;
+            superseded = 0;
+            // The recorded entries are in hand; the fragments they were
+            // built from go in the same commit, so the text is never
+            // absent for a frame and never shown twice.
+            setStream((cur) => { runs = Math.max(0, runs - drop); return cur.slice(drop); });
             setLines((cur) => {
               const seen = new Set(cur.map((l) => l.seq));
               return [...cur, ...r.entries.filter((e) => !seen.has(e.seq))];
@@ -566,13 +746,89 @@ export default function App() {
 
   const row = rows.find((r) => r.id === selected) ?? null;
 
+  // A preview outlives its turn only if the entry it was previewing
+  // never arrived. Once the session is no longer running there is
+  // nothing left to be a preview of.
+  const status = row?.status;
+  useEffect(() => { if (status && status !== "running") setStream([]); }, [status]);
+
   const [palette, setPalette] = useState(false);
   const [home, setHome] = useState("");
   useEffect(() => { api.home().then(setHome).catch(() => setHome("")); }, []);
+
+  /**
+   * Where you are lives in the URL.
+   *
+   * It was React state alone, so reloading the tab dropped you back on
+   * "no session open" with the conversation you had just started
+   * somewhere in a list of a hundred and fifty — which reads as the
+   * agent having been interrupted, though it never stops. It also
+   * makes Back work, and makes a conversation a link you can send
+   * yourself.
+   */
+  useEffect(() => {
+    const read = () => {
+      const h = window.location.hash.replace(/^#\/?/, "");
+      if (h === "hooks" || h === "projects") { setView(h); setContext(false); return; }
+      const m = /^s\/([^/]+)(\/context)?$/.exec(h);
+      if (m) {
+        setView("sessions"); setSelected(m[1]); setContext(Boolean(m[2])); setPane("thread");
+      } else if (h === "") {
+        setView("sessions"); setSelected(null); setContext(false);
+      }
+    };
+    read();
+    window.addEventListener("popstate", read);
+    window.addEventListener("hashchange", read);
+    return () => {
+      window.removeEventListener("popstate", read);
+      window.removeEventListener("hashchange", read);
+    };
+  }, []);
+
+  // Writing it back is replaceState, not push: every keystroke in the
+  // sidebar filter would otherwise become a history entry to walk back
+  // through. Opening a conversation pushes (see openSession).
+  useEffect(() => {
+    const want = view === "hooks" ? "#/hooks"
+      : view === "projects" ? "#/projects"
+      : selected ? `#/s/${selected}${context ? "/context" : ""}`
+      : "#/";
+    if (window.location.hash !== want) {
+      window.history.replaceState(null, "", want);
+    }
+  }, [view, selected, context]);
+
+  /**
+   * An open block closes when you click anywhere in it — the whole
+   * body, not just its one-line header. Two things must still work:
+   * selecting text to copy a command ends in a click and must not
+   * slam the block shut, and a nested disclosure or button owns its
+   * own clicks.
+   */
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t) return;
+      const block = t.closest("details.block[open]") as HTMLDetailsElement | null;
+      if (!block) return;
+      if (t.closest("summary")) return;                       // already toggles
+      if (t.closest("a,button,input,textarea,select,label")) return;
+      if (t.closest("details.block-inner") !== null) return;  // the inner call
+      if ((window.getSelection()?.toString() ?? "") !== "") return;
+      block.open = false;
+    };
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, []);
   usePaletteKey(useCallback(() => setPalette(true), []));
 
   const openSession = useCallback((id: string) => {
     setSelected(id); setContext(false); setView("sessions"); setPane("thread");
+    // A push, so Back returns to where you were rather than leaving.
+    if (window.location.hash !== `#/s/${id}`) {
+      window.history.pushState(null, "", `#/s/${id}`);
+    }
   }, []);
 
   const act = async (fn: () => Promise<unknown>) => {
@@ -648,7 +904,7 @@ export default function App() {
       ) : row && context ? (
         <ContextPage session={row.id} onBack={() => setContext(false)} />
       ) : row ? (
-        <Thread row={row} lines={lines} projects={projects} busy={busy} onBack={() => setPane("list")}
+        <Thread row={row} lines={lines} stream={stream} projects={projects} busy={busy} onBack={() => setPane("list")}
           onSend={(t) => act(() => api.prompt(row.id, t))}
           onAnswer={(t) => act(() => api.answer(row.id, t))}
           onInterrupt={() => act(() => api.interrupt(row.id))}

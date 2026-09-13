@@ -264,11 +264,12 @@ whole block. Every tool
 returns its value directly — write tools.bash("ls"), not await. To do
 several things, call them one after another or map over a list.
 
-Write ONE code block per reply: only the first block runs, anything
-after it is dropped. That block is executed and its output is sent back
-to you as the next message. Do not write the next command before you
-have seen the output of this one — put several steps in ONE program
-instead when they belong together. Declarations (const/let/var) do not
+Prefer ONE code block per reply. Every block of a reply runs, in order,
+one after another, and each block's output comes back to you as the next
+message; at most 8 blocks run and the rest of the reply is dropped, and
+if a block fails the blocks after it do not run. So write a second block
+only when it does not depend on what the first one prints — otherwise
+put the steps in ONE program, or wait for the output. Declarations (const/let/var) do not
 persist between blocks; print what you need to carry over. Never write
 output or result blocks yourself; only the runtime returns output. Take
 as many steps as you need.
@@ -442,35 +443,58 @@ func stripFakeSystem(reply string) string {
 	return looseSystemTag.ReplaceAllString(out, removedSystem)
 }
 
-// extraBlocks is the marker replacing the code blocks after the first.
-const extraBlocks = "[%d further code block(s) dropped — only the first block of a reply runs]"
+// maxBlocks is how many js blocks of one reply the loop will run.
+// Eight is well past what an honest reply writes (two or three: write
+// a file, then run it) and well short of a hallucinated session.
+const maxBlocks = 8
 
-// firstBlockOnly keeps a reply's first js block and replaces the rest
-// with a marker, returning how many were dropped.
+// MaxBlocks is maxBlocks for other plugins: workers runs a subagent's
+// blocks itself and has to tell the model the same thing this loop
+// would, in the same words.
+const MaxBlocks = maxBlocks
+
+// extraBlocks is the marker replacing the code blocks past the cap.
+const extraBlocks = "[%d further code block(s) dropped — a reply runs at most %d blocks]"
+
+// droppedStop is the marker for a stop block sitting under code that
+// is about to run: it answers output that does not exist yet.
+const droppedStop = "[stop block dropped — it answers output that has not been produced yet]"
+
+// capBlocks keeps a reply's first maxBlocks js blocks and replaces
+// everything after the last kept one with a marker, returning how many
+// blocks were dropped.
 //
-// A reply is a PLAN plus its first action; the actions after it were
-// written blind, before their predecessor's output existed. Running
-// them all made a degenerate reply catastrophic: one glm-5.3-flash
-// reply carried 138 fenced blocks — a whole imagined session, complete
-// with invented outputs between them — and the loop dutifully executed
-// every one, so a single step produced 138 commands and 138 results
-// the model then had to reconcile. One block per step also keeps the
-// recorded reply small: the dropped text never re-enters the context.
-func firstBlockOnly(reply string) (string, int) {
+// The blocks that survive are run IN ORDER, one at a time: they
+// routinely depend on each other (write a file, then run it), and
+// codemode is a single goja VM behind a mutex, so concurrent execution
+// is not available even if it were wanted.
+//
+// The cap is what keeps a degenerate reply from becoming a degenerate
+// step: one glm-5.3-flash reply carried 138 fenced blocks — a whole
+// imagined session, complete with invented outputs between them — and
+// the loop dutifully executed every one, so a single step produced 138
+// commands and 138 results the model then had to reconcile. Capping
+// also keeps the recorded reply small: the dropped text never re-enters
+// the context.
+func capBlocks(reply string) (string, int) {
 	locs := jsBlock.FindAllStringIndex(reply, -1)
-	if len(locs) <= 1 {
+	if len(locs) <= maxBlocks {
 		return reply, 0
 	}
-	// Everything after the first block goes, prose included: that prose
-	// narrates results that do not exist yet ("The subagent has
-	// finished. Verification confirms."), which is exactly the
-	// invented-output problem in a different costume.
-	return reply[:locs[0][1]] + "\n" + fmt.Sprintf(extraBlocks, len(locs)-1), len(locs) - 1
+	// The trailing prose goes with the dropped blocks: it narrates
+	// results that do not exist yet ("The subagent has finished.
+	// Verification confirms."), which is the invented-output problem in
+	// a different costume.
+	return reply[:locs[maxBlocks-1][1]] + "\n" + fmt.Sprintf(extraBlocks, len(locs)-maxBlocks, maxBlocks), len(locs) - maxBlocks
 }
 
-// FirstBlockOnly is firstBlockOnly for other plugins (workers runs the
-// same one-block-per-step rule for subagents).
-func FirstBlockOnly(reply string) (string, int) { return firstBlockOnly(reply) }
+// CapBlocks is capBlocks for other plugins (workers runs the same cap
+// for subagents).
+func CapBlocks(reply string) (string, int) { return capBlocks(reply) }
+
+// FirstBlockOnly is the old name of CapBlocks, kept for callers outside
+// this package.
+func FirstBlockOnly(reply string) (string, int) { return capBlocks(reply) }
 
 // StopAnswer is stopAnswer for other plugins: workers ends a child's
 // run on the same contract.
@@ -506,12 +530,12 @@ func Finish(reply string) (text string, stopped bool, dropped int) {
 			return strings.TrimSpace(stopFence.ReplaceAllString(reply, "$1")), true, 0
 		}
 	}
-	text, dropped = firstBlockOnly(reply)
-	// A stop block under the block that is about to run is an answer
+	text, dropped = capBlocks(reply)
+	// A stop block under the blocks that are about to run is an answer
 	// to output that does not exist yet. It cannot be honoured this
 	// round, and left in the record it reads as the model's verdict.
 	if loc := stopFence.FindStringIndex(text); loc != nil {
-		text = strings.TrimRight(text[:loc[0]], "\n") + "\n" + fmt.Sprintf(extraBlocks, 1)
+		text = strings.TrimRight(text[:loc[0]], "\n") + "\n" + droppedStop
 		dropped++
 	}
 	return text, false, dropped
@@ -1617,7 +1641,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		}
 		dropped := 0
 		if !stopped {
-			reply, dropped = firstBlockOnly(reply)
+			reply, dropped = capBlocks(reply)
 		}
 		note("assistant", reply, r.provenance())
 		blocks := jsBlock.FindAllStringSubmatch(reply, -1)
@@ -1696,7 +1720,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			r.fire(ctx, "stop", map[string]any{"input": input, "reply": reply}, emit)
 			return nil
 		}
-		for _, m := range blocks {
+		for i, m := range blocks {
 			if r.landSteers(ctx, emit, false) {
 				break // steered: the rest of this reply is stale, ask again
 			}
@@ -1734,8 +1758,15 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			// Tool output is untrusted text (files, command output, MCP
 			// results): a <system-*> tag in it must not reach the model.
 			out = capOutput(noneNoted(stripFakeSystem(out)), maxResultBytes)
-			if dropped > 0 {
-				out += fmt.Sprintf("\n\n[only the first of your %d code blocks ran. Write ONE block per reply, read its output, then decide the next one.]", dropped+1)
+			// A failing block ends the reply: the blocks after it were
+			// written before this one's output existed and assume it
+			// succeeded, so running them compounds the error. The model
+			// is told what did not run rather than left to infer it.
+			if runErr != nil && i < len(blocks)-1 {
+				out += fmt.Sprintf("\n\n[the %d code block(s) after this one in your reply were not run: this block failed.]", len(blocks)-1-i)
+			}
+			if dropped > 0 && (runErr != nil || i == len(blocks)-1) {
+				out += fmt.Sprintf("\n\n[%d of your %d code blocks ran; the rest were dropped — a reply runs at most %d blocks. Read these results, then decide what comes next.]", len(blocks), len(blocks)+dropped, maxBlocks)
 			}
 			if res := r.fire(ctx, "post-result", map[string]any{"code": code, "result": out}, emit); res != nil {
 				if s, ok := res["result"].(string); ok {
@@ -1749,10 +1780,10 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			if runErr != nil {
 				lastFailed = true
 				emit("error", out)
-			} else {
-				lastFailed = false
-				emit("result", out)
+				break
 			}
+			lastFailed = false
+			emit("result", out)
 		}
 	}
 	// The budget is spent. Ending here would leave the user with tool

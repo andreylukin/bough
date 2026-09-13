@@ -528,8 +528,8 @@ func (w *Workers) runChildTo(ctx context.Context, task string, id int, run func(
 		// push-back loop inside a subagent is worse than a slightly
 		// informal report.
 		// One rule, one implementation (loop.Finish): a js block before
-		// the stop fence means the child is still working, and only the
-		// first of them runs.
+		// the stop fence means the child is still working, and a reply
+		// runs at most loop.MaxBlocks of them.
 		reply, stopped, dropped := loop.Finish(reply)
 		_ = stopped // a child takes a block-less reply as its report either way
 		note("assistant", reply, nil)
@@ -583,7 +583,7 @@ func (w *Workers) runChildTo(ctx context.Context, task string, id int, run func(
 				note("result", out, nil)
 			}
 			if dropped > 0 {
-				out += fmt.Sprintf("\n\n[only the first of your %d code blocks ran. Write ONE block per reply, read its output, then decide the next one.]", dropped+1)
+				out += fmt.Sprintf("\n\n[%d further code block(s) dropped — a reply runs at most %d blocks. Read these results, then decide what comes next.]", dropped, loop.MaxBlocks)
 			}
 			msgs = append(msgs, llm.Message{Role: "user", Content: "[tool output]\n" + out})
 		}

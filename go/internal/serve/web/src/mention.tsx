@@ -16,9 +16,13 @@ export interface Trigger { kind: "/" | "@"; token: string; from: number; to: num
 /**
  * A trigger is only live at the caret and only when the sigil starts a
  * word — "/" after a word is a path separator, and "@" inside one is
- * an email. "/" additionally only leads a message: a skill runs by
- * being the first thing said, so offering it mid-sentence would offer
- * something that does nothing.
+ * an email, so every address would otherwise open a picker.
+ *
+ * Starting a word is the whole rule. "/" used to have to lead the
+ * message as well, on the theory that a skill only runs as the first
+ * thing said; but a name is half-remembered wherever you are in a
+ * sentence, and refusing to complete it there is just a picker that
+ * does not work.
  */
 export function triggerAt(text: string, caret: number): Trigger | null {
   for (let i = caret - 1; i >= 0; i--) {
@@ -27,7 +31,6 @@ export function triggerAt(text: string, caret: number): Trigger | null {
     if (ch === "/" || ch === "@") {
       const before = i === 0 ? "" : text[i - 1];
       if (before && !/\s/.test(before)) return null;
-      if (ch === "/" && text.slice(0, i).trim() !== "") return null;
       return { kind: ch, token: text.slice(i + 1, caret), from: i, to: caret };
     }
   }

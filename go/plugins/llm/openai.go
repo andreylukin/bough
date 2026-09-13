@@ -6,7 +6,9 @@ package llm
 // (required), effort ("low" … "xhigh", optional, sent as
 // reasoning.effort), base_url (default https://api.openai.com). Key:
 // OPENAI_API_KEY. Streams via SSE: response.output_text.delta feeds
-// the ui, response.completed carries the whole text and usage.
+// the ui, response.completed carries the whole text and usage, and
+// response.reasoning_summary_text.delta the reasoning summary (see
+// StreamThinking).
 
 import (
 	"bufio"
@@ -72,15 +74,26 @@ func (o *openaiLLM) Usage() Usage {
 }
 
 func (o *openaiLLM) Complete(ctx context.Context, system string, messages []Message) (string, error) {
-	return o.call(ctx, system, messages, nil)
+	return o.call(ctx, system, messages, nil, nil)
 }
 
 func (o *openaiLLM) Stream(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
-	return o.call(ctx, system, messages, onDelta)
+	return o.call(ctx, system, messages, onDelta, nil)
+}
+
+// StreamThinking implements ThinkingStreamer. The Responses API never
+// returns the raw chain of thought for the gpt-5/6 families; what it
+// will return is a SUMMARY of it, and only when the request asks for
+// one (reasoning.summary). So the summary is requested on this path
+// alone, and its own event type is decoded into onThink. If the model
+// sends no summary at all, readStream says so through onThink rather
+// than leaving the user staring at nothing after setting /think xhigh.
+func (o *openaiLLM) StreamThinking(ctx context.Context, system string, messages []Message, onDelta, onThink func(string)) (string, error) {
+	return o.call(ctx, system, messages, onDelta, onThink)
 }
 
 // body builds the Responses API request. Pure, so tests can pin it.
-func (o *openaiLLM) body(system string, messages []Message, stream bool) map[string]any {
+func (o *openaiLLM) body(system string, messages []Message, stream, think bool) map[string]any {
 	input := make([]map[string]any, 0, len(messages))
 	for _, m := range messages {
 		role := "user"
@@ -107,15 +120,16 @@ func (o *openaiLLM) body(system string, messages []Message, stream bool) map[str
 		b["instructions"] = system
 	}
 	if e := o.Effort(); e != "" && e != "off" {
-		b["reasoning"] = map[string]any{"effort": e}
+		r := map[string]any{"effort": e}
+		if think {
+			r["summary"] = "auto"
+		}
+		b["reasoning"] = r
 	}
 	return b
 }
 
-// Effort is the reasoning level in force; SetEffort changes it
-// (/think). The Responses API streams reasoning SUMMARIES as their own
-// event type, which is not wired up: /think changes how hard it
-// thinks, but openai's thinking is not shown.
+// Effort is the reasoning level in force; SetEffort changes it (/think).
 func (o *openaiLLM) Effort() string {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -193,11 +207,11 @@ func (o *openaiLLM) Transcribe(ctx context.Context, wav []byte, lang string) (st
 	return strings.TrimSpace(out.Text), nil
 }
 
-func (o *openaiLLM) call(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
+func (o *openaiLLM) call(ctx context.Context, system string, messages []Message, onDelta, onThink func(string)) (string, error) {
 	if err := o.init(); err != nil {
 		return "", err
 	}
-	body, err := json.Marshal(o.body(system, messages, onDelta != nil))
+	body, err := json.Marshal(o.body(system, messages, onDelta != nil, onThink != nil))
 	if err != nil {
 		return "", fmt.Errorf("llm-openai: %w", err)
 	}
@@ -219,7 +233,7 @@ func (o *openaiLLM) call(ctx context.Context, system string, messages []Message,
 			return "", retryableStatus(resp.StatusCode), withRetryAfter(openaiErr(resp.StatusCode, o.model, data), resp.Header)
 		}
 		if onDelta != nil {
-			out, err := o.readStream(guardStalls(resp.Body, stallTimeout), func(d string) { delivered = true; onDelta(d) })
+			out, err := o.readStream(guardStalls(resp.Body, stallTimeout), func(d string) { delivered = true; onDelta(d) }, onThink)
 			return out, err != nil && !delivered && retryableErr(err), err
 		}
 		data, err := io.ReadAll(resp.Body)
@@ -312,10 +326,14 @@ func (o *openaiLLM) finish(r *openaiResponse) (string, error) {
 // onDelta; the terminal response.completed/incomplete event carries
 // the response object the reply and usage come from; response.failed
 // or error events surface as the call's error.
-func (o *openaiLLM) readStream(body io.Reader, onDelta func(string)) (string, error) {
+func (o *openaiLLM) readStream(body io.Reader, onDelta, onThink func(string)) (string, error) {
 	sc := bufio.NewScanner(body)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	var streamed strings.Builder
+	thought := false
+	// The reasoning summary arrives as its own items; separate them the
+	// way the reply's message items are separated.
+	summaryPart := 0
 	for sc.Scan() {
 		line := sc.Text()
 		if !strings.HasPrefix(line, "data:") {
@@ -344,12 +362,23 @@ func (o *openaiLLM) readStream(body io.Reader, onDelta func(string)) (string, er
 				streamed.WriteString("\n\n")
 				onDelta("\n\n")
 			}
+		case "response.reasoning_summary_part.added":
+			if onThink != nil && summaryPart > 0 {
+				onThink("\n\n")
+			}
+			summaryPart++
+		case "response.reasoning_summary_text.delta":
+			if onThink != nil && ev.Delta != "" {
+				thought = true
+				onThink(ev.Delta)
+			}
 		case "response.output_text.delta":
 			if ev.Delta != "" {
 				streamed.WriteString(ev.Delta)
 				onDelta(ev.Delta)
 			}
 		case "response.completed", "response.incomplete":
+			o.noteNoThinking(onThink, thought)
 			if ev.Response != nil {
 				return o.finish(ev.Response)
 			}
@@ -372,6 +401,22 @@ func (o *openaiLLM) readStream(body io.Reader, onDelta func(string)) (string, er
 		return "", fmt.Errorf("llm-openai: stream: %w", err)
 	}
 	return "", fmt.Errorf("llm-openai: stream ended without response.completed")
+}
+
+// noteNoThinking explains an empty thinking pane. A user who set
+// /think xhigh and sees nothing has no way to tell "the model did not
+// think" from "bough forgot to show it", so when a reasoning effort
+// was in force and the response carried no summary, say so once, in
+// the one place the thinking would have appeared.
+func (o *openaiLLM) noteNoThinking(onThink func(string), thought bool) {
+	if onThink == nil || thought {
+		return
+	}
+	e := o.Effort()
+	if e == "" || e == "off" {
+		return
+	}
+	onThink(fmt.Sprintf("(reasoning effort %q was sent, but %s returned no reasoning summary for this reply — OpenAI does not expose the raw chain of thought, and some models and unverified organizations get no summary either)", e, o.model))
 }
 
 // openaiErr formats a non-200: a 404 is an unknown model; only the

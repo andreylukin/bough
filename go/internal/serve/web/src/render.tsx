@@ -107,6 +107,77 @@ export function groupTurns(lines: Line[]): Turn[] {
   return turns;
 }
 
+/* ---------------- subagents ---------------- */
+
+/**
+ * One subagent inside a run. `worker` is the lane the loop stamps on
+ * every sub:* entry (data.worker), which is the only thing that tells
+ * two concurrent subagents apart — their entries interleave in the
+ * transcript in the order they happened to finish a step.
+ */
+export interface SubAgent {
+  worker: string;
+  task: string;
+  status: string; // "ok" | "error" | "" while it is still working
+  steps: number;
+  lines: Line[];
+  seq: number;
+}
+
+/**
+ * A turn body is mostly the parent's own work with runs of subagent
+ * work spliced into it. Rendered flat, a subagent's code and results
+ * are indistinguishable from the parent's — which is what they looked
+ * like. So a contiguous stretch of sub:* entries becomes one item.
+ */
+export type Item =
+  | { kind: "line"; seq: number; line: Line }
+  | { kind: "sub"; seq: number; agents: SubAgent[] };
+
+function readStr(v: unknown): string {
+  return typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
+}
+
+export function groupSubs(body: Line[]): Item[] {
+  const out: Item[] = [];
+  let run: { kind: "sub"; seq: number; agents: SubAgent[] } | null = null;
+  let lane = new Map<string, SubAgent>();
+
+  for (const l of body) {
+    if (!l.kind.startsWith("sub:")) {
+      run = null;
+      lane = new Map();
+      out.push({ kind: "line", seq: l.seq, line: l });
+      continue;
+    }
+    const worker = readStr(l.data?.worker) || "1";
+    if (!run) {
+      run = { kind: "sub", seq: l.seq, agents: [] };
+      out.push(run);
+    }
+    let a = lane.get(worker);
+    if (!a) {
+      a = { worker, task: "", status: "", steps: 0, lines: [], seq: l.seq };
+      lane.set(worker, a);
+      run.agents.push(a);
+    }
+    if (l.kind === "sub:start") { a.task = l.text; continue; }
+    if (l.kind === "sub:done") {
+      a.status = readStr(l.data?.status) || "ok";
+      const n = l.data?.steps;
+      a.steps = typeof n === "number" ? n : 0;
+      continue;
+    }
+    a.lines.push(l);
+  }
+  return out;
+}
+
+/** "1 step" / "4 steps" — the same English as lineCount. */
+export function stepCount(n: number): string {
+  return n === 1 ? "1 step" : `${n} steps`;
+}
+
 /** "1 line" / "4 lines" — a count that reads as English. */
 export function lineCount(n: number): string {
   return n === 1 ? "1 line" : `${n} lines`;

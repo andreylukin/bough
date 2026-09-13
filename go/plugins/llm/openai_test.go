@@ -12,7 +12,7 @@ import (
 
 func TestOpenaiBody(t *testing.T) {
 	o := &openaiLLM{model: "gpt-5.6-sol", effort: "xhigh"}
-	b := o.body("sys", []Message{{Role: "user", Content: "hi"}, {Role: "assistant", Content: "yo"}}, true)
+	b := o.body("sys", []Message{{Role: "user", Content: "hi"}, {Role: "assistant", Content: "yo"}}, true, false)
 	if b["model"] != "gpt-5.6-sol" || b["instructions"] != "sys" || b["store"] != false || b["stream"] != true {
 		t.Fatalf("body = %v", b)
 	}
@@ -23,7 +23,7 @@ func TestOpenaiBody(t *testing.T) {
 	if len(in) != 2 || in[0]["role"] != "user" || in[1]["role"] != "assistant" || in[1]["content"] != "yo" {
 		t.Fatalf("input = %v", in)
 	}
-	if _, has := (&openaiLLM{model: "m"}).body("", nil, false)["reasoning"]; has {
+	if _, has := (&openaiLLM{model: "m"}).body("", nil, false, false)["reasoning"]; has {
 		t.Fatal("no effort should mean no reasoning field")
 	}
 }
@@ -39,18 +39,18 @@ func TestOpenaiReadStream(t *testing.T) {
 	}, "\n")
 	o := &openaiLLM{model: "m"}
 	var got []string
-	out, err := o.readStream(strings.NewReader(body), func(d string) { got = append(got, d) })
+	out, err := o.readStream(strings.NewReader(body), func(d string) { got = append(got, d) }, nil)
 	if err != nil || out != "Hello" || strings.Join(got, "|") != "Hel|lo" {
 		t.Fatalf("readStream = (%q, %v) deltas=%v", out, err, got)
 	}
 	if u := o.Usage(); u.InputTokens != 7 || u.OutputTokens != 3 || u.LastInputTokens != 7 || u.Priced {
 		t.Fatalf("usage = %+v", u)
 	}
-	_, err = o.readStream(strings.NewReader(`data: {"type":"response.failed","response":{"status":"failed","error":{"message":"quota"}}}`), func(string) {})
+	_, err = o.readStream(strings.NewReader(`data: {"type":"response.failed","response":{"status":"failed","error":{"message":"quota"}}}`), func(string) {}, nil)
 	if err == nil || !strings.Contains(err.Error(), "quota") {
 		t.Fatalf("failed event = %v", err)
 	}
-	_, err = o.readStream(strings.NewReader(`data: {"type":"response.output_text.delta","delta":"x"}`), func(string) {})
+	_, err = o.readStream(strings.NewReader(`data: {"type":"response.output_text.delta","delta":"x"}`), func(string) {}, nil)
 	if err == nil || !strings.Contains(err.Error(), "without response.completed") {
 		t.Fatalf("cut stream = %v", err)
 	}
@@ -136,4 +136,65 @@ func TestOpenaiTranscribe(t *testing.T) {
 	}
 	var tr Transcriber = o
 	_ = tr
+}
+
+// StreamThinking asks for a reasoning summary and decodes it into
+// onThink, keeping it out of the reply.
+func TestOpenaiStreamThinking(t *testing.T) {
+	var reqBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&reqBody)
+		w.Write([]byte(strings.Join([]string{
+			`data: {"type":"response.reasoning_summary_part.added"}`,
+			`data: {"type":"response.reasoning_summary_text.delta","delta":"weighing "}`,
+			`data: {"type":"response.reasoning_summary_text.delta","delta":"options"}`,
+			`data: {"type":"response.reasoning_summary_part.added"}`,
+			`data: {"type":"response.reasoning_summary_text.delta","delta":"decided"}`,
+			`data: {"type":"response.output_text.delta","delta":"Hi"}`,
+			`data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Hi"}]}]}}`,
+		}, "\n")))
+	}))
+	defer srv.Close()
+	o := &openaiLLM{model: "gpt-6-astra", effort: "xhigh", base: srv.URL, key: "k"}
+	o.once.Do(func() {})
+	var ts ThinkingStreamer = o
+	var reply, think strings.Builder
+	out, err := ts.StreamThinking(context.Background(), "sys", []Message{{Role: "user", Content: "hi"}},
+		func(d string) { reply.WriteString(d) }, func(d string) { think.WriteString(d) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "Hi" || reply.String() != "Hi" {
+		t.Fatalf("reply = %q / %q", out, reply.String())
+	}
+	if think.String() != "weighing options\n\ndecided" {
+		t.Fatalf("thinking = %q", think.String())
+	}
+	r, _ := reqBody["reasoning"].(map[string]any)
+	if r["effort"] != "xhigh" || r["summary"] != "auto" {
+		t.Fatalf("reasoning = %v", r)
+	}
+}
+
+// A model that returns no summary must say so in the thinking pane:
+// silence is indistinguishable from a bug on the bough side.
+func TestOpenaiNoReasoningSummaryIsLegible(t *testing.T) {
+	body := `data: {"type":"response.output_text.delta","delta":"Hi"}
+data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Hi"}]}]}}`
+	o := &openaiLLM{model: "gpt-6-astra", effort: "xhigh"}
+	var think strings.Builder
+	if _, err := o.readStream(strings.NewReader(body), func(string) {}, func(d string) { think.WriteString(d) }); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(think.String(), "no reasoning summary") || !strings.Contains(think.String(), "xhigh") {
+		t.Fatalf("note = %q", think.String())
+	}
+
+	// With reasoning off there is nothing to explain.
+	off := &openaiLLM{model: "gpt-6-astra"}
+	think.Reset()
+	off.readStream(strings.NewReader(body), func(string) {}, func(d string) { think.WriteString(d) })
+	if think.Len() != 0 {
+		t.Fatalf("unexpected note = %q", think.String())
+	}
 }

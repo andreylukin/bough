@@ -38,8 +38,8 @@ func TestCodemodeFlowRenders(t *testing.T) {
 	}
 }
 
-// Only the FIRST js block of a reply runs: the second is dropped with
-// a marker, so one runaway reply cannot fire a hundred commands.
+// Every js block of a reply runs, in order, each with its own code and
+// result row.
 func TestMultiBlockReplyRenders(t *testing.T) {
 	t.Parallel()
 	step := 0
@@ -54,17 +54,17 @@ func TestMultiBlockReplyRenders(t *testing.T) {
 		"codemode", "loop")
 	d.Say("go")
 	d.WaitFor("all done here")
-	// Blocks arrive collapsed; expand both result blocks (tab starts at
-	// the newest and walks older: result2, code2, result1, code1).
+	// The finished turn folds into one row; expand it to see the steps.
 	d.Press("tab", "enter")
 	frame := d.Frame()
-	if got := strings.Count(frame, "▾ result"); got != 1 {
-		t.Fatalf("want 1 result box, got %d:\n%s", got, frame)
+	if got := strings.Count(frame, "result (1 line)"); got != 2 {
+		t.Fatalf("want 2 result rows, got %d:\n%s", got, frame)
 	}
-	if !strings.Contains(frame, "OUT_ONE") {
-		t.Fatalf("missing the first block's output:\n%s", frame)
+	one, two := strings.Index(frame, "OUT_ONE"), strings.Index(frame, "OUT_TWO")
+	if one < 0 || two < 0 {
+		t.Fatalf("both blocks should have run and printed:\n%s", frame)
 	}
-	if strings.Contains(frame, "OUT_TWO") {
-		t.Fatalf("the second block ran:\n%s", frame)
+	if one > two {
+		t.Fatalf("blocks ran out of order:\n%s", frame)
 	}
 }

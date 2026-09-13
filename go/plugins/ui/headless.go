@@ -163,11 +163,22 @@ func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog h
 // printing so a caller waiting on that line can answer; "[error]" goes
 // to stderr and marks the run failed; everything else to stdout.
 func hlPrint(ev Event) {
-	if ev.Kind == "assistant-delta" {
-		return // the whole reply prints once as "[assistant]"
+	switch ev.Kind {
+	case "assistant-delta", "thinking-delta":
+		// Fragments of a reply that is still forming. Plain headless is
+		// read by humans and by the bench harness, so a token per line
+		// would ruin it: drop them there, as before. Under --json each
+		// one is its own object, tagged by kind, so `bough serve` can
+		// stream a reply into the browser and a script can ignore them
+		// on kind. They are never history, and the finished reply still
+		// prints once as "[assistant]".
+		if HeadlessJSON {
+			hlLine(hlOut, ev.Kind, ev.Text, nil)
+		}
+		return
 	}
 	switch ev.Kind {
-	case "title", "context", "thinking-delta", "activity":
+	case "title", "context", "activity":
 		// Bookkeeping around the turn, not the turn's output: a script
 		// (and the benchmark harness) reads these lines as results.
 		return

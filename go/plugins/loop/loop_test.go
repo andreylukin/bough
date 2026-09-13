@@ -478,44 +478,42 @@ func TestStripFakeSystemLeavesRealText(t *testing.T) {
 	}
 }
 
-// One reply, one action. A reply carrying several fences runs only the
-// first; the rest — and the prose after it, which narrates results
-// that do not exist yet — are replaced by a marker.
-func TestFirstBlockOnly(t *testing.T) {
+// A reply's blocks all run, in order, up to the cap; past the cap the
+// rest — and the prose after them, which narrates results that do not
+// exist yet — are replaced by a marker.
+func TestCapBlocks(t *testing.T) {
 	one := "let me look:\n```js\ntools.bash(\"ls\")\n```"
-	if got, n := firstBlockOnly(one); got != one || n != 0 {
+	if got, n := capBlocks(one); got != one || n != 0 {
 		t.Fatalf("a single block was rewritten: %q (%d)", got, n)
 	}
-	if got, n := firstBlockOnly("no code here"); got != "no code here" || n != 0 {
+	if got, n := capBlocks("no code here"); got != "no code here" || n != 0 {
 		t.Fatalf("prose was rewritten: %q (%d)", got, n)
 	}
 
-	got, n := firstBlockOnly(one + "\nThe output shows 12 files.\n```js\ntools.bash(\"wc -l *\")\n```\nAll verified.")
-	if n != 1 {
-		t.Fatalf("dropped %d blocks, want 1", n)
-	}
-	for _, gone := range []string{"wc -l", "The output shows 12 files", "All verified"} {
-		if strings.Contains(got, gone) {
-			t.Fatalf("%q survived: %q", gone, got)
-		}
-	}
-	if !strings.Contains(got, `tools.bash("ls")`) || !strings.Contains(got, "1 further code block") {
-		t.Fatalf("kept text or marker missing: %q", got)
+	two := one + "\nthen count them:\n```js\ntools.bash(\"wc -l *\")\n```"
+	if got, n := capBlocks(two); got != two || n != 0 {
+		t.Fatalf("a two-block reply was rewritten: %q (%d)", got, n)
 	}
 
-	// The pathological case this exists for: a reply that imagines a
-	// whole session costs exactly one command.
+	// The pathological case the cap exists for: a reply that imagines a
+	// whole session costs maxBlocks commands, not 138.
 	var big strings.Builder
 	big.WriteString("here we go\n")
 	for i := range 138 {
 		fmt.Fprintf(&big, "```js\ntools.bash(\"step %d\")\n```\nlooks good.\n", i)
 	}
-	got, n = firstBlockOnly(big.String())
-	if n != 137 {
-		t.Fatalf("dropped %d, want 137", n)
+	got, n := capBlocks(big.String())
+	if n != 138-maxBlocks {
+		t.Fatalf("dropped %d, want %d", n, 138-maxBlocks)
 	}
-	if c := strings.Count(got, "```js"); c != 1 {
-		t.Fatalf("%d blocks survived, want 1: %q", c, got)
+	if c := strings.Count(got, "```js"); c != maxBlocks {
+		t.Fatalf("%d blocks survived, want %d: %q", c, maxBlocks, got)
+	}
+	if !strings.Contains(got, fmt.Sprintf("%d further code block(s) dropped", 138-maxBlocks)) {
+		t.Fatalf("marker missing or wrong: %q", got)
+	}
+	if strings.Contains(got, fmt.Sprintf("step %d", maxBlocks)) {
+		t.Fatalf("a block past the cap survived: %q", got)
 	}
 }
 
@@ -780,7 +778,7 @@ func TestNoSchemaLeavesProseAlone(t *testing.T) {
 // The bug this exists for: a child imagined a whole session — 69k
 // characters, 74 js fences — and ended it with a stop block. The stop
 // won, its "answer" carried every one of those fences, and workers ran
-// all 74. One rule, one implementation.
+// all 74. One rule, one implementation: the cap holds through Finish.
 func TestFinishNeverHandsBackCode(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("Let me look at the file.\n")
@@ -793,11 +791,14 @@ func TestFinishNeverHandsBackCode(t *testing.T) {
 	if stopped {
 		t.Fatal("a reply that starts with a js block is still working, not stopped")
 	}
-	if c := strings.Count(text, "```js"); c != 1 {
-		t.Fatalf("%d blocks survived, want 1", c)
+	if c := strings.Count(text, "```js"); c != maxBlocks {
+		t.Fatalf("%d blocks survived, want %d", c, maxBlocks)
 	}
-	if dropped != 73 {
-		t.Fatalf("dropped %d, want 73", dropped)
+	if dropped != 74-maxBlocks {
+		t.Fatalf("dropped %d, want %d", dropped, 74-maxBlocks)
+	}
+	if strings.Contains(text, "All done: 74 steps") {
+		t.Fatalf("the stop answer survived under pending code: %q", text)
 	}
 
 	// A genuine stop: prose, then the fence. The prose stays, and any

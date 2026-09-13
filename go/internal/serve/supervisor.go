@@ -127,6 +127,7 @@ type Supervisor struct {
 	seq      map[string]int64
 	asks     map[string]*Ask
 	subs     map[string]map[int]chan Event
+	deltas   map[string]*deltaState
 	nextID   int
 	meta     map[string]SessionMeta
 	projects map[string]Project
@@ -162,6 +163,7 @@ func NewSupervisor(opt Options) (*Supervisor, error) {
 		seq:      map[string]int64{},
 		asks:     map[string]*Ask{},
 		subs:     map[string]map[int]chan Event{},
+		deltas:   map[string]*deltaState{},
 		meta:     map[string]SessionMeta{},
 		projects: map[string]Project{},
 	}
@@ -506,6 +508,14 @@ func metaSession(extra map[string]any) string {
 // emitLocked assigns the per-session seq, appends to the ring, tracks
 // the armed ask and fans out. Caller holds s.mu.
 func (s *Supervisor) emitLocked(id, kind, text string, extra map[string]any) {
+	if isDelta(kind) {
+		s.bufferDeltaLocked(id, kind, text)
+		return
+	}
+	// Anything recorded supersedes the fragments that led to it, so
+	// drain them first and keep the browser's ordering honest.
+	s.flushDeltasLocked(id)
+
 	s.seq[id]++
 	ev := Event{Session: id, Seq: s.seq[id], At: time.Now(), Kind: kind, Text: text, Extra: extra}
 
@@ -524,6 +534,12 @@ func (s *Supervisor) emitLocked(id, kind, text string, extra map[string]any) {
 		delete(s.asks, id)
 	}
 
+	s.fanoutLocked(id, ev)
+}
+
+// fanoutLocked delivers one event to every live subscriber of a
+// session. Caller holds s.mu.
+func (s *Supervisor) fanoutLocked(id string, ev Event) {
 	for key, cch := range s.subs[id] {
 		select {
 		case cch <- ev:
@@ -967,6 +983,12 @@ func (s *Supervisor) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
+	for id, st := range s.deltas {
+		if st.timer != nil {
+			st.timer.Stop()
+		}
+		delete(s.deltas, id)
+	}
 	for id, subs := range s.subs {
 		for key, cch := range subs {
 			close(cch)

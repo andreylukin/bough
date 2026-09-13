@@ -49,6 +49,49 @@ export const turn: Line[] = [
   { seq: 11, at: hoursAgo(1), kind: "done", text: "", data: { files: ["plugins/todo/todo_test.go"] } },
 ];
 
+/**
+ * A turn where the work was farmed out. Two subagents run at once and
+ * their entries interleave step by step — worker 1's result lands
+ * between worker 2's code and its reply — which is exactly the shape
+ * that reads as nonsense when it is rendered flat.
+ */
+const subCode1 = 'tools.bash("grep -rn \\"deltaWindow\\" internal/serve/")';
+const subCode2 = 'tools.bash("go test ./internal/serve/ -run Delta")';
+
+export const subTurn: Line[] = [
+  { seq: 1, at: hoursAgo(1), kind: "input", text: "Check the delta stream lands and the tests cover it." },
+  { seq: 2, at: hoursAgo(1), kind: "assistant", text: "Two things to check; I'll run them side by side." },
+  // On the wire a start's task is Line.text (serve lifts data.text out
+  // with history.EntryText); data keeps the worker lane.
+  { seq: 3, at: hoursAgo(1), kind: "sub:start", text: "Find every use of deltaWindow and say what sets it.", data: { worker: 1 } },
+  { seq: 4, at: hoursAgo(1), kind: "sub:start", text: "Run the serve delta tests and report failures verbatim.", data: { worker: 2 } },
+  { seq: 5, at: hoursAgo(1), kind: "sub:assistant", text: "Grepping for the constant first.", data: { worker: 1 } },
+  { seq: 6, at: hoursAgo(1), kind: "sub:code", text: subCode1, data: { worker: 1 } },
+  { seq: 7, at: hoursAgo(1), kind: "sub:code", text: subCode2, data: { worker: 2 } },
+  { seq: 8, at: hoursAgo(1), kind: "sub:result", data: { worker: 1, code: subCode1 },
+    text: subCode1 + "\ndeltas.go:27:const deltaWindow = 50 * time.Millisecond\ndeltas.go:64:\ttime.AfterFunc(deltaWindow, ...)" },
+  { seq: 9, at: hoursAgo(1), kind: "sub:result", data: { worker: 2, code: subCode2 },
+    text: subCode2 + "\n--- FAIL: TestDeltaFlushBeforeRecorded (0.00s)" },
+  { seq: 10, at: hoursAgo(1), kind: "sub:assistant", text: "One definition, one use: the flush timer. Nothing else reads it.", data: { worker: 1 } },
+  { seq: 11, at: hoursAgo(1), kind: "sub:error", text: "go: exit status 1", data: { worker: 2 } },
+  { seq: 12, at: hoursAgo(1), kind: "sub:done", text: "", data: { worker: 1, status: "ok", steps: 2 } },
+  { seq: 13, at: hoursAgo(1), kind: "sub:done", text: "", data: { worker: 2, status: "error", steps: 2 } },
+  { seq: 14, at: hoursAgo(1), kind: "assistant", text: "The constant is only read by the flush timer, and `TestDeltaFlushBeforeRecorded` is red. I'll look at the ordering next." },
+  { seq: 15, at: hoursAgo(1), kind: "done", text: "" },
+];
+
+/** A turn caught mid-reply: nothing of it is recorded yet. */
+export const openTurn: Line[] = [
+  { seq: 1, at: hoursAgo(0), kind: "input", text: "Why does the browser show a duplicate tail after a turn lands?" },
+];
+
+export const streamRuns = [
+  { kind: "thinking" as const,
+    text: "The flush is on a 50ms timer, so a buffered fragment can be delivered *after* the `assistant` line it was building." },
+  { kind: "assistant" as const,
+    text: "Because the delta is late, not wrong. The recorded entry renders, then the stray fragment append" },
+];
+
 export const markdown = `## What I found
 
 The watcher already takes a \`clock\`, so the fix is one line in the test.
@@ -92,6 +135,11 @@ export function installFakeApi(): void {
   const routes: Record<string, unknown> = {
     "/api/models": models,
     "/api/skills": { skills },
+    "/api/files?q=del&session=s1": { files: [
+      { path: "internal/serve/deltas.go", dir: false },
+      { path: "internal/serve/deltas_test.go", dir: false },
+      { path: "internal/serve/web/design/", dir: true },
+    ] },
   };
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.pathname : input.url;

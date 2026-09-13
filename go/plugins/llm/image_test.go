@@ -28,7 +28,7 @@ func TestProvidersSendImages(t *testing.T) {
 	if !strings.Contains(string(a), `"type":"image"`) || !strings.Contains(string(a), b64) {
 		t.Errorf("anthropic: %s", a)
 	}
-	o, _ := json.Marshal((&openaiLLM{}).body("", msgs, false))
+	o, _ := json.Marshal((&openaiLLM{}).body("", msgs, false, false))
 	if !strings.Contains(string(o), `"input_image"`) || !strings.Contains(string(o), "data:image/png;base64,"+b64) {
 		t.Errorf("openai: %s", o)
 	}

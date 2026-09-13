@@ -345,7 +345,15 @@ func writeEvent(w http.ResponseWriter, fl http.Flusher, ev Event) {
 	// usage, kinds a later plugin adds). Naming the frame would drop
 	// those silently. The kind rides in the payload, where a client
 	// cannot miss it.
-	fmt.Fprintf(w, "id: %d\ndata: %s\n\n", ev.Seq, b)
+	// Seq 0 is an ephemeral frame (a streaming delta): it holds no
+	// place in the session's sequence, so it gets no SSE id line
+	// either — a reconnecting EventSource must never ask to resume
+	// from text that was never recorded.
+	if ev.Seq == 0 {
+		fmt.Fprintf(w, "data: %s\n\n", b)
+	} else {
+		fmt.Fprintf(w, "id: %d\ndata: %s\n\n", ev.Seq, b)
+	}
 	fl.Flush()
 }
 
