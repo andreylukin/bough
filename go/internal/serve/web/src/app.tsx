@@ -1397,8 +1397,19 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
     try { failed ? sessionStorage.setItem(failedKey, JSON.stringify(failed)) : sessionStorage.removeItem(failedKey); } catch { /* storage off */ }
   }, [failed, failedKey]);
 
+  // What you just sent, shown the moment you send it. The recorded input
+  // can take seconds to land (the child may be starting), and a message
+  // that vanished from the composer with nothing in its place read as lost.
+  // It stands until any newer input is recorded, or the send fails.
+  const [sending, setSending] = useState<{ text: string; after: number } | null>(null);
+  const newest = lines.length ? lines[lines.length - 1].seq : 0;
+  const landed = sending !== null && lines.some((l) => l.kind === "input" && l.seq > sending.after);
+  useEffect(() => { if (landed) setSending(null); }, [landed]);
+
   const deliver = async (t: string, answer: boolean) => {
+    if (!answer) setSending({ text: t, after: newest });
     const ok = await (answer ? onAnswer(t) : onSend(t));
+    if (ok === false) setSending(null);
     setFailed(ok === false ? { text: t, answer } : null);
   };
   const send = async () => {
@@ -1471,6 +1482,15 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
               </>
             ) : undefined} />
         ))}
+        {sending && !landed && (
+          <section className="turn turn-sending" aria-live="polite">
+            <div className="prompt">
+              <span className="mono prompt-mark">&gt;</span>
+              <div className="prompt-text"><p>{sending.text}</p></div>
+              <span className="num prompt-time">Sending…</span>
+            </div>
+          </section>
+        )}
         {running && (turns.length === 0 || turns[turns.length - 1].done) && !row.ask && (
           <div className="turn"><div className="turn-body"><StreamView runs={stream} /><Working label={activity || "Working"} /></div></div>
         )}
