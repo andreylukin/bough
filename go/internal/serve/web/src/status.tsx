@@ -1,4 +1,13 @@
-import type { Status } from "./types";
+import type { Row, Status } from "./types";
+
+/**
+ * One attention model for every surface: 0 wants a person (a recorded
+ * failure, seen or not, or a pending request), 1 is moving, 2 is resting.
+ * Seen only changes how loud a row looks, never where it ranks.
+ */
+export function sessionSignal(r: Row): 0 | 1 | 2 {
+  return r.trouble || r.testsFailed || r.status === "needs-you" ? 0 : r.status === "running" ? 1 : 2;
+}
 
 /**
  * How each status looks. Colour is never the only carrier: every state

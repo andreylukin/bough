@@ -24,6 +24,14 @@ export const rows: Row[] = [
     project: "p1" },
   { id: "s5", title: "Rename the scratch dir", cwd: "/w/bough", status: "stopped", live: false,
     archived: false, entries: 3, modified: hoursAgo(24 * 5), lastAt: hoursAgo(24 * 5) },
+  // Recorded test failures: every surface must rank these as needing you,
+  // past 72h, in Background, and after being marked seen (no trouble).
+  { id: "s7", title: "Retry budget for the TLS dialer", cwd: "/w/bough", repo: "andreylukin/bough", status: "done",
+    testsFailed: true, trouble: "tests failed", live: false, archived: false, entries: 9, modified: hoursAgo(24 * 4), lastAt: hoursAgo(24 * 4) },
+  { id: "s8", title: "Nightly bench sweep", cwd: "/w/bench", status: "done", background: true, testsFailed: true,
+    live: false, archived: false, entries: 6, modified: hoursAgo(2), lastAt: hoursAgo(2) },
+  { id: "s9", title: "Seen but still red: vtreal load", cwd: "/w/bough", repo: "andreylukin/bough", status: "done",
+    testsFailed: true, live: false, archived: false, entries: 4, modified: hoursAgo(24 * 6), lastAt: hoursAgo(24 * 6) },
   { id: "s6", title: "Old spike on goja perf", cwd: "/w/bough", status: "idle", live: false,
     archived: true, entries: 2, modified: hoursAgo(24 * 30), lastAt: hoursAgo(24 * 30) },
 ];
