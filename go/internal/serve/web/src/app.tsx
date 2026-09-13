@@ -1566,7 +1566,7 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
   activity?: string; projects: Project[]; busy: boolean; onBack?: () => void;
   /** Scroll to this turn (1-based) once it is on screen; `at` makes a repeat click count. */
   jump?: { turn: number; at: number } | null;
-  onSend: (t: string) => Promise<boolean> | void; onAnswer: (t: string) => Promise<boolean> | void; onInterrupt: () => void;
+  onSend: (t: string) => Promise<string | null> | void; onAnswer: (t: string) => Promise<string | null> | void; onInterrupt: () => Promise<boolean> | void;
   onArchive: () => void; onRename: (t: string) => void; onContext?: () => void; onAck?: () => void;
   onModel: (m: string) => void; onEffort: (e: string) => void; onAssign: (p: string) => void;
 }) {
@@ -1694,16 +1694,25 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
     const el = composer.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, Math.round(window.innerHeight / 3)) + "px";
+    el.style.height = Math.min(el.scrollHeight, Math.round((window.visualViewport?.height ?? window.innerHeight) / 3)) + "px";
   }, [draft]);
 
-  const caretTrigger = (el: HTMLTextAreaElement) => setTrigger(triggerAt(el.value, el.selectionStart ?? 0));
+  // Escape shuts a picker until the token it was over changes; the keyup
+  // that follows the Escape would otherwise open it straight back.
+  const dismissed = useRef("");
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const caretTrigger = (el: HTMLTextAreaElement) => {
+    const t = triggerAt(el.value, el.selectionStart ?? 0);
+    const key = t ? `${t.from}:${t.kind}${t.token}` : "";
+    if (key !== dismissed.current) dismissed.current = "";
+    setTrigger(key && key === dismissed.current ? null : t);
+  };
 
   // A message that did not go through is kept on its own, not folded back
   // into the draft: you may already be typing the next one, and switching
   // sessions must not lose it.
   const failedKey = "bough:failed:" + row.id;
-  const [failed, setFailed] = useState<{ text: string; answer: boolean } | null>(() => {
+  const [failed, setFailed] = useState<{ text: string; answer: boolean; ask?: string; error?: string } | null>(() => {
     try { return JSON.parse(sessionStorage.getItem(failedKey) ?? "null"); } catch { return null; }
   });
   useEffect(() => {
@@ -1713,17 +1722,42 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
   // What you just sent, shown the moment you send it. The recorded input
   // can take seconds to land (the child may be starting), and a message
   // that vanished from the composer with nothing in its place read as lost.
-  // It stands until any newer input is recorded, or the send fails.
-  const [sending, setSending] = useState<{ text: string; after: number } | null>(null);
+  // Each send is its own record, and each input recorded after it claims
+  // exactly one, oldest first: a second send can no longer be "confirmed"
+  // by the first one landing, nor replace its preview.
+  const [sending, setSending] = useState<{ id: number; text: string; after: number }[]>([]);
+  const sendId = useRef(0);
   const newest = lines.length ? lines[lines.length - 1].seq : 0;
-  const landed = sending !== null && lines.some((l) => l.kind === "input" && l.seq > sending.after);
-  useEffect(() => { if (landed) setSending(null); }, [landed]);
+  const unlanded = sending.filter((p, i) => lines.filter((l) => l.kind === "input" && l.seq > p.after).length <= i);
+  const landedIds = sending.length - unlanded.length;
+  useEffect(() => { if (landedIds) setSending((q) => q.slice(landedIds)); }, [landedIds]);
+  // Sending is something you did, so it is followed like new output is.
+  useEffect(() => { if (atBottom.current) end.current?.scrollIntoView({ block: "end" }); }, [sending.length]);
 
+  // The option being submitted, keyed to the question it answers.
+  const [answering, setAnswering] = useState<{ ask: string; text: string } | null>(null);
   const deliver = async (t: string, answer: boolean) => {
-    if (!answer) setSending({ text: t, after: newest });
-    const ok = await (answer ? onAnswer(t) : onSend(t));
-    if (ok === false) setSending(null);
-    setFailed(ok === false ? { text: t, answer } : null);
+    const askId = row.ask?.id;
+    // An answer written for a question that has since been replaced is
+    // not sent to the new one; it goes back to the draft instead.
+    if (answer && failed?.ask && failed.text === t && failed.ask !== askId) { setFailed(null); setDraft(t); return; }
+    const id = ++sendId.current;
+    if (!answer) setSending((q) => [...q, { id, text: t, after: newest }]);
+    else setAnswering({ ask: askId ?? "", text: t });
+    const error = await (answer ? onAnswer(t) : onSend(t));
+    if (answer) setAnswering(null);
+    if (error) setSending((q) => q.filter((p) => p.id !== id));
+    // Only the retried message clears a failure; an unrelated send leaves it.
+    if (error) setFailed({ text: t, answer, ask: askId, error });
+    else setFailed((f) => (f && f.text === t ? null : f));
+  };
+  // Stop is asked once; the button says so until the ask is answered.
+  const [stopping, setStopping] = useState<"" | "stopping" | "failed">("");
+  useEffect(() => { if (!running) setStopping(""); }, [running]);
+  const stop = async () => {
+    setStopping("stopping");
+    const ok = await onInterrupt();
+    if (ok === false) setStopping("failed");
   };
   // Pastes too big to edit in place, and pasted images, sit in the draft
   // as "[Pasted text #N +L lines]" and "[Image #N]" tags, as in the TUI.
@@ -1850,15 +1884,15 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
               </>
             ) : undefined} />
         ))}
-        {sending && !landed && (
-          <section className="turn turn-sending" aria-live="polite">
+        {unlanded.map((p) => (
+          <section key={p.id} className="turn turn-sending">
             <div className="prompt">
               <span className="mono prompt-mark">&gt;</span>
-              <div className="prompt-text"><p>{sending.text}</p></div>
-              <span className="num prompt-time">Sending…</span>
+              <div className="prompt-text"><p className="prompt-clamp">{p.text}</p></div>
+              <span className="num prompt-time turn-sending-state" role="status">Sending…</span>
             </div>
           </section>
-        )}
+        ))}
         {running && (turns.length === 0 || turns[turns.length - 1].done) && !row.ask && (
           <div className="turn"><div className="turn-body"><StreamView runs={stream} /><Working label={activity || "Working"} /></div></div>
         )}
@@ -1868,10 +1902,13 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
             {/* Questions carry paths and commands in backticks; raw, they read as noise. */}
             <div className="ask-q"><Markdown text={row.ask.text} /></div>
             {row.ask.options.length > 0 && (
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <div className="ask-options">
                 {/* Equal alternatives, so none of them is dressed as the primary action. */}
                 {row.ask.options.map((o) => (
-                  <button key={o} className="btn" onClick={() => onAnswer(o)}>{o}</button>
+                  <button key={o} className="btn ask-option" disabled={busy || answering !== null}
+                          onClick={() => deliver(o, true)}>
+                    {answering?.ask === row.ask?.id && answering?.text === o ? "Submitting…" : o}
+                  </button>
                 ))}
               </div>
             )}
@@ -1888,28 +1925,29 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
         )}
         {row.ask && !askSeen && (
           <div className="ask-bar">
-            <p><strong>Needs your answer.</strong> {row.ask.text}</p>
+            <p><strong>Needs your answer</strong></p>
             <button className="btn" onClick={() => {
               // Land on the answer, not just near it: the first option if
               // there are any, otherwise the composer the answer is typed in.
               ask.current?.scrollIntoView({ block: "center" });
               (ask.current?.querySelector("button") ?? composer.current)?.focus({ preventScroll: true });
             }}>
-              Answer question
+              Review question
             </button>
           </div>
         )}
         {failed && (
           <div className="send-failed" role="alert">
-            <span className="send-failed-text" title={failed.text}>Not sent: {failed.text}</span>
-            <button className="btn" disabled={busy} onClick={() => deliver(failed.text, failed.answer)}>Retry</button>
-            <button className="btn" onClick={() => {
-              // Put back beside what is already being typed, never over it.
-              setDraft((d) => (d.trim() ? d.trimEnd() + "\n\n" + failed.text : failed.text));
-              setFailed(null);
-              composer.current?.focus();
-            }}>Put back</button>
-            <button className="link" onClick={() => setFailed(null)}>Dismiss</button>
+            <span className="send-failed-text" title={failed.error ? `${failed.error}\n\n${failed.text}` : failed.text}>
+              <strong>Not sent</strong> {failed.text}
+            </span>
+            <span className="send-failed-actions">
+              <button className="btn" disabled={busy} onClick={() => deliver(failed.text, failed.answer)}>Retry</button>
+              {/* Edit never lands on a newer draft: two prompts glued together is a third nobody wrote. */}
+              <button className="btn" disabled={Boolean(draft.trim())} title={draft.trim() ? "Send or clear the current draft first" : undefined}
+                onClick={() => { setDraft(failed.text); setFailed(null); composer.current?.focus(); }}>Edit</button>
+              <button className="link" onClick={() => setFailed(null)}>Dismiss</button>
+            </span>
           </div>
         )}
         <div className="composer">
@@ -1924,13 +1962,14 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
               const caret = t.from + value.length + 2;
               requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(caret, caret); });
             }}
-            onClose={() => setTrigger(null)} />
+            onClose={() => { if (trigger) dismissed.current = `${trigger.from}:${trigger.kind}${trigger.token}`; setTrigger(null); }}
+            onOpen={setPickerOpen} />
           <textarea id="composer" ref={composer} value={draft} rows={1}
-            aria-label="Message"
-            placeholder={row.ask ? "Answer the question above"
-              : running ? "Send a message — it steers the turn already running"
-              : "Send a message to start the next turn"}
-            onPaste={onPaste}
+            aria-label={row.ask ? "Answer to agent question" : "Message"}
+            aria-controls={pickerOpen ? "mention-list" : undefined}
+            aria-activedescendant={pickerOpen ? document.querySelector(".mention-on")?.id : undefined}
+            placeholder={row.ask ? "Answer…" : running ? "Steer the running turn…" : "Next turn…"}
+            onPaste={(e) => { pasted.current = true; onPaste(e); }}
             onChange={(e) => {
               setDraft(e.target.value);
               // The change a paste produces carries a caret at the end
@@ -1952,23 +1991,29 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
               // The paste chord's own keydown comes before the paste, so
               // the next keydown after one is a genuine later keystroke.
               if (!(e.metaKey || e.ctrlKey)) pasted.current = false;
-              // While the picker is up it owns Enter and the arrows.
-              if (trigger && ["Enter", "Tab", "ArrowUp", "ArrowDown", "Escape"].includes(e.key)) return;
+              // An open picker takes its keys before this runs (capture);
+              // an empty or hidden one owns nothing, so Enter still sends.
               // Enter that confirms an IME composition is not a send.
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }
             }} />
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <span className="hint">Return to send</span>
-            <span className="hint">Shift + Return for a newline</span>
+          <div className="composer-bar">
+            {!pickerOpen && <span className="hint" title="Shift + Return for a newline">@ files · / skills · ↵ send</span>}
             {uploading > 0 && <span className="attach-note">Attaching image…</span>}
             {attachErr && <span className="attach-note attach-err" role="alert">{attachErr}</span>}
-            <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
+            <div className="composer-actions">
               <SkillPicker onPick={(name) => {
-                setDraft((d) => (d.trimStart().startsWith("/") ? d : `/${name} ${d.trimStart()}`));
+                // A skill runs only as the lead word, so a pick replaces the one there.
+                setDraft((d) => `/${name} ${d.trimStart().replace(/^\/\S+\s*/, "")}`);
                 document.getElementById("composer")?.focus();
               }} />
-              {running && <button className="btn" onClick={onInterrupt}>Stop</button>}
-              <button className="btn btn-primary" onClick={send} disabled={busy || uploading > 0 || !draft.trim()}>Send</button>
+              {running && (
+                <button className="btn" disabled={stopping === "stopping"} onClick={stop}>
+                  {stopping === "stopping" ? "Stopping…" : stopping === "failed" ? "Couldn’t stop · Retry" : "Stop"}
+                </button>
+              )}
+              <button className="btn btn-primary" onClick={send} disabled={busy || uploading > 0 || !draft.trim()}>
+                {row.ask ? "Answer" : running && draft.trim() ? "Send to running turn" : "Send"}
+              </button>
             </div>
           </div>
         </div>
@@ -2237,10 +2282,10 @@ export default function App() {
   }, []);
 
   /** A send or answer: its failure is shown beside the composer it came from, not as a toast too. */
-  const deliverTo = async (fn: () => Promise<unknown>): Promise<boolean> => {
+  const deliverTo = async (fn: () => Promise<unknown>): Promise<string | null> => {
     setBusy(true);
-    try { await fn(); return true; }
-    catch { return false; }
+    try { await fn(); return null; }
+    catch (e) { return e instanceof Error ? e.message : String(e); }
     finally { setBusy(false); await refresh(); }
   };
 

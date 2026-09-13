@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { rankSkills, useSkills } from "./mention";
 
 // A skill runs by being the first thing in a message ("/grill-me the
 // design"), so this picker does not execute anything: it puts the
@@ -9,26 +10,23 @@ export interface Skill { name: string; summary: string; manual: boolean }
 
 export function SkillPicker({ onPick }: { onPick: (name: string) => void }) {
   const [open, setOpen] = useState(false);
-  const [all, setAll] = useState<Skill[]>([]);
+  const { all, error, retry } = useSkills(open);
   const [q, setQ] = useState("");
   const [at, setAt] = useState(0);
   const trigger = useRef<HTMLButtonElement>(null);
   const field = useRef<HTMLInputElement>(null);
   const listbox = useRef<HTMLDivElement>(null);
-
+  // A fast read shows nothing; only a slow one says it is loading.
+  const [slow, setSlow] = useState(false);
   useEffect(() => {
-    if (!open || all.length) return;
-    fetch("/api/skills").then((r) => r.json())
-      .then((d) => setAll(d.skills ?? [])).catch(() => setAll([]));
-  }, [open, all.length]);
+    if (!open || all) { setSlow(false); return; }
+    const t = setTimeout(() => setSlow(true), 200);
+    return () => clearTimeout(t);
+  }, [open, all]);
 
   useEffect(() => { if (open) field.current?.focus(); }, [open]);
 
-  const hits = useMemo(() => {
-    const t = q.trim().toLowerCase();
-    if (!t) return all;
-    return all.filter((s) => s.name.toLowerCase().includes(t) || s.summary.toLowerCase().includes(t));
-  }, [all, q]);
+  const hits = useMemo(() => rankSkills(all ?? [], q), [all, q]);
 
   useEffect(() => { setAt(0); }, [q]);
 
@@ -39,7 +37,7 @@ export function SkillPicker({ onPick }: { onPick: (name: string) => void }) {
 
   const close = () => { setOpen(false); setQ(""); trigger.current?.focus(); };
 
-  const pick = (s: Skill) => { onPick(s.name); setOpen(false); setQ(""); };
+  const pick = (s: { name: string }) => { onPick(s.name); setOpen(false); setQ(""); };
 
   const keys = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") { e.preventDefault(); close(); return; }
@@ -58,21 +56,23 @@ export function SkillPicker({ onPick }: { onPick: (name: string) => void }) {
           <div className="skills-scrim" onClick={close} />
           <div className="skills-pop" role="dialog" aria-label="Insert a skill">
             <input ref={field} className="skills-filter" value={q} placeholder="Filter skills"
-              aria-label="Filter skills" aria-controls="skill-list" onChange={(e) => setQ(e.target.value)}
-              onKeyDown={keys} />
+              aria-label="Filter skills" aria-controls="skill-list" role="combobox" aria-expanded="true"
+              aria-activedescendant={hits[at] ? "skill-" + at : undefined}
+              onChange={(e) => setQ(e.target.value)} onKeyDown={keys} />
             <div id="skill-list" ref={listbox} className="skills-list" role="listbox" aria-label="Skills">
               {hits.map((s, i) => (
-                <button key={s.name} role="option" aria-selected={i === at} data-at={i === at ? 1 : 0}
-                  className={"skill" + (i === at ? " skill-on" : "")}
+                <button key={s.name} id={"skill-" + i} role="option" aria-selected={i === at} data-at={i === at ? 1 : 0}
+                  tabIndex={-1} className={"skill" + (i === at ? " skill-on" : "")}
                   onMouseEnter={() => setAt(i)} onClick={() => pick(s)}>
                   <span className="mono skill-name">/{s.name}</span>
                   {s.summary && <span className="skill-sum">{s.summary}</span>}
                 </button>
               ))}
               {hits.length === 0 && (
-                <p className="skills-empty">
-                  {all.length === 0
-                    ? "No skills found. Add one as a SKILL.md folder under ~/.claude/skills."
+                <p className="skills-empty" role="status">
+                  {error ? <>Couldn’t load skills. <button className="link" onClick={retry}>Retry</button></>
+                    : !all ? (slow ? "Loading skills…" : "")
+                    : all.length === 0 ? "No skills installed. Create ~/.claude/skills/<name>/SKILL.md"
                     : `No skills match “${q.trim()}”.`}
                 </p>
               )}

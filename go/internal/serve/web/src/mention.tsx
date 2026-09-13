@@ -30,7 +30,9 @@ export function triggerAt(text: string, caret: number): Trigger | null {
     if (ch === " " || ch === "\n" || ch === "\t") return null;
     if (ch === "/" || ch === "@") {
       const before = i === 0 ? "" : text[i - 1];
-      if (before && !/\s/.test(before)) return null;
+      // Mid-word "/" is a path separator: keep walking, so "@go/internal/x"
+      // is still the @ token it started as.
+      if (before && !/\s/.test(before)) { if (ch === "/") continue; return null; }
       return { kind: ch, token: text.slice(i + 1, caret), from: i, to: caret };
     }
   }
@@ -56,15 +58,36 @@ export function rank(text: string, q: string): number {
 interface SkillRow { name: string; summary: string }
 interface FileRow { path: string; dir: boolean }
 
-/** Skills are a small fixed list, so they load once and match locally. */
-function useSkills(on: boolean): Choice[] {
-  const [all, setAll] = useState<SkillRow[]>([]);
+/**
+ * Skills are a small fixed list, so they load once and match locally.
+ * One catalogue serves the / picker and the Skills button alike, and a
+ * failed read is kept as a failure, not shown as "none installed".
+ */
+let catalogue: Promise<SkillRow[]> | null = null;
+export function useSkills(on: boolean) {
+  const [all, setAll] = useState<SkillRow[] | null>(null);
+  const [error, setError] = useState(false);
+  const [tries, setTries] = useState(0);
   useEffect(() => {
-    if (!on || all.length) return;
-    fetch("/api/skills").then((r) => r.json())
-      .then((d) => setAll(d.skills ?? [])).catch(() => setAll([]));
-  }, [on, all.length]);
-  return useMemo(() => all.map((s) => ({ value: s.name, label: "/" + s.name, hint: s.summary })), [all]);
+    if (!on) return;
+    let live = true;
+    catalogue ??= fetch("/api/skills").then((r) => {
+      if (!r.ok) throw new Error(String(r.status));
+      return r.json();
+    }).then((d) => d.skills ?? []);
+    setError(false);
+    catalogue.then((v) => { if (live) setAll(v); })
+      .catch(() => { catalogue = null; if (live) setError(true); });
+    return () => { live = false; };
+  }, [on, tries]);
+  return { all, error, retry: () => setTries((n) => n + 1) };
+}
+
+/** Skill rows ranked for a query: the one ordering both pickers use. */
+export function rankSkills<T extends SkillRow>(all: T[], q: string): T[] {
+  const t = q.trim().toLowerCase();
+  return all.map((s) => ({ s, r: Math.max(rank(s.name, t), s.summary.toLowerCase().includes(t) ? 10 : -1) }))
+    .filter((x) => x.r >= 0).sort((a, b) => b.r - a.r).map((x) => x.s);
 }
 
 /**
@@ -92,15 +115,17 @@ function useFiles(on: boolean, token: string, session: string): Choice[] {
   })), [hits]);
 }
 
-export function Mentions({ trigger, session, onPick, onClose }: {
+export function Mentions({ trigger, session, onPick, onClose, onOpen }: {
   trigger: Trigger | null;
   session: string;
   onPick: (t: Trigger, value: string) => void;
   onClose: () => void;
+  /** Whether the picker is on screen and owns Enter, so the hint can step aside. */
+  onOpen?: (open: boolean) => void;
 }) {
   const [at, setAt] = useState(0);
   const box = useRef<HTMLDivElement>(null);
-  const skills = useSkills(trigger?.kind === "/");
+  const { all: skills } = useSkills(trigger?.kind === "/");
   const files = useFiles(trigger?.kind === "@", trigger?.token ?? "", session);
 
   const token = (trigger?.token ?? "").toLowerCase();
@@ -109,15 +134,14 @@ export function Mentions({ trigger, session, onPick, onClose }: {
     // Files are already ranked by the server, which saw the whole tree;
     // re-ranking here would only throw that away.
     if (trigger.kind === "@") return files.slice(0, 20);
-    return skills
-      .map((c) => ({ c, r: rank(c.value, token) }))
-      .filter((x) => x.r >= 0)
-      .sort((a, b) => b.r - a.r)
-      .map((x) => x.c)
-      .slice(0, 20);
+    return rankSkills(skills ?? [], token).slice(0, 20)
+      .map((s) => ({ value: s.name, label: "/" + s.name, hint: s.summary }));
   }, [trigger, token, skills, files]);
 
   useEffect(() => { setAt(0); }, [token, trigger?.kind]);
+  // Results can shrink under the cursor without the token changing.
+  useEffect(() => { setAt((i) => Math.min(i, Math.max(hits.length - 1, 0))); }, [hits.length]);
+  useEffect(() => { onOpen?.(Boolean(trigger && hits.length)); }, [trigger, hits.length, onOpen]);
   useEffect(() => {
     box.current?.querySelector('[data-at="1"]')?.scrollIntoView({ block: "nearest" });
   }, [at, hits.length]);
@@ -148,7 +172,7 @@ export function Mentions({ trigger, session, onPick, onClose }: {
   const isFiles = trigger.kind === "@";
   return (
     <div className="mention" ref={box}>
-      <div className="mention-list" role="listbox" aria-label={isFiles ? "Files" : "Skills"}>
+      <div className="mention-list" id="mention-list" role="listbox" aria-label={isFiles ? "Files" : "Skills"}>
         {hits.map((c, i) => {
           // A path scans by its name, not its directories: the name leads,
           // the folder it lives in follows, dimmed.
@@ -157,7 +181,7 @@ export function Mentions({ trigger, session, onPick, onClose }: {
           const dir = isFiles && slash >= 0 ? c.value.slice(0, slash) : "";
           const isDir = isFiles && c.hint === "directory";
           return (
-            <button key={c.value} role="option" aria-selected={i === at} data-at={i === at ? 1 : 0}
+            <button key={c.value} id={"mention-" + i} role="option" aria-selected={i === at} data-at={i === at ? 1 : 0}
                     className={"mention-item" + (i === at ? " mention-on" : "")}
                     onMouseDown={(e) => e.preventDefault() /* keep the composer focused */}
                     onMouseEnter={() => setAt(i)} onClick={() => onPick(trigger, c.value)}>
