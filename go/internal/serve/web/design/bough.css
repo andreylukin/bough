@@ -190,7 +190,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .rt-bar>span{display:block;height:100%;background:var(--accent)}
 .rt-bar>.rt-hot{background:var(--amber)}
 .rt-cache-hot .rt-value{color:var(--accent)}
-.rt-cache-cold .rt-value{color:var(--amber)}
+.rt-cache-cold .rt-value{color:var(--text-2)}
 .rt-jobs{position:relative}
 .rt-jobs>summary{list-style:none;cursor:pointer;display:inline-flex;gap:6px}
 .rt-jobs>summary::-webkit-details-marker{display:none}
@@ -198,6 +198,8 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
   background:var(--raised);border:1px solid var(--line);border-radius:8px;display:flex;flex-direction:column;gap:4px}
 .rt-pop li{display:flex;gap:12px;justify-content:space-between}
 .rt-job-cmd{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rt-add{color:var(--accent)}
+.rt-del{color:var(--red)}
 
 .say{display:flex;flex-direction:column;gap:8px;max-width:78ch}
 .say-who{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text-2)}

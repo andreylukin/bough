@@ -24,7 +24,12 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 const post = (path: string, body?: unknown) =>
   req<{ ok: true }>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
 
+export interface Change { path: string; add: number; del: number; new?: boolean }
+
 export const api = {
+  /** What is uncommitted in the session's working tree, live from git. */
+  changes: (id: string) => req<{ repo: boolean; files: Change[] }>(`/api/sessions/${id}/changes`),
+
   /** Where a new session starts, from the server that knows. */
   home: () => req<{ home: string }>("/api/health").then((r) => r.home ?? ""),
 

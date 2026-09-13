@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, subscribe } from "./api";
+import { api, subscribe, type Change } from "./api";
 import type { Line, Project, Row } from "./types";
 import { StatusMark, Working } from "./status";
 import { ProjectsView } from "./projects";
@@ -12,8 +12,9 @@ import { Mentions, triggerAt, type Trigger } from "./mention";
 import { HooksPage } from "./hooks";
 import { ContextPage } from "./context";
 import { Palette, usePaletteKey, type Command } from "./palette";
+import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
 
-export type View = "sessions" | "projects" | "hooks";
+export type View = "sessions" | "projects" | "hooks" | "wiki";
 
 const POLL_MS = 4000; // sessions we are not streaming still change status
 
@@ -57,10 +58,12 @@ function modKey(): string {
   return typeof navigator !== "undefined" && /Mac|iP/.test(navigator.platform) ? "\u2318" : "Ctrl+";
 }
 
-export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived, onToggleArchived, view, onView }: {
+export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived, onToggleArchived, view, onView, wikiFlags = 0 }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
   query: string; onQuery: (q: string) => void; showArchived: boolean; onToggleArchived: () => void;
   view: View; onView: (v: View) => void;
+  /** Claims the wiki's review is waiting on; shown beside the nav item. */
+  wikiFlags?: number;
 }) {
   // A control room lists what needs you first, then what is moving;
   // only settled sessions fall back to the day they last changed.
@@ -93,6 +96,16 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
         <button className={"nav-item" + (view === "hooks" ? " nav-on" : "")}
                 aria-current={view === "hooks" ? "page" : undefined}
                 onClick={() => onView("hooks")}>Hooks</button>
+        <button className={"nav-item" + (view === "wiki" ? " nav-on" : "")}
+                aria-current={view === "wiki" ? "page" : undefined}
+                onClick={() => onView("wiki")}>
+          Wiki
+          {wikiFlags > 0 && (
+            <span className="nav-count" title={`${wikiFlags} claims to review`}>
+              {wikiFlags}<span className="visually-hidden"> claims to review</span>
+            </span>
+          )}
+        </button>
       </nav>
       <div className="session-search">
         {/* The placeholder names the field; a visible label above it said it twice. */}
@@ -340,10 +353,10 @@ export function Entry({ line, codes, nested }: { line: Line; codes: string[]; ne
     // every paragraph of a five-step run is noise.
     return (
       <div className="say">
-        {!nested && (
-          <div className="say-who">{k === "assistant" ? <Sprout size={14} /> : <span className="sub-dot" />}
-            <span>{k === "assistant" ? "bough" : "subagent"}</span></div>
-        )}
+        {/* There is one assistant; naming it above every reply said nothing. */}
+        {!nested && (k === "assistant"
+          ? <span className="visually-hidden">bough</span>
+          : <div className="say-who"><span className="sub-dot" /><span>subagent</span></div>)}
         <Markdown text={body} />
       </div>
     );
@@ -640,7 +653,8 @@ function RuntimeStrip({ row, lines }: { row: Row; lines: Line[] }) {
     }).catch(() => setLimits({}));
   }, []);
   const u = useMemo(() => sessionUsage(lines), [lines]);
-  if (!u && !row.model) return null;
+  // Jobs, cache and changes stand on their own: a session with no usage
+  // recorded can still have a server running.
   const limit = row.model ? limits[row.model] : undefined;
   const pct = u && limit ? Math.min(100, Math.round((u.lastIn / limit) * 100)) : undefined;
   return (
@@ -663,9 +677,48 @@ function RuntimeStrip({ row, lines }: { row: Row; lines: Line[] }) {
           <span className="rt-label">Cost</span><span className="num rt-value">{money(u.cost)}</span>
         </span>
       )}
+      <ChangesChip id={row.id} tick={lines.length} />
       {row.cache && <CacheChip cache={row.cache} model={row.model} />}
       {row.jobs && row.jobs.length > 0 && <JobsChip jobs={row.jobs} />}
     </div>
+  );
+}
+
+/**
+ * What is uncommitted where the session works, read from git whenever the
+ * transcript grows. It is the repository's state, not a tally of what the
+ * agent claimed, so an edit made by hand shows too. Absent outside a repo
+ * and when the tree is clean.
+ */
+function ChangesChip({ id, tick }: { id: string; tick: number }) {
+  const [files, setFiles] = useState<Change[]>([]);
+  useEffect(() => {
+    let live = true;
+    api.changes(id).then((r) => { if (live) setFiles(r.files); }).catch(() => { if (live) setFiles([]); });
+    return () => { live = false; };
+  }, [id, tick]);
+  if (!files.length) return null;
+  const add = files.reduce((n, f) => n + Math.max(0, f.add), 0);
+  const del = files.reduce((n, f) => n + Math.max(0, f.del), 0);
+  return (
+    <details className="rt rt-jobs">
+      <summary>
+        <span className="rt-label">Changes</span>
+        <span className="num rt-value">{files.length} <span className="rt-add">+{add}</span> <span className="rt-del">−{del}</span></span>
+      </summary>
+      <ul className="rt-pop">
+        {files.map((f) => (
+          <li key={f.path}>
+            <span className="mono rt-job-cmd" title={f.path}>{f.path}</span>
+            <span className="num">
+              {f.new ? <span className="rt-add">new</span>
+                : f.add < 0 ? <span className="rt-label">binary</span>
+                : <><span className="rt-add">+{f.add}</span> <span className="rt-del">−{f.del}</span></>}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -809,7 +862,6 @@ export function StreamView({ runs }: { runs: DeltaRun[] }) {
         </div>
       ) : (
         <div key={i} className={"say stream-say" + (i === runs.length - 1 ? " stream-tip" : "")}>
-          <div className="say-who"><Sprout size={14} /><span>bough</span></div>
           <Markdown text={r.text} />
         </div>
       ))}
@@ -1105,7 +1157,8 @@ export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, on
               if (!(e.metaKey || e.ctrlKey)) pasted.current = false;
               // While the picker is up it owns Enter and the arrows.
               if (trigger && ["Enter", "Tab", "ArrowUp", "ArrowDown", "Escape"].includes(e.key)) return;
-              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+              // Enter that confirms an IME composition is not a send.
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }
             }} />
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <span className="hint">Return to send</span>
@@ -1287,28 +1340,6 @@ export default function App() {
     }
   }, [view, selected, context]);
 
-  /**
-   * An open block closes when you click anywhere in it — the whole
-   * body, not just its one-line header. Two things must still work:
-   * selecting text to copy a command ends in a click and must not
-   * slam the block shut, and a nested disclosure or button owns its
-   * own clicks.
-   */
-  useEffect(() => {
-    const onClick = (e: MouseEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (!t) return;
-      const block = t.closest("details.block[open]") as HTMLDetailsElement | null;
-      if (!block) return;
-      if (t.closest("summary")) return;                       // already toggles
-      if (t.closest("a,button,input,textarea,select,label")) return;
-      if (t.closest("details.block-inner") !== null) return;  // the inner call
-      if ((window.getSelection()?.toString() ?? "") !== "") return;
-      block.open = false;
-    };
-    document.addEventListener("click", onClick);
-    return () => document.removeEventListener("click", onClick);
-  }, []);
   usePaletteKey(useCallback(() => setPalette(true), []));
 
   const openSession = useCallback((id: string) => {
