@@ -679,8 +679,7 @@ export function CodeBlock({ line }: { line: Line }) {
 
 /** The first non-empty line, for a one-line summary. */
 function firstLine(text: string): string {
-  const l = text.split("\n").find((x) => x.trim()) ?? "";
-  return l.length > 110 ? l.slice(0, 110) + "…" : l;
+  return text.split("\n").find((x) => x.trim()) ?? "";
 }
 
 export function ResultBlock({ line }: { line: Line }) {
@@ -917,12 +916,9 @@ export function SubRun({ agents }: { agents: SubAgent[] }) {
   );
 }
 
-/** A command cut to its first step, short enough to sit on a thin line. */
+/** A command's first line; the line's own width truncates it, not a count. */
 function gistOf(text: string): string {
-  const line = firstLine(text);
-  const g = line.split(/\s*(?:;|&&|\|\|)\s*/)[0] ?? "";
-  if (g.length > 60) return g.slice(0, 60) + "…";
-  return g.length < line.length ? g + " …" : g;
+  return firstLine(text);
 }
 
 /** One call's recorded facts, for its thin line and the hover list. */
@@ -1010,6 +1006,19 @@ function useThinPop(rows: CallFacts[]) {
   return { handlers, pop };
 }
 
+/** A pasted image in a prompt: a fixed box, so loading never moves the page. */
+function Thumb({ path, n }: { path: string; n: number }) {
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  return (
+    <a href={api.attachmentURL(path)} target="_blank" rel="noreferrer" title={path}>
+      {state === "error" ? "Image unavailable" : (
+        <img src={api.attachmentURL(path)} alt={`Image #${n}`} onLoad={() => setState("ready")} onError={() => setState("error")}
+             style={state === "loading" ? { opacity: 0 } : undefined} />
+      )}
+    </a>
+  );
+}
+
 /** A result's text minus the code history prefixes onto it. */
 function resultBody(l: Line): string {
   const code = str(l.data?.code);
@@ -1056,13 +1065,17 @@ export function ToolRun({ lines, codes }: { lines: Line[]; codes: string[] }) {
     first.querySelector("summary")?.focus({ preventScroll: true });
     first.scrollIntoView({ block: "nearest" });
   };
-  // The line is only the count, time and failures; each command lives
-  // once in the hover list and once in the expansion.
+  // The line names the work: what kind of calls, then what they were
+  // aimed at. The count and time are secondary; the full targets sit in
+  // the hover list and the expansion.
+  const verbs = [...new Set(facts.map((f) => f.verb))];
+  const targets = [...new Set(facts.map((f) => f.gist).filter(Boolean))];
   return (
     <details className="block thin toolrun" ref={box}>
       <summary {...handlers}>
-        <span className={"block-label" + (failed ? " thin-failed" : "")}>{calls} tool calls</span>
-        {timed && <span className="num tool-meta">{duration(totalMs)}</span>}
+        <span className={"block-label" + (failed ? " thin-failed" : "")}>{verbs.join(" + ")}</span>
+        <span className="mono block-detail">{targets.join(" · ")}</span>
+        <span className="num tool-meta">{calls} calls{timed ? ` · ${duration(totalMs)}` : ""}</span>
         {failed > 0 && <button type="button" className="link num toolrun-failed" onClick={openFailed}>{failed} failed</button>}
       </summary>
       {pop}
@@ -1092,9 +1105,9 @@ export function ToolCall({ code, result }: { code: Line; result?: Line }) {
   const outAll = (out || "(no output)").split("\n");
   const shown = outAll.filter((l) => l.trim()).slice(0, 3);
   const more = outAll.length - shown.length;
-  const cut = gistOf(call.gist) !== firstLine(call.gist);
+  // The full call and its exit code live here, keeping the line itself short.
   const { handlers, pop } = useThinPop(timedOut ? [] : [{
-    verb: result ? (failed ? "Failed" : "Output") : "no result yet", gist: cut ? firstLine(call.gist) : "", failed,
+    verb: result ? (failed ? "Failed" : "Output") : "no result yet", gist: call.gist, failed, exit, ms,
     preview: result ? shown.join("\n") + (more > 0 ? `\n+${lineCount(more)}` : "") : undefined,
   }]);
   // Exit and time only when they are news: a failure, or a slow call.
@@ -1197,15 +1210,14 @@ function TurnFooter({ turn }: { turn: Turn }) {
   if (turn.prompt?.at) facts.push(duration(Date.parse(done.at) - Date.parse(turn.prompt.at)));
   // The strip above owns session totals; a turn says what it took, with
   // its tokens on the price rather than as a third figure.
-  const tokens = u ? `${tokenCount(u.in)} in · ${tokenCount(u.out)} out` : "";
+  if (u) facts.push(`${tokenCount(u.in)} in · ${tokenCount(u.out)} out`);
   if (u?.cost !== undefined) facts.push(money(u.cost));
-  else if (u) facts.push(tokens);
   return (
     <div className="turn-foot">
       <span className={"turn-outcome" + (failed ? " turn-failed" : "")}>
-        {done.kind === "cancelled" ? "Stopped" : failed ? `Finished · last command exit ${exit}` : "Finished"}
+        {turn.stopped || done.kind === "cancelled" ? "Stopped" : failed ? `Finished · last command exit ${exit}` : "Finished"}
       </span>
-      {facts.map((f) => <span key={f} className="num" title={tokens || undefined}>{f}</span>)}
+      {facts.map((f) => <span key={f} className="num">{f}</span>)}
       {files.length > 0 && (
         <details className="turn-files">
           <summary>{files.length} {files.length === 1 ? "file" : "files"} changed</summary>
@@ -1222,7 +1234,7 @@ function TurnFooter({ turn }: { turn: Turn }) {
  * actually answering. The window is only named when the session records
  * its model; a default model is not guessed at.
  */
-function RuntimeStrip({ row, lines }: { row: Row; lines: Line[] }) {
+function RuntimeStrip({ row, lines, paused, onRetry }: { row: Row; lines: Line[]; paused?: number; onRetry?: () => void }) {
   const [limits, setLimits] = useState<Record<string, number>>({});
   useEffect(() => {
     fetch("/api/models").then((r) => r.json()).then((c: { providers?: ProviderInfo[] }) => {
@@ -1250,6 +1262,11 @@ function RuntimeStrip({ row, lines }: { row: Row; lines: Line[] }) {
   // recorded can still have a server running.
   return (
     <div className="runtime-strip" ref={strip}>
+      {paused !== undefined && (
+        <span className="rt-paused" role="status">
+          Updates paused · last synced {clock(new Date(paused).toISOString())} · <button className="link" onClick={onRetry}>Retry</button>
+        </span>
+      )}
       {u && (
         <Tip tip={limit ? `${u.lastIn.toLocaleString()} of ${limit.toLocaleString()} tokens` : switched ? "The model changed since this input was read" : "The model's context window is not in the catalogue"}>
           <span className="rt-label">{limit ? "Context" : "Last input"}</span>
@@ -1573,9 +1590,7 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
             {images.length > 0 && (
               <div className="prompt-images">
                 {images.map((p, i) => (
-                  <a key={i} href={api.attachmentURL(p)} target="_blank" rel="noreferrer" title={p}>
-                    <img src={api.attachmentURL(p)} alt={`Image #${i + 1}`} />
-                  </a>
+                  <Thumb key={i} path={p} n={i + 1} />
                 ))}
               </div>
             )}
@@ -1769,8 +1784,16 @@ export function Back({ onBack }: { onBack?: () => void }) {
   );
 }
 
-export function Thread({ row, lines, loading = false, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy, jump }: {
+/** Where each session was read, kept for this tab only. */
+const scrollMemo = new Map<string, { top: number; follow: boolean }>();
+
+export function Thread({ row, lines, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy, jump }: {
   row: Row; lines: Line[]; loading?: boolean; stream?: DeltaRun[];
+  /** The first read failed: there is no transcript to show. */
+  loadError?: string;
+  /** Catching up keeps failing: what is shown is as of this time. */
+  paused?: number;
+  onRetry?: () => void;
   /** The small model's live label for the running turn; never recorded. */
   activity?: string; projects: Project[]; busy: boolean; onBack?: () => void;
   /** Scroll to this turn (1-based) once it is on screen; `at` makes a repeat click count. */
@@ -1843,6 +1866,7 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
     // means by "at the bottom", and an exact test loses the stick the
     // moment a fragment arrives a pixel early.
     atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    if (!loading) scrollMemo.set(row.id, { top: el.scrollTop, follow: atBottom.current });
     // What was recorded when you left, so the button can say something new arrived.
     if (!atBottom.current && !away) awayAt.current = lines.length;
     setAway(!atBottom.current);
@@ -1850,27 +1874,29 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
   const awayAt = useRef(0);
   const toLatest = () => {
     atBottom.current = true; setAway(false);
+    scrollMemo.delete(row.id);
     const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     end.current?.scrollIntoView({ block: "end", behavior: still ? "auto" : "smooth" });
   };
-  const latestKey = useRef(toLatest);
-  latestKey.current = toLatest;
+  // Cmd/Ctrl+End with focus in the transcript; elsewhere it is the page's.
+  const latestKey = (e: React.KeyboardEvent) => {
+    if (e.key !== "End" || !(e.metaKey || e.ctrlKey)) return;
+    e.preventDefault();
+    toLatest();
+  };
+  // Coming back to a session lands where you were reading. One that was
+  // following its output (or is new) opens at the bottom, new events and all.
+  const memo = scrollMemo.get(row.id);
+  if (memo && !memo.follow) atBottom.current = false;
+  const restoredAt = useRef(false);
   useEffect(() => {
-    // Cmd/Ctrl+End, unless you are typing: there it moves the caret.
-    const key = (e: KeyboardEvent) => {
-      if (e.key !== "End" || !(e.metaKey || e.ctrlKey)) return;
-      if ((e.target as HTMLElement | null)?.closest?.("input,textarea,select,[contenteditable]")) return;
-      e.preventDefault();
-      latestKey.current();
-    };
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, []);
+    if (loading || restoredAt.current) return;
+    restoredAt.current = true;
+    if (memo && !memo.follow && scroller.current) { scroller.current.scrollTop = memo.top; setAway(true); }
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (atBottom.current) end.current?.scrollIntoView({ block: "end" });
   }, [lines.length, streamLen]);
-  // Opening a different conversation starts at the bottom again.
-  useEffect(() => { atBottom.current = true; }, [row.id]);
   const turns = useMemo(() => groupTurns(lines), [lines]);
   // A turn picked from the log: land on it once the transcript holds it,
   // flash it, and stop following the bottom so it stays put.
@@ -1974,9 +2000,25 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
   // deleted drops its paste.
   const pastes = useRef<string[]>([]);
   const images = useRef<string[]>([]);
+  // They are part of the draft: saved with it per session, so switching
+  // away and back never leaves a bare tag that would be sent as text.
+  const attsKey = "bough:draft-atts:" + row.id;
+  const restored = useRef(false);
+  if (!restored.current) {
+    restored.current = true;
+    try {
+      const a = JSON.parse(sessionStorage.getItem(attsKey) ?? "null") as { pastes: string[]; images: string[] } | null;
+      if (a) { pastes.current = a.pastes; images.current = a.images; }
+    } catch { /* storage off */ }
+  }
+  useEffect(() => {
+    try {
+      if (draft && (pastes.current.length || images.current.length)) sessionStorage.setItem(attsKey, JSON.stringify({ pastes: pastes.current, images: images.current }));
+      else sessionStorage.removeItem(attsKey);
+    } catch { /* storage off */ }
+  }, [draft, attsKey]);
   const [uploading, setUploading] = useState(0);
   const [attachErr, setAttachErr] = useState("");
-  useEffect(() => { pastes.current = []; images.current = []; setAttachErr(""); }, [row.id]);
   const insert = (s: string) => {
     const el = composer.current;
     const from = el?.selectionStart ?? draft.length, to = el?.selectionEnd ?? draft.length;
@@ -2018,6 +2060,10 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
     const t = draft.trim();
     // Enter reaches here even while the Send button is disabled.
     if (!t || busy || uploading) return;
+    // A tag whose content is gone is never sent as its placeholder.
+    const lost = [...t.matchAll(/\[Image #(\d+)\]|\[Pasted text #(\d+) \+\d+ lines\]/g)]
+      .filter((m) => m[1] ? !images.current[+m[1] - 1] : pastes.current[+m[2] - 1] === undefined);
+    if (lost.length) { setAttachErr(`Attachment unavailable: remove ${lost.map((m) => m[0]).join(", ")}`); return; }
     setDraft("");
     const full = expand(t);
     pastes.current = []; images.current = [];
@@ -2076,11 +2122,17 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
             )}
           </div>
         </div>
-        <RuntimeStrip row={row} lines={lines} />
+        <RuntimeStrip row={row} lines={lines} paused={paused} onRetry={onRetry} />
       </header>
 
-      <div className="scroll transcript" ref={scroller} onScroll={onScroll}>
-        {loading && slow && <p className="meta-line transcript-state" role="status">Loading transcript…</p>}
+      <div className="scroll transcript" ref={scroller} onScroll={onScroll} onKeyDown={latestKey}
+           tabIndex={0} role="region" aria-label="Transcript">
+        {loading && loadError && (
+          <p className="meta-line transcript-state transcript-retry" role="alert">
+            Couldn't load transcript <button className="link" onClick={onRetry}>Retry</button>
+          </p>
+        )}
+        {loading && !loadError && slow && <p className="meta-line transcript-state" role="status">Loading transcript…</p>}
         {!loading && turns.length === 0 && !running && !row.ask && (
           <p className="meta-line transcript-state">No recorded turns.</p>
         )}
@@ -2246,6 +2298,12 @@ export default function App() {
   // Whose transcript is in hand. An empty list means "loading" until the
   // first read for that session lands, and only then "nothing recorded".
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  // The open transcript's read state: a first read that failed, and since
+  // when catching up has been failing. Retry re-reads or catches up now.
+  const [loadFail, setLoadFail] = useState<string | null>(null);
+  const [paused, setPaused] = useState<number | undefined>(undefined);
+  const [loadTry, setLoadTry] = useState(0);
+  const retryRef = useRef<() => void>(() => {});
   useEffect(() => { lastSeq.current = lines.length ? lines[lines.length - 1].seq : 0; }, [lines]);
   // Live fragments of the reply being written, newest last. Never
   // merged into `lines`: these carry no history seq and the recorded
@@ -2298,12 +2356,14 @@ export default function App() {
     let live = true;
     // Never show one session's transcript under another's header while loading.
     setLines([]);
+    setLoadFail(null); setPaused(undefined);
+    // Its failure is the transcript's own state, with a retry, not a toast.
     api.session(selected).then((r) => {
       if (!live) return;
       setLines(r.entries);
       setLoadedFor(selected);
       setRows((prev) => prev.map((x) => (x.id === r.session.id ? r.session : x)));
-    }).catch((e) => setErr(String(e)));
+    }).catch((e) => { if (live) setLoadFail(e instanceof Error ? e.message : String(e)); });
 
     setStream([]);
     // How many delta runs were already on screen when the last recorded
@@ -2323,6 +2383,7 @@ export default function App() {
     // event of a turn has no next one: the transcript stayed short with
     // nothing saying so. Retry on a backoff until one lands.
     let backoff = 4000;
+    let synced = Date.now();
     const catchUp = () => {
       // The fetch used to start inside a setLines updater, which React may
       // run twice. The cursor comes from a ref instead, and the stream
@@ -2333,6 +2394,8 @@ export default function App() {
       api.session(selected, since).then((r) => {
         if (!live) return;
         backoff = 4000;
+        synced = Date.now();
+        setPaused(undefined);
         setRows((rs) => rs.map((x) => (x.id === r.session.id ? r.session : x)));
         if (!r.entries.length) return;
         superseded = Math.max(0, superseded - drop);
@@ -2346,6 +2409,8 @@ export default function App() {
         });
       }).catch(() => {
         if (!live) return;
+        // The transcript stays; the header says it is no longer current.
+        setPaused((p) => p ?? synced);
         clearTimeout(timer);
         timer = setTimeout(catchUp, backoff);
         backoff = Math.min(backoff * 2, 30_000);
@@ -2377,8 +2442,9 @@ export default function App() {
       clearTimeout(timer);
       timer = setTimeout(catchUp, 120);
     });
+    retryRef.current = () => { clearTimeout(timer); backoff = 4000; catchUp(); };
     return () => { live = false; clearTimeout(timer); stop(); };
-  }, [selected]);
+  }, [selected, loadTry]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -2601,7 +2667,8 @@ export default function App() {
       ) : row && context ? (
         <ContextPage session={row.id} onBack={() => setContext(false)} />
       ) : row ? (
-        <Thread key={row.id} row={row} lines={lines} jump={jump?.id === row.id ? jump : null} loading={loadedFor !== row.id} stream={stream} activity={activity} projects={projects} busy={busy} onBack={goList}
+        <Thread key={row.id} row={row} lines={lines} jump={jump?.id === row.id ? jump : null} loading={loadedFor !== row.id} loadError={loadFail ?? undefined} paused={paused}
+          onRetry={() => (loadedFor === row.id ? retryRef.current() : setLoadTry((n) => n + 1))} stream={stream} activity={activity} projects={projects} busy={busy} onBack={goList}
           onSend={(t) => deliverTo(() => api.prompt(row.id, t))}
           onAnswer={(t) => deliverTo(() => api.answer(row.id, t))}
           onInterrupt={() => act(() => api.interrupt(row.id))}

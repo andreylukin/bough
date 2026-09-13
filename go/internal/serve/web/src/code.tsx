@@ -109,7 +109,18 @@ export function parseCall(code: string): Call {
   if (!call || names.length > 1) {
     // Several calls in one block: name the tools it used, not its first
     // line ("const out = []" says nothing). None: show the program itself.
-    if (names.length > 1) return { verb: "Program", target: "", gist: [...new Set(names)].join(", "), body: raw, lang: "javascript", raw };
+    // What each call was aimed at is what tells two programs apart: the
+    // commands and paths, from the recorded source, never guessed.
+    if (names.length > 1) {
+      const targets = [...raw.matchAll(/tools\.(\w+)\s*\(/g)].map((m) => {
+        let i = m.index + m[0].length;
+        while (i < raw.length && /\s/.test(raw[i])) i++;
+        const s = readString(raw, i);
+        return s ? (m[1] === "bash" ? gistOf(s.value) : s.value.split("\n")[0]) : m[1];
+      });
+      const verb = names.every((n) => n === "bash") ? "Ran" : "Program";
+      return { verb, target: "", gist: [...new Set(targets)].join(" · "), body: raw, lang: "javascript", raw };
+    }
     return { verb: "Code", target: "", gist: gistOf(raw), body: raw, lang: "javascript", raw };
   }
   const [a = "", b = ""] = call.args;

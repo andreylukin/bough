@@ -168,6 +168,8 @@ export interface Turn {
   prompt: Line | null;
   body: Line[];
   done: Line | null;
+  /** Ended by a cancel; `done` is then the loop's trailing record when it came. */
+  stopped?: boolean;
 }
 
 export function groupTurns(lines: Line[]): Turn[] {
@@ -184,7 +186,13 @@ export function groupTurns(lines: Line[]): Turn[] {
     // A cancel is followed by the done the loop always writes. With the
     // turn already closed, that done opened an empty turn of its own and
     // a stopped turn read "Stopped" then "Finished".
-    if (!cur && (l.kind === "done" || l.kind === "cancelled") && turns.length && turns[turns.length - 1].done) continue;
+    // That done still carries the turn's usage and files: it replaces the
+    // cancel as the record, and the turn remembers it was stopped.
+    if (!cur && (l.kind === "done" || l.kind === "cancelled") && turns.length && turns[turns.length - 1].done) {
+      const last = turns[turns.length - 1];
+      if (l.kind === "done" && last.done!.kind === "cancelled") { last.stopped = true; last.done = l; }
+      continue;
+    }
     if (!cur) cur = { seq: l.seq, prompt: null, body: [], done: null };
     if (l.kind === "done" || l.kind === "cancelled") {
       cur.done = l;

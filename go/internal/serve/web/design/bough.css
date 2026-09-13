@@ -231,13 +231,19 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 @media (pointer:coarse){.sel-btn{height:44px}.sel-item{min-height:44px}}
 
 /* turns */
-/* One readable column, centred. A transcript set to the width of a
-   wide window is a wall: the eye loses the line it is on between the
-   right edge and the next line's start. 80ch is the measure asked for
-   — wider than prose wants, which is right here, because most of this
-   is commands and output rather than sentences. */
-.transcript{flex-grow:1;padding:24px 32px 8px;display:flex;flex-direction:column;gap:24px}
-.transcript>*{width:100%;max-width:80ch;margin-inline:auto}
+/* Commands and output want the width; replies keep an 80ch measure. */
+.transcript{flex-grow:1;padding:24px 24px 8px;display:flex;flex-direction:column;gap:24px}
+.transcript:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+/* Left-aligned under the header, as wide as a wide window allows:
+   commands, output and tables use the width; prose keeps a measure. */
+.transcript>*{width:100%;max-width:1088px;margin-inline:0}
+.transcript .say{max-width:80ch}
+.prompt-images{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.prompt-images a{display:grid;place-items:center;width:72px;height:54px;border:1px solid var(--line);border-radius:4px;background:var(--surface);overflow:hidden;font-size:11px;color:var(--text-3);text-align:center}
+.prompt-images img{width:100%;height:100%;object-fit:contain}
+.transcript-retry{display:flex;align-items:center;justify-content:center;gap:10px}
+.rt-paused{color:#e2ba78}
+.rt-paused .link{color:#e2ba78;text-decoration:underline}
 .turn{display:flex;flex-direction:column;gap:10px}
 .prompt{display:grid;grid-template-columns:14px minmax(0,1fr) auto;column-gap:8px;align-items:baseline;max-width:78ch;min-width:0}
 .prompt-mark{color:var(--accent)}
@@ -547,10 +553,12 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 /* Bookkeeping rows are one thin line: no card, muted 12px, detail on hover
    (.thin-pop) and the full blocks one click in. */
 .block.thin{background:none;border:0;border-radius:0;overflow:visible}
-.block.thin>summary{gap:6px;padding:4px;min-height:24px;font-size:12px;line-height:16px;border-radius:4px}
+.block.thin>summary{gap:8px;padding:4px;min-height:28px;font-size:13px;line-height:20px;border-radius:4px}
+.block.thin>summary>.block-detail{flex:1 1 auto}
+.block.thin>summary .block-label{font-weight:500}
 .block.thin>summary:focus-visible{outline-offset:0}
 .block.thin>summary::before{width:8px}
-.block.thin>summary .block-label,.block.thin>summary .block-detail{font-size:12px;color:var(--text-3)}
+.block.thin>summary .block-label,.block.thin>summary .block-detail{font-size:13px;color:var(--text-3)}
 .block.thin>summary:hover .block-label,.block.thin>summary:hover .block-detail{color:var(--text-2)}
 .block.thin.block-failed>summary .block-label,.block.thin>summary .thin-failed{color:var(--red)}
 .block.thin>summary .block-detail{min-width:0}
@@ -569,7 +577,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
   background:var(--raised);border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.18);
   font-size:12px;line-height:18px;color:var(--text-2)}
 .thin-pop-row{display:contents}
-.thin-pop-cmd{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-1)}
+.thin-pop-cmd{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text-1)}
 .thin-pop-row .num{color:var(--text-3);text-align:end;white-space:nowrap}
 .thin-pop-failed>span,.thin-pop-failed .num{color:var(--red)}
 .thin-pop-out{grid-column:1/-1;margin:0;white-space:pre;overflow:hidden;text-overflow:ellipsis;color:var(--text-2)}
@@ -578,7 +586,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 /* thin lines stay one line at any width: the full text is one tap in */
 .block.thin>summary{flex-wrap:nowrap}
 .block.thin>summary>.block-detail{order:0;flex:0 1 auto;flex-basis:auto;min-width:0;padding-inline-start:0;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:16px}
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:20px}
 .block.thin>summary>.block-label,.block.thin>summary>.num{flex:none;white-space:nowrap}
 
 /* markdown inside a reply */
@@ -614,10 +622,10 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .ask-q{margin:0;font-size:15px;font-weight:500;color:var(--text-1)}
 
 /* composer */
-/* The composer shares the transcript's 80ch column, so what you type
+/* The composer shares the transcript's column, so what you type
    lines up with what you are reading. */
-.composer-wrap{position:relative;flex-shrink:0;padding:8px 32px 12px}
-.composer-wrap>*{width:100%;max-width:80ch;margin-inline:auto}
+.composer-wrap{position:relative;flex-shrink:0;padding:8px 24px 12px}
+.composer-wrap>*{width:100%;max-width:1088px;margin-inline:0}
 .send-failed{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;padding-inline:12px;line-height:18px;color:var(--text-2)}
 .send-failed>*{font-size:13px}
 .send-failed-text{flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -627,7 +635,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 @media (max-width:480px){.send-failed-actions{flex-basis:100%}.send-failed .btn,.send-failed .link{min-height:44px}}
 @media (pointer:coarse){.send-failed .btn{height:44px}}
 /* Floats over the transcript's foot: appearing never moves what you read. */
-.composer-wrap>.jump-latest{position:absolute;z-index:5;bottom:100%;left:50%;transform:translateX(-50%);width:auto;margin:0;
+.composer-wrap>.jump-latest{position:absolute;z-index:5;bottom:100%;right:24px;width:auto;margin:0;
   height:32px;padding:0 12px;border-radius:6px;font-size:12px;background:var(--raised)}
 .composer-wrap>.jump-latest:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @media (pointer:coarse){.composer-wrap>.jump-latest{height:40px}}
@@ -819,7 +827,8 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .turn-done{padding-left:0}
   .turn-foot{padding-left:0}
   .runtime-strip{padding:6px 16px;gap:4px 14px}
-  .composer-wrap{padding:8px 12px calc(12px + env(safe-area-inset-bottom))}
+  .composer-wrap{padding:8px 16px calc(12px + env(safe-area-inset-bottom))}
+  .composer-wrap>.jump-latest{right:16px}
   /* The clock goes under the prompt rather than holding a column of its own. */
   .prompt{grid-template-columns:10px minmax(0,1fr) auto}
   .composer{padding:10px 12px}
