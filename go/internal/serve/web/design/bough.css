@@ -27,12 +27,12 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 /* sidebar: workspace › session › turns, like a file tree with the status at the left */
 .sidebar{width:304px;flex-shrink:0;border-right:1px solid var(--line);background:var(--surface);
          display:flex;flex-direction:column}
-.sidebar .scroll{flex:1 1 0%;min-height:0;padding:2px 8px 16px;position:relative;display:flex;flex-direction:column;gap:6px}
+.sidebar .scroll{flex:1 1 0%;min-height:0;padding:2px 8px 16px;position:relative;display:flex;flex-direction:column;gap:4px}
 .list-none{padding:0 12px;color:var(--text-3);font-size:13px}
 .row-untitled{color:var(--text-3);font-size:13px}
 .session{position:relative}
 /* The log's disclosure sits at the row's end: a sibling of the row, shown on hover, focus, or once open. */
-.row-twist{position:absolute;right:6px;top:8px;z-index:2;width:24px;height:24px;padding:0;display:grid;place-items:center;
+.row-twist{position:absolute;right:6px;top:4px;z-index:2;width:24px;height:24px;padding:0;display:grid;place-items:center;
   background:none;border:0;border-radius:6px;color:var(--text-3);cursor:pointer;opacity:0}
 .row-twist svg{transition:transform .12s}
 .row-twist[aria-expanded="true"] svg{transform:rotate(90deg)}
@@ -40,11 +40,11 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .row-twist:hover{background:var(--line);color:var(--text-1)}
 @media (hover:none){.row-twist{opacity:1}}
 .turns{list-style:none;margin:0 0 6px;padding:0}
-.turn-line{display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 10px 0 36px;background:none;border:0;
+.turn-line{display:flex;align-items:center;gap:8px;width:100%;height:28px;padding:0 10px 0 8px;background:none;border:0;
   border-radius:6px;font:13px/28px var(--sans);color:var(--text-3);text-align:start;cursor:pointer}
 .turn-line:hover{background:var(--raised);color:var(--text-1)}
 .turn-line:focus-visible{outline-offset:-2px}
-.turn-n{flex-shrink:0;min-width:2ch;text-align:end;color:var(--text-3);font-size:12px}
+.turn-n{flex-shrink:0;width:20px;text-align:end;color:var(--text-3);font-size:12px}
 .turn-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .turn-wait{padding-inline-start:36px;font-size:12px;line-height:28px;color:var(--text-3)}
 @media (pointer:coarse){.turn-line{height:40px}.row{height:44px}.row-twist{top:6px;width:32px;height:32px}}
@@ -59,12 +59,11 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .turn-sending .prompt-text{opacity:.75}
 .transcript-state{margin:auto 0;text-align:center}
 /* The toolbar: sidebar, back, forward, search, and New set apart on the right. */
-.side-bar{flex-shrink:0;display:flex;align-items:center;gap:2px;height:52px;padding:0 10px}
+.side-bar{flex-shrink:0;display:flex;align-items:center;justify-content:space-between;height:48px;padding:0 10px}
 .side-icon{display:grid;place-items:center;width:34px;height:34px;padding:0;background:none;border:0;border-radius:8px;
   color:var(--text-3);cursor:pointer}
 .side-icon:hover,.side-icon-on{color:var(--text-1);background:var(--raised)}
-.side-collapse{margin-inline-end:8px}
-.side-new{margin-inline-start:auto;display:grid;place-items:center;width:38px;height:38px;padding:0;border:0;border-radius:50%;
+.side-new{display:grid;place-items:center;width:38px;height:38px;padding:0;border:0;border-radius:50%;
   background:var(--text-1);color:var(--bg);cursor:pointer}
 .side-new:hover{background:var(--accent)}
 .sidebar-closed{width:54px}
@@ -76,7 +75,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .field::placeholder{color:var(--text-3)}
 /* A workspace, and the sections below: a muted name and a thin rule filling the row. */
 .ws{display:flex;flex-direction:column}
-.ws-head,.sec-fold{display:flex;align-items:center;gap:8px;height:36px;padding:0 10px;color:var(--text-3);font:14px var(--sans)}
+.ws-head,.sec-fold{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;color:var(--text-3);font:13px var(--sans)}
 .ws-head svg{flex-shrink:0}
 .ws-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:70%}
 .ws-rule{flex:1 1 auto;min-width:16px;height:1px;background:var(--line)}
@@ -84,18 +83,17 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .sec-fold:hover{color:var(--text-1)}
 .sec-fold[aria-expanded="true"]{color:var(--text-2)}
 .sec-count{color:var(--text-3)}
-.sec{margin-top:6px}
+.sec{margin-top:2px}
 @media (pointer:coarse){.sec-fold{height:44px}}
 /* A session: its status mark, its title, and a trailing count only when there is one. */
-.row{display:flex;align-items:center;gap:10px;width:100%;height:40px;text-align:start;padding:0 10px;
+.row{display:flex;align-items:center;gap:10px;width:100%;height:32px;text-align:start;padding:0 10px;
      background:none;border:0;border-radius:8px;color:inherit;font:inherit;cursor:pointer}
 .row-has-log{padding-inline-end:34px}
 .row-mark{display:grid;place-items:center;width:16px;flex-shrink:0}
 .row:hover{background:var(--raised)}
 .row:focus-visible{outline-offset:-2px}
 .row-on,.row-on:hover{background:var(--sel)}
-.row-title{font-size:15px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.row-on .row-title{color:var(--text-1)}
+.row-title{font-size:15px;color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .row-wrap:hover>.row-has-ack .row-jobs,.row-wrap:focus-within>.row-has-ack .row-jobs{visibility:hidden}
 .head-ack{height:26px;padding:0 10px;font-size:12px;flex-shrink:0}
 .link{background:none;border:0;padding:0;color:var(--text-3);font:12px var(--sans);cursor:pointer}

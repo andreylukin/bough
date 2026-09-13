@@ -40,6 +40,8 @@ export interface Row {
   archived: boolean;
   entries: number;
   modified: string;
+  /** When the session last wrote an entry; recency reads this, not the file mtime. */
+  lastAt: string;
   ask?: Ask;
   model?: string;
   effort?: string;

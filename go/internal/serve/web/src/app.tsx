@@ -71,7 +71,7 @@ function workspaceOf(r: Row): string {
 /** What needs you, then what is moving, then the most recent. */
 function byUrgency(a: Row, b: Row): number {
   const rank = (r: Row) => (r.status === "needs-you" || r.trouble ? 0 : r.status === "running" ? 1 : 2);
-  return rank(a) - rank(b) || Date.parse(b.modified) - Date.parse(a.modified);
+  return rank(a) - rank(b) || Date.parse(b.lastAt) - Date.parse(a.lastAt);
 }
 
 /** Rows under their workspace, workspaces by their latest activity. */
@@ -82,7 +82,7 @@ function byWorkspace(rows: Row[]): [string, Row[]][] {
     if (!out.has(k)) out.set(k, []);
     out.get(k)!.push(r);
   }
-  const latest = (list: Row[]) => Math.max(...list.map((r) => Date.parse(r.modified)));
+  const latest = (list: Row[]) => Math.max(...list.map((r) => Date.parse(r.lastAt)));
   return [...out.entries()]
     .map(([k, list]) => [k, list.sort(byUrgency)] as [string, Row[]])
     .sort((a, b) => latest(b[1]) - latest(a[1]));
@@ -131,7 +131,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     const recent: Row[] = [], inactive: Row[] = [], archived: Row[] = [];
     for (const r of rows) {
       if (r.archived) archived.push(r);
-      else if (r.status === "needs-you" || r.status === "running" || r.trouble || now - Date.parse(r.modified) < INACTIVE_MS) recent.push(r);
+      else if (r.status === "needs-you" || r.status === "running" || r.trouble || now - Date.parse(r.lastAt) < INACTIVE_MS) recent.push(r);
       else inactive.push(r);
     }
     return { recent: byWorkspace(recent), inactive, archived };
@@ -274,11 +274,12 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
                   aria-describedby={card?.id === r.id ? "row-card" : undefined}
                   className={"row" + (on ? " row-on" : "") + (r.turns ? " row-has-log" : "") + (r.trouble && onAck ? " row-has-ack" : "")}
                   aria-current={on ? "true" : undefined}
-                  title={`${why} · ${ago(r.modified)} ago${r.branch ? ` · ${r.branch}` : ""}`}>
+                  title={`${why} · ${ago(r.lastAt)} ago${r.branch ? ` · ${r.branch}` : ""}`}>
             {/* A failure you have not seen is a red mark; the reason is its label. */}
             <span className="row-mark">
-              {r.trouble ? <StatusMark status="error" size={14} bare /> : <StatusMark status={r.status} size={14} bare />}
-              <span className="visually-hidden">{why}: </span>
+              {r.trouble
+                ? <span className="status"><svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{STATUS.error.glyph}</svg><span className="visually-hidden">{why}</span></span>
+                : <StatusMark status={r.status} size={16} bare />}
             </span>
             {r.ask && name && askSaysTitle(r.ask.text, name)
               ? <span className="row-title" title={r.ask.text}>{plainTitle(r.ask.text)}</span>
@@ -308,7 +309,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
             {log ? log.map((l) => (
               <li key={l.turn}>
                 <button className="turn-line" title={l.text} onClick={() => onTurn?.(r.id, l.turn)}>
-                  <span className="num turn-n">{l.turn}</span><span className="turn-text">{l.text}</span>
+                  <span className="num turn-n">{l.turn}</span><span className="turn-text">{l.text.replace(/^you (asked|said|wanted)( to| for| that)?\s+/i, "").replace(/^./, (c) => c.toUpperCase())}</span>
                 </button>
               </li>
             )) : <li className="turn-wait">Loading…</li>}
@@ -328,7 +329,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
   // A section folds; a search shows every match, folded or not.
   const section = (key: string, label: string, open: boolean, toggle: () => void, count: number | null, body: React.ReactNode) => (
     <div className="sec">
-      <button className="sec-fold" aria-expanded={open} onClick={toggle}>
+      <button className="sec-fold" aria-expanded={open} onClick={toggle} aria-controls={`sec-${key}`}>
         <span>{label}</span><span className="ws-rule" />{count !== null && <span className="num sec-count">{count}</span>}
       </button>
       {open && <div className="sec-body" id={`sec-${key}`}>{body}</div>}
@@ -385,7 +386,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
           <p className="list-none">{query ? `No sessions match “${query}”.` : "No sessions yet."}</p>
         )}
         {workspaces(recent)}
-        {section("inactive", "Inactive last 72h", Boolean(query) || unfolded.has("inactive"), () => toggleFold("inactive"),
+        {inactive.length > 0 && section("inactive", "Inactive last 72h", Boolean(query) || unfolded.has("inactive"), () => toggleFold("inactive"),
           inactive.length, workspaces(byWorkspace(inactive)))}
         {section("archived", "Archived", showArchived, onToggleArchived, showArchived ? archived.length : null,
           archived.length ? workspaces(byWorkspace(archived)) : <p className="list-none">Nothing archived.</p>)}

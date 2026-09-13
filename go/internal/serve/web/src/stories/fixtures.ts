@@ -11,21 +11,21 @@ export const projects: Project[] = [
 
 export const rows: Row[] = [
   { id: "s1", title: "Fix the flaky PTY test", cwd: "/w/bough", repo: "andreylukin/bough", branch: "main",
-    status: "running", live: true, archived: false, entries: 12, modified: hoursAgo(1), project: "p2",
+    status: "running", live: true, archived: false, entries: 12, modified: hoursAgo(1), lastAt: hoursAgo(1), project: "p2",
     model: "claude-sonnet-5", effort: "default" },
   { id: "s2", title: "Which migration order is safe?", cwd: "/w/api", repo: "acme/api", branch: "db-split",
-    status: "needs-you", live: true, archived: false, entries: 8, modified: hoursAgo(3), project: "p1",
+    status: "needs-you", live: true, archived: false, entries: 8, modified: hoursAgo(3), lastAt: hoursAgo(3), project: "p1",
     ask: { id: "a1", text: "The migration touches two tables. Run it against staging first?",
            options: ["Yes, staging first", "No, straight to prod"], seq: 8 } },
   { id: "s3", title: "## Wiki compile from history", cwd: "/w/bough", repo: "andreylukin/bough",
-    status: "done", live: false, archived: false, entries: 40, modified: hoursAgo(26) },
+    status: "done", live: false, archived: false, entries: 40, modified: hoursAgo(26), lastAt: hoursAgo(26) },
   { id: "s4", title: "Headless SIGPIPE on closed stdout", cwd: "/w/bough", repo: "andreylukin/bough",
-    branch: "headless-pipe", status: "error", live: false, archived: false, entries: 5, modified: hoursAgo(30),
+    branch: "headless-pipe", status: "error", live: false, archived: false, entries: 5, modified: hoursAgo(30), lastAt: hoursAgo(30),
     project: "p1" },
   { id: "s5", title: "Rename the scratch dir", cwd: "/w/bough", status: "stopped", live: false,
-    archived: false, entries: 3, modified: hoursAgo(24 * 5) },
+    archived: false, entries: 3, modified: hoursAgo(24 * 5), lastAt: hoursAgo(24 * 5) },
   { id: "s6", title: "Old spike on goja perf", cwd: "/w/bough", status: "idle", live: false,
-    archived: true, entries: 2, modified: hoursAgo(24 * 30) },
+    archived: true, entries: 2, modified: hoursAgo(24 * 30), lastAt: hoursAgo(24 * 30) },
 ];
 
 const code = 'tools.bash("go test -race ./plugins/todo/")';

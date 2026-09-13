@@ -50,7 +50,10 @@ type Row struct {
 	Archived bool      `json:"archived"`
 	Entries  int       `json:"entries"`
 	Modified time.Time `json:"modified"`
-	Ask      *Ask      `json:"ask,omitempty"`
+	// LastAt is when the session last wrote an entry; a file's mtime can
+	// move without any activity (a copy, a restore), so recency reads this.
+	LastAt time.Time `json:"lastAt"`
+	Ask    *Ask      `json:"ask,omitempty"`
 	// Model and Effort are what this session was last ASKED to run as
 	// (empty = whatever its own config says). They are not read back
 	// from the child, so do not present them as ground truth.
@@ -433,6 +436,7 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 		Archived: meta.Archived,
 		Entries:  in.Entries,
 		Modified: in.ModTime,
+		LastAt:   lastAt(entries, in.ModTime),
 		Ask:      ask,
 		Model:    model,
 		Effort:   meta.Effort,
@@ -442,6 +446,16 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 		Trouble:  Troubled(st, entries, meta.Ack, time.Now()),
 		Turns:    countTurns(entries),
 	}
+}
+
+// lastAt is the newest entry's time, or fallback when no entry has one.
+func lastAt(entries []history.Entry, fallback time.Time) time.Time {
+	for i := len(entries) - 1; i >= 0; i-- {
+		if !entries[i].At.IsZero() {
+			return entries[i].At
+		}
+	}
+	return fallback
 }
 
 // lastModel is the model that answered most recently, or "" for a
