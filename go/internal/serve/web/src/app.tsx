@@ -126,15 +126,18 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
 }) {
   // Status lives in the glyphs and the order; the sections are only
   // where a session ran, and whether it is still recent.
-  const { recent, inactive, archived } = useMemo(() => {
+  // Runs nobody started by hand fold into Background, even when one
+  // needs attention: they are not the person's work.
+  const { recent, inactive, background, archived } = useMemo(() => {
     const now = Date.now();
-    const recent: Row[] = [], inactive: Row[] = [], archived: Row[] = [];
+    const recent: Row[] = [], inactive: Row[] = [], background: Row[] = [], archived: Row[] = [];
     for (const r of rows) {
       if (r.archived) archived.push(r);
+      else if (r.background) background.push(r);
       else if (r.status === "needs-you" || r.status === "running" || r.trouble || now - Date.parse(r.lastAt) < INACTIVE_MS) recent.push(r);
       else inactive.push(r);
     }
-    return { recent: byWorkspace(recent), inactive, archived };
+    return { recent: byWorkspace(recent), inactive, background, archived };
   }, [rows]);
 
   // Inactive stays shut until asked, and the way you left it across reloads.
@@ -327,10 +330,13 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
   ));
 
   // A section folds; a search shows every match, folded or not.
-  const section = (key: string, label: string, open: boolean, toggle: () => void, count: number | null, body: React.ReactNode) => (
+  const section = (key: string, label: string, open: boolean, toggle: () => void, count: number | null, body: React.ReactNode, alert?: "trouble" | "needs-you") => (
     <div className="sec">
       <button className="sec-fold" aria-expanded={open} onClick={toggle} aria-controls={`sec-${key}`}>
-        <span>{label}</span><span className="ws-rule" />{count !== null && <span className="num sec-count">{count}</span>}
+        <span>{label}</span>
+        {alert && <span className={"sec-alert sec-alert-" + alert} title={alert === "trouble" ? "Something inside failed" : "Something inside needs you"}>
+          <span className="visually-hidden">{alert === "trouble" ? " (something failed)" : " (needs you)"}</span></span>}
+        <span className="ws-rule" />{count !== null && <span className="num sec-count">{count}</span>}
       </button>
       {open && <div className="sec-body" id={`sec-${key}`}>{body}</div>}
     </div>
@@ -360,7 +366,9 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
   // A phone has no room to fold the list into: there the list is the pane.
   if (closed && !window.matchMedia?.("(max-width:720px)").matches) return <div className="sidebar sidebar-closed">{toolbar}</div>;
 
-  const total = recent.length + inactive.length + archived.length;
+  const total = recent.length + inactive.length + background.length + archived.length;
+  const bgAlert = background.some((r) => r.trouble) ? "trouble"
+    : background.some((r) => r.status === "needs-you") ? "needs-you" : undefined;
   return (
     <div className="sidebar">
       {card && (
@@ -388,6 +396,8 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
         {workspaces(recent)}
         {inactive.length > 0 && section("inactive", "Inactive last 72h", Boolean(query) || unfolded.has("inactive"), () => toggleFold("inactive"),
           inactive.length, workspaces(byWorkspace(inactive)))}
+        {background.length > 0 && section("background", "Background", Boolean(query) || unfolded.has("background"), () => toggleFold("background"),
+          background.length, workspaces(byWorkspace(background)), bgAlert)}
         {section("archived", "Archived", showArchived, onToggleArchived, showArchived ? archived.length : null,
           archived.length ? workspaces(byWorkspace(archived)) : <p className="list-none">Nothing archived.</p>)}
       </div>

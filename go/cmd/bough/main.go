@@ -404,6 +404,7 @@ func main() {
 
 	ctx := kernel.NewContext()
 	ctx.Provide("ui-mode", mode)
+	ctx.Provide("origin", sessionOrigin(mode))
 	// A dev install running a build older than its checkout: say so
 	// where a person will see it (the ui shows the "notice" service as
 	// its first row; headless prints it), naming `bough update`.
@@ -504,6 +505,22 @@ func main() {
 // dir (editors replace files, so watching the file itself breaks),
 // 300ms debounce, then parse + overrides + Reconcile. One-line result
 // log either way; a bad candidate keeps the last good tree.
+// sessionOrigin is who started this process, for the session's meta
+// entry: $BOUGH_ORIGIN when a launcher set it (serve's children say
+// "web"), else the ui mode. The variable is cleared so a bough the
+// agent runs from its shell is not mistaken for the same person.
+func sessionOrigin(mode string) string {
+	o := os.Getenv("BOUGH_ORIGIN")
+	os.Unsetenv("BOUGH_ORIGIN")
+	if o != "" {
+		return o
+	}
+	if strings.HasPrefix(mode, "web:") {
+		return "web"
+	}
+	return mode
+}
+
 func watchConfig(ctx *kernel.Context, src configSource, ov *overrides, headless bool) (func(), error) {
 	if src.path == "" {
 		kernel.Logf("bough: embedded config has no file; hot reload disabled\n")

@@ -66,7 +66,7 @@ func StatusOf(entries []history.Entry, childAlive bool) (Status, *Ask) {
 		pending   *Ask
 	)
 	for _, e := range entries {
-		if e.Kind != "meta" {
+		if e.Kind != "meta" && e.Kind != "origin" {
 			seen = true
 		}
 		switch e.Kind {

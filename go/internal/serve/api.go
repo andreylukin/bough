@@ -70,6 +70,9 @@ type Row struct {
 	Trouble string `json:"trouble,omitempty"`
 	// Turns counts the lines of the session's running log (GET .../turns).
 	Turns int `json:"turns,omitempty"`
+	// Background marks a run nobody started by hand (a wiki ingest, a
+	// bench, a test); the sidebar folds these away.
+	Background bool `json:"background,omitempty"`
 }
 
 // maxBody caps every request body: the API takes prompts and titles,
@@ -445,6 +448,8 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 		Cache:    LastCache(entries, model),
 		Trouble:  Troubled(st, entries, meta.Ack, time.Now()),
 		Turns:    countTurns(entries),
+
+		Background: in.Background,
 	}
 }
 

@@ -213,7 +213,7 @@ type SessionInfo struct {
 	// Summary is the latest title entry's few sentences on what the
 	// session is about; "" before it was first named.
 	Summary string
-	Cwd     string    // working directory from the "meta" entry; "" for old files
+	Cwd     string // working directory from the "meta" entry; "" for old files
 	// Repo and Branch are the git repository root and branch recorded
 	// on the "meta" entry when the session started. Both "" outside a
 	// repo and for sessions written before they were captured; callers
@@ -226,6 +226,71 @@ type SessionInfo struct {
 	// fork.
 	ForkedFrom string
 	AtSeq      int64
+	// Origin is who started the session: "web" (serve), "tui" or
+	// "headless", from the meta entry or a later "origin" entry that
+	// claimed it for a person. "" for sessions written before it was kept.
+	Origin string
+	// Background is Classify's verdict: a run nobody sat in front of.
+	Background bool
+}
+
+// Origins a person drives; everything else is automation.
+func userOrigin(o string) bool { return o == "web" || o == "tui" }
+
+// Classify says why a session is background ("" = it is the user's).
+// A recorded origin decides; without one, only signals that never
+// describe a person's own work count, and anything else stays the user's.
+func Classify(origin, cwd, firstPrompt, home string) string {
+	switch {
+	case userOrigin(origin):
+		return ""
+	case origin != "":
+		return "origin"
+	case cwd != "" && home != "" && under(cwd, filepath.Join(home, ".bough")):
+		return "bough-home"
+	case cwd != "" && tempDir(cwd):
+		return "temp-dir"
+	case strings.HasPrefix(firstPrompt, "/llm-wiki"):
+		return "wiki-ingest"
+	}
+	return ""
+}
+
+func under(p, dir string) bool {
+	return p == dir || strings.HasPrefix(p, dir+string(filepath.Separator))
+}
+
+// tempDir: scratch directories tests, benches and live checks run in.
+func tempDir(p string) bool {
+	for _, d := range []string{"/tmp", "/private/tmp", "/var/folders", "/private/var/folders", filepath.Clean(os.TempDir())} {
+		if under(p, d) {
+			return true
+		}
+	}
+	return false
+}
+
+// entriesOrigin is the last origin the entries record.
+func entriesOrigin(entries []Entry) string {
+	o := ""
+	for _, e := range entries {
+		if e.Kind == "meta" || e.Kind == "origin" {
+			if v, _ := e.Data["origin"].(string); v != "" {
+				o = v
+			}
+		}
+	}
+	return o
+}
+
+// firstInput is the first input's prompt, "" if none.
+func firstInput(entries []Entry) string {
+	for _, e := range entries {
+		if e.Kind == "input" {
+			return Prompt(e)
+		}
+	}
+	return ""
 }
 
 // List scans dir for session JSONL files, newest first (mtime, then
@@ -238,6 +303,7 @@ func List(dir string) ([]SessionInfo, error) {
 		return nil, fmt.Errorf("history: list %s: %w", dir, err)
 	}
 	var infos []SessionInfo
+	home, _ := os.UserHomeDir()
 	for _, p := range paths {
 		st, err := os.Stat(p)
 		if err != nil {
@@ -252,6 +318,7 @@ func List(dir string) ([]SessionInfo, error) {
 		title, summary, cwd, from := "", "", "", ""
 		repo, branch := "", ""
 		var atSeq int64
+		origin := entriesOrigin(entries)
 		for _, e := range entries {
 			// A "title" entry is a name the session was given (the
 			// session-title plugin); it wins over the opening line.
@@ -296,6 +363,8 @@ func List(dir string) ([]SessionInfo, error) {
 
 			ForkedFrom: from,
 			AtSeq:      atSeq,
+			Origin:     origin,
+			Background: Classify(origin, cwd, firstInput(entries), home) != "",
 		})
 	}
 	slices.SortFunc(infos, func(a, b SessionInfo) int {
@@ -556,9 +625,16 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			return err
 		}
 	}
+	// "origin" is who is running this process (main provides it:
+	// $BOUGH_ORIGIN, else the ui mode). It is bookkeeping for listings;
+	// the loop's projection never reads meta or origin entries.
+	origin, _ := kernel.Get[string](ctx, "origin")
 	if created {
 		if cwd, err := os.Getwd(); err == nil {
 			data := map[string]any{"cwd": cwd}
+			if origin != "" {
+				data["origin"] = origin
+			}
 			// Only when the session starts inside a checkout. Started
 			// from a directory that merely holds repos, there is no
 			// one repo to name, and search falls back to the text.
@@ -576,6 +652,23 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		// loop's [cancelled] note instead of an unanswered prompt it
 		// might pick back up. "interrupted" tells the UI it was not esc.
 		s.Append("cancelled", map[string]any{"interrupted": true})
+	}
+	// A person resuming a session (TUI, or serve's child for a prompt
+	// sent from the web) makes it theirs, even one born headless: an
+	// "origin" entry records the claim so listings stop hiding it.
+	if !created && userOrigin(origin) {
+		es := s.Entries()
+		home, _ := os.UserHomeDir()
+		cwd := ""
+		for _, e := range es {
+			if e.Kind == "meta" {
+				cwd, _ = e.Data["cwd"].(string)
+				break
+			}
+		}
+		if Classify(entriesOrigin(es), cwd, firstInput(es), home) != "" {
+			s.Append("origin", map[string]any{"origin": origin})
+		}
 	}
 	ctx.Provide("history", s)
 	ctx.Provide("checkpoints", &Checkpoints{session: strings.TrimSuffix(filepath.Base(s.Path()), ".jsonl")})

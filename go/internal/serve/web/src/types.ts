@@ -38,6 +38,8 @@ export interface Row {
   status: Status;
   live: boolean;
   archived: boolean;
+  /** A run nobody started by hand (wiki ingest, bench, test); the sidebar folds these away. */
+  background?: boolean;
   entries: number;
   modified: string;
   /** When the session last wrote an entry; recency reads this, not the file mtime. */

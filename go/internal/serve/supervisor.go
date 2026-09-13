@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -387,6 +388,9 @@ func (s *Supervisor) start(ch *child, dir, id string) error {
 	if cmd.Env == nil {
 		cmd.Env = os.Environ()
 	}
+	// Every child serve runs is the person's: created from the page, or
+	// resumed because they sent it something.
+	cmd.Env = append(slices.Clone(cmd.Env), "BOUGH_ORIGIN=web")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("serve: supervisor: stdin pipe: %w", err)
