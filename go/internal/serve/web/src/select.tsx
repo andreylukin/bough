@@ -1,7 +1,7 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 
 /** One choosable value. Options sharing a `group` sit under one heading. */
-export interface Option { value: string; label: string; detail?: string; group?: string }
+export interface Option { value: string; label: string; detail?: string; group?: string; /** What the closed button shows, when shorter than the label. */ short?: string }
 
 /**
  * The control room's dropdown.
@@ -16,7 +16,7 @@ export interface Option { value: string; label: string; detail?: string; group?:
  * Keyboard: ↓/↑/Enter/Space open it; inside, ↓↑ move, Enter picks,
  * Esc closes and gives focus back to the button.
  */
-export function Select({ value, options, onChange, label, placeholder = "Choose", searchable = false, align = "start" }: {
+export function Select({ value, options, onChange, label, placeholder = "Choose", searchable = false, align = "start", note }: {
   value: string;
   options: Option[];
   onChange: (value: string) => void;
@@ -25,6 +25,8 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
   placeholder?: string;
   searchable?: boolean;
   align?: "start" | "end";
+  /** A line above the options saying when the choice takes effect. */
+  note?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -33,6 +35,11 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
   const btn = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const current = options.find((o) => o.value === value);
+  const id = useId();
+  const listId = id + "-list";
+  // Focus stays on the button (or the search field); the highlighted row
+  // is announced through aria-activedescendant.
+  const optId = (i: number) => `${id}-opt-${i}`;
 
   const shown = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -86,12 +93,13 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
 
   return (
     <div className={"sel" + (open ? " sel-open" : "")} ref={root} onKeyDown={onKey}>
-      <button ref={btn} type="button" className="sel-btn" aria-haspopup="listbox" aria-expanded={open}
-              aria-label={`${label}: ${current?.label ?? placeholder}`}
+      <button ref={btn} type="button" className="sel-btn" role="combobox" aria-haspopup="listbox" aria-expanded={open}
+              aria-controls={listId} aria-activedescendant={open && !searchable && shown[at] ? optId(at) : undefined}
+              aria-label={`${label}: ${current?.label ?? (value || placeholder)}`}
               onClick={() => (open ? hide(false) : show())}>
         {/* A value the options do not list yet (the catalogue still
             loading, a project since deleted) is shown as itself. */}
-        <span className={"sel-value" + (current || value ? "" : " sel-placeholder")}>{current?.label ?? (value || placeholder)}</span>
+        <span className={"sel-value" + (current || value ? "" : " sel-placeholder")}>{current?.short ?? current?.label ?? (value ? value.split("/").pop() : placeholder)}</span>
         <svg className="sel-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
              strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M6 9l6 6 6-6" />
@@ -101,14 +109,16 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
         <div className={"sel-pop sel-" + align}>
           {searchable && (
             <input className="sel-search" autoFocus value={q} placeholder={`Search ${label.toLowerCase()}`}
-                   aria-label={`Search ${label.toLowerCase()}`}
+                   aria-label={`Search ${label.toLowerCase()}`} role="combobox" aria-expanded="true"
+                   aria-controls={listId} aria-autocomplete="list" aria-activedescendant={shown[at] ? optId(at) : undefined}
                    onChange={(e) => { setQ(e.target.value); setAt(0); }} />
           )}
-          <div className="sel-list" role="listbox" aria-label={label} ref={list}>
+          {note && <p className="sel-note">{note}</p>}
+          <div className="sel-list" role="listbox" id={listId} aria-label={label} ref={list}>
             {shown.map((o, i) => (
               <Fragment key={(o.group ?? "") + ":" + o.value}>
                 {o.group && o.group !== shown[i - 1]?.group && <div className="sel-group">{o.group}</div>}
-                <button type="button" role="option" aria-selected={o.value === value}
+                <button type="button" role="option" id={optId(i)} tabIndex={-1} aria-selected={o.value === value}
                         data-at={i === at ? 1 : 0}
                         className={"sel-item" + (i === at ? " sel-on" : "")}
                         onMouseEnter={() => setAt(i)} onClick={() => pick(o)}>

@@ -1027,22 +1027,22 @@ function RuntimeStrip({ row, lines }: { row: Row; lines: Line[] }) {
   return (
     <div className="runtime-strip">
       {u && (
-        <span className="rt" title={limit ? `${u.lastIn.toLocaleString()} of ${limit.toLocaleString()} tokens` : undefined}>
+        <Tip tip={limit ? `${u.lastIn.toLocaleString()} of ${limit.toLocaleString()} tokens` : "The model's context window is not in the catalogue"}>
           <span className="rt-label">{limit ? "Context" : "Last input"}</span>
-          <span className="num rt-value">{tokenCount(u.lastIn)}{limit ? ` / ${contextSize(limit)}` : ""}</span>
+          <span className="num rt-value">{tokenCount(u.lastIn)}{limit ? ` · ${tokenCount(Math.max(0, limit - u.lastIn))} left` : ""}</span>
           {pct !== undefined && (
             <span className="rt-bar" role="meter" aria-label="Context used" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
               <span className={pct >= 80 ? "rt-hot" : undefined} style={{ width: `${pct}%` }} />
             </span>
           )}
-        </span>
+        </Tip>
       )}
       {u?.cost !== undefined && (
         // Tokens in/out ride on the cost's tooltip: the price is the figure
         // a person acts on. The model is named once, in the header picker.
-        <span className="rt" title={`${u.in.toLocaleString()} tokens in · ${u.out.toLocaleString()} out`}>
+        <Tip tip={`${u.in.toLocaleString()} tokens in · ${u.out.toLocaleString()} out`}>
           <span className="rt-label">Cost</span><span className="num rt-value">{money(u.cost)}</span>
-        </span>
+        </Tip>
       )}
       <ChangesChip id={row.id} tick={lines.length} />
       <TestsChip lines={lines} />
@@ -1157,13 +1157,26 @@ function CacheChip({ cache, model }: { cache: NonNullable<Row["cache"]>; model?:
   const hit = cache.in ? Math.round((cache.read / cache.in) * 100) : 0;
   const provider = model?.split("/")[0]?.replace(/^~/, "") || "provider";
   return (
-    <span className={"rt" + (left ? " rt-cache-hot" : " rt-cache-cold")}
-          title={`${provider} prompt cache · last turn read ${tokenCount(cache.read)} of ${tokenCount(cache.in)} input tokens from it (${hit}%), wrote ${tokenCount(cache.write)}`}>
+    <Tip className={left ? "rt-cache-hot" : "rt-cache-cold"}
+         tip={`${provider} prompt cache · last turn read ${tokenCount(cache.read)} of ${tokenCount(cache.in)} input tokens from it (${hit}%), wrote ${tokenCount(cache.write)}`}>
       <span className="rt-label">Cache</span>
       <span className="num rt-value">
         {/* "~": the window is the provider's documented minimum, not a reading. */}
         {left ? `hot · ~${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "cold"}
       </span>
+    </Tip>
+  );
+}
+
+/**
+ * A strip figure whose detail shows on hover after a beat, on keyboard
+ * focus and on tap — not only in a title tooltip a phone never shows.
+ */
+function Tip({ tip, className, children }: { tip: string; className?: string; children: React.ReactNode }) {
+  return (
+    <span className={"rt rt-tip" + (className ? " " + className : "")} tabIndex={0}>
+      {children}
+      <span className="rt-tip-body" role="tooltip">{tip}</span>
     </span>
   );
 }
@@ -1346,12 +1359,13 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
   const models: Option[] = row.model ? [] : [{ value: "", label: "Default model" }];
   for (const p of cat?.providers ?? []) {
     for (const m of p.models ?? []) {
-      models.push({ value: m.id, label: m.id, group: p.plugin.replace(/^llm-/, ""),
+      // The group already names the provider; the trigger drops it too.
+      models.push({ value: m.id, label: m.id, short: m.id.split("/").pop(), group: p.plugin.replace(/^llm-/, ""),
                     detail: m.context ? contextSize(m.context) : undefined });
     }
   }
   if (row.model && !models.some((o) => o.value === row.model)) {
-    models.push({ value: row.model, label: row.model, group: "In use" });
+    models.push({ value: row.model, label: row.model, short: row.model.split("/").pop(), group: "In use" });
   }
 
   // Effort is offered for what the chosen model supports; a model the
@@ -1365,10 +1379,10 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
         // What the next turn runs as is one setting: the model and how hard
         // it thinks, side by side, on every screen.
         <div className="ctl ctl-run">
-          <Select label="Model" value={row.model ?? ""} options={models} searchable align="end"
+          <Select label="Model" value={row.model ?? ""} options={models} searchable align="end" note="Applies to the next turn"
                   onChange={(v) => v && onModel(v)} />
           {efforts.length > 0 && (
-            <Select label="Effort" value={row.effort ?? ""} align="end" onChange={(v) => v && onEffort(v)}
+            <Select label="Effort" value={row.effort ?? ""} align="end" note="Applies to the next turn" onChange={(v) => v && onEffort(v)}
                     options={[...(row.effort ? [] : [{ value: "", label: "Default effort" }]), ...efforts.map((e) => ({ value: e, label: effortLabel(e) }))]} />
           )}
         </div>
@@ -1380,6 +1394,53 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
                   options={[{ value: "", label: "Unassigned" }, ...projects.map((p) => ({ value: p.id, label: p.name }))]} />
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Home: what wants a person now, not a blank pane. Only sessions that
+ * need you or are running are listed (Background ones included when
+ * they are in trouble); the sidebar already holds everything else.
+ */
+function ControlOverview({ rows, onOpen }: { rows: Row[]; onOpen: (id: string) => void }) {
+  const live = rows.filter((r) => !r.archived && !(r.empty && !r.live));
+  const needs = live.filter((r) => r.trouble || r.status === "needs-you");
+  const running = live.filter((r) => !needs.includes(r) && !r.background && r.status === "running");
+  const recent = needs.length || running.length ? [] :
+    live.filter((r) => !r.background).sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt)).slice(0, 3);
+  const group = (label: string, list: Row[]) => list.length > 0 && (
+    <section className="ov-group" aria-label={label}>
+      <h2 className="ov-label">{label}</h2>
+      {list.map((r) => (
+        <button key={r.id} className="ov-row" onClick={() => onOpen(r.id)}>
+          <span className="ov-title">{plainTitle(r.title) || untitled(r.id)}</span>
+          <span className="ov-why">
+            {r.trouble ? <span className="status head-trouble"><StatusMark status="error" bare />{capital(r.trouble)}</span>
+              : <StatusMark status={r.status} />}
+            {r.repo && <span className="mono">{r.repo.split("/").pop()}</span>}
+            <span className="num">{ago(r.lastAt)} ago</span>
+          </span>
+        </button>
+      ))}
+    </section>
+  );
+  return (
+    <div className="ov">
+      <header className="ov-head">
+        <h1>Overview</h1>
+        <span className="ov-hint">{modKey()}K to start a session</span>
+      </header>
+      <div className="scroll ov-body">
+        {group("Needs you", needs)}
+        {group("Running", running)}
+        {recent.length > 0 && (
+          <>
+            <p className="ov-none">Nothing needs your attention.</p>
+            {group("Recent", recent)}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -1414,9 +1475,27 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
     try { draft ? sessionStorage.setItem(draftKey, draft) : sessionStorage.removeItem(draftKey); } catch { /* storage off */ }
   }, [draft, draftKey]);
   const [trigger, setTrigger] = useState<Trigger | null>(null);
-  // A phone hides the model, project and thinking controls behind one
-  // button: they change rarely, and the thread is what the screen is for.
+  // Project, rename and archive change rarely: they wait in a popover
+  // under More rather than pushing the transcript down.
   const [more, setMore] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const closeMore = useCallback((refocus: boolean) => {
+    setMore(false);
+    if (refocus) moreRef.current?.querySelector<HTMLButtonElement>("button.more")?.focus();
+  }, []);
+  useEffect(() => {
+    if (!more) return;
+    // Escape closes the popover only; it must not also leave the thread.
+    // A Select open inside it handles its own Escape first.
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || moreRef.current?.querySelector(".sel-open")) return;
+      e.preventDefault(); e.stopPropagation(); closeMore(true);
+    };
+    const away = (e: MouseEvent) => { if (!moreRef.current?.contains(e.target as Node)) setMore(false); };
+    window.addEventListener("keydown", key, true);
+    document.addEventListener("mousedown", away);
+    return () => { window.removeEventListener("keydown", key, true); document.removeEventListener("mousedown", away); };
+  }, [more, closeMore]);
   const end = useRef<HTMLDivElement>(null);
   const ask = useRef<HTMLDivElement>(null);
   // The reminder above the composer is for a question scrolled out of
@@ -1580,7 +1659,7 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
 
   return (
     <div className="thread">
-      <header className="thread-head" data-more={more ? "1" : "0"}>
+      <header className="thread-head">
         <Back onBack={onBack} />
         <div className="head-main">
           <h1 title={row.title}>{plainTitle(row.title) || untitled(row.id)}</h1>
@@ -1590,35 +1669,42 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
               {row.branch && <span style={{ color: "var(--line-strong)" }}>/</span>}{row.branch}
             </span>
           )}
-          {row.trouble ? (
+          {row.trouble && row.trouble !== "tests failed" ? (
             // One status: the reason replaces "Done".
             <span className="status head-trouble"><StatusMark status="error" bare />{capital(row.trouble)}</span>
+          ) : row.testsFailed || row.trouble ? (
+            // The Tests chip names the failure; the mark only stops a
+            // failing check from reading as a clean "Done".
+            <span className="status head-trouble head-check"><StatusMark status="error" bare />Agent {(STATUS[row.status]?.label ?? row.status).toLowerCase()}</span>
           ) : <StatusMark status={row.status} />}
           {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
         </div>
-        <button className="more" aria-label="Session settings" aria-expanded={more}
-                onClick={() => setMore((v) => !v)}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
-               strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" />
-          </svg>
-        </button>
         <div className="head-side">
-          <RuntimeStrip row={row} lines={lines} />
           <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" />
-          {onContext && <div className="head-actions"><button className="btn" onClick={onContext}>Context</button></div>}
-        </div>
-        <div className="head-extra">
-          <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="rest" />
-          <div className="head-actions">
-            <button className="btn" onClick={async () => {
-              // Empty is allowed: it hands the title back to the session.
-              const t = await askText("Rename session", { initial: plainTitle(row.title), action: "Rename", allowEmpty: true });
-              if (t !== null) onRename(t);
-            }}>Rename</button>
-            <button className="btn" onClick={onArchive}>{row.archived ? "Unarchive" : "Archive"}</button>
+          {onContext && <button className="btn head-context" onClick={onContext}>Context</button>}
+          <div className="head-more" ref={moreRef}>
+            <button className="more" aria-label="Session settings" aria-expanded={more} aria-controls={"more-" + row.id}
+                    onClick={() => setMore((v) => !v)}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
+                   strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" />
+              </svg>
+            </button>
+            {more && (
+              <div className="head-pop" id={"more-" + row.id}>
+                <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="rest" />
+                <button className="head-pop-item" onClick={async () => {
+                  closeMore(false);
+                  // Empty is allowed: it hands the title back to the session.
+                  const t = await askText("Rename session", { initial: plainTitle(row.title), action: "Rename", allowEmpty: true });
+                  if (t !== null) onRename(t);
+                }}>Rename</button>
+                <button className="head-pop-item" onClick={() => { closeMore(true); onArchive(); }}>{row.archived ? "Unarchive" : "Archive"}</button>
+              </div>
+            )}
           </div>
         </div>
+        <RuntimeStrip row={row} lines={lines} />
       </header>
 
       <div className="scroll transcript" ref={scroller} onScroll={onScroll}>
@@ -2142,9 +2228,9 @@ export default function App() {
           onContext={() => setContext(true)}
           onAck={() => act(() => api.ack(row.id))} />
       ) : (
-        <div className="thread empty">
+        <div className={"thread" + (selected ? " empty" : "")}>
           {!selected ? (
-            <p>Open a session on the left, or press {modKey()}K to start one.</p>
+            <ControlOverview rows={rows} onOpen={openSession} />
           ) : rows.length > 0 && (
             // A link to a session this list does not hold.
             <div>

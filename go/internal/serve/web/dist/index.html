@@ -121,27 +121,44 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .thread.empty{align-items:center;justify-content:center;text-align:center;color:var(--text-3)}
 .thread.empty h1{font-size:20px;font-weight:600;color:var(--text-2);margin:0 0 8px}
 .thread.empty p{margin:0 auto 16px;max-width:46ch}
-.thread-head{flex-shrink:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px 20px;padding:8px 32px;
-             border-bottom:1px solid var(--line)}
-.head-main{display:flex;align-items:baseline;gap:14px;min-width:0;flex:1 1 320px}
+/* One fixed height on every session: title, status and the run setting on
+   row 1, the budget on row 2 starting at the same x each time. */
+.thread-head{flex-shrink:0;display:grid;grid-template-columns:auto minmax(0,1fr) auto;
+             grid-template-rows:32px 24px;grid-template-areas:"back main side" "strip strip strip";
+             align-items:center;gap:4px 16px;padding:6px 24px;border-bottom:1px solid var(--line)}
+.thread-head>.back{grid-area:back}
+.thread-head>.head-main{grid-area:main}
+.thread-head>.head-side{grid-area:side}
+.thread-head>.runtime-strip{grid-area:strip;display:flex;flex-wrap:nowrap;min-width:0}
+.thread-head .status{font:500 12px/16px var(--sans)}
+.head-trouble{display:inline-flex;align-items:center;gap:7px}
+/* A failing check next to a finished agent: the mark carries the red, the Tests chip the words. */
+.head-check{color:var(--text-2)}
+.head-main{display:flex;align-items:center;gap:14px;min-width:0}
 .status{white-space:nowrap;flex-shrink:0}
 .head-main h1{min-width:0}
 .back{display:none;align-self:center;flex-shrink:0;width:32px;height:32px;margin-inline-start:-8px;
       align-items:center;justify-content:center;background:none;border:0;border-radius:6px;
       color:var(--text-2);cursor:pointer}
 .back:hover{background:var(--raised);color:var(--text-1)}
-.head-main h1{margin:0;font-size:19px;font-weight:600;line-height:1.2;letter-spacing:-.01em;
+.head-main h1{margin:0;font-size:16px;font-weight:600;line-height:22px;letter-spacing:-.01em;
               white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:44ch}
-.head-repo{font-size:13px;color:var(--text-3)}
-.head-side{margin-left:auto;display:flex;flex-wrap:wrap;align-items:center;gap:12px;flex:0 1 auto;max-width:100%;
-           min-width:0}
+.head-repo{font-size:13px;color:var(--text-3);white-space:nowrap}
+.head-side{display:flex;align-items:center;gap:8px;min-width:0}
 .head-actions{display:flex;gap:12px}
 /* Model stays in the header because it changes mid-session; project,
-   thinking, rename and archive are rarer and live one click away. */
-.head-extra{display:none;flex-basis:100%;justify-content:flex-end;flex-wrap:wrap;gap:12px}
-.thread-head[data-more="1"] .head-extra{display:flex}
-.thread-head>.more{order:1}
-.thread-head>.head-extra{order:2}
+   rename and archive are rarer and wait in a popover under More. */
+.head-more{position:relative;display:flex}
+.head-pop{position:absolute;top:calc(100% + 8px);inset-inline-end:0;z-index:40;width:280px;padding:4px;
+          display:flex;flex-direction:column;background:var(--raised);border:1px solid var(--line-strong);border-radius:10px;
+          box-shadow:0 1px 2px rgb(0 0 0/.4),0 12px 32px rgb(0 0 0/.45)}
+.head-pop .controls{padding:4px 6px}
+.thread-head .head-pop .sel-btn{background:var(--surface);border-color:var(--line-strong)}
+.head-pop .ctl{width:100%;justify-content:space-between}
+.head-pop-item{display:flex;align-items:center;height:36px;padding:0 10px;text-align:start;font:13px var(--sans);
+               color:var(--text-2);background:none;border:0;border-radius:6px;cursor:pointer}
+.head-pop-item:hover{background:var(--sel);color:var(--text-1)}
+@media (pointer:coarse){.head-pop-item{height:44px}}
 .more{display:inline-flex;flex-shrink:0;width:32px;height:32px;align-items:center;justify-content:center;
       background:none;border:1px solid var(--line-strong);border-radius:6px;color:var(--text-2);cursor:pointer}
 .more:hover{color:var(--text-1)}
@@ -263,6 +280,30 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .rt-link{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;display:inline-flex;gap:6px;align-items:baseline}
 .rt-link:hover .rt-value{text-decoration:underline}
 .rt-stop{height:24px;padding:0 8px;font-size:12px;flex-shrink:0}
+/* A figure's detail: after a beat on hover, at once on focus or a tap. */
+.rt-tip{position:relative;border-radius:4px}
+.rt-tip-body{position:absolute;top:calc(100% + 6px);left:0;z-index:30;width:max-content;max-width:min(360px,calc(100vw - 32px));
+  padding:6px 10px;font-size:12px;line-height:16px;color:var(--text-2);background:var(--raised);
+  border:1px solid var(--line);border-radius:8px;display:none}
+/* display, not visibility: a hidden tip must not widen a phone's page. */
+.rt-tip:hover>.rt-tip-body{display:block;animation:tip-in 80ms 300ms both}
+.rt-tip:focus>.rt-tip-body{display:block;animation:none}
+@keyframes tip-in{from{opacity:0}to{opacity:1}}
+.sel-note{margin:0;padding:6px 12px;font-size:12px;color:var(--text-3);border-bottom:1px solid var(--line)}
+/* Home: what wants a person now. */
+.ov{flex-grow:1;display:flex;flex-direction:column;min-height:0}
+.ov-head{flex-shrink:0;display:flex;align-items:center;gap:16px;height:48px;padding:0 24px;border-bottom:1px solid var(--line)}
+.ov-head h1{margin:0;font-size:16px;font-weight:600}
+.ov-hint{font-size:12px;color:var(--text-3)}
+.ov-body{padding:24px;display:flex;flex-direction:column;gap:24px}
+.ov-group{display:flex;flex-direction:column}
+.ov-label{margin:0 0 4px;font:600 12px/16px var(--sans);color:var(--text-3)}
+.ov-row{display:flex;flex-direction:column;justify-content:center;gap:2px;height:56px;padding:0 12px;text-align:start;
+        background:none;border:0;border-bottom:1px solid var(--line);color:var(--text-1);font:15px var(--sans);cursor:pointer}
+.ov-row:hover{background:var(--raised)}
+.ov-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ov-why{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--text-3);min-width:0}
+.ov-none{margin:0;color:var(--text-2)}
 
 .say{display:flex;flex-direction:column;gap:8px;max-width:78ch}
 .say-who{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text-2)}
@@ -594,7 +635,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 /* A half-faded accent still reads as "press me"; an empty Send is not. */
 .btn-primary:disabled{background:var(--raised);color:var(--text-3);border-color:var(--line);opacity:1;filter:none}
 /* Fingers are not cursors: the icon buttons get a full touch target. */
-@media (pointer:coarse){.back,.thread-head>.more,.copy-btn{min-width:44px;min-height:44px}}
+@media (pointer:coarse){.back,.head-more>.more,.copy-btn{min-width:44px;min-height:44px}}
 /* On a phone the command is the part worth reading: it takes its own full
    line instead of being cut to fit beside a line count. */
 @media (max-width:720px){
@@ -689,19 +730,18 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .sidebar{width:100%;border-right:0}
   .side-collapse{display:none}
   .back{display:inline-flex}
-  .thread-head{padding:10px 12px 10px 8px;gap:10px 8px;align-items:center}
-  .head-main{flex:1 1 0;min-width:0;gap:10px;align-items:center}
-  .head-main h1{font-size:17px;flex:0 1 auto}
+  /* A phone stacks it: title, the run setting in reach, then the budget wrapping. */
+  .thread-head{padding:4px 12px 8px 8px;gap:4px 8px;grid-template-columns:auto minmax(0,1fr);
+               grid-template-rows:44px 44px auto;grid-template-areas:"back main" "side side" "strip strip"}
+  .thread-head>.runtime-strip{flex-wrap:wrap;padding:0 4px}
+  .head-main{gap:10px}
   .head-repo{display:none}
-  .thread-head>.more{width:36px;height:36px;order:0}
-  /* On a phone the header is the title and the budget; settings wait behind More. */
-  .head-side{margin-left:0;flex-basis:100%;flex-direction:row;align-items:center;gap:8px}
-  /* The budget stays in view; the run setting waits behind More with the rest. */
-  .head-side .head-actions,.head-side .controls{display:none}
-  .thread-head[data-more="1"] .head-side .head-actions,.thread-head[data-more="1"] .head-side .controls{display:flex}
+  .head-side .controls,.ctl-run{flex:1 1 0;min-width:0}
   .ctl-run .sel{flex:1 1 0}
-  .ctl-run .sel-btn{height:36px}
-  .head-extra{flex-direction:column;align-items:stretch;gap:10px}
+  /* Anchored under the whole header so it never covers the run setting. */
+  .thread-head{position:relative}
+  .head-more{position:static}
+  .head-pop{top:calc(100% + 8px);inset-inline:12px;width:auto;max-width:366px;margin-inline-start:auto}
   /* Under 16px iOS zooms the page on focus. */
   .field,.sel-btn,.sel-search,.composer textarea{font-size:16px}
   .controls{flex-direction:column;gap:8px}
