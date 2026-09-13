@@ -672,9 +672,11 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .md-table{position:relative;margin:0 0 12px}
 .md-table-scroll{overflow-x:auto;border-radius:4px;min-width:0;max-width:100%}
 .md-table-scroll:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.md-table::after{content:"";position:absolute;inset-block:0;right:0;width:40px;pointer-events:none;
+.md-table::after{content:"";position:absolute;inset-block-end:0;height:var(--tbl-h,100%);right:0;width:24px;pointer-events:none;
   background:linear-gradient(to right,transparent,var(--bg))}
-.md-table[data-end]::after{display:none}
+.md-table:not([data-over])::after,.md-table[data-end]::after{display:none}
+.md-table[data-over]::before{content:attr(data-over);display:block;font-size:12px;line-height:16px;color:var(--text-3);margin-bottom:4px}
+.md-table[data-over]{--tbl-h:calc(100% - 20px)}
 @media (max-width:720px){.md-table table{min-width:640px}.md-table th,.md-table td{padding:8px;font-size:13px;line-height:18px}
   .md-table th:first-child,.md-table td:first-child{position:sticky;left:0;width:112px;min-width:112px;background:var(--bg);z-index:1}
   .md-table code{white-space:nowrap}}
@@ -767,6 +769,13 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .row-wrap:not(:has(.row-twist))>.row-ack{right:8px}
 .row-wrap:hover>.row-ack,.row-wrap:focus-within>.row-ack{opacity:1;pointer-events:auto}
 @media (hover:none){.row-ack{opacity:1;pointer-events:auto;height:32px}}
+/* On touch the row's actions are real 44px buttons in their own columns, not overlays. */
+@media (max-width:720px),(pointer:coarse){
+  .row-wrap{display:flex;align-items:center}
+  .row-wrap>.row{flex:1 1 auto;min-width:0}
+  .row-has-log{padding-inline-end:10px}
+  .row-wrap>.row-ack,.row-wrap>.row-twist{position:static;transform:none;flex:0 0 auto;opacity:1;pointer-events:auto;min-width:44px;height:44px}
+  .row-wrap>.row-twist{width:44px}}
 .row-jobs{flex-shrink:0;margin-inline-start:auto;font-size:12px;color:var(--accent)}
 .btn{font:13px var(--sans);color:var(--text-2);background:none;border:1px solid var(--line-strong);
      border-radius:6px;padding:6px 12px;cursor:pointer}

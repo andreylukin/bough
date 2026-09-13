@@ -2180,6 +2180,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   const running = row.status === "running";
 
   const [multi, setMulti] = useState(false);
+  const [narrow, setNarrow] = useState(false);
   // The textarea's width in the one-row layout, remembered for collapsing back.
   const composerRow = useRef(0);
   // A long paste should be visible, not a two-row porthole you have to
@@ -2214,9 +2215,19 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   useEffect(() => {
     const el = composer.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => { if (!el.parentElement?.classList.contains("composer-multi")) composerRow.current = el.clientWidth; });
-    ro.observe(el);
-    return () => ro.disconnect();
+    const box = el.parentElement!;
+    // Width left for typing beside the buttons, measured: under 160px the buttons take their own row.
+    const fit = () => {
+      if (!box.classList.contains("composer-multi")) composerRow.current = el.clientWidth;
+      const actions = box.querySelector<HTMLElement>(".composer-actions");
+      setNarrow(box.clientWidth - (actions?.offsetWidth ?? 0) - 30 < 160);
+    };
+    const ro = new ResizeObserver(fit);
+    ro.observe(el); ro.observe(box);
+    const actions = box.querySelector(".composer-actions");
+    if (actions) ro.observe(actions);
+    window.visualViewport?.addEventListener("resize", fit);
+    return () => { ro.disconnect(); window.visualViewport?.removeEventListener("resize", fit); };
   }, []);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [activeOpt, setActiveOpt] = useState<string | undefined>();
@@ -2540,7 +2551,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             </span>
           </div>
         ))}
-        <div className={"composer" + (multi ? " composer-multi" : "")}>
+        <div className={"composer" + (multi || narrow ? " composer-multi" : "")}>
           <Mentions trigger={trigger} session={row.id}
             onPick={(t, value) => {
               // Replace the token being typed, and leave a trailing

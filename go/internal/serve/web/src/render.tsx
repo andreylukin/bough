@@ -19,7 +19,14 @@ export function Markdown({ text }: { text: string }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const boxes = [...(ref.current?.querySelectorAll<HTMLElement>(".md-table-scroll") ?? [])];
-    const mark = (b: HTMLElement) => b.parentElement!.toggleAttribute("data-end", b.scrollLeft + b.clientWidth >= b.scrollWidth - 1);
+    const mark = (b: HTMLElement) => {
+      const p = b.parentElement!;
+      p.toggleAttribute("data-end", b.scrollLeft + b.clientWidth >= b.scrollWidth - 1);
+      // Only a table that overflows says how many columns it has and that it scrolls.
+      const over = b.scrollWidth > b.clientWidth + 1;
+      if (over) p.setAttribute("data-over", `${b.querySelector("tr")?.children.length ?? 0} columns · swipe →`);
+      else p.removeAttribute("data-over");
+    };
     const on = (e: Event) => mark(e.currentTarget as HTMLElement);
     // A resize or a streamed row changes the overflow, not only a scroll.
     const ro = new ResizeObserver(() => boxes.forEach(mark));
