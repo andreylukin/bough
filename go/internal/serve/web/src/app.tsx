@@ -129,9 +129,11 @@ function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived, onTog
 /**
  * Copy what a block holds.
  *
- * It sits OUTSIDE the <details>, below it, because a <details> hides
- * every child but its summary when closed — and the whole point is to
- * copy a command or its output without opening the block first.
+ * An icon, not a word. Set as text it read as one more piece of
+ * metadata on a row that already ends in "1 line" — two grey words in
+ * a row, neither of them obviously a control. It follows the status
+ * glyphs' idiom: a 24-box stroked in currentColor, 1.5px beside
+ * regular text.
  */
 function CopyButton({ text, what }: { text: string; what: string }) {
   const [done, setDone] = useState(false);
@@ -164,16 +166,31 @@ function CopyButton({ text, what }: { text: string; what: string }) {
   };
 
   return (
-    <button className="copy-btn" onClick={(e) => {
-      // It sits inside the <summary>, so a click would toggle the block
-      // as well as copy it. Stop both: this is its own control.
-      e.preventDefault();
-      e.stopPropagation();
-      copy();
-    }} aria-label={`Copy ${what}`}>
-        {/* The word changes, not just a colour: a state carried by
-            colour alone says nothing to half the people reading it. */}
-      {done ? "Copied" : "Copy"}
+    <button
+      className={"copy-btn" + (done ? " copy-done" : "")}
+      title={done ? "Copied" : `Copy ${what}`}
+      aria-label={done ? "Copied" : `Copy ${what}`}
+      onClick={(e) => {
+        // It sits inside the <summary>, so a click would toggle the
+        // block as well as copy it. Stop both: this is its own control.
+        e.preventDefault();
+        e.stopPropagation();
+        copy();
+      }}
+    >
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+           stroke="currentColor" strokeWidth="1.5"
+           strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        {done
+          ? <path d="M5 12.5l4.5 4.5L19 7.5" />
+          : <>
+              <rect x="9" y="9" width="11" height="11" rx="2" />
+              <path d="M5 15V6a2 2 0 0 1 2-2h9" />
+            </>}
+      </svg>
+      {/* The change of shape is the cue; this is for a reader who
+          cannot see it. */}
+      <span className="visually-hidden" role="status">{done ? "Copied" : ""}</span>
     </button>
   );
 }
