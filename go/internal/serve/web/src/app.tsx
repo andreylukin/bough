@@ -29,8 +29,6 @@ function bucket(iso: string): string {
 }
 const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-/** A phone-width window, where the list and a thread take turns. */
-const narrow = () => typeof window !== "undefined" && window.matchMedia("(max-width: 720px)").matches;
 
 export function Sprout({ size = 18 }: { size?: number }) {
   return (
@@ -61,16 +59,59 @@ function modKey(): string {
   return typeof navigator !== "undefined" && /Mac|iP/.test(navigator.platform) ? "\u2318" : "Ctrl+";
 }
 
-export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived, onToggleArchived, view, onView, wikiFlags = 0, onNew, onAck }: {
-  rows: Row[]; selected: string | null; onSelect: (id: string) => void;
-  query: string; onQuery: (q: string) => void; showArchived: boolean; onToggleArchived: () => void;
+/** The bar above everything: where you are, where else you can go, search, and New. */
+export function TopBar({ query, onQuery, view, onView, wikiFlags = 0, onNew }: {
+  query: string; onQuery: (q: string) => void;
   view: View; onView: (v: View) => void;
   /** Claims the wiki's review is waiting on; shown beside the nav item. */
   wikiFlags?: number;
   /** Starting work is the other half of a control room; it opens the palette's Start group. */
   onNew?: () => void;
+}) {
+  const item = (v: View, label: string, extra?: React.ReactNode) => (
+    <button className={"nav-item" + (view === v ? " nav-on" : "")}
+            aria-current={view === v ? "page" : undefined}
+            onClick={() => onView(v)}>{label}{extra}</button>
+  );
+  return (
+    <header className="topbar">
+      <div className="brand"><Sprout /><span>bough</span></div>
+      <nav className="nav" aria-label="Views">
+        {item("sessions", "Sessions")}
+        {item("projects", "Projects")}
+        {item("hooks", "Hooks")}
+        {item("wiki", "Wiki", wikiFlags > 0 && (
+          <span className="nav-count" title={`${wikiFlags} claims to review`}>
+            {wikiFlags}<span className="visually-hidden"> claims to review</span>
+          </span>
+        ))}
+      </nav>
+      <div className="session-search">
+        {/* The placeholder names the field; a visible label above it said it twice. */}
+        <label htmlFor="q" className="visually-hidden">Search sessions</label>
+        <input id="q" className="field" value={query} placeholder={`Search sessions · ${modKey()}K for commands`}
+               onChange={(e) => onQuery(e.target.value)}
+               onKeyDown={(e) => {
+                 // Down from the search lands on the first match.
+                 if (e.key !== "ArrowDown") return;
+                 const first = document.querySelector<HTMLElement>(".sidebar button.row");
+                 if (first && first.offsetParent) { e.preventDefault(); first.focus(); }
+               }} />
+      </div>
+      {onNew && <button className="btn brand-new" onClick={onNew} title={`New conversation (${modKey()}K)`}>New</button>}
+    </header>
+  );
+}
+
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+export function Sidebar({ rows, selected, onSelect, query, showArchived, onToggleArchived, onAck, active = true }: {
+  rows: Row[]; selected: string | null; onSelect: (id: string) => void;
+  query: string; showArchived: boolean; onToggleArchived: () => void;
   /** Mark a troubled session seen without opening it. */
   onAck?: (id: string) => void;
+  /** Whether the list is on screen; coming back to it puts focus on the row you left. */
+  active?: boolean;
 }) {
   // A control room lists what needs you first, then what is moving;
   // only settled sessions fall back to the day they last changed.
@@ -86,16 +127,7 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
     const rank = (k: string) => (k === "Needs you" ? 0 : k === "Running" ? 1 : 2);
     return [...out.entries()].sort((a, b) => rank(a[0]) - rank(b[0]));
   }, [rows]);
-  // Opening a session from a link or the palette can pick a row far down
-  // the list; bring it into view once, not on every live update.
-  useEffect(() => {
-    document.querySelector(".sidebar .row-on")?.scrollIntoView({ block: "nearest" });
-  }, [selected]);
 
-  // What a session is about, on hover or focus: the title names it, the
-  // summary says where it stands. One card for the whole list, fixed to
-  // the viewport beside the row, because the list scrolls and would clip
-  // anything hung off a row. It waits a beat so skimming does not flash it.
   // Settled history folds by day, and stays folded across reloads. What
   // needs you and what is running never fold: they are the point of the list.
   const [folded, setFolded] = useState<Set<string>>(() => {
@@ -107,64 +139,75 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
     try { localStorage.setItem("bough:folded", JSON.stringify([...next])); } catch { /* storage off */ }
     return next;
   });
+
+  // What a session is about, on hover or focus: the title names it, the
+  // summary says where it stands. One card for the whole list, fixed to
+  // the viewport under the title, because the list scrolls and would clip
+  // anything hung off a row. It waits a beat so skimming does not flash it.
   const [card, setCard] = useState<{ id: string; text: string; top: number; left: number } | null>(null);
   const peekTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const quiet = useRef(false);
   const peek = (r: Row, el: HTMLElement) => {
     clearTimeout(peekTimer.current);
-    if (!r.summary) { setCard(null); return; }
-    const rect = el.getBoundingClientRect();
+    if (!r.summary || quiet.current) { setCard(null); return; }
+    const rect = (el.querySelector(".row-title") ?? el).getBoundingClientRect();
     peekTimer.current = setTimeout(() => setCard({
       id: r.id, text: r.summary!,
-      top: Math.min(rect.top, window.innerHeight - 160), left: rect.right + 8,
+      top: Math.min(rect.bottom + 6, window.innerHeight - 160),
+      left: Math.max(12, Math.min(rect.left, window.innerWidth - 344)),
     }), 450);
   };
   const unpeek = () => { clearTimeout(peekTimer.current); setCard(null); };
   useEffect(() => () => clearTimeout(peekTimer.current), []);
+
+  // Back on the list, the row you left is where you are: in view, and
+  // focused so the arrows carry on from it. Not on every live update.
+  useEffect(() => {
+    if (!active) { unpeek(); return; }
+    const el = document.querySelector<HTMLElement>(".sidebar .row-on");
+    if (!el) return;
+    el.scrollIntoView({ block: "nearest" });
+    quiet.current = true;
+    el.focus({ preventScroll: true });
+    quiet.current = false;
+  }, [active, selected]);
+
+  // Up and down walk the rows and the day headings; Enter opens or folds.
+  const walk = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    const items = [...e.currentTarget.querySelectorAll<HTMLElement>("button.row, button.group-fold")];
+    if (!items.length) return;
+    const at = document.activeElement as HTMLElement | null;
+    const cur = at?.closest(".row-wrap")?.querySelector<HTMLElement>("button.row") ?? at;
+    const i = cur ? items.indexOf(cur) : -1;
+    e.preventDefault();
+    const next = i < 0 ? (e.key === "ArrowDown" ? 0 : items.length - 1)
+      : Math.max(0, Math.min(items.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)));
+    items[next].focus();
+    items[next].scrollIntoView({ block: "nearest" });
+  };
 
   return (
     <div className="sidebar">
       {card && (
         <div id="row-card" className="row-card" role="tooltip" style={{ top: card.top, left: card.left }}>{card.text}</div>
       )}
-      <div className="brand"><Sprout /><span>bough</span>
-        {onNew && <button className="btn brand-new" onClick={onNew} title={`New conversation (${modKey()}K)`}>New</button>}
-      </div>
-      <nav className="nav" aria-label="Views">
-        <button className={"nav-item" + (view === "sessions" ? " nav-on" : "")}
-                aria-current={view === "sessions" ? "page" : undefined}
-                onClick={() => onView("sessions")}>Sessions</button>
-        <button className={"nav-item" + (view === "projects" ? " nav-on" : "")}
-                aria-current={view === "projects" ? "page" : undefined}
-                onClick={() => onView("projects")}>Projects</button>
-        <button className={"nav-item" + (view === "hooks" ? " nav-on" : "")}
-                aria-current={view === "hooks" ? "page" : undefined}
-                onClick={() => onView("hooks")}>Hooks</button>
-        <button className={"nav-item" + (view === "wiki" ? " nav-on" : "")}
-                aria-current={view === "wiki" ? "page" : undefined}
-                onClick={() => onView("wiki")}>
-          Wiki
-          {wikiFlags > 0 && (
-            <span className="nav-count" title={`${wikiFlags} claims to review`}>
-              {wikiFlags}<span className="visually-hidden"> claims to review</span>
-            </span>
-          )}
-        </button>
-      </nav>
-      <div className="session-search">
-        {/* The placeholder names the field; a visible label above it said it twice. */}
-        <label htmlFor="q" className="visually-hidden">Search sessions</label>
-        <input id="q" className="field" value={query} placeholder={`Search sessions · ${modKey()}K for commands`}
-               onChange={(e) => onQuery(e.target.value)} />
-      </div>
-      <div className="scroll" onScroll={unpeek} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div className="scroll" onScroll={unpeek} onKeyDown={walk}>
+        {groups.length > 0 && (
+          <div className="table-head" aria-hidden="true">
+            <span>Status</span><span>Session</span><span>Where</span><span>Activity</span><span className="table-when">Updated</span>
+          </div>
+        )}
         {groups.length === 0 && (
-          <p style={{ padding: "0 20px", color: "var(--text-3)", fontSize: 13 }}>
+          <p className="list-none">
             {query ? `No sessions match “${query}”.` : "No sessions yet."}
           </p>
         )}
-        {groups.map(([name, list]) => (
-          <div key={name} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {name === "Needs you" || name === "Running" ? (
+        {groups.map(([name, list]) => {
+          const act = name === "Needs you" || name === "Running";
+          return (
+          <div key={name} className="group">
+            {act ? (
               <div className="group-head">{name}<span className="num group-count">{list.length}</span></div>
             ) : (
               // A search shows every match, folded group or not.
@@ -173,7 +216,9 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
                 {name}<span className="num group-count">{list.length}</span>
               </button>
             )}
-            {(query || !folded.has(name) || name === "Needs you" || name === "Running") && list.map((r) => (
+            {(query || !folded.has(name) || act) && list.map((r) => {
+              const hot = r.cache ? Date.parse(r.cache.at) + r.cache.ttl * 1000 > Date.now() : undefined;
+              return (
               <div key={r.id} className="row-wrap">
               {r.trouble && onAck && (
                 // A sibling of the row, not inside it: a button in a button
@@ -184,51 +229,52 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
                       onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
                       onFocus={(e) => peek(r, e.currentTarget)} onBlur={unpeek}
                       aria-describedby={card?.id === r.id ? "row-card" : undefined}
-                      className={"row" + (name === "Needs you" || name === "Running" ? " row-act" : " row-settled") + (r.id === selected ? " row-on" : "")}
+                      className={"row" + (act ? " row-act" : " row-settled") + (r.id === selected ? " row-on" : "")}
                       aria-current={r.id === selected ? "true" : undefined}>
-                <span className="row-line">
-                  <span className="row-title">{plainTitle(r.title) || untitled(r.id)}</span>
-                  {/* A session that needs you or is moving is measured in how
-                      long, not the wall-clock time it last changed. */}
-                  <span className="num" title={new Date(r.modified).toLocaleString()}>
-                    {r.status === "needs-you" ? `Waiting ${ago(r.modified)}`
-                      : r.status === "running" ? `Running ${ago(r.modified)}`
-                      : clock(r.modified)}
-                  </span>
-                </span>
-                <span className="row-meta">
-                  {/* The time beside the title already says "Waiting" or "Running". */}
-                  {r.trouble === "tests failed" && r.status === "done" ? (
+                <span className="row-status">
+                  {r.trouble ? (
                     // "Done" in a queue of trouble says nothing; the reason does.
-                    <span className="row-trouble">Tests failed</span>
+                    <><StatusMark status="error" bare /><span className="row-trouble">{capital(r.trouble)}</span></>
+                  ) : r.ask ? (
+                    // What the session is waiting on: the row should say what
+                    // answering it means. "Waiting" is in the time column.
+                    <><StatusMark status="needs-you" bare /><span className="row-ask" title={r.ask.text}>{plainTitle(r.ask.text)}</span></>
                   ) : (
                     <StatusMark status={r.status} bare={r.status === "needs-you" || r.status === "running"} />
                   )}
+                </span>
+                <span className="row-title">{plainTitle(r.title) || untitled(r.id)}</span>
+                <span className="mono row-where" title={r.cwd}>
+                  {r.repo || r.branch ? (
+                    <>{r.repo?.split("/").pop()}{r.branch && <span className="row-sep">/</span>}{r.branch}</>
+                  ) : r.cwd && (
+                    // With no repo, the folder it ran in tells two sessions apart.
+                    r.cwd.split("/").filter(Boolean).pop() || "/"
+                  )}
+                </span>
+                <span className="num row-activity">
                   {r.jobs && r.jobs.length > 0 && (
-                    <span className="num row-jobs" title={r.jobs.map((j) => j.cmd).join("\n")}>
+                    <span className="row-jobs" title={r.jobs.map((j) => j.cmd).join("\n")}>
                       {r.jobs.length} {r.jobs.length === 1 ? "job" : "jobs"}
                     </span>
                   )}
-                  {r.ask ? (
-                    // What the session is waiting on, not an id: the row
-                    // should say what answering it means.
-                    <span className="row-ask" title={r.ask.text}>{plainTitle(r.ask.text)}</span>
-                  ) : r.repo || r.branch ? (
-                    <span className="mono">
-                      {r.repo?.split("/").pop()}
-                      {r.branch && <span style={{ color: "var(--line-strong)" }}>/</span>}{r.branch}
-                    </span>
-                  ) : r.cwd && (
-                    // With no repo, the folder it ran in tells two sessions
-                    // apart and says something; an id tail only did the first.
-                    <span className="mono" title={r.cwd}>{r.cwd.split("/").filter(Boolean).pop() || "/"}</span>
-                  )}
+                  {/* A cold cache only matters for the next turn, so settled rows say only when it is hot. */}
+                  {hot ? <span className="row-hot">cache hot</span> : hot === false && act && <span>cache cold</span>}
+                </span>
+                {/* A session that needs you or is moving is measured in how
+                    long, not the wall-clock time it last changed. */}
+                <span className="num row-when" title={new Date(r.modified).toLocaleString()}>
+                  {r.status === "needs-you" ? `Waiting ${ago(r.modified)}`
+                    : r.status === "running" ? `Running ${ago(r.modified)}`
+                    : clock(r.modified)}
                 </span>
               </button>
               </div>
-            ))}
+              );
+            })}
           </div>
-        ))}
+          );
+        })}
       </div>
       {/* Showing archived lives in the palette; once shown, the way back stays in view. */}
       {showArchived && (
@@ -1068,10 +1114,11 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
 
 /* ---------------- thread ---------------- */
 
-export function Back({ onBack }: { onBack?: () => void }) {
+export function Back({ onBack, always }: { onBack?: () => void; always?: boolean }) {
   if (!onBack) return null;
   return (
-    <button className="back" onClick={onBack} aria-label="Back to sessions">
+    <button className={"back" + (always ? " back-always" : "")} onClick={onBack} aria-label="Back to sessions"
+            title={always ? "Sessions (Esc)" : undefined}>
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
     </button>
@@ -1184,7 +1231,7 @@ export function Thread({ row, lines, loading = false, stream = [], projects, onA
   return (
     <div className="thread">
       <header className="thread-head" data-more={more ? "1" : "0"}>
-        <Back onBack={onBack} />
+        <Back onBack={onBack} always />
         <div className="head-main">
           <h1 title={row.title}>{plainTitle(row.title) || untitled(row.id)}</h1>
           {(row.repo || row.branch) && (
@@ -1578,6 +1625,25 @@ export default function App() {
     if (window.location.hash !== "#/") window.history.pushState(null, "", "#/");
   }, []);
 
+  // The session last opened, so the list comes back with your place in it.
+  const [lastId, setLastId] = useState<string | null>(null);
+  useEffect(() => { if (selected) setLastId(selected); }, [selected]);
+
+  // Esc leaves a session for the list, unless something nearer owns it:
+  // the composer or a field, a picker, a dialog, the palette.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || palette || view !== "sessions" || !selected) return;
+      const a = document.activeElement as HTMLElement | null;
+      if (a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT" || a.isContentEditable)) return;
+      if (document.querySelector(".dlg-scrim, .sel-pop, .skills-pop, .mention")) return;
+      e.preventDefault();
+      if (context) setContext(false); else goList();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [palette, view, selected, context, goList]);
+
   const openSession = useCallback((id: string) => {
     setSelected(id); setContext(false); setView("sessions"); setPane("thread");
     // A push, so Back returns to where you were rather than leaving.
@@ -1625,8 +1691,7 @@ export default function App() {
         const n = await askText("New project", { placeholder: "What is this work?", action: "Create" });
         if (n) act(() => api.newProject(n));
       } },
-    { id: "go:sessions", group: "Go to", label: "Sessions",
-      run: () => { setView("sessions"); setContext(false); setPane(narrow() ? "list" : "thread"); } },
+    { id: "go:sessions", group: "Go to", label: "Sessions", run: () => goList() },
     { id: "go:projects", group: "Go to", label: "Projects",
       run: () => { setView("projects"); setPane("thread"); } },
     { id: "go:hooks", group: "Go to", label: "Hooks",
@@ -1666,12 +1731,14 @@ export default function App() {
                commands={commands} onOpenSession={openSession} initialQuery={palQuery}
                onOpenWikiPage={(path) => goWiki({ at: "page", path })}
                onStart={home ? (text) => start(home, text) : undefined} />
-      <Sidebar rows={visible} selected={selected}
-               onSelect={openSession}
-               query={query} onQuery={setQuery} view={view} wikiFlags={wikiFlags}
-               onView={(v) => { if (v === "wiki") goWiki({ at: "index" }); else { setView(v); setPane(v === "sessions" && narrow() ? "list" : "thread"); } }}
+      <TopBar query={query} view={view} wikiFlags={wikiFlags}
+              onQuery={(q) => { setQuery(q); if (view !== "sessions" || selected) goList(); }}
+              onView={(v) => { if (v === "wiki") goWiki({ at: "index" }); else if (v === "sessions") goList(); else { setView(v); setPane("thread"); } }}
+              onNew={() => setPalette(true)} />
+      <div className="app-body">
+      <Sidebar rows={visible} selected={selected ?? lastId} active={pane === "list"}
+               onSelect={openSession} query={query}
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)}
-               onNew={() => setPalette(true)}
                onAck={(id) => act(() => api.ack(id))} />
       {view === "wiki" ? (
         <WikiPage route={wikiRoute} onRoute={goWiki} onBack={goList} onOpenSession={openSession}
@@ -1702,16 +1769,17 @@ export default function App() {
           onContext={() => setContext(true)}
           onAck={() => act(() => api.ack(row.id))} />
       ) : (
+        // A link to a session this list does not hold (yet, while it loads).
         <div className="thread empty">
-          <div>
-            <h1>Choose a session</h1>
-            <p>Pick one on the left to watch it, steer it, or answer what it is waiting on.</p>
-            {visible.length > 0 && (
-              <button className="btn" onClick={() => openSession(visible[0].id)}>Open most recent</button>
-            )}
-          </div>
+          {rows.length > 0 && (
+            <div>
+              <h1>Session not found</h1>
+              <button className="btn" onClick={goList}>All sessions</button>
+            </div>
+          )}
         </div>
       )}
+      </div>
       <DialogHost />
       {err ? (
         <button className="toast" role="alert" onClick={() => setErr(null)} title="Dismiss">{err}</button>

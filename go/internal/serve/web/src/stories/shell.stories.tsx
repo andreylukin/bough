@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Sidebar, Thread, type View } from "../app";
+import { Sidebar, Thread, TopBar, type View } from "../app";
 import { ProjectsView } from "../projects";
 import { projects, rows, turn } from "./fixtures";
 
@@ -17,10 +17,12 @@ function Shell({ selected: initial = "s2", pane: initialPane = "thread" }: { sel
   const row = rows.find((r) => r.id === selected) ?? null;
   return (
     <div className="app" data-pane={pane}>
+      <TopBar query={query} onQuery={setQuery} view={view}
+              onView={(v) => { setView(v); if (v === "sessions") { setSelected(null); setPane("list"); } else setPane("thread"); }} />
+      <div className="app-body">
       <Sidebar rows={rows.filter((r) => archived || !r.archived)} selected={selected}
                onSelect={(id) => { setSelected(id); setView("sessions"); setPane("thread"); }}
-               query={query} onQuery={setQuery} view={view} onView={(v) => { setView(v); setPane("thread"); }}
-               showArchived={archived} onToggleArchived={() => setArchived((v) => !v)} />
+               query={query} showArchived={archived} onToggleArchived={() => setArchived((v) => !v)} />
       {view === "projects" ? (
         <ProjectsView projects={projects} rows={rows} onOpen={(id) => { setSelected(id); setView("sessions"); }} onBack={() => setPane("list")}
                       onAssign={noop} onCreate={noop} onRename={noop} onDelete={noop} />
@@ -34,6 +36,7 @@ function Shell({ selected: initial = "s2", pane: initialPane = "thread" }: { sel
           <p>Pick one on the left to watch it, steer it, or answer what it is waiting on.</p>
         </div></div>
       )}
+      </div>
     </div>
   );
 }
@@ -44,6 +47,6 @@ type S = StoryObj<typeof Shell>;
 
 export const WaitingForYou: S = { args: { selected: "s2" } };
 export const Running: S = { args: { selected: "s1" } };
-export const NothingOpen: S = { args: { selected: null } };
+export const NothingOpen: S = { args: { selected: null, pane: "list" } };
 export const PhoneList: S = { args: { selected: "s2", pane: "list" }, globals: { viewport: { value: "mobile1" } } };
 export const PhoneThread: S = { args: { selected: "s2", pane: "thread" }, globals: { viewport: { value: "mobile1" } } };

@@ -21,23 +21,44 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .mono{font-family:var(--mono)}
 ::selection{background:color-mix(in srgb,var(--accent) 30%,var(--surface));color:var(--text-1)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
-.app{display:flex;height:100%}
+.app{display:flex;flex-direction:column;height:100%}
+.app-body{flex:1 1 0%;min-height:0;display:flex;position:relative}
 .scroll{overflow-y:auto;min-height:0}
 
-/* sidebar */
-.sidebar{width:304px;flex-shrink:0;border-right:1px solid var(--line);background:var(--surface);
-         display:flex;flex-direction:column}
-.sidebar .scroll{flex:1 1 0%;min-height:0;padding-bottom:16px;position:relative}
+/* The top bar: brand, views, search, New — in reach whether the table or a thread is showing. */
+.topbar{flex-shrink:0;display:flex;align-items:center;gap:8px 20px;height:48px;padding:0 16px;
+        border-bottom:1px solid var(--line);background:var(--surface)}
+.topbar .session-search{margin-inline-start:auto;width:min(340px,30vw)}
+.topbar .field{padding-block:6px}
+.topbar .nav{padding:0}
+
+/* The session list. One pane at a time: the table, or the thread it opened. */
+.sidebar{flex:1 1 0%;min-width:0;background:var(--bg);display:flex;flex-direction:column}
+.app[data-pane="list"] .thread{display:none}
+.app[data-pane="thread"] .sidebar{display:none}
+.sidebar .scroll{flex:1 1 0%;min-height:0;padding-bottom:16px;position:relative;display:flex;flex-direction:column;gap:10px}
+.group{display:flex;flex-direction:column}
+.list-none{padding:0 16px;color:var(--text-3);font-size:13px}
+/* Columns, shared by the head and every row so the eye runs down them. */
+.table-head,.row{display:grid;grid-template-columns:minmax(9rem,17rem) minmax(12rem,1fr) minmax(8rem,15rem) 8rem 6.5rem;
+                 column-gap:20px;align-items:center}
+.table-head{position:sticky;top:0;z-index:3;padding:8px 16px 6px 18px;background:var(--bg);border-bottom:1px solid var(--line);
+            font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text-3)}
+.table-when,.row-when{text-align:end}
+.row-status{display:flex;align-items:center;gap:7px;min-width:0;font-size:12px}
+.row-where{min-width:0;font-size:12px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-sep{color:var(--line-strong)}
+.row-activity{display:flex;gap:10px;font-size:12px;color:var(--text-3);white-space:nowrap;overflow:hidden}
+.row-hot{color:var(--accent)}
+.row-when{font-size:12px;color:var(--text-3);white-space:nowrap}
 /* .visually-hidden is absolute: without a positioned ancestor each one sat at its
    place deep in the transcript and stretched the document past the viewport. */
 .transcript{position:relative}
 .transcript-state{margin:auto 0;text-align:center}
 /* The sidebar's first screen is for sessions: a 44px brand row, one row
    of view tabs, the search, then the queue. */
-.brand{display:flex;align-items:center;gap:10px;height:44px;padding:0 16px;font-size:15px;font-weight:600;
-       letter-spacing:-.01em}
-.session-search{padding:0 16px 12px;flex-shrink:0}
-/* Only the session list gives up height; the brand, tabs and search keep theirs. */
+.brand{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:600;letter-spacing:-.01em}
+.session-search{flex-shrink:0}
 .brand,.nav,.sidebar-foot{flex-shrink:0}
 .row-ask{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2)}
 .group-count{margin-inline-start:6px;color:var(--text-3);font-weight:400}
@@ -52,21 +73,17 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .group-fold:hover{color:var(--text-2)}
 @media (pointer:coarse){.group-fold{min-height:44px}}
 @media (prefers-reduced-motion:reduce){.group-fold::before{transition:none}}
-.row{display:flex;flex-direction:column;gap:2px;width:100%;text-align:start;padding:7px 16px;
+.row{width:100%;min-height:44px;text-align:start;padding:4px 16px;
      background:none;border:0;border-left:2px solid transparent;color:inherit;font:inherit;cursor:pointer}
-.row-line{display:flex;align-items:center;gap:8px;min-width:0}
-.row-line .num{margin-left:auto;font-size:12px;color:var(--text-3);flex-shrink:0}
-.row-meta{display:flex;align-items:center;gap:8px;min-width:0;font-size:12px;color:var(--text-3)}
-.row-meta .mono{flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row-meta .mono::before{content:"·";margin-inline-end:8px;color:var(--line-strong)}
 .row:hover{background:var(--raised)}
+.row:focus-visible{outline-offset:-2px;border-radius:0}
 .row-on{background:var(--sel);border-left-color:var(--accent)}
 .row-title{font-size:14px;font-weight:500;color:var(--text-2);white-space:nowrap;overflow:hidden;
            text-overflow:ellipsis;min-width:0}
 .row-on .row-title{color:var(--text-1)}
 .sidebar-foot{border-top:1px solid var(--line);padding:12px 20px}
 .head-ack{height:26px;padding:0 10px;font-size:12px;flex-shrink:0}
-.brand-new{margin-inline-start:auto;height:28px;padding:0 10px;font-size:12px}
+.brand-new{height:30px;padding:0 12px;font-size:12px;flex-shrink:0}
 .link{background:none;border:0;padding:0;color:var(--text-3);font:12px var(--sans);cursor:pointer}
 .link:hover{color:var(--text-1)}
 
@@ -84,6 +101,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
       align-items:center;justify-content:center;background:none;border:0;border-radius:6px;
       color:var(--text-2);cursor:pointer}
 .back:hover{background:var(--raised);color:var(--text-1)}
+.back-always{display:inline-flex}
 .head-main h1{margin:0;font-size:19px;font-weight:600;line-height:1.2;letter-spacing:-.01em;
               white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:44ch}
 .head-repo{font-size:13px;color:var(--text-3)}
@@ -495,8 +513,8 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 @media (hover:none){.row-card{display:none}}
 .row-wrap{position:relative}
 /* Settled history is scanned, not acted on: it sits tighter than what needs you. */
-.row-settled{padding-block:5px;gap:0}
-.sidebar .scroll .row-wrap+.row-wrap{margin-top:0}
+.row-settled{min-height:36px;padding-block:2px}
+.row-settled .row-title{font-weight:400}
 .row-ack{position:absolute;right:12px;top:50%;transform:translateY(-50%);z-index:2;height:24px;padding:0 8px;font-size:12px;
   opacity:0;pointer-events:none;background:var(--raised)}
 .row-wrap:hover>.row-ack,.row-wrap:focus-within>.row-ack{opacity:1;pointer-events:auto}
@@ -593,7 +611,6 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .skills-empty{margin:0;padding:14px 12px;font-size:13px;color:var(--text-3);line-height:1.5}
 /* Middling windows: the sidebar gives up width before the thread does. */
 @media (max-width:1100px){
-  .sidebar{width:256px}
   .transcript,.thread-head,.proj-body{padding-inline:24px}
   .composer-wrap{padding-inline:24px}
 }
@@ -601,9 +618,20 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
    sidebar is not a drawer over the thread — nothing here is glanceable
    enough to justify hiding the list behind a hamburger. */
 @media (max-width:720px){
-  .app[data-pane="list"] .thread{display:none}
-  .app[data-pane="thread"] .sidebar{display:none}
-  .sidebar{width:100%;border-right:0}
+  /* On a phone the bar belongs to the list; a thread has its own header and back. */
+  .app[data-pane="thread"] .topbar{display:none}
+  .topbar{flex-wrap:wrap;height:auto;padding:8px 16px 12px;gap:8px}
+  .topbar .brand{flex:1 1 auto;height:36px}
+  .topbar .brand-new{order:1}
+  .topbar .nav{order:2;flex-basis:100%;margin-inline:-10px}
+  .topbar .session-search{order:3;flex-basis:100%;width:100%;margin:0}
+  .sidebar{background:var(--surface)}
+  .table-head{display:none}
+  /* Two lines: the title and when; then the state, where, and what is running. */
+  .row{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"title title when" "status where activity";
+       column-gap:10px;row-gap:2px;padding:7px 16px}
+  .row-title{grid-area:title}.row-when{grid-area:when}.row-status{grid-area:status;min-width:0;max-width:60vw}
+  .row-where{grid-area:where}.row-activity{grid-area:activity}
   .back{display:inline-flex}
   .thread-head{padding:10px 12px 10px 8px;gap:10px 8px;align-items:center}
   .head-main{flex:1 1 0;min-width:0;gap:10px;align-items:center}
