@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Sidebar, TopBar, type View } from "../app";
+import { Sidebar, type View } from "../app";
 import { rows } from "./fixtures";
 import type { Row } from "../types";
 
@@ -12,12 +12,10 @@ function Live({ rows: list, selected: initial = "s1", showArchived = false }: { 
   const q = query.trim().toLowerCase();
   const visible = q ? list.filter((r) => [r.title, r.repo, r.branch].some((v) => v?.toLowerCase().includes(q))) : list;
   return (
-    <div className="app" data-pane="list" style={{ height: "100vh" }}>
-      <TopBar query={query} onQuery={setQuery} view={view} onView={setView} />
-      <div className="app-body">
-        <Sidebar rows={visible.filter((r) => archived || !r.archived)} selected={selected} onSelect={setSelected}
-                 query={query} showArchived={archived} onToggleArchived={() => setArchived((v) => !v)} />
-      </div>
+    <div className="app" style={{ height: "100vh" }}>
+      <Sidebar rows={visible.filter((r) => archived || !r.archived)} selected={selected} onSelect={setSelected}
+               query={query} onQuery={setQuery} view={view} onView={setView}
+               showArchived={archived} onToggleArchived={() => setArchived((v) => !v)} />
     </div>
   );
 }

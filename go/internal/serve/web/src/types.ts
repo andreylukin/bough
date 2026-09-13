@@ -50,6 +50,8 @@ export interface Row {
   cache?: Cache;
   /** Why this session needs you ("failed", "interrupted", "tests failed"); absent once marked seen. */
   trouble?: string;
+  /** Lines in the session's running log (GET /api/sessions/{id}/turns); absent when none. */
+  turns?: number;
 }
 
 export interface Job { id: number; cmd: string; started: string }

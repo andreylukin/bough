@@ -65,6 +65,8 @@ type Row struct {
 	// Trouble is why this session needs a person ("failed",
 	// "interrupted", "tests failed"), or "" once marked seen.
 	Trouble string `json:"trouble,omitempty"`
+	// Turns counts the lines of the session's running log (GET .../turns).
+	Turns int `json:"turns,omitempty"`
 }
 
 // maxBody caps every request body: the API takes prompts and titles,
@@ -438,6 +440,7 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 		Jobs:     RunningJobs(entries, live),
 		Cache:    LastCache(entries, model),
 		Trouble:  Troubled(st, entries, meta.Ack, time.Now()),
+		Turns:    countTurns(entries),
 	}
 }
 

@@ -4,7 +4,20 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/andreylukin/bough/plugins/history"
 )
+
+// countTurns is how many running-log lines the entries hold.
+func countTurns(entries []history.Entry) int {
+	n := 0
+	for _, e := range entries {
+		if e.Kind == "turn-summary" {
+			n++
+		}
+	}
+	return n
+}
 
 // TurnLine is one line of a session's running log (the session-title
 // plugin's "turn-summary" entries).

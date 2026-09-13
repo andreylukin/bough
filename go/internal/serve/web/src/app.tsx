@@ -59,55 +59,25 @@ function modKey(): string {
   return typeof navigator !== "undefined" && /Mac|iP/.test(navigator.platform) ? "\u2318" : "Ctrl+";
 }
 
-/** The bar above everything: where you are, where else you can go, search, and New. */
-export function TopBar({ query, onQuery, view, onView, wikiFlags = 0, onNew }: {
-  query: string; onQuery: (q: string) => void;
-  view: View; onView: (v: View) => void;
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+const readSet = (key: string): Set<string> => {
+  try { return new Set(JSON.parse(localStorage.getItem(key) ?? "[]")); } catch { return new Set(); }
+};
+const writeSet = (key: string, s: Set<string>) => {
+  try { localStorage.setItem(key, JSON.stringify([...s].slice(-200))); } catch { /* storage off */ }
+};
+
+export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, showArchived, onToggleArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true }: {
+  rows: Row[]; selected: string | null; onSelect: (id: string) => void;
+  /** Open a session at one turn of its log. */
+  onTurn?: (id: string, turn: number) => void;
+  query: string; onQuery: (q: string) => void; showArchived: boolean; onToggleArchived: () => void;
+  view?: View; onView?: (v: View) => void;
   /** Claims the wiki's review is waiting on; shown beside the nav item. */
   wikiFlags?: number;
   /** Starting work is the other half of a control room; it opens the palette's Start group. */
   onNew?: () => void;
-}) {
-  const item = (v: View, label: string, extra?: React.ReactNode) => (
-    <button className={"nav-item" + (view === v ? " nav-on" : "")}
-            aria-current={view === v ? "page" : undefined}
-            onClick={() => onView(v)}>{label}{extra}</button>
-  );
-  return (
-    <header className="topbar">
-      <div className="brand"><Sprout /><span>bough</span></div>
-      <nav className="nav" aria-label="Views">
-        {item("sessions", "Sessions")}
-        {item("projects", "Projects")}
-        {item("hooks", "Hooks")}
-        {item("wiki", "Wiki", wikiFlags > 0 && (
-          <span className="nav-count" title={`${wikiFlags} claims to review`}>
-            {wikiFlags}<span className="visually-hidden"> claims to review</span>
-          </span>
-        ))}
-      </nav>
-      <div className="session-search">
-        {/* The placeholder names the field; a visible label above it said it twice. */}
-        <label htmlFor="q" className="visually-hidden">Search sessions</label>
-        <input id="q" className="field" value={query} placeholder={`Search sessions · ${modKey()}K for commands`}
-               onChange={(e) => onQuery(e.target.value)}
-               onKeyDown={(e) => {
-                 // Down from the search lands on the first match.
-                 if (e.key !== "ArrowDown") return;
-                 const first = document.querySelector<HTMLElement>(".sidebar button.row");
-                 if (first && first.offsetParent) { e.preventDefault(); first.focus(); }
-               }} />
-      </div>
-      {onNew && <button className="btn brand-new" onClick={onNew} title={`New conversation (${modKey()}K)`}>New</button>}
-    </header>
-  );
-}
-
-const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-
-export function Sidebar({ rows, selected, onSelect, query, showArchived, onToggleArchived, onAck, active = true }: {
-  rows: Row[]; selected: string | null; onSelect: (id: string) => void;
-  query: string; showArchived: boolean; onToggleArchived: () => void;
   /** Mark a troubled session seen without opening it. */
   onAck?: (id: string) => void;
   /** Whether the list is on screen; coming back to it puts focus on the row you left. */
@@ -130,15 +100,42 @@ export function Sidebar({ rows, selected, onSelect, query, showArchived, onToggl
 
   // Settled history folds by day, and stays folded across reloads. What
   // needs you and what is running never fold: they are the point of the list.
-  const [folded, setFolded] = useState<Set<string>>(() => {
-    try { return new Set(JSON.parse(localStorage.getItem("bough:folded") ?? "[]")); } catch { return new Set(); }
-  });
+  const [folded, setFolded] = useState<Set<string>>(() => readSet("bough:folded"));
   const toggleFold = (name: string) => setFolded((cur) => {
     const next = new Set(cur);
     if (next.has(name)) next.delete(name); else next.add(name);
-    try { localStorage.setItem("bough:folded", JSON.stringify([...next])); } catch { /* storage off */ }
+    writeSet("bough:folded", next);
     return next;
   });
+
+  // A session's turn log, one line a turn, opens under its row. The open
+  // session shows its own; the rest stay shut until asked, and stay the
+  // way you left them across reloads.
+  const [expanded, setExpanded] = useState<Set<string>>(() => readSet("bough:turns-open"));
+  const setOpen = useCallback((id: string, open: boolean) => setExpanded((cur) => {
+    if (cur.has(id) === open) return cur;
+    const next = new Set(cur);
+    if (open) next.add(id); else next.delete(id);
+    writeSet("bough:turns-open", next);
+    return next;
+  }), []);
+  useEffect(() => { if (selected) setOpen(selected, true); }, [selected, setOpen]);
+
+  // Fetched on first open, kept per session, and read again once the
+  // session has changed since.
+  const [logs, setLogs] = useState<Record<string, { at: string; lines: TurnLine[] }>>({});
+  const fetching = useRef(new Set<string>());
+  useEffect(() => {
+    for (const r of rows) {
+      if (!r.turns || !expanded.has(r.id) || logs[r.id]?.at === r.modified || fetching.current.has(r.id)) continue;
+      const at = r.modified;
+      fetching.current.add(r.id);
+      api.turns(r.id)
+        .then((lines) => setLogs((m) => ({ ...m, [r.id]: { at, lines } })))
+        .catch(() => {})
+        .finally(() => fetching.current.delete(r.id));
+    }
+  }, [rows, expanded, logs]);
 
   // What a session is about, on hover or focus: the title names it, the
   // summary says where it stands. One card for the whole list, fixed to
@@ -147,30 +144,17 @@ export function Sidebar({ rows, selected, onSelect, query, showArchived, onToggl
   const [card, setCard] = useState<{ id: string; text: string; top: number; left: number } | null>(null);
   const peekTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const quiet = useRef(false);
-  // The last few lines of each session's running log, fetched the first
-  // time its card opens.
-  const turnLines = useRef(new Map<string, TurnLine[]>());
-  const [, setTurnsLoaded] = useState(0);
   const peek = (r: Row, el: HTMLElement) => {
     clearTimeout(peekTimer.current);
     if (!r.summary || quiet.current) { setCard(null); return; }
-    const rect = (el.querySelector(".row-title") ?? el).getBoundingClientRect();
-    peekTimer.current = setTimeout(() => {
-      setCard({
-        id: r.id, text: r.summary!,
-        top: Math.min(rect.bottom + 6, window.innerHeight - 220),
-        left: Math.max(12, Math.min(rect.left, window.innerWidth - 344)),
-      });
-      if (!turnLines.current.has(r.id)) {
-        turnLines.current.set(r.id, []);
-        api.turns(r.id).then((t) => {
-          turnLines.current.set(r.id, t.slice(-3));
-          setTurnsLoaded((n) => n + 1);
-        }).catch(() => turnLines.current.delete(r.id));
-      }
-    }, 450);
+    const rect = el.getBoundingClientRect();
+    // Beside the row, so it never covers the turn log under it.
+    peekTimer.current = setTimeout(() => setCard({
+      id: r.id, text: r.summary!,
+      top: Math.max(8, Math.min(rect.top, window.innerHeight - 200)),
+      left: Math.min(rect.right + 8, window.innerWidth - 332),
+    }), 450);
   };
-  const cardTurns = card ? turnLines.current.get(card.id) ?? [] : [];
   const unpeek = () => { clearTimeout(peekTimer.current); setCard(null); };
   useEffect(() => () => clearTimeout(peekTimer.current), []);
 
@@ -186,39 +170,81 @@ export function Sidebar({ rows, selected, onSelect, query, showArchived, onToggl
     quiet.current = false;
   }, [active, selected]);
 
-  // Up and down walk the rows and the day headings; Enter opens or folds.
+  // The tree by keyboard: up and down walk what is visible, right opens
+  // a day or a log (or steps into it), left shuts it (or steps out);
+  // Enter opens a session or jumps to a turn.
   const walk = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-    const items = [...e.currentTarget.querySelectorAll<HTMLElement>("button.row, button.group-fold")];
+    if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(e.key)) return;
+    const items = [...e.currentTarget.querySelectorAll<HTMLElement>("button.group-fold, button.row, button.turn-line")];
     if (!items.length) return;
     const at = document.activeElement as HTMLElement | null;
     const cur = at?.closest(".row-wrap")?.querySelector<HTMLElement>("button.row") ?? at;
-    const i = cur ? items.indexOf(cur) : -1;
+    const go = (el?: HTMLElement | null) => { if (el) { el.focus(); el.scrollIntoView({ block: "nearest" }); } };
     e.preventDefault();
-    const next = i < 0 ? (e.key === "ArrowDown" ? 0 : items.length - 1)
-      : Math.max(0, Math.min(items.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)));
-    items[next].focus();
-    items[next].scrollIntoView({ block: "nearest" });
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      const i = cur ? items.indexOf(cur) : -1;
+      go(items[i < 0 ? (e.key === "ArrowDown" ? 0 : items.length - 1)
+        : Math.max(0, Math.min(items.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))]);
+      return;
+    }
+    if (!cur) return;
+    const right = e.key === "ArrowRight";
+    if (cur.classList.contains("group-fold")) {
+      if (cur.getAttribute("aria-expanded") === String(!right)) cur.click();
+      return;
+    }
+    const session = cur.closest<HTMLElement>(".session");
+    const twist = session?.querySelector<HTMLElement>(".row-twist");
+    if (cur.classList.contains("turn-line")) {
+      if (!right) go(session?.querySelector<HTMLElement>("button.row"));
+      return;
+    }
+    const id = cur.dataset.id!;
+    const open = twist?.getAttribute("aria-expanded") === "true";
+    if (right) {
+      if (twist && !open) setOpen(id, true);
+      else if (open) go(session?.querySelector<HTMLElement>("button.turn-line"));
+    } else if (open) setOpen(id, false);
+    else go(cur.closest(".group")?.querySelector<HTMLElement>("button.group-fold"));
   };
 
   return (
     <div className="sidebar">
       {card && (
-        <div id="row-card" className="row-card" role="tooltip" style={{ top: card.top, left: card.left }}>
-          {card.text}
-          {cardTurns.length > 0 && (
-            <ol className="row-card-turns">
-              {cardTurns.map((l) => <li key={l.turn} value={l.turn}>{l.text}</li>)}
-            </ol>
-          )}
-        </div>
+        <div id="row-card" className="row-card" role="tooltip" style={{ top: card.top, left: card.left }}>{card.text}</div>
       )}
+      <div className="brand"><Sprout /><span>bough</span>
+        {onNew && <button className="btn brand-new" onClick={onNew} title={`New conversation (${modKey()}K)`}>New</button>}
+      </div>
+      {onView && (
+        <nav className="nav" aria-label="Views">
+          {([["sessions", "Sessions"], ["projects", "Projects"], ["hooks", "Hooks"], ["wiki", "Wiki"]] as const).map(([v, label]) => (
+            <button key={v} className={"nav-item" + (view === v ? " nav-on" : "")}
+                    aria-current={view === v ? "page" : undefined}
+                    onClick={() => onView(v)}>
+              {label}
+              {v === "wiki" && wikiFlags > 0 && (
+                <span className="nav-count" title={`${wikiFlags} claims to review`}>
+                  {wikiFlags}<span className="visually-hidden"> claims to review</span>
+                </span>
+              )}
+            </button>
+          ))}
+        </nav>
+      )}
+      <div className="session-search">
+        <label htmlFor="q" className="visually-hidden">Search sessions</label>
+        <input id="q" className="field" value={query} placeholder="Search sessions"
+               onChange={(e) => onQuery(e.target.value)}
+               onKeyDown={(e) => {
+                 // Down from the search lands on the first match.
+                 if (e.key !== "ArrowDown") return;
+                 const first = document.querySelector<HTMLElement>(".sidebar button.row");
+                 if (first) { e.preventDefault(); first.focus(); }
+               }} />
+        <span className="search-hint" aria-hidden="true">{modKey()}K</span>
+      </div>
       <div className="scroll" onScroll={unpeek} onKeyDown={walk}>
-        {groups.length > 0 && (
-          <div className="table-head" aria-hidden="true">
-            <span>Status</span><span>Session</span><span>Where</span><span className="table-when">Updated</span>
-          </div>
-        )}
         {groups.length === 0 && (
           <p className="list-none">
             {query ? `No sessions match “${query}”.` : "No sessions yet."}
@@ -238,59 +264,79 @@ export function Sidebar({ rows, selected, onSelect, query, showArchived, onToggl
               </button>
             )}
             {(query || !folded.has(name) || act) && list.map((r) => {
-              const hot = r.cache ? Date.parse(r.cache.at) + r.cache.ttl * 1000 > Date.now() : undefined;
+              const open = Boolean(r.turns) && expanded.has(r.id);
+              const log = logs[r.id]?.lines;
+              const name = plainTitle(r.title);
               return (
-              <div key={r.id} className="row-wrap">
+              <div key={r.id} className="session">
+              <div className="row-wrap">
+              {r.turns ? (
+                // The disclosure and Seen are siblings of the row, not inside
+                // it: a button in a button is invalid and would open it too.
+                // Arrows reach the log from the row, so Tab skips this.
+                <button className="row-twist" tabIndex={-1} aria-expanded={open} aria-controls={`turns-${r.id}`}
+                        aria-label={`${open ? "Hide" : "Show"} turn log of ${name || "session"}`}
+                        onClick={() => setOpen(r.id, !open)} />
+              ) : null}
               {r.trouble && onAck && (
-                // A sibling of the row, not inside it: a button in a button
-                // is invalid and a click would open the session too.
-                <button className="btn row-ack" onClick={() => onAck(r.id)} aria-label={`Mark ${plainTitle(r.title) || "session"} seen`}>Seen</button>
+                <button className="btn row-ack" onClick={() => onAck(r.id)} aria-label={`Mark ${name || "session"} seen`}>Seen</button>
               )}
-              <button onClick={() => onSelect(r.id)}
+              <button onClick={() => onSelect(r.id)} data-id={r.id}
                       onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
                       onFocus={(e) => peek(r, e.currentTarget)} onBlur={unpeek}
                       aria-describedby={card?.id === r.id ? "row-card" : undefined}
                       className={"row" + (act ? " row-act" : " row-settled") + (r.id === selected ? " row-on" : "")}
                       aria-current={r.id === selected ? "true" : undefined}>
-                <span className="row-status">
+                <span className="row-line">
+                  {name
+                    ? <span className="row-title">{name}</span>
+                    // No title: the id tail alone tells rows apart.
+                    : <span className="row-title mono row-untitled">{r.id.slice(-6)}</span>}
+                  {/* A session that needs you or is moving is measured in how
+                      long; its group already says which. */}
+                  <span className="num" title={new Date(r.modified).toLocaleString()}>
+                    {act ? ago(r.modified) : clock(r.modified)}
+                  </span>
+                </span>
+                <span className="row-meta">
                   {r.trouble ? (
                     // "Done" in a queue of trouble says nothing; the reason does.
-                    <><StatusMark status="error" bare /><span className="row-trouble" title={capital(r.trouble)}>{capital(r.trouble)}</span></>
+                    <span className="row-trouble" title={capital(r.trouble)}>{capital(r.trouble)}</span>
                   ) : (
                     <StatusMark status={r.status} bare={r.status === "needs-you" || r.status === "running"} />
                   )}
-                </span>
-                <span className="row-main">
-                  <span className="row-line">
-                    {plainTitle(r.title)
-                      ? <span className="row-title">{plainTitle(r.title)}</span>
-                      // No title: the id tail alone tells rows apart; "Session" is the column.
-                      : <span className="row-title mono row-untitled">{r.id.slice(-6)}</span>}
-                    {r.jobs && r.jobs.length > 0 && (
-                      <span className="num row-jobs" title={r.jobs.map((j) => j.cmd).join("\n")}>
-                        {r.jobs.length} {r.jobs.length === 1 ? "job" : "jobs"}
-                      </span>
-                    )}
-                    {/* A cold cache only matters for the next turn, so settled rows say only when it is hot. */}
-                    {hot ? <span className="row-hot">cache hot</span> : hot === false && act && <span className="row-cold">cache cold</span>}
-                  </span>
-                  {/* What the session is waiting on: answering it is what the row is for. */}
-                  {r.ask && <span className="row-ask" title={r.ask.text}>{plainTitle(r.ask.text)}</span>}
-                </span>
-                <span className="mono row-where" title={r.cwd}>
-                  {r.repo || r.branch ? (
-                    <>{r.repo?.split("/").pop()}{r.branch && <span className="row-sep">/</span>}{r.branch}</>
+                  {r.jobs && r.jobs.length > 0 && (
+                    <span className="num row-jobs" title={r.jobs.map((j) => j.cmd).join("\n")}>
+                      {r.jobs.length} {r.jobs.length === 1 ? "job" : "jobs"}
+                    </span>
+                  )}
+                  {r.ask ? (
+                    // What the session is waiting on: answering it is what the row is for.
+                    <span className="row-ask" title={r.ask.text}>{plainTitle(r.ask.text)}</span>
                   ) : (
-                    // With no repo, the folder it ran in tells two sessions apart.
-                    r.cwd ? r.cwd.split("/").filter(Boolean).pop() || "/" : "–"
+                    <span className="mono" title={r.cwd}>
+                      {r.repo || r.branch ? (
+                        <>{r.repo?.split("/").pop()}{r.branch && <span style={{ color: "var(--line-strong)" }}>/</span>}{r.branch}</>
+                      ) : (
+                        // With no repo, the folder it ran in tells two sessions apart.
+                        r.cwd ? r.cwd.split("/").filter(Boolean).pop() || "/" : "–"
+                      )}
+                    </span>
                   )}
                 </span>
-                {/* A session that needs you or is moving is measured in how
-                    long; its group already says which. */}
-                <span className="num row-when" title={new Date(r.modified).toLocaleString()}>
-                  {act ? ago(r.modified) : clock(r.modified)}
-                </span>
               </button>
+              </div>
+              {open && (
+                <ol id={`turns-${r.id}`} className="turns" aria-label={`Turns of ${name || "session"}`}>
+                  {log ? log.map((l) => (
+                    <li key={l.turn}>
+                      <button className="turn-line" title={l.text} onClick={() => onTurn?.(r.id, l.turn)}>
+                        <span className="num turn-n">{l.turn}</span><span className="turn-text">{l.text}</span>
+                      </button>
+                    </li>
+                  )) : <li className="turn-wait">Loading…</li>}
+                </ol>
+              )}
               </div>
               );
             })}
@@ -968,7 +1014,7 @@ function JobsChip({ session, jobs }: { session: string; jobs: NonNullable<Row["j
   );
 }
 
-export function TurnView({ turn, tail }: { turn: Turn; tail?: React.ReactNode }) {
+export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode; /** 1-based position, so the turn log can land on it. */ n?: number }) {
   const codes = turn.body.filter((l) => l.kind === "code" || l.kind === "sub:code").map((l) => l.text);
   const hooks = useMemo(() => turn.body.filter(isHookLine), [turn.body]);
   const items = useMemo<Item[]>(
@@ -984,7 +1030,7 @@ export function TurnView({ turn, tail }: { turn: Turn; tail?: React.ReactNode })
   const [full, setFull] = useState(false);
   const long = said.length > 420 || said.split("\n").length > 4;
   return (
-    <section className="turn">
+    <section className="turn" data-turn={n}>
       {turn.prompt && (
         <div className="prompt">
           <span className="mono prompt-mark">&gt;</span>
@@ -1135,19 +1181,20 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
 
 /* ---------------- thread ---------------- */
 
-export function Back({ onBack, always }: { onBack?: () => void; always?: boolean }) {
+export function Back({ onBack }: { onBack?: () => void }) {
   if (!onBack) return null;
   return (
-    <button className={"back" + (always ? " back-always" : "")} onClick={onBack} aria-label="Back to sessions"
-            title={always ? "Sessions (Esc)" : undefined}>
+    <button className="back" onClick={onBack} aria-label="Back to sessions">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
     </button>
   );
 }
 
-export function Thread({ row, lines, loading = false, stream = [], projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy }: {
+export function Thread({ row, lines, loading = false, stream = [], projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy, jump }: {
   row: Row; lines: Line[]; loading?: boolean; stream?: DeltaRun[]; projects: Project[]; busy: boolean; onBack?: () => void;
+  /** Scroll to this turn (1-based) once it is on screen; `at` makes a repeat click count. */
+  jump?: { turn: number; at: number } | null;
   onSend: (t: string) => Promise<boolean> | void; onAnswer: (t: string) => Promise<boolean> | void; onInterrupt: () => void;
   onArchive: () => void; onRename: (t: string) => void; onContext?: () => void; onAck?: () => void;
   onModel: (m: string) => void; onEffort: (e: string) => void; onAssign: (p: string) => void;
@@ -1206,6 +1253,22 @@ export function Thread({ row, lines, loading = false, stream = [], projects, onA
   // Opening a different conversation starts at the bottom again.
   useEffect(() => { atBottom.current = true; }, [row.id]);
   const turns = useMemo(() => groupTurns(lines), [lines]);
+  // A turn picked from the log: land on it once the transcript holds it,
+  // flash it, and stop following the bottom so it stays put.
+  const jumped = useRef(0);
+  useEffect(() => {
+    if (!jump || loading || jumped.current === jump.at) return;
+    const el = scroller.current?.querySelector<HTMLElement>(`.turn[data-turn="${jump.turn}"]`);
+    if (!el) return;
+    jumped.current = jump.at;
+    atBottom.current = false;
+    el.scrollIntoView({ block: "start" });
+    el.classList.remove("turn-flash");
+    void el.offsetWidth;
+    el.classList.add("turn-flash");
+    const t = setTimeout(() => el.classList.remove("turn-flash"), 1600);
+    return () => clearTimeout(t);
+  }, [jump, loading, turns.length]);
   // A fast read shows nothing at all; only a slow one earns a word.
   const [slow, setSlow] = useState(false);
   useEffect(() => {
@@ -1252,7 +1315,7 @@ export function Thread({ row, lines, loading = false, stream = [], projects, onA
   return (
     <div className="thread">
       <header className="thread-head" data-more={more ? "1" : "0"}>
-        <Back onBack={onBack} always />
+        <Back onBack={onBack} />
         <div className="head-main">
           <h1 title={row.title}>{plainTitle(row.title) || untitled(row.id)}</h1>
           {(row.repo || row.branch) && (
@@ -1298,7 +1361,7 @@ export function Thread({ row, lines, loading = false, stream = [], projects, onA
           <p className="meta-line transcript-state">No recorded turns.</p>
         )}
         {turns.map((t, i) => (
-          <TurnView key={t.seq} turn={t}
+          <TurnView key={t.seq} turn={t} n={i + 1}
             // The preview belongs to the turn that is still open, so it
             // sits where the recorded entry will appear and is replaced
             // in place rather than jumping up the page.
@@ -1651,6 +1714,8 @@ export default function App() {
 
   // The session last opened, so the list comes back with your place in it.
   const [lastId, setLastId] = useState<string | null>(null);
+  // A turn picked from a session's log, for its thread to scroll to.
+  const [jump, setJump] = useState<{ id: string; turn: number; at: number } | null>(null);
   useEffect(() => { if (selected) setLastId(selected); }, [selected]);
 
   // Esc leaves a session for the list, unless something nearer owns it:
@@ -1755,13 +1820,11 @@ export default function App() {
                commands={commands} onOpenSession={openSession} initialQuery={palQuery}
                onOpenWikiPage={(path) => goWiki({ at: "page", path })}
                onStart={home ? (text) => start(home, text) : undefined} />
-      <TopBar query={query} view={view} wikiFlags={wikiFlags}
-              onQuery={(q) => { setQuery(q); if (view !== "sessions" || selected) goList(); }}
-              onView={(v) => { if (v === "wiki") goWiki({ at: "index" }); else if (v === "sessions") goList(); else { setView(v); setPane("thread"); } }}
-              onNew={() => setPalette(true)} />
-      <div className="app-body">
       <Sidebar rows={visible} selected={selected ?? lastId} active={pane === "list"}
-               onSelect={openSession} query={query}
+               onSelect={openSession} query={query} onQuery={setQuery}
+               onTurn={(id, turn) => { if (id !== selected || view !== "sessions" || context) openSession(id); else setPane("thread"); setJump({ id, turn, at: Date.now() }); }}
+               view={view} wikiFlags={wikiFlags} onNew={() => setPalette(true)}
+               onView={(v) => { if (v === "wiki") goWiki({ at: "index" }); else if (v === "sessions") { setView(v); setContext(false); } else { setView(v); setPane("thread"); } }}
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)}
                onAck={(id) => act(() => api.ack(id))} />
       {view === "wiki" ? (
@@ -1781,7 +1844,7 @@ export default function App() {
       ) : row && context ? (
         <ContextPage session={row.id} onBack={() => setContext(false)} />
       ) : row ? (
-        <Thread key={row.id} row={row} lines={lines} loading={loadedFor !== row.id} stream={stream} projects={projects} busy={busy} onBack={goList}
+        <Thread key={row.id} row={row} lines={lines} jump={jump?.id === row.id ? jump : null} loading={loadedFor !== row.id} stream={stream} projects={projects} busy={busy} onBack={goList}
           onSend={(t) => deliverTo(() => api.prompt(row.id, t))}
           onAnswer={(t) => deliverTo(() => api.answer(row.id, t))}
           onInterrupt={() => act(() => api.interrupt(row.id))}
@@ -1793,9 +1856,11 @@ export default function App() {
           onContext={() => setContext(true)}
           onAck={() => act(() => api.ack(row.id))} />
       ) : (
-        // A link to a session this list does not hold (yet, while it loads).
         <div className="thread empty">
-          {rows.length > 0 && selected && (
+          {!selected ? (
+            <p>Open a session on the left, or press {modKey()}K to start one.</p>
+          ) : rows.length > 0 && (
+            // A link to a session this list does not hold.
             <div>
               <h1>Session not found</h1>
               <button className="btn" onClick={goList}>All sessions</button>
@@ -1803,7 +1868,6 @@ export default function App() {
           )}
         </div>
       )}
-      </div>
       <DialogHost />
       {err ? (
         <button className="toast" role="alert" onClick={() => setErr(null)} title="Dismiss">{err}</button>
