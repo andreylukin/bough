@@ -91,6 +91,17 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
   // summary says where it stands. One card for the whole list, fixed to
   // the viewport beside the row, because the list scrolls and would clip
   // anything hung off a row. It waits a beat so skimming does not flash it.
+  // Settled history folds by day, and stays folded across reloads. What
+  // needs you and what is running never fold: they are the point of the list.
+  const [folded, setFolded] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("bough:folded") ?? "[]")); } catch { return new Set(); }
+  });
+  const toggleFold = (name: string) => setFolded((cur) => {
+    const next = new Set(cur);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    try { localStorage.setItem("bough:folded", JSON.stringify([...next])); } catch { /* storage off */ }
+    return next;
+  });
   const [card, setCard] = useState<{ id: string; text: string; top: number; left: number } | null>(null);
   const peekTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const peek = (r: Row, el: HTMLElement) => {
@@ -148,8 +159,16 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
         )}
         {groups.map(([name, list]) => (
           <div key={name} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <div className="group-head">{name}<span className="num group-count">{list.length}</span></div>
-            {list.map((r) => (
+            {name === "Needs you" || name === "Running" ? (
+              <div className="group-head">{name}<span className="num group-count">{list.length}</span></div>
+            ) : (
+              // A search shows every match, folded group or not.
+              <button className="group-head group-fold" aria-expanded={Boolean(query) || !folded.has(name)}
+                      onClick={() => toggleFold(name)}>
+                {name}<span className="num group-count">{list.length}</span>
+              </button>
+            )}
+            {(query || !folded.has(name) || name === "Needs you" || name === "Running") && list.map((r) => (
               <button key={r.id} onClick={() => onSelect(r.id)}
                       onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
                       onFocus={(e) => peek(r, e.currentTarget)} onBlur={unpeek}
