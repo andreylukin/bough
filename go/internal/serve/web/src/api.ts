@@ -33,6 +33,8 @@ export const api = {
   turns: (id: string) => req<{ turns: TurnLine[] }>(`/api/sessions/${id}/turns`).then((r) => r.turns ?? []),
   /** What is uncommitted in the session's working tree, live from git. */
   changes: (id: string) => req<{ repo: boolean; files: Change[] }>(`/api/sessions/${id}/changes`),
+  /** One file's unified diff against HEAD, 3 lines of context. */
+  diff: (id: string, path: string) => req<{ diff: string }>(`/api/sessions/${id}/diff?path=${encodeURIComponent(path)}`).then((r) => r.diff),
   /** Ask the session to stop one of its background jobs. */
   killJob: (id: string, job: number) => post(`/api/sessions/${id}/jobs/${job}/kill`),
   /** Mark what a session has recorded so far as seen, taking it out of Needs you. */

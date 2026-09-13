@@ -19,7 +19,8 @@ export interface Option { value: string; label: string; detail?: string; group?:
 export function Select({ value, options, onChange, label, placeholder = "Choose", searchable = false, align = "start", note }: {
   value: string;
   options: Option[];
-  onChange: (value: string) => void;
+  /** A promise that resolves false (or rejects) is a save that failed: the button says so and offers the retry. */
+  onChange: (value: string) => void | Promise<unknown>;
   /** Names the control for assistive tech; the visible label sits beside it. */
   label: string;
   placeholder?: string;
@@ -62,9 +63,16 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
     setOpen(false);
     if (refocus) btn.current?.focus();
   };
+  const [save, setSave] = useState<{ value: string; state: "saving" | "failed" } | null>(null);
+  const commit = (v: string) => {
+    const r = onChange(v);
+    if (!(r instanceof Promise)) return;
+    setSave({ value: v, state: "saving" });
+    r.then((ok) => setSave(ok === false ? { value: v, state: "failed" } : null), () => setSave({ value: v, state: "failed" }));
+  };
   const pick = (o: Option) => {
     hide(true);
-    if (o.value !== value) onChange(o.value);
+    if (o.value !== value) commit(o.value);
   };
 
   useEffect(() => {
@@ -136,6 +144,10 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
           <path d="M6 9l6 6 6-6" />
         </svg>
       </button>
+      {save && (
+        save.state === "saving" ? <span className="sel-save" role="status">Saving…</span>
+          : <button type="button" className="sel-save sel-save-failed" onClick={() => commit(save.value)}>Couldn’t save · Retry</button>
+      )}
       {open && (
         <div ref={pop} style={pos} className={"sel-pop sel-" + align}>
           {searchable && (

@@ -1222,7 +1222,7 @@ function TurnFooter({ turn }: { turn: Turn }) {
  * actually answering. The window is only named when the session records
  * its model; a default model is not guessed at.
  */
-function RuntimeStrip({ row, lines, onRun }: { row: Row; lines: Line[]; /** Opens the settings the phone's run line stands in for. */ onRun?: () => void }) {
+function RuntimeStrip({ row, lines }: { row: Row; lines: Line[] }) {
   const [limits, setLimits] = useState<Record<string, number>>({});
   useEffect(() => {
     fetch("/api/models").then((r) => r.json()).then((c: { providers?: ProviderInfo[] }) => {
@@ -1232,21 +1232,26 @@ function RuntimeStrip({ row, lines, onRun }: { row: Row; lines: Line[]; /** Open
     }).catch(() => setLimits({}));
   }, []);
   const u = useMemo(() => sessionUsage(lines), [lines]);
+  // Headroom is measured against the model that took the last input. A
+  // /model after the last finished turn means the picker names a model
+  // that has not read this context yet, so only the reading is shown.
+  const switched = useMemo(() => {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].kind === "done" && usageOf(lines[i])) return false;
+      if (/^\/model \S/.test(lines[i].text) && !/^\/model list\b/.test(lines[i].text)) return true;
+    }
+    return false;
+  }, [lines]);
+  const limit = row.model && !switched ? limits[row.model] : undefined;
+  const pct = u && limit ? Math.min(100, Math.round((u.lastIn / limit) * 100)) : undefined;
+  const strip = useRef<HTMLDivElement>(null);
+  usePopovers(strip);
   // Jobs, cache and changes stand on their own: a session with no usage
   // recorded can still have a server running.
-  const limit = row.model ? limits[row.model] : undefined;
-  const pct = u && limit ? Math.min(100, Math.round((u.lastIn / limit) * 100)) : undefined;
   return (
-    <div className="runtime-strip">
-      {/* A phone has no room for the pickers: the run is one line, one tap opens them. */}
-      {onRun && (
-        <button className="rt rt-link rt-run" onClick={onRun} aria-label="Model and effort settings">
-          <span className="rt-value">{row.model ? row.model.split("/").pop() : "Default model"}</span>
-          <span className="rt-label">{row.effort ? effortLabel(row.effort) : "Default effort"}</span>
-        </button>
-      )}
+    <div className="runtime-strip" ref={strip}>
       {u && (
-        <Tip tip={limit ? `${u.lastIn.toLocaleString()} of ${limit.toLocaleString()} tokens` : "The model's context window is not in the catalogue"}>
+        <Tip tip={limit ? `${u.lastIn.toLocaleString()} of ${limit.toLocaleString()} tokens` : switched ? "The model changed since this input was read" : "The model's context window is not in the catalogue"}>
           <span className="rt-label">{limit ? "Context" : "Last input"}</span>
           <span className="num rt-value">{tokenCount(u.lastIn)}{limit ? ` · ${tokenCount(Math.max(0, limit - u.lastIn))} left` : ""}</span>
           {pct !== undefined && (
@@ -1259,8 +1264,8 @@ function RuntimeStrip({ row, lines, onRun }: { row: Row; lines: Line[]; /** Open
       {u?.cost !== undefined && (
         // Tokens in/out ride on the cost's tooltip: the price is the figure
         // a person acts on. The model is named once, in the header picker.
-        <Tip tip={`${u.in.toLocaleString()} tokens in · ${u.out.toLocaleString()} out`}>
-          <span className="rt-label">Cost</span><span className="num rt-value">{money(u.cost)}</span>
+        <Tip label="Session cost" tip={`${u.in.toLocaleString()} tokens in · ${u.out.toLocaleString()} out`}>
+          <span className="rt-label" aria-hidden="true">Cost</span><span className="num rt-value">{money(u.cost)}</span>
         </Tip>
       )}
       <ChangesChip id={row.id} tick={lines.length} />
@@ -1272,44 +1277,101 @@ function RuntimeStrip({ row, lines, onRun }: { row: Row; lines: Line[]; /** Open
 }
 
 /**
+ * The strip's disclosures behave as one menu: opening one shuts the
+ * others, and Escape or a click elsewhere shuts it and gives focus back.
+ */
+function usePopovers(root: React.RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    const open = () => [...el.querySelectorAll<HTMLDetailsElement>("details[open]")];
+    const toggle = (e: Event) => {
+      const d = e.target as HTMLDetailsElement;
+      if (d.open) for (const o of open()) if (o !== d) o.open = false;
+    };
+    const key = (e: KeyboardEvent) => {
+      const d = open()[0];
+      if (e.key !== "Escape" || !d) return;
+      e.preventDefault(); e.stopPropagation();
+      d.open = false;
+      d.querySelector("summary")?.focus();
+    };
+    const away = (e: MouseEvent) => { for (const d of open()) if (!d.contains(e.target as Node)) d.open = false; };
+    el.addEventListener("toggle", toggle, true);
+    window.addEventListener("keydown", key, true);
+    document.addEventListener("mousedown", away);
+    return () => { el.removeEventListener("toggle", toggle, true); window.removeEventListener("keydown", key, true); document.removeEventListener("mousedown", away); };
+  }, [root]);
+}
+
+/**
  * What is uncommitted where the session works, read from git whenever the
  * transcript grows. It is the repository's state, not a tally of what the
- * agent claimed, so an edit made by hand shows too. Absent outside a repo
- * and when the tree is clean.
+ * agent claimed, so an edit made by hand shows too. Every state is said:
+ * reading, clean, not a repository, or a failed read (the last result
+ * kept and marked stale). A file opens its diff.
  */
 function ChangesChip({ id, tick }: { id: string; tick: number }) {
-  const [files, setFiles] = useState<Change[]>([]);
+  const [state, setState] = useState<{ files: Change[] | null; repo: boolean; failed: boolean }>({ files: null, repo: true, failed: false });
+  const [nonce, setNonce] = useState(0);
+  const [diff, setDiff] = useState<{ path: string; text: string | null; failed?: boolean } | null>(null);
   useEffect(() => {
     let live = true;
     // A hand edit or another session changes the tree without a transcript
-    // entry, so it is re-read on a timer too. A failed read keeps the last
-    // snapshot rather than claiming the tree is clean.
-    const read = () => api.changes(id).then((r) => { if (live) setFiles(r.files); }).catch(() => {});
+    // entry, so it is re-read on a timer too.
+    const read = () => api.changes(id)
+      .then((r) => { if (live) setState({ files: r.files, repo: r.repo, failed: false }); })
+      .catch(() => { if (live) setState((s) => ({ ...s, failed: true })); });
     read();
     const t = setInterval(read, 10_000);
     return () => { live = false; clearInterval(t); };
-  }, [id, tick]);
-  if (!files.length) return null;
+  }, [id, tick, nonce]);
+  const open = (path: string) => {
+    setDiff({ path, text: null });
+    api.diff(id, path).then((text) => setDiff((d) => d?.path === path ? { path, text } : d),
+      () => setDiff((d) => d?.path === path ? { path, text: null, failed: true } : d));
+  };
+  const { files, repo, failed } = state;
+  // Clean and outside a repo stay quiet: an idle strip is small.
+  if (files === null && !failed) return <span className="rt"><span className="rt-label">Changes…</span></span>;
+  if (files === null) return <button className="rt rt-link" onClick={() => setNonce((n) => n + 1)}><span className="rt-label">Changes</span><span className="rt-value rt-stale">unavailable · Retry</span></button>;
+  if (!repo) return null;
+  if (!files.length) return failed ? null : <span className="rt"><span className="rt-label">Clean</span></span>;
   const add = files.reduce((n, f) => n + Math.max(0, f.add), 0);
   const del = files.reduce((n, f) => n + Math.max(0, f.del), 0);
   return (
-    <details className="rt rt-jobs">
-      <summary>
+    <details className="rt rt-jobs" onToggle={(e) => { if (!e.currentTarget.open) setDiff(null); }}>
+      <summary aria-label={`Changes: ${files.length} files, ${add} added, ${del} removed${failed ? ", stale" : ""}`}>
         <span className="rt-label">Changes</span>
-        <span className="num rt-value">{files.length} <span className="rt-add">+{add}</span> <span className="rt-del">−{del}</span></span>
+        <span className={"num rt-value" + (failed ? " rt-stale" : "")}>{files.length} <span className="rt-add">+{add}</span> <span className="rt-del">−{del}</span></span>
       </summary>
-      <ul className="rt-pop">
-        {files.map((f) => (
-          <li key={f.path}>
-            <span className="mono rt-job-cmd" title={f.path}>{f.path}</span>
-            <span className="num">
-              {f.new ? <span className="rt-add">new</span>
-                : f.add < 0 ? <span className="rt-label">binary</span>
-                : <><span className="rt-add">+{f.add}</span> <span className="rt-del">−{f.del}</span></>}
-            </span>
-          </li>
-        ))}
-      </ul>
+      {diff ? (
+        <div className="rt-pop rt-diff">
+          <button className="head-pop-item rt-back" onClick={() => setDiff(null)}>← <span className="mono">{diff.path}</span></button>
+          {diff.text !== null ? <pre className="mono rt-diff-body">{diff.text.split("\n").map((l, i) => (
+              <span key={i} className={l.startsWith("+") && !l.startsWith("+++") ? "rt-add" : l.startsWith("-") && !l.startsWith("---") ? "rt-del" : l.startsWith("@@") ? "rt-label" : undefined}>{l + "\n"}</span>
+            ))}</pre>
+            : diff.failed ? <button className="btn rt-stop" onClick={() => open(diff.path)}>Couldn’t read the diff · Retry</button>
+            : <p className="rt-label">Reading diff…</p>}
+        </div>
+      ) : (
+        <ul className="rt-pop">
+          {failed && (
+            <li><span className="rt-label">Stale: the last refresh failed</span>
+              <button className="btn rt-stop" onClick={() => setNonce((n) => n + 1)}>Retry</button></li>
+          )}
+          {files.map((f) => (
+            <li key={f.path}>
+              <button className="rt-link mono rt-job-cmd" title={f.path} onClick={() => open(f.path)}>{f.path}</button>
+              <span className="num">
+                {f.new ? <span className="rt-add">new</span>
+                  : f.add < 0 ? <span className="rt-label">binary</span>
+                  : <><span className="rt-add">+{f.add}</span> <span className="rt-del">−{f.del}</span></>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </details>
   );
 }
@@ -1347,10 +1409,17 @@ function TestsChip({ lines }: { lines: Line[] }) {
               el.querySelector("summary")?.focus();
             }}>
       <span className="rt-label">Tests</span>
-      <span className={"num rt-value " + (failed ? "rt-del" : "rt-add")}>{failed ? "failed" : "passed"}</span>
+      <span className={"num rt-value " + (failed ? "rt-del" : "rt-add")}>{failed && <span aria-hidden="true" className="rt-mark"><StatusMark status="error" bare /></span>}{failed ? "failed" : "passed"}</span>
       <span className="num rt-label">{ago(last.at)} ago</span>
     </button>
   );
+}
+
+/** How long the running turn has taken, counted from its prompt. */
+function RunClock({ since }: { since: string }) {
+  const now = useNow(true);
+  const t = Math.max(0, Math.round((now - Date.parse(since)) / 1000));
+  return <span className="num head-clock">{Math.floor(t / 60)}:{String(t % 60).padStart(2, "0")}</span>;
 }
 
 /** Now, re-read every second while `on`. */
@@ -1377,11 +1446,10 @@ function CacheChip({ cache, model }: { cache: NonNullable<Row["cache"]>; model?:
   const provider = model?.split("/")[0]?.replace(/^~/, "") || "provider";
   return (
     <Tip className={left ? "rt-cache-hot" : "rt-cache-cold"}
-         tip={`${provider} prompt cache · last turn read ${tokenCount(cache.read)} of ${tokenCount(cache.in)} input tokens from it (${hit}%), wrote ${tokenCount(cache.write)}`}>
-      <span className="rt-label">Cache</span>
+         tip={`Estimate: ${provider}'s documented cache window since the last turn ended, not a measured hit. Last turn read ${tokenCount(cache.read)} of ${tokenCount(cache.in)} input tokens from the cache (${hit}%), wrote ${tokenCount(cache.write)}`}>
+      <span className="rt-label">TTL</span>
       <span className="num rt-value">
-        {/* "~": the window is the provider's documented minimum, not a reading. */}
-        {left ? `hot · ~${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "cold"}
+        {left ? `~${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "elapsed"}
       </span>
     </Tip>
   );
@@ -1391,11 +1459,12 @@ function CacheChip({ cache, model }: { cache: NonNullable<Row["cache"]>; model?:
  * A strip figure whose detail shows on hover after a beat, on keyboard
  * focus and on tap — not only in a title tooltip a phone never shows.
  */
-function Tip({ tip, className, children }: { tip: string; className?: string; children: React.ReactNode }) {
+function Tip({ tip, label, className, children }: { tip: string; /** The accessible name, when the visible words are too short to be one. */ label?: string; className?: string; children: React.ReactNode }) {
+  const id = useId();
   return (
-    <span className={"rt rt-tip" + (className ? " " + className : "")} tabIndex={0}>
+    <span className={"rt rt-tip" + (className ? " " + className : "")} tabIndex={0} aria-label={label} aria-describedby={id}>
       {children}
-      <span className="rt-tip-body" role="tooltip">{tip}</span>
+      <span className="rt-tip-body" role="tooltip" id={id}>{tip}</span>
     </span>
   );
 }
@@ -1587,14 +1656,17 @@ interface ProviderInfo { plugin: string; models?: ModelInfo[] }
 
 export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
   row: Row; projects: Project[];
-  onModel: (m: string) => void; onEffort: (e: string) => void; onAssign: (p: string) => void;
+  onModel: (m: string) => Promise<boolean> | void; onEffort: (e: string) => Promise<boolean> | void; onAssign: (p: string) => void;
   /** Render just the model picker, or everything but it. */
   only?: "model" | "rest";
 }) {
   const [cat, setCat] = useState<{ providers: ProviderInfo[]; efforts: string[] } | null>(null);
+  const [catFailed, setCatFailed] = useState(false);
+  const [nonce, setNonce] = useState(0);
   useEffect(() => {
-    fetch("/api/models").then((r) => r.json()).then(setCat).catch(() => setCat(null));
-  }, []);
+    setCatFailed(false);
+    fetch("/api/models").then((r) => r.json()).then(setCat).catch(() => { setCat(null); setCatFailed(true); });
+  }, [nonce]);
 
   // A session that has not answered yet genuinely has no model to name;
   // one running a model the catalogue does not list still shows it.
@@ -1624,11 +1696,12 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
         // it thinks, side by side, on every screen.
         <div className="ctl ctl-run">
           <Select label="Model" value={row.model ?? ""} options={models} searchable align="end" note="Applies to the next turn"
-                  onChange={(v) => v && onModel(v)} />
+                  onChange={(v) => (v ? onModel(v) : undefined)} />
           {efforts.length > 0 && (
-            <Select label="Effort" value={row.effort ?? ""} align="end" note="Applies to the next turn" onChange={(v) => v && onEffort(v)}
+            <Select label="Effort" value={row.effort ?? ""} align="end" note="Applies to the next turn" onChange={(v) => (v ? onEffort(v) : undefined)}
                     options={[...(row.effort ? [] : [{ value: "", label: "Default effort" }]), ...efforts.map((e) => ({ value: e, label: effortLabel(e) }))]} />
           )}
+          {catFailed && <button className="btn" onClick={() => setNonce((n) => n + 1)}>Models unavailable · Retry</button>}
         </div>
       )}
       {only !== "model" && (
@@ -1704,7 +1777,7 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
   jump?: { turn: number; at: number } | null;
   onSend: (t: string) => Promise<string | null> | void; onAnswer: (t: string) => Promise<string | null> | void; onInterrupt: () => Promise<boolean> | void;
   onArchive: () => void; onRename: (t: string) => void; onContext?: () => void; onAck?: () => void;
-  onModel: (m: string) => void; onEffort: (e: string) => void; onAssign: (p: string) => void;
+  onModel: (m: string) => Promise<boolean> | void; onEffort: (e: string) => Promise<boolean> | void; onAssign: (p: string) => void;
 }) {
   // One draft per session: switching away and back keeps what you were
   // typing there, and never carries it into another conversation.
@@ -1966,11 +2039,9 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
           {row.trouble && row.trouble !== "tests failed" ? (
             // One status: the reason replaces "Done".
             <span className="status head-trouble"><StatusMark status="error" bare />{capital(row.trouble)}</span>
-          ) : row.testsFailed || row.trouble ? (
-            // The Tests chip names the failure; the mark only stops a
-            // failing check from reading as a clean "Done".
-            <span className="status head-trouble head-check"><StatusMark status="error" bare />Agent {(STATUS[row.status]?.label ?? row.status).toLowerCase()}</span>
           ) : <StatusMark status={row.status} />}
+          {/* A test failure is the Tests chip's to say, once. */}
+          {running && turns[turns.length - 1]?.prompt?.at && !turns[turns.length - 1]?.done && <RunClock since={turns[turns.length - 1].prompt!.at} />}
           {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
         </div>
         <div className="head-side">
@@ -1993,10 +2064,6 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
                 if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
                 else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
               }}>
-                <div className="head-pop-phone">
-                  <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" />
-                  {row.cache && <div className="head-pop-cache"><CacheChip cache={row.cache} model={row.model} /></div>}
-                </div>
                 <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="rest" />
                 <button className="head-pop-item" onClick={async () => {
                   closeMore(false);
@@ -2004,13 +2071,12 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
                   const t = await askText("Rename session", { initial: plainTitle(row.title), action: "Rename", allowEmpty: true });
                   if (t !== null) onRename(t);
                 }}>Rename</button>
-                {onContext && <button className="head-pop-item head-pop-phone" onClick={() => { closeMore(false); onContext(); }}>Context</button>}
                 <button className="head-pop-item" onClick={() => { closeMore(true); onArchive(); }}>{row.archived ? "Unarchive" : "Archive"}</button>
               </div>
             )}
           </div>
         </div>
-        <RuntimeStrip row={row} lines={lines} onRun={() => setMore(true)} />
+        <RuntimeStrip row={row} lines={lines} />
       </header>
 
       <div className="scroll transcript" ref={scroller} onScroll={onScroll}>

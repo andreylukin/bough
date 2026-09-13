@@ -173,8 +173,9 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
                color:var(--text-2);background:none;border:0;border-radius:6px;cursor:pointer}
 .head-pop-item:hover{background:var(--sel);color:var(--text-1)}
 /* Model, effort, cache and Context move into settings only on a phone. */
-.head-pop-phone,.runtime-strip .rt-run{display:none}
-.head-pop-cache{padding:4px 10px 8px;font-size:12px}
+.head-clock{font-size:12px;color:var(--text-2)}
+.sel-save{font-size:12px;color:var(--text-3);white-space:nowrap;margin-inline-start:6px}
+.sel-save-failed{background:none;border:0;padding:0;color:var(--red);cursor:pointer}
 @media (pointer:coarse){.head-pop-item{height:44px}}
 .more{display:inline-flex;flex-shrink:0;width:32px;height:32px;align-items:center;justify-content:center;
       background:none;border:1px solid var(--line-strong);border-radius:6px;color:var(--text-2);cursor:pointer}
@@ -299,6 +300,13 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .rt-add{color:var(--accent)}
 .rt-del{color:var(--red)}
 .rt-pop li{align-items:center}
+.rt-stale{color:var(--text-3)}
+.rt-mark{display:inline-flex;margin-inline-end:4px;vertical-align:-2px}
+.rt-diff{width:min(480px,calc(100vw - 32px));max-width:none;padding:4px}
+.rt-back{gap:8px;height:32px;color:var(--text-2)}
+.rt-diff-body{margin:0;padding:6px 8px;max-height:min(420px,60vh);overflow:auto;font-size:12px;line-height:17px;white-space:pre}
+.rt-diff-body>span{display:block}
+.rt-pop .rt-link:focus-visible,.rt-jobs>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .rt-link{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;display:inline-flex;gap:6px;align-items:baseline}
 .rt-link:hover .rt-value{text-decoration:underline}
 .rt-stop{height:24px;padding:0 8px;font-size:12px;flex-shrink:0}
@@ -830,13 +838,16 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   /* The dynamic viewport, so browser chrome never hides the composer. */
   .app{height:100dvh}
   /* Header: back, title and settings on one 44px row; the run and budget under it. */
-  .thread-head{grid-template-columns:auto minmax(0,1fr) auto;grid-template-rows:44px auto;grid-template-areas:"back main side" "strip strip strip"}
-  .head-side>.controls,.head-context,.runtime-strip .rt-cache-hot,.runtime-strip .rt-cache-cold{display:none}
+  /* The real pickers and Context get a 44px row of their own; Settings keeps only Project, Rename, Archive. */
+  .thread-head{grid-template-columns:auto minmax(0,1fr) auto;grid-template-rows:44px 44px auto;grid-template-areas:"back main side" "run run ctx" "strip strip strip"}
+  .thread-head>.head-side{display:contents}
+  .head-side>.controls{grid-area:run;align-self:center}
+  .head-side>.head-context{grid-area:ctx;height:44px}
+  .head-side>.head-more{grid-area:side}
+  .head-side>.controls .ctl-run{flex-direction:row;gap:8px}
+  .head-side>.controls .sel-btn{height:44px}
   .back,.head-more>.more{width:44px;height:44px}
   .thread-head>.runtime-strip{padding:0 4px;gap:0 14px;font-variant-numeric:tabular-nums}
-  .runtime-strip .rt-run{display:inline-flex;flex-basis:100%;min-height:24px;gap:8px}
-  div.head-pop-phone{display:flex;flex-direction:column}
-  button.head-pop-phone{display:flex;flex-direction:row}
   .head-pop .ctl-run{flex-direction:column;align-items:stretch;gap:8px}
   .head-pop{padding:8px;max-width:354px}
   /* The list: a separate 44px disclosure column, Seen beside it. */

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -71,6 +72,38 @@ func (a *API) changes(w http.ResponseWriter, r *http.Request) {
 		files = []Change{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"repo": repo, "files": files})
+}
+
+// Diff is one file's unified diff against HEAD with 3 lines of context;
+// an untracked file is diffed against nothing, so all of it reads as added.
+func Diff(ctx context.Context, dir, path string) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", "-C", dir, "diff", "-U3", "HEAD", "--", path).Output()
+	if err == nil && len(out) == 0 {
+		// Untracked: --no-index exits 1 whenever the files differ.
+		out, _ = exec.CommandContext(ctx, "git", "-C", dir, "diff", "-U3", "--no-index", "--", "/dev/null", path).Output()
+	}
+	return string(out), err
+}
+
+func (a *API) diff(w http.ResponseWriter, r *http.Request) {
+	in, ok := a.info(r.PathValue("id"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: unknown session %q", r.PathValue("id")))
+		return
+	}
+	path := r.URL.Query().Get("path")
+	if path == "" || filepath.IsAbs(path) || strings.HasPrefix(filepath.Clean(path), "..") {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: diff path %q is not inside the tree", path))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	text, err := Diff(ctx, in.Cwd, path)
+	if err != nil {
+		writeErr(w, http.StatusConflict, fmt.Errorf("serve: api: diff %s: %w", path, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"diff": text})
 }
 
 // killJob stops one of a session's background jobs. The job lives in the

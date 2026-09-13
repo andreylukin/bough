@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -39,5 +40,11 @@ func TestChanges(t *testing.T) {
 	}
 	if files[0] != (Change{Path: "a.go", Add: 2, Del: 1}) || !files[1].New || files[1].Path != "b.go" {
 		t.Fatalf("changes = %+v", files)
+	}
+	if d, err := Diff(context.Background(), dir, "a.go"); err != nil || !strings.Contains(d, "-two") || !strings.Contains(d, "+four") {
+		t.Fatalf("diff a.go = %q, %v", d, err)
+	}
+	if d, err := Diff(context.Background(), dir, "b.go"); err != nil || !strings.Contains(d, "+new") {
+		t.Fatalf("diff of an untracked file = %q, %v", d, err)
 	}
 }
