@@ -938,7 +938,7 @@ export function SubAgentView({ agent, live }: { agent: SubAgent; live: boolean }
     <details className={"sub " + st.cls} open={agent.status === "error"}>
       <summary>
         <span className="sub-task">{task}</span>
-        <span className="num sub-tag" title={`Subagent ${agent.worker}`}>#{agent.worker}</span>
+        <span className="num sub-tag">Subagent {agent.worker}</span>
         <span className="sub-state">
           {working && (
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -1308,7 +1308,7 @@ function TurnFooter({ turn }: { turn: Turn }) {
  * actually answering. The window is only named when the session records
  * its model; a default model is not guessed at.
  */
-function RuntimeStrip({ row, lines, paused, onRetry }: { row: Row; lines: Line[]; paused?: number; onRetry?: () => void }) {
+function RuntimeStrip({ row, lines, paused, onRetry, onContext }: { row: Row; lines: Line[]; paused?: number; onRetry?: () => void; onContext?: () => void }) {
   const [limits, setLimits] = useState<Record<string, number>>({});
   useEffect(() => {
     fetch("/api/models").then((r) => r.json()).then((c: { providers?: ProviderInfo[] }) => {
@@ -1341,26 +1341,29 @@ function RuntimeStrip({ row, lines, paused, onRetry }: { row: Row; lines: Line[]
           Updates paused · last synced {clock(new Date(paused).toISOString())} · <button className="link" onClick={onRetry}>Retry</button>
         </span>
       )}
-      {u && (
-        <Tip tip={limit ? `${u.lastIn.toLocaleString()} of ${limit.toLocaleString()} tokens, read by ${row.model}`
-                  : !row.model ? "No model is recorded for this session, so headroom is not known"
-                  : switched ? "The model changed after this input was read; headroom shows once the new model answers"
-                  : `${row.model} has no context window in the catalogue`}>
-          <span className="rt-label">{limit ? "Context" : "Last input"}</span>
-          <span className="num rt-value">{tokenCount(u.lastIn)}{limit ? ` · ${tokenCount(Math.max(0, limit - u.lastIn))} left` : ""}</span>
+      {u && (() => {
+        // The reading is the way into Context; there is no second button for it.
+        const tip = limit ? `${u.lastIn.toLocaleString()} of ${limit.toLocaleString()} tokens, read by ${row.model}`
+          : !row.model ? "No model is recorded for this session, so headroom is not known"
+          : switched ? "The model changed after this input was read; headroom shows once the new model answers"
+          : `${row.model} has no context window in the catalogue`;
+        const body = <>
+          {limit && <span className="rt-label">Context</span>}
+          <span className="num rt-value">{tokenCount(u.lastIn)}{limit ? ` · ${tokenCount(Math.max(0, limit - u.lastIn))} left` : " in"}</span>
           {pct !== undefined && (
             <span className="rt-bar" role="meter" aria-label="Context used" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
               <span className={pct >= 80 ? "rt-hot" : undefined} style={{ width: `${pct}%` }} />
             </span>
           )}
-        </Tip>
-      )}
+        </>;
+        return onContext
+          ? <button type="button" className="rt rt-link" title={`${tip} · open Context`} aria-label={`Context: ${tip}`} onClick={onContext}>{body}</button>
+          : <Tip tip={tip}>{body}</Tip>;
+      })()}
       {u?.cost !== undefined && (
-        // Tokens in/out ride on the cost's tooltip: the price is the figure
-        // a person acts on. The model is named once, in the header picker.
-        <Tip label="Session cost" tip={`${u.in.toLocaleString()} tokens in · ${u.out.toLocaleString()} out`}>
-          <span className="rt-label" aria-hidden="true">Cost</span><span className="num rt-value">{money(u.cost)}</span>
-        </Tip>
+        <span className="rt" title={`${u.in.toLocaleString()} tokens in · ${u.out.toLocaleString()} out`}>
+          <span className="num rt-value">{money(u.cost)}</span><span className="num rt-label">{tokenCount(u.in + u.out)} tok</span>
+        </span>
       )}
       <ChangesChip id={row.id} tick={lines.length} />
       <TestsChip lines={lines} />
@@ -1550,12 +1553,14 @@ function CacheChip({ cache, model }: { cache: NonNullable<Row["cache"]>; model?:
   const left = Math.max(0, Math.round((end - now) / 1000));
   const hit = cache.in ? Math.round((cache.read / cache.in) * 100) : 0;
   const provider = model?.split("/")[0]?.replace(/^~/, "") || "provider";
+  // An elapsed window is not a decision fact; only a warm one is.
+  if (!left) return null;
   return (
-    <Tip className={left ? "rt-cache-hot" : "rt-cache-cold"}
+    <Tip className="rt-cache-hot"
          tip={`Estimate: ${provider}'s documented cache window since the last turn ended, not a measured hit. Last turn read ${tokenCount(cache.read)} of ${tokenCount(cache.in)} input tokens from the cache (${hit}%), wrote ${tokenCount(cache.write)}`}>
       <span className="rt-label">TTL</span>
       <span className="num rt-value">
-        {left ? `~${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "elapsed"}
+        ~{Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}
       </span>
     </Tip>
   );
@@ -1763,6 +1768,14 @@ function effortLabel(e: string): string {
 }
 interface ProviderInfo { plugin: string; models?: ModelInfo[] }
 
+// The keyboard shrinks the visual viewport, not 100dvh: the app follows it.
+if (typeof window !== "undefined" && window.visualViewport) {
+  const vv = window.visualViewport;
+  const fit = () => document.documentElement.style.setProperty("--app-height", `${vv.height}px`);
+  fit();
+  vv.addEventListener("resize", fit);
+}
+
 export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
   row: Row; projects: Project[];
   onModel: (m: string) => Promise<boolean> | void; onEffort: (e: string) => Promise<boolean> | void; onAssign: (p: string) => void;
@@ -1951,7 +1964,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     const fit = () => {
       const vv = window.visualViewport;
       const bottom = vv ? vv.offsetTop + vv.height : innerHeight;
-      pop.style.maxHeight = `${Math.max(120, bottom - pop.getBoundingClientRect().top - 12)}px`;
+      pop.style.maxHeight = `${Math.max(0, bottom - pop.getBoundingClientRect().top - 12)}px`;
     };
     fit();
     pop.querySelector<HTMLElement>("button,input")?.focus();
@@ -2231,7 +2244,6 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
         </div>
         <div className="head-side">
           <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" />
-          {onContext && <button className="btn head-context" onClick={onContext}>Context</button>}
           <div className="head-more" ref={moreRef}>
             <button className="more" aria-label="Session settings" aria-expanded={more} aria-controls={"more-" + row.id}
                     onClick={() => setMore((v) => !v)}>
@@ -2241,7 +2253,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
               </svg>
             </button>
             {more && (
-              <div className="head-pop" id={"more-" + row.id} onKeyDown={(e) => {
+              <div className="head-pop" role="dialog" aria-label="Session settings" id={"more-" + row.id} onKeyDown={(e) => {
                 // Tab stays inside the open settings.
                 if (e.key !== "Tab") return;
                 const all = [...e.currentTarget.querySelectorAll<HTMLElement>("button,input")].filter((el) => el.offsetParent);
@@ -2260,7 +2272,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             )}
           </div>
         </div>
-        <RuntimeStrip row={row} lines={lines} paused={paused} onRetry={onRetry} />
+        <RuntimeStrip row={row} lines={lines} paused={paused} onRetry={onRetry} onContext={onContext} />
       </header>
 
       <div className="scroll transcript" ref={scroller} onScroll={onScroll} onKeyDown={latestKey}

@@ -21,8 +21,10 @@ export function Markdown({ text }: { text: string }) {
     const boxes = [...(ref.current?.querySelectorAll<HTMLElement>(".md-table-scroll") ?? [])];
     const mark = (b: HTMLElement) => b.parentElement!.toggleAttribute("data-end", b.scrollLeft + b.clientWidth >= b.scrollWidth - 1);
     const on = (e: Event) => mark(e.currentTarget as HTMLElement);
-    boxes.forEach((b) => { mark(b); b.addEventListener("scroll", on, { passive: true }); });
-    return () => boxes.forEach((b) => b.removeEventListener("scroll", on));
+    // A resize or a streamed row changes the overflow, not only a scroll.
+    const ro = new ResizeObserver(() => boxes.forEach(mark));
+    boxes.forEach((b) => { mark(b); ro.observe(b); if (b.firstElementChild) ro.observe(b.firstElementChild); b.addEventListener("scroll", on, { passive: true }); });
+    return () => { ro.disconnect(); boxes.forEach((b) => b.removeEventListener("scroll", on)); };
   }, [html]);
   return <div className="md" ref={ref} dangerouslySetInnerHTML={{ __html: html }} />;
 }
