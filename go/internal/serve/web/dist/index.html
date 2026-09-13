@@ -89,7 +89,13 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .ctl select:hover{color:var(--text-1)}
 
 /* turns */
+/* One readable column, centred. A transcript set to the width of a
+   wide window is a wall: the eye loses the line it is on between the
+   right edge and the next line's start. 80ch is the measure asked for
+   — wider than prose wants, which is right here, because most of this
+   is commands and output rather than sentences. */
 .transcript{flex-grow:1;padding:24px 32px 8px;display:flex;flex-direction:column;gap:28px}
+.transcript>*{width:100%;max-width:80ch;margin-inline:auto}
 .turn{display:flex;flex-direction:column;gap:14px}
 .prompt{display:flex;align-items:baseline;gap:12px;max-width:78ch}
 .prompt-mark{color:var(--accent);flex-shrink:0}

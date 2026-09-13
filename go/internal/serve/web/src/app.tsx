@@ -490,7 +490,24 @@ export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, on
   // is lifted by the next real key.
   const pasted = useRef(false);
   const streamLen = stream.reduce((n, r) => n + r.text.length, 0);
-  useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [lines.length, streamLen]);
+  const scroller = useRef<HTMLDivElement>(null);
+  // Stick to the bottom only while you are already there. Scrolling up
+  // during a streaming turn used to be impossible: every fragment
+  // re-scrolled to the end and dragged you back down mid-sentence.
+  const atBottom = useRef(true);
+  const onScroll = () => {
+    const el = scroller.current;
+    if (!el) return;
+    // A slack of a couple of lines: "near the bottom" is what a reader
+    // means by "at the bottom", and an exact test loses the stick the
+    // moment a fragment arrives a pixel early.
+    atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  };
+  useEffect(() => {
+    if (atBottom.current) end.current?.scrollIntoView({ block: "end" });
+  }, [lines.length, streamLen]);
+  // Opening a different conversation starts at the bottom again.
+  useEffect(() => { atBottom.current = true; }, [row.id]);
   const turns = useMemo(() => groupTurns(lines), [lines]);
   const running = row.status === "running";
 
@@ -546,7 +563,7 @@ export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, on
         </div>
       </header>
 
-      <div className="scroll transcript">
+      <div className="scroll transcript" ref={scroller} onScroll={onScroll}>
         {turns.map((t, i) => (
           <TurnView key={t.seq} turn={t}
             // The preview belongs to the turn that is still open, so it
