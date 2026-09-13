@@ -25,6 +25,9 @@ const post = (path: string, body?: unknown) =>
   req<{ ok: true }>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
 
 export const api = {
+  /** Where a new session starts, from the server that knows. */
+  home: () => req<{ home: string }>("/api/health").then((r) => r.home ?? ""),
+
   sessions: (all = false) =>
     req<{ sessions: Row[] }>(`/api/sessions${all ? "?all=1" : ""}`).then((r) => r.sessions),
 

@@ -69,12 +69,14 @@ function useFullText(q: string, open: boolean): SearchHit[] {
   return hits;
 }
 
-export function Palette({ open, onClose, rows, commands, onOpenSession }: {
+export function Palette({ open, onClose, rows, commands, onOpenSession, onStart }: {
   open: boolean;
   onClose: () => void;
   rows: Row[];
   commands: Command[];
   onOpenSession: (id: string) => void;
+  /** Start a conversation with what was typed as its first message. */
+  onStart?: (text: string) => void;
 }) {
   const [q, setQ] = useState("");
   const [at, setAt] = useState(0);
@@ -130,8 +132,21 @@ export function Palette({ open, onClose, rows, commands, onOpenSession }: {
         run: () => onOpenSession(h.id),
       });
     }
+    // Last, never first: what you typed is usually the name of
+    // something that exists. It is offered once nothing obvious
+    // matched, or at the end when something did.
+    const typed = q.trim();
+    if (onStart && typed.length >= 2 && !typed.includes(":")) {
+      all.push({
+        id: "start:" + typed,
+        label: `Start a conversation: “${typed}”`,
+        hint: "sends it as the first message",
+        group: "Start",
+        run: () => onStart(typed),
+      });
+    }
     return all.slice(0, 40);
-  }, [q, rows, commands, onOpenSession, found]);
+  }, [q, rows, commands, onOpenSession, found, onStart]);
 
   useEffect(() => { setAt(0); }, [q]);
   useEffect(() => {

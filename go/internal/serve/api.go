@@ -109,8 +109,12 @@ func NewAPI(sup *Supervisor) *API {
 
 func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) { a.mux.ServeHTTP(w, r) }
 
+// health also carries where a new session would start. Creating one
+// needs a directory, and the page has no way to know the home it is
+// being served from — without this the UI can only offer to create a
+// session somewhere the person has to type out.
 func (a *API) health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "home": a.home})
 }
 
 // listSessions answers newest-first. Archived sessions are hidden

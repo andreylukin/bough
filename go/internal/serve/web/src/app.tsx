@@ -35,7 +35,12 @@ export function Sprout({ size = 18 }: { size?: number }) {
   );
 }
 
-export /** ⌘ on a Mac, Ctrl everywhere else. */
+export /** A path as a person reads it: ~ for home, and no repetition of it. */
+function shortPath(p: string, home: string): string {
+  return home && p.startsWith(home) ? "~" + p.slice(home.length) : p;
+}
+
+/** ⌘ on a Mac, Ctrl everywhere else. */
 function modKey(): string {
   return typeof navigator !== "undefined" && /Mac|iP/.test(navigator.platform) ? "\u2318" : "Ctrl+";
 }
@@ -534,6 +539,8 @@ export default function App() {
   const row = rows.find((r) => r.id === selected) ?? null;
 
   const [palette, setPalette] = useState(false);
+  const [home, setHome] = useState("");
+  useEffect(() => { api.home().then(setHome).catch(() => setHome("")); }, []);
   usePaletteKey(useCallback(() => setPalette(true), []));
 
   const openSession = useCallback((id: string) => {
@@ -550,7 +557,24 @@ export default function App() {
   // What the chrome can do, the keyboard can do. Session-scoped
   // commands only appear when one is open, so the list never offers
   // something that would fail.
+  const start = (cwd: string, prompt: string) => act(async () => {
+    const created = await api.create(cwd, prompt);
+    openSession(created.id);
+  });
+
   const commands: Command[] = [
+    ...(home ? [{
+      id: "new:here", group: "Start", label: "New conversation",
+      hint: shortPath(home, home),
+      run: () => start(home, ""),
+    }] : []),
+    ...(home && row?.cwd && row.cwd !== home ? [{
+      id: "new:cwd", group: "Start", label: "New conversation where this one is",
+      hint: shortPath(row.cwd, home),
+      run: () => start(row.cwd, ""),
+    }] : []),
+    { id: "new:project", group: "Start", label: "New project…",
+      run: () => { const n = prompt("Name the project"); if (n?.trim()) act(() => api.newProject(n.trim())); } },
     { id: "go:sessions", group: "Go to", label: "Conversations",
       run: () => { setView("sessions"); setContext(false); setPane("thread"); } },
     { id: "go:projects", group: "Go to", label: "Projects",
@@ -576,7 +600,8 @@ export default function App() {
   return (
     <div className="app" data-pane={pane}>
       <Palette open={palette} onClose={() => setPalette(false)} rows={rows}
-               commands={commands} onOpenSession={openSession} />
+               commands={commands} onOpenSession={openSession}
+               onStart={home ? (text) => start(home, text) : undefined} />
       <Sidebar rows={visible} selected={selected}
                onSelect={(id) => { setSelected(id); setContext(false); setView("sessions"); setPane("thread"); }}
                query={query} onQuery={setQuery} view={view} onView={(v) => { setView(v); setPane("thread"); }}

@@ -473,3 +473,19 @@ func TestAPIEventsUnknownSession(t *testing.T) {
 		t.Errorf("events on an unknown session = %d, want 404", code)
 	}
 }
+
+// Creating a session needs a directory, and the page cannot know the
+// home it is served from. Without this the UI can only offer to create
+// one somewhere the person types out by hand.
+func TestHealthCarriesHome(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	f.api.home = f.home
+	code, body := f.do(t, "GET", "/api/health", "")
+	if code != http.StatusOK {
+		t.Fatalf("GET /api/health = %d", code)
+	}
+	if body["home"] != f.home {
+		t.Errorf("home = %v, want %q", body["home"], f.home)
+	}
+}
