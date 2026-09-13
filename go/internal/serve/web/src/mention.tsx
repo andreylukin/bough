@@ -33,6 +33,8 @@ export function triggerAt(text: string, caret: number): Trigger | null {
       // Mid-word "/" is a path separator: keep walking, so "@go/internal/x"
       // is still the @ token it started as.
       if (before && !/\s/.test(before)) { if (ch === "/") continue; return null; }
+      // A skill runs only as the lead word, as the Skills button places it.
+      if (ch === "/" && text.slice(0, i).trim()) return null;
       return { kind: ch, token: text.slice(i + 1, caret), from: i, to: caret };
     }
   }
@@ -150,7 +152,7 @@ export function Mentions({ trigger, session, onPick, onClose, onOpen, onActive }
   useEffect(() => { setAt(0); }, [token, trigger?.kind]);
   // Results can shrink under the cursor without the token changing.
   useEffect(() => { setAt((i) => Math.min(i, Math.max(hits.length - 1, 0))); }, [hits.length]);
-  useEffect(() => { onOpen?.(Boolean(trigger && hits.length)); }, [trigger, hits.length, onOpen]);
+
   useEffect(() => { onActive?.(trigger && hits.length ? "mention-" + at : undefined); }, [trigger, hits.length, at, onActive]);
   // A fast answer shows nothing; only a slow one says it is looking.
   const loaded = trigger?.kind === "@" ? files !== null : skills !== null;
@@ -172,10 +174,10 @@ export function Mentions({ trigger, session, onPick, onClose, onOpen, onActive }
       const own = ["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key) && !(e.shiftKey && e.key !== "Escape");
       if (!own || e.isComposing) return;
       if (!hits.length) {
-        // Loading or empty: Escape still closes, and Enter waits for
-        // results rather than sending a half-typed token.
+        // Loading, empty or failed: Escape closes, and Enter never sends
+        // a half-typed token while the picker is there.
         if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onClose(); }
-        else if (e.key === "Enter" && !loaded) { e.preventDefault(); e.stopPropagation(); }
+        else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); }
         return;
       }
       // Stop the key here. Picking closes the picker synchronously, so by
@@ -193,18 +195,25 @@ export function Mentions({ trigger, session, onPick, onClose, onOpen, onActive }
     return () => el?.removeEventListener("keydown", h, true);
   }, [trigger, hits, at, loaded, onPick, onClose]);
 
+  const isFiles = trigger?.kind === "@";
+  const failed = isFiles ? filesErr : skillsErr;
+  const panel = Boolean(trigger && (hits.length || failed || loaded || slow));
+  useEffect(() => { onOpen?.(panel); }, [panel, onOpen]);
   if (!trigger) return null;
-  const isFiles = trigger.kind === "@";
   if (hits.length === 0) {
     // Nothing to pick is still an answer: say which one, never go blank.
-    const failed = isFiles ? filesErr : skillsErr;
     const q = trigger.token ? ` match “${trigger.token}”` : "";
     const msg = failed ? <>Couldn’t load {isFiles ? "files" : "skills"}. <button className="link" onMouseDown={(e) => e.preventDefault()}
         onClick={isFiles ? retryFiles : retrySkills}>Retry</button></>
       : !loaded ? (slow ? (isFiles ? "Finding files…" : "Loading skills…") : null)
       : !isFiles && skills?.length === 0 ? "No skills installed"
       : `No ${isFiles ? "files" : "skills"}${q || " found"}`;
-    return msg && <div className="mention"><p className="mention-state" role="status">{msg}</p></div>;
+    return msg && (
+      <div className="mention" ref={box} onKeyDown={(e) => {
+        // Escape from Retry closes the picker and hands the keys back.
+        if (e.key === "Escape") { e.preventDefault(); onClose(); document.getElementById("composer")?.focus(); }
+      }}><p className="mention-state" role="status">{msg}</p></div>
+    );
   }
   return (
     <div className="mention" ref={box}>

@@ -1998,7 +1998,12 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   // Whether the draft is an answer is decided when you start it, keyed to
   // the question on screen then: a question arriving mid-draft must not
   // quietly turn a message into an answer, nor a newer one inherit it.
-  const [draftAsk, setDraftAsk] = useState(() => row.ask?.id ?? "");
+  // Saved with the draft, so a remount never re-decides it against a newer question.
+  const askKey = "bough:draft-ask:" + row.id;
+  const [draftAsk, setDraftAsk] = useState(() => { try { return sessionStorage.getItem(askKey) ?? row.ask?.id ?? ""; } catch { return row.ask?.id ?? ""; } });
+  useEffect(() => {
+    try { draft.trim() ? sessionStorage.setItem(askKey, draftAsk) : sessionStorage.removeItem(askKey); } catch { /* storage off */ }
+  }, [draft, draftAsk, askKey]);
   const blank = !draft.trim();
   useEffect(() => { if (blank) setDraftAsk(row.ask?.id ?? ""); }, [blank, row.ask?.id]);
   const askChanged = !blank && draftAsk !== (row.ask?.id ?? "");
@@ -2133,6 +2138,9 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   }, [loading]);
   const running = row.status === "running";
 
+  const [multi, setMulti] = useState(false);
+  // The textarea's width in the one-row layout, remembered for collapsing back.
+  const composerRow = useRef(0);
   // A long paste should be visible, not a two-row porthole you have to
   // drag open. Grow to the text and stop at a third of the window.
   useEffect(() => {
@@ -2140,11 +2148,35 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     if (!el) return;
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, Math.round((window.visualViewport?.height ?? window.innerHeight) / 3)) + "px";
-  }, [draft]);
+    // Two rows only once the text really wraps (measured, not counted);
+    // staying multi until it fits again keeps the layout from flapping.
+    const line = parseFloat(getComputedStyle(el).lineHeight) || 20;
+    const pad = parseFloat(getComputedStyle(el).paddingTop) + parseFloat(getComputedStyle(el).paddingBottom);
+    const wraps = draft.includes("\n") || el.scrollHeight - pad > line * 1.5;
+    if (wraps !== multi) {
+      if (wraps) setMulti(true);
+      else if (!draft) setMulti(false);
+      else {
+        // Measure at single-row width before collapsing back.
+        const probe = el.cloneNode() as HTMLTextAreaElement;
+        probe.style.cssText = `position:absolute;visibility:hidden;height:auto;width:${composerRow.current}px`;
+        probe.value = draft; el.parentElement?.appendChild(probe);
+        if (probe.scrollHeight - pad <= line * 1.5) setMulti(false);
+        probe.remove();
+      }
+    }
+  }, [draft, multi]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Escape shuts a picker until the token it was over changes; the keyup
   // that follows the Escape would otherwise open it straight back.
   const dismissed = useRef("");
+  useEffect(() => {
+    const el = composer.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => { if (!el.parentElement?.classList.contains("composer-multi")) composerRow.current = el.clientWidth; });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [activeOpt, setActiveOpt] = useState<string | undefined>();
   const caretTrigger = (el: HTMLTextAreaElement) => {
@@ -2180,6 +2212,8 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   const landedIds = sending.length - unlanded.length;
   useEffect(() => { if (landedIds) setSending((q) => q.slice(landedIds)); }, [landedIds]); // eslint-disable-line react-hooks/exhaustive-deps
   const [fullPending, setFullPending] = useState("");
+  // Offered whenever the clamp actually hides something, whatever the length.
+  const [clipped, setClipped] = useState<Record<string, boolean>>({});
   // Sending is something you did, so it is followed like new output is.
   useEffect(() => { if (atBottom.current) end.current?.scrollIntoView({ block: "end" }); }, [sending.length]);
 
@@ -2196,14 +2230,15 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
       else setFailures((q) => [...q, { ...retried, error: "That question expired" }]);
       return;
     }
-    const id = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+    // A retry is the same request, so it keeps its id.
+    const id = retried?.id ?? (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
     if (!answer) setSending((q) => [...q, { id, text: t, after: newest }]);
     else setAnswering({ ask: ask ?? "", text: t });
     const error = await (answer ? onAnswer(t, ask) : onSend(t));
     if (answer) setAnswering(null);
     if (error) setSending((q) => q.filter((p) => p.id !== id));
-    // The same prompt failing again is one row with its latest cause, not a second identical row.
-    if (error) setFailures((q) => [...q.filter((f) => f.text !== t || f.answer !== answer), { id, at: Date.now(), text: t, answer, ask, error }]);
+    // Each request is its own row; a retry that fails again replaces its own.
+    if (error) setFailures((q) => [...q.filter((f) => f.id !== id), { id, at: Date.now(), text: t, answer, ask, error }]);
   };
   // Stop is asked once; the button says so until the ask is answered.
   const [stopping, setStopping] = useState<"" | "stopping" | "failed">("");
@@ -2375,8 +2410,10 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             <div className="prompt">
               <span className="mono prompt-mark">&gt;</span>
               <div className="prompt-text">
-                <p className={fullPending === p.id ? "" : "prompt-clamp"}>{p.text}</p>
-                {(p.text.length > 400 || p.text.split("\n").length > 6) && (
+                <p className={fullPending === p.id ? "" : "prompt-clamp"} ref={(el) => {
+                  if (el && !clipped[p.id] && el.scrollHeight > el.clientHeight + 1) setClipped((m) => ({ ...m, [p.id]: true }));
+                }}>{p.text}</p>
+                {clipped[p.id] && (
                   <button className="link" onClick={() => setFullPending((v) => (v === p.id ? "" : p.id))}>
                     {fullPending === p.id ? "Show less" : "Show full prompt"}
                   </button>
@@ -2430,12 +2467,10 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
               <strong>Question changed</strong>
               <span className="send-failed-text">{draftAsk ? "the one this answer was for is gone" : "this draft was written as a message"}</span>
             </span>
+            {/* Nothing changes until you choose; each choice is one small link. */}
             <span className="send-failed-actions">
-              <button className="btn" onClick={() => {
-                setDraftAsk(row.ask?.id ?? "");
-                if (row.ask) ask.current?.scrollIntoView({ block: "center" });
-                composer.current?.focus({ preventScroll: true });
-              }}>Review</button>
+              {row.ask && <button className="link" onClick={() => { ask.current?.scrollIntoView({ block: "center" }); setDraftAsk(row.ask?.id ?? ""); composer.current?.focus({ preventScroll: true }); }}>Use for this question</button>}
+              <button className="link" onClick={() => { setDraftAsk(""); composer.current?.focus({ preventScroll: true }); }}>Keep as message</button>
             </span>
           </div>
         )}
@@ -2464,7 +2499,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             </span>
           </div>
         ))}
-        <div className={"composer" + (draft.includes("\n") || draft.length > 60 ? " composer-multi" : "")}>
+        <div className={"composer" + (multi ? " composer-multi" : "")}>
           <Mentions trigger={trigger} session={row.id}
             onPick={(t, value) => {
               // Replace the token being typed, and leave a trailing
@@ -2503,13 +2538,18 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
               caretTrigger(e.currentTarget);
             }}
             onClick={(e) => { pasted.current = false; caretTrigger(e.currentTarget); }}
-            onBlur={() => { pasted.current = false; setTrigger(null); }}
+            onBlur={(e) => {
+              pasted.current = false;
+              // Focus moving into the picker (its Retry) keeps it open.
+              if (e.relatedTarget instanceof Node && e.currentTarget.parentElement?.querySelector(".mention")?.contains(e.relatedTarget)) return;
+              setTrigger(null);
+            }}
             onKeyDown={(e) => {
               // The paste chord's own keydown comes before the paste, so
               // the next keydown after one is a genuine later keystroke.
               if (!(e.metaKey || e.ctrlKey)) pasted.current = false;
-              // An open picker takes its keys before this runs (capture);
-              // an empty or hidden one owns nothing, so Enter still sends.
+              // An open picker takes its keys before this runs (capture),
+              // including Enter in its empty, loading and error states.
               // Enter that confirms an IME composition is not a send.
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }
             }} />
