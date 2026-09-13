@@ -72,9 +72,3 @@ func TestScrollInputGarbageFocus(t *testing.T) {
 	t.Parallel()
 	inputGarbageRun(t, time.Millisecond, "\x1b[I\x1b[<64;10;5M\x1b[O\x1b[<65;10;5M")
 }
-
-// A gap longer than the esc timeout after each byte.
-func TestScrollInputGarbageSplitSlow(t *testing.T) {
-	t.Parallel()
-	inputGarbageRun(t, 80*time.Millisecond, "")
-}

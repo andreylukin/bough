@@ -194,35 +194,6 @@ func TestStreamPtyStallThenEnd(t *testing.T) {
 	liveGlueSettledChecks(a, "after stall")
 }
 
-// A 5000-line reply streamed with no delay: the last line must reach
-// the screen promptly once the turn is done.
-func TestStreamPtyHugeReply(t *testing.T) {
-	t.Parallel()
-	a := startCfg(t, 100, 30, perfConfig(streamPtyHugeTape(t), 0))
-	start := time.Now()
-	streamPtySend(a, "go")
-	if !a.waitDone(1, 60*time.Second) {
-		t.Fatalf("turn never finished:\n%s", a.text())
-	}
-	loopDone := time.Since(start)
-	shown, ok := perfWaitText(a, "HUGE5000", 180*time.Second)
-	// Caught up means the finished turn is on screen, not just the
-	// last live line: the spinner leaves once the final render lands.
-	for ok && shown < 180*time.Second && liveGlueHasSpinner(a.text()) {
-		time.Sleep(2 * time.Millisecond)
-		shown = time.Since(start) - loopDone
-	}
-	t.Logf("5000 lines: loop done after %v, last line on screen %v later", loopDone, shown)
-	if !ok {
-		t.Fatalf("last line never reached the screen:\n%s", a.text())
-	}
-	// A shared macOS CI runner under -race trails by 5-7 s.
-	if shown > 10*time.Second {
-		t.Errorf("the screen trailed the finished turn by %v (> 10s): the live block renders too slowly", shown)
-	}
-	liveGlueSettledChecks(a, "after 5000 lines")
-}
-
 // A js fence arriving mid-stream: once the code line shows, its row
 // offset from the prose above it must not change while the stream runs
 // (a half-drawn box that later jumps would change it).

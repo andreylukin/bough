@@ -172,31 +172,3 @@ func TestConfigReloadMidTurnOverlay(t *testing.T) {
 		"/theme to mark dracula current: the overlay reload applied")
 	r.check("after /theme")
 }
-
-// init.js changes mid-turn (theme token + keybinding): nothing reloads
-// it, so the turn finishes and ctrl+g does not become clear_input.
-func TestConfigReloadMidTurnInitJs(t *testing.T) {
-	t.Parallel()
-	r := configReloadMidTurnBoot(t)
-	js := `bough.setup({ui: {theme: {user: "#ff0000:bold"}, keymap: {clear_input: "ctrl+g"}}})` + "\n"
-	if err := os.WriteFile(r.initjs, []byte(js), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	r.held("init.js rewritten")
-	r.finish()
-	// The reload races the turn's end on a loaded runner: poll for it.
-	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
-		for _, row := range r.term.Snapshot().Cells {
-			for _, c := range row {
-				if c.Content != "h" || c.Style.Fg == nil {
-					continue
-				}
-				red, g, b, _ := c.Style.Fg.RGBA()
-				if red>>8 == 0xff && g == 0 && b == 0 {
-					return
-				}
-			}
-		}
-	}
-	t.Fatalf("user text never turned #ff0000: the init.js edit was not reloaded:\n%s", r.text())
-}

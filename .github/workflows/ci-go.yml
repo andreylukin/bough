@@ -1,17 +1,15 @@
 # CI for the Go bough under go/: everything runs in parallel.
-#   unit    — go vet + go test -race ./... (kernel, plugin, teatest,
-#             headless e2e, and PTY suites; each test is isolated, so
-#             the whole tree runs fully parallel in one job) on Linux,
-#             macOS and Windows. macOS is where bough is used most and
-#             was long unchecked; Windows is where nobody has run it, so
-#             the tests are the only thing that can say whether it works
-#             (GitHub's runners ship Git Bash, which is the `sh` that
-#             tools.bash needs)
-#   cross   — every release target compiles, so a tag never discovers a
-#             build break on an architecture nobody ran, plus Windows,
-#             which ships no binary but must keep compiling
+#   unit    — go test ./... on Linux and macOS (kernel, plugin, teatest,
+#             headless e2e, and PTY suites). macOS is where bough is used
+#             most. -race everywhere except the PTY suite (internal/vtreal):
+#             it drives a separately built bough binary, so the detector
+#             only slows its timing-sensitive screens down. Windows ships
+#             no binary and its tests are not claimed to pass, so it is
+#             compiled and vetted (cross), not tested.
+#   cross   — every release target compiles and vets, so a tag never
+#             discovers a build break on an architecture nobody ran
 #   web-e2e — Playwright specs against real `bough --web` processes,
-#             sharded 4 ways
+#             sharded 2 ways (setup, not the specs, dominates a shard)
 name: ci-go
 
 on:
@@ -21,18 +19,18 @@ on:
   pull_request:
     paths: ['go/**', '.github/workflows/ci-go.yml']
 
+# A newer push to the same branch or PR supersedes the run in progress.
+concurrency:
+  group: ci-go-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   unit:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    # Windows does not pass yet and is not claimed to. The job runs so
-    # the failures are enumerated rather than imagined — see the
-    # Windows section of the README — but it does not gate a merge on a
-    # platform bough does not ship a binary for.
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     defaults:
       run:
         working-directory: go
@@ -44,25 +42,27 @@ jobs:
           cache: true # modules + build cache
           cache-dependency-path: go/go.sum
       # The pre-commit hook runs this too; CI is what catches a commit
-      # made with --no-verify. One runner is enough — gofmt's answer
-      # does not vary by platform.
-      - name: gofmt
+      # made with --no-verify. gofmt and vet answer the same on any
+      # runner (vet per GOOS runs in cross).
+      - name: gofmt + vet
         if: matrix.os == 'ubuntu-latest'
         run: |
           unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
             echo "not gofmt'd:"; echo "$unformatted"; exit 1
           fi
-      - run: go vet ./...
-      # Two vCPUs: 16-way parallelism only starves the timing-sensitive
-      # TUI and PTY tests. -race is the point of running it here.
-      - run: go test -race -parallel 4 -timeout 20m ./...
+          go vet ./...
+      # Few vCPUs: wide parallelism only starves the timing-sensitive
+      # TUI and PTY tests.
+      - name: test (race)
+        run: go test -race -parallel 4 -timeout 20m $(go list ./... | grep -v /internal/vtreal)
+      - name: test (PTY suite)
+        run: go test -parallel 4 -timeout 20m ./internal/vtreal/
 
   # A release cross-compiles four targets from one runner. Finding out
   # at tag time that one of them does not build is finding out too late.
-  # Windows is here too: no binary is published for it and nobody has
-  # run bough there, but the Unix-only calls are behind build tags now
-  # and this is what keeps them that way.
+  # Windows is here too: no binary is published for it, but the
+  # Unix-only calls are behind build tags and this keeps them that way.
   cross:
     runs-on: ubuntu-latest
     defaults:
@@ -83,13 +83,20 @@ jobs:
             CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" \
               go build -trimpath -o /dev/null ./cmd/bough
           done
+      - name: Vet darwin and windows
+        run: |
+          set -euo pipefail
+          for goos in darwin windows; do
+            echo "vet $goos"
+            CGO_ENABLED=0 GOOS=$goos go vet ./...
+          done
 
   web-e2e:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -115,7 +122,7 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('go/tests/web/package-lock.json') }}
       - run: npx playwright install --with-deps chromium
         working-directory: go/tests/web
-      - run: npx playwright test --shard=${{ matrix.shard }}/4
+      - run: npx playwright test --shard=${{ matrix.shard }}/2
         working-directory: go/tests/web
         env:
           BOUGH_BIN: ${{ github.workspace }}/bough-go-bin

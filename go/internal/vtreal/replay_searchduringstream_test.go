@@ -83,6 +83,9 @@ func searchDuringStreamRun(t *testing.T, during func(a *app)) (a *app, final str
 		t.Fatalf("turn never finished:\n%s", a.text())
 	}
 	a.waitFor("fin.")
+	// Esc is held up to a second to tell it from a split mouse report;
+	// on a loaded runner the overlay closes after the turn's last frame.
+	a.waitUntil(func(s string) bool { return !strings.Contains(strings.ToLower(s), "search ") }, "the search overlay to close")
 	return a, a.settled()
 }
 

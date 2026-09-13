@@ -56,10 +56,11 @@ func cwdDeletedUnderSessionStart(t *testing.T, home, dir, yml string) *app {
 	return a
 }
 
-// cwdDeletedUnderSessionError: the failed block shows the shell's own
-// complaint about the missing directory.
+// cwdDeletedUnderSessionError: the block shows the shell's own
+// complaint about the missing directory. macOS's sh fails the command;
+// Linux's dash only warns and exits 0, so the complaint is the contract.
 func cwdDeletedUnderSessionError(s string) bool {
-	return strings.Contains(s, "✗ error") && strings.Contains(s, "getcwd")
+	return strings.Contains(s, "getcwd")
 }
 
 func TestCwdDeletedUnderSession(t *testing.T) {

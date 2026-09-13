@@ -88,9 +88,8 @@ func TestLlmSmallTitle(t *testing.T) {
 	a.check("boot")
 
 	llmSmallTurn(a, "list the files here", 1)
-	if s := a.text(); !strings.Contains(s, "MAIN-ONE") {
-		t.Fatalf("the first main-tape turn did not land:\n%s", s)
-	}
+	// done is recorded before the final frame paints: wait for it.
+	a.waitUntil(func(s string) bool { return strings.Contains(s, "MAIN-ONE") }, "the first main-tape turn")
 	a.waitUntil(func(s string) bool { return strings.Contains(s, "Fix the flaky golden test") },
 		"the session title from the small tape")
 	a.check("named")

@@ -304,7 +304,7 @@ func foldModelRun(rt *rapid.T, t *testing.T, maxSteps int) {
 					}
 					ref.collapsed[b.id] = b.collapsed
 				}
-				if after := strings.Join(d.m.lines, "\n"); !refolded && stripANSI(after) != stripANSI(before) {
+				if after := strings.Join(d.m.lines, "\n"); !refolded && foldModelNoClock(after) != foldModelNoClock(before) {
 					rt.Fatalf("toggle twice changed the transcript:\n--- before\n%s\n--- after\n%s", stripANSI(before), stripANSI(after))
 				}
 				step = "toggle twice"

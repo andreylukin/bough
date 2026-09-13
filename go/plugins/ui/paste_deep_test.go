@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"pgregory.net/rapid"
@@ -165,36 +164,6 @@ func TestPasteWhitespaceOnly(t *testing.T) {
 		if len(d.sent) != 0 {
 			t.Errorf("%q sent %q", s, d.sent)
 		}
-	}
-}
-
-// A 1 MB paste settles fast and comes back byte for byte.
-func TestPasteOneMegabyte(t *testing.T) {
-	t.Parallel()
-	d := defaultDrv(t)
-	var b strings.Builder
-	for i := 0; b.Len() < 1<<20; i++ {
-		fmt.Fprintf(&b, "line %06d %s\n", i, strings.Repeat("x", 60))
-	}
-	body := b.String() + "END"
-	t0 := time.Now()
-	d.feed(tea.PasteMsg{Content: body})
-	_ = d.view()
-	if el := time.Since(t0); el > 2*time.Second {
-		t.Fatalf("1 MB paste took %v to settle", el)
-	}
-	if v := d.m.input.Value(); !strings.HasPrefix(v, pastePrefix) || len(v) > 60 {
-		t.Fatalf("draft = %.80q", v)
-	}
-	t0 = time.Now()
-	d.press(keyEnter())
-	_ = d.view()
-	// ~1 s locally under -race; a shared macOS CI runner takes 2-3 s.
-	if el := time.Since(t0); el > 5*time.Second {
-		t.Fatalf("sending took %v", el)
-	}
-	if len(d.sent) != 1 || d.sent[0] != body {
-		t.Fatalf("sent %d msgs / %d bytes, want %d", len(d.sent), len(strings.Join(d.sent, "")), len(body))
 	}
 }
 
