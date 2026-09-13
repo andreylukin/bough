@@ -1558,6 +1558,13 @@ export default function App() {
 
   usePaletteKey(useCallback(() => setPalette(true), []));
 
+  // Back on a phone goes to the list and says so in the URL: it only
+  // swapped panes, so a reload landed back in the thread it had left.
+  const goList = useCallback(() => {
+    setSelected(null); setContext(false); setView("sessions"); setPane("list");
+    if (window.location.hash !== "#/") window.history.pushState(null, "", "#/");
+  }, []);
+
   const openSession = useCallback((id: string) => {
     setSelected(id); setContext(false); setView("sessions"); setPane("thread");
     // A push, so Back returns to where you were rather than leaving.
@@ -1653,15 +1660,15 @@ export default function App() {
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)}
                onNew={() => setPalette(true)} />
       {view === "wiki" ? (
-        <WikiPage route={wikiRoute} onRoute={goWiki} onBack={() => setPane("list")} onOpenSession={openSession}
+        <WikiPage route={wikiRoute} onRoute={goWiki} onBack={goList} onOpenSession={openSession}
                   onSearch={(text) => { setPalQuery(text.replace(/\s+/g, " ").slice(0, 60)); setPalette(true); }} />
       ) : view === "hooks" ? (
-        <HooksPage onBack={() => setPane("list")} />
+        <HooksPage onBack={goList} />
       ) : view === "projects" ? (
         <ProjectsView
           projects={projects} rows={rows}
           onOpen={openSession}
-          onBack={() => setPane("list")}
+          onBack={goList}
           onAssign={(id, p) => act(() => api.assign(id, p))}
           onCreate={(name) => act(() => api.newProject(name))}
           onRename={(id, name) => act(() => api.renameProject(id, name))}
@@ -1669,7 +1676,7 @@ export default function App() {
       ) : row && context ? (
         <ContextPage session={row.id} onBack={() => setContext(false)} />
       ) : row ? (
-        <Thread key={row.id} row={row} lines={lines} loading={loadedFor !== row.id} stream={stream} projects={projects} busy={busy} onBack={() => setPane("list")}
+        <Thread key={row.id} row={row} lines={lines} loading={loadedFor !== row.id} stream={stream} projects={projects} busy={busy} onBack={goList}
           onSend={(t) => deliverTo(() => api.prompt(row.id, t))}
           onAnswer={(t) => deliverTo(() => api.answer(row.id, t))}
           onInterrupt={() => act(() => api.interrupt(row.id))}
