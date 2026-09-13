@@ -26,7 +26,7 @@ const post = (path: string, body?: unknown) =>
 
 export interface Change { path: string; add: number; del: number; new?: boolean }
 /** One line of a session's running log, written by the small model per turn. */
-export interface TurnLine { turn: number; text: string; at: string }
+export interface TurnLine { turn: number; text: string; at: string; test?: { cmd: string; exit: number } }
 
 export const api = {
   /** The session's running log, one caveman line per finished turn. */
