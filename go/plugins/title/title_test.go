@@ -3,6 +3,7 @@ package title
 import (
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -41,14 +42,15 @@ func TestCleanLine(t *testing.T) {
 		"You \x1b]2;PWNED\x07asked\u202e why; agent found \x07bug": "You asked why; agent found bug",
 		`"You shared serve.go; agent awaits review."`:              "You shared serve.go; agent awaits review.",
 		long: "You " + strings.TrimSpace(strings.Repeat("word ", 15)) + "…",
-		"":   "",
+		"You asked start `sleep 120; echo A` and `sleep 200; echo B`; agent started both with jobs 1 and 2 running now, exit 0": "You asked start `sleep 120; echo A` and `sleep 200; echo B`; agent started both with jobs 1 and 2 running now…",
+		"": "",
 	}
 	for in, want := range cases {
 		if got := CleanLine(in); got != want {
 			t.Errorf("CleanLine(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if n := len(strings.Fields(CleanLine(long))); n != maxWords {
+	if n := len(words(CleanLine(long))); n != maxWords {
 		t.Errorf("capped line has %d words", n)
 	}
 }
@@ -64,11 +66,12 @@ func TestParse(t *testing.T) {
 }
 
 func e(kind string, data map[string]any) history.Entry { return history.Entry{Kind: kind, Data: data} }
-func input(t string) history.Entry                   { return e("input", map[string]any{"text": t}) }
-func done() history.Entry                            { return e("done", map[string]any{}) }
+func input(t string) history.Entry                     { return e("input", map[string]any{"text": t}) }
+func done() history.Entry                              { return e("done", map[string]any{}) }
 
-// Turns groups like the approved prototype: an input opens a turn, the
-// first done/cancelled/error closes it, a new input closes an open one.
+// Turns groups like the approved prototype, except only a done closes a
+// turn (a cancelled or error before it names the end); a new input closes
+// an open one.
 func TestTurns(t *testing.T) {
 	ts := Turns([]history.Entry{
 		e("meta", map[string]any{"cwd": "/x"}),
@@ -82,16 +85,20 @@ func TestTurns(t *testing.T) {
 		done(),
 		input("stop that"), e("cancelled", nil), done(),
 		input("half"), input("still going"),
+		e("error", map[string]any{"text": "steer blocked"}), // mid-turn: does not close it
+		e("assistant", map[string]any{"text": "carried on"}), done(),
+		input("open"),
 	})
-	if len(ts) != 4 {
+	if len(ts) != 5 {
 		t.Fatalf("%d turns: %+v", len(ts), ts)
 	}
 	if ts[0].End != "done" || ts[0].Reply != "the golden file is stale" ||
 		strings.Join(ts[0].Calls, "|") != "bash: go test ./... → exit 1|console.log(1)" {
 		t.Fatalf("turn 1 = %+v", ts[0])
 	}
-	if ts[1].End != "cancelled" || ts[2].End != "" || ts[2].Ask != "half" || ts[3].End != "" {
-		t.Fatalf("ends = %q %q %q", ts[1].End, ts[2].End, ts[3].End)
+	if ts[1].End != "cancelled" || ts[2].End != "" || ts[2].Ask != "half" ||
+		ts[3].End != "error" || ts[3].Reply != "carried on" || ts[4].End != "" {
+		t.Fatalf("turns = %+v", ts)
 	}
 }
 
@@ -179,7 +186,8 @@ type fakeTimer struct {
 func newTitler(l llm.LLM, h History) (*Titler, *fakeTimer, *[]string) {
 	ft := &fakeTimer{}
 	var emitted []string
-	tr := &Titler{llm: l, hist: h, ctx: context.Background(),
+	ctx, cancel := context.WithCancel(context.Background())
+	tr := &Titler{llm: l, hist: h, ctx: ctx, cancel: cancel,
 		emit: func(kind, text string) { emitted = append(emitted, kind+":"+text) },
 		ttl:  func() time.Duration { return llm.CacheTTL("openai/gpt-6-astra") },
 		after: func(d time.Duration, f func()) func() bool {
@@ -355,11 +363,11 @@ func TestBackfill(t *testing.T) {
 		switch {
 		case en.Kind == "turn-summary":
 			lines++
-		case en.Kind == "title" && en.Data["final"] == true && en.Data["turn"] == 3.0:
+		case en.Kind == "title" && en.Data["final"] == true && en.Data["turn"] == 2.0:
 			finals++
 		}
 	}
-	if lines != 3 || finals != 1 || !strings.Contains(out.String(), "total: 4 calls") {
+	if lines != 2 || finals != 1 || !strings.Contains(out.String(), "total: 3 calls") {
 		t.Fatalf("%d lines, %d finals:\n%s", lines, finals, out.String())
 	}
 	if len(read(done1)) != 3 {
@@ -386,4 +394,60 @@ func TestParseSummarize(t *testing.T) {
 			t.Errorf("parseSummarize(%q) accepted", bad)
 		}
 	}
+}
+
+// Backfill and the live plugin number turns the same way: after a
+// backfill of a session with a cut-off turn and an open one, the open
+// turn's done logs it under its own number, once.
+func TestBackfillThenLive(t *testing.T) {
+	dir := t.TempDir()
+	p := writeSession(t, dir, "01mix", input("a"), done(), input("cut"), input("b"),
+		e("cancelled", nil), done(), input("open"))
+	newLLM := func() (llm.LLM, error) { return &stubLLM{}, nil }
+	if err := Backfill(context.Background(), io.Discard, dir, summarizeOpts{all: true}, newLLM); err != nil {
+		t.Fatal(err)
+	}
+	s, err := history.OpenExisting(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Append("done", map[string]any{})
+	l := &stubLLM{}
+	tr, _, _ := newTitler(l, s)
+	tr.turnDone()
+	tr.turnDone()
+	var got []int
+	for _, en := range s.Entries() {
+		if en.Kind == "turn-summary" {
+			got = append(got, intOf(en.Data["turn"]))
+		}
+	}
+	s.Close()
+	if fmt.Sprint(got) != "[1 2 3 4]" || l.turns != 1 {
+		t.Fatalf("turns logged %v, %d live calls", got, l.turns)
+	}
+}
+
+// A turn that ends after shutdown arms no timer; shutdown is bounded
+// even when the model hangs.
+func TestShutdownBoundedAndFinal(t *testing.T) {
+	h := &memHist{entries: []history.Entry{input("a"), done()}}
+	tr, ft, _ := newTitler(hangLLM{}, h)
+	tr.grace = 50 * time.Millisecond
+	start := time.Now()
+	tr.shutdown()
+	if time.Since(start) > 2*time.Second {
+		t.Fatal("shutdown waited on the model")
+	}
+	tr.turnDone()
+	if ft.armed != 0 {
+		t.Fatal("armed a timer after shutdown")
+	}
+}
+
+type hangLLM struct{}
+
+func (hangLLM) Complete(ctx context.Context, _ string, _ []llm.Message) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
 }

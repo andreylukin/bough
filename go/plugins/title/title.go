@@ -54,9 +54,12 @@ type Titler struct {
 	ttl   func() time.Duration
 	after func(time.Duration, func()) (stop func() bool)
 
-	work  sync.Mutex // one model call sequence at a time: never a line twice
-	tmu   sync.Mutex
-	timer func() bool
+	work   sync.Mutex // one model call sequence at a time: never a line twice
+	tmu    sync.Mutex
+	timer  func() bool
+	closed bool          // under tmu: shut down, arm nothing more
+	cancel func()        // cancels ctx: shutdown frees an in-flight call
+	grace  time.Duration // shutdown's whole budget; 0 means 10s
 }
 
 // Clean trims what a small model tends to wrap around a title — and a
@@ -134,25 +137,16 @@ func call(ctx context.Context, l llm.LLM, system, input string) (string, error) 
 // A session that predates the log (or was backfilled only in part) gets
 // just its latest turn: catching up a long history is `bough summarize`'s
 // job, not a turn's. Caller holds work.
-func (t *Titler) logTurns() {
+func (t *Titler) logTurns(ctx context.Context) {
 	entries := t.hist.Entries()
-	var closed []Turn
-	for _, tr := range Turns(entries) {
-		if tr.End != "" {
-			closed = append(closed, tr)
-		}
-	}
+	ts := Turns(entries)
 	lines, logged := turnLog(entries)
-	from := logged + 1
-	if len(closed)-logged > 2 {
-		from = len(closed)
-	}
 	named := false
 	for _, e := range entries {
 		named = named || e.Kind == "title"
 	}
-	for n := from; n <= len(closed); n++ {
-		reply, err := call(t.ctx, t.llm, TurnPrompt, TurnInput(lines, closed[n-1]))
+	for _, n := range pending(ts, logged) {
+		reply, err := call(ctx, t.llm, TurnPrompt, TurnInput(lines, ts[n-1]))
 		if err != nil {
 			return // the next turn picks it up
 		}
@@ -175,13 +169,13 @@ func (t *Titler) logTurns() {
 
 // finalName names the session from its whole log, when turns were
 // logged since the last final naming. Caller holds work.
-func (t *Titler) finalName() {
+func (t *Titler) finalName(ctx context.Context) {
 	entries := t.hist.Entries()
 	lines, logged := turnLog(entries)
 	if logged == 0 || logged <= lastFinal(entries) {
 		return
 	}
-	reply, err := call(t.ctx, t.llm, FinalPrompt, "Running log:\n"+strings.Join(lines, "\n"))
+	reply, err := call(ctx, t.llm, FinalPrompt, "Running log:\n"+strings.Join(lines, "\n"))
 	if err != nil {
 		return // the provisional (or an older) name stands
 	}
@@ -201,10 +195,13 @@ func (t *Titler) finalName() {
 // quiet timer.
 func (t *Titler) turnDone() {
 	t.work.Lock()
-	t.logTurns()
+	t.logTurns(t.ctx)
 	t.work.Unlock()
 	t.tmu.Lock()
 	defer t.tmu.Unlock()
+	if t.closed {
+		return
+	}
 	if t.timer != nil {
 		t.timer()
 	}
@@ -215,26 +212,44 @@ func (t *Titler) turnDone() {
 // turn that has started since (an input with no end yet) cancels it:
 // that turn's end restarts the timer.
 func (t *Titler) quiet() {
+	t.tmu.Lock()
+	closed := t.closed
+	t.tmu.Unlock()
+	if closed {
+		return
+	}
 	if ts := Turns(t.hist.Entries()); len(ts) > 0 && ts[len(ts)-1].End == "" {
 		return
 	}
 	t.work.Lock()
 	defer t.work.Unlock()
-	t.finalName()
+	t.finalName(t.ctx)
 }
 
-// shutdown names the session one last time before it closes.
+// shutdown names the session one last time before it closes, all of it
+// under one short deadline: an in-flight turn call is cancelled first so
+// the close never waits out a model.
 func (t *Titler) shutdown() {
 	t.tmu.Lock()
+	t.closed = true
 	if t.timer != nil {
 		t.timer()
 		t.timer = nil
 	}
 	t.tmu.Unlock()
+	if t.cancel != nil {
+		t.cancel()
+	}
+	grace := t.grace
+	if grace == 0 {
+		grace = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
 	t.work.Lock()
 	defer t.work.Unlock()
-	t.logTurns()
-	t.finalName()
+	t.logTurns(ctx)
+	t.finalName(ctx)
 }
 
 type plugin struct{}
@@ -260,7 +275,7 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	kctx.Effect(cancel)
-	t := &Titler{llm: l, hist: h, ctx: ctx,
+	t := &Titler{llm: l, hist: h, ctx: ctx, cancel: cancel,
 		ttl: func() time.Duration {
 			main, _ := kernel.Get[llm.LLM](kctx, "llm")
 			if main == nil {
@@ -278,8 +293,9 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 			go t.turnDone()
 		}
 	})
-	// Registered after cancel, so it runs first (LIFO) with ctx alive,
-	// and before history closes (rows unmount in reverse).
+	// Registered after cancel, so it runs first (LIFO), and before
+	// history closes (rows unmount in reverse). It cancels ctx itself and
+	// runs its own work under a fresh short deadline.
 	kctx.Effect(t.shutdown)
 	return nil
 }

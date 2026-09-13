@@ -184,8 +184,7 @@ func Backfill(ctx context.Context, w io.Writer, dir string, o summarizeOpts, new
 
 func id(path string) string { return strings.TrimSuffix(filepath.Base(path), ".jsonl") }
 
-func backfillOne(ctx context.Context, w io.Writer, path string, o summarizeOpts, newLLM func() (llm.LLM, error)) (tally, error) {
-	var t tally
+func backfillOne(ctx context.Context, w io.Writer, path string, o summarizeOpts, newLLM func() (llm.LLM, error)) (t tally, err error) {
 	entries, err := history.Read(path)
 	if err != nil {
 		return t, err
@@ -197,14 +196,22 @@ func backfillOne(ctx context.Context, w io.Writer, path string, o summarizeOpts,
 		return t, nil
 	}
 	turns := Turns(entries)
-	if len(turns) == 0 {
+	// Numbered as the live plugin numbers them; the trailing open turn
+	// is left for its done to log.
+	var nums []int
+	for i, tr := range turns {
+		if tr.End != "" || i < len(turns)-1 {
+			nums = append(nums, i+1)
+		}
+	}
+	if len(nums) == 0 {
 		if !o.all {
 			fmt.Fprintf(w, "%s: no turns, skipped\n\n", id(path))
 		}
 		return t, nil
 	}
-	if o.maxTurns > 0 && len(turns) > o.maxTurns {
-		turns = turns[:o.maxTurns]
+	if o.maxTurns > 0 && len(nums) > o.maxTurns {
+		nums = nums[len(nums)-o.maxTurns:] // the latest: the name is about where it stands
 	}
 	l, err := newLLM()
 	if err != nil {
@@ -215,21 +222,21 @@ func backfillOne(ctx context.Context, w io.Writer, path string, o summarizeOpts,
 			t.usage = r.Usage()
 		}
 	}()
-	fmt.Fprintf(w, "%s (%d turns)\n", id(path), len(turns))
+	fmt.Fprintf(w, "%s (%d turns)\n", id(path), len(nums))
 	var lines, texts []string
-	var nums []int
-	for i, tr := range turns {
+	var logged []int
+	for _, n := range nums {
 		t.calls++
-		reply, err := call(ctx, l, TurnPrompt, TurnInput(lines, tr))
+		reply, err := call(ctx, l, TurnPrompt, TurnInput(lines, turns[n-1]))
 		if err != nil {
-			return t, fmt.Errorf("turn %d: %w", i+1, err)
+			return t, fmt.Errorf("turn %d: %w", n, err)
 		}
 		line := CleanLine(reply)
 		if line == "" {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("%d. %s", i+1, line))
-		texts, nums = append(texts, line), append(nums, i+1)
+		lines = append(lines, fmt.Sprintf("%d. %s", n, line))
+		texts, logged = append(texts, line), append(logged, n)
 		fmt.Fprintf(w, "  %s\n", lines[len(lines)-1])
 	}
 	if len(lines) == 0 {
@@ -251,10 +258,10 @@ func backfillOne(ctx context.Context, w io.Writer, path string, o summarizeOpts,
 		return t, err
 	}
 	for i, text := range texts {
-		s.Append("turn-summary", map[string]any{"text": text, "turn": nums[i]})
+		s.Append("turn-summary", map[string]any{"text": text, "turn": logged[i]})
 	}
 	if title != "" {
-		data := map[string]any{"text": title, "turn": nums[len(nums)-1], "final": true}
+		data := map[string]any{"text": title, "turn": logged[len(logged)-1], "final": true}
 		if summary != "" {
 			data["summary"] = summary
 		}

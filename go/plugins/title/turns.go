@@ -55,20 +55,22 @@ func gist(code string) string {
 	return cut(first, 140)
 }
 
-// Turns groups a session's entries into turns: an input opens one, the
-// first done, cancelled or error closes it. An input arriving while a
-// turn is open closes that one as still open.
+// Turns groups a session's entries into turns: an input opens one, a
+// done closes it. A cancelled or error entry before the done names how it
+// ended (the loop writes non-terminal errors mid-turn too, so they never
+// close one). An input arriving while a turn is open closes that one as
+// still open. A turn's number is its index here plus one, everywhere.
 func Turns(entries []history.Entry) []Turn {
 	var out []Turn
 	var cur *Turn
-	pending := ""
+	pending, end := "", ""
 	for _, e := range entries {
 		text, _ := e.Data["text"].(string)
 		if e.Kind == "input" {
 			if cur != nil && cur.Ask != "" {
 				out = append(out, *cur)
 			}
-			cur, pending = &Turn{Ask: history.Prompt(e)}, ""
+			cur, pending, end = &Turn{Ask: history.Prompt(e)}, "", ""
 			continue
 		}
 		if cur == nil {
@@ -91,8 +93,13 @@ func Turns(entries []history.Entry) []Turn {
 			if strings.TrimSpace(text) != "" {
 				cur.Reply = text
 			}
-		case "done", "cancelled", "error":
-			cur.End = e.Kind
+		case "cancelled", "error":
+			end = e.Kind
+		case "done":
+			cur.End = "done"
+			if end != "" {
+				cur.End = end
+			}
 			out = append(out, *cur)
 			cur = nil
 		}
@@ -155,10 +162,53 @@ func CleanLine(s string) string {
 		s = ""
 	}
 	s = strings.Trim(numbered.ReplaceAllString(s, ""), ` "'*`)
-	if w := strings.Fields(s); len(w) > maxWords {
+	if w := words(s); len(w) > maxWords {
 		s = strings.TrimRight(strings.Join(w[:maxWords], " "), ",;:") + "…"
 	}
 	return s
+}
+
+// words splits on spaces, keeping a backticked span (a command with
+// spaces in it) as one word, so the cap does not eat the result.
+func words(s string) []string {
+	var out []string
+	var b strings.Builder
+	tick := false
+	for _, r := range s {
+		switch {
+		case r == '`':
+			tick = !tick
+			b.WriteRune(r)
+		case r == ' ' && !tick:
+			if b.Len() > 0 {
+				out = append(out, b.String())
+				b.Reset()
+			}
+		default:
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() > 0 {
+		out = append(out, b.String())
+	}
+	return out
+}
+
+// pending is the turns to log after the logged ones: every turn past
+// logged that has ended, or was cut off by a later input (the trailing
+// open turn waits for its done). More than two behind (a session that
+// predates the log) logs just the latest.
+func pending(ts []Turn, logged int) []int {
+	var ns []int
+	for i := logged; i < len(ts); i++ {
+		if ts[i].End != "" || i < len(ts)-1 {
+			ns = append(ns, i+1)
+		}
+	}
+	if len(ns) > 2 {
+		ns = ns[len(ns)-1:]
+	}
+	return ns
 }
 
 // provisional names a session from its first log line until the final
