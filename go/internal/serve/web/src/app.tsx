@@ -1490,6 +1490,12 @@ export default function App() {
     { id: "wiki:ingest", group: "Wiki", label: "Ingest now",
       hint: "compiles finished sessions into the wiki",
       run: () => act(() => wikiApi.ingest()).then((ok) => { if (ok) goWiki({ at: "activity" }); }) },
+    // Draining a backlog one "Mark seen" at a time is a chore; this is the
+    // once-a-week sweep, kept off the screen because it is rare.
+    ...(rows.some((r) => r.trouble) ? [{
+      id: "ack:all", group: "Start", label: `Mark every failure seen (${rows.filter((r) => r.trouble).length})`,
+      run: () => act(() => Promise.all(rows.filter((r) => r.trouble).map((r) => api.ack(r.id)))),
+    }] : []),
     { id: "go:archived", group: "Go to",
       label: archived ? "Hide archived conversations" : "Show archived conversations",
       run: () => setArchived((v) => !v) },
