@@ -45,8 +45,8 @@ type Activity struct {
 	emit func(text string)
 	ctx  context.Context
 
-	mu   sync.Mutex
-	busy bool
+	mu  sync.Mutex
+	gen int // bumped per program; only the newest program's label lands
 }
 
 // Clean trims a small model's label down to what fits a status line
@@ -72,18 +72,13 @@ func Clean(s string) string {
 
 // label runs one call for one program.
 func (a *Activity) label(code string) {
+	// A new program retires the last one's label at once: a stale label
+	// is worse than the plain "Working" line until the new one lands.
 	a.mu.Lock()
-	if a.busy {
-		a.mu.Unlock()
-		return // the last label has not landed; this step goes unnamed
-	}
-	a.busy = true
+	a.gen++
+	gen := a.gen
 	a.mu.Unlock()
-	defer func() {
-		a.mu.Lock()
-		a.busy = false
-		a.mu.Unlock()
-	}()
+	a.emit("")
 
 	if len(code) > maxCode {
 		code = code[:maxCode]
@@ -94,7 +89,10 @@ func (a *Activity) label(code string) {
 	if err != nil {
 		return // a missing label is not worth an error row
 	}
-	if l := Clean(reply); l != "" {
+	l := Clean(reply)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if l != "" && gen == a.gen {
 		a.emit(l)
 	}
 }
@@ -133,6 +131,9 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		case "code":
 			go a.label(ev.Text)
 		case "done":
+			a.mu.Lock()
+			a.gen++ // a label still in flight must not outlive the turn
+			a.mu.Unlock()
 			a.emit("") // the turn is over; the line goes back to the usual
 		}
 	})

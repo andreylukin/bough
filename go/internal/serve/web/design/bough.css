@@ -481,9 +481,10 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .block.thin>.block-body,.block.thin>pre,.block.thin>.think-body,.block.thin>.turn-hooks-body{
   margin:4px 0 6px;border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow:hidden}
 .block.thin>.think-body{background:none;padding-top:10px}
-.block.thin.toolrun>.toolrun-body{gap:0;padding:2px 0 4px 10px;margin-inline-start:7px;border-top:0;border-left:1px solid var(--line);background:none}
+.block.thin.toolrun>.toolrun-body{gap:2px;padding:2px 0 4px 10px;margin-inline-start:7px;border-top:0;border-left:1px solid var(--line);background:none}
 .turn-body>.block.thin+.block.thin{margin-top:-10px}
-.thin-pop{position:fixed;z-index:60;pointer-events:none;max-width:min(520px,calc(100vw - 32px));
+.sub-body>.block.thin+.block.thin{margin-top:-8px}
+.thin-pop{position:fixed;z-index:60;pointer-events:none;max-height:calc(100vh - 32px);overflow:hidden;max-width:min(520px,calc(100vw - 32px));
   display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:2px 10px;padding:6px 10px;
   background:var(--raised);border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.18);
   font-size:12px;line-height:18px;color:var(--text-2)}
@@ -492,6 +493,11 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .thin-pop-row .num{color:var(--text-3);text-align:end;white-space:nowrap}
 .thin-pop-failed>span,.thin-pop-failed .num{color:var(--red)}
 @media (hover:none){.thin-pop{display:none}}
+/* thin lines stay one line at any width: the full text is one tap in */
+.block.thin>summary{flex-wrap:nowrap}
+.block.thin>summary>.block-detail{order:0;flex:0 1 auto;flex-basis:auto;min-width:0;padding-inline-start:0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:16px}
+.block.thin>summary>.block-label,.block.thin>summary>.num{flex:none;white-space:nowrap}
 
 /* markdown inside a reply */
 .md{color:var(--text-2)}

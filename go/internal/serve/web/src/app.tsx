@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, subscribe, type Change, type TurnLine } from "./api";
 import type { Line, Project, Row } from "./types";
@@ -651,8 +651,10 @@ export function SubRun({ agents }: { agents: SubAgent[] }) {
 
 /** A command cut to its first step, short enough to sit on a thin line. */
 function gistOf(text: string): string {
-  const g = firstLine(text).split(/\s*(?:;|&&|\|\|)\s*/)[0] ?? "";
-  return g.length > 60 ? g.slice(0, 60) + "…" : g;
+  const line = firstLine(text);
+  const g = line.split(/\s*(?:;|&&|\|\|)\s*/)[0] ?? "";
+  if (g.length > 60) return g.slice(0, 60) + "…";
+  return g.length < line.length ? g + " …" : g;
 }
 
 /** One call's recorded facts, for its thin line and the hover list. */
@@ -679,10 +681,11 @@ function useThinPop(rows: CallFacts[]) {
   const hide = useCallback(() => { clearTimeout(timer.current); setAt(null); }, []);
   useEffect(() => {
     if (!at) return;
-    const key = (e: KeyboardEvent) => { if (e.key === "Escape") hide(); };
-    window.addEventListener("keydown", key);
+    // Escape closes the popover only; it must not also leave the thread.
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); hide(); } };
+    window.addEventListener("keydown", key, true);
     window.addEventListener("scroll", hide, true);
-    return () => { window.removeEventListener("keydown", key); window.removeEventListener("scroll", hide, true); };
+    return () => { window.removeEventListener("keydown", key, true); window.removeEventListener("scroll", hide, true); };
   }, [at, hide]);
   useEffect(() => () => clearTimeout(timer.current), []);
   const show = (e: React.SyntheticEvent<HTMLElement>) => {
@@ -692,15 +695,23 @@ function useThinPop(rows: CallFacts[]) {
     timer.current = setTimeout(() => setAt(el.getBoundingClientRect()), 350);
   };
   const handlers = { onMouseEnter: show, onFocus: show, onMouseLeave: hide, onBlur: hide, onClick: hide };
+  // Placed from its own measured size: below the line if it fits, else
+  // above, else pinned to the top (its max-height keeps it on screen).
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!at || !el) return;
+    const r = el.getBoundingClientRect();
+    const top = at.bottom + 4 + r.height <= window.innerHeight - 16 ? at.bottom + 4
+      : at.top - 4 - r.height >= 16 ? at.top - 4 - r.height : 16;
+    el.style.top = top + "px";
+    el.style.left = Math.max(16, Math.min(at.left, window.innerWidth - 16 - r.width)) + "px";
+    el.style.visibility = "visible";
+  }, [at]);
   let pop: React.ReactNode = null;
   if (at && rows.length) {
-    const below = at.bottom + 8 + rows.length * 20 < window.innerHeight;
-    const style: React.CSSProperties = {
-      left: Math.max(16, Math.min(at.left, window.innerWidth - 16 - 520)),
-      ...(below ? { top: at.bottom + 4 } : { bottom: window.innerHeight - at.top + 4 }),
-    };
     pop = createPortal(
-      <div className="thin-pop" role="tooltip" style={style}>
+      <div ref={ref} className="thin-pop" role="tooltip" style={{ top: 0, left: 0, visibility: "hidden" }}>
         {rows.map((r, i) => (
           <div key={i} className={"thin-pop-row" + (r.failed ? " thin-pop-failed" : "")}>
             <span>{r.verb}</span>
@@ -747,13 +758,12 @@ export function ToolRun({ lines, codes }: { lines: Line[]; codes: string[] }) {
   const failed = facts.filter((f) => f.failed).length;
   const timed = facts.every((f) => f.ms !== undefined);
   const totalMs = facts.reduce((n, f) => n + (f.ms ?? 0), 0);
-  // The line names the first command; every call, with its exit and
-  // time, is in the hover list and the expansion, never here twice.
+  // The line is only the count, time and failures; each command lives
+  // once in the hover list and once in the expansion.
   return (
     <details className="block thin toolrun">
       <summary {...handlers}>
         <span className={"block-label" + (failed ? " thin-failed" : "")}>{calls} tool calls</span>
-        <span className="mono block-detail">{facts[0].gist}</span>
         {timed && <span className="num tool-meta">{duration(totalMs)}</span>}
         {failed > 0 && <span className="num toolrun-failed">{failed} failed</span>}
       </summary>
@@ -781,8 +791,10 @@ export function ToolCall({ code, result }: { code: Line; result?: Line }) {
   // A single call's line already says everything the hover list would,
   // so its hover shows what the line cannot: the full first line and output size.
   const outLines = (out || "(no output)").split("\n").length;
+  // The full first line only when the thin line had to cut it.
+  const cut = gistOf(call.gist) !== firstLine(call.gist);
   const { handlers, pop } = useThinPop(timedOut ? [] : [{
-    verb: result ? lineCount(outLines) : "no result yet", gist: firstLine(call.gist), failed,
+    verb: result ? lineCount(outLines) : "no result yet", gist: cut ? firstLine(call.gist) : "", failed,
   }]);
   return (
     <details className={"block thin" + (failed ? " block-failed" : "")} data-seq={result?.seq}>
@@ -1695,6 +1707,7 @@ export default function App() {
       // status, not a record: it changes nothing to catch up on.
       if (ev.kind === "activity") { setActivity(ev.text); return; }
       if (ev.kind === "assistant-delta" || ev.kind === "thinking-delta") {
+        setActivity(""); // the program it named is over; its label must not come back
         const kind = ev.kind === "thinking-delta" ? "thinking" : "assistant";
         setStream((prev) => {
           const n = prev.length;
