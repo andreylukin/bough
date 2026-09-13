@@ -17,20 +17,36 @@
   },
   "overrides": {
     "App": {
-      "cardMode": "column"
+      "cardMode": "column",
+      "viewport": "1440x900"
     },
     "StatusMark": {
       "cardMode": "column"
     },
     "Thread": {
-      "cardMode": "column"
+      "cardMode": "column",
+      "viewport": "1280x860"
     },
     "Palette": {
       "cardMode": "single",
-      "primaryStory": "OneWord"
+      "primaryStory": "OneWord",
+      "viewport": "1000x620"
     },
     "StreamView": {
-      "cardMode": "column"
+      "cardMode": "column",
+      "viewport": "1100x700"
+    },
+    "HooksView": {
+      "cardMode": "column",
+      "viewport": "1200x860"
+    },
+    "ContextView": {
+      "cardMode": "column",
+      "viewport": "1200x820"
+    },
+    "ProjectsView": {
+      "cardMode": "column",
+      "viewport": "1200x820"
     }
   },
   "readmeHeader": ".design-sync/conventions.md"
