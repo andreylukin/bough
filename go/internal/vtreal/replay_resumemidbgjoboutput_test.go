@@ -1,3 +1,5 @@
+//go:build unix
+
 package vtreal
 
 // Resume mid background-job output: turn 1 starts a detached job that

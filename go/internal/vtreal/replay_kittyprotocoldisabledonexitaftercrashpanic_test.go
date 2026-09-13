@@ -1,3 +1,5 @@
+//go:build unix
+
 package vtreal
 
 // Terminal modes handed back on exit, read from the raw PTY byte

@@ -91,7 +91,8 @@ func sigtstpSuspendResumeRun(t *testing.T, tape string, mid bool) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	if bad != nil {
-		t.Fatalf("after SIGCONT: %s\nscreen:\n%s", strings.Join(bad, ", "), a.text())
+		state, _ := exec.Command("ps", "-o", "state=", "-p", fmt.Sprint(pid)).Output()
+		t.Fatalf("after SIGCONT: %s (ps state %q)\nscreen:\n%s", strings.Join(bad, ", "), strings.TrimSpace(string(state)), a.text())
 	}
 	a.check("after resume")
 

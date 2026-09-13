@@ -1,3 +1,5 @@
+//go:build unix
+
 package vtreal
 
 // A background job that finishes while a later turn is still

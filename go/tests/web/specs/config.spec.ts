@@ -18,7 +18,8 @@ function waitForOutput(b: { output(): string }, substr: string, timeoutMs = 8_00
 }
 
 test('editing the config mid-session reconciles; the next prompt still answers', async ({ launchBough, page }) => {
-  const b = await launchBough();
+  // The reload line is diagnostic chatter, printed only with --verbose.
+  const b = await launchBough({ args: ['--verbose'] });
   await boot(page, b.url);
   await ask(page, 'before reload', 'echo: before reload');
 

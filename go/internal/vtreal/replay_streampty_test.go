@@ -216,8 +216,9 @@ func TestStreamPtyHugeReply(t *testing.T) {
 	if !ok {
 		t.Fatalf("last line never reached the screen:\n%s", a.text())
 	}
-	if shown > 5*time.Second {
-		t.Errorf("the screen trailed the finished turn by %v (> 5s): the live block renders too slowly", shown)
+	// A shared macOS CI runner under -race trails by 5-7 s.
+	if shown > 10*time.Second {
+		t.Errorf("the screen trailed the finished turn by %v (> 10s): the live block renders too slowly", shown)
 	}
 	liveGlueSettledChecks(a, "after 5000 lines")
 }

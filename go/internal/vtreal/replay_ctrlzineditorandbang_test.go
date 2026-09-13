@@ -1,3 +1,5 @@
+//go:build unix
+
 package vtreal
 
 // External editor that exits nonzero after the pane was resized while

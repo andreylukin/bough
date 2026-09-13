@@ -1,3 +1,5 @@
+//go:build unix
+
 package vtreal
 
 // The session's working directory is deleted between turns (a branch

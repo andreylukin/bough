@@ -1,3 +1,5 @@
+//go:build unix
+
 package vtreal
 
 // /undo after a background job wrote files. The turn writes a.txt with

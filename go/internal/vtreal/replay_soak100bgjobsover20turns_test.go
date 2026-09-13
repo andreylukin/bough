@@ -1,3 +1,5 @@
+//go:build unix
+
 package vtreal
 
 // Soak: five short background jobs per turn for twenty turns, each

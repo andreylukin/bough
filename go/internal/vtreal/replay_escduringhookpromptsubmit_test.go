@@ -1,3 +1,5 @@
+//go:build unix
+
 package vtreal
 
 // Esc while a user-prompt-submit hook is still deciding. The hook for

@@ -1,3 +1,5 @@
+//go:build unix
+
 package vtreal
 
 // The terminal window closes mid-turn: the PTY master goes away (the

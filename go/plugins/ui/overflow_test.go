@@ -49,7 +49,6 @@ func TestNoLineWiderThanThePane(t *testing.T) {
 	}
 }
 
-
 // The subagent overlay is a pane too: its header carries the whole
 // task and its boxes hold whatever the child printed.
 func TestOverlayLinesFitThePane(t *testing.T) {

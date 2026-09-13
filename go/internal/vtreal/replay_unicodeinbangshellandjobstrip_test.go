@@ -1,3 +1,5 @@
+//go:build unix
+
 package vtreal
 
 // Unicode through the "!" shell and the background-job strip on a real

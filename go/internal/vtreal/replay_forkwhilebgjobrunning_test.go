@@ -1,3 +1,5 @@
+//go:build unix
+
 package vtreal
 
 // Fork while a background job runs. Turn 1 starts a detached job gated

@@ -1,3 +1,5 @@
+//go:build unix
+
 package tools
 
 // Background-job failure paths: every way a detached job can go wrong,

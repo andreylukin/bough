@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"sync"
+	"time"
 )
 
 // titleFilter lifts OSC 0/2 (window title) out of the byte stream
@@ -13,15 +14,22 @@ import (
 // byte and the rest of the title prints on screen as text. Real
 // terminals decode UTF-8 first and never see it; the filter keeps the
 // emulator honest and records the title itself.
+//
+// It also holds back a chunk's trailing non-ASCII bytes. A PTY read can
+// end inside a grapheme ("👨" + ZWJ, then "👩" in the next read) and
+// x/vt commits each write's graphemes, so the split would stick on
+// screen. The held bytes go out with the next chunk, or after a pause.
 type titleFilter struct {
 	w     io.Writer
 	title func(string)
 
-	mu   sync.Mutex
-	esc  bool   // a lone ESC was the last byte written
-	in   bool   // inside an OSC we are capturing
-	stEs bool   // ESC seen inside the OSC (ESC \ is ST)
-	buf  []byte // the OSC payload so far
+	mu    sync.Mutex
+	esc   bool   // a lone ESC was the last byte written
+	in    bool   // inside an OSC we are capturing
+	stEs  bool   // ESC seen inside the OSC (ESC \ is ST)
+	buf   []byte // the OSC payload so far
+	pend  []byte // trailing non-ASCII bytes held for the next chunk
+	flush *time.Timer
 }
 
 func newTitleFilter(w io.Writer, title func(string)) *titleFilter {
@@ -31,7 +39,8 @@ func newTitleFilter(w io.Writer, title func(string)) *titleFilter {
 func (f *titleFilter) Write(p []byte) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	var out []byte
+	out := f.pend
+	f.pend = nil
 	for i := 0; i < len(p); i++ {
 		b := p[i]
 		switch {
@@ -66,12 +75,35 @@ func (f *titleFilter) Write(p []byte) (int, error) {
 			out = append(out, b)
 		}
 	}
+	cut := len(out)
+	for cut > 0 && out[cut-1] >= 0x80 {
+		cut--
+	}
+	if cut < len(out) {
+		f.pend = append([]byte(nil), out[cut:]...)
+		out = out[:cut]
+		if f.flush == nil {
+			f.flush = time.AfterFunc(20*time.Millisecond, f.flushPend)
+		} else {
+			f.flush.Reset(20 * time.Millisecond)
+		}
+	}
 	if len(out) > 0 {
 		if _, err := f.w.Write(out); err != nil {
 			return 0, err
 		}
 	}
 	return len(p), nil
+}
+
+// flushPend writes held bytes once no further chunk has come for them.
+func (f *titleFilter) flushPend() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.pend) > 0 {
+		_, _ = f.w.Write(f.pend)
+		f.pend = nil
+	}
 }
 
 // end dispatches a finished OSC: titles are recorded and dropped,

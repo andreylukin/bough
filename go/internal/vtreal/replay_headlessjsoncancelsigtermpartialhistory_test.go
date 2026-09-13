@@ -1,3 +1,5 @@
+//go:build unix
+
 package vtreal
 
 // Surface "headless-json-cancel-sigterm-partial-history": `bough

@@ -1,3 +1,5 @@
+//go:build unix
+
 package vtreal
 
 // Config rewritten while a turn runs. The model side is a tape, but
@@ -182,14 +184,17 @@ func TestConfigReloadMidTurnInitJs(t *testing.T) {
 	}
 	r.held("init.js rewritten")
 	r.finish()
-	for _, row := range r.term.Snapshot().Cells {
-		for _, c := range row {
-			if c.Content != "h" || c.Style.Fg == nil {
-				continue
-			}
-			red, g, b, _ := c.Style.Fg.RGBA()
-			if red>>8 == 0xff && g == 0 && b == 0 {
-				return
+	// The reload races the turn's end on a loaded runner: poll for it.
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		for _, row := range r.term.Snapshot().Cells {
+			for _, c := range row {
+				if c.Content != "h" || c.Style.Fg == nil {
+					continue
+				}
+				red, g, b, _ := c.Style.Fg.RGBA()
+				if red>>8 == 0xff && g == 0 && b == 0 {
+					return
+				}
 			}
 		}
 	}

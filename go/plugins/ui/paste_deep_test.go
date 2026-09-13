@@ -189,7 +189,8 @@ func TestPasteOneMegabyte(t *testing.T) {
 	t0 = time.Now()
 	d.press(keyEnter())
 	_ = d.view()
-	if el := time.Since(t0); el > 2*time.Second {
+	// ~1 s locally under -race; a shared macOS CI runner takes 2-3 s.
+	if el := time.Since(t0); el > 5*time.Second {
 		t.Fatalf("sending took %v", el)
 	}
 	if len(d.sent) != 1 || d.sent[0] != body {

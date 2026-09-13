@@ -1,3 +1,5 @@
+//go:build unix
+
 package vtreal
 
 // Background-job failure paths on the real binary: a replay tape

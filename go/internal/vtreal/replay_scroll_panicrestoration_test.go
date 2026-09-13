@@ -1,3 +1,5 @@
+//go:build unix
+
 package vtreal
 
 // Panic restoration: a panic anywhere in the TUI must hand the terminal

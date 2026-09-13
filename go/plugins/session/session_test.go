@@ -16,8 +16,8 @@ type stubLLM struct {
 }
 
 func (s *stubLLM) Complete(context.Context, string, []llm.Message) (string, error) { return "", nil }
-func (s *stubLLM) Usage() llm.Usage                                                 { return s.u }
-func (s *stubLLM) Model() string                                                    { return s.model }
+func (s *stubLLM) Usage() llm.Usage                                                { return s.u }
+func (s *stubLLM) Model() string                                                   { return s.model }
 
 type stubCost struct{ stubLLM }
 

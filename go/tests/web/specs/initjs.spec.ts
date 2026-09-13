@@ -117,11 +117,11 @@ bough.project(function (entries) {
   expect(await vpText(page)).not.toContain('echo: the real input');
 });
 
-test('an unknown bough.setup key fails the mount loudly', async ({ launchBough }) => {
-  await expect(
-    launchBough({
-      cwd: { '.bough/init.js': 'bough.setup({ bogus: 1 });' },
-      readyTimeoutMs: 8_000,
-    }),
-  ).rejects.toThrow(/unknown key "bogus"|unknown key/);
+// A broken init.js is loud but not fatal: the error is reported and the
+// session still boots.
+test('an unknown bough.setup key is reported, and boot survives', async ({ launchBough, page }) => {
+  const b = await launchBough({ cwd: { '.bough/init.js': 'bough.setup({ bogus: 1 });' } });
+  expect(b.output()).toContain('unknown key "bogus"');
+  await boot(page, b.url);
+  await ask(page, 'still up', 'echo: still up');
 });

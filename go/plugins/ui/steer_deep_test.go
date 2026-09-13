@@ -354,7 +354,7 @@ func TestSteerDeepResumeOrder(t *testing.T) {
 // has one row, pending = sent − landed, and after the final landing
 // and done nothing is pending or running.
 func TestSteerDeepProp(t *testing.T) {
-	run :=func(rt *rapid.T) {
+	run := func(rt *rapid.T) {
 		d, rec, _ := steerDeepDrv(t, nil)
 		var sent []string
 		landed := 0
