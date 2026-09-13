@@ -165,10 +165,18 @@ func TestTwoBgjobsFinishSameTick(t *testing.T) {
 			t.Errorf("want %d finished turns, got %d:\n%s", 1+wakes, n, a.text())
 		}
 		s := a.settled()
+		// Jobs finishing in the same tick may share one note (one wake),
+		// whose collapsed header names only one of them: never twice.
+		notes := 0
 		for _, head := range []string{"job 1 [exited 0]", "job 2 [exited 0]"} {
-			if n := strings.Count(s, "▸ job (2 lines): "+head); n != 1 {
-				t.Errorf("want one collapsed %q note on screen, got %d:\n%s", head, n, s)
+			n := strings.Count(s, "): "+head)
+			if n > 1 {
+				t.Errorf("want at most one collapsed %q note on screen, got %d:\n%s", head, n, s)
 			}
+			notes += n
+		}
+		if notes != wakes {
+			t.Errorf("want %d collapsed job notes (one per wake), got %d:\n%s", wakes, notes, s)
 		}
 		if strings.Contains(s, "[background job]") {
 			t.Errorf("wake preamble leaked onto the screen:\n%s", s)

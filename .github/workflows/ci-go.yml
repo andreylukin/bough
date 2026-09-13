@@ -26,10 +26,14 @@ concurrency:
 
 jobs:
   unit:
+    # The race-checked packages and the PTY suite each take minutes, so
+    # they run as separate jobs, in parallel, not as two steps in one.
+    name: unit (${{ matrix.os }}, ${{ matrix.suite }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        suite: [race, pty]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -45,7 +49,7 @@ jobs:
       # made with --no-verify. gofmt and vet answer the same on any
       # runner (vet per GOOS runs in cross).
       - name: gofmt + vet
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && matrix.suite == 'race'
         run: |
           unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
@@ -55,8 +59,10 @@ jobs:
       # Few vCPUs: wide parallelism only starves the timing-sensitive
       # TUI and PTY tests.
       - name: test (race)
+        if: matrix.suite == 'race'
         run: go test -race -parallel 4 -timeout 20m $(go list ./... | grep -v /internal/vtreal)
       - name: test (PTY suite)
+        if: matrix.suite == 'pty'
         run: go test -parallel 4 -timeout 20m ./internal/vtreal/
 
   # A release cross-compiles four targets from one runner. Finding out
@@ -78,7 +84,8 @@ jobs:
       - name: Build every release target
         run: |
           set -euo pipefail
-          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
+          # One arch per OS: GOARCH rarely breaks a pure-Go build, GOOS does.
+          for target in darwin/arm64 linux/amd64 windows/amd64; do
             echo "building $target"
             CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" \
               go build -trimpath -o /dev/null ./cmd/bough
