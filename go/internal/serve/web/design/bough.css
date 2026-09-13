@@ -677,19 +677,24 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
    lines up with what you are reading. */
 .composer-wrap{position:relative;flex-shrink:0;padding:8px 24px 12px}
 .composer-wrap>*{width:100%;max-width:1088px;margin-inline:0}
-.send-failed{margin-bottom:8px;padding-inline:12px;line-height:18px;color:var(--text-2);font-size:13px}
-.send-failed>summary{display:flex;align-items:center;gap:6px;min-height:32px;cursor:pointer;list-style:none}
-.send-failed>summary::-webkit-details-marker{display:none}
+.send-failed{margin-bottom:8px;padding-inline:12px;line-height:18px;color:var(--text-2);font-size:13px;
+             display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;column-gap:8px}
+.send-failed>details{min-width:0}
+.send-failed summary,.send-failed-line{display:flex;align-items:center;gap:6px;min-height:32px;cursor:pointer;list-style:none;min-width:0}
+.send-failed-line{cursor:default}
+.send-failed summary::-webkit-details-marker{display:none}
+.send-failed-chev{flex-shrink:0;color:var(--text-3);transition:transform .12s}
+.send-failed details[open] .send-failed-chev{transform:rotate(90deg)}
+.send-failed-meta{display:flex;align-items:center;gap:12px;color:var(--text-3);font-size:12px}
 .send-failed strong{font-weight:600;color:#FF9787;flex-shrink:0}
 .send-failed-text{flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.send-failed[open] .send-failed-text{display:none}
+.send-failed details[open] .send-failed-gist{display:none}
 .send-failed-body{padding:4px 0 4px 12px;border-inline-start:2px solid #FF9787}
 .send-failed-body p{margin:0 0 6px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:30vh;overflow-y:auto}
-.send-failed-error{color:#FF9787}
 .send-failed-prompt{color:var(--text-1)}
-.send-failed-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.send-failed-actions{display:flex;align-items:center;gap:8px}
 .send-failed .btn{height:32px;padding:0 10px;font-size:13px}
-@media (max-width:480px){.send-failed-actions{flex-basis:100%}.send-failed .btn,.send-failed .link{min-height:44px}}
+@media (max-width:480px){.send-failed .link{min-height:44px}}
 @media (max-width:720px),(pointer:coarse){.send-failed .btn{height:44px}}
 /* Jump to latest sits beside Send: it never covers what you read. */
 .jump-latest{gap:6px;font-size:12px}

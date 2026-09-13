@@ -74,7 +74,8 @@ export function useSkills(on: boolean) {
     catalogue ??= fetch("/api/skills").then((r) => {
       if (!r.ok) throw new Error(String(r.status));
       return r.json();
-    }).then((d) => d.skills ?? []);
+    // An empty answer is not cached: skills installed since show on the next open.
+    }).then((d) => { const v = d.skills ?? []; if (!v.length) catalogue = null; return v; });
     setError(false);
     catalogue.then((v) => { if (live) setAll(v); })
       .catch(() => { catalogue = null; if (live) setError(true); });
@@ -96,19 +97,22 @@ export function rankSkills<T extends SkillRow>(all: T[], q: string): T[] {
  * you stop typing.
  */
 function useFiles(on: boolean, token: string, session: string) {
-  const [hits, setHits] = useState<FileRow[] | null>(null);
+  // Results carry the query they answer, so a slow reply to an older
+  // token is never offered (or picked) under a newer one.
+  const [got, setGot] = useState<{ q: string; rows: FileRow[] } | null>(null);
+  const hits = got && got.q === token ? got.rows : null;
   const [error, setError] = useState(false);
   const [tries, setTries] = useState(0);
   useEffect(() => {
     // A bare "@" asks too: the server answers it with the files nearest
     // the top of the project, so the picker opens the moment you type it.
-    if (!on) { setHits(null); setError(false); return; }
+    if (!on) { setGot(null); setError(false); return; }
     let live = true;
     const t = setTimeout(() => {
       fetch(`/api/files?q=${encodeURIComponent(token)}&session=${encodeURIComponent(session)}`)
         .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
-        .then((d) => { if (live) { setHits(d.files ?? []); setError(false); } })
-        .catch(() => { if (live) { setHits([]); setError(true); } });
+        .then((d) => { if (live) { setGot({ q: token, rows: d.files ?? [] }); setError(false); } })
+        .catch(() => { if (live) { setGot({ q: token, rows: [] }); setError(true); } });
     }, 140);
     return () => { live = false; clearTimeout(t); };
   }, [on, token, session, tries]);
@@ -164,9 +168,16 @@ export function Mentions({ trigger, session, onPick, onClose, onOpen, onActive }
   useEffect(() => {
     if (!trigger) return;
     const h = (e: KeyboardEvent) => {
-      if (!hits.length) return;
-      const own = ["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key);
+      // Shift+Enter is a newline and Shift+Tab leaves the field, open picker or not.
+      const own = ["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key) && !(e.shiftKey && e.key !== "Escape");
       if (!own || e.isComposing) return;
+      if (!hits.length) {
+        // Loading or empty: Escape still closes, and Enter waits for
+        // results rather than sending a half-typed token.
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onClose(); }
+        else if (e.key === "Enter" && !loaded) { e.preventDefault(); e.stopPropagation(); }
+        return;
+      }
       // Stop the key here. Picking closes the picker synchronously, so by
       // the time the composer's own handler saw this Enter the trigger was
       // already gone and it sent the message: Enter picked AND sent.
@@ -180,7 +191,7 @@ export function Mentions({ trigger, session, onPick, onClose, onOpen, onActive }
     const el = document.getElementById("composer");
     el?.addEventListener("keydown", h, true);
     return () => el?.removeEventListener("keydown", h, true);
-  }, [trigger, hits, at, onPick, onClose]);
+  }, [trigger, hits, at, loaded, onPick, onClose]);
 
   if (!trigger) return null;
   const isFiles = trigger.kind === "@";

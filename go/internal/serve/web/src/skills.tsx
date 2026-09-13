@@ -43,7 +43,7 @@ export function SkillPicker({ onPick }: { onPick: (name: string, known: string[]
   const keys = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing) return;
     if (e.key === "Escape") { e.preventDefault(); close(); return; }
-    if (e.key === "ArrowDown") { e.preventDefault(); setAt((i) => Math.min(i + 1, hits.length - 1)); return; }
+    if (e.key === "ArrowDown") { e.preventDefault(); setAt((i) => Math.max(0, Math.min(i + 1, hits.length - 1))); return; }
     if (e.key === "ArrowUp") { e.preventDefault(); setAt((i) => Math.max(i - 1, 0)); return; }
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (active >= 0) pick(hits[active]); }
   };
@@ -56,7 +56,9 @@ export function SkillPicker({ onPick }: { onPick: (name: string, known: string[]
       {open && (
         <>
           <div className="skills-scrim" onClick={close} />
-          <div className="skills-pop" role="dialog" aria-label="Insert a skill">
+          {/* Tabbing out closes it where focus went; only Escape returns to the button. */}
+          <div className="skills-pop" role="dialog" aria-label="Insert a skill"
+            onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null) && e.relatedTarget) { setOpen(false); setQ(""); } }}>
             <input ref={field} className="skills-filter" value={q} placeholder="Filter skills"
               aria-label="Filter skills" aria-controls="skill-list" role="combobox" aria-expanded="true"
               aria-activedescendant={active >= 0 ? "skill-" + active : undefined}
