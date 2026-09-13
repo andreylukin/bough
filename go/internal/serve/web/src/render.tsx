@@ -156,7 +156,8 @@ export function groupTurns(lines: Line[]): Turn[] {
   const turns: Turn[] = [];
   let cur: Turn | null = null;
   for (const l of lines) {
-    if (l.kind === "meta" || l.kind === "title") continue;
+    // Turn summaries live in the sidebar's turn log, not the transcript.
+    if (l.kind === "meta" || l.kind === "title" || l.kind === "turn-summary") continue;
     if (l.kind === "input") {
       if (cur) turns.push(cur);
       cur = { seq: l.seq, prompt: l, body: [], done: null };

@@ -288,7 +288,10 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
                       className={"row" + (act ? " row-act" : " row-settled") + (r.id === selected ? " row-on" : "")}
                       aria-current={r.id === selected ? "true" : undefined}>
                 <span className="row-line">
-                  {name
+                  {r.ask && name && askSaysTitle(r.ask.text, name)
+                    // The ask already says what the title would.
+                    ? <span className="row-title row-ask" title={r.ask.text}>{plainTitle(r.ask.text)}</span>
+                    : name
                     ? <span className="row-title">{name}</span>
                     // No title: the id tail alone tells rows apart.
                     : <span className="row-title mono row-untitled">{r.id.slice(-6)}</span>}
@@ -310,7 +313,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
                       {r.jobs.length} {r.jobs.length === 1 ? "job" : "jobs"}
                     </span>
                   )}
-                  {r.ask ? (
+                  {r.ask && !(name && askSaysTitle(r.ask.text, name)) ? (
                     // What the session is waiting on: answering it is what the row is for.
                     <span className="row-ask" title={r.ask.text}>{plainTitle(r.ask.text)}</span>
                   ) : (
@@ -535,9 +538,7 @@ export function Entry({ line, codes, nested }: { line: Line; codes: string[]; ne
     return (
       <div className="say">
         {/* There is one assistant; naming it above every reply said nothing. */}
-        {!nested && (k === "assistant"
-          ? <span className="visually-hidden">bough</span>
-          : <div className="say-who"><span className="sub-dot" /><span>subagent</span></div>)}
+        {!nested && k !== "assistant" && <div className="say-who"><span className="sub-dot" /><span>subagent</span></div>}
         <Markdown text={body} />
       </div>
     );
@@ -1014,6 +1015,14 @@ function JobsChip({ session, jobs }: { session: string; jobs: NonNullable<Row["j
   );
 }
 
+/** The ask repeats the title when it carries most of the title's words. */
+function askSaysTitle(ask: string, title: string): boolean {
+  const words = (t: string) => t.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+  const have = new Set(words(ask));
+  const want = words(title);
+  return want.length > 0 && want.filter((w) => have.has(w)).length / want.length >= 2 / 3;
+}
+
 export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode; /** 1-based position, so the turn log can land on it. */ n?: number }) {
   const codes = turn.body.filter((l) => l.kind === "code" || l.kind === "sub:code").map((l) => l.text);
   const hooks = useMemo(() => turn.body.filter(isHookLine), [turn.body]);
@@ -1361,7 +1370,9 @@ export function Thread({ row, lines, loading = false, stream = [], projects, onA
           <p className="meta-line transcript-state">No recorded turns.</p>
         )}
         {turns.map((t, i) => (
-          <TurnView key={t.seq} turn={t} n={i + 1}
+          // Numbered by prompt, as the turn log counts: a leading /model
+          // section has no prompt and no number.
+          <TurnView key={t.seq} turn={t} n={t.prompt ? turns.slice(0, i + 1).filter((x) => x.prompt).length : undefined}
             // The preview belongs to the turn that is still open, so it
             // sits where the recorded entry will appear and is replaced
             // in place rather than jumping up the page.
