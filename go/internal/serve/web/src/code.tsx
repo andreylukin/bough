@@ -105,10 +105,12 @@ function firstCall(src: string): { name: string; args: string[] } | null {
 export function parseCall(code: string): Call {
   const raw = code.trim();
   const call = firstCall(raw);
-  const many = (raw.match(/tools\.\w+\s*\(/g) ?? []).length > 1;
-  if (!call || many) {
-    // Several calls in one block, or none: show the program itself.
-    return { verb: many ? "Ran a program" : "Code", target: "", gist: gistOf(raw), body: raw, lang: "javascript", raw };
+  const names = [...raw.matchAll(/tools\.(\w+)\s*\(/g)].map((m) => m[1]);
+  if (!call || names.length > 1) {
+    // Several calls in one block: name the tools it used, not its first
+    // line ("const out = []" says nothing). None: show the program itself.
+    if (names.length > 1) return { verb: "Program", target: "", gist: [...new Set(names)].join(", "), body: raw, lang: "javascript", raw };
+    return { verb: "Code", target: "", gist: gistOf(raw), body: raw, lang: "javascript", raw };
   }
   const [a = "", b = ""] = call.args;
   switch (call.name) {

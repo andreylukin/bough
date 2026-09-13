@@ -209,7 +209,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 /* A long prompt folds to four lines. */
 .prompt-clamp{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
 /* An attached file is source: keep its indentation, scroll sideways. */
-.prompt-file pre{white-space:pre;overflow-wrap:normal;overflow-x:auto;color:var(--text-2)}
+.prompt-att-file{white-space:pre;overflow-wrap:normal;overflow-x:auto;color:var(--text-2)}
 .prompt-more{align-self:flex-start;font-size:12px}
 .sel-item[aria-selected="true"]{color:var(--text-1)}
 .sel-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -225,21 +225,25 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
    right edge and the next line's start. 80ch is the measure asked for
    — wider than prose wants, which is right here, because most of this
    is commands and output rather than sentences. */
-.transcript{flex-grow:1;padding:24px 32px 8px;display:flex;flex-direction:column;gap:28px}
+.transcript{flex-grow:1;padding:24px 32px 8px;display:flex;flex-direction:column;gap:24px}
 .transcript>*{width:100%;max-width:80ch;margin-inline:auto}
-.turn{display:flex;flex-direction:column;gap:14px}
-.prompt{display:flex;align-items:baseline;gap:12px;max-width:78ch;min-width:0}
-.prompt-mark{color:var(--accent);flex-shrink:0}
+.turn{display:flex;flex-direction:column;gap:10px}
+.prompt{display:grid;grid-template-columns:14px minmax(0,1fr) auto;column-gap:8px;align-items:baseline;max-width:78ch;min-width:0}
+.prompt-mark{color:var(--accent)}
 /* A pasted path or URL has no break opportunities; without these a long
    one pushed the whole prompt off the right edge of a phone. */
-.prompt-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.prompt-text{min-width:0;display:flex;flex-direction:column;gap:8px}
 .prompt p{margin:0;font-size:16px;font-weight:500;text-wrap:pretty;white-space:pre-wrap;overflow-wrap:anywhere}
 /* Skill bodies ride along with the prompt they were invoked from. They
    are context the agent read, not something you typed, so they fold. */
-.prompt-skill>summary{padding:6px 12px}
-.prompt-skill pre{margin:0;padding:10px 14px;max-height:240px;overflow:auto;font:12px/1.6 var(--mono);
-                  color:var(--text-3);white-space:pre-wrap;overflow-wrap:anywhere}
-.prompt-time{margin-left:auto;font-size:12px;color:var(--text-3);flex-shrink:0}
+.prompt-chip{display:inline-flex;align-items:center;max-width:100%;height:24px;padding:0 6px;vertical-align:1px;
+  border:1px solid var(--line);border-radius:4px;background:none;font:500 12px var(--mono);color:var(--text-2);
+  cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prompt-chip:hover,.prompt-chip[aria-expanded="true"]{border-color:var(--line-strong);color:var(--text-1)}
+.prompt-atts{display:flex;flex-wrap:wrap;gap:6px}
+.prompt-att{margin:0;padding:10px 14px;max-height:240px;overflow:auto;font:12px/1.6 var(--mono);border:1px solid var(--line);
+  border-radius:8px;background:var(--surface);color:var(--text-3);white-space:pre-wrap;overflow-wrap:anywhere}
+.prompt-time{align-self:start;font-size:11px;line-height:24px;color:var(--text-3);white-space:nowrap}
 .turn-body{display:flex;flex-direction:column;gap:12px;padding-left:22px}
 .turn-body>.block+.block{margin-top:-6px}
 .turn-done{padding-left:22px;font-size:12px;color:var(--text-3)}
@@ -514,8 +518,10 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .turn-hooks-body .hook-line{margin:0 0 6px;overflow-wrap:anywhere}
 .thinking pre{color:var(--text-3);font:13px/1.65 var(--sans);white-space:pre-wrap;
               text-indent:0;padding-inline-start:14px;max-width:78ch}
-.think-body{padding:2px 14px 12px;max-width:78ch}
-.think-body .md{color:var(--text-3);font-size:13px}
+.think-body{padding:2px 12px 12px;max-width:78ch}
+.think-body .md{color:var(--text-2);font-size:13px;line-height:20px}
+/* Open, the body starts with the sentence the summary previewed. */
+.thinking[open]>summary .block-detail{display:none}
 .think-body .md pre{background:var(--bg)}
 .thinking .block-detail{font-style:italic}
 /* Reasoning is not execution: no filled card, so tool calls carry the weight. */
@@ -523,7 +529,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 /* Bookkeeping rows are one thin line: no card, muted 12px, detail on hover
    (.thin-pop) and the full blocks one click in. */
 .block.thin{background:none;border:0;border-radius:0;overflow:visible}
-.block.thin>summary{gap:6px;padding:2px 4px;min-height:20px;font-size:12px;line-height:16px;border-radius:4px}
+.block.thin>summary{gap:6px;padding:4px;min-height:24px;font-size:12px;line-height:16px;border-radius:4px}
 .block.thin>summary:focus-visible{outline-offset:0}
 .block.thin>summary::before{width:8px}
 .block.thin>summary .block-label,.block.thin>summary .block-detail{font-size:12px;color:var(--text-3)}
@@ -540,7 +546,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .block.thin.toolrun>.toolrun-body{gap:2px;padding:2px 0 4px 10px;margin-inline-start:7px;border-top:0;border-left:1px solid var(--line);background:none}
 .turn-body>.block.thin+.block.thin{margin-top:-10px}
 .sub-body>.block.thin+.block.thin{margin-top:-8px}
-.thin-pop{position:fixed;z-index:60;pointer-events:none;max-height:calc(100vh - 32px);overflow:hidden;max-width:min(520px,calc(100vw - 32px));
+.thin-pop{position:fixed;z-index:60;max-height:min(240px,calc(100vh - 32px));overflow:auto;max-width:min(640px,calc(100vw - 32px));
   display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:2px 10px;padding:6px 10px;
   background:var(--raised);border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.18);
   font-size:12px;line-height:18px;color:var(--text-2)}
@@ -548,7 +554,9 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .thin-pop-cmd{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-1)}
 .thin-pop-row .num{color:var(--text-3);text-align:end;white-space:nowrap}
 .thin-pop-failed>span,.thin-pop-failed .num{color:var(--red)}
-@media (hover:none){.thin-pop{display:none}}
+.thin-pop-out{grid-column:1/-1;margin:0;white-space:pre;overflow:hidden;text-overflow:ellipsis;color:var(--text-2)}
+.block.thin>summary .toolrun-failed{height:auto;color:var(--red)}
+.block.thin>summary .toolrun-failed:hover{text-decoration:underline}
 /* thin lines stay one line at any width: the full text is one tap in */
 .block.thin>summary{flex-wrap:nowrap}
 .block.thin>summary>.block-detail{order:0;flex:0 1 auto;flex-basis:auto;min-width:0;padding-inline-start:0;
@@ -586,14 +594,17 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 /* composer */
 /* The composer shares the transcript's 80ch column, so what you type
    lines up with what you are reading. */
-.composer-wrap{flex-shrink:0;padding:8px 32px 24px}
+.composer-wrap{position:relative;flex-shrink:0;padding:8px 32px 24px}
 .composer-wrap>*{width:100%;max-width:80ch;margin-inline:auto}
 .send-failed{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;line-height:16px;color:var(--red)}
 .send-failed-text{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .send-failed .btn{height:28px;padding:0 10px;font-size:12px;flex-shrink:0}
 @media (pointer:coarse){.send-failed .btn{height:44px}}
-.composer-wrap>.jump-latest{display:block;width:auto;margin:0 auto 8px;height:32px;padding:0 14px;font-size:12px}
-@media (pointer:coarse){.composer-wrap>.jump-latest{height:44px}}
+/* Floats over the transcript's foot: appearing never moves what you read. */
+.composer-wrap>.jump-latest{position:absolute;z-index:5;bottom:100%;left:50%;transform:translateX(-50%);width:auto;margin:0;
+  height:32px;padding:0 12px;border-radius:6px;font-size:12px;background:var(--raised)}
+.composer-wrap>.jump-latest:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (pointer:coarse){.composer-wrap>.jump-latest{height:40px}}
 .composer{background:var(--surface);border:1px solid var(--line-strong);border-radius:9px;padding:12px 16px;
           display:flex;flex-direction:column;gap:10px}
 /* It already grows to its text, so a drag grip is only noise. */
@@ -761,9 +772,7 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .runtime-strip{padding:6px 16px;gap:4px 14px}
   .composer-wrap{padding:8px 12px calc(12px + env(safe-area-inset-bottom))}
   /* The clock goes under the prompt rather than holding a column of its own. */
-  .prompt{display:grid;grid-template-columns:10px minmax(0,1fr);gap:4px 10px}
-  .prompt-text,.prompt-time{grid-column:2}
-  .prompt-time{margin-left:0}
+  .prompt{grid-template-columns:10px minmax(0,1fr) auto}
   .composer{padding:10px 12px}
   .hint+.hint{display:none}
   .toast{left:16px;right:16px;bottom:16px;max-width:none}
@@ -852,9 +861,6 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .stream-tip .md>:last-child::after{
   content:"";display:inline-block;width:7px;height:.95em;vertical-align:-2px;margin-inline-start:3px;
   background:var(--accent);animation:bough-blink 1s steps(1,end) infinite}
-.stream-think{padding-bottom:4px}
-.stream-think-head{display:flex;align-items:center;gap:10px;padding:9px 14px 4px}
-.stream-think-head .block-label{font-style:italic}
 
 /* Subagents. A subagent's code and results used to be dealt straight
    into the parent's turn, which read as one agent doing two things at

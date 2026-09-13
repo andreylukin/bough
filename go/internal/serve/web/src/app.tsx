@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, subscribe, type Change, type TurnLine } from "./api";
 import type { Line, Project, Row } from "./types";
@@ -6,7 +6,7 @@ import { STATUS, StatusMark, Working } from "./status";
 import { ProjectsView } from "./projects";
 import { Select, type Option } from "./select";
 import { DialogHost, askText } from "./dialog";
-import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, type Item, type SubAgent, type Turn, lineCount } from "./render";
+import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath } from "./code";
 import { SkillPicker } from "./skills";
 import { Mentions, triggerAt, type Trigger } from "./mention";
@@ -629,8 +629,8 @@ function str(v: unknown): string {
 export function Entry({ line, codes, nested }: { line: Line; codes: string[]; nested?: boolean }) {
   const k = line.kind;
   if (k === "assistant" || k === "sub:assistant") {
-    const body = stripRunFences(line.text, codes);
-    if (blank(body)) return null; // the reply was only the program it ran
+    const [body, program] = splitBareProgram(stripRunFences(line.text, codes));
+    if (blank(body) && !program) return null; // the reply was only the program it ran
     // Inside a subagent card the rail and the card's own header
     // already say whose words these are; repeating "subagent" above
     // every paragraph of a five-step run is noise.
@@ -638,8 +638,30 @@ export function Entry({ line, codes, nested }: { line: Line; codes: string[]; ne
       <div className="say">
         {/* There is one assistant; naming it above every reply said nothing. */}
         {!nested && k !== "assistant" && <div className="say-who"><span className="sub-dot" /><span>subagent</span></div>}
-        <Markdown text={body} />
+        {!blank(body) && <Markdown text={body} />}
+        {program && (
+          // A program that lost its fence never ran: it is code, not prose.
+          <details className="block thin">
+            <summary>
+              <span className="block-label">Program</span>
+              <span className="block-detail">execution not recorded</span>
+            </summary>
+            <div className="block-body"><Code text={program} lang="javascript" /></div>
+          </details>
+        )}
       </div>
+    );
+  }
+  if (k === "nudge" && str(line.data?.retry)) {
+    // The loop's retry note is bookkeeping: one line, the note inside.
+    return (
+      <details className="block thin">
+        <summary>
+          <span className="block-label">Retry {str(line.data?.retry)}</span>
+          <span className="block-detail">{str(line.data?.why)}</span>
+        </summary>
+        <pre className="mono">{line.text}</pre>
+      </details>
     );
   }
   if (k === "code" || k === "sub:code") return <CodeBlock line={line} />;
@@ -706,9 +728,15 @@ export function SubAgentView({ agent }: { agent: SubAgent }) {
   const st = subState(agent.status);
   const codes = agent.lines.filter((l) => l.kind === "sub:code").map((l) => l.text);
   const task = firstLine(plainTitle(agent.task)) || "a subagent";
+  // While it works, the line says what it is doing right now.
+  const lastCode = agent.status === "" ? [...agent.lines].reverse().find((l) => l.kind === "sub:code") : undefined;
+  const op = lastCode ? parseCall(lastCode.text) : null;
+  const ms = Date.parse(agent.to) - Date.parse(agent.from);
+  const errors = agent.status === "error" ? agent.lines.filter((l) => l.kind === "sub:error") : [];
+  const entries = agent.lines.map((l) => <Entry key={l.seq} line={l} codes={codes} nested />);
   // A run that failed is the one you opened the thread to read, so it
-  // opens itself. The rest stay folded: the point of the card is that
-  // a subagent reads as one thing that happened.
+  // opens itself — onto the error, with its steps one level further in.
+  // The rest stay folded: a subagent reads as one thing that happened.
   return (
     <details className={"sub " + st.cls} open={agent.status === "error"}>
       <summary>
@@ -723,10 +751,18 @@ export function SubAgentView({ agent }: { agent: SubAgent }) {
           )}
           {st.word}
         </span>
+        {op && <span className="mono sub-op">{op.verb} {gistOf(op.gist)}</span>}
+        {ms >= 1000 && <span className="num sub-steps">{duration(ms)}</span>}
         {agent.steps > 0 && <span className="num sub-steps">{stepCount(agent.steps)}</span>}
       </summary>
       <div className="sub-body">
-        {agent.lines.map((l) => <Entry key={l.seq} line={l} codes={codes} nested />)}
+        {errors.length > 0 ? <>
+          {errors.map((l) => <div key={l.seq} className="err">{l.text}</div>)}
+          <details className="block thin">
+            <summary><span className="block-label">All steps</span></summary>
+            <div className="sub-body">{entries}</div>
+          </details>
+        </> : entries}
         {agent.lines.length === 0 && <p className="meta-line">Nothing recorded yet.</p>}
       </div>
     </details>
@@ -756,7 +792,10 @@ function gistOf(text: string): string {
 }
 
 /** One call's recorded facts, for its thin line and the hover list. */
-interface CallFacts { verb: string; gist: string; exit?: number; ms?: number; failed: boolean }
+interface CallFacts { verb: string; gist: string; exit?: number; ms?: number; failed: boolean; preview?: string }
+
+/** A call this slow is worth its duration on the line; a quick one is not. */
+const SLOW_MS = 10_000;
 
 function callFacts(code: Line, result?: Line): CallFacts {
   const call = parseCall(code.text);
@@ -771,31 +810,43 @@ const canHover = () => typeof window !== "undefined" && window.matchMedia?.("(ho
 /**
  * Hover (or keyboard focus) on a thin line shows its details after a
  * beat, in a fixed layer the scrolling transcript cannot clip. Touch
- * screens get none: a tap opens the line instead.
+ * screens get none: a tap opens the line instead. The pointer can move
+ * onto it (it stays while hovered) to read or select the output.
  */
 function useThinPop(rows: CallFacts[]) {
+  const id = useId();
   const [at, setAt] = useState<DOMRect | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const hide = useCallback(() => { clearTimeout(timer.current); setAt(null); }, []);
+  const hideSoon = () => { clearTimeout(timer.current); timer.current = setTimeout(() => setAt(null), 150); };
+  const keep = () => clearTimeout(timer.current);
+  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!at) return;
     // Escape closes the popover only; it must not also leave the thread.
     const key = (e: KeyboardEvent) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); hide(); } };
+    // The transcript scrolling moves the line away; the popover's own does not.
+    const scroll = (e: Event) => { if (!ref.current?.contains(e.target as Node)) hide(); };
     window.addEventListener("keydown", key, true);
-    window.addEventListener("scroll", hide, true);
-    return () => { window.removeEventListener("keydown", key, true); window.removeEventListener("scroll", hide, true); };
+    window.addEventListener("scroll", scroll, true);
+    return () => { window.removeEventListener("keydown", key, true); window.removeEventListener("scroll", scroll, true); };
   }, [at, hide]);
   useEffect(() => () => clearTimeout(timer.current), []);
   const show = (e: React.SyntheticEvent<HTMLElement>) => {
     const el = e.currentTarget;
-    if (!canHover() || (el.parentElement as HTMLDetailsElement | null)?.open) return;
+    if ((el.parentElement as HTMLDetailsElement | null)?.open) return;
+    // Keyboard focus shows it on any device; a click's focus does not.
+    const keyboard = e.type === "focus" && el.matches(":focus-visible");
+    if (!keyboard && (e.type === "focus" || !canHover())) return;
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => setAt(el.getBoundingClientRect()), 350);
+    timer.current = setTimeout(() => setAt(el.getBoundingClientRect()), keyboard ? 0 : 350);
   };
-  const handlers = { onMouseEnter: show, onFocus: show, onMouseLeave: hide, onBlur: hide, onClick: hide };
+  const handlers = {
+    onMouseEnter: show, onFocus: show, onMouseLeave: hideSoon, onBlur: hide, onClick: hide,
+    "aria-describedby": at ? id : undefined,
+  };
   // Placed from its own measured size: below the line if it fits, else
   // above, else pinned to the top (its max-height keeps it on screen).
-  const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const el = ref.current;
     if (!at || !el) return;
@@ -809,13 +860,15 @@ function useThinPop(rows: CallFacts[]) {
   let pop: React.ReactNode = null;
   if (at && rows.length) {
     pop = createPortal(
-      <div ref={ref} className="thin-pop" role="tooltip" style={{ top: 0, left: 0, visibility: "hidden" }}>
+      <div ref={ref} id={id} className="thin-pop" role="tooltip" style={{ top: 0, left: 0, visibility: "hidden" }}
+           onMouseEnter={keep} onMouseLeave={hideSoon}>
         {rows.map((r, i) => (
           <div key={i} className={"thin-pop-row" + (r.failed ? " thin-pop-failed" : "")}>
             <span>{r.verb}</span>
             <span className="mono thin-pop-cmd">{r.gist}</span>
             <span className="num">{r.exit !== undefined ? `exit ${r.exit}` : ""}</span>
             <span className="num">{r.ms !== undefined ? duration(r.ms) : ""}</span>
+            {r.preview && <pre className="mono thin-pop-out">{r.preview}</pre>}
           </div>
         ))}
       </div>, document.body);
@@ -851,19 +904,32 @@ export function ToolRun({ lines, codes }: { lines: Line[]; codes: string[] }) {
     }
   }
   const { handlers, pop } = useThinPop(facts);
+  const box = useRef<HTMLDetailsElement>(null);
   const calls = facts.length;
   if (calls < 2) return <>{rows}</>;
   const failed = facts.filter((f) => f.failed).length;
   const timed = facts.every((f) => f.ms !== undefined);
   const totalMs = facts.reduce((n, f) => n + (f.ms ?? 0), 0);
+  // One click from the count to the output that failed.
+  const openFailed = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const run = box.current;
+    const first = run?.querySelector<HTMLDetailsElement>(":scope>.toolrun-body>.block-failed");
+    if (!run || !first) return;
+    run.open = true;
+    first.open = true;
+    first.querySelector("summary")?.focus({ preventScroll: true });
+    first.scrollIntoView({ block: "nearest" });
+  };
   // The line is only the count, time and failures; each command lives
   // once in the hover list and once in the expansion.
   return (
-    <details className="block thin toolrun">
+    <details className="block thin toolrun" ref={box}>
       <summary {...handlers}>
         <span className={"block-label" + (failed ? " thin-failed" : "")}>{calls} tool calls</span>
         {timed && <span className="num tool-meta">{duration(totalMs)}</span>}
-        {failed > 0 && <span className="num toolrun-failed">{failed} failed</span>}
+        {failed > 0 && <button type="button" className="link num toolrun-failed" onClick={openFailed}>{failed} failed</button>}
       </summary>
       {pop}
       <div className="toolrun-body">{rows}</div>
@@ -887,22 +953,27 @@ export function ToolCall({ code, result }: { code: Line; result?: Line }) {
   // A question nobody answered is an outcome, not an exception to parse.
   const timedOut = /ask: no answer after (\S+)/.exec(out);
   // A single call's line already says everything the hover list would,
-  // so its hover shows what the line cannot: the full first line and output size.
-  const outLines = (out || "(no output)").split("\n").length;
-  // The full first line only when the thin line had to cut it.
+  // so its hover shows what the line cannot: the first lines of output,
+  // and the full first line of the call when the thin line had to cut it.
+  const outAll = (out || "(no output)").split("\n");
+  const shown = outAll.filter((l) => l.trim()).slice(0, 3);
+  const more = outAll.length - shown.length;
   const cut = gistOf(call.gist) !== firstLine(call.gist);
   const { handlers, pop } = useThinPop(timedOut ? [] : [{
-    verb: result ? lineCount(outLines) : "no result yet", gist: cut ? firstLine(call.gist) : "", failed,
+    verb: result ? (failed ? "Failed" : "Output") : "no result yet", gist: cut ? firstLine(call.gist) : "", failed,
+    preview: result ? shown.join("\n") + (more > 0 ? `\n+${lineCount(more)}` : "") : undefined,
   }]);
+  // Exit and time only when they are news: a failure, or a slow call.
+  const meta = failed
+    ? ["Failed", exit !== undefined && exit !== 0 ? `exit ${exit}` : "", ms !== undefined ? duration(ms) : ""]
+    : [ms !== undefined && ms >= SLOW_MS ? duration(ms) : ""];
   return (
     <details className={"block thin" + (failed ? " block-failed" : "")} data-seq={result?.seq}>
       <summary {...handlers}>
         <span className="block-label">{timedOut ? "Question timed out" : call.verb}</span>
         <span className="mono block-detail">{timedOut ? timedOut[1] : gistOf(call.gist)}</span>
-        {(exit !== undefined || ms !== undefined) && (
-          <span className={"num tool-meta" + (exit !== undefined && exit !== 0 ? " tool-meta-failed" : "")}>
-            {[exit !== undefined && exit !== 0 ? `exit ${exit}` : "", ms !== undefined ? duration(ms) : ""].filter(Boolean).join(" · ")}
-          </span>
+        {meta.some(Boolean) && (
+          <span className={"num tool-meta" + (failed ? " tool-meta-failed" : "")}>{meta.filter(Boolean).join(" · ")}</span>
         )}
         <CopyButton text={out || call.body || call.raw} what={result ? "output" : call.verb.toLowerCase() + " block"} />
       </summary>
@@ -928,10 +999,17 @@ export function ToolCall({ code, result }: { code: Line; result?: Line }) {
  * on every tool call, so inline they drowned the transcript; folded,
  * the count says whether anything happened and the ledger is one click in.
  */
+const DECIDED: Record<string, string> = { block: "blocked", deny: "denied", allow: "allowed", ask: "asked", rewrite: "rewritten", approve: "approved" };
+
 export function TurnHooks({ lines }: { lines: Line[] }) {
   const fires = lines.filter((l) => l.kind === "hook");
   if (!fires.length) return null;
-  const decided = fires.filter((l) => str(l.data?.decision)).length;
+  // What the decisions were ("1 blocked"), not that there were some.
+  const outcomes = new Map<string, number>();
+  for (const l of fires) {
+    const d = str(l.data?.decision);
+    if (d) outcomes.set(d, (outcomes.get(d) ?? 0) + 1);
+  }
   const errored = fires.filter((l) => str(l.data?.error)).length;
   const rules = new Set<string>();
   for (const l of fires) {
@@ -939,8 +1017,8 @@ export function TurnHooks({ lines }: { lines: Line[] }) {
     if (n.startsWith("applied ")) n.slice(8).split(", ").forEach((r) => rules.add(r));
   }
   const parts = [`${fires.length} fired`];
+  for (const [d, n] of outcomes) parts.push(`${n} ${DECIDED[d] ?? d}`);
   if (rules.size) parts.push(`${rules.size} ${rules.size === 1 ? "rule" : "rules"} applied`);
-  if (decided) parts.push(`${decided} decided`);
   return (
     <details className="block thin turn-hooks">
       <summary>
@@ -1224,7 +1302,7 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
   const codes = turn.body.filter((l) => l.kind === "code" || l.kind === "sub:code").map((l) => l.text);
   const hooks = useMemo(() => turn.body.filter(isHookLine), [turn.body]);
   const items = useMemo<Item[]>(
-    () => groupTools(groupSubs(turn.body.filter((l) => !isHookLine(l))), codes),
+    () => groupTools(groupSubs(foldRetries(turn.body.filter((l) => !isHookLine(l)))), codes),
     // codes is derived from turn.body on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [turn.body]);
@@ -1237,7 +1315,37 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
   const images = [...raw.matchAll(/\[Image #\d+: ([^\]\n]+)\]/g)].map((m) => m[1]);
   const said = raw.replace(/\[Image (#\d+): [^\]\n]+\]/g, "[Image $1]");
   const [full, setFull] = useState(false);
+  const [opened, setOpened] = useState<number | null>(null);
   const long = said.length > 420 || said.split("\n").length > 4;
+  // Each attachment is named once: as a chip where the prompt mentions
+  // it (/exa, @go/serve.go), else in a strip below. Its contents open
+  // under the prompt, one at a time.
+  const atts = skills.map((s) => {
+    const [head, ...body] = s.split("\n");
+    const m = /^\[(skill|file): (.+)\]$/.exec(head.trim());
+    const isFile = m?.[1] === "file";
+    const token = (isFile ? "@" : "/") + (m?.[2] ?? head);
+    let at = -1;
+    for (let i = said.indexOf(token); i >= 0; i = said.indexOf(token, i + 1)) {
+      if (i === 0 || /\s/.test(said[i - 1])) { at = i; break; }
+    }
+    return { isFile, token, body: body.join("\n"), at };
+  });
+  const chip = (i: number) => (
+    <button key={"att" + i} type="button" className="mono prompt-chip" aria-expanded={opened === i}
+            title={atts[i].isFile ? "Attached file" : "Skill"} onClick={() => setOpened((v) => (v === i ? null : i))}>
+      {atts[i].token}
+    </button>
+  );
+  const said2: React.ReactNode[] = [];
+  let pos = 0;
+  for (const i of atts.map((_, i) => i).filter((i) => atts[i].at >= 0).sort((a, b) => atts[a].at - atts[b].at)) {
+    if (atts[i].at < pos) { atts[i].at = -1; continue; }
+    said2.push(said.slice(pos, atts[i].at), chip(i));
+    pos = atts[i].at + atts[i].token.length;
+  }
+  said2.push(said.slice(pos));
+  const loose = atts.map((_, i) => i).filter((i) => atts[i].at < 0);
   return (
     <section className="turn" data-turn={n}>
       {turn.prompt && (
@@ -1246,7 +1354,7 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
           <div className="prompt-text">
             {/* A long brief (pasted logs, a spec) is evidence, not the
                 thing to navigate by: four lines, and one click for the rest. */}
-            <p className={long && !full ? "prompt-clamp" : undefined}>{said}</p>
+            <p className={long && !full ? "prompt-clamp" : undefined}>{said2}</p>
             {long && (
               <button className="link prompt-more" onClick={() => setFull((v) => !v)}>
                 {full ? "Show less" : "Show full prompt"}
@@ -1261,20 +1369,10 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
                 ))}
               </div>
             )}
-            {skills.map((s, i) => {
-              const [head, ...body] = s.split("\n");
-              const m = /^\[(skill|file): (.+)\]$/.exec(head.trim());
-              const isFile = m?.[1] === "file";
-              return (
-                <details key={i} className={"block prompt-skill" + (isFile ? " prompt-file" : "")}>
-                  <summary>
-                    <span className="block-label">{isFile ? "File" : "Skill"}</span>
-                    <span className="mono block-detail">{m?.[2] ?? head}</span>
-                  </summary>
-                  <pre>{body.join("\n")}</pre>
-                </details>
-              );
-            })}
+            {loose.length > 0 && <div className="prompt-atts">{loose.map(chip)}</div>}
+            {opened !== null && atts[opened] && (
+              <pre className={"prompt-att" + (atts[opened].isFile ? " prompt-att-file" : "")}>{atts[opened].body}</pre>
+            )}
           </div>
           <span className="num prompt-time">{clock(turn.prompt.at)}</span>
         </div>
@@ -1311,10 +1409,15 @@ export function StreamView({ runs }: { runs: DeltaRun[] }) {
       {runs.map((r, i) => r.kind === "thinking" ? (
         // Only the run still being written carries the caret; an
         // earlier one is finished text waiting to be recorded.
-        <div key={i} className={"block thinking stream-think" + (i === runs.length - 1 ? " stream-tip" : "")}>
-          <div className="stream-think-head"><span className="block-label">Thinking</span></div>
+        // Folded like a recorded one: the line shows its latest sentence,
+        // the essay is one click in.
+        <details key={i} className={"block thin thinking" + (i === runs.length - 1 ? " stream-tip" : "")}>
+          <summary>
+            <span className="block-label">Thinking</span>
+            <span className="block-detail">{plainTitle(r.text.split("\n").filter((l) => l.trim()).pop() ?? "").slice(-90)}</span>
+          </summary>
           <div className="think-body"><Markdown text={r.text} /></div>
-        </div>
+        </details>
       ) : (
         <div key={i} className={"say stream-say" + (i === runs.length - 1 ? " stream-tip" : "")}>
           <Markdown text={r.text} />
@@ -1531,8 +1634,29 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
     // means by "at the bottom", and an exact test loses the stick the
     // moment a fragment arrives a pixel early.
     atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    // What was recorded when you left, so the button can say something new arrived.
+    if (!atBottom.current && !away) awayAt.current = lines.length;
     setAway(!atBottom.current);
   };
+  const awayAt = useRef(0);
+  const toLatest = () => {
+    atBottom.current = true; setAway(false);
+    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    end.current?.scrollIntoView({ block: "end", behavior: still ? "auto" : "smooth" });
+  };
+  const latestKey = useRef(toLatest);
+  latestKey.current = toLatest;
+  useEffect(() => {
+    // Cmd/Ctrl+End, unless you are typing: there it moves the caret.
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "End" || !(e.metaKey || e.ctrlKey)) return;
+      if ((e.target as HTMLElement | null)?.closest?.("input,textarea,select,[contenteditable]")) return;
+      e.preventDefault();
+      latestKey.current();
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, []);
   useEffect(() => {
     if (atBottom.current) end.current?.scrollIntoView({ block: "end" });
   }, [lines.length, streamLen]);
@@ -1758,10 +1882,9 @@ export function Thread({ row, lines, loading = false, stream = [], activity = ""
 
       <div className="composer-wrap">
         {away && (
-          <button className="btn jump-latest" onClick={() => {
-            atBottom.current = true; setAway(false);
-            end.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-          }}>Jump to latest</button>
+          <button className="btn jump-latest" onClick={toLatest}>
+            {lines.length > awayAt.current ? "New activity ↓" : "Jump to latest"}
+          </button>
         )}
         {row.ask && !askSeen && (
           <div className="ask-bar">

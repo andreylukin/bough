@@ -114,6 +114,24 @@ export function stripRunFences(text: string, codes: string[]): string {
 }
 
 /**
+ * A reply whose fence was lost ends in a bare program: marked renders
+ * it as one run-on paragraph of escaped JavaScript. Split it off at the
+ * first code-shaped line outside any fence, when a tools call follows.
+ */
+export function splitBareProgram(text: string): [string, string] {
+  const lines = text.split("\n");
+  let fenced = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*```/.test(lines[i])) { fenced = !fenced; continue; }
+    if (fenced || !/^\s*(?:const |let |var |await |console\.log\(|out\.push\()/.test(lines[i])) continue;
+    const rest = lines.slice(i).join("\n");
+    if (/tools\.\w+\s*\(/.test(rest)) return [lines.slice(0, i).join("\n").replace(/`+\s*$/, "").trim(), rest.trim()];
+    return [text, ""];
+  }
+  return [text, ""];
+}
+
+/**
  * Nothing a reader would see. A reply can be a program plus a stray
  * marker the model emitted ("<focus seq=12>"): the sanitiser drops the
  * tag, the Markdown renders empty, and a bare "bough" label was left
@@ -195,6 +213,9 @@ export interface SubAgent {
   steps: number;
   lines: Line[];
   seq: number;
+  /** When its first and latest entries were recorded, for elapsed time. */
+  from: string;
+  to: string;
 }
 
 /**
@@ -250,6 +271,25 @@ export function isHookLine(l: Line): boolean {
   return l.kind === "hook" || (l.kind === "system" && l.text.startsWith("hook "));
 }
 
+/**
+ * The loop records a retry twice: its note to the model ("[unfinished]
+ * …") and a line for you ("that reply ran nothing …; asking again (1/2)").
+ * Folded onto the note, they render as one row.
+ */
+export function foldRetries(body: Line[]): Line[] {
+  const out: Line[] = [];
+  for (const l of body) {
+    const m = l.kind === "system" ? /^that reply (.+); asking again \((\d+\/\d+)\)$/.exec(l.text) : null;
+    const prev = out[out.length - 1];
+    if (m && prev?.kind === "nudge") {
+      out[out.length - 1] = { ...prev, data: { ...prev.data, retry: m[2], why: m[1] } };
+      continue;
+    }
+    out.push(l);
+  }
+  return out;
+}
+
 function readStr(v: unknown): string {
   return typeof v === "string" ? v : typeof v === "number" ? String(v) : "";
 }
@@ -257,26 +297,31 @@ function readStr(v: unknown): string {
 export function groupSubs(body: Line[]): Item[] {
   const out: Item[] = [];
   let run: { kind: "sub"; seq: number; agents: SubAgent[] } | null = null;
-  let lane = new Map<string, SubAgent>();
+  // Lanes live for the whole turn: a parent entry landing between two
+  // steps of the same worker (a /sessions command, say) used to split
+  // that worker into a second card. It keeps the card it started in.
+  const lane = new Map<string, SubAgent>();
 
   for (const l of body) {
     if (!l.kind.startsWith("sub:")) {
       run = null;
-      lane = new Map();
       out.push({ kind: "line", seq: l.seq, line: l });
       continue;
     }
     const worker = readStr(l.data?.worker) || "1";
-    if (!run) {
-      run = { kind: "sub", seq: l.seq, agents: [] };
-      out.push(run);
-    }
     let a = lane.get(worker);
+    // A finished worker's lane is free again: a new start is a new agent.
+    if (a && a.status && l.kind === "sub:start") a = undefined;
     if (!a) {
-      a = { worker, task: "", status: "", steps: 0, lines: [], seq: l.seq };
+      if (!run) {
+        run = { kind: "sub", seq: l.seq, agents: [] };
+        out.push(run);
+      }
+      a = { worker, task: "", status: "", steps: 0, lines: [], seq: l.seq, from: l.at, to: l.at };
       lane.set(worker, a);
       run.agents.push(a);
     }
+    a.to = l.at;
     if (l.kind === "sub:start") { a.task = l.text; continue; }
     if (l.kind === "sub:done") {
       a.status = readStr(l.data?.status) || "ok";
