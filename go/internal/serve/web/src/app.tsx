@@ -157,10 +157,10 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
                       {r.repo?.split("/").pop()}
                       {r.branch && <span style={{ color: "var(--line-strong)" }}>/</span>}{r.branch}
                     </span>
-                  ) : plainTitle(r.title) && (
-                    // Two sessions can share a title; with no repo to tell
-                    // them apart, the id tail does.
-                    <span className="mono">{r.id.slice(-6)}</span>
+                  ) : r.cwd && (
+                    // With no repo, the folder it ran in tells two sessions
+                    // apart and says something; an id tail only did the first.
+                    <span className="mono" title={r.cwd}>{r.cwd.split("/").filter(Boolean).pop() || "/"}</span>
                   )}
                 </span>
               </button>
