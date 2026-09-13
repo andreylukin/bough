@@ -536,7 +536,7 @@ export function ToolCall({ code, result }: { code: Line; result?: Line }) {
   // A question nobody answered is an outcome, not an exception to parse.
   const timedOut = /ask: no answer after (\S+)/.exec(out);
   return (
-    <details className={"block" + (failed ? " block-failed" : "")}>
+    <details className={"block" + (failed ? " block-failed" : "")} data-seq={result?.seq}>
       <summary>
         <span className="block-label">{timedOut ? "Question timed out" : call.verb}</span>
         <span className="mono block-detail">{timedOut ? timedOut[1] : firstLine(call.gist)}</span>
@@ -751,18 +751,27 @@ function TestsChip({ lines }: { lines: Line[] }) {
       const r = lines[i], c = lines[i - 1];
       if (r.kind !== "result" || c.kind !== "code" || typeof r.data?.exit !== "number") continue;
       const call = parseCall(c.text);
-      if (call.verb === "Ran" && TEST_CMD.test(call.target)) return { cmd: call.gist, exit: r.data.exit as number, at: r.at };
+      if (call.verb === "Ran" && TEST_CMD.test(call.target)) return { cmd: call.gist, exit: r.data.exit as number, at: r.at, seq: r.seq };
     }
     return null;
   }, [lines]);
   if (!last) return null;
   const failed = last.exit !== 0;
   return (
-    <span className="rt" title={`${last.cmd} · exit ${last.exit} · ${new Date(last.at).toLocaleString()}`}>
+    // The chip is a way to the evidence, not a second copy of it: it opens
+    // the call in the transcript (and the run folding it) and lands there.
+    <button className="rt rt-link" title={`${last.cmd} · exit ${last.exit} · ${new Date(last.at).toLocaleString()}`}
+            onClick={() => {
+              const el = document.querySelector<HTMLDetailsElement>(`details.block[data-seq="${last.seq}"]`);
+              if (!el) return;
+              for (let d: HTMLElement | null = el; d; d = d.parentElement?.closest("details") ?? null) (d as HTMLDetailsElement).open = true;
+              el.scrollIntoView({ block: "center" });
+              el.querySelector("summary")?.focus();
+            }}>
       <span className="rt-label">Tests</span>
       <span className={"num rt-value " + (failed ? "rt-del" : "rt-add")}>{failed ? "failed" : "passed"}</span>
       <span className="num rt-label">{ago(last.at)} ago</span>
-    </span>
+    </button>
   );
 }
 
