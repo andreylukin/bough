@@ -126,6 +126,54 @@ function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived, onTog
 
 /* ---------------- transcript ---------------- */
 
+/**
+ * Copy what a block holds.
+ *
+ * It sits OUTSIDE the <details>, below it, because a <details> hides
+ * every child but its summary when closed — and the whole point is to
+ * copy a command or its output without opening the block first.
+ */
+function CopyButton({ text, what }: { text: string; what: string }) {
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    if (!done) return;
+    const t = setTimeout(() => setDone(false), 1400);
+    return () => clearTimeout(t);
+  }, [done]);
+
+  const copy = async () => {
+    try {
+      // navigator.clipboard needs a secure context; localhost is one.
+      // The textarea fallback is for anything that is not.
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+      }
+      setDone(true);
+    } catch {
+      setDone(false);
+    }
+  };
+
+  return (
+    <div className="block-foot">
+      <button className="copy-btn" onClick={copy} aria-label={`Copy ${what}`}>
+        {/* The word changes, not just a colour: a state carried by
+            colour alone says nothing to half the people reading it. */}
+        {done ? "Copied" : "Copy"}
+      </button>
+    </div>
+  );
+}
+
 export function CodeBlock({ line }: { line: Line }) {
   const call = useMemo(() => parseCall(line.text), [line.text]);
   const lines = call.body ? call.body.split("\n").length : 0;
@@ -133,6 +181,7 @@ export function CodeBlock({ line }: { line: Line }) {
   // point of the list is to be scanned, and an open block for every one
   // of them buries the reply that follows.
   return (
+    <div className="block-wrap">
     <details className="block">
       <summary>
         <span className="block-label">{call.verb}</span>
@@ -151,6 +200,8 @@ export function CodeBlock({ line }: { line: Line }) {
         )}
       </div>
     </details>
+    <CopyButton text={call.body || call.raw} what={call.verb.toLowerCase() + " block"} />
+    </div>
   );
 }
 
@@ -170,6 +221,7 @@ export function ResultBlock({ line }: { line: Line }) {
   const lines = (body || "(no output)").split("\n");
   const head = lines.find((l) => l.trim()) ?? "";
   return (
+    <div className="block-wrap">
     <details className="block">
       <summary>
         <span className="block-label">Result</span>
@@ -180,6 +232,8 @@ export function ResultBlock({ line }: { line: Line }) {
         <Code text={body || "(no output)"} lang={resultLang(line)} />
       </div>
     </details>
+    <CopyButton text={body} what="output" />
+    </div>
   );
 }
 
