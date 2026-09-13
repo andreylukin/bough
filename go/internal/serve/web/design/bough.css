@@ -27,12 +27,15 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 /* sidebar */
 .sidebar{width:304px;flex-shrink:0;border-right:1px solid var(--line);background:var(--surface);
          display:flex;flex-direction:column}
-.sidebar .scroll{flex-grow:1;padding-bottom:16px}
+.sidebar .scroll{flex:1 1 0%;min-height:0;padding-bottom:16px}
 /* The sidebar's first screen is for sessions: a 44px brand row, one row
    of view tabs, the search, then the queue. */
 .brand{display:flex;align-items:center;gap:10px;height:44px;padding:0 16px;font-size:15px;font-weight:600;
        letter-spacing:-.01em}
-.session-search{padding:0 16px 12px}
+.session-search{padding:0 16px 12px;flex-shrink:0}
+/* Only the session list gives up height; the brand, tabs and search keep theirs. */
+.brand,.nav,.sidebar-foot{flex-shrink:0}
+.row-ask{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2)}
 .group-count{margin-inline-start:6px;color:var(--text-3);font-weight:400}
 .field-label{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;font-size:12px;font-weight:500;color:var(--text-3);margin-bottom:6px}
 .field{width:100%;font:13px var(--sans);color:var(--text-1);background:var(--raised);
@@ -397,6 +400,8 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .think-body .md{color:var(--text-3);font-size:13px}
 .think-body .md pre{background:var(--bg)}
 .thinking .block-detail{font-style:italic}
+/* Reasoning is not execution: no filled card, so tool calls carry the weight. */
+.block.thinking{background:none;border:1px solid var(--line)}
 
 /* markdown inside a reply */
 .md{color:var(--text-2)}

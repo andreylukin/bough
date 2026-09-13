@@ -113,7 +113,11 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
                 </span>
                 <span className="row-meta">
                   <StatusMark status={r.status} />
-                  {r.repo || r.branch ? (
+                  {r.ask ? (
+                    // What the session is waiting on, not an id: the row
+                    // should say what answering it means.
+                    <span className="row-ask" title={r.ask.text}>{plainTitle(r.ask.text)}</span>
+                  ) : r.repo || r.branch ? (
                     <span className="mono">
                       {r.repo?.split("/").pop()}
                       {r.branch && <span style={{ color: "var(--line-strong)" }}>/</span>}{r.branch}
@@ -448,7 +452,7 @@ export function ToolRun({ lines, codes }: { lines: Line[]; codes: string[] }) {
   // Pair each call with the result recorded for it: one row per thing
   // done, not a "Ran" row and a "Result" row saying half each.
   const rows: React.ReactNode[] = [];
-  let calls = 0, failed = 0, last = "";
+  let calls = 0, failed = 0, last = "", totalMs = 0, timed = 0;
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
     if (l.kind === "code") {
@@ -456,7 +460,9 @@ export function ToolRun({ lines, codes }: { lines: Line[]; codes: string[] }) {
       const result = next?.kind === "result" ? next : undefined;
       if (result) i++;
       calls++;
-      if (result && /^error\b/i.test(resultBody(result))) failed++;
+      const rexit = result?.data?.exit;
+      if (result && ((typeof rexit === "number" && rexit !== 0) || /^error\b/i.test(resultBody(result)))) failed++;
+      if (typeof result?.data?.ms === "number") { totalMs += result.data.ms as number; timed++; }
       last = firstLine(parseCall(l.text).gist);
       rows.push(<ToolCall key={l.seq} code={l} result={result} />);
     } else {
@@ -468,7 +474,11 @@ export function ToolRun({ lines, codes }: { lines: Line[]; codes: string[] }) {
     <details className="block toolrun">
       <summary>
         <span className="block-label">{calls} tool calls</span>
-        <span className="mono block-detail">{last}</span>
+        {/* Recorded time leads when every call has it; a run from before
+            the loop recorded durations still names its last command. */}
+        {timed === calls
+          ? <span className="num block-detail">{duration(totalMs)} running</span>
+          : <span className="mono block-detail">{last}</span>}
         {failed > 0 && <span className="num toolrun-failed">{failed} failed</span>}
       </summary>
       <div className="toolrun-body">{rows}</div>
