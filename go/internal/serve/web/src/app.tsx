@@ -58,7 +58,7 @@ function modKey(): string {
   return typeof navigator !== "undefined" && /Mac|iP/.test(navigator.platform) ? "\u2318" : "Ctrl+";
 }
 
-export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived, onToggleArchived, view, onView, wikiFlags = 0, onNew }: {
+export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived, onToggleArchived, view, onView, wikiFlags = 0, onNew, onAck }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
   query: string; onQuery: (q: string) => void; showArchived: boolean; onToggleArchived: () => void;
   view: View; onView: (v: View) => void;
@@ -66,6 +66,8 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
   wikiFlags?: number;
   /** Starting work is the other half of a control room; it opens the palette's Start group. */
   onNew?: () => void;
+  /** Mark a troubled session seen without opening it. */
+  onAck?: (id: string) => void;
 }) {
   // A control room lists what needs you first, then what is moving;
   // only settled sessions fall back to the day they last changed.
@@ -169,7 +171,13 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
               </button>
             )}
             {(query || !folded.has(name) || name === "Needs you" || name === "Running") && list.map((r) => (
-              <button key={r.id} onClick={() => onSelect(r.id)}
+              <div key={r.id} className="row-wrap">
+              {r.trouble && onAck && (
+                // A sibling of the row, not inside it: a button in a button
+                // is invalid and a click would open the session too.
+                <button className="btn row-ack" onClick={() => onAck(r.id)} aria-label={`Mark ${plainTitle(r.title) || "session"} seen`}>Seen</button>
+              )}
+              <button onClick={() => onSelect(r.id)}
                       onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
                       onFocus={(e) => peek(r, e.currentTarget)} onBlur={unpeek}
                       aria-describedby={card?.id === r.id ? "row-card" : undefined}
@@ -214,6 +222,7 @@ export function Sidebar({ rows, selected, onSelect, query, onQuery, showArchived
                   )}
                 </span>
               </button>
+              </div>
             ))}
           </div>
         ))}
@@ -1658,7 +1667,8 @@ export default function App() {
                query={query} onQuery={setQuery} view={view} wikiFlags={wikiFlags}
                onView={(v) => { if (v === "wiki") goWiki({ at: "index" }); else { setView(v); setPane("thread"); } }}
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)}
-               onNew={() => setPalette(true)} />
+               onNew={() => setPalette(true)}
+               onAck={(id) => act(() => api.ack(id))} />
       {view === "wiki" ? (
         <WikiPage route={wikiRoute} onRoute={goWiki} onBack={goList} onOpenSession={openSession}
                   onSearch={(text) => { setPalQuery(text.replace(/\s+/g, " ").slice(0, 60)); setPalette(true); }} />

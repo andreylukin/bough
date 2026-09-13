@@ -493,6 +493,11 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
   background:var(--raised);border:1px solid var(--line-strong);color:var(--text-2);font-size:13px;line-height:1.45;
   box-shadow:0 8px 24px rgba(0,0,0,.35);pointer-events:none}
 @media (hover:none){.row-card{display:none}}
+.row-wrap{position:relative}
+.row-ack{position:absolute;right:12px;top:50%;transform:translateY(-50%);z-index:2;height:24px;padding:0 8px;font-size:12px;
+  opacity:0;pointer-events:none;background:var(--raised)}
+.row-wrap:hover>.row-ack,.row-wrap:focus-within>.row-ack{opacity:1;pointer-events:auto}
+@media (hover:none){.row-ack{opacity:1;pointer-events:auto;height:36px}}
 .row-trouble{color:var(--red);font-size:12px}
 .row-jobs{color:var(--accent)}
 .btn{font:13px var(--sans);color:var(--text-2);background:none;border:1px solid var(--line-strong);
