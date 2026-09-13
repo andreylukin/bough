@@ -48,6 +48,59 @@ export function doneSummary(line: Line): string {
   return parts.join(" · ");
 }
 
+/** 21043 → "21k", 1_234_000 → "1.2M": a count read at a glance. */
+export function tokenCount(n: number): string {
+  if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(n);
+}
+
+/** "$0.39"; a fraction of a cent is "<$0.01", not "$0.00". */
+export function money(n: number): string {
+  return n > 0 && n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`;
+}
+
+/** 252000 → "4m 12s". */
+export function duration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+/**
+ * What a turn spent, as the loop stamps it on the done entry (usage:
+ * in/out/cost, and last_in — the context the next turn starts from).
+ * cost is absent for a provider that does not price; null means the
+ * turn recorded no usage at all.
+ */
+export interface Usage { in: number; out: number; cost?: number; lastIn: number }
+
+export function usageOf(done: Line | null): Usage | null {
+  const u = done?.data?.usage as Record<string, unknown> | undefined;
+  if (!u) return null;
+  const n = (v: unknown) => (typeof v === "number" ? v : 0);
+  return { in: n(u.in), out: n(u.out), cost: typeof u.cost === "number" ? u.cost : undefined, lastIn: n(u.last_in) };
+}
+
+/** The session's tally: every turn's usage summed; context is the latest turn's. */
+export function sessionUsage(lines: Line[]): Usage | null {
+  let seen = false, priced = false;
+  let tokensIn = 0, tokensOut = 0, cost = 0, lastIn = 0;
+  for (const l of lines) {
+    if (l.kind !== "done") continue;
+    const u = usageOf(l);
+    if (!u) continue;
+    seen = true;
+    tokensIn += u.in;
+    tokensOut += u.out;
+    lastIn = u.lastIn;
+    if (u.cost !== undefined) { priced = true; cost += u.cost; }
+  }
+  return seen ? { in: tokensIn, out: tokensOut, cost: priced ? cost : undefined, lastIn } : null;
+}
+
 /**
  * A reply carries the fenced program it wants run, and the loop records
  * that program again as its own `code` entry. Rendering both shows the

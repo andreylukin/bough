@@ -160,6 +160,27 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .turn-body{display:flex;flex-direction:column;gap:12px;padding-left:22px}
 .turn-body>.block+.block{margin-top:-6px}
 .turn-done{padding-left:22px;font-size:12px;color:var(--text-3)}
+/* A turn ends with what it did and what it cost. */
+.turn-foot{padding-left:22px;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;
+           font-size:12px;line-height:18px;color:var(--text-3)}
+.turn-outcome{color:var(--text-2)}
+.turn-failed{color:var(--red)}
+.turn-files>summary{cursor:pointer;list-style:none;color:var(--text-2)}
+.turn-files>summary::-webkit-details-marker{display:none}
+.turn-files>summary::before{content:"›";margin-inline-end:6px;font-family:var(--mono)}
+.turn-files[open]>summary::before{content:"⌄"}
+.turn-files[open]{flex-basis:100%}
+.turn-files ul{margin:6px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:2px}
+.turn-files li{font-size:12px;color:var(--text-2);overflow-wrap:anywhere}
+/* The session's budget, always in view, and unboxed. */
+.runtime-strip{flex-shrink:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 20px;padding:6px 32px;
+               border-bottom:1px solid var(--line);font-size:12px;line-height:16px}
+.rt{display:inline-flex;align-items:center;gap:6px;min-width:0}
+.rt-label{color:var(--text-3)}
+.rt-value{color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt-bar{width:64px;height:4px;border-radius:2px;background:var(--raised);overflow:hidden}
+.rt-bar>span{display:block;height:100%;background:var(--accent)}
+.rt-bar>.rt-hot{background:var(--amber)}
 
 .say{display:flex;flex-direction:column;gap:8px;max-width:78ch}
 .say-who{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text-2)}
@@ -531,6 +552,8 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .transcript{padding:16px 16px 8px;gap:24px}
   .turn-body{padding-left:0}
   .turn-done{padding-left:0}
+  .turn-foot{padding-left:0}
+  .runtime-strip{padding:6px 16px;gap:4px 14px}
   .composer-wrap{padding:8px 12px calc(12px + env(safe-area-inset-bottom))}
   /* The clock goes under the prompt rather than holding a column of its own. */
   .prompt{display:grid;grid-template-columns:10px minmax(0,1fr);gap:4px 10px}

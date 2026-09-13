@@ -5,7 +5,7 @@ import { StatusMark, Working } from "./status";
 import { ProjectsView } from "./projects";
 import { Select, type Option } from "./select";
 import { DialogHost, askText } from "./dialog";
-import { Markdown, codeLabel, doneSummary, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, plainTitle, stepCount, stripRunFences, type Item, type SubAgent, type Turn, lineCount } from "./render";
+import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath } from "./code";
 import { SkillPicker } from "./skills";
 import { Mentions, triggerAt, type Trigger } from "./mention";
@@ -557,8 +557,93 @@ export function TurnHooks({ lines }: { lines: Line[] }) {
   );
 }
 
+/**
+ * How a turn ended and what it took, from what the loop recorded on its
+ * done entry: elapsed, tokens, cost, the context it left, the files it
+ * changed. A bare "Finished" told a programmer none of that. Nothing is
+ * estimated — a provider that recorded no usage shows only the outcome.
+ */
+function TurnFooter({ turn }: { turn: Turn }) {
+  const done = turn.done!;
+  const u = usageOf(done);
+  const files = Array.isArray(done.data?.files) ? (done.data!.files as string[]) : [];
+  const exit = done.data?.exit;
+  const failed = typeof exit === "number" && exit !== 0;
+  const facts: string[] = [];
+  if (turn.prompt?.at) facts.push(duration(Date.parse(done.at) - Date.parse(turn.prompt.at)));
+  if (u) {
+    facts.push(`${tokenCount(u.in)} in · ${tokenCount(u.out)} out`);
+    if (u.cost !== undefined) facts.push(money(u.cost));
+    if (u.lastIn) facts.push(`context ${tokenCount(u.lastIn)}`);
+  }
+  return (
+    <div className="turn-foot">
+      <span className={"turn-outcome" + (failed ? " turn-failed" : "")}>
+        {done.kind === "cancelled" ? "Stopped" : failed ? `Finished · last command exit ${exit}` : "Finished"}
+      </span>
+      {facts.map((f) => <span key={f} className="num">{f}</span>)}
+      {files.length > 0 && (
+        <details className="turn-files">
+          <summary>{files.length} {files.length === 1 ? "file" : "files"} changed</summary>
+          <ul>{files.map((f) => <li key={f} className="mono">{f}</li>)}</ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The session's running budget, always in view: what the context holds
+ * against the model's window, what the session has spent, and the model
+ * actually answering. The window is only named when the session records
+ * its model; a default model is not guessed at.
+ */
+function RuntimeStrip({ row, lines }: { row: Row; lines: Line[] }) {
+  const [limits, setLimits] = useState<Record<string, number>>({});
+  useEffect(() => {
+    fetch("/api/models").then((r) => r.json()).then((c: { providers?: ProviderInfo[] }) => {
+      const m: Record<string, number> = {};
+      for (const p of c.providers ?? []) for (const x of p.models ?? []) if (x.context) m[x.id] = x.context;
+      setLimits(m);
+    }).catch(() => setLimits({}));
+  }, []);
+  const u = useMemo(() => sessionUsage(lines), [lines]);
+  if (!u && !row.model) return null;
+  const limit = row.model ? limits[row.model] : undefined;
+  const pct = u && limit ? Math.min(100, Math.round((u.lastIn / limit) * 100)) : undefined;
+  return (
+    <div className="runtime-strip">
+      {u && (
+        <span className="rt" title={limit ? `${u.lastIn.toLocaleString()} of ${limit.toLocaleString()} tokens` : undefined}>
+          <span className="rt-label">Context</span>
+          <span className="num rt-value">{tokenCount(u.lastIn)}{limit ? ` / ${contextSize(limit)}` : ""}</span>
+          {pct !== undefined && (
+            <span className="rt-bar" role="meter" aria-label="Context used" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+              <span className={pct >= 80 ? "rt-hot" : undefined} style={{ width: `${pct}%` }} />
+            </span>
+          )}
+        </span>
+      )}
+      {u && (
+        <span className="rt">
+          <span className="rt-label">Tokens</span>
+          <span className="num rt-value">{tokenCount(u.in)} in · {tokenCount(u.out)} out</span>
+        </span>
+      )}
+      {u?.cost !== undefined && (
+        <span className="rt"><span className="rt-label">Cost</span><span className="num rt-value">{money(u.cost)}</span></span>
+      )}
+      {row.model && (
+        <span className="rt">
+          <span className="rt-label">Model</span>
+          <span className="mono rt-value">{row.model}{row.effort ? ` · ${effortLabel(row.effort)}` : ""}</span>
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function TurnView({ turn, tail }: { turn: Turn; tail?: React.ReactNode }) {
-  const summary = turn.done ? doneSummary(turn.done) : "";
   const codes = turn.body.filter((l) => l.kind === "code" || l.kind === "sub:code").map((l) => l.text);
   const hooks = useMemo(() => turn.body.filter(isHookLine), [turn.body]);
   const items = useMemo<Item[]>(
@@ -614,11 +699,7 @@ export function TurnView({ turn, tail }: { turn: Turn; tail?: React.ReactNode })
         {tail}
         <TurnHooks lines={hooks} />
       </div>
-      {turn.done && (
-        <div className="turn-done">
-          {turn.done.kind === "cancelled" ? "Stopped" : summary || "Finished"}
-        </div>
-      )}
+      {turn.done && <TurnFooter turn={turn} />}
     </section>
   );
 }
@@ -840,6 +921,7 @@ export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, on
           </div>
         </div>
       </header>
+      <RuntimeStrip row={row} lines={lines} />
 
       <div className="scroll transcript" ref={scroller} onScroll={onScroll}>
         {turns.map((t, i) => (
