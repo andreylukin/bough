@@ -485,6 +485,8 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 @media (pointer:coarse){.back,.thread-head>.more,.copy-btn{min-width:44px;min-height:44px}}
 .toast{position:fixed;right:20px;bottom:20px;max-width:46ch;background:var(--raised);
        border:1px solid var(--red);color:var(--text-1);border-radius:8px;padding:10px 14px;font-size:13px}
+/* A dismissible alert is a button; buttons do not inherit the font or alignment. */
+button.toast{font:13px/1.45 var(--sans);text-align:start;cursor:pointer}
 
 /* view switcher */
 .nav{display:flex;gap:4px;padding:0 12px 10px}
