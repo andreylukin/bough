@@ -484,7 +484,11 @@ export function ToolRun({ lines, codes }: { lines: Line[]; codes: string[] }) {
 export function ToolCall({ code, result }: { code: Line; result?: Line }) {
   const call = useMemo(() => parseCall(code.text), [code.text]);
   const out = result ? resultBody(result) : "";
-  const failed = /^error\b/i.test(out);
+  // Recorded evidence, when the loop stamped it: the block's own exit code
+  // and how long it ran. Older results carry neither and show neither.
+  const exit = typeof result?.data?.exit === "number" ? (result.data.exit as number) : undefined;
+  const ms = typeof result?.data?.ms === "number" ? (result.data.ms as number) : undefined;
+  const failed = (exit !== undefined && exit !== 0) || /^error\b/i.test(out);
   // A question nobody answered is an outcome, not an exception to parse.
   const timedOut = /ask: no answer after (\S+)/.exec(out);
   return (
@@ -492,6 +496,11 @@ export function ToolCall({ code, result }: { code: Line; result?: Line }) {
       <summary>
         <span className="block-label">{timedOut ? "Question timed out" : call.verb}</span>
         <span className="mono block-detail">{timedOut ? timedOut[1] : firstLine(call.gist)}</span>
+        {(exit !== undefined || ms !== undefined) && (
+          <span className={"num tool-meta" + (exit !== undefined && exit !== 0 ? " tool-meta-failed" : "")}>
+            {[exit !== undefined ? `exit ${exit}` : "", ms !== undefined ? duration(ms) : ""].filter(Boolean).join(" · ")}
+          </span>
+        )}
         {result && <span className="num block-lines">{lineCount((out || "(no output)").split("\n").length)}</span>}
         <CopyButton text={out || call.body || call.raw} what={result ? "output" : call.verb.toLowerCase() + " block"} />
       </summary>

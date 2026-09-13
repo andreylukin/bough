@@ -92,6 +92,12 @@ func StatusOf(entries []history.Entry, childAlive bool) (Status, *Ask) {
 			// you" with live buttons for a question nobody was waiting on.
 			pending = nil
 		case "done", "cancelled":
+			// The loop writes a done after every cancel. With the turn
+			// already closed by the cancel, that done is bookkeeping, not
+			// a finish: the session was stopped, and said "Done".
+			if e.Kind == "done" && !open && lastClose == "cancelled" {
+				break
+			}
 			open = false
 			lastClose = e.Kind
 			pending = nil // a closed turn cannot still be waiting on you

@@ -119,6 +119,26 @@ func TestStatusOf(t *testing.T) {
 			wantAsk: &Ask{ID: "q1", Text: "which?", Options: []string{"a", "b"}, Seq: 2},
 		},
 		{
+			name: "the done written after a cancel does not turn stopped into done",
+			entries: entries(
+				ent(1, "input", text("hi")),
+				ent(2, "cancelled", nil),
+				ent(3, "done", nil),
+			),
+			want: StatusStopped,
+		},
+		{
+			name: "a later turn that finishes is done again",
+			entries: entries(
+				ent(1, "input", text("hi")),
+				ent(2, "cancelled", nil),
+				ent(3, "done", nil),
+				ent(4, "input", text("again")),
+				ent(5, "done", nil),
+			),
+			want: StatusDone,
+		},
+		{
 			name: "a timed-out ask stops waiting once its block returns",
 			entries: entries(
 				ent(1, "input", text("hi")),

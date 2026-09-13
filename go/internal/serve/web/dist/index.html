@@ -385,6 +385,10 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
    the calls, and each call opens onto its output. */
 .toolrun-body{display:flex;flex-direction:column;gap:6px;padding:8px;border-top:1px solid var(--line);background:var(--bg)}
 .toolrun-failed{margin-left:auto;font-size:12px;color:var(--red);flex-shrink:0}
+/* A call's recorded exit and duration lead its metadata; the line count follows. */
+.tool-meta{margin-left:auto;font-size:12px;color:var(--text-3);flex-shrink:0;white-space:nowrap}
+.tool-meta+.block-lines{margin-left:0}
+.tool-meta-failed{color:var(--red);font-weight:600}
 /* Hooks and rules fire on every call: one quiet row per turn, the ledger inside. */
 .turn-hooks{background:none;border:1px solid var(--line)}
 .turn-hooks>summary{padding:5px 12px}
@@ -556,6 +560,8 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .ctl .sel-btn{width:100%;justify-content:space-between;height:44px}
   /* Four rows, so the picker still clears a phone's keyboard. */
   .mention-list{max-height:184px}
+  .mention-item{min-height:44px}
+  .mention-foot,.hint{display:none}
   .head-actions{gap:8px}
   .transcript{padding:16px 16px 8px;gap:24px}
   .turn-body{padding-left:0}

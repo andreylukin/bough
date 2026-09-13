@@ -1730,7 +1730,17 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 				}
 			}
 			note("code", code, nil)
+			// Per-block evidence for the result entry: how long the block
+			// took, and — when it ran bash — that block's own exit code.
+			// The done entry only ever carried the turn's LAST exit.
+			bash, _ := r.stats.(interface{ Bash() (runs, exit int) })
+			runsBefore := 0
+			if bash != nil {
+				runsBefore, _ = bash.Bash()
+			}
+			started := time.Now()
 			out, runErr := r.runCode(ctx, code)
+			elapsed := time.Since(started).Milliseconds()
 			if ctx.Err() != nil {
 				// doneData, not nil: the block may have written files
 				// before the cancel reached it, and /undo right after
@@ -1771,7 +1781,13 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			// A run error still lands as a "result" entry (text
 			// "error: ...") so the projection feeds it back to the
 			// model; the UI event keeps the "error" kind.
-			r.hist.Append("result", map[string]any{"text": out, "code": code})
+			result := map[string]any{"text": out, "code": code, "ms": elapsed}
+			if bash != nil {
+				if runs, exit := bash.Bash(); runs > runsBefore {
+					result["exit"] = exit
+				}
+			}
+			r.hist.Append("result", result)
 			if runErr != nil {
 				lastFailed = true
 				emit("error", out)

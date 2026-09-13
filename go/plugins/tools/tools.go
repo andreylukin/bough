@@ -60,6 +60,7 @@ type Stats struct {
 	files []string
 	exit  int
 	ran   bool // a bash call happened since the last Take
+	runs  int  // bash calls ever made; never reset, so a caller can diff it
 	// read remembers what each path looked like when it was last
 	// viewed THIS turn, so a re-read that found nothing new can say so
 	// (see view). Cleared by Take, like the rest of the turn's tally.
@@ -101,6 +102,17 @@ func (s *Stats) exited(code int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.exit, s.ran = code, true
+	s.runs++
+}
+
+// Bash reports how many bash calls have ever run and the last one's exit
+// code, without resetting anything: the loop reads it before and after a
+// block to stamp that block's own exit on its result, while Take keeps
+// the turn's tally for the done entry.
+func (s *Stats) Bash() (runs, exit int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.runs, s.exit
 }
 
 type plugin struct{}
