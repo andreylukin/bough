@@ -9,9 +9,18 @@ export function sessionSignal(r: Row): 0 | 1 | 2 {
   return hasFailure(r) || hasQuestion(r) ? 0 : r.status === "running" ? 1 : 2;
 }
 
-/** Red: a recorded failure, seen or not, or a turn that ended in error. */
+/** A failure older than this, already marked seen, is history, not a to-do. */
+const STALE_FAILURE_MS = 72 * 3_600_000;
+
+/**
+ * Red: an unseen failure, or a recorded one (failed tests, an error) from
+ * the last three days. Old failures that were already seen used to crowd
+ * the recent groups with week-old benchmark runs.
+ */
 export function hasFailure(r: Row): boolean {
-  return Boolean(r.trouble || r.testsFailed || r.status === "error");
+  if (r.trouble) return true;
+  const recent = !r.lastAt || Date.now() - Date.parse(r.lastAt) < STALE_FAILURE_MS;
+  return Boolean((r.testsFailed || r.status === "error") && recent);
 }
 
 /** The status a list shows: a recorded failure outranks "Done", as in the sidebar. */

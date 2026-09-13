@@ -198,8 +198,8 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
 }) {
   // Status lives in the glyphs and the order; the sections are only
   // where a session ran, and whether it is still recent.
-  // Runs nobody started by hand fold into Background, unless one needs
-  // you: then it sits with the recent work, where it cannot get lost.
+  // Runs nobody started by hand always fold into Background — the person
+  // chose that; one that needs attention lights the section header instead.
   const { recent, inactive, background, archived } = useMemo(() => {
     const now = Date.now();
     const recent: Row[] = [], inactive: Row[] = [], background: Row[] = [], archived: Row[] = [];
@@ -209,7 +209,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
       // with New), or when a search asks for it.
       if (r.empty && !r.live && r.id !== selected && !query) continue;
       if (r.archived) archived.push(r);
-      else if (r.background && sessionSignal(r) > 0) background.push(r);
+      else if (r.background) background.push(r);
       else if (sessionSignal(r) < 2 || now - Date.parse(r.lastAt) < INACTIVE_MS) recent.push(r);
       else inactive.push(r);
     }
@@ -356,7 +356,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     onQuery("");
     const path = r.repo || r.cwd;
     setWsFolded((cur) => { const next = new Set([...cur].filter((k) => !k.endsWith(":" + path))); writeSet("bough:ws-folded", next); return next; });
-    const sec = r.background && sessionSignal(r) > 0 ? "background" : sessionSignal(r) < 2 || Date.now() - Date.parse(r.lastAt) < INACTIVE_MS ? "" : "inactive";
+    const sec = r.background ? "background" : sessionSignal(r) < 2 || Date.now() - Date.parse(r.lastAt) < INACTIVE_MS ? "" : "inactive";
     if (sec) setUnfolded((cur) => { const next = new Set(cur).add(sec); writeSet("bough:unfolded", next); return next; });
     requestAnimationFrame(() => {
       const el = document.querySelector<HTMLElement>(`.sidebar button.row[data-id="${r.id}"]`);
