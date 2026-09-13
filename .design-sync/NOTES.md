@@ -123,3 +123,23 @@ components will re-grade (their sources moved), which is correct.
 - **`Live` added to titleMap** → `StreamView`. thread/live.stories.tsx
   showcases the live half of a turn (StreamView, SubRun, Working); StreamView
   is the composed one, the same reasoning as Transcript → TurnView.
+
+## Re-sync 2026-09-13 — after the Amp sidebar, turn summaries and four design rounds
+
+- Driver found 4 changed (App, ProjectsView, StreamView, Thread), 4 added
+  (WikiActivityView, WikiIndexView, WikiPageView, WikiReviewView), 0 removed.
+  All 14 storied components graded `match` from their sheets; the pipeline
+  churn canary (ContextView, TurnView, Palette, SkillPicker) re-checked clean.
+  `HooksView` has no capturable story and re-ships ungraded.
+- Framing, not render: the preview panel frames ~12px lower than storybook,
+  so the bottom icon nav labels (App, Sidebar) crop at the sheet edge, and
+  Palette's single card shows a grey surround. Don't chase these.
+- **`conventions.md` was stale against this build** — fixed with the user's OK
+  in the same re-sync: the Shell row names `.sidebar-foot` and the Rows row
+  names `.row-line` and `.group-head`, none of which exist any more. The
+  sidebar now uses `.side-bar`, `.side-new`, `.ws-head`/`.ws-name` (workspace
+  groups), `.sec-fold` (Inactive / Background / Archived), `.row-wrap`,
+  `.row-meta-live` and `.turn-line` (turn-log lines).
+- Still unverified: the phone stories render the desktop layout (capture
+  viewport), StreamView and TurnView capture 6 of 10 stories, and SkillPicker
+  still has only the closed story.
