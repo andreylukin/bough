@@ -1821,7 +1821,8 @@ export default function App() {
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return rows;
-    return rows.filter((r) => [r.title, r.repo, r.branch, r.cwd].some((v) => v?.toLowerCase().includes(q)));
+    // The id is searchable too: an untitled session shows only its id tail.
+    return rows.filter((r) => [r.title, r.repo, r.branch, r.cwd, r.id].some((v) => v?.toLowerCase().includes(q)));
   }, [rows, query]);
 
   const row = rows.find((r) => r.id === selected) ?? null;
