@@ -6,6 +6,7 @@ import { ProjectsView } from "./projects";
 import { Markdown, codeLabel, doneSummary, groupTurns, isQuiet, plainTitle, stripRunFences, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath } from "./code";
 import { SkillPicker } from "./skills";
+import { Mentions, triggerAt, type Trigger } from "./mention";
 import { HooksPage } from "./hooks";
 import { ContextPage } from "./context";
 import { Palette, usePaletteKey, type Command } from "./palette";
@@ -378,6 +379,7 @@ export function Thread({ row, lines, projects, onSend, onAnswer, onInterrupt, on
   onModel: (m: string) => void; onEffort: (e: string) => void; onAssign: (p: string) => void;
 }) {
   const [draft, setDraft] = useState("");
+  const [trigger, setTrigger] = useState<Trigger | null>(null);
   // A phone hides the model, project and thinking controls behind one
   // button: they change rarely, and the thread is what the screen is for.
   const [more, setMore] = useState(false);
@@ -446,12 +448,38 @@ export function Thread({ row, lines, projects, onSend, onAnswer, onInterrupt, on
 
       <div className="composer-wrap">
         <div className="composer">
+          <Mentions trigger={trigger} session={row.id}
+            onPick={(t, value) => {
+              // Replace the token being typed, and leave a trailing
+              // space so the next word is not glued to it.
+              const next = draft.slice(0, t.from) + t.kind + value + " " + draft.slice(t.to);
+              setDraft(next);
+              setTrigger(null);
+              const el = document.getElementById("composer") as HTMLTextAreaElement | null;
+              const caret = t.from + value.length + 2;
+              requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(caret, caret); });
+            }}
+            onClose={() => setTrigger(null)} />
           <textarea id="composer" value={draft} rows={2}
             placeholder={row.ask ? "Answer the question above"
               : row.status === "running" ? "Send a message — it steers the turn already running"
               : "Send a message to start the next turn"}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setTrigger(triggerAt(e.target.value, e.target.selectionStart ?? 0));
+            }}
+            onKeyUp={(e) => {
+              // Moving the caret changes what is being typed, so the
+              // picker follows arrows and clicks as well as letters.
+              const el = e.currentTarget;
+              setTrigger(triggerAt(el.value, el.selectionStart ?? 0));
+            }}
+            onBlur={() => setTrigger(null)}
+            onKeyDown={(e) => {
+              // While the picker is up it owns Enter and the arrows.
+              if (trigger && ["Enter", "Tab", "ArrowUp", "ArrowDown", "Escape"].includes(e.key)) return;
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+            }} />
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <span className="hint">Return to send</span>
             <span className="hint">Shift + Return for a newline</span>
