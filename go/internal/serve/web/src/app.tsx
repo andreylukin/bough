@@ -846,7 +846,9 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
 
   // A session that has not answered yet genuinely has no model to name;
   // one running a model the catalogue does not list still shows it.
-  const models: Option[] = [{ value: "", label: "Default model" }];
+  // "Default" can only be where a session starts: the supervisor has no
+  // way back to it, so once a model is set it is not offered.
+  const models: Option[] = row.model ? [] : [{ value: "", label: "Default model" }];
   for (const p of cat?.providers ?? []) {
     for (const m of p.models ?? []) {
       models.push({ value: m.id, label: m.id, group: p.plugin.replace(/^llm-/, ""),
@@ -875,7 +877,7 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
         <div className="ctl">
           <span className="ctl-label">Thinking</span>
           <Select label="Thinking" value={row.effort ?? ""} align="end" onChange={(v) => v && onEffort(v)}
-                  options={[{ value: "", label: "Default" }, ...(cat?.efforts ?? []).map((e) => ({ value: e, label: effortLabel(e) }))]} />
+                  options={[...(row.effort ? [] : [{ value: "", label: "Default" }]), ...(cat?.efforts ?? []).map((e) => ({ value: e, label: effortLabel(e) }))]} />
         </div>
       </>}
     </div>
@@ -900,7 +902,13 @@ export function Thread({ row, lines, stream = [], projects, onSend, onAnswer, on
   onArchive: () => void; onRename: (t: string) => void; onContext?: () => void;
   onModel: (m: string) => void; onEffort: (e: string) => void; onAssign: (p: string) => void;
 }) {
-  const [draft, setDraft] = useState("");
+  // One draft per session: switching away and back keeps what you were
+  // typing there, and never carries it into another conversation.
+  const draftKey = "bough:draft:" + row.id;
+  const [draft, setDraft] = useState(() => { try { return sessionStorage.getItem(draftKey) ?? ""; } catch { return ""; } });
+  useEffect(() => {
+    try { draft ? sessionStorage.setItem(draftKey, draft) : sessionStorage.removeItem(draftKey); } catch { /* storage off */ }
+  }, [draft, draftKey]);
   const [trigger, setTrigger] = useState<Trigger | null>(null);
   // A phone hides the model, project and thinking controls behind one
   // button: they change rarely, and the thread is what the screen is for.
@@ -1149,6 +1157,8 @@ export default function App() {
   useEffect(() => {
     if (!selected) return;
     let live = true;
+    // Never show one session's transcript under another's header while loading.
+    setLines([]);
     api.session(selected).then((r) => {
       if (!live) return;
       setLines(r.entries);
@@ -1384,7 +1394,7 @@ export default function App() {
       ) : row && context ? (
         <ContextPage session={row.id} onBack={() => setContext(false)} />
       ) : row ? (
-        <Thread row={row} lines={lines} stream={stream} projects={projects} busy={busy} onBack={() => setPane("list")}
+        <Thread key={row.id} row={row} lines={lines} stream={stream} projects={projects} busy={busy} onBack={() => setPane("list")}
           onSend={(t) => act(() => api.prompt(row.id, t))}
           onAnswer={(t) => act(() => api.answer(row.id, t))}
           onInterrupt={() => act(() => api.interrupt(row.id))}
