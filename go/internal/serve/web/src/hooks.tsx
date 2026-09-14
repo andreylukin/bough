@@ -5,6 +5,7 @@ import { plainTitle } from "./render";
 
 // Shared wire types for the Hooks page and per-turn inspection.
 export interface Hook {
+  description?: string;
   id: string;
   off: boolean;
   name: string;
@@ -31,6 +32,7 @@ export interface Watcher {
 }
 
 export interface Fire {
+  description?: string;
   at: string;
   session: string;
   event: string;
@@ -283,6 +285,7 @@ export function FireInspection({ fire, load = hooksApi.read, save = hooksApi.wri
 }) {
   return (
     <div className="hk-inspect">
+      <p className="hk2-note hk-description">{fire.description || "No description recorded for this run."}</p>
       <div className="hk-io"><Payload fire={fire} side="input" /><Payload fire={fire} side="output" /></div>
       {showDefinition && (fire.path
         ? <Source key={fire.path} path={fire.path} load={load} save={save} definition />
@@ -361,6 +364,7 @@ function HookRow({ h, latest, off, setOff, onOff, load, save, dryrun }: {
       actions={<OffToggle id={offId("hook", h.id)} off={off} what={`the hook ${h.name}`}
                           setOff={setOff} onChange={onOff} />}
       detail={<>
+        <p className="hk2-note hk-description">{h.description || "No description provided. Add a // Description: comment at the top of the hook file."}</p>
         <Source path={h.path} event={h.event} load={load} save={save} dryrun={dryrun} definition />
         {latest ? <details className="hk2-more">
           <summary>Latest recorded input / output · {clock(latest.at)}</summary>

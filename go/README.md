@@ -332,6 +332,7 @@ A hook file's text is the **body** of `function(event){...}`. It may
 
 ```js
 // ~/.bough/hooks/user-prompt-submit/tag.js
+// Description: Ask for a terse reply by appending a reminder to each user prompt.
 return {input: event.input + "\n(reply tersely)"};
 ```
 
@@ -341,6 +342,20 @@ base-name order and are **re-read on every fire** — edit them live, no
 restart. Results merge in file order (later keys win); a `block`/`deny`
 key short-circuits remaining files. A file that fails to read or run is
 logged to stderr and skipped, never fatal.
+
+Optional metadata is a leading `// Description: ...` comment. The first
+such line in the header wins (case-sensitive, value trimmed); whitespace,
+blank lines, and other comments may precede it. Block comments are skipped,
+not read as metadata, and scanning stops at the first non-comment code.
+Descriptions are plain text, never evaluated and never inferred from code,
+names, or results. Missing or empty descriptions are omitted from JSON.
+
+Installed hooks expose the current file's description. Each fire captures
+the description from the exact body read before execution, including runs
+that fail; history keeps that value even after the file is edited or deleted.
+Legacy history without metadata stays undescribed. In-process Go hooks can
+register with `AddWithDescription(event, name, description, fn)`; the existing
+`Add(event, name, fn)` remains supported with no description.
 
 Events and honored result keys:
 

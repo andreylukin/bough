@@ -11,7 +11,7 @@ const base: Fire = {
   at: "2026-06-10T12:00:00Z", session: "inspection", event: "pre-code-exec", name: "guard.js",
   ms: 2, decision: "", error: "", notice: "", truncated: [], path,
 };
-const captured: Fire = { ...base, input: { code: 'console.log("hello")', context: { cwd: "/w/demo", files: ["src/main.ts"] } },
+const captured: Fire = { ...base, description: "Rewrite the greeting before code execution.", input: { code: 'console.log("hello")', context: { cwd: "/w/demo", files: ["src/main.ts"] } },
   output: { code: 'console.log("hello, world")' }, decision: "rewrote" };
 const quietFires: Fire[] = [
   { ...base, at: "2026-06-10T12:03:00Z", input: { code: "1 + 1" }, output: null },
@@ -29,7 +29,7 @@ const edgeFires: Fire[] = [
   { ...base, name: "long-value", input: { text: "unbroken".repeat(200) }, output: [] },
 ];
 const installed: Hook[] = [
-  { id: "guard-project", name: "guard.js", event: base.event, path, scope: "project", off: false,
+  { id: "guard-project", description: "Check generated code before execution.", name: "guard.js", event: base.event, path, scope: "project", off: false,
     shadowed: false, lastFired: base.at, lastDecision: "rewrote", failing: false, error: "" },
   { id: "guard-home", name: "guard.js", event: base.event, path: homePath, scope: "home", off: false,
     shadowed: true, lastFired: null, lastDecision: "", failing: false, error: "" },

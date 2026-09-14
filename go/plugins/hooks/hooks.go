@@ -20,6 +20,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/andreylukin/bough/internal/hookmeta"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/offlist"
 )
@@ -54,13 +55,14 @@ const maxHookOutput = 10000
 // Fire is one hook run: what ran, how long it took, and what it
 // decided. The json tags are the /api/hooks "fires" contract.
 type Fire struct {
-	At       time.Time `json:"at"`
-	Session  string    `json:"session"`
-	Event    string    `json:"event"`
-	Name     string    `json:"name"`
-	Ms       int64     `json:"ms"`
-	Decision string    `json:"decision"`
-	Error    string    `json:"error"`
+	At          time.Time `json:"at"`
+	Session     string    `json:"session"`
+	Event       string    `json:"event"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	Ms          int64     `json:"ms"`
+	Decision    string    `json:"decision"`
+	Error       string    `json:"error"`
 	// Notice is the hook's message to the human. It is recorded and
 	// shown, and never reaches the model.
 	Notice string `json:"notice"`
@@ -117,6 +119,9 @@ func (s *Service) TakeFireRecords() []map[string]any {
 		rec := map[string]any{
 			"event": f.Event, "name": f.Name, "ms": f.Ms,
 			"decision": f.Decision, "error": f.Error,
+		}
+		if f.Description != "" {
+			rec["description"] = f.Description
 		}
 		if f.Path != "" {
 			rec["path"] = f.Path
@@ -270,19 +275,25 @@ func off(event, name string) bool {
 // scoped rules, say). It runs before the .js files for its event and
 // merges the same way. A nil result is "nothing to say".
 type goHook struct {
-	name string
-	fn   func(payload map[string]any) map[string]any
+	name        string
+	description string
+	fn          func(payload map[string]any) map[string]any
 }
 
 // Add registers an in-process hook for event; the returned function
 // removes it (a row calls it from its Effect).
 func (s *Service) Add(event, name string, fn func(payload map[string]any) map[string]any) func() {
+	return s.AddWithDescription(event, name, "", fn)
+}
+
+// AddWithDescription registers an in-process hook with metadata captured in its fires.
+func (s *Service) AddWithDescription(event, name, description string, fn func(payload map[string]any) map[string]any) func() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.gohs == nil {
 		s.gohs = map[string][]goHook{}
 	}
-	s.gohs[event] = append(s.gohs[event], goHook{name, fn})
+	s.gohs[event] = append(s.gohs[event], goHook{name: name, description: description, fn: fn})
 	return func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -311,7 +322,7 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 		if off(event, h.name) {
 			continue
 		}
-		f := Fire{Event: event, Name: h.name}
+		f := Fire{Event: event, Name: h.name, Description: h.description}
 		f.captureInput(payload)
 		start := time.Now()
 		res := h.fn(payload)
@@ -364,6 +375,7 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 			failed = append(failed, fmt.Errorf("%s: %w", path, err))
 			continue
 		}
+		f.Description = hookmeta.Description(string(body))
 		res, err := s.code.RunHook(ctx, string(body), payload)
 		if ctx.Err() != nil {
 			return merged, nil // the turn was cancelled: not a hook failure

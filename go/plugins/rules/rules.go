@@ -35,6 +35,18 @@ type sourcer interface {
 type hooker interface {
 	Add(event, name string, fn func(payload map[string]any) map[string]any) func()
 }
+type describedHooker interface {
+	AddWithDescription(event, name, description string, fn func(payload map[string]any) map[string]any) func()
+}
+
+// Older hook services still accept the registration, just without metadata.
+func addHook(h hooker, event, name, description string, fn func(payload map[string]any) map[string]any) func() {
+	if described, ok := h.(describedHooker); ok {
+		return described.AddWithDescription(event, name, description, fn)
+	}
+	return h.Add(event, name, fn)
+}
+
 type policer interface {
 	SetPolicy(fn func(cmd string) error)
 }
@@ -354,7 +366,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		ctx.Effect(src.AddSource(s.Unscoped))
 	}
 	if h, err := kernel.Get[hooker](ctx, "hooks"); err == nil {
-		ctx.Effect(h.Add("post-result", "rules", func(payload map[string]any) map[string]any {
+		ctx.Effect(addHook(h, "post-result", "rules", "Append matching path-scoped rules to code results once per session, and report which rule files were applied.", func(payload map[string]any) map[string]any {
 			code, _ := payload["code"].(string)
 			extra, fired := s.TouchedNamed(code)
 			if extra == "" {

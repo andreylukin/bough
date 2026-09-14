@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/andreylukin/bough/internal/hookmeta"
 	"github.com/andreylukin/bough/internal/serve/watch"
 	"github.com/andreylukin/bough/plugins/ccplugins"
 	"github.com/andreylukin/bough/plugins/codemode"
@@ -33,6 +34,7 @@ type HookRow struct {
 	// plugins/hooks checks before it runs a file.
 	ID           string     `json:"id"`
 	Name         string     `json:"name"`
+	Description  string     `json:"description,omitempty"`
 	Event        string     `json:"event"`
 	Path         string     `json:"path"`
 	Scope        string     `json:"scope"`
@@ -68,13 +70,14 @@ type RuleRow struct {
 // HookFire is one row of the ledger: what ran, how long it took, and
 // what it decided.
 type HookFire struct {
-	At       time.Time `json:"at"`
-	Session  string    `json:"session"`
-	Event    string    `json:"event"`
-	Name     string    `json:"name"`
-	Ms       int64     `json:"ms"`
-	Decision string    `json:"decision"`
-	Error    string    `json:"error"`
+	At          time.Time `json:"at"`
+	Session     string    `json:"session"`
+	Event       string    `json:"event"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	Ms          int64     `json:"ms"`
+	Decision    string    `json:"decision"`
+	Error       string    `json:"error"`
 	// Notice is what a hook wanted the human to know. It never reached
 	// the model — that is the point of the channel — so this page is
 	// the only place it is visible after the turn scrolls away.
@@ -215,6 +218,7 @@ func (a *API) fires() []HookFire {
 				Session:         si.ID,
 				Event:           str(e.Data["event"]),
 				Name:            str(e.Data["name"]),
+				Description:     str(e.Data["description"]),
 				Ms:              num(e.Data["ms"]),
 				Decision:        str(e.Data["decision"]),
 				Error:           str(e.Data["error"]),
@@ -309,12 +313,15 @@ func (a *API) installed() []HookRow {
 				if p.scope == "project" {
 					projects[key{ev.Name(), f.Name()}] = true
 				}
+				path := filepath.Join(p.dir, ev.Name(), f.Name())
+				body, _ := os.ReadFile(path)
 				rows = append(rows, HookRow{
-					ID:    ev.Name() + "/" + f.Name(),
-					Name:  f.Name(),
-					Event: ev.Name(),
-					Path:  filepath.Join(p.dir, ev.Name(), f.Name()),
-					Scope: p.scope,
+					Description: hookmeta.Description(string(body)),
+					ID:          ev.Name() + "/" + f.Name(),
+					Name:        f.Name(),
+					Event:       ev.Name(),
+					Path:        path,
+					Scope:       p.scope,
 				})
 			}
 		}
