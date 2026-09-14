@@ -2,7 +2,7 @@
 
 Contract for three parallel work areas. Paths are relative to `go/`.
 
-Why: a smart-scheduler session could not run pytest because it had no
+Why: a project session could not run its tests because it had no
 `DEVPI_URL`. The value lives only in the user's password manager, and the
 orb passes a fixed env allowlist, so the agent quietly fell back to lint.
 This spec makes secrets available by reference, lets the agent ask the user
@@ -12,7 +12,7 @@ for one, and makes a blocked check visible.
 
 ```yaml
 secrets:
-  DEVPI_URL: keychain:bough/smart-scheduler/DEVPI_URL
+  DEVPI_URL: keychain:bough/example-app/DEVPI_URL
 ```
 
 - `Def.Secrets map[string]string \`yaml:"secrets,omitempty"\``. Each key is an
@@ -120,7 +120,7 @@ for pointing at an item the user already has.
 
 ```
 tools.secret("DEVPI_URL", "uv needs the devpi index to install test deps")
-  -> "stored DEVPI_URL as keychain:bough/smart-scheduler/DEVPI_URL; available to the next command"
+  -> "stored DEVPI_URL as keychain:bough/example-app/DEVPI_URL; available to the next command"
 ```
 
 - `project` defaults to `session-project`. In a local session, or when it

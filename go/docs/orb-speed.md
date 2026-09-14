@@ -1,11 +1,11 @@
 # Orb speed: cached builds, shared caches, many sessions per project
 
-Contract for making heavy project orbs (reference: smart-scheduler) fast to
+Contract for making heavy project orbs (reference: a large Python + Rust service) fast to
 build, cheap to rebuild, and cheap to open N times at once. Companion to
 docs/orbs.md; where they disagree, this file is the target and orbs.md is
 updated to match.
 
-Measured baseline (work laptop, `container` 1.4.1, builder-shim 0.13.1):
+Measured baseline (an Apple Silicon Mac, `container` 1.4.1, builder-shim 0.13.1):
 full build ~7 min (setup.sh RUN 348 s + export 57 s); a hash change with
 byte-identical setup.sh already rebuilds in 10 s (BuildKit layer cache hit,
 8.6 s export). Every new session reinstalls requirements.txt from scratch
@@ -39,9 +39,9 @@ Consequences, all required for the hash change to be honest:
 One-time cost: the new hash differs from the old one for EVERY existing
 project, edited or not (project.yml and undeclared lockfiles are no
 longer inputs), so each project's next session after upgrading does one
-full build (~7 min for smart-scheduler; BuildKit's layer cache does not
+full build (~7 min for the reference project; BuildKit's layer cache does not
 help, because the generated Dockerfile changed shape). Measured on the
-laptop: unchanged smart-scheduler went from `e857a920c1c3` to
+test machine: an unchanged project went from `e857a920c1c3` to
 `ba230460a93c`.
 
 Dockerfile path: project.yml and resume.sh ARE hashed when the Dockerfile
@@ -75,7 +75,7 @@ apt-get update && apt-get install -y ...
 curl ... | sh -s -- -y --profile minimal --default-toolchain 1.96.0
 # bough:step python-deps
 # bough:uses requirements.txt
-uv pip install --system -r /bough-setup/lock/uni-network-evaluation-scheduler/requirements.txt
+uv pip install --system -r /bough-setup/lock/app/requirements.txt
 ```
 
 Text before the first marker (shebang, `set -e...`) is the preamble and is
@@ -124,7 +124,7 @@ Build serialisation (`orb.EnsureImage`), extended:
 - Bound: plugin Open timeout stays 30 min (plugins/orb/orb.go), > 7 min build.
 - Old tags are pruned after a successful build: remove
   `bough-orb/<slug>:*` tags not in use by any existing container
-  (laptop currently holds 7 tags for smart-scheduler).
+  (a busy project had accumulated 7 tags).
 
 Per-session isolation (unchanged, restated): each session has its own
 container, rootfs (venv, postgres data, rabbitmq state), worktrees and
@@ -164,13 +164,13 @@ hashed by the declared lockfile, zero per-session cost). Install per
 session in resume.sh against a shared cache when credentials are needed.
 
 Secrets never enter a layer. Build-time secrets (`--secret` +
-`RUN --mount=type=secret`) are NOT adopted now: smart-scheduler's Cargo
-token is minted per session by host `aws codeartifact`, DevPI/Cargo index
+`RUN --mount=type=secret`) are NOT adopted now: a private Cargo registry
+token can be minted per session by a host cloud CLI, DevPI/Cargo index
 values are per-exec env, and baking private wheels would tie image
 validity to credential lifetimes. Revisit only if §2 check 3 passes AND a
 project has long-lived build credentials.
 
-So for smart-scheduler: resume.sh keeps `uv pip install -r requirements.txt`
+So for such a project: resume.sh keeps `uv pip install -r requirements.txt`
 into a per-container venv, but with the uv + cargo caches shared, a second
 session's install is a cache hit (downloads and built wheels reused, no
 Rust wheel recompiles). Public tooling (apt, rust, uv python, circleci)
@@ -199,15 +199,15 @@ orb:
 - prune removes unused tags only.
 plugins/orb: skill_test.go assertions updated for new SKILL.md wording.
 
-## 8. Live measurement plan (work laptop)
+## 8. Live measurement plan
 
 Never stop/restart the serve on 127.0.0.1:7684, never touch its sessions or
-existing containers. Use the laptop binary built from the change.
+existing containers. Use a binary built from the change.
 
 1. Builder checks (§2 1-3, §4 concurrency) with throwaway tags/volumes named
    `bough-speedtest-*`; remove only those afterwards.
 2. From a temp cwd (`mktemp -d`), time `bough --headless --project
-   smart-scheduler "reply ok"` → cold build (after the definition change),
+   example-app "reply ok"` → cold build (after the definition change),
    first session start (build end → resume.sh end, from build.json +
    resume.log).
 3. Edit the last setup.sh step trivially; rerun → expect only that step
@@ -237,8 +237,8 @@ Area A — bough code (repo, go/):
 - plugins/orb/SKILL.md, plugins/orb/skill_test.go
 - docs/orbs.md, docs/orb-speed.md
 
-Area B — smart-scheduler on the work laptop (only via `bough project` there,
+Area B — the reference project's definition on a test machine (only via `bough project` there,
 after Area A is built there; drafts in a scratch dir first):
-- ~/.bough/projects/smart-scheduler/setup.sh: step markers (apt, uv-python, rust, circleci)
-- ~/.bough/projects/smart-scheduler/project.yml: `caches: [/root/.cache/uv]`, env `UV_CACHE_DIR`, `UV_LINK_MODE=copy` (no shared CARGO_HOME, see §4)
-- ~/.bough/projects/smart-scheduler/resume.sh: keep install per venv; drop nothing that needs secrets; rely on caches
+- ~/.bough/projects/example-app/setup.sh: step markers (apt, uv-python, rust, circleci)
+- ~/.bough/projects/example-app/project.yml: `caches: [/root/.cache/uv]`, env `UV_CACHE_DIR`, `UV_LINK_MODE=copy` (no shared CARGO_HOME, see §4)
+- ~/.bough/projects/example-app/resume.sh: keep install per venv; drop nothing that needs secrets; rely on caches
