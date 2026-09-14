@@ -24,12 +24,14 @@ import (
 )
 
 // spawnallPartialFailureConfig is replayConfig with the real runtime:
-// codemode, tools-basic (for the child that sleeps) and workers.
+// codemode and workers. The child that sleeps uses the embedded tree's
+// `tools` row; a second tools-basic row beside it fails to mount
+// ("/jobkill already registered") and the TUI never boots.
 func spawnallPartialFailureConfig(tape string) string {
 	cfg := replayConfig(tape)
 	out := strings.Replace(cfg,
 		fmt.Sprintf("- id: codemode\n  plugin: replay\n  config: {file: %q, provide: codemode}", tape),
-		"- id: codemode\n  plugin: codemode\n- id: tools-basic\n  plugin: tools-basic\n- id: workers\n  plugin: workers",
+		"- id: codemode\n  plugin: codemode\n- id: workers\n  plugin: workers",
 		1)
 	if out == cfg {
 		panic("spawnallPartialFailureConfig: replayConfig's codemode row changed shape")

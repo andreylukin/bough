@@ -52,7 +52,28 @@ func (m *model) syncPalette() {
 // paletteOpens says whether the palette shows for this draft.
 func (m *model) paletteOpens(draft string) bool {
 	return (m.cfg.Load().cmds != nil || m.pal.actionsOnly) && !m.inspecting && !m.picking && !m.mp.open &&
-		slashStart(draft) >= 0 && !m.pal.escaped && !strings.HasPrefix(draft, newDirPrefix)
+		slashStart(m.beforeCursor()) >= 0 && !m.pal.escaped && !strings.HasPrefix(draft, newDirPrefix)
+}
+
+// beforeCursor is the draft up to the cursor. The palette filters the
+// "/" word the cursor is in, so a "/" typed in the middle of a prompt
+// opens it too, not only one typed at the end.
+func (m *model) beforeCursor() string {
+	v := m.input.Value()
+	return v[:cursorByteOffset(v, m.input.Line(), m.input.Column())]
+}
+
+// cursorByteOffset maps the textarea's (line, rune column) to a byte
+// offset into value.
+func cursorByteOffset(value string, line, col int) int {
+	lines := strings.Split(value, "\n")
+	line = min(max(line, 0), len(lines)-1)
+	off := 0
+	for _, l := range lines[:line] {
+		off += len(l) + 1
+	}
+	r := []rune(lines[line])
+	return off + len(string(r[:min(max(col, 0), len(r))]))
 }
 
 // leaveActions ends the actions-only mode, putting back the draft
@@ -92,12 +113,12 @@ func slashStart(draft string) int {
 // palette's "/" — or, mid Tab-cycle, the query the cycle started
 // from, so the list keeps every match while Tab walks them.
 func (m *model) paletteQuery() string {
-	draft := m.input.Value()
-	if m.pal.cycling && draft == m.pal.cycleDraft {
+	if m.pal.cycling && m.input.Value() == m.pal.cycleDraft {
 		return m.pal.cycleQuery
 	}
-	if i := slashStart(draft); i >= 0 {
-		return draft[i+1:]
+	before := m.beforeCursor()
+	if i := slashStart(before); i >= 0 {
+		return before[i+1:]
 	}
 	return ""
 }
@@ -106,23 +127,33 @@ func (m *model) paletteQuery() string {
 // the user actually typed, for the fuzzy-accept echo.
 func (m *model) draftWord() string {
 	draft := strings.TrimSpace(m.input.Value())
-	if i := slashStart(m.input.Value()); i >= 0 {
-		draft = m.input.Value()[i:]
+	if before := m.beforeCursor(); slashStart(before) >= 0 {
+		draft = before[slashStart(before):]
 	}
 	word, _, _ := strings.Cut(strings.TrimSpace(draft), " ")
 	return word
 }
 
-// completePalette rewrites the palette's word to "/name " in place.
+// completePalette rewrites the palette's word to "/name " in place,
+// keeping whatever follows the cursor, with the cursor after the name.
 func (m *model) completePalette(name string) {
-	draft := m.input.Value()
-	i := slashStart(draft)
+	before := m.beforeCursor()
+	after := m.input.Value()[len(before):]
+	i := slashStart(before)
 	if i < 0 {
-		i = 0
-		draft = ""
+		i, before, after = 0, "", ""
 	}
-	m.input.SetValue(draft[:i] + "/" + name + " ")
+	head := before[:i] + "/" + name + " "
+	m.input.SetValue(head)
 	m.input.CursorEnd()
+	if after != "" {
+		m.input.InsertString(after) // leaves the cursor after it: walk back
+		for range strings.Count(after, "\n") {
+			m.input.CursorUp()
+		}
+		lines := strings.Split(head, "\n")
+		m.input.SetCursorColumn(len([]rune(lines[len(lines)-1])))
+	}
 	m.pal.cycleDraft = m.input.Value()
 	m.syncPalette()
 }
@@ -139,7 +170,7 @@ func (m *model) paletteItems() []paletteItem {
 				skill: in.IsSkill() || in.IsTemplate()})
 		}
 	}
-	if slashStart(m.input.Value()) == 0 {
+	if slashStart(m.beforeCursor()) == 0 {
 		for _, a := range uiActions {
 			items = append(items, paletteItem{name: a.name, usage: actionKey(cfg, a.name), summary: a.desc, action: true})
 		}
@@ -213,7 +244,7 @@ func (m *model) paletteKey(key string) (bool, tea.Cmd) {
 		m.completePalette(name)
 		return true, nil
 	case palAccept:
-		if slashStart(m.input.Value()) > 0 {
+		if slashStart(m.beforeCursor()) > 0 {
 			// Mid-text there is nothing to dispatch: complete instead.
 			m.completePalette(name)
 			return true, nil

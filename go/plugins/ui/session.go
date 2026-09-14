@@ -477,7 +477,10 @@ func (m *model) resumeID(id string) {
 // pickerPage is how many session rows fit between the picker's header
 // and its hint row (at least one).
 func (m *model) pickerPage(cfg *uiCfg) int {
-	header := 2
+	header := 2 + 2 // title and blank, then the "N sessions" count and blank
+	if m.pickQuery != "" {
+		header += 2
+	}
 	if cfg.choose == nil {
 		header += 2
 	}

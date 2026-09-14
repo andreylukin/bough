@@ -219,7 +219,7 @@ func TestHistoryFileConcurrentHeadlessAndRewind(t *testing.T) {
 			t.Errorf("original TUI session turns changed by rewinds:\nwant prefix %s\ngot  %s", origBytes, got)
 		} else if extra, err := history.Read(orig); err == nil {
 			for _, e := range extra[2+3*n-1:] {
-				if e.Kind != "command" && e.Kind != "undo" && e.Kind != "system" {
+				if e.Kind != "command" && e.Kind != "undo" && e.Kind != "system" && e.Kind != "origin" {
 					t.Errorf("original TUI session gained a %q entry after rewinds: %+v", e.Kind, e)
 				}
 			}
@@ -272,8 +272,17 @@ func TestHistoryFileConcurrentHeadlessAndRewind(t *testing.T) {
 	t.Run("ResumeHeadlessIdentical", func(t *testing.T) {
 		for p := range hlBytes {
 			resume(t, p, []string{"how many go files are here", "Two Go files: a.go and b.go."}, []string{"ANSWER-1"})
-			if got, _ := os.ReadFile(p); string(got) != string(hlBytes[p]) {
+			// Resuming a headless session in the TUI claims it with one
+			// "origin" entry (history.go); every byte before that stays.
+			if got, _ := os.ReadFile(p); !strings.HasPrefix(string(got), string(hlBytes[p])) {
 				t.Errorf("resuming headless session %s rewrote it", p)
+			} else if es, err := history.Read(p); err == nil {
+				before := strings.Count(string(hlBytes[p]), "\n")
+				for _, e := range es[min(before, len(es)):] {
+					if e.Kind != "origin" {
+						t.Errorf("resuming headless session %s appended a %q entry: %+v", p, e.Kind, e)
+					}
+				}
 			}
 			break // one is enough: they are byte-identical runs of one tape
 		}

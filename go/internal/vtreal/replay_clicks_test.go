@@ -310,7 +310,10 @@ func TestClicksDoubleClickTogglesTwice(t *testing.T) {
 	a.click(2, row)
 	a.click(2, row)
 	a.waitUntil(func(s string) bool { return clicksHasClosed(s, "code js") }, "the code block closed again after a double click")
-	if s := a.settled(); s != before {
+	// A click also focuses the block, and focus has a text marker ("> ");
+	// the fold state is what must come back.
+	unfocus := strings.NewReplacer("> ▸", "▸", "> ▾", "▾")
+	if s := a.settled(); unfocus.Replace(s) != before {
 		t.Fatalf("a double click did not return the screen to where it was:\nbefore:\n%s\nafter:\n%s", before, s)
 	}
 	a.check("double click")

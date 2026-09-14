@@ -110,8 +110,8 @@ test('!cmd runs the shell and never becomes an LLM turn', async ({ launchBough, 
   await boot(page, b.url);
 
   await say(page, '!echo bang-marker-42');
-  // Command echo, labeled result block, and the output itself.
-  await waitForTermText(page, '! echo bang-marker-42');
+  // The Shell result header names the command, then the output itself.
+  await waitForTermText(page, 'Shell · echo bang-marker-42');
   await waitForTermText(page, 'bang-marker-42');
 
   // A follow-up LLM turn works; the bang line never reached the model.

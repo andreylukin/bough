@@ -161,7 +161,9 @@ func TestRewindAcrossSubagentTurn(t *testing.T) {
 			if strings.HasPrefix(e.Kind, "sub:") {
 				t.Errorf("fork keeps subagent entry %s #%d", e.Kind, e.Seq)
 			}
-			if e.Seq > 4 {
+			// "origin" is bookkeeping the TUI appends when it claims the
+			// fork (history.go), not a kept turn entry.
+			if e.Seq > 4 && e.Kind != "origin" {
 				t.Errorf("fork keeps entry after the rewind point: %s #%d %v", e.Kind, e.Seq, e.Data)
 			}
 			if e.Kind == "input" {

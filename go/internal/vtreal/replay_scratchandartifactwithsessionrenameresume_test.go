@@ -157,7 +157,12 @@ console.log("URL=" + tools.artifact("renamed", %q))`, mark, scratchAndArtifactWi
 	tape1 := scratchAndArtifactWithSessionRenameResumeTape(t, "first.jsonl",
 		scratchAndArtifactWithSessionRenameResumeProbe("first", write),
 		"```stop\nsaved and published.\n```",
-		title)
+		// session-title asks twice: the turn's log line (which also
+		// becomes the provisional name) and, when run one closes, the
+		// final name. Without the second reply the tape's end marker
+		// became the session's name.
+		title,
+		"Title: "+title+"\nSummary: You kept notes and published a page.")
 	first := crashResumeIntegrityStart(t, home, scratchAndArtifactWithSessionRenameResumeConfig(tape1, addr, true))
 	first.typeText("keep notes and publish a page")
 	first.key(uv.KeyEnter, 0)

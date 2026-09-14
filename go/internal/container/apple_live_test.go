@@ -1,3 +1,8 @@
+//go:build darwin
+
+// Apple's container CLI only exists on macOS, and the bind-mount owner
+// check reads syscall.Stat_t, which windows lacks (cross vet failed).
+
 package container
 
 import (

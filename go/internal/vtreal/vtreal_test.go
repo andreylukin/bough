@@ -76,6 +76,14 @@ const config = `
   plugin: loop
 - id: ui
   plugin: ui
+# Rows that call the model on their own (see replayConfig): with the echo
+# model session-title renames the session "Echo: Log so far: …".
+- id: session-title
+  plugin: session-title
+  disabled: true
+- id: activity
+  plugin: activity
+  disabled: true
 `
 
 type app struct {
@@ -411,7 +419,10 @@ func TestLongReplyKeepsComposerPinned(t *testing.T) {
 	// and expands to the full text on enter.
 	a.waitFor("[Pasted text #1 1999 chars]")
 	a.key(uv.KeyEnter, 0)
-	a.waitFor("echo: word")
+	// Wait for the turn, not for "echo: word": the reply is taller than
+	// the 20-row screen, so its first line has scrolled off by the time
+	// it lands whole — which is the behaviour under test.
+	followUpWaitDone(a, 1)
 	s := a.settled()
 	ls := strings.Split(s, "\n")
 	if r := composerRow(ls); r < 0 || r < len(ls)-3 {

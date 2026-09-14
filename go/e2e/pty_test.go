@@ -189,8 +189,10 @@ func TestPTYResumePicker(t *testing.T) {
 
 	p := launchTUI(t, launchOpts{from: a, args: []string{"-r"}})
 	p.waitFor("resume a session") // picker header
-	p.waitFor("seeded turn")      // the session's title row
-	p.write("\r")                 // pick it
+	// The row's title is session-title's name for it, which the echo
+	// model makes up ("echo: Running log: …"); the count proves the row.
+	p.waitFor("1 session")
+	p.write("\r") // pick it
 
 	// Replay: the prior turn renders as transcript blocks.
 	p.waitFor("echo: seeded turn")

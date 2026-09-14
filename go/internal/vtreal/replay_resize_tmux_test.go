@@ -235,7 +235,8 @@ func TestResizeTmuxMidStream(t *testing.T) {
 	tape := resizeTmuxTape(t)
 	yml := strings.Replace(replayConfig(tape),
 		fmt.Sprintf("config: {file: %q}", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: 800}", tape), 1)
+		// 800 ms let a loaded CI runner finish the turn before the sweep.
+		fmt.Sprintf("config: {file: %q, delay_ms: 2000}", tape), 1)
 	tm, home := resizeTmuxStart(t, 100, 30, yml)
 
 	resizeTmuxSend(tm, "run the tests and show me a very long separator line")
