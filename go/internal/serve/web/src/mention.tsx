@@ -33,8 +33,6 @@ export function triggerAt(text: string, caret: number): Trigger | null {
       // Mid-word "/" is a path separator: keep walking, so "@go/internal/x"
       // is still the @ token it started as.
       if (before && !/\s/.test(before)) { if (ch === "/") continue; return null; }
-      // A skill runs only as the lead word, as the Skills button places it.
-      if (ch === "/" && text.slice(0, i).trim()) return null;
       return { kind: ch, token: text.slice(i + 1, caret), from: i, to: caret };
     }
   }

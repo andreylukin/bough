@@ -2583,13 +2583,16 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
       }
     }
   };
-  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+  // A paste and a drop carry the same DataTransfer; a drop has no default
+  // insert, so short text lands through insert() instead of the browser.
+  const take = (e: { dataTransfer: DataTransfer; preventDefault(): void }, drop: boolean) => {
     pasted.current = true;
-    const files = [...e.clipboardData.files].filter((f) => /^image\/(png|jpeg|gif|webp)$/.test(f.type));
+    const files = [...e.dataTransfer.files].filter((f) => /^image\/(png|jpeg|gif|webp)$/.test(f.type));
     if (files.length) { e.preventDefault(); void attach(files); return; }
-    const text = e.clipboardData.getData("text/plain").replace(/\r\n?/g, "\n");
+    const text = e.dataTransfer.getData("text/plain").replace(/\r\n?/g, "\n");
     const n = text.split("\n").length;
-    if (text.length <= 800 && n <= 12) return;
+    if (drop) e.preventDefault();
+    if (text.length <= 800 && n <= 12) { if (drop && text) insert(text); return; }
     e.preventDefault();
     pastes.current.push(text);
     insert(`[Pasted text #${pastes.current.length} +${n} lines] `);
@@ -2862,7 +2865,9 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             aria-controls={pickerOpen ? "mention-list" : undefined}
             aria-activedescendant={pickerOpen ? activeOpt : undefined}
             placeholder={row.ask && !askChanged ? "Answer…" : running ? "Steer the running turn…" : "Next turn…"}
-            onPaste={(e) => { pasted.current = true; onPaste(e); }}
+            onPaste={(e) => take({ dataTransfer: e.clipboardData, preventDefault: () => e.preventDefault() }, false)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => { e.currentTarget.focus(); take(e, true); }}
             onChange={(e) => {
               setDraft(e.target.value);
               // The change a paste produces carries a caret at the end
