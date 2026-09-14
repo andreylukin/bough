@@ -99,7 +99,7 @@ func (s *Skills) Inject(input string) []string {
 		// per mention — "/parallel" runs it, prose does not — either
 		// because its SKILL.md says `manual: true` or because its name
 		// is a word people write without meaning it.
-		if (manual(skills[name].path) || commonWord(name)) && !strings.Contains(input, "/"+name) {
+		if (manual(skills[name].path) || commonWord(name)) && !slashCommand(input, name) {
 			continue
 		}
 		if s.off(name) {
@@ -182,6 +182,15 @@ var commonWords = map[string]bool{
 }
 
 func commonWord(name string) bool { return commonWords[strings.ToLower(name)] }
+
+// slashCommand reports whether input invokes /name as a command: the slash
+// starts a word. A path segment is not an invocation: a finished job's note
+// mentioning "$BOUGH_SCRATCH/orb-setup.sh" pulled the whole /orb skill into
+// a background-job turn.
+func slashCommand(input, name string) bool {
+	re := regexp.MustCompile(`(?i)(^|\s)/` + regexp.QuoteMeta(name) + `\b`)
+	return re.MatchString(input)
+}
 
 // manual reports whether a SKILL.md opts out of being injected on a
 // mention (`manual: true` in its frontmatter); it is still available

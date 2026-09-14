@@ -10,7 +10,7 @@ import { DialogHost, askChoice, askConfirm, askText } from "./dialog";
 import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, execNote, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
-import { agentsFromRows, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
+import { agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
 import { ExecNote, JobLines, JobRow, LIFE_WORD, WorkButton, WorkContext, WorkDialog, WorkState, agentReports, jobIdOf, spokenDuration, splitExecNote, stateText, useChildren, useStopStore, useWork, useWorkAnnouncer, type WorkCtx } from "./work-ui";
 import { SkillPicker } from "./skills";
 import { Mentions, triggerAt, type Trigger } from "./mention";
@@ -2001,6 +2001,14 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
   // A pasted image rides as "[Image #N: path]": show the tag and the picture, not the path.
   const images = [...raw.matchAll(/\[Image #\d+: ([^\]\n]+)\]/g)].map((m) => m[1]);
   const said = raw.replace(/\[Image (#\d+): [^\]\n]+\]/g, "[Image $1]");
+  // A turn a finished background job started is not something you typed:
+  // its prompt is the loop's instruction to the model plus the job notes.
+  const wakeJobs = useMemo(() => {
+    const notes = turn.prompt ? jobWakeNotes(raw) : null;
+    if (!notes || !turn.prompt) return null;
+    const at = turn.prompt.at;
+    return jobsFromLines(notes.map((text, i) => ({ seq: turn.prompt!.seq * 1000 + i, at, kind: "job", text })), "", false);
+  }, [turn.prompt, raw]);
   // A turn that ended on a failed command opens that command, and only that one:
   // an earlier failure the agent went on to fix is history, still counted.
   const exit = turn.done?.data?.exit;
@@ -2044,7 +2052,15 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
   const loose = atts.map((_, i) => i).filter((i) => atts[i].at < 0);
   return (
     <section className="turn" data-turn={n}>
-      {turn.prompt && (
+      {turn.prompt && wakeJobs && (
+        <div className="job-wake" role="note">
+          <p className="meta-line">
+            {wakeJobs.length === 1 ? "A background job finished" : `${wakeJobs.length} background jobs finished`} while the agent was idle · {clock(turn.prompt.at)}
+          </p>
+          {wakeJobs.map((w) => <JobRow key={w.key} w={w} />)}
+        </div>
+      )}
+      {turn.prompt && !wakeJobs && (
         <div className="prompt">
           <span className="mono prompt-mark">&gt;</span>
           <div className="prompt-text">

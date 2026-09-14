@@ -326,3 +326,21 @@ export function useReviewed(session: string): { isReviewed(w: Worker): boolean; 
     isNew: (w: Worker) => isNewWork(w, cur.loadedAt, cur.map),
   }), [cur, markReviewed]);
 }
+
+/** The loop's prefix for a turn a finished background job starts on its own. */
+export const JOB_WAKE_PREFIX = "[background job] ";
+
+/**
+ * The job notes of a background-job wake-up turn, or null for a prompt a
+ * person typed. That turn is recorded as an input, so it rendered as if you
+ * had typed the model's instruction and the raw "job 8 [failed] …" lines.
+ */
+export function jobWakeNotes(text: string): string[] | null {
+  if (!text.startsWith(JOB_WAKE_PREFIX)) return null;
+  const notes: string[] = [];
+  for (const l of text.split("\n")) {
+    if (/^job \d+ \[/.test(l)) notes.push(l);
+    else if (notes.length && l.trim()) notes[notes.length - 1] += "\n" + l;
+  }
+  return notes.map((n) => n.trimEnd());
+}
