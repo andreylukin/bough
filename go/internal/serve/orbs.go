@@ -151,6 +151,9 @@ func (a *API) orbSummary(ctx context.Context, slug string) (OrbSummary, string) 
 	if b, err := orb.ReadBuild(home, slug); err == nil {
 		sum.Build = b.State
 	}
+	if msg := a.buildFailure(slug); msg != "" {
+		sum.Build = "failed"
+	}
 	if a.building(slug) {
 		sum.Build = "building"
 	}
@@ -177,6 +180,14 @@ func (a *API) building(slug string) bool {
 	a.sup.mu.Lock()
 	defer a.sup.mu.Unlock()
 	return a.sup.building[slug]
+}
+
+// buildFailure is why the last build this serve started failed, "" when
+// it did not.
+func (a *API) buildFailure(slug string) string {
+	a.sup.mu.Lock()
+	defer a.sup.mu.Unlock()
+	return a.sup.buildErr[slug]
 }
 
 func (a *API) listProjects(w http.ResponseWriter, r *http.Request) {
@@ -300,6 +311,9 @@ func (a *API) orbDetail(w http.ResponseWriter, r *http.Request) {
 	if b, err := orb.ReadBuild(home, p.Slug); err == nil {
 		d.Build = b
 	}
+	if msg := a.buildFailure(p.Slug); msg != "" {
+		d.Build.State, d.Build.Error = "failed", msg
+	}
 	d.Orbs = a.orbsOf(p.Slug)
 	rt := a.sup.Runtime()
 	d.Runtime.Name = rt.Name()
@@ -382,6 +396,7 @@ func (a *API) buildOrb(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.sup.building[p.Slug] = true
+	delete(a.sup.buildErr, p.Slug)
 	a.sup.mu.Unlock()
 
 	rt := a.sup.Runtime()
@@ -391,8 +406,22 @@ func (a *API) buildOrb(w http.ResponseWriter, r *http.Request) {
 			delete(a.sup.building, p.Slug)
 			a.sup.mu.Unlock()
 		}()
-		// Not the request's context: the build outlives the 202.
-		_, _ = orb.EnsureImage(context.Background(), rt, home, def, nil)
+		// Not the request's context: the build outlives the 202. Remote
+		// repos are cloned first, as orb.Open does, or the tag would be
+		// computed without their lockfiles.
+		bctx := context.Background()
+		err := orb.SyncRepos(bctx, home, def)
+		if err == nil {
+			_, err = orb.EnsureImage(bctx, rt, home, def, nil)
+		}
+		a.sup.mu.Lock()
+		if err != nil {
+			// A failure before build.json is written (clone, lock, image
+			// check) would otherwise leave the page showing the previous
+			// build as if nothing happened.
+			a.sup.buildErr[p.Slug] = err.Error()
+		}
+		a.sup.mu.Unlock()
 	}()
 	writeJSON(w, http.StatusAccepted, map[string]any{"build": orb.Build{
 		Tag:       projectdef.ImageTag(p.Slug, hash),
@@ -417,6 +446,10 @@ func (a *API) buildLog(w http.ResponseWriter, r *http.Request) {
 	if b, err := orb.ReadBuild(home, p.Slug); err == nil {
 		state = b.State
 	}
+	msg := a.buildFailure(p.Slug)
+	if msg != "" {
+		state = "failed"
+	}
 	// Until EnsureImage writes build.json the build this serve started is
 	// still building; a poller must not read "" and stop.
 	if a.building(p.Slug) {
@@ -432,7 +465,7 @@ func (a *API) buildLog(w http.ResponseWriter, r *http.Request) {
 		text = string(buf)
 		offset += int64(len(buf))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"text": text, "offset": offset, "state": state})
+	writeJSON(w, http.StatusOK, map[string]any{"text": text, "offset": offset, "state": state, "error": msg})
 }
 
 func (a *API) sessionOrb(w http.ResponseWriter, r *http.Request) {

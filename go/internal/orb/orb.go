@@ -35,7 +35,7 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 	}
 	// Read before any writeState below overwrites it: the previous image
 	// tells us whether an existing container is stale.
-	prev, _ := ReadState(home, session)
+	prev, prevErr := ReadState(home, session)
 	o := &Orb{rt: rt, home: home, session: session, project: p, scratch: scratchDir}
 	o.state = State{Session: session, Project: p.Slug, Container: container.OrbName(session), PID: os.Getpid()}
 	fail := func(err error) (*Orb, error) {
@@ -49,13 +49,8 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 	if err := rt.Available(ctx); err != nil {
 		return fail(fmt.Errorf("%w (run `bough update` or `container system start`)", err))
 	}
-	// Clone remote repos BEFORE hashing so their lockfiles count.
-	for _, r := range p.Def.Repos {
-		if r.Remote != "" {
-			if err := syncCache(ctx, home, p.Slug, r); err != nil {
-				return fail(err)
-			}
-		}
+	if err := SyncRepos(ctx, home, p); err != nil {
+		return fail(err)
 	}
 
 	o.state.Status = StatusBuilding
@@ -76,10 +71,18 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 		Name: o.state.Container, Image: tag, Mounts: mounts,
 		Env: o.env(), Workdir: o.state.Primary, CPUs: p.Def.CPUs, Memory: p.Def.Memory,
 	}
-	// An existing container from an older image must not be reused.
-	if st, err := rt.Inspect(ctx, o.spec.Name); err == nil && st != container.StateMissing {
-		if prev.Image != "" && prev.Image != tag {
-			rt.Remove(ctx, o.spec.Name)
+	// An existing container is reused only when the last state we wrote
+	// proves it runs this tag: a missing or unreadable state.json says
+	// nothing about its image, mounts or env, and Start would silently
+	// restart it as it was. A failed Remove fails the open for the same
+	// reason.
+	st, err := rt.Inspect(ctx, o.spec.Name)
+	if err != nil {
+		return fail(fmt.Errorf("inspect %s: %w", o.spec.Name, err))
+	}
+	if st != container.StateMissing && (prevErr != nil || prev.Image != tag) {
+		if err := rt.Remove(ctx, o.spec.Name); err != nil {
+			return fail(fmt.Errorf("remove stale %s: %w", o.spec.Name, err))
 		}
 	}
 	if err := rt.Start(ctx, o.spec); err != nil {
@@ -89,6 +92,20 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 	defer o.mu.Unlock()
 	o.resumeLocked(ctx)
 	return o, nil
+}
+
+// SyncRepos clones or fetches every remote repo's cache. Call it BEFORE
+// hashing or building: a repo not cloned yet contributes no lockfiles,
+// so the tag would be built without its dependencies.
+func SyncRepos(ctx context.Context, home string, p projectdef.Project) error {
+	for _, r := range p.Def.Repos {
+		if r.Remote != "" {
+			if err := syncCache(ctx, home, p.Slug, r); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (o *Orb) prepareMounts(ctx context.Context) ([]container.Mount, error) {
@@ -199,7 +216,19 @@ func (o *Orb) Command(ctx context.Context, argv ...string) *exec.Cmd {
 		cmd.Err = fmt.Errorf("orb: %s: restart: %w", o.session, err)
 		return cmd
 	}
-	return o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: primary, Env: o.env()}, argv...)
+	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: primary, Env: o.env()}, argv...)
+	// Killing the host `container exec` client does not end the guest
+	// processes, so cancel also kills them inside the orb. A caller that
+	// replaces Cancel (tools' process-group kill) must call this one too.
+	if k, ok := o.rt.(guestKiller); ok {
+		cmd.Cancel = k.KillFunc(o.spec.Name, cmd)
+	}
+	return cmd
+}
+
+// guestKiller is the runtime's optional guest-side kill (Apple.KillFunc).
+type guestKiller interface {
+	KillFunc(name string, cmd *exec.Cmd) func() error
 }
 
 func (o *Orb) ensureRunningLocked(ctx context.Context) error {

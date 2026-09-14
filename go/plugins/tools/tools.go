@@ -112,6 +112,21 @@ func (p *projectMode) command(ctx context.Context, script string) (*exec.Cmd, er
 	return o.Command(ctx, "sh", script), nil
 }
 
+// cancel kills c's host process group and, in a project session, also
+// runs the orb's own Cancel: the host process there is only the
+// `container exec` client, and killing it leaves the guest command
+// (a dev server, a sleep) running in the orb.
+func (p *projectMode) cancel(c *exec.Cmd) func() error {
+	guest := c.Cancel
+	return func() error {
+		err := killProcessGroup(c)
+		if p != nil && guest != nil {
+			_ = guest()
+		}
+		return err
+	}
+}
+
 // allowed refuses a write outside the orb's worktrees, the scratchpad
 // and the session's own project definition: those are the only paths
 // shared with (or meant for) the project.
@@ -350,7 +365,7 @@ func (s *Stats) bash(cmd string, opts ...any) (string, error) {
 	// the command, and killing sh alone leaves a sleep, a server, a
 	// build running after the turn was cancelled.
 	ownProcessGroup(c)
-	c.Cancel = func() error { return killProcessGroup(c) }
+	c.Cancel = s.project.cancel(c)
 	c.WaitDelay = 2 * time.Second
 	out, err := c.CombinedOutput()
 	// ErrWaitDelay means sh exited 0 but a backgrounded child (`cmd &`)

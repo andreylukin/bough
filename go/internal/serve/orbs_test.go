@@ -317,3 +317,35 @@ func sameResolvedDir(got any, want string) bool {
 	b, _ := filepath.EvalSymlinks(want)
 	return a != "" && a == b
 }
+
+// Build clones a remote repo before hashing, as orb.Open does, and a
+// failure before build.json is written still reaches the page.
+func TestBuildOrbClonesRemoteAndReportsEarlyFailure(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	id := mkProject(t, f, "remote")
+	f.do(t, "POST", "/api/projects/"+id+"/orb", `{}`)
+	base := "/api/projects/" + id + "/orb/files/"
+	missing := filepath.Join(t.TempDir(), "nope.git")
+	if code, body := f.do(t, "PUT", base+"project.yml", `{"text":"repos:\n  - remote: `+missing+`\n    name: app\n"}`); code != http.StatusOK {
+		t.Fatalf("save = %d %v", code, body)
+	}
+	if code, body := f.do(t, "POST", "/api/projects/"+id+"/orb/build", `{}`); code != http.StatusAccepted {
+		t.Fatalf("build = %d %v", code, body)
+	}
+	var lb map[string]any
+	waitFor(t, "build failed", func() bool {
+		_, lb = f.do(t, "GET", "/api/projects/"+id+"/orb/build/log?offset=0", "")
+		return lb["state"] == "failed"
+	})
+	if msg, _ := lb["error"].(string); msg == "" {
+		t.Errorf("failed build has no error: %v", lb)
+	}
+	_, d := f.do(t, "GET", "/api/projects/"+id+"/orb", "")
+	if b, _ := d["build"].(map[string]any); b["state"] != "failed" || b["error"] == "" {
+		t.Errorf("detail build = %v", d["build"])
+	}
+	if o, _ := projectByID(t, f, id)["orb"].(map[string]any); o["build"] != "failed" {
+		t.Errorf("summary = %v", o)
+	}
+}

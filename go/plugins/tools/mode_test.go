@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -152,5 +153,58 @@ func TestProjectWithoutOrbNeverRunsOnHost(t *testing.T) {
 	}
 	if _, err := st.write(marker, "x"); err == nil || !strings.Contains(err.Error(), "orb not ready") {
 		t.Errorf("write err = %v", err)
+	}
+}
+
+// guestOrb's commands carry a Cancel standing in for the runtime's guest
+// kill, which tools must still call after its own process-group kill.
+type guestOrb struct {
+	fakeOrb
+	kills atomic.Int32
+}
+
+func (o *guestOrb) Command(ctx context.Context, argv ...string) *exec.Cmd {
+	c := o.fakeOrb.Command(ctx, argv...)
+	c.Cancel = func() error { o.kills.Add(1); return nil }
+	return c
+}
+
+func TestProjectCancelKillsInsideOrb(t *testing.T) {
+	t.Parallel()
+	ctx := kernel.NewContext()
+	ctx.Provide("codemode", codemode.New(5*time.Second))
+	ctx.Provide("session-mode", "project")
+	if err := (plugin{}).Apply(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	defer ctx.Unmount()
+	st, _ := kernel.Get[*Stats](ctx, "turn-stats")
+	o := &guestOrb{fakeOrb: fakeOrb{root: t.TempDir()}}
+	ctx.Provide("orb", orbExec(o))
+
+	turn, cancel := context.WithCancel(context.Background())
+	st.runCtx = func() context.Context { return turn }
+	done := make(chan error, 1)
+	go func() { _, err := st.bash("sleep 30"); done <- err }()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	if err := <-done; err == nil || !strings.Contains(err.Error(), "cancelled") {
+		t.Fatalf("bash err = %v", err)
+	}
+	if n := o.kills.Load(); n != 1 {
+		t.Fatalf("guest kills after a cancelled bash = %d, want 1", n)
+	}
+
+	if _, err := st.bash("sleep 30", 60); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	st.jobs.Stop()
+	deadline := time.Now().Add(5 * time.Second)
+	for o.kills.Load() != 2 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if n := o.kills.Load(); n != 2 {
+		t.Fatalf("guest kills after stopping a job = %d, want 2", n)
 	}
 }

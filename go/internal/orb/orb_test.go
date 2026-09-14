@@ -278,3 +278,77 @@ func TestOpenFailureWritesState(t *testing.T) {
 		t.Fatalf("missing state %+v %v", st, err)
 	}
 }
+
+// A container left from before, with no state.json saying which image it
+// runs, is replaced, and a failed remove fails the open instead of
+// silently restarting the stale container.
+func TestOpenReplacesUnprovenContainer(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	home := t.TempDir()
+	p := newProject(t, home, "st", "  - path: "+newRepo(t)+"\n")
+	rt := container.NewFake()
+	if _, err := Open(ctx, rt, home, "s5", p, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(Dir(home, "s5"), stateFile)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(ctx, rt, home, "s5", p, ""); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(rt.CallList(), "remove "+container.OrbName("s5")); n != 1 {
+		t.Fatalf("container with no state not removed: %v", rt.CallList())
+	}
+
+	os.WriteFile(filepath.Join(Dir(home, "s5"), stateFile), []byte("{not json"), 0o644)
+	rt.FailRemove = errors.New("engine busy")
+	_, err := Open(ctx, rt, home, "s5", p, "")
+	if err == nil || !strings.Contains(err.Error(), "engine busy") {
+		t.Fatalf("open with a failed remove = %v", err)
+	}
+	if n := count(rt.CallList(), "start "); n != 2 {
+		t.Fatalf("stale container started anyway: %v", rt.CallList())
+	}
+}
+
+// killFake is a runtime with a guest-side kill, like Apple.
+type killFake struct {
+	*container.Fake
+	mu     sync.Mutex
+	killed []string
+}
+
+func (k *killFake) KillFunc(name string, cmd *exec.Cmd) func() error {
+	return func() error {
+		k.mu.Lock()
+		k.killed = append(k.killed, name)
+		k.mu.Unlock()
+		return cmd.Process.Kill()
+	}
+}
+
+// Cancelling an orb command reaches the runtime's guest kill: killing
+// the host exec client alone leaves the guest process running.
+func TestCommandCancelKillsGuest(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	p := newProject(t, home, "kg", "  - path: "+newRepo(t)+"\n")
+	rt := &killFake{Fake: container.NewFake()}
+	o, err := Open(context.Background(), rt, home, "s6", p, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := o.Command(ctx, "sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	cmd.Wait()
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if len(rt.killed) != 1 || rt.killed[0] != container.OrbName("s6") {
+		t.Fatalf("guest kill = %v", rt.killed)
+	}
+}

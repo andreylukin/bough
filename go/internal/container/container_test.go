@@ -191,3 +191,27 @@ func TestCommitContext(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// With FilesRoot, files keep their relative path: two subdirectory
+// lockfiles of one name land apart.
+func TestCommitContextFilesRoot(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	script := filepath.Join(root, "setup.sh")
+	os.WriteFile(script, []byte("true\n"), 0o644)
+	a := filepath.Join(root, "app", "go", "go.sum")
+	b := filepath.Join(root, "app", "tools", "go.sum")
+	for _, f := range []string{a, b} {
+		os.MkdirAll(filepath.Dir(f), 0o755)
+		os.WriteFile(f, []byte(f), 0o644)
+	}
+	dir := t.TempDir()
+	if err := writeCommitContext(dir, CommitSpec{Script: script, Files: []string{a, b}, FilesRoot: root}); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"app/go/go.sum", "app/tools/go.sum"} {
+		if got, err := os.ReadFile(filepath.Join(dir, rel)); err != nil || !strings.HasSuffix(string(got), rel) {
+			t.Errorf("%s = %q, %v", rel, got, err)
+		}
+	}
+}

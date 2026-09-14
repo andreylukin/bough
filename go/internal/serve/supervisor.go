@@ -165,6 +165,9 @@ type Supervisor struct {
 	stoppedAt map[string]time.Time
 	// building is the slugs with an image build this serve started.
 	building map[string]bool
+	// buildErr is the last failed build per slug this serve started,
+	// kept so a failure build.json never recorded still shows.
+	buildErr map[string]string
 }
 
 // NewSupervisor loads the meta store and resolves the bough binary. A
@@ -200,6 +203,7 @@ func NewSupervisor(opt Options) (*Supervisor, error) {
 		started:   time.Now(),
 		stoppedAt: map[string]time.Time{},
 		building:  map[string]bool{},
+		buildErr:  map[string]string{},
 		opt:       opt,
 		exe:       exe,
 		cwd:       cwd,

@@ -190,11 +190,62 @@ func TestImageHash(t *testing.T) {
 	if h4 == h3 {
 		t.Fatal("Dockerfile did not move the hash")
 	}
-	WriteFile(home, "h", FileSetup, "#!/bin/sh\necho ignored now\n")
-	if hash() != h4 {
-		t.Fatal("setup.sh counted while Dockerfile wins")
+	// The Dockerfile's build context is the whole project dir: a file it
+	// could COPY is an input.
+	os.WriteFile(filepath.Join(p.Dir, "setup.sh"), []byte("#!/bin/sh\necho copied\n"), 0o644)
+	h5 := hash()
+	if h5 == h4 {
+		t.Fatal("a build-context file did not move the Dockerfile hash")
+	}
+	os.WriteFile(filepath.Join(p.Dir, "conf.toml"), []byte("x=1\n"), 0o644)
+	if hash() == h5 {
+		t.Fatal("a new build-context file did not move the Dockerfile hash")
 	}
 	if ImageTag("h", h4) != "bough-orb/h:"+h4 {
 		t.Fatal("tag")
+	}
+}
+
+// Lockfiles below the repo root (go/go.sum, web/bun.lock) are hashed and
+// handed to setup at their paths.
+func TestSubdirLockfiles(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	repo := newRepo(t, map[string]string{"README": "hi\n"})
+	for n, c := range map[string]string{"go/go.sum": "v1\n", "web/bun.lock": "b1\n"} {
+		os.MkdirAll(filepath.Join(repo, filepath.Dir(n)), 0o755)
+		os.WriteFile(filepath.Join(repo, n), []byte(c), 0o644)
+	}
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-qm", "locks")
+	if _, err := Create(home, "m"); err != nil {
+		t.Fatal(err)
+	}
+	WriteFile(home, "m", FileYAML, "repos:\n  - path: "+repo+"\n    branch: main\n")
+	p, err := Load(home, "m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h0, err := ImageHash(home, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(repo, "go", "go.sum"), []byte("v2\n"), 0o644)
+	git(t, repo, "commit", "-qam", "bump")
+	if h1, _ := ImageHash(home, p); h1 == h0 {
+		t.Fatal("subdirectory go.sum did not move the hash")
+	}
+	dir := t.TempDir()
+	files, err := Lockfiles(home, p, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Base(repo)
+	want := []string{filepath.Join(dir, name, "go", "go.sum"), filepath.Join(dir, name, "web", "bun.lock")}
+	if strings.Join(files, ",") != strings.Join(want, ",") {
+		t.Fatalf("lockfiles = %v, want %v", files, want)
+	}
+	if b, _ := os.ReadFile(want[0]); string(b) != "v2\n" {
+		t.Fatalf("go.sum = %q", b)
 	}
 }

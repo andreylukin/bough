@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/andreylukin/bough/internal/container"
@@ -33,6 +35,21 @@ type direr interface{ Dir() string }
 type sections interface{ Set(name, text string) }
 
 type plugin struct{}
+
+// opened holds each session's orb across reloads of this row. The row
+// reloads whenever a service it read lands late (the loop's
+// prompt-sections always does), and stopping and reopening the
+// container then would kill background jobs and rerun resume.sh.
+var opened = struct {
+	sync.Mutex
+	m map[string]openOrb
+}{m: map[string]openOrb{}}
+
+type openOrb struct {
+	o    *iorb.Orb
+	slug string
+	cfg  map[string]any
+}
 
 func init() {
 	kernel.Register("orb", func() kernel.Plugin { return plugin{} })
@@ -107,15 +124,27 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if err := rt.Available(octx); err != nil {
 		return fmt.Errorf("orb: open %s: runtime %s: %w (run `bough update` or `container system start`)", slug, rt.Name(), err)
 	}
-	o, err := iorb.Open(octx, rt, home, session, p, pad.Dir())
-	if err != nil {
-		return fmt.Errorf("orb: open %s: %w", slug, err)
+	opened.Lock()
+	prev, reused := opened.m[session]
+	delete(opened.m, session)
+	opened.Unlock()
+	reused = reused && prev.slug == slug && reflect.DeepEqual(prev.cfg, cfg)
+	if !reused && prev.o != nil {
+		stopOrb(prev.o)
+	}
+	o := prev.o
+	if !reused {
+		if o, err = iorb.Open(octx, rt, home, session, p, pad.Dir()); err != nil {
+			return fmt.Errorf("orb: open %s: %w", slug, err)
+		}
 	}
 	st := o.State()
 	// Checkpoints and relative paths use the process cwd: it must be the
 	// primary worktree, which is also the container's workdir.
 	if st.Primary != "" {
 		if err := chdir(st.Primary); err != nil {
+			// Open started the container and no Effect owns it yet.
+			stopOrb(o)
 			return fmt.Errorf("orb: chdir %s: %w", st.Primary, err)
 		}
 	}
@@ -126,15 +155,45 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	ctx.Provide("orb", o)
 	ctx.Provide("orb-state", o)
 	// Stop, never Remove: a resumed session reuses its worktrees and
-	// container.
+	// container. A reload (this row still mounted and still desired as
+	// is) keeps the orb running for the next Apply instead.
 	ctx.Effect(func() {
-		sctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		defer cancel()
-		if err := o.Stop(sctx); err != nil {
-			fmt.Fprintf(os.Stderr, "bough: orb: stop: %v\n", err)
+		if reloading(ctx, cfg) {
+			opened.Lock()
+			opened.m[session] = openOrb{o: o, slug: slug, cfg: cfg}
+			opened.Unlock()
+			return
 		}
+		stopOrb(o)
 	})
 	return nil
+}
+
+// reloading reports whether the orb row is being disposed only to be
+// applied again: it is still mounted (Unmount clears that first) and a
+// desired row still carries the same config (Reconcile swaps the
+// desired set before it disposes a removed or changed row).
+func reloading(ctx *kernel.Context, cfg map[string]any) bool {
+	active := map[string]bool{}
+	for _, r := range ctx.Rows() {
+		if r.Plugin == "orb" && r.State == kernel.StateActive {
+			active[r.ID] = true
+		}
+	}
+	for _, r := range ctx.Desired() {
+		if active[r.ID] && !r.Disabled && reflect.DeepEqual(r.Config, cfg) {
+			return true
+		}
+	}
+	return false
+}
+
+func stopOrb(o *iorb.Orb) {
+	sctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := o.Stop(sctx); err != nil {
+		fmt.Fprintf(os.Stderr, "bough: orb: stop: %v\n", err)
+	}
 }
 
 // promptSection tells the model where its shell runs and what to check.

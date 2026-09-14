@@ -16,6 +16,7 @@ type Fake struct {
 	mu         sync.Mutex
 	Calls      []string
 	FailBuild  error
+	FailRemove error
 	images     map[string]bool
 	containers map[string]State
 	volumes    map[string]bool
@@ -116,6 +117,9 @@ func (f *Fake) Remove(_ context.Context, name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.record("remove " + name)
+	if f.FailRemove != nil {
+		return f.FailRemove
+	}
 	delete(f.containers, name)
 	return nil
 }

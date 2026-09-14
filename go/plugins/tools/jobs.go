@@ -380,7 +380,7 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 		return nil, fmt.Errorf("bash: %w", err)
 	}
 	ownProcessGroup(c)
-	c.Cancel = func() error { return killProcessGroup(c) }
+	c.Cancel = j.project.cancel(c)
 	c.WaitDelay = 2 * time.Second
 
 	owner := j.session()

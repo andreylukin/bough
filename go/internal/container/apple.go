@@ -136,6 +136,13 @@ func writeCommitContext(dir string, spec CommitSpec) error {
 	for _, f := range spec.Files {
 		// Keep <parent>/<name> so two repos' identical lockfile names don't collide.
 		rel := filepath.Join(filepath.Base(filepath.Dir(f)), filepath.Base(f))
+		if spec.FilesRoot != "" {
+			r, err := filepath.Rel(spec.FilesRoot, f)
+			if err != nil || strings.HasPrefix(r, "..") {
+				return fmt.Errorf("file %s is outside %s", f, spec.FilesRoot)
+			}
+			rel = r
+		}
 		if err := copyFile(f, filepath.Join(dir, rel)); err != nil {
 			return err
 		}

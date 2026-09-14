@@ -118,7 +118,7 @@ func build(ctx context.Context, rt container.Runtime, home string, p projectdef.
 	if base == "" {
 		base = container.DefaultBase
 	}
-	return rt.Commit(ctx, container.CommitSpec{Base: base, Script: script, Files: files, Env: envList(p.Def.Env), Tag: tag}, w)
+	return rt.Commit(ctx, container.CommitSpec{Base: base, Script: script, Files: files, FilesRoot: tmp, Env: envList(p.Def.Env), Tag: tag}, w)
 }
 
 // envList sorts so the generated image recipe is deterministic.

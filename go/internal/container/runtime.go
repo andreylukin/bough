@@ -49,8 +49,12 @@ type CommitSpec struct {
 	// Files are extra host files copied into the build context next to
 	// the script, as their base names under <parent dir>/<name>.
 	Files []string
-	Env   []string // becomes ENV lines
-	Tag   string
+	// FilesRoot, when set, keeps each of Files at its path relative to
+	// it, so a subdirectory lockfile (<repo>/go/go.sum) neither loses
+	// its directory nor collides with another repo's.
+	FilesRoot string
+	Env       []string // becomes ENV lines
+	Tag       string
 }
 
 type Mount struct {

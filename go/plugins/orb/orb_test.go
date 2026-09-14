@@ -113,4 +113,31 @@ func TestProjectRowOpensOrb(t *testing.T) {
 	if err != nil || disk.Project != "demo" || disk.Status == "" {
 		t.Errorf("state.json = %+v, %v", disk, err)
 	}
+
+	// A reload (a late service, a Remount) keeps the same running orb:
+	// no stop, no second Open.
+	opens := func() int {
+		b, _ := os.ReadFile(filepath.Join(iorb.Dir(home, "sess1"), "state.json"))
+		return strings.Count(string(b), "running")
+	}
+	if err := ctx.Remount("orb"); err != nil {
+		t.Fatal(err)
+	}
+	o2, err := kernel.Get[interface{ State() iorb.State }](ctx, "orb-state")
+	if err != nil || o2 != o {
+		t.Fatalf("reload reopened the orb: %v", err)
+	}
+	if s, _ := iorb.ReadState(home, "sess1"); s.Status != iorb.StatusRunning || opens() != 1 {
+		t.Fatalf("reload stopped the orb: %+v", s)
+	}
+
+	// A chdir failing after the orb is open must not leave it running
+	// with no owner.
+	chdir = func(string) error { return os.ErrNotExist }
+	if err := ctx.Remount("orb"); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := iorb.ReadState(home, "sess1"); s.Status != iorb.StatusStopped {
+		t.Fatalf("failed chdir left the orb %s", s.Status)
+	}
 }
