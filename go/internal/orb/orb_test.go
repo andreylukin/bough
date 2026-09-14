@@ -6,9 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/andreylukin/bough/internal/container"
 	"github.com/andreylukin/bough/internal/projectdef"
@@ -167,8 +169,8 @@ func TestOpenPathRepo(t *testing.T) {
 	if onDisk, _ := ReadState(home, "s1"); onDisk.Status != StatusRunning || onDisk.PID != os.Getpid() {
 		t.Fatalf("state.json %+v", onDisk)
 	}
-	if count(rt.CallList(), "volume bough-cache-web-0") != 1 {
-		t.Fatalf("no cache volume: %v", rt.CallList())
+	if fi, err := os.Stat(cacheDir(home, "web", "/root/.cache")); err != nil || !fi.IsDir() {
+		t.Fatalf("no cache dir: %v", err)
 	}
 
 	out, err := o.Command(ctx, "sh", "-c", "pwd; echo $BOUGH_SCRATCH").Output()
@@ -413,4 +415,161 @@ func TestExecEnvSecrets(t *testing.T) {
 	if got := strings.TrimSpace(string(out)); got != "https://devpi.test/one|later-value|unset" {
 		t.Fatalf("command env %q", got)
 	}
+}
+
+// A waiter re-hashes under the lock: a definition edited while it waited
+// is built once, at the new hash, never the stale one.
+func TestEnsureImageRehashUnderLock(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	home := t.TempDir()
+	p := newProject(t, home, "edit", "  - path: "+newRepo(t)+"\n")
+	rt := container.NewFake()
+	rt.AddImage(projectdef.BaseTag())
+	oldHash, err := projectdef.ImageHash(home, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := imagesDir(home, "edit")
+	os.MkdirAll(dir, 0o755)
+	unlock, err := lockFile(filepath.Join(dir, "build.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan string)
+	go func() {
+		tag, err := EnsureImage(ctx, rt, home, p, nil)
+		if err != nil {
+			t.Error(err)
+		}
+		done <- tag
+	}()
+	oldTag := projectdef.ImageTag("edit", oldHash)
+	deadline := time.Now().Add(10 * time.Second)
+	for count(rt.CallList(), "image-exists "+oldTag) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := projectdef.WriteFile(home, "edit", projectdef.FileSetup, "#!/bin/sh\necho edited\n"); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	tag := <-done
+	newHash, _ := projectdef.ImageHash(home, p)
+	if newHash == oldHash || tag != projectdef.ImageTag("edit", newHash) {
+		t.Fatalf("tag %s, old %s new %s", tag, oldHash, newHash)
+	}
+	if n := count(rt.CallList(), "commit "); n != 1 || count(rt.CallList(), "commit "+oldTag) != 0 {
+		t.Fatalf("calls %v", rt.CallList())
+	}
+}
+
+// setup.sh steps reach the runtime as separate layers.
+func TestEnsureImageSteps(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	repo := newRepo(t)
+	p := newProject(t, home, "steps", "  - path: "+repo+"\n")
+	if err := projectdef.WriteFile(home, "steps", projectdef.FileSetup, "#!/bin/bash\n# bough:step a\ntrue\n# bough:step b\n# bough:uses go.sum\ntrue\n"); err != nil {
+		t.Fatal(err)
+	}
+	rt := container.NewFake()
+	if _, err := EnsureImage(context.Background(), rt, home, p, nil); err != nil {
+		t.Fatal(err)
+	}
+	s := rt.LastCommit.Steps
+	if len(s) != 2 || s[0].Name != "a" || len(s[0].Files) != 0 || len(s[1].Files) != 1 || !strings.HasPrefix(string(s[1].Script), "#!/bin/bash\n") {
+		t.Fatalf("steps %+v", s)
+	}
+	if want := filepath.Join(rt.LastCommit.FilesRoot, filepath.Base(repo), "go.sum"); s[1].Files[0] != want {
+		t.Fatalf("file %s, want %s", s[1].Files[0], want)
+	}
+}
+
+func TestCacheDirNames(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	a, b := cacheDir(home, "p", "/root/.cache/uv"), cacheDir(home, "p", "/cache/cargo")
+	if a == b || a != cacheDir(home, "p", "/root/.cache/uv") || cacheDir(home, "q", "/root/.cache/uv") == a {
+		t.Fatalf("names %s %s", a, b)
+	}
+	// Named by path, not index: reordering caches keeps each dir's bind,
+	// every session of the project mounts the same one, and none is a
+	// named volume (a block device two running VMs cannot share).
+	names := func(caches []string) map[string]string {
+		o := &Orb{rt: container.NewFake(), home: home, session: "s", project: projectdef.Project{Slug: "p", Dir: t.TempDir(), Def: projectdef.Def{Caches: caches}}}
+		mounts, err := o.prepareMounts(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := map[string]string{}
+		for _, mt := range mounts {
+			if mt.Volume {
+				t.Fatalf("cache as volume: %+v", mt)
+			}
+			if slices.Contains(caches, mt.Target) {
+				m[mt.Target] = mt.Source
+			}
+		}
+		return m
+	}
+	x, y := names([]string{"/root/.cache/uv", "/cache/cargo"}), names([]string{"/cache/cargo", "/root/.cache/uv"})
+	if len(x) != 2 || x["/root/.cache/uv"] != a || x["/cache/cargo"] != b || y["/root/.cache/uv"] != a || y["/cache/cargo"] != b {
+		t.Fatalf("x %v y %v", x, y)
+	}
+}
+
+func TestPruneImages(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	rt := container.NewFake()
+	for _, tag := range []string{"bough-orb/a:1", "bough-orb/a:2", "bough-orb/a:3", "bough-orb/ab:1", "bough-orb/base:1"} {
+		rt.AddImage(tag)
+	}
+	if err := rt.Start(ctx, container.RunSpec{Name: "c", Image: "bough-orb/a:2"}); err != nil {
+		t.Fatal(err)
+	}
+	rt.Stop(ctx, "c")
+	if err := pruneImages(ctx, rt, "a", "bough-orb/a:3"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := rt.Images(ctx)
+	if strings.Join(got, ",") != "bough-orb/a:2,bough-orb/a:3,bough-orb/ab:1,bough-orb/base:1" {
+		t.Fatalf("images %v", got)
+	}
+	if pruneImages(ctx, rt, "base", "bough-orb/base:2"); count(rt.CallList(), "remove-image bough-orb/base") != 0 {
+		t.Fatal("pruned bough's base image")
+	}
+}
+
+// A waiter tails the running build's log, then stops when told.
+func TestTailFile(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "build.log")
+	os.WriteFile(path, []byte("one\n"), 0o644)
+	var buf syncBuffer
+	stop := tailFile(path, &buf)
+	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	f.WriteString("two\n")
+	f.Close()
+	stop()
+	if buf.String() != "one\ntwo\n" {
+		t.Fatalf("tail %q", buf.String())
+	}
+}
+
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }

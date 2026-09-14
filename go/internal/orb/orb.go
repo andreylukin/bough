@@ -2,6 +2,8 @@ package orb
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -12,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/andreylukin/bough/internal/container"
 	"github.com/andreylukin/bough/internal/projectdef"
@@ -93,7 +96,19 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 		}
 	}
 	if err := rt.Start(ctx, o.spec); err != nil {
-		return fail(err)
+		// A concurrent session's build may have pruned our tag between
+		// EnsureImage and Start (no container used it yet): rebuild once.
+		if ok, ierr := rt.ImageExists(ctx, tag); ierr != nil || ok {
+			return fail(err)
+		}
+		if tag, err = EnsureImage(ctx, rt, home, p, nil); err != nil {
+			return fail(err)
+		}
+		o.state.Image, o.spec.Image = tag, tag
+		writeState(home, o.state)
+		if err := rt.Start(ctx, o.spec); err != nil {
+			return fail(err)
+		}
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -154,17 +169,27 @@ func (o *Orb) prepareMounts(ctx context.Context) ([]container.Mount, error) {
 	// Read-only so resume.sh is runnable in the guest; the agent edits the
 	// definition through host tools, never from inside the container.
 	add(container.Mount{Source: p.Dir, Target: p.Dir, ReadOnly: true})
-	for n, dir := range p.Def.Caches {
-		vol := fmt.Sprintf("bough-cache-%s-%d", p.Slug, n)
-		if err := o.rt.CreateVolume(ctx, vol); err != nil {
-			return nil, fmt.Errorf("cache volume %s: %w", vol, err)
+	for _, dir := range p.Def.Caches {
+		src := cacheDir(o.home, p.Slug, dir)
+		if err := os.MkdirAll(src, 0o755); err != nil {
+			return nil, fmt.Errorf("cache dir %s: %w", src, err)
 		}
-		add(container.Mount{Source: vol, Target: dir, Volume: true})
+		add(container.Mount{Source: src, Target: dir})
 	}
 	for _, m := range identityMounts(o.home, p.Def.Identity) {
 		add(m)
 	}
 	return mounts, nil
+}
+
+// cacheDir is a cache's host directory, named by its guest path so
+// reordering caches never mounts one onto another dir. It is a bind, not
+// a named volume: an Apple container volume is a block device that a
+// second running VM cannot attach, and every session of the project
+// shares this dir.
+func cacheDir(home, slug, dir string) string {
+	sum := sha256.Sum256([]byte(dir))
+	return filepath.Join(home, ".bough", "cache", slug, hex.EncodeToString(sum[:])[:10])
 }
 
 // baseEnv is the container's own env; it holds no secrets, because run
@@ -278,7 +303,16 @@ func (o *Orb) runResume(ctx context.Context, script string) error {
 	text, _ := os.ReadFile(script)
 	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: o.state.Primary, Env: o.execEnv(o.proxyURLLocked()), Secrets: o.secretEnv()}, container.ScriptArgv(text, script)...)
 	cmd.Stdout, cmd.Stderr = f, f
-	return cmd.Run()
+	// Timestamps let session starts be measured without parsing output.
+	start := time.Now()
+	fmt.Fprintf(f, "== resume.sh start %s\n", start.UTC().Format(time.RFC3339))
+	err = cmd.Run()
+	status := "ok"
+	if err != nil {
+		status = err.Error()
+	}
+	fmt.Fprintf(f, "== resume.sh end %s duration %s: %s\n", time.Now().UTC().Format(time.RFC3339), time.Since(start).Round(time.Millisecond), status)
+	return err
 }
 
 func (o *Orb) State() State {

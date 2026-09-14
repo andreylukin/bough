@@ -181,34 +181,11 @@ func TestParseInspect(t *testing.T) {
 	}
 }
 
+// One COPY+RUN layer per step, no ENV, and only each step's declared
+// files, copied right before its RUN.
 func TestCommitContext(t *testing.T) {
 	t.Parallel()
-	src := t.TempDir()
-	script := filepath.Join(src, "setup.sh")
-	lock := filepath.Join(src, "api", "go.sum")
-	_ = os.MkdirAll(filepath.Dir(lock), 0o755)
-	_ = os.WriteFile(script, []byte("echo hi"), 0o644)
-	_ = os.WriteFile(lock, []byte("sum"), 0o644)
-	dir := t.TempDir()
-	if err := writeCommitContext(dir, CommitSpec{Script: script, Files: []string{lock}, Env: []string{"K=v w"}}); err != nil {
-		t.Fatal(err)
-	}
-	df, _ := os.ReadFile(filepath.Join(dir, "Dockerfile"))
-	if want := "FROM " + DefaultBase + "\nENV K=\"v w\"\nCOPY . /bough-setup\nRUN sh /bough-setup/setup.sh\n"; string(df) != want {
-		t.Fatalf("dockerfile %q", df)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "api", "go.sum")); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// With FilesRoot, files keep their relative path: two subdirectory
-// lockfiles of one name land apart.
-func TestCommitContextFilesRoot(t *testing.T) {
-	t.Parallel()
 	root := t.TempDir()
-	script := filepath.Join(root, "setup.sh")
-	os.WriteFile(script, []byte("true\n"), 0o644)
 	a := filepath.Join(root, "app", "go", "go.sum")
 	b := filepath.Join(root, "app", "tools", "go.sum")
 	for _, f := range []string{a, b} {
@@ -216,12 +193,45 @@ func TestCommitContextFilesRoot(t *testing.T) {
 		os.WriteFile(f, []byte(f), 0o644)
 	}
 	dir := t.TempDir()
-	if err := writeCommitContext(dir, CommitSpec{Script: script, Files: []string{a, b}, FilesRoot: root}); err != nil {
+	spec := CommitSpec{FilesRoot: root, Steps: []Step{
+		{Name: "apt", Script: []byte("#!/bin/bash\napt-get update\n")},
+		{Name: "deps", Script: []byte("echo deps\n"), Files: []string{a}},
+	}}
+	if err := writeCommitContext(dir, spec); err != nil {
 		t.Fatal(err)
 	}
-	for _, rel := range []string{"app/go/go.sum", "app/tools/go.sum"} {
-		if got, err := os.ReadFile(filepath.Join(dir, rel)); err != nil || !strings.HasSuffix(string(got), rel) {
-			t.Errorf("%s = %q, %v", rel, got, err)
-		}
+	df, _ := os.ReadFile(filepath.Join(dir, "Dockerfile"))
+	want := "FROM " + DefaultBase + "\n" +
+		"COPY steps/01-apt.sh /bough-setup/steps/\n" +
+		"RUN bash /bough-setup/steps/01-apt.sh\n" +
+		"COPY steps/02-deps.sh /bough-setup/steps/\n" +
+		"COPY lock/app/go/go.sum /bough-setup/lock/app/go/go.sum\n" +
+		"RUN sh /bough-setup/steps/02-deps.sh\n"
+	if string(df) != want {
+		t.Fatalf("dockerfile %q\nwant %q", df, want)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "lock", "app", "go", "go.sum")); err != nil || string(got) != a {
+		t.Fatalf("go.sum = %q, %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "lock", "app", "tools", "go.sum")); err == nil {
+		t.Fatal("undeclared file copied")
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "steps", "01-apt.sh")); string(got) != "#!/bin/bash\napt-get update\n" {
+		t.Fatalf("step script %q", got)
+	}
+	if err := writeCommitContext(t.TempDir(), CommitSpec{FilesRoot: root, Steps: []Step{{Name: "x", Files: []string{"/elsewhere"}}}}); err == nil {
+		t.Fatal("file outside FilesRoot accepted")
+	}
+}
+
+func TestParseImageLists(t *testing.T) {
+	t.Parallel()
+	tags, err := parseImageList([]byte(`[{"configuration":{"descriptor":{},"name":"bough-orb/a:1"},"id":"x"},{"configuration":{"name":"debian:bookworm"}}]`))
+	if err != nil || strings.Join(tags, ",") != "bough-orb/a:1,debian:bookworm" {
+		t.Fatalf("tags = %v, %v", tags, err)
+	}
+	refs, err := parseContainerImages([]byte(`[{"configuration":{"id":"bough-orb-s","image":{"descriptor":{},"reference":"bough-orb/a:1"}},"status":"running"}]`))
+	if err != nil || strings.Join(refs, ",") != "bough-orb/a:1" {
+		t.Fatalf("refs = %v, %v", refs, err)
 	}
 }

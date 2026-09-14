@@ -24,12 +24,40 @@ verification because a credential, dependency or tool is missing.
 Use the base image plus `setup.sh` when the toolchain installs with apt or
 curl. Write a Dockerfile only when the repo needs a different distro.
 
+Split setup.sh into cached layers with step markers, slowest-changing
+first (apt, then toolchains, then dependencies):
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+# bough:step apt
+apt-get update && apt-get install -y ...
+# bough:step node-deps
+# bough:uses package-lock.json
+cd /bough-setup/lock/<repo> && npm ci
+```
+
+- Lines before the first `# bough:step` run at the top of every step.
+- Editing a step rebuilds that step and the ones after it.
+- `# bough:uses <file>` copies that repo file, at the base branch, to
+  `/bough-setup/lock/<repo>/<file>`. A new commit to the file rebuilds
+  its step. Undeclared repo files are not in the build.
+- setup.sh gets no project env. Export what it needs inside the script.
+- In a Dockerfile, order RUN lines the same way: apt first, deps last.
+- Only setup.sh, `base:`, declared files and a Dockerfile dir rebuild
+  the image. Env, secrets, checks, caches, cpus, memory and resume.sh
+  do not.
+
 ## 3. setup.sh vs resume.sh
 
 - `setup.sh` runs at image build and gets no secrets. Put toolchains and
   system packages there.
+- Lockfile-pinned dependencies from a public index go in a setup.sh step
+  with `# bough:uses`. setup.sh gets no build-time secrets or
+  `RUN --mount=type=cache`.
 - `resume.sh` runs once per session and has secrets available. Put
-  dependency installs (`uv sync`, `npm ci`) and devpi or index config there.
+  dependency installs that need credentials (devpi, CodeArtifact) and
+  index config there.
 - Never echo a secret. resume.log is on the host and bough does not scrub it.
 
 ## 4. Caches and env
@@ -37,6 +65,9 @@ curl. Write a Dockerfile only when the repo needs a different distro.
 - Package caches live under `caches:` in project.yml; `set` has no key
   for them. Read `bough project show <slug> project.yml`, edit the text,
   and pipe it back through `bough project write <slug> project.yml`.
+- Every session of the project shares each cache dir at once. Cache only
+  tools that lock their own cache (uv, pip, go-build). Never cache a
+  venv, `target/`, node_modules, a database dir or CARGO_HOME.
 - Plain settings: `bough project set <slug> env.NAME value`.
 
 ## 5. Secrets

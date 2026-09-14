@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -19,11 +21,13 @@ type Fake struct {
 	FailRemove error
 	images     map[string]bool
 	containers map[string]State
+	cimages    map[string]string // container -> image
 	volumes    map[string]bool
+	LastCommit CommitSpec
 }
 
 func NewFake() *Fake {
-	return &Fake{images: map[string]bool{}, containers: map[string]State{}, volumes: map[string]bool{}}
+	return &Fake{images: map[string]bool{}, containers: map[string]State{}, cimages: map[string]string{}, volumes: map[string]bool{}}
 }
 
 func (f *Fake) record(s string) { f.Calls = append(f.Calls, s) }
@@ -56,6 +60,7 @@ func (f *Fake) Commit(_ context.Context, spec CommitSpec, log io.Writer) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.record("commit " + spec.Tag)
+	f.LastCommit = spec
 	if log != nil {
 		fmt.Fprintf(log, "fake commit %s\n", spec.Tag)
 	}
@@ -79,6 +84,9 @@ func (f *Fake) Start(_ context.Context, spec RunSpec) error {
 	f.record("start " + spec.Name)
 	if _, ok := f.containers[spec.Name]; !ok && !f.images[spec.Image] {
 		return fmt.Errorf("container: fake: image %s not built", spec.Image)
+	}
+	if _, ok := f.containers[spec.Name]; !ok {
+		f.cimages[spec.Name] = spec.Image
 	}
 	f.containers[spec.Name] = StateRunning
 	return nil
@@ -121,6 +129,7 @@ func (f *Fake) Remove(_ context.Context, name string) error {
 		return f.FailRemove
 	}
 	delete(f.containers, name)
+	delete(f.cimages, name)
 	return nil
 }
 
@@ -138,5 +147,32 @@ func (f *Fake) CreateVolume(_ context.Context, name string) error {
 	defer f.mu.Unlock()
 	f.record("volume " + name)
 	f.volumes[name] = true
+	return nil
+}
+
+// AddImage marks tag as built without recording a call.
+func (f *Fake) AddImage(tag string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.images[tag] = true
+}
+
+func (f *Fake) Images(context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Sorted(maps.Keys(f.images)), nil
+}
+
+func (f *Fake) ContainerImages(context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Sorted(maps.Values(f.cimages)), nil
+}
+
+func (f *Fake) RemoveImage(_ context.Context, tag string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.record("remove-image " + tag)
+	delete(f.images, tag)
 	return nil
 }

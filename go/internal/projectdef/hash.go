@@ -10,13 +10,9 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
-	"slices"
+	"regexp"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
-
-var LockfileNames = []string{"go.sum", "package-lock.json", "bun.lock", "bun.lockb", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "poetry.lock", "uv.lock", "requirements.txt", "Gemfile.lock"}
 
 // BaseDockerfile is bough's orb base: the user's everyday CLIs. A project
 // with no `base` builds its setup.sh on top of it.
@@ -55,11 +51,14 @@ func (r Repo) BaseRef() string {
 	return r.Branch
 }
 
-// ImageHash fingerprints every input of the snapshot image. Lockfiles are
-// read with `git show <ref>:<file>` so uncommitted edits in the user's
-// checkout, and worktree changes by agents, never trigger a rebuild.
-// A remote repo not cloned yet contributes nothing; orb.Open clones before
-// hashing so the tag it builds is complete.
+// ImageHash fingerprints the build inputs of the snapshot image, and only
+// those (docs/orb-speed.md §1): the base; on the setup.sh path the script
+// and the lockfiles its steps declare; on the Dockerfile path every project
+// dir file except project.yml and resume.sh. Declared lockfiles are read
+// with `git show <ref>:<file>` so uncommitted edits in the user's checkout,
+// and worktree changes by agents, never trigger a rebuild. A remote repo
+// not cloned yet contributes nothing; orb.Open clones before hashing so
+// the tag it builds is complete.
 func ImageHash(home string, p Project) (string, error) {
 	h := sha256.New()
 	field := func(label string, b []byte) {
@@ -67,10 +66,11 @@ func ImageHash(home string, p Project) (string, error) {
 		h.Write(b)
 	}
 	if p.UsesDockerfile() {
-		// The whole project dir is the build context: any file the
-		// Dockerfile COPYs (a setup script, a config) is an input, and
-		// project.yml is one of them.
-		if err := hashTree(p.Dir, field); err != nil {
+		// The project dir is the build context: any file the Dockerfile
+		// COPYs is an input. project.yml and resume.sh are only when the
+		// Dockerfile names them.
+		df, _ := os.ReadFile(filepath.Join(p.Dir, FileDockerfile))
+		if err := hashTree(p.Dir, string(df), field); err != nil {
 			return "", fmt.Errorf("projectdef: hash %s: %w", p.Slug, err)
 		}
 	} else {
@@ -79,105 +79,148 @@ func ImageHash(home string, p Project) (string, error) {
 			return "", fmt.Errorf("projectdef: hash %s: %w", p.Slug, err)
 		}
 		field(FileSetup, b)
-		y, err := os.ReadFile(filepath.Join(p.Dir, FileYAML))
+		steps, err := ParseSteps(string(b))
 		if err != nil {
 			return "", fmt.Errorf("projectdef: hash %s: %w", p.Slug, err)
 		}
-		field(FileYAML, withoutSecrets(y))
+		for _, s := range steps {
+			lfs, err := StepLockfiles(home, p, s.Uses)
+			if err != nil {
+				return "", fmt.Errorf("projectdef: hash %s: %w", p.Slug, err)
+			}
+			for _, lf := range lfs {
+				field("lock:"+lf.Rel(), lf.Data)
+			}
+		}
 	}
 	base := p.Def.Base
 	if base == "" {
 		base = BaseTag()
 	}
 	field("base", []byte(base))
-	for _, r := range p.Def.Repos {
-		gd := SourceGitDir(home, p.Slug, r)
-		if _, err := os.Stat(gd); err != nil {
-			continue
-		}
-		for _, lf := range repoLockfiles(gd, r.BaseRef()) {
-			out, err := exec.Command("git", "-C", gd, "show", r.BaseRef()+":"+lf).Output()
-			if err != nil {
-				continue
-			}
-			field("lock:"+r.RepoName()+"/"+lf, out)
-		}
-	}
 	return hex.EncodeToString(h.Sum(nil))[:12], nil
 }
 
-// Lockfiles writes each repo's lockfiles at its base ref into dir as
-// <repo>/<path in repo> and returns the written paths, for CommitSpec.Files.
-func Lockfiles(home string, p Project, dir string) ([]string, error) {
-	var paths []string
-	for _, r := range p.Def.Repos {
-		gd := SourceGitDir(home, p.Slug, r)
-		for _, lf := range repoLockfiles(gd, r.BaseRef()) {
-			out, err := exec.Command("git", "-C", gd, "show", r.BaseRef()+":"+lf).Output()
+// Step is one image layer of a setup.sh build.
+type Step struct {
+	Name   string   // `# bough:step <name>`; "setup" for a script without markers
+	Script string   // the preamble followed by the step's own lines
+	Uses   []string // repo-relative files from `# bough:uses`
+}
+
+var stepNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
+
+// ParseSteps splits setup.sh on `# bough:step <name>` markers. Text before
+// the first marker (shebang, set -e) is the preamble, prepended to every
+// step; no markers is one step. `# bough:uses <file>...` inside a step
+// declares repo files the step reads, as /bough-setup/lock/<repo>/<file>.
+func ParseSteps(text string) ([]Step, error) {
+	var preamble strings.Builder
+	var steps []Step
+	var body strings.Builder
+	flush := func() {
+		if len(steps) > 0 {
+			steps[len(steps)-1].Script = preamble.String() + body.String()
+		}
+		body.Reset()
+	}
+	for _, line := range strings.SplitAfter(text, "\n") {
+		t := strings.TrimSpace(line)
+		if name, ok := strings.CutPrefix(t, "# bough:step"); ok {
+			name = strings.TrimSpace(name)
+			if !stepNameRE.MatchString(name) {
+				return nil, fmt.Errorf("%s: bad step name %q (want [a-z0-9][a-z0-9._-]*)", FileSetup, name)
+			}
+			for _, s := range steps {
+				if s.Name == name {
+					return nil, fmt.Errorf("%s: duplicate step %q", FileSetup, name)
+				}
+			}
+			flush()
+			steps = append(steps, Step{Name: name})
+			body.WriteString(line)
+			continue
+		}
+		if rest, ok := strings.CutPrefix(t, "# bough:uses"); ok {
+			if len(steps) == 0 {
+				return nil, fmt.Errorf("%s: bough:uses before the first bough:step", FileSetup)
+			}
+			files := strings.Fields(rest)
+			if len(files) == 0 {
+				return nil, fmt.Errorf("%s: step %s: bough:uses names no file", FileSetup, steps[len(steps)-1].Name)
+			}
+			for _, f := range files {
+				if path.IsAbs(f) || path.Clean(f) != f || f == "." || f == ".." || strings.HasPrefix(f, "../") {
+					return nil, fmt.Errorf("%s: step %s: bough:uses %q: want a clean repo-relative path", FileSetup, steps[len(steps)-1].Name, f)
+				}
+			}
+			steps[len(steps)-1].Uses = append(steps[len(steps)-1].Uses, files...)
+		}
+		if len(steps) == 0 {
+			preamble.WriteString(line)
+		} else {
+			body.WriteString(line)
+		}
+	}
+	if len(steps) == 0 {
+		return []Step{{Name: "setup", Script: text}}, nil
+	}
+	flush()
+	return steps, nil
+}
+
+// Lockfile is one declared file at its repo's base ref.
+type Lockfile struct {
+	Repo string // RepoName
+	Path string // repo-relative, slash-separated
+	Data []byte
+}
+
+// Rel is the file's place under /bough-setup/lock/.
+func (l Lockfile) Rel() string { return l.Repo + "/" + l.Path }
+
+// StepLockfiles resolves a step's `bough:uses` files in every repo that
+// tracks them at its base ref. A file no repo tracks is an error, unless
+// a remote repo is not cloned yet (it may be there).
+func StepLockfiles(home string, p Project, uses []string) ([]Lockfile, error) {
+	var out []Lockfile
+	for _, f := range uses {
+		found, unknown := false, false
+		for _, r := range p.Def.Repos {
+			gd := SourceGitDir(home, p.Slug, r)
+			if _, err := os.Stat(gd); err != nil {
+				unknown = true
+				continue
+			}
+			b, err := exec.Command("git", "-C", gd, "show", r.BaseRef()+":"+f).Output()
 			if err != nil {
 				continue
 			}
-			dst := filepath.Join(dir, r.RepoName(), filepath.FromSlash(lf))
-			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-				return nil, fmt.Errorf("projectdef: lockfiles: %w", err)
-			}
-			if err := os.WriteFile(dst, out, 0o644); err != nil {
-				return nil, fmt.Errorf("projectdef: lockfiles: %w", err)
-			}
-			paths = append(paths, dst)
+			found = true
+			out = append(out, Lockfile{Repo: r.RepoName(), Path: f, Data: b})
+		}
+		if !found && !unknown {
+			return nil, fmt.Errorf("%s: bough:uses %s: no repo tracks it at its base ref", FileSetup, f)
 		}
 	}
-	return paths, nil
-}
-
-// repoLockfiles lists the tracked files at ref named like a lockfile, at
-// any depth: a monorepo keeps web/bun.lock, bough keeps go/go.sum. The
-// list is sorted by git, so the hash is stable.
-func repoLockfiles(gitDir, ref string) []string {
-	out, err := exec.Command("git", "-C", gitDir, "ls-tree", "-r", "--name-only", ref).Output()
-	if err != nil {
-		return nil // no such ref (empty repo, unfetched branch): nothing to hash
-	}
-	var files []string
-	for _, f := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if f != "" && slices.Contains(LockfileNames, path.Base(f)) {
-			files = append(files, f)
-		}
-	}
-	return files
-}
-
-// withoutSecrets is project.yml with the secrets key removed, so adding a
-// secret never rebuilds the image. It is always re-marshaled, so a file
-// with and without secrets hashes alike; an unparseable one hashes as is.
-func withoutSecrets(y []byte) []byte {
-	d, err := Parse(y)
-	if err != nil {
-		return y
-	}
-	// Neither secrets nor identity mounts are part of the image.
-	d.Secrets, d.Identity = nil, nil
-	b, err := yaml.Marshal(d)
-	if err != nil {
-		return y
-	}
-	return b
+	return out, nil
 }
 
 // hashTree feeds every regular file under dir to field, by relative
-// path in walk (lexical) order.
-func hashTree(dir string, field func(string, []byte)) error {
+// path in walk (lexical) order, skipping project.yml and resume.sh unless
+// the Dockerfile text mentions them (a COPY would bake them in).
+func hashTree(dir, dockerfile string, field func(string, []byte)) error {
 	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || !d.Type().IsRegular() {
 			return err
 		}
+		rel, _ := filepath.Rel(dir, p)
+		if (rel == FileYAML || rel == FileResume) && !strings.Contains(dockerfile, rel) {
+			return nil
+		}
 		b, err := os.ReadFile(p)
 		if err != nil {
 			return err
-		}
-		rel, _ := filepath.Rel(dir, p)
-		if rel == FileYAML {
-			b = withoutSecrets(b)
 		}
 		field("ctx:"+filepath.ToSlash(rel), b)
 		return nil

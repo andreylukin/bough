@@ -114,9 +114,9 @@ func buildArgs(spec BuildSpec) []string {
 	return []string{"build", "-t", spec.Tag, "-f", file, "--progress", "plain", spec.Dir}
 }
 
-// Commit writes a temp context (setup.sh + Files) and a Dockerfile that
-// runs the script on the base, then builds it: 1.1.0 has no commit verb and
-// a build cannot see bind mounts, so files are copied in instead.
+// Commit writes a temp context and a Dockerfile with one COPY+RUN layer
+// per step (docs/orb-speed.md §2), then builds it: 1.1.0 has no commit
+// verb and a build cannot see bind mounts, so files are copied in instead.
 func (a *Apple) Commit(ctx context.Context, spec CommitSpec, log io.Writer) error {
 	dir, err := os.MkdirTemp("", "bough-commit-")
 	if err != nil {
@@ -130,22 +130,8 @@ func (a *Apple) Commit(ctx context.Context, spec CommitSpec, log io.Writer) erro
 }
 
 func writeCommitContext(dir string, spec CommitSpec) error {
-	if err := copyFile(spec.Script, filepath.Join(dir, "setup.sh")); err != nil {
-		return err
-	}
-	for _, f := range spec.Files {
-		// Keep <parent>/<name> so two repos' identical lockfile names don't collide.
-		rel := filepath.Join(filepath.Base(filepath.Dir(f)), filepath.Base(f))
-		if spec.FilesRoot != "" {
-			r, err := filepath.Rel(spec.FilesRoot, f)
-			if err != nil || strings.HasPrefix(r, "..") {
-				return fmt.Errorf("file %s is outside %s", f, spec.FilesRoot)
-			}
-			rel = r
-		}
-		if err := copyFile(f, filepath.Join(dir, rel)); err != nil {
-			return err
-		}
+	if len(spec.Steps) == 0 {
+		return fmt.Errorf("no setup steps")
 	}
 	base := spec.Base
 	if base == "" {
@@ -153,12 +139,28 @@ func writeCommitContext(dir string, spec CommitSpec) error {
 	}
 	var df strings.Builder
 	fmt.Fprintf(&df, "FROM %s\n", base)
-	for _, e := range spec.Env {
-		k, v, _ := strings.Cut(e, "=")
-		fmt.Fprintf(&df, "ENV %s=%s\n", k, strconv.Quote(v))
+	for i, st := range spec.Steps {
+		name := fmt.Sprintf("steps/%02d-%s.sh", i+1, st.Name)
+		if err := os.MkdirAll(filepath.Join(dir, "steps"), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), st.Script, 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintf(&df, "COPY %s /bough-setup/steps/\n", name)
+		for _, f := range st.Files {
+			r, err := filepath.Rel(spec.FilesRoot, f)
+			if err != nil || strings.HasPrefix(r, "..") {
+				return fmt.Errorf("file %s is outside %s", f, spec.FilesRoot)
+			}
+			rel := "lock/" + filepath.ToSlash(r)
+			if err := copyFile(f, filepath.Join(dir, rel)); err != nil {
+				return err
+			}
+			fmt.Fprintf(&df, "COPY %s /bough-setup/%s\n", rel, rel)
+		}
+		fmt.Fprintf(&df, "RUN %s\n", strings.Join(ScriptArgv(st.Script, "/bough-setup/"+name), " "))
 	}
-	script, _ := os.ReadFile(spec.Script)
-	fmt.Fprintf(&df, "COPY . /bough-setup\nRUN %s\n", strings.Join(ScriptArgv(script, "/bough-setup/setup.sh"), " "))
 	return os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(df.String()), 0o644)
 }
 
@@ -351,6 +353,69 @@ func parseInspect(out []byte) (State, error) {
 		return StateRunning, nil
 	}
 	return StateStopped, nil
+}
+
+// Images reads `container image list --format json`: the tag is
+// configuration.name (checked on 1.1.0 and 1.4.1).
+func (a *Apple) Images(ctx context.Context) ([]string, error) {
+	out, err := a.run(ctx, "image", "list", "--format", "json")
+	if err != nil {
+		return nil, err
+	}
+	return parseImageList(out)
+}
+
+func parseImageList(out []byte) ([]string, error) {
+	var items []struct {
+		Configuration struct {
+			Name string `json:"name"`
+		} `json:"configuration"`
+	}
+	if err := json.Unmarshal(out, &items); err != nil {
+		return nil, fmt.Errorf("container: apple: image list json: %w", err)
+	}
+	var tags []string
+	for _, it := range items {
+		if it.Configuration.Name != "" {
+			tags = append(tags, it.Configuration.Name)
+		}
+	}
+	return tags, nil
+}
+
+// ContainerImages reads `container list --all --format json`: the image
+// is configuration.image.reference (checked on 1.1.0 and 1.4.1).
+func (a *Apple) ContainerImages(ctx context.Context) ([]string, error) {
+	out, err := a.run(ctx, "list", "--all", "--format", "json")
+	if err != nil {
+		return nil, err
+	}
+	return parseContainerImages(out)
+}
+
+func parseContainerImages(out []byte) ([]string, error) {
+	var items []struct {
+		Configuration struct {
+			Image struct {
+				Reference string `json:"reference"`
+			} `json:"image"`
+		} `json:"configuration"`
+	}
+	if err := json.Unmarshal(out, &items); err != nil {
+		return nil, fmt.Errorf("container: apple: list json: %w", err)
+	}
+	var refs []string
+	for _, it := range items {
+		if r := it.Configuration.Image.Reference; r != "" {
+			refs = append(refs, r)
+		}
+	}
+	return refs, nil
+}
+
+func (a *Apple) RemoveImage(ctx context.Context, tag string) error {
+	_, err := a.run(ctx, "image", "delete", tag)
+	return err
 }
 
 func (a *Apple) CreateVolume(ctx context.Context, name string) error {

@@ -35,6 +35,11 @@ type Runtime interface {
 	Remove(ctx context.Context, name string) error // missing is nil
 	Inspect(ctx context.Context, name string) (State, error)
 	CreateVolume(ctx context.Context, name string) error // exists is nil
+	// Images lists every image tag; ContainerImages the image of every
+	// container, stopped ones included; RemoveImage deletes one tag.
+	Images(ctx context.Context) ([]string, error)
+	ContainerImages(ctx context.Context) ([]string, error)
+	RemoveImage(ctx context.Context, tag string) error
 }
 
 type BuildSpec struct {
@@ -43,18 +48,24 @@ type BuildSpec struct {
 	Tag        string
 }
 
+// CommitSpec is a setup-script build: one COPY+RUN layer per step, so
+// BuildKit's layer cache re-runs only the first changed step onward.
 type CommitSpec struct {
-	Base   string // generic base image, DefaultBase when empty
-	Script string // host path of the setup script
-	// Files are extra host files copied into the build context next to
-	// the script, as their base names under <parent dir>/<name>.
-	Files []string
-	// FilesRoot, when set, keeps each of Files at its path relative to
-	// it, so a subdirectory lockfile (<repo>/go/go.sum) neither loses
-	// its directory nor collides with another repo's.
+	Base  string // generic base image, DefaultBase when empty
+	Steps []Step
+	// FilesRoot is the host dir every Step.Files path lies under; each
+	// file lands at /bough-setup/lock/<path relative to it>.
 	FilesRoot string
-	Env       []string // becomes ENV lines
 	Tag       string
+}
+
+// Step is one layer: its declared files and script are copied in right
+// before its RUN. There are no ENV lines: project env reaches the
+// container at run and exec time, never the image.
+type Step struct {
+	Name   string // file-name safe; the script is steps/<nn>-<name>.sh
+	Script []byte // run with ScriptArgv
+	Files  []string
 }
 
 type Mount struct {

@@ -7,7 +7,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/andreylukin/bough/internal/container"
@@ -36,6 +38,10 @@ func ReadBuild(home, slug string) (Build, error) {
 }
 
 // EnsureImage builds the project's snapshot image when its tag is missing.
+// Builds are serialised per project by build.lock; a waiter re-hashes
+// under the lock (the definition may have changed while it waited), so N
+// sessions opened during one build cause one build. A waiter with a log
+// tails the running build's build.log into it.
 func EnsureImage(ctx context.Context, rt container.Runtime, home string, p projectdef.Project, log io.Writer) (string, error) {
 	hash, err := projectdef.ImageHash(home, p)
 	if err != nil {
@@ -51,13 +57,26 @@ func EnsureImage(ctx context.Context, rt container.Runtime, home string, p proje
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("orb: image %s: %w", tag, err)
 	}
+	stopTail := func() {}
+	if b, _ := ReadBuild(home, p.Slug); log != nil && b.State == "building" {
+		stopTail = tailFile(ImageLogPath(home, p.Slug), log)
+	}
 	unlock, err := lockFile(filepath.Join(dir, "build.lock"))
+	stopTail()
 	if err != nil {
 		return "", fmt.Errorf("orb: image %s: lock: %w", tag, err)
 	}
 	defer unlock()
-	// Re-check under the lock: a waiter whose peer just built must not
-	// truncate that peer's build.log or rebuild.
+	// Re-hash and re-check under the lock: a waiter whose peer just built
+	// must not truncate that peer's build.log or rebuild, and one whose
+	// definition was edited meanwhile builds the new hash, not the stale one.
+	if fresh, err := projectdef.Load(home, p.Slug); err == nil && fresh.Dir == p.Dir {
+		p = fresh
+	}
+	if hash, err = projectdef.ImageHash(home, p); err != nil {
+		return "", fmt.Errorf("orb: image %s: %w", p.Slug, err)
+	}
+	tag = projectdef.ImageTag(p.Slug, hash)
 	if ok, err := rt.ImageExists(ctx, tag); err != nil {
 		return "", fmt.Errorf("orb: image %s: %w", tag, err)
 	} else if ok {
@@ -91,18 +110,84 @@ func EnsureImage(ctx context.Context, rt container.Runtime, home string, p proje
 	if berr != nil {
 		return "", fmt.Errorf("orb: image %s: %w", tag, berr)
 	}
+	if err := pruneImages(ctx, rt, p.Slug, tag); err != nil {
+		fmt.Fprintf(w, "prune old images: %v\n", err)
+	}
 	return tag, nil
+}
+
+// pruneImages removes the project's tags other than keep that no
+// container, stopped or running, uses.
+func pruneImages(ctx context.Context, rt container.Runtime, slug, keep string) error {
+	if slug == "base" {
+		return nil // bough-orb/base:* is bough's own base image
+	}
+	tags, err := rt.Images(ctx)
+	if err != nil {
+		return err
+	}
+	used, err := rt.ContainerImages(ctx)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, t := range tags {
+		if t != keep && strings.HasPrefix(t, "bough-orb/"+slug+":") && !slices.Contains(used, t) {
+			errs = append(errs, rt.RemoveImage(ctx, t))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// tailFile copies path's content to w as it grows, from the start, until
+// the returned stop is called; stop copies what is left and returns once
+// the copier has finished.
+func tailFile(path string, w io.Writer) func() {
+	done, stopped := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(stopped)
+		var off int64
+		copyNew := func() {
+			f, err := os.Open(path)
+			if err != nil {
+				return
+			}
+			defer f.Close()
+			if fi, err := f.Stat(); err == nil && fi.Size() < off {
+				off = 0 // a new build truncated it
+			}
+			n, _ := io.Copy(w, io.NewSectionReader(f, off, 1<<62))
+			off += n
+		}
+		for {
+			select {
+			case <-done:
+				copyNew()
+				return
+			case <-time.After(200 * time.Millisecond):
+				copyNew()
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-stopped
+	}
 }
 
 func build(ctx context.Context, rt container.Runtime, home string, p projectdef.Project, tag string, w io.Writer) error {
 	if p.UsesDockerfile() {
 		return rt.Build(ctx, container.BuildSpec{Dir: p.Dir, Dockerfile: filepath.Join(p.Dir, projectdef.FileDockerfile), Tag: tag}, w)
 	}
-	script := filepath.Join(p.Dir, projectdef.FileSetup)
-	if _, err := os.Stat(script); err != nil {
+	text, err := os.ReadFile(filepath.Join(p.Dir, projectdef.FileSetup))
+	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("project %s has neither %s nor %s", p.Slug, projectdef.FileDockerfile, projectdef.FileSetup)
 		}
+		return err
+	}
+	steps, err := projectdef.ParseSteps(string(text))
+	if err != nil {
 		return err
 	}
 	tmp, err := os.MkdirTemp("", "bough-orb-lock-*")
@@ -110,17 +195,31 @@ func build(ctx context.Context, rt container.Runtime, home string, p projectdef.
 		return err
 	}
 	defer os.RemoveAll(tmp)
-	files, err := projectdef.Lockfiles(home, p, tmp)
-	if err != nil {
-		return err
+	spec := container.CommitSpec{FilesRoot: tmp, Tag: tag}
+	for _, s := range steps {
+		lfs, err := projectdef.StepLockfiles(home, p, s.Uses)
+		if err != nil {
+			return err
+		}
+		st := container.Step{Name: s.Name, Script: []byte(s.Script)}
+		for _, lf := range lfs {
+			dst := filepath.Join(tmp, filepath.FromSlash(lf.Rel()))
+			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(dst, lf.Data, 0o644); err != nil {
+				return err
+			}
+			st.Files = append(st.Files, dst)
+		}
+		spec.Steps = append(spec.Steps, st)
 	}
-	base := p.Def.Base
-	if base == "" {
-		if base, err = EnsureBase(ctx, rt, w); err != nil {
+	if spec.Base = p.Def.Base; spec.Base == "" {
+		if spec.Base, err = EnsureBase(ctx, rt, w); err != nil {
 			return err
 		}
 	}
-	return rt.Commit(ctx, container.CommitSpec{Base: base, Script: script, Files: files, FilesRoot: tmp, Env: envList(p.Def.Env), Tag: tag}, w)
+	return rt.Commit(ctx, spec, w)
 }
 
 // EnsureBase builds bough's embedded base image when its tag is missing.

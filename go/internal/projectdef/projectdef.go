@@ -37,7 +37,7 @@ type Def struct {
 	Checks Checks            `yaml:"checks,omitempty"`
 	LSP    []string          `yaml:"lsp,omitempty"`    // roots; parsed, unused this run
 	Base   string            `yaml:"base,omitempty"`   // setup-script base; "" = bough's base image (BaseTag)
-	Caches []string          `yaml:"caches,omitempty"` // guest dirs backed by named volumes
+	Caches []string          `yaml:"caches,omitempty"` // guest dirs bound to host dirs under ~/.bough/cache/<slug>
 	Env    map[string]string `yaml:"env,omitempty"`
 	// Secrets maps an env name to a ref (keychain:<service>); values never
 	// live in this file.
@@ -273,8 +273,10 @@ checks:
 
 const skeletonSetup = `#!/bin/sh
 # Runs once on the base image; the result is snapshotted as the orb image.
-# Repo lockfiles are copied next to this script as <repo>/<lockfile>.
+# "# bough:step <name>" starts a cached layer; "# bough:uses <file>" in a
+# step copies that repo file to /bough-setup/lock/<repo>/<file> first.
 set -e
+# bough:step apt
 apt-get update && apt-get install -y --no-install-recommends git ca-certificates
 `
 
@@ -331,6 +333,10 @@ func WriteFile(home, slug, name, text string) error {
 			return fmt.Errorf("projectdef: delete %s/%s: %w", slug, name, err)
 		}
 		return nil
+	} else if name == FileSetup {
+		if err := checkSetup(home, slug, text); err != nil {
+			return err
+		}
 	}
 	mode := os.FileMode(0o644)
 	if strings.HasSuffix(name, ".sh") {
@@ -338,6 +344,25 @@ func WriteFile(home, slug, name, text string) error {
 	}
 	if err := atomicWrite(path, []byte(text), mode); err != nil {
 		return fmt.Errorf("projectdef: write %s/%s: %w", slug, name, err)
+	}
+	return nil
+}
+
+// checkSetup rejects bad step markers and, when project.yml loads, a
+// `bough:uses` file no repo tracks.
+func checkSetup(home, slug, text string) error {
+	steps, err := ParseSteps(text)
+	if err != nil {
+		return fmt.Errorf("projectdef: %w", err)
+	}
+	p, err := Load(home, slug)
+	if err != nil {
+		return nil
+	}
+	for _, s := range steps {
+		if _, err := StepLockfiles(home, p, s.Uses); err != nil {
+			return fmt.Errorf("projectdef: %w", err)
+		}
 	}
 	return nil
 }

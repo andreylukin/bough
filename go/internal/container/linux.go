@@ -46,6 +46,11 @@ func (u Nerdctl) Inspect(context.Context, string) (State, error) {
 	return StateMissing, stubErr(u.label_())
 }
 func (u Nerdctl) CreateVolume(context.Context, string) error { return stubErr(u.label_()) }
+func (u Nerdctl) Images(context.Context) ([]string, error)   { return nil, stubErr(u.label_()) }
+func (u Nerdctl) ContainerImages(context.Context) ([]string, error) {
+	return nil, stubErr(u.label_())
+}
+func (u Nerdctl) RemoveImage(context.Context, string) error { return stubErr(u.label_()) }
 func (u Nerdctl) Command(ctx context.Context, _ string, _ ExecOptions, _ ...string) *exec.Cmd {
 	return stubCommand(ctx, u.label_())
 }
@@ -63,6 +68,11 @@ func (u Podman) Inspect(context.Context, string) (State, error) {
 	return StateMissing, stubErr(u.label_())
 }
 func (u Podman) CreateVolume(context.Context, string) error { return stubErr(u.label_()) }
+func (u Podman) Images(context.Context) ([]string, error)   { return nil, stubErr(u.label_()) }
+func (u Podman) ContainerImages(context.Context) ([]string, error) {
+	return nil, stubErr(u.label_())
+}
+func (u Podman) RemoveImage(context.Context, string) error { return stubErr(u.label_()) }
 func (u Podman) Command(ctx context.Context, _ string, _ ExecOptions, _ ...string) *exec.Cmd {
 	return stubCommand(ctx, u.label_())
 }
@@ -80,6 +90,11 @@ func (u Unsupported) Inspect(context.Context, string) (State, error) {
 	return StateMissing, stubErr(u.label_())
 }
 func (u Unsupported) CreateVolume(context.Context, string) error { return stubErr(u.label_()) }
+func (u Unsupported) Images(context.Context) ([]string, error)   { return nil, stubErr(u.label_()) }
+func (u Unsupported) ContainerImages(context.Context) ([]string, error) {
+	return nil, stubErr(u.label_())
+}
+func (u Unsupported) RemoveImage(context.Context, string) error { return stubErr(u.label_()) }
 func (u Unsupported) Command(ctx context.Context, _ string, _ ExecOptions, _ ...string) *exec.Cmd {
 	return stubCommand(ctx, u.label_())
 }

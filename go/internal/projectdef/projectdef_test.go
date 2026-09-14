@@ -144,13 +144,17 @@ func TestCreateListWrite(t *testing.T) {
 func TestImageHash(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	repo := newRepo(t, map[string]string{"go.sum": "v1\n", "main.go": "package main\n"})
+	repo := newRepo(t, map[string]string{"go.sum": "v1\n", "uv.lock": "u1\n", "main.go": "package main\n"})
 	p, err := Create(home, "h")
 	if err != nil {
 		t.Fatal(err)
 	}
 	yml := "repos:\n  - path: " + repo + "\n    branch: main\n"
 	if err := WriteFile(home, "h", FileYAML, yml); err != nil {
+		t.Fatal(err)
+	}
+	setup := "#!/bin/sh\nset -e\n# bough:step apt\ntrue\n# bough:step deps\n# bough:uses go.sum\ntrue\n"
+	if err := WriteFile(home, "h", FileSetup, setup); err != nil {
 		t.Fatal(err)
 	}
 	hash := func() string {
@@ -172,15 +176,30 @@ func TestImageHash(t *testing.T) {
 	if hash() != h0 {
 		t.Fatal("unstable")
 	}
+	// Run-time settings never rebuild.
 	if err := SetSecret(home, "h", "DEVPI_URL", "keychain:bough/h/DEVPI_URL"); err != nil {
 		t.Fatal(err)
 	}
+	for _, extra := range []string{
+		"checks: {fast: make}\n", "env: {A: b}\n", "identity: [.circleci]\n",
+		"cpus: 4\n", "memory: 8G\n", "caches: [/root/.cache/uv]\n", "lsp: [.]\n",
+	} {
+		if err := WriteFile(home, "h", FileYAML, yml+extra); err != nil {
+			t.Fatal(err)
+		}
+		if hash() != h0 {
+			t.Fatalf("%q moved the hash", extra)
+		}
+	}
+	WriteFile(home, "h", FileResume, "#!/bin/sh\necho resume\n")
 	if hash() != h0 {
-		t.Fatal("a secret moved the hash")
+		t.Fatal("resume.sh moved the hash")
 	}
 	WriteFile(home, "h", FileYAML, yml)
-	// Unrelated repo file and uncommitted lockfile edits do not rebuild.
+	// Unrelated repo files, uncommitted lockfile edits and lockfiles no
+	// step declares do not rebuild.
 	os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main // x\n"), 0o644)
+	os.WriteFile(filepath.Join(repo, "uv.lock"), []byte("u2\n"), 0o644)
 	git(t, repo, "commit", "-qam", "code")
 	os.WriteFile(filepath.Join(repo, "go.sum"), []byte("dirty\n"), 0o644)
 	if hash() != h0 {
@@ -189,25 +208,30 @@ func TestImageHash(t *testing.T) {
 	git(t, repo, "commit", "-qam", "lock")
 	h1 := hash()
 	if h1 == h0 {
-		t.Fatal("lockfile at branch head did not move the hash")
+		t.Fatal("declared lockfile at branch head did not move the hash")
 	}
-	WriteFile(home, "h", FileSetup, "#!/bin/sh\necho changed\n")
+	WriteFile(home, "h", FileSetup, setup+"echo changed\n")
 	h2 := hash()
 	if h2 == h1 {
 		t.Fatal("setup.sh did not move the hash")
 	}
-	WriteFile(home, "h", FileYAML, yml+"checks: {fast: make}\n")
+	WriteFile(home, "h", FileYAML, yml+"base: docker.io/library/debian:trixie\n")
 	h3 := hash()
 	if h3 == h2 {
-		t.Fatal("project.yml did not move the hash")
+		t.Fatal("base did not move the hash")
 	}
 	WriteFile(home, "h", FileDockerfile, "FROM debian\n")
 	h4 := hash()
 	if h4 == h3 {
 		t.Fatal("Dockerfile did not move the hash")
 	}
-	// The Dockerfile's build context is the whole project dir: a file it
-	// could COPY is an input.
+	// The Dockerfile's build context is the project dir minus project.yml
+	// and resume.sh.
+	WriteFile(home, "h", FileYAML, yml+"base: docker.io/library/debian:trixie\nchecks: {fast: make}\n")
+	WriteFile(home, "h", FileResume, "#!/bin/sh\necho other\n")
+	if hash() != h4 {
+		t.Fatal("project.yml or resume.sh moved the Dockerfile hash")
+	}
 	os.WriteFile(filepath.Join(p.Dir, "setup.sh"), []byte("#!/bin/sh\necho copied\n"), 0o644)
 	h5 := hash()
 	if h5 == h4 {
@@ -217,52 +241,73 @@ func TestImageHash(t *testing.T) {
 	if hash() == h5 {
 		t.Fatal("a new build-context file did not move the Dockerfile hash")
 	}
+	// A Dockerfile that COPYs resume.sh bakes it in, so it is an input.
+	WriteFile(home, "h", FileDockerfile, "FROM debian\nCOPY resume.sh /usr/local/bin/\n")
+	h6 := hash()
+	WriteFile(home, "h", FileResume, "#!/bin/sh\necho third\n")
+	if hash() == h6 {
+		t.Fatal("resume.sh named by the Dockerfile did not move the hash")
+	}
 	if ImageTag("h", h4) != "bough-orb/h:"+h4 {
 		t.Fatal("tag")
 	}
 }
 
-// Lockfiles below the repo root (go/go.sum, web/bun.lock) are hashed and
-// handed to setup at their paths.
-func TestSubdirLockfiles(t *testing.T) {
+func TestParseSteps(t *testing.T) {
+	t.Parallel()
+	plain := "#!/bin/bash\nset -e\napt-get update\n"
+	if s, err := ParseSteps(plain); err != nil || len(s) != 1 || s[0].Script != plain || s[0].Name != "setup" {
+		t.Fatalf("no markers = %+v, %v", s, err)
+	}
+	text := "#!/bin/bash\nset -e\n# bough:step apt\napt-get update\n# bough:step deps\n# bough:uses requirements.txt go/go.sum\nuv pip install\n"
+	s, err := ParseSteps(text)
+	if err != nil || len(s) != 2 {
+		t.Fatalf("steps = %+v, %v", s, err)
+	}
+	if s[0].Name != "apt" || s[0].Script != "#!/bin/bash\nset -e\n# bough:step apt\napt-get update\n" || len(s[0].Uses) != 0 {
+		t.Fatalf("step 1 = %+v", s[0])
+	}
+	if s[1].Name != "deps" || !strings.HasPrefix(s[1].Script, "#!/bin/bash\nset -e\n# bough:step deps\n") || strings.Join(s[1].Uses, ",") != "requirements.txt,go/go.sum" {
+		t.Fatalf("step 2 = %+v", s[1])
+	}
+	for _, bad := range []string{
+		"# bough:uses go.sum\n",
+		"# bough:step Bad Name\n",
+		"# bough:step a\n# bough:step a\n",
+		"# bough:step a\n# bough:uses ../x\n",
+		"# bough:step a\n# bough:uses /etc/passwd\n",
+		"# bough:step a\n# bough:uses\n",
+	} {
+		if _, err := ParseSteps(bad); err == nil {
+			t.Errorf("ParseSteps(%q) accepted", bad)
+		}
+	}
+}
+
+// A declared file must exist in a repo at its base ref, at any depth.
+func TestStepLockfiles(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	repo := newRepo(t, map[string]string{"README": "hi\n"})
-	for n, c := range map[string]string{"go/go.sum": "v1\n", "web/bun.lock": "b1\n"} {
-		os.MkdirAll(filepath.Join(repo, filepath.Dir(n)), 0o755)
-		os.WriteFile(filepath.Join(repo, n), []byte(c), 0o644)
-	}
+	os.MkdirAll(filepath.Join(repo, "go"), 0o755)
+	os.WriteFile(filepath.Join(repo, "go", "go.sum"), []byte("v1\n"), 0o644)
 	git(t, repo, "add", "-A")
 	git(t, repo, "commit", "-qm", "locks")
 	if _, err := Create(home, "m"); err != nil {
 		t.Fatal(err)
 	}
 	WriteFile(home, "m", FileYAML, "repos:\n  - path: "+repo+"\n    branch: main\n")
-	p, err := Load(home, "m")
-	if err != nil {
+	err := WriteFile(home, "m", FileSetup, "# bough:step deps\n# bough:uses go/nope.sum\ntrue\n")
+	if err == nil || !strings.Contains(err.Error(), "go/nope.sum") {
+		t.Fatalf("unknown file accepted: %v", err)
+	}
+	if err := WriteFile(home, "m", FileSetup, "# bough:step deps\n# bough:uses go/go.sum\ntrue\n"); err != nil {
 		t.Fatal(err)
 	}
-	h0, err := ImageHash(home, p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.WriteFile(filepath.Join(repo, "go", "go.sum"), []byte("v2\n"), 0o644)
-	git(t, repo, "commit", "-qam", "bump")
-	if h1, _ := ImageHash(home, p); h1 == h0 {
-		t.Fatal("subdirectory go.sum did not move the hash")
-	}
-	dir := t.TempDir()
-	files, err := Lockfiles(home, p, dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	name := filepath.Base(repo)
-	want := []string{filepath.Join(dir, name, "go", "go.sum"), filepath.Join(dir, name, "web", "bun.lock")}
-	if strings.Join(files, ",") != strings.Join(want, ",") {
-		t.Fatalf("lockfiles = %v, want %v", files, want)
-	}
-	if b, _ := os.ReadFile(want[0]); string(b) != "v2\n" {
-		t.Fatalf("go.sum = %q", b)
+	p, _ := Load(home, "m")
+	lfs, err := StepLockfiles(home, p, []string{"go/go.sum"})
+	if err != nil || len(lfs) != 1 || lfs[0].Rel() != filepath.Base(repo)+"/go/go.sum" || string(lfs[0].Data) != "v1\n" {
+		t.Fatalf("lockfiles = %+v, %v", lfs, err)
 	}
 }
 

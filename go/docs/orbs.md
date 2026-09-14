@@ -73,17 +73,20 @@ type BuildSpec struct {
 	Tag        string
 }
 
+// CommitSpec is a setup-script build with one COPY+RUN layer per step
+// (docs/orb-speed.md §2). No bind mounts: Apple 1.1.0 has no commit verb,
+// so Commit is a generated Dockerfile build, and a build cannot see mounts.
 type CommitSpec struct {
-	Base   string // generic base image, DefaultBase unless project.yml says otherwise
-	Script string // host path of the setup script, copied into the build context and run with sh
-	// Files are extra host files copied into the build context next to
-	// the script (the repos' lockfiles, as <repo>/<lockfile>) so setup
-	// can pre-install dependencies. No bind mounts: Apple 1.1.0 has no
-	// commit verb, so Commit is a generated Dockerfile build, and a
-	// build cannot see mounts.
-	Files []string
-	Env   []string // becomes ENV lines
-	Tag   string
+	Base      string // generic base image, DefaultBase unless project.yml says otherwise
+	Steps     []Step
+	FilesRoot string // every Step.Files path lies under it; lands at /bough-setup/lock/<rel>
+	Tag       string
+}
+
+type Step struct {
+	Name   string   // script is steps/<nn>-<name>.sh
+	Script []byte   // preamble + step body, run with ScriptArgv
+	Files  []string // the step's `bough:uses` files, COPYed right before its RUN
 }
 
 type Mount struct {
@@ -155,7 +158,8 @@ test and records the real shape in apple.go: `container image list --format json
 the `--mount type=volume` syntax (fallback `-v NAME:DST`), and that
 `--mount`/`-v` of a named volume works. There is NO commit verb in 1.1.0:
 Commit writes a temp context dir (setup.sh + Files) and a Dockerfile
-(`FROM base`, `ENV`, `COPY . /bough-setup`, `RUN <interpreter> /bough-setup/setup.sh`, the
+(`FROM base`, then per step `COPY steps/<nn>-<name>.sh`, `COPY lock/<repo>/<file>` for
+its declared files, `RUN <interpreter> /bough-setup/steps/<nn>-<name>.sh`; no `ENV`; the
 interpreter taken from the script's `#!` line, else `sh`; resume.sh runs the same way)
 and calls Build; documented in apple.go.
 Exec env: `container exec` does NOT inherit the host environment, so the
@@ -190,7 +194,7 @@ type Def struct {
 	Checks  Checks            `yaml:"checks,omitempty"`
 	LSP     []string          `yaml:"lsp,omitempty"`     // roots; parsed, unused this run
 	Base    string            `yaml:"base,omitempty"`    // setup-script base; "" = container.DefaultBase
-	Caches  []string          `yaml:"caches,omitempty"`  // guest dirs backed by named volumes, e.g. /root/.cache/go-build
+	Caches  []string          `yaml:"caches,omitempty"`  // guest dirs bound to ~/.bough/cache/<slug>/<sha>, e.g. /root/.cache/go-build
 	Env     map[string]string `yaml:"env,omitempty"`
 	Secrets map[string]string `yaml:"secrets,omitempty"` // env name -> keychain:<service>; refs only
 	CPUs    int               `yaml:"cpus,omitempty"`
@@ -226,22 +230,26 @@ func ReadFile(home, slug, name string) (string, error)   // missing => "", nil
 func WriteFile(home, slug, name, text string) error
 func Parse(b []byte) (Def, error)
 
-// ImageHash is sha256 over, in order: the Dockerfile OR setup.sh bytes
-// (whichever is used), project.yml bytes, Base, and for each repo in
-// order the bytes of any of LockfileNames found at the repo's root at
-// its resolved branch head (read from the host source checkout /
-// cached clone, never a worktree). Hex, first 12 chars.
+// ImageHash is sha256 over build inputs only (docs/orb-speed.md §1): Base
+// (or BaseTag); on the setup.sh path its bytes plus each step's
+// `# bough:uses` files at the repo's base ref (read from the host source
+// checkout / cached clone, never a worktree); on the Dockerfile path every
+// project dir file except project.yml and resume.sh. Hex, first 12 chars.
 func ImageHash(home string, p Project) (string, error)
-var LockfileNames = []string{"go.sum", "package-lock.json", "bun.lock", "bun.lockb", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "poetry.lock", "uv.lock", "requirements.txt", "Gemfile.lock"}
+// ParseSteps splits setup.sh on `# bough:step <name>`; the preamble before
+// the first marker is prepended to every step; no markers = one step.
+func ParseSteps(text string) ([]Step, error)
+// StepLockfiles resolves `bough:uses` files; a file no repo tracks is an error.
+func StepLockfiles(home string, p Project, uses []string) ([]Lockfile, error)
 func ImageTag(slug, hash string) string // "bough-orb/<slug>:<hash>"
 ```
 
 `Parse` validates `secrets`: names match `^[A-Za-z_][A-Za-z0-9_]*$`, refs
 are `keychain:<service>` (non-empty, at most 200 bytes, no whitespace or
 control characters), and a name can't be in both `env` and `secrets`.
-`ImageHash` hashes project.yml with `secrets` removed, so adding a secret
-never rebuilds the image (the re-marshal rebuilds every existing image
-once after upgrading); secrets never reach setup.sh or the Dockerfile.
+`ImageHash` does not read project.yml beyond `base`, so secrets, env,
+checks, identity, cpus, memory and caches never rebuild the image;
+secrets never reach setup.sh or the Dockerfile.
 `SetSecret(home, slug, name, ref)` sets one and drops a same-named env.
 See docs/secrets.md.
 
@@ -290,9 +298,11 @@ func ImageLogPath(home, slug string) string    // home/.bough/orbs/images/<slug>
 // slug across processes (serve's Build button and any number of
 // children) with a flock on images/<slug>/build.lock (unix; no-op lock
 // on windows). It re-checks ImageExists AFTER taking the lock and
-// returns without touching build.log/build.json when a waiter finds the
-// image already built; only the process that actually builds truncates
-// and writes build.log; also tees to
+// re-hashes (re-loading the definition) and returns without touching
+// build.log/build.json when a waiter finds that image already built; a
+// waiter with a log tails the running build.log into it; only the process that actually builds truncates
+// and writes build.log, and after success prunes bough-orb/<slug>:* tags
+// no container uses; also tees to
 // log when non-nil. Writes images/<slug>/build.json:
 // {"tag","hash","state":"building|ok|failed","startedAt","endedAt","error"}.
 func EnsureImage(ctx context.Context, rt container.Runtime, home string, p projectdef.Project, log io.Writer) (tag string, err error)
@@ -308,13 +318,14 @@ type Build struct {
 
 // Open prepares a session's orb: EnsureImage, worktrees (branch
 // "bough/<session>" off Repo.Branch; existing worktree reused on resume),
-// cache volumes "bough-cache-<slug>-<n>", Start with mounts
+// cache dirs ~/.bough/cache/<slug>/<sha256(guest path)[:10]> (host binds), Start with mounts
 // {each worktree, scratchDir} at identical paths — plus, for Path repos,
 // the source checkout's .git dir at its identical path, because a
 // worktree's .git FILE points at <source>/.git/worktrees/<name> and git
 // inside the container fails without it (remote repos: the cache .git
 // dir likewise) — then resume.sh (if any)
-// via Exec with output appended to Dir/resume.log. A resume.sh failure
+// via Exec with output appended to Dir/resume.log between start/end
+// lines carrying timestamps and duration. A resume.sh failure
 // marks Failed but returns the Orb usable (the agent can fix it).
 func Open(ctx context.Context, rt container.Runtime, home, session string, p projectdef.Project, scratchDir string) (*Orb, error)
 func (o *Orb) State() State
