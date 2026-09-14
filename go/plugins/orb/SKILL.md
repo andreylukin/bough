@@ -80,6 +80,20 @@ For each credential the repo expects (Makefile `ensure-*` targets,
 - If the user already has a keychain item:
   `bough project set <slug> secrets.NAME keychain:<service>`.
 
+## 5b. Host identity
+
+A project container gets none of the user's logins by default: no
+`GH_TOKEN`, no `~/.aws`, `~/.kube` or other CLI config. When the repo's
+checks or resume.sh need one, ask the user first, then:
+
+- `bough project add-identity <slug> gh` passes the host's `gh auth token`
+  as GH_TOKEN and sets git's GitHub credential helper.
+- `bough project add-identity <slug> .aws` mounts `~/.aws` read-only at
+  `/root/.aws`. Append `:rw` (`.kube:rw`) only for SSO or token caches
+  that must refresh in place.
+- `.ssh`, `.gnupg` and `.bough` are always refused. Remove one with
+  `bough project remove-identity <slug> <entry>`. It applies next session.
+
 ## 6. Checks
 
 `bough project set <slug> checks.fast "<cmd>"` and `checks.full`. Use the

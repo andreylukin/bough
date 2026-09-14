@@ -98,6 +98,23 @@ jobs:
             CGO_ENABLED=0 GOOS=$goos go vet ./...
           done
 
+  # dist/app.js is committed and go:embed-ed. A source change without a
+  # rebuild ships the old UI, so rebuild and require no diff.
+  web-dist:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go/internal/serve/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - name: dist/app.js matches a fresh build
+        run: git diff --exit-code --stat -- dist/app.js
+
   web-e2e:
     runs-on: ubuntu-latest
     strategy:

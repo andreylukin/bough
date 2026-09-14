@@ -27,7 +27,7 @@ bough in public.
 
 ## Enforcement
 
-Report to **luk.andrey@gmail.com**. Reports are handled privately and promptly, and the
+Report privately to the maintainers through GitHub (a private security advisory on the repository, or a direct message to a maintainer). Reports are handled privately and promptly, and the
 reporter's identity is protected.
 
 Maintainers may edit, remove, or reject any contribution that violates this document, and

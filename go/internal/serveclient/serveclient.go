@@ -33,7 +33,11 @@ func Addr(home string) (string, error) {
 	if err != nil || !servepid.Alive(pid) {
 		return "", ErrNoServe
 	}
-	return "http://" + addr, nil
+	base := "http://" + addr
+	if tok := ReadToken(home); tok != "" {
+		tokens.Store(base, tok)
+	}
+	return base, nil
 }
 
 // Client talks to one serve. Parent is the calling session: serve only
@@ -125,6 +129,9 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if tok, ok := tokens.Load(c.Base); ok {
+		req.Header.Set("Authorization", "Bearer "+tok.(string))
 	}
 	hc := c.HTTP
 	if hc == nil {

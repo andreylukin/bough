@@ -13,7 +13,7 @@ reported benchmark held out.
 - `evolve.py` — `baseline`, `iterate -n N`, `digest <job>`, `status`. One iteration: digest the
   best train run → the proposer (`claude -p`, Fable) edits ONE component with a prediction of
   which tasks flip → train k=2 → if train improved, val k=2 → keep only if val did not drop →
-  commit or revert. `state.json` and `iterations/` are the log.
+  commit or revert. Run records (`state.json`, `iterations/`) are local and gitignored.
 
 Cost: ~20 × 2 train + 15 × 2 val trials per kept iteration; at default effort ≈ $15, at
 xhigh ≈ 5×.

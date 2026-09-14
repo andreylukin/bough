@@ -193,7 +193,7 @@ func TestHeadlessJSONContract(t *testing.T) {
 
 	t.Run("ErrorOnStderrExitOne", func(t *testing.T) {
 		t.Parallel()
-		r := headlessJSONContractRun(t, headlessJSONContractTapeCfg(t, "headless_error.jsonl"),
+		r := headlessJSONContractRun(t, headlessJSONContractTapeCfg(t, "headless_error_unrecovered.jsonl"),
 			headlessJSONContractPrompt("run the build"))
 		headlessJSONContractCheck(t, r)
 		if r.code != 1 {

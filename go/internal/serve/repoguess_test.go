@@ -25,11 +25,11 @@ func TestRepoGroupsFromTouchedPaths(t *testing.T) {
 	// both must land in the same group rather than fragmenting.
 	f.seed(t, "01a00000-0000-7000-8000-0000000000a1",
 		history.Entry{Seq: 1, At: now, Kind: "meta", Data: map[string]any{"cwd": f.home}},
-		codeEntry(2, `tools.bash("cd repos/worktree/uni-svc.andrey-feature-one && git status")`),
+		codeEntry(2, `tools.bash("cd repos/worktree/api-svc.feature-one && git status")`),
 	)
 	f.seed(t, "01a00000-0000-7000-8000-0000000000a2",
 		history.Entry{Seq: 1, At: now, Kind: "meta", Data: map[string]any{"cwd": f.home}},
-		codeEntry(2, `tools.bash("cd repos/worktree/uni-svc.andrey-feature-two && make test")`),
+		codeEntry(2, `tools.bash("cd repos/worktree/api-svc.feature-two && make test")`),
 	)
 	f.seed(t, "01a00000-0000-7000-8000-0000000000b1",
 		history.Entry{Seq: 1, At: now, Kind: "meta", Data: map[string]any{"cwd": f.home}},
@@ -52,8 +52,8 @@ func TestRepoGroupsFromTouchedPaths(t *testing.T) {
 		n, _ := m["count"].(float64)
 		got[m["repo"].(string)] = int(n)
 	}
-	if got["uni-svc"] != 2 {
-		t.Errorf("uni-svc = %d, want 2 — two worktrees of one repo must group together (%v)", got["uni-svc"], got)
+	if got["api-svc"] != 2 {
+		t.Errorf("api-svc = %d, want 2 — two worktrees of one repo must group together (%v)", got["api-svc"], got)
 	}
 	if got["other-thing"] != 1 {
 		t.Errorf("other-thing = %d, want 1 (%v)", got["other-thing"], got)
@@ -122,12 +122,12 @@ func TestProjectFromSeveralRepos(t *testing.T) {
 			codeEntry(2, `tools.bash("cd repos/`+repo+` && ls")`),
 		)
 	}
-	seed("01a00000-0000-7000-8000-0000000000e1", "uni-fmds-prototype")
-	seed("01a00000-0000-7000-8000-0000000000e2", "uni-fmds-prototype-py")
+	seed("01a00000-0000-7000-8000-0000000000e1", "acme-api")
+	seed("01a00000-0000-7000-8000-0000000000e2", "acme-api-py")
 	seed("01a00000-0000-7000-8000-0000000000e3", "unrelated-thing")
 
 	code, body := f.do(t, "POST", "/api/projects/from-repo",
-		`{"repos":["uni-fmds-prototype","uni-fmds-prototype-py"],"name":"FMDS"}`)
+		`{"repos":["acme-api","acme-api-py"],"name":"Acme"}`)
 	if code != http.StatusOK {
 		t.Fatalf("POST = %d (%v)", code, body)
 	}
@@ -135,7 +135,7 @@ func TestProjectFromSeveralRepos(t *testing.T) {
 		t.Errorf("moved = %v, want both repos' sessions", body["moved"])
 	}
 	p, _ := body["project"].(map[string]any)
-	if p["name"] != "FMDS" {
+	if p["name"] != "Acme" {
 		t.Errorf("name = %v, want the name the caller gave, not a repo name", p["name"])
 	}
 	// The repo nobody picked is still on offer.
@@ -149,7 +149,7 @@ func TestProjectFromSeveralRepos(t *testing.T) {
 	if !left["unrelated-thing"] {
 		t.Error("an unpicked repo was filed too")
 	}
-	if left["uni-fmds-prototype"] || left["uni-fmds-prototype-py"] {
+	if left["acme-api"] || left["acme-api-py"] {
 		t.Error("a filed repo is still on offer")
 	}
 }

@@ -208,10 +208,10 @@ func (o *Orb) coreEnv() []string {
 
 // execEnv is passed on every exec because the engine does not inherit the
 // host environment: the base env, the user's identity and the proxy.
-// Project env comes last so a project can override any of it. Secrets
+// Project env comes last; projectdef refuses env names this sets. Secrets
 // go separately in ExecOptions.Secrets, so they never reach argv.
 func (o *Orb) execEnv(proxyURL string) []string {
-	env := append(o.coreEnv(), identityEnv()...)
+	env := append(o.coreEnv(), identityEnv(o.project.Def.Identity)...)
 	if proxyURL != "" {
 		env = append(env, proxyEnv(proxyURL)...)
 		env = append(env, "BOUGH_HOST="+proxyURL)

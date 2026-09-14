@@ -94,3 +94,36 @@ func TestClient(t *testing.T) {
 		t.Fatalf("404 = %v", err)
 	}
 }
+
+// A client built from Addr sends the install's token as a Bearer header.
+func TestClientSendsToken(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	tok, err := LoadToken(home)
+	if err != nil || tok == "" {
+		t.Fatalf("LoadToken = %q, %v", tok, err)
+	}
+	if again, _ := LoadToken(home); again != tok {
+		t.Fatalf("second LoadToken = %q, want %q", again, tok)
+	}
+	if fi, err := os.Stat(TokenPath(home)); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("token file = %v, %v", fi, err)
+	}
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("Authorization")
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	writePid(t, home, os.Getpid(), strings.TrimPrefix(srv.URL, "http://"))
+	base, err := Addr(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&Client{Base: base}).Agent(context.Background(), "x"); err != nil {
+		t.Fatal(err)
+	}
+	if got != "Bearer "+tok {
+		t.Fatalf("Authorization = %q", got)
+	}
+}

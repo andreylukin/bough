@@ -149,9 +149,17 @@ func TestHeadless(t *testing.T) {
 
 	t.Run("BlockErrorExitsNonZero", func(t *testing.T) {
 		t.Parallel()
-		r := headlessRun(t, "headless_error.jsonl", "run the build")
+		r := headlessRun(t, "headless_error_unrecovered.jsonl", "run the build")
 		if r.code == 0 {
-			t.Errorf("a turn whose block failed must exit non-zero:\n%s", r.screen())
+			t.Errorf("a turn that ends on a failed block must exit non-zero:\n%s", r.screen())
+		}
+	})
+
+	t.Run("RecoveredBlockErrorExitsZero", func(t *testing.T) {
+		t.Parallel()
+		r := headlessRun(t, "headless_error_recovered.jsonl", "run the build")
+		if r.code != 0 {
+			t.Errorf("a turn whose later block ran after the failure exits 0:\n%s", r.screen())
 		}
 		if !strings.Contains(r.stderr, "[error] ") || !strings.Contains(r.stderr, "headless-fixture-boom") {
 			t.Errorf("the failure must be reported on stderr as [error] ...:\n%s", r.screen())

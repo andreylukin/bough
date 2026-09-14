@@ -40,11 +40,11 @@ storybook-static/
 *.log
 
 # design-sync (claude.ai/design)
-.design-sync/sb-reference/
-.design-sync/learnings/
-.design-sync/.cache/
-.design-sync/node_modules
-.design-sync/*.log
+.design-sync/
 .ds-sync/
 ds-bundle/
 go/internal/serve/web/types/
+
+# Evolve run records: per-run logs and the loop state.
+bench/evolve/iterations/
+bench/evolve/state.json

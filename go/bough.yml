@@ -154,11 +154,6 @@
 #     service: llm-small
 #     model: z-ai/glm-5.3-flash
 
-#     days: 14              # only PRs updated this recently
-#     max_prs: 3            # per poll
-#     authors: ["@me"]      # whose PRs
-#     bots: [codex, devin, copilot, coderabbit, cursor, sourcery, graphite, greptile]
-
 - id: loop
   plugin: loop
   # config:
@@ -207,9 +202,6 @@
 - id: session-title
   plugin: session-title
 
-# Colors: a bundled palette by name (forest, forest_light, ansi,
-# tokyonight, catppuccin_mocha, gruvbox, nord, dracula); /theme lists
-# and switches live. init.js `ui.theme` tokens overlay the palette.
 # The local page server: one address where rows with a page to show
 # mount it — every artifact an agent publishes. The first bough process binds it; later ones
 # find it taken and point at the same pages (they are read from disk).
@@ -231,6 +223,9 @@
   # config:
   #   open: false          # do not open the browser on first publish
 
+# Colors: a bundled palette by name (forest, forest_light, ansi,
+# tokyonight, catppuccin_mocha, gruvbox, nord, dracula); /theme lists
+# and switches live. init.js `ui.theme` tokens overlay the palette.
 - id: theme
   plugin: theme
   config:

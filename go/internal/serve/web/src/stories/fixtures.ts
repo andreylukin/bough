@@ -172,7 +172,7 @@ export function installFakeApi(): void {
     [/^\/api\/sessions\/gone-parent$/, () => json({ error: "no such session" }, 404)],
     // The orb stories: a failed setup's log, and a build that keeps printing.
     [/^\/api\/sessions\/orb-failed\/orb\/log$/, () => json({ status: "failed", error: "resume.sh: exit status 1", image: "bough-orb/bough:3f9a2c71d0be",
-      text: "== resume.sh start 2026-09-14T19:03:45Z\nresume.sh: line 6: DEVPI_URL: Private DevPI index required\n== resume.sh end 2026-09-14T19:03:45Z duration 142ms: exit status 1\n" })],
+      text: "== resume.sh start 2026-09-14T19:03:45Z\nresume.sh: line 6: DEVPI_URL: package index URL required\n== resume.sh end 2026-09-14T19:03:45Z duration 142ms: exit status 1\n" })],
     [/^\/api\/sessions\/orb-building\/orb\/build\/log\?offset=\d+$/, () => {
       buildTick++;
       const text = buildTick === 1 ? "#6 [linux/arm64 2/9] RUN bash /bough-setup/steps/01-apt.sh\n" : `#6 ${(buildTick * 1.7).toFixed(1)} Setting up package ${buildTick}\n`;

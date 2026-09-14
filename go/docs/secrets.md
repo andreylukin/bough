@@ -85,7 +85,8 @@ var KeychainWrite = func(service, value string) error      // see below
 the later value wins:
 
 1. coreEnv (`HOME`, `TERM`, `BOUGH_SCRATCH`)
-2. identityEnv (`GH_TOKEN`, `GIT_CONFIG_*`, host prefixes)
+2. identityEnv (`GIT_CONFIG_*` author, `AWS_PROFILE`/region; `GH_TOKEN`
+   and the gh credential helper only when `identity:` lists `gh`)
 3. proxyEnv, `BOUGH_HOST`, `PATH`
 4. `envList(Def.Env)`
 5. **resolved secrets, sorted by name**
@@ -188,8 +189,10 @@ is acceptable.
 - Provided names:
   - `def.Env` and `def.Secrets`.
   - Core: `HOME TERM BOUGH_SCRATCH BOUGH_HOST PATH`.
-  - Identity: `GH_TOKEN`, and the prefixes `GIT_CONFIG_`, `AWS_`,
-    `GRAFANA_`. Copy the prefixes from `identityEnvPrefixes`, and keep a
+  - Identity: `GH_TOKEN`, and the prefixes `GIT_CONFIG_`, `AWS_PROFILE`,
+    `AWS_REGION`, `AWS_DEFAULT_REGION`. Nothing else is forwarded or
+    mounted unless project.yml `identity:` opts in (`gh`, `<dir>` read-only,
+    `<dir>:rw`). Copy the prefixes from `identityEnvPrefixes`, and keep a
     unit test that asserts the two lists match via an exported
     `iorb.IdentityEnvPrefixes` if one exists. Otherwise hardcode the list
     and leave a comment.

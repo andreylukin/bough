@@ -81,8 +81,8 @@ func (a *API) byRepo(w http.ResponseWriter, r *http.Request) {
 
 // projectFromRepo makes one project out of one or more repos. Several
 // on purpose: a project here is an area of work, not a repo. A person
-// with hundreds of repos has a handful of areas, and "uni-fmds-
-// prototype-py" is the name of a checkout, not the name of a thing you
+// with hundreds of repos has a handful of areas, and "acme-api-py"
+// is the name of a checkout, not the name of a thing you
 // are doing. The caller names it.
 func (a *API) projectFromRepo(w http.ResponseWriter, r *http.Request) {
 	var body struct {

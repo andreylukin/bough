@@ -10,7 +10,7 @@ import (
 )
 
 // proxy is the orb's way out through the host. Container traffic leaves
-// the Mac from a VM bridge, which per-app VPNs (Jamf Trust Private Access)
+// the Mac from a VM bridge, which per-app VPNs
 // do not tunnel, so internal hosts the user reaches are unreachable from
 // the guest. Pointing HTTPS_PROXY at this listener makes every connection
 // originate from the host process, with the user's network access.

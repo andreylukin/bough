@@ -132,7 +132,7 @@ const UNKNOWN = "Unknown repo";
 /**
  * A first guess at what a set of repos is called: what they share,
  * minus the organisation prefix every repo at a company carries. Two
- * "uni-fmds-*" repos suggest "fmds"; unrelated ones suggest nothing,
+ * "acme-*" repos suggest "acme"; unrelated ones suggest nothing,
  * because a wrong name is worse than an empty box.
  */
 export function suggestName(repos: string[]): string {

@@ -18,54 +18,68 @@ import (
 	"time"
 
 	"github.com/andreylukin/bough/internal/serve"
+	"github.com/andreylukin/bough/internal/serve/watch"
+	"github.com/andreylukin/bough/internal/serveclient"
 )
 
 // defaultServeAddr is the control API's own port: not 7683 (the
 // artifacts page server) and not 7681 (the web TUI), so the three can
-// run side by side. Loopback only — this phase has no auth.
+// run side by side. Loopback by default; anything else needs
+// --insecure-bind (see serveAddr).
 const defaultServeAddr = "127.0.0.1:7684"
 
 // serveArgs parses `bough serve` arguments, mirroring webArgs: no
 // args or an address starts (or attaches to) the daemon; "status" and
 // "stop" are their own verbs; the hidden "--run <addr>" is how the
-// detached child is told to be the server in the foreground. Pure.
-func serveArgs(args []string) (verb, addr string, err error) {
-	usage := "(usage: bough serve [addr|status|stop])"
+// detached child is told to be the server in the foreground.
+// --insecure-bind, anywhere, allows a non-loopback address. Pure.
+func serveArgs(all []string) (verb, addr string, insecure bool, err error) {
+	usage := "(usage: bough serve [--insecure-bind] [addr|status|stop])"
+	var args []string
+	for _, a := range all {
+		if a == "--insecure-bind" {
+			insecure = true
+			continue
+		}
+		args = append(args, a)
+	}
 	switch {
 	case len(args) == 0:
-		return "start", defaultServeAddr, nil
+		return "start", defaultServeAddr, insecure, nil
 	case args[0] == "--run":
 		switch len(args) {
 		case 1:
-			return "--run", defaultServeAddr, nil
+			return "--run", defaultServeAddr, insecure, nil
 		case 2:
-			a, aerr := serveAddr(args[1])
+			a, aerr := serveAddr(args[1], insecure)
 			if aerr != nil {
-				return "", "", aerr
+				return "", "", false, aerr
 			}
-			return "--run", a, nil
+			return "--run", a, insecure, nil
 		}
-		return "", "", fmt.Errorf("serve: --run takes at most one address, got %v %s", args[1:], usage)
+		return "", "", false, fmt.Errorf("serve: --run takes at most one address, got %v %s", args[1:], usage)
 	case len(args) > 1:
-		return "", "", fmt.Errorf("serve: takes at most one argument, got %v %s", args, usage)
+		return "", "", false, fmt.Errorf("serve: takes at most one argument, got %v %s", args, usage)
 	}
 	switch args[0] {
 	case "status", "stop":
-		return args[0], "", nil
+		return args[0], "", insecure, nil
 	case "start":
-		return "start", defaultServeAddr, nil
+		return "start", defaultServeAddr, insecure, nil
 	}
-	a, err := serveAddr(args[0])
+	a, err := serveAddr(args[0], insecure)
 	if err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
-	return "start", a, nil
+	return "start", a, insecure, nil
 }
 
 // serveAddr accepts host:port or a bare port; a bare port binds
-// loopback, never a wildcard, because the API is unauthenticated.
-func serveAddr(a string) (string, error) {
-	usage := "(usage: bough serve [addr|status|stop])"
+// loopback, never a wildcard. A non-loopback host (":7684" included)
+// is refused unless insecure: the API runs agents and writes hooks,
+// and a token is all that would stand between it and the network.
+func serveAddr(a string, insecure bool) (string, error) {
+	usage := "(usage: bough serve [--insecure-bind] [addr|status|stop])"
 	if strings.HasPrefix(a, "-") {
 		return "", fmt.Errorf("serve: unknown flag %s %s", a, usage)
 	}
@@ -74,6 +88,9 @@ func serveAddr(a string) (string, error) {
 			return fmt.Sprintf("127.0.0.1:%d", p), nil
 		}
 		return "", fmt.Errorf("serve: %q is not host:port or a port %s", a, usage)
+	}
+	if watch.CheckLoopback(a) != nil && !insecure {
+		return "", fmt.Errorf("serve: %s is not a loopback address; the API would be reachable from the network — pass --insecure-bind to do it anyway %s", a, usage)
 	}
 	return a, nil
 }
@@ -129,7 +146,7 @@ func writeServePidfile(home, addr string) func() {
 // launchServe starts `bin serve --run addr` detached (own session,
 // output appended to ~/.bough/serve.log) and returns its pid and log
 // path.
-func launchServe(home, bin, addr string) (int, string, error) {
+func launchServe(home, bin, addr string, insecure bool) (int, string, error) {
 	logPath := filepath.Join(home, ".bough", "serve.log")
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return 0, "", fmt.Errorf("serve: log dir: %w", err)
@@ -139,7 +156,11 @@ func launchServe(home, bin, addr string) (int, string, error) {
 		return 0, "", fmt.Errorf("serve: open %s: %w", logPath, err)
 	}
 	defer logF.Close()
-	cmd := exec.Command(bin, "serve", "--run", addr)
+	argv := []string{"serve", "--run", addr}
+	if insecure {
+		argv = append(argv, "--insecure-bind")
+	}
+	cmd := exec.Command(bin, argv...)
 	cmd.Stdout = logF
 	cmd.Stderr = logF
 	detach(cmd)
@@ -150,7 +171,7 @@ func launchServe(home, bin, addr string) (int, string, error) {
 }
 
 func runServe(args []string) {
-	verb, addr, err := serveArgs(args)
+	verb, addr, insecure, err := serveArgs(args)
 	if err != nil {
 		fatal(err)
 	}
@@ -187,7 +208,7 @@ func runServe(args []string) {
 		fmt.Printf("bough serve: stopped http://%s (pid %d)\n", w.addr, w.pid)
 		return
 	case "--run":
-		if err := serveForeground(home, addr); err != nil {
+		if err := serveForeground(home, addr, insecure); err != nil {
 			fatal(err)
 		}
 		return
@@ -203,7 +224,7 @@ func runServe(args []string) {
 		}
 		return
 	}
-	pid, logPath, err := launchServe(home, resolveExe(), addr)
+	pid, logPath, err := launchServe(home, resolveExe(), addr, insecure)
 	if err != nil {
 		fatal(err)
 	}
@@ -225,7 +246,15 @@ func runServe(args []string) {
 
 // serveForeground is the daemon body: supervisor + API on addr until
 // SIGINT/SIGTERM, then drain HTTP and kill every child.
-func serveForeground(home, addr string) error {
+func serveForeground(home, addr string, insecure bool) error {
+	remote := watch.CheckLoopback(addr) != nil
+	if remote {
+		fmt.Fprintf(os.Stderr, "bough serve: WARNING: %s is not loopback; the API is reachable from the network, guarded only by the token in %s\n", addr, serveclient.TokenPath(home))
+	}
+	token, err := serveclient.LoadToken(home)
+	if err != nil {
+		return fmt.Errorf("serve: %w", err)
+	}
 	if done := writeServePidfile(home, addr); done != nil {
 		defer done()
 	}
@@ -247,7 +276,7 @@ func serveForeground(home, addr string) error {
 		return fmt.Errorf("serve: listen %s: %w", addr, err)
 	}
 	api := serve.NewAPI(sup)
-	srv := &http.Server{Addr: addr, Handler: api}
+	srv := &http.Server{Addr: addr, Handler: serve.Guard(api, token, remote && insecure)}
 
 	// Watchers run for as long as the server does. They execute shell,
 	// so a server bound off loopback gets none — say why, rather than

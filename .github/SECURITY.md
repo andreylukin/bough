@@ -27,8 +27,8 @@ because that is exactly what happens.
 - **The browser UI.** `bough web` defaults to `localhost:7681` and is unauthenticated by
   design for the local user; anything that lets an *off-host* or cross-user party reach
   it, or that binds it wider than the address you asked for, is in scope. (Deliberately
-  serving it to a network is yours to front with auth — see [`deploy/`](../deploy) for how
-  this repo does it, over a tailnet.)
+  serving it to a network is yours to front with auth; `bough serve` needs `--insecure-bind`
+  for that and still requires its token.)
 - **Session and history integrity.** A path where the transcript, the session tree, or the
   history log can be made to misrepresent what actually ran.
 - **Supply chain.** A compromised or typosquatted dependency, or a build/release step that

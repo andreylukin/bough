@@ -254,7 +254,12 @@ func promptSection(root string, st iorb.State, def projectdef.Def, missing []str
 	checks := def.Checks
 	var b strings.Builder
 	fmt.Fprintf(&b, "Project session: %s. Your shell runs in a Linux container (%s); files under %s are shared with the host at the same paths.\n", st.Project, st.Container, root)
-	b.WriteString("The shell acts as the user: gh, git, aws, kubectl, helm, helmfile, sops, just, gcx and argocd use the user's own credentials, and network traffic leaves through the host, so internal hosts the user can reach work here too.\n")
+	if len(def.Identity) > 0 {
+		fmt.Fprintf(&b, "Host identity lent to this container: %s (dirs mounted at /root/<dir>, read-only unless :rw; gh = GH_TOKEN).\n", strings.Join(def.Identity, ", "))
+	} else {
+		b.WriteString("No host identity is lent to this container: no GH_TOKEN and no cloud or cluster config (~/.aws, ~/.kube, ...).\n")
+	}
+	fmt.Fprintf(&b, "If a command needs one of the user's logins, ask the user to allow it, then run \"bough project add-identity %s gh\" or \"... %s .aws\" (append :rw only for token caches that must refresh); it applies to the next session. Network traffic leaves through the host, so internal hosts the user can reach work here too.\n", st.Project, st.Project)
 	names := make([]string, 0, len(st.Worktrees))
 	for n := range st.Worktrees {
 		names = append(names, n)

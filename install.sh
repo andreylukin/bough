@@ -62,21 +62,26 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 say "downloading bough $VERSION for $os/$arch"
 fetch_to "$url" "$tmp/$asset" || die "download failed: $url"
 
-# Verify against the release's checksums when they are published and a
-# sha256 tool exists. A silently corrupt binary is worse than no binary.
-if checksums=$(fetch "https://github.com/$REPO/releases/download/$VERSION/checksums.txt" 2>/dev/null); then
+# Verify against the release's checksums. This fails closed: a missing
+# checksums.txt, a missing entry, no sha256 tool, or a mismatch aborts.
+# A silently corrupt or swapped binary is worse than no binary.
+# BOUGH_INSECURE_SKIP_CHECKSUM=1 skips the check, on your own say-so.
+if [ "${BOUGH_INSECURE_SKIP_CHECKSUM:-}" = 1 ]; then
+  say "WARNING: BOUGH_INSECURE_SKIP_CHECKSUM=1, not verifying $asset"
+else
+  checksums=$(fetch "https://github.com/$REPO/releases/download/$VERSION/checksums.txt") ||
+    die "could not fetch checksums.txt for $VERSION (set BOUGH_INSECURE_SKIP_CHECKSUM=1 to skip)"
   if command -v sha256sum >/dev/null 2>&1; then
     got=$(sha256sum "$tmp/$asset" | cut -d' ' -f1)
   elif command -v shasum >/dev/null 2>&1; then
     got=$(shasum -a 256 "$tmp/$asset" | cut -d' ' -f1)
   else
-    got=""
+    die "need sha256sum or shasum to verify the download (or BOUGH_INSECURE_SKIP_CHECKSUM=1)"
   fi
-  if [ -n "$got" ]; then
-    want=$(printf '%s\n' "$checksums" | grep " $asset\$" | cut -d' ' -f1)
-    [ -z "$want" ] || [ "$got" = "$want" ] || die "checksum mismatch for $asset"
-    [ -z "$want" ] || say "checksum ok"
-  fi
+  want=$(printf '%s\n' "$checksums" | grep " \*\{0,1\}$asset\$" | cut -d' ' -f1 | head -1)
+  [ -n "$want" ] || die "checksums.txt has no entry for $asset"
+  [ "$got" = "$want" ] || die "checksum mismatch for $asset (want $want, got $got)"
+  say "checksum ok"
 fi
 
 tar -xzf "$tmp/$asset" -C "$tmp" || die "could not unpack $asset"

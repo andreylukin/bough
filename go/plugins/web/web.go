@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -66,8 +67,20 @@ func (s *Service) Unhandle(pattern string) {
 	s.mux = nil
 }
 
-// ServeHTTP dispatches to the mounted routes.
+// ServeHTTP dispatches to the mounted routes. A request naming a Host
+// that is not this machine is refused (DNS rebinding: a foreign page
+// that re-points its name at 127.0.0.1 still sends its own Host), unless
+// the server was configured off loopback; a state-changing request from
+// another origin is always refused (CSRF).
 func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !loopbackHost(r.Host) && loopbackHost(s.addr) {
+		http.Error(w, "web: host is not loopback", http.StatusForbidden)
+		return
+	}
+	if crossOrigin(r) {
+		http.Error(w, "web: cross-origin request refused", http.StatusForbidden)
+		return
+	}
 	s.rmu.Lock()
 	if s.mux == nil {
 		s.mux = http.NewServeMux()
@@ -78,6 +91,35 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	mux := s.mux
 	s.rmu.Unlock()
 	mux.ServeHTTP(w, r)
+}
+
+// loopbackHost reports whether host (with or without a port) is
+// localhost, 127.0.0.0/8 or ::1.
+func loopbackHost(host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// crossOrigin: a non-GET/HEAD/OPTIONS request whose Origin is present
+// and is not the Host it was sent to.
+func crossOrigin(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+	o := r.Header.Get("Origin")
+	if o == "" {
+		return false
+	}
+	u, err := url.Parse(o)
+	return err != nil || u.Host == "" || !strings.EqualFold(u.Host, r.Host)
 }
 
 // URL is the server's address for the browser.

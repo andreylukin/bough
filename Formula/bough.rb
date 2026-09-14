@@ -18,8 +18,8 @@
 class Bough < Formula
   desc "Coding agent that acts by writing programs"
   homepage "https://github.com/andreylukin/bough"
-  url "https://github.com/andreylukin/bough/archive/refs/tags/v0.2.3.tar.gz"
-  sha256 "753c5a678444cbce393f03ec1add63a6ae1e53727d1ee24d269ccc6f73996d3f"
+  url "https://github.com/andreylukin/bough/archive/refs/tags/v0.2.6.tar.gz"
+  sha256 "44da7c94bea4946d38b5bbf239a483c4c29515c4a39007160912eba3c5ca96b8"
   license "Apache-2.0"
   head "https://github.com/andreylukin/bough.git", branch: "main"
 
@@ -30,7 +30,10 @@ class Bough < Formula
     # "dev" a checkout-less build would otherwise fall back to: `bough
     # --version` is the first thing a bug report quotes.
     ldflags = "-s -w -X main.version=v#{version}"
-    system "go", "build", *std_go_args(ldflags: ldflags), "./cmd/bough"
+    # The Go module lives under go/, not at the tarball root.
+    cd "go" do
+      system "go", "build", *std_go_args(ldflags: ldflags), "./cmd/bough"
+    end
   end
 
   def caveats

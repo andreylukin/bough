@@ -22,8 +22,7 @@ var (
 var providedEnv = map[string]bool{}
 
 // providedPrefixes is iorb's identity env (GIT_CONFIG_* from git config,
-// IdentityEnvPrefixes) plus BASH_*. A copied list flagged CIRCLECI_ and
-// ARGOCD_ names as missing and let every AWS_* name through.
+// IdentityEnvPrefixes) plus BASH_*, so the two lists never drift.
 var providedPrefixes = append([]string{"GIT_CONFIG_", "BASH_"}, iorb.IdentityEnvPrefixes...)
 
 func init() {

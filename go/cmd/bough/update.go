@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/andreylukin/bough/internal/serve/watch"
 	"github.com/andreylukin/bough/internal/servepid"
 )
 
@@ -105,7 +106,7 @@ func restartServe(home, bin string, out io.Writer) error {
 	}
 	os.Remove(servePidfile(home)) // best-effort; the exiting process usually removed it
 
-	pid, logPath, err := launchServe(home, bin, cur.addr)
+	pid, logPath, err := launchServe(home, bin, cur.addr, watch.CheckLoopback(cur.addr) != nil)
 	if err != nil {
 		return err
 	}

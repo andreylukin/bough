@@ -12,7 +12,7 @@ bough is a coding agent for the terminal. The model is given one tool:
 it writes a JavaScript program, bough runs it in an in-process goja VM
 where every `tools.*` call is a normal function, and whatever the
 program prints goes back to the model. Everything above the kernel —
-the LLM provider, the loop, the tools, the UI, history, memory, MCP,
+the LLM provider, the loop, the tools, the UI, history, MCP,
 hooks, skills — is a row in `bough.yml` that can be swapped, disabled,
 or hot-reloaded while a session runs.
 
@@ -46,12 +46,11 @@ The browser layer needs Node and a Chromium and is not part of
 `go test`:
 
 ```sh
-cd tests/web && npm ci && npx playwright install chromium && npm test
+cd go/tests/web && npm ci && npx playwright install chromium && npm test
 ```
 
-Do not run `bough update`, `bough restart`, or anything under `deploy/`
-while working on the tree: the first two replace the binary you are
-testing, and `deploy/` provisions a real droplet.
+Do not run `bough update` or `bough restart` while working on the tree:
+both replace the binary you are testing.
 
 ## Layout
 
@@ -62,7 +61,7 @@ testing, and `deploy/` provisions a real droplet.
 | `go/plugins/` | every behavior, one directory each; `example/` is the worked plugin from [`go/docs/PLUGINS.md`](go/docs/PLUGINS.md) |
 | `go/e2e/`, `go/internal/` | headless and PTY suites, shared LLM stubs, the real-terminal suite |
 | `go/tests/web/` | Playwright specs against real `bough --web` processes |
-| `go/docs/` | plugin authoring, the init.js API, the memory-graph design |
+| `go/docs/` | plugin authoring, the init.js API, orbs, secrets, loops, background agents |
 | `.githooks/` | the pre-commit and commit-msg checks (`./.githooks/install`) |
 
 ## Conventions this codebase follows

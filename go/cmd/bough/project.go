@@ -25,7 +25,7 @@ const projectUsage = `usage: bough project <command>
   create <slug> <repo>...               new project; a repo is a local path (~ ok) or a git remote
   add-repo <slug> <repo> [--branch B] [--name N]
   remove-repo <slug> <name>
-  add-identity <slug> <dir>             lend the container a $HOME config dir, e.g. .circleci (read-write at /root/<dir>)
+  add-identity <slug> <dir>             lend the container gh, or a $HOME config dir like .aws (read-only; <dir>:rw for read-write)
   remove-identity <slug> <dir>
   set <slug> <key> <value>              checks.fast, checks.full, base, memory, cpus, env.NAME,
                                         secrets.NAME keychain:<service>; "" clears

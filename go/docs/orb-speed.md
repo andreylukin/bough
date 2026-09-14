@@ -165,7 +165,7 @@ session in resume.sh against a shared cache when credentials are needed.
 
 Secrets never enter a layer. Build-time secrets (`--secret` +
 `RUN --mount=type=secret`) are NOT adopted now: a private Cargo registry
-token can be minted per session by a host cloud CLI, DevPI/Cargo index
+token can be minted per session by a host cloud CLI, private package index
 values are per-exec env, and baking private wheels would tie image
 validity to credential lifetimes. Revisit only if §2 check 3 passes AND a
 project has long-lived build credentials.

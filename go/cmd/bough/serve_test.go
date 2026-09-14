@@ -31,9 +31,14 @@ func TestServeArgs(t *testing.T) {
 		{[]string{"a", "b"}, "", "", true},
 		{[]string{"--run", "a", "b"}, "", "", true},
 		{[]string{"--run", "--port"}, "", "", true},
+		// Off loopback only with the explicit flag.
+		{[]string{"0.0.0.0:9000"}, "", "", true},
+		{[]string{":9000"}, "", "", true},
+		{[]string{"--insecure-bind", "0.0.0.0:9000"}, "start", "0.0.0.0:9000", false},
+		{[]string{"--run", "0.0.0.0:9000", "--insecure-bind"}, "--run", "0.0.0.0:9000", false},
 	}
 	for _, c := range cases {
-		verb, addr, err := serveArgs(c.in)
+		verb, addr, _, err := serveArgs(c.in)
 		if (err != nil) != c.bad || verb != c.verb || addr != c.addr {
 			t.Errorf("serveArgs(%v) = %q %q %v, want %q %q bad=%v", c.in, verb, addr, err, c.verb, c.addr, c.bad)
 		}

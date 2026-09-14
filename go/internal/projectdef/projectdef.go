@@ -42,8 +42,9 @@ type Def struct {
 	// Secrets maps an env name to a ref (keychain:<service>); values never
 	// live in this file.
 	Secrets map[string]string `yaml:"secrets,omitempty"`
-	// Identity lists extra $HOME-relative config dirs (".circleci") mounted
-	// read-write at /root/<dir>, on top of the built-in identity dirs.
+	// Identity opts the container into the user's host identity; nothing
+	// is lent by default. "<dir>" mounts $HOME/<dir> read-only at
+	// /root/<dir>, "<dir>:rw" read-write, and "gh" passes GH_TOKEN.
 	Identity []string `yaml:"identity,omitempty"`
 	CPUs     int      `yaml:"cpus,omitempty"`
 	Memory   string   `yaml:"memory,omitempty"`
@@ -113,6 +114,11 @@ func Parse(b []byte) (Def, error) {
 			return Def{}, fmt.Errorf("projectdef: %s: secrets.%s: also set in env", FileYAML, name)
 		}
 	}
+	for _, name := range slices.Sorted(maps.Keys(d.Env)) {
+		if reservedEnv(name) {
+			return Def{}, fmt.Errorf("projectdef: %s: env.%s: reserved env name (set by every exec)", FileYAML, name)
+		}
+	}
 	for _, dir := range d.Identity {
 		if err := CheckIdentity(dir); err != nil {
 			return Def{}, fmt.Errorf("projectdef: %s: identity: %w", FileYAML, err)
@@ -124,7 +130,7 @@ func Parse(b []byte) (Def, error) {
 var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // ReservedEnv is what every orb exec sets itself (core, identity, proxy);
-// a secret must not shadow it. BOUGH_ and GIT_CONFIG_ are reserved as
+// neither a secret nor env may shadow it. BOUGH_ and GIT_CONFIG_ are reserved as
 // prefixes.
 var ReservedEnv = []string{"HOME", "TERM", "PATH", "BOUGH_SCRATCH", "BOUGH_HOST", "GH_TOKEN",
 	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
@@ -135,17 +141,42 @@ func reservedEnv(name string) bool {
 	return slices.Contains(ReservedEnv, name) || strings.HasPrefix(name, "BOUGH_") || strings.HasPrefix(name, "GIT_CONFIG_")
 }
 
-// CheckIdentity accepts a clean $HOME-relative dir that is not a key store
-// or bough's own state: a project may lend its container a CLI's login,
-// never the user's SSH or GPG keys, nor ~/.bough (definitions, keys,
-// other sessions).
-func CheckIdentity(dir string) error {
-	if dir == "" || filepath.IsAbs(dir) || strings.HasPrefix(dir, "~") || filepath.Clean(dir) != dir || dir == "." || dir == ".." || strings.HasPrefix(dir, "../") {
-		return fmt.Errorf("%q: want a clean path relative to $HOME, like .circleci", dir)
+// IdentityGitHub is the identity entry that passes the host's GitHub
+// token (gh auth token) as GH_TOKEN.
+const IdentityGitHub = "gh"
+
+// IdentityDir splits a dir identity entry into its $HOME-relative dir
+// and whether it is read-write (":rw"); "gh" yields no dir.
+func IdentityDir(entry string) (dir string, rw bool) {
+	if entry == IdentityGitHub {
+		return "", false
+	}
+	dir, rw = strings.CutSuffix(entry, ":rw")
+	return dir, rw
+}
+
+// CheckIdentity accepts "gh" or a clean $HOME-relative dir, optionally
+// suffixed ":rw", that is not a key store or bough's own state: a project
+// may lend its container a CLI's login, never the user's SSH or GPG keys,
+// nor ~/.bough (definitions, keys, other sessions), nor a dir the host
+// runs code or reads tokens from (Library/LaunchAgents, ~/.local/bin,
+// ~/.config itself or its shell/git/gh config): a writable mount there
+// would let the container run code on the host.
+func CheckIdentity(entry string) error {
+	if entry == IdentityGitHub {
+		return nil
+	}
+	dir, _ := IdentityDir(entry)
+	if dir == "" || strings.Contains(dir, ":") || filepath.IsAbs(dir) || strings.HasPrefix(dir, "~") || filepath.Clean(dir) != dir || dir == "." || dir == ".." || strings.HasPrefix(dir, "../") {
+		return fmt.Errorf("%q: want gh, or a clean path relative to $HOME like .circleci (add :rw for read-write)", entry)
 	}
 	top := strings.SplitN(dir, "/", 2)[0]
-	if slices.Contains([]string{".ssh", ".gnupg", ".bough"}, top) {
-		return fmt.Errorf("%q: %s is never mounted into a project container", dir, top)
+	if slices.Contains([]string{".ssh", ".gnupg", ".bough", "Library", ".local", ".docker"}, top) {
+		return fmt.Errorf("%q: %s is never mounted into a project container", entry, top)
+	}
+	parts := strings.SplitN(dir, "/", 3)
+	if top == ".config" && (len(parts) == 1 || slices.Contains([]string{"fish", "git", "gh", "zsh", "bash", "nvim", "autostart", "systemd", "launchd"}, parts[1])) {
+		return fmt.Errorf("%q: mount a CLI's own dir under .config (like .config/gcloud), not shell, git or gh config", entry)
 	}
 	return nil
 }

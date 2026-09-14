@@ -5,39 +5,40 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/andreylukin/bough/internal/container"
+	"github.com/andreylukin/bough/internal/projectdef"
 )
 
-// A project session acts as the user: same cloud, cluster and GitHub
-// identity as their own shell. Credentials that live in files are mounted
-// read-write (SSO and kube token caches refresh in place, shared with the
-// host); the GitHub token lives in the macOS keychain, so it is read on
-// the host and passed in.
+// A project session gets none of the user's identity unless its
+// definition lists it (projectdef.Def.Identity): "<dir>" mounts
+// $HOME/<dir> read-only at /root/<dir>, "<dir>:rw" read-write (SSO and
+// kube token caches that refresh in place), and "gh" passes the host's
+// GitHub token, which lives in the macOS keychain, as GH_TOKEN.
 
-// identityDirs are $HOME-relative config dirs mounted at /root/<dir>.
-var identityDirs = []string{".aws", ".kube", ".config/gcx", ".config/argocd", ".config/gcloud", ".circleci"}
+// IdentityEnvPrefixes are host env vars passed through unchanged. They
+// select a profile or region, never carry a credential.
+var IdentityEnvPrefixes = []string{"AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION"}
 
-// IdentityEnvPrefixes are host env vars passed through unchanged.
-var IdentityEnvPrefixes = []string{"AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION", "GRAFANA_", "ARGOCD_", "CIRCLECI_", "LINEAR_"}
-
-// identityMounts are the built-in dirs plus the project's own identity
-// list (validated by projectdef), each mounted once, when present.
-func identityMounts(home string, extra []string) []container.Mount {
+// identityMounts are the project's identity dirs (validated by
+// projectdef), each mounted once, when present on the host.
+func identityMounts(home string, identity []string) []container.Mount {
 	var ms []container.Mount
 	seen := map[string]bool{}
-	for _, d := range append(append([]string(nil), identityDirs...), extra...) {
-		if seen[d] {
+	for _, entry := range identity {
+		d, rw := projectdef.IdentityDir(entry)
+		if d == "" || seen[d] {
 			continue
 		}
 		seen[d] = true
 		src := filepath.Join(home, d)
 		if fi, err := os.Stat(src); err == nil && fi.IsDir() {
-			ms = append(ms, container.Mount{Source: src, Target: filepath.Join("/root", d)})
+			ms = append(ms, container.Mount{Source: src, Target: filepath.Join("/root", d), ReadOnly: !rw})
 		}
 	}
 	return ms
@@ -78,15 +79,19 @@ func githubToken() string {
 	return ghToken.val
 }
 
-// identityEnv is the per-exec env that carries the user's identity.
-func identityEnv() []string {
+// identityEnv is the per-exec env that carries the user's identity: git
+// author and profile env always, GH_TOKEN only when identity lists "gh".
+func identityEnv(identity []string) []string {
 	var env []string
-	if t := githubToken(); t != "" {
-		env = append(env, "GH_TOKEN="+t)
-	}
 	// Git config through the environment: the host's gitconfig names
 	// macOS binaries, so it is not mounted.
-	cfg := [][2]string{{"credential.https://github.com.helper", ""}, {"credential.https://github.com.helper", "!gh auth git-credential"}}
+	var cfg [][2]string
+	if slices.Contains(identity, projectdef.IdentityGitHub) {
+		if t := githubToken(); t != "" {
+			env = append(env, "GH_TOKEN="+t)
+		}
+		cfg = append(cfg, [2]string{"credential.https://github.com.helper", ""}, [2]string{"credential.https://github.com.helper", "!gh auth git-credential"})
+	}
 	for _, k := range []string{"user.name", "user.email"} {
 		if v := hostCommand("git", "config", "--global", k); v != "" {
 			cfg = append(cfg, [2]string{k, v})

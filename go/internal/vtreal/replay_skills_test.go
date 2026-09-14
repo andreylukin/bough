@@ -80,7 +80,7 @@ func (a *app) skillsSay(s string) {
 func TestSkillsHeaderListsCatalogue(t *testing.T) {
 	t.Parallel()
 	a := skillsStart(t)
-	a.waitFor("skills: 3 (alpha, bravo, broken)")
+	a.waitFor("skills: 4 (alpha, bravo, broken, orb)")
 	a.check("skills header")
 }
 

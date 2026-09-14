@@ -360,18 +360,18 @@ own shell; it only isolates file changes.
   It carries gh, aws, kubectl, helm, helmfile, sops, just, gcx, argocd,
   uv and python3. `ImageHash` hashes the base tag, so editing the base
   rebuilds every project on it.
-- **File credentials**: `~/.aws`, `~/.kube`, `~/.config/gcx`,
-  `~/.config/argocd`, `~/.config/gcloud`, `~/.circleci` are bind-mounted
-  read-write at `/root/...` when present, so SSO and kube token caches stay
-  shared with the host. A project adds its own with `identity: [.foo]`
-  (`bough project add-identity <slug> .foo`); `.ssh`, `.gnupg` and
-  `.bough` are refused, and the list is not part of the image hash.
-- **Keychain credentials**: `GH_TOKEN` is the host's `gh auth token`
-  (cached 5 min), passed per exec, never in run env. Git gets
-  `credential.https://github.com.helper=!gh auth git-credential` and the
-  host's user.name/email through `GIT_CONFIG_*` env; the host gitconfig is
-  not mounted (it names macOS binaries). Host `AWS_PROFILE`/`AWS_REGION`
-  and `GRAFANA_*`/`ARGOCD_*`/`CIRCLECI_*`/`LINEAR_*` pass through.
+- **Host identity (opt-in)**: nothing from the host is lent by default.
+  A project lists what it needs in `identity:` (`bough project
+  add-identity <slug> gh|.aws|.kube:rw`). `gh` passes the host's
+  `gh auth token` as `GH_TOKEN` (cached 5 min, per exec, never in run env)
+  and sets `credential.https://github.com.helper=!gh auth git-credential`.
+  A `<dir>` entry bind-mounts `~/<dir>` read-only at `/root/<dir>`
+  (`<dir>:rw` for read-write). `.ssh`, `.gnupg`, `.bough`, `Library`,
+  `.local`, `.docker`, `.config` itself and its shell/git/gh config are
+  refused, and the list is not part of the image hash. The host's
+  user.name/email reach git through `GIT_CONFIG_*` env (the host gitconfig
+  is not mounted); host `AWS_PROFILE`/`AWS_REGION`/`AWS_DEFAULT_REGION`
+  pass through.
 - **Secrets**: project.yml `secrets:` maps env names to
   `keychain:<service>` refs (stored under account `bough`, read from any
   account). `internal/secrets` resolves them on the host (5 min cache,
@@ -382,7 +382,7 @@ own shell; it only isolates file changes.
   prints one (`env`, `echo $NAME`) lands in the tool result and history;
   nothing scrubs it. Asked secrets are stored as `bough/<slug>/<NAME>`.
   resume.log is on the host and is not scrubbed.
-- **Egress**: per-app VPNs (Jamf Trust Private Access) do not tunnel the
+- **Egress**: per-app VPNs (for example zero-trust access clients) do not tunnel the
   VM bridge, so the child runs an HTTP/CONNECT proxy on the guest's
   gateway IP (its resolv.conf nameserver) and sets `HTTPS_PROXY` and
   friends per exec. Stop closes it; a restart reopens it.

@@ -110,3 +110,31 @@ func TestUntrustedPeerGetsOwnPort(t *testing.T) {
 		}
 	}
 }
+
+func TestForeignHostAndCrossOriginRefused(t *testing.T) {
+	s := &Service{addr: "127.0.0.1:7683", routes: map[string]http.Handler{
+		"/x": http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
+	}}
+	cases := []struct {
+		method, host, origin string
+		want                 int
+	}{
+		{"GET", "127.0.0.1:7683", "", 200},
+		{"GET", "evil.example:7683", "", 403},
+		{"POST", "localhost:7683", "http://evil.example", 403},
+		{"POST", "localhost:7683", "http://localhost:7683", 200},
+		{"POST", "localhost:7683", "", 200},
+	}
+	for _, c := range cases {
+		req := httptest.NewRequest(c.method, "http://"+c.host+"/x", nil)
+		req.Host = c.host
+		if c.origin != "" {
+			req.Header.Set("Origin", c.origin)
+		}
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		if rec.Code != c.want {
+			t.Errorf("%s host=%s origin=%s = %d, want %d", c.method, c.host, c.origin, rec.Code, c.want)
+		}
+	}
+}

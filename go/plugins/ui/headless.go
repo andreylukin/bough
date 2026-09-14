@@ -224,7 +224,9 @@ func hlPrint(ev Event) {
 		// wiki ingest updated its pages and still exited 1).
 		hlTurnErr.Store(true)
 		hlLine(hlErr, "error", ev.Text, nil)
-	case "assistant", "code", "result":
+	case "result":
+		// Only a later block that ran counts as recovery; a reply that
+		// just gives up after the failure still ends the turn on it.
 		hlTurnErr.Store(false)
 		hlLine(hlOut, ev.Kind, ev.Text, nil)
 	default:
@@ -398,7 +400,7 @@ func hlAnswerPending(line string) bool {
 }
 
 // hlTurnErr is an error the running turn has not recovered from yet: set
-// by an "error" event, cleared by later progress, and turned into an
+// by an "error" event, cleared by a later block's result, and turned into an
 // errored run only if the turn's done arrives first.
 var hlTurnErr atomic.Bool
 

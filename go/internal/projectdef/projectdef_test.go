@@ -46,6 +46,8 @@ func TestParseValidate(t *testing.T) {
 		{"secret bad name", "repos:\n  - path: /x\nsecrets:\n  1X: keychain:a\n", "secrets.1X: bad env name"},
 		{"secret reserved", "repos:\n  - path: /x\nsecrets:\n  PATH: keychain:a\n", "secrets.PATH: reserved env name"},
 		{"secret reserved prefix", "repos:\n  - path: /x\nsecrets:\n  GIT_CONFIG_COUNT: keychain:a\n", "secrets.GIT_CONFIG_COUNT: reserved env name"},
+		{"env reserved", "repos:\n  - path: /x\nenv:\n  HTTPS_PROXY: http://evil\n", "env.HTTPS_PROXY: reserved env name"},
+		{"env reserved prefix", "repos:\n  - path: /x\nenv:\n  GIT_CONFIG_KEY_0: x\n", "env.GIT_CONFIG_KEY_0: reserved env name"},
 		{"secret scheme", "repos:\n  - path: /x\nsecrets:\n  X: vault:a\n", `secrets.X: unknown ref scheme "vault" (want keychain:)`},
 		{"secret empty", "repos:\n  - path: /x\nsecrets:\n  X: 'keychain:'\n", "secrets.X: bad keychain service"},
 		{"secret space", "repos:\n  - path: /x\nsecrets:\n  X: keychain:a b\n", "secrets.X: bad keychain service"},

@@ -767,7 +767,8 @@ commands:
   web       [addr] start the browser UI detached and open it (default
             localhost:7681); "web status" / "web stop"
   serve     [addr] start the session control API detached (default
-            127.0.0.1:7684); "serve status" / "serve stop"
+            127.0.0.1:7684; off loopback needs --insecure-bind);
+            "serve status" / "serve stop"
   loop      run <pipeline.yml> [--detach] | status [id] | stop <id>:
             agent and check nodes routed by exit codes (docs/loops.md)
 

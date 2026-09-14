@@ -260,7 +260,9 @@ func MissingKey(plugin, env string) error {
 		"      /connect %s <key>\n"+
 		"  or put it where bough reads it at boot:\n"+
 		"      mkdir -p ~/.bough && echo '%s=...' >> ~/.bough/env\n"+
-		"  /connect on its own lists every provider and which have a key.", plugin, env, providerName(plugin), env)
+		"  /connect on its own lists every provider and which have a key.\n"+
+		"  With no llm row in bough.yml, any of ANTHROPIC_API_KEY, OPENROUTER_API_KEY,\n"+
+		"  OPENAI_API_KEY or CEREBRAS_API_KEY works.", plugin, env, providerName(plugin), env)
 }
 
 // providerName is the short name /connect takes, derived from the
