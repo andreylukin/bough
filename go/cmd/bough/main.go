@@ -189,7 +189,7 @@ func (s configSource) describe() string {
 }
 
 // commands are the subcommands `bough <name>` dispatches to.
-var commands = map[string]bool{"rows": true, "sessions": true, "search": true, "log": true, "update": true, "restart": true, "web": true, "serve": true}
+var commands = map[string]bool{"rows": true, "sessions": true, "search": true, "log": true, "update": true, "restart": true, "web": true, "serve": true, "project": true}
 
 // command splits argv into the subcommand (if any) and its args. A
 // first arg that is neither a flag nor a known subcommand is an error
@@ -290,6 +290,9 @@ func main() {
 		return
 	case "serve":
 		runServe(args)
+		return
+	case "project":
+		runProject(args)
 		return
 	}
 	if pc, ok := kernel.FindCommand(cmd); ok && cmd != "" {

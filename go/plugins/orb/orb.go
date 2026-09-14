@@ -215,5 +215,6 @@ func promptSection(root string, st iorb.State, checks projectdef.Checks) string 
 	if checks.Full != "" {
 		fmt.Fprintf(&b, "Full check: %s\n", checks.Full)
 	}
+	fmt.Fprintf(&b, "This project's definition (repos, checks, env, setup.sh, resume.sh) is yours to change with \"bough project ... %s ...\" (no args for usage); it validates, and changes apply to the next session.\n", st.Project)
 	return strings.TrimRight(b.String(), "\n")
 }

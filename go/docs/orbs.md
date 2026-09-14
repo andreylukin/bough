@@ -452,7 +452,9 @@ type orbExec interface {
   same path) instead of os.TempDir. Process-group kill, timeout,
   WaitDelay stay as is (see the kill-semantics note in §1a).
   write/patch refuse paths outside `orb.Root()`, `$BOUGH_SCRATCH` and
-  `~/.bough/projects/<slug>` (the agent may edit its own project
+  `~/.bough/projects/<slug>` (the agent may edit its own project; any
+  session, local included, changes definitions through the validated
+  `bough project` CLI, which the guest's shim relays to the host
   definition) with an error naming the allowed roots; same "not ready"
   error when `orb` is absent.
 - Mode (`session-mode`, provided by main before any row mounts) is read

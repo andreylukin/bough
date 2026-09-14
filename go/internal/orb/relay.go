@@ -18,7 +18,8 @@ import (
 // the host's own bough and hands back its output.
 
 // relayedCommands are the bough subcommands the guest may run on the host.
-var relayedCommands = map[string]bool{"mcp": true}
+// project definitions live in the host's ~/.bough/projects.
+var relayedCommands = map[string]bool{"mcp": true, "project": true}
 
 // hostBough is the binary relayed calls run; tests swap it.
 var hostBough = func() (string, error) { return os.Executable() }
@@ -43,7 +44,7 @@ func relayExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(req.Args) == 0 || !relayedCommands[req.Args[0]] {
-		http.Error(w, "orb relay: only `bough mcp ...` runs on the host", http.StatusForbidden)
+		http.Error(w, "orb relay: only `bough mcp ...` and `bough project ...` run on the host", http.StatusForbidden)
 		return
 	}
 	bin, err := hostBough()
