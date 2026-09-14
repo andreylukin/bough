@@ -641,15 +641,26 @@ func render(name, code string, m meta) string {
 func (s *Store) serveIndex(w http.ResponseWriter) {
 	es := s.list("")
 	var b strings.Builder
-	b.WriteString(`<!doctype html><meta charset="utf-8"><title>artifacts</title><style>body{font:15px/1.5 system-ui,sans-serif;max-width:70ch;margin:3rem auto;padding:0 1rem;color:#1a1a1a;background:#fafaf7}@media(prefers-color-scheme:dark){body{color:#e6e4dd;background:#15161a}a{color:#9fc0ff}}h1{font-size:1rem;letter-spacing:.08em;text-transform:uppercase;font-family:ui-monospace,monospace}li{margin:.4rem 0}small{opacity:.6;font-family:ui-monospace,monospace;font-size:.8rem}</style><h1>artifacts</h1>`)
+	b.WriteString(indexHead)
+	fmt.Fprintf(&b, `<h1>Artifacts</h1><div class="bar"><input id="q" type="search" placeholder="Find an artifact" aria-label="Find an artifact" autocomplete="off"><span id="count" class="count" aria-live="polite">%d</span></div>`, len(es))
 	if len(es) == 0 {
-		b.WriteString("<p>nothing published yet.</p>")
+		b.WriteString(`<p class="empty">No artifacts published yet. An agent publishes one with tools.artifact.</p>`)
 	}
-	b.WriteString("<ul>")
+	b.WriteString(`<ul class="artifact-list" id="list">`)
 	for _, e := range es {
-		fmt.Fprintf(&b, `<li><a href="/artifacts/%s/%s">%s</a> <small>v%d · %s · %s</small></li>`, e.Session, e.Name, html(e.Name), e.Version, html(e.Session), html(e.Published))
+		short := e.Session
+		if len(short) > 8 {
+			short = short[:8]
+		}
+		when := e.Published
+		if t, err := time.Parse(time.RFC3339, e.Published); err == nil {
+			when = t.UTC().Format("2 Jan 2006, 15:04 UTC")
+		}
+		fmt.Fprintf(&b, `<li class="artifact-row"><div class="artifact-name"><a href="/artifacts/%s/%s">%s</a> <span class="version">v%d</span></div><button class="session" type="button" data-session="%s" title="Copy session %s" aria-label="Copy full session ID">%s</button><time datetime="%s">%s</time></li>`,
+			e.Session, e.Name, html(e.Name), e.Version, html(e.Session), html(e.Session), html(short), html(e.Published), html(when))
 	}
-	b.WriteString("</ul>")
+	b.WriteString(`</ul><p class="empty" id="none" hidden>No matching artifacts. <button type="button" id="clear">Clear search</button></p>`)
+	b.WriteString(indexScript)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(b.String()))
 }
@@ -658,12 +669,44 @@ func html(s string) string {
 	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;").Replace(s)
 }
 
+// indexHead and indexScript are the artifacts index: a searchable list,
+// newest first, with the same type and palette as the viewer.
+const indexHead = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Artifacts</title><style>
+:root{--paper:#faf9f5;--ink:#1c1b18;--muted:#5f5b52;--rule:#e6e2d8;--border:#b9b3a4;--card:#fff;--focus:#255eb6;--sans:system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;color-scheme:light dark}
+@media(prefers-color-scheme:dark){:root{--paper:#15161a;--ink:#e8e6df;--muted:#a6acb7;--rule:#30343c;--border:#667080;--card:#1c1e24;--focus:#9fc0ff}}
+*,*::before,*::after{box-sizing:border-box}html{background:var(--paper);color:var(--ink)}body{margin:0;font:15px/24px var(--sans);max-width:1120px;margin:0 auto;padding:24px 32px 40px}
+:where(a,button,input):focus-visible{outline:2px solid var(--focus);outline-offset:3px}
+h1{font:700 28px/34px var(--sans);letter-spacing:-.02em;margin:0}
+.bar{display:flex;align-items:center;gap:12px;margin-top:16px}
+#q{width:320px;max-width:100%;height:36px;padding:0 12px;font:14px var(--sans);color:var(--ink);background:var(--card);border:1px solid var(--border);border-radius:6px}
+.count{font:13px/20px var(--sans);color:var(--muted)}
+.artifact-list{list-style:none;padding:0;margin:16px 0 0}
+.artifact-row{display:grid;grid-template-columns:minmax(0,1fr) 112px 200px;gap:16px;align-items:center;min-height:56px;padding:10px 12px;border-bottom:1px solid var(--rule)}
+.artifact-name{font:600 15px/22px var(--sans);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.artifact-name a{color:var(--ink);text-decoration:none}.artifact-name a:hover{text-decoration:underline}
+.version{font:400 13px/20px var(--sans);color:var(--muted)}
+.session{font:13px/20px var(--mono);color:var(--muted);background:none;border:0;padding:0;cursor:pointer;text-align:left}
+.session:hover{color:var(--ink)}
+time{font:13px/20px var(--sans);color:var(--muted);white-space:nowrap;text-align:right}
+.empty{color:var(--muted);margin-top:16px}.empty button{font:inherit;color:inherit;text-decoration:underline;background:none;border:0;cursor:pointer}
+@media(max-width:640px){body{padding:16px 16px 32px}.artifact-row{grid-template-columns:1fr auto;gap:4px 12px}.artifact-name{grid-column:1/-1;white-space:normal;overflow-wrap:anywhere}time{text-align:right}#q{width:100%;height:44px;font-size:16px}}
+</style>`
+
+const indexScript = `<script>
+const q=document.getElementById('q'),rows=[...document.querySelectorAll('.artifact-row')],count=document.getElementById('count'),none=document.getElementById('none');
+const total=rows.length;const plural=n=>n+(n===1?' artifact':' artifacts');count.textContent=plural(total);
+function filter(){const t=q.value.trim().toLowerCase();let n=0;for(const r of rows){const hit=!t||r.textContent.toLowerCase().includes(t)||r.querySelector('.session').dataset.session.includes(t);r.hidden=!hit;if(hit)n++}count.textContent=t?n+' of '+plural(total):plural(total);if(none)none.hidden=!(t&&n===0)}
+if(q)q.oninput=filter;const c=document.getElementById('clear');if(c)c.onclick=()=>{q.value='';filter();q.focus()};
+for(const b of document.querySelectorAll('.session'))b.onclick=async()=>{try{await navigator.clipboard.writeText(b.dataset.session);const was=b.textContent;b.textContent='Copied';setTimeout(()=>b.textContent=was,1200)}catch(e){}};
+</script>`
+
 // PromptSection tells the model when a page earns its place and how
 // to write one. The language reference itself is behind
 // tools.artifactGuide(): long, and needed once.
 const PromptSection = `Artifacts — pages you publish for the user to read and act on in the browser: tools.artifact(name, code) -> URL.
 Make one when the user will scan, compare, keep or interact with the result: a comparison, a report, a dashboard, a plan, a form. Not for a short answer, and not to dress prose up — reply in text then.
 code is OpenUI Lang: one "name = Component(...)" statement per line, root = Card([...]) first, positional arguments, references to other statements, $variables for reactive state. Before your FIRST page in a session call tools.artifactGuide() and read the component signatures; do not guess them.
+Write it for someone deciding something fast. Order: CardHeader(human title, scope: environment, versions or time window); a lead TextContent(..., "large") of at most 45 words with the conclusion and its main limitation; the 3-5 numbers that matter with units and denominators; the comparison or evidence table; then detail. Keep paragraphs under 60 words; put qualifications in one TextCallout, the audit trail (method, sources, IDs) last. Say "not measured" or "not run" rather than leaving gaps. If the user must choose, put the Buttons right after the lead. Mark numeric columns Col(label, data, "number") and keep raw numbers in data (the page formats them).
 Example:
   root = Card([head, stats, tbl, ask])
   head = CardHeader("Embedded database comparison", "measured on this machine")

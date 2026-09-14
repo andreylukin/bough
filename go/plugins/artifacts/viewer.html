@@ -6,45 +6,117 @@
 <title>artifact</title>
 <link rel="stylesheet" href="/artifacts/_lib/openui-styles.css">
 <style>
-:root { --paper: #faf9f5; --ink: #1c1b18; --muted: #6b675e; --rule: #e6e2d8; --border: #cfcabc; --card: #ffffff; --good: #2f7a3e; --bad: #b3352b; --accent: #3b6d3a;
-  --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
-@media (prefers-color-scheme: dark) { :root { --paper: #15161a; --ink: #e8e6df; --muted: #a09c92; --rule: #2a2c33; --border: #3d404a; --card: #1c1e24; --good: #7fcf8b; --bad: #ef7b6f; --accent: #8fc98a; } }
+:root { --paper: #faf9f5; --ink: #1c1b18; --muted: #5f5b52; --rule: #e6e2d8; --border: #b9b3a4; --card: #ffffff; --good: #2f7a3e; --bad: #b3352b; --accent: #3b6d3a; --focus: #255eb6;
+  --warn-ink: #8a5a12; --warn-bg: #fff4df;
+  --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light dark; }
+@media (prefers-color-scheme: dark) { :root { --paper: #15161a; --ink: #e8e6df; --muted: #a6acb7; --rule: #30343c; --border: #667080; --card: #1c1e24; --good: #7fcf8b; --bad: #ef7b6f; --accent: #8fc98a; --focus: #9fc0ff;
+  --warn-ink: #e3b65f; --warn-bg: #282319; } }
+*, *::before, *::after { box-sizing: border-box; }
 html { background: var(--paper); color: var(--ink); }
-body { margin: 0; font: 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
-main { max-width: 960px; margin: 0 auto; padding: 32px 20px 72px; }
-.eyebrow { font: 600 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
-#root { margin-top: 12px; }
-.errors { margin-top: 18px; border-left: 3px solid var(--bad); background: var(--card); padding: 10px 14px; border-radius: 0 6px 6px 0; font: 13px/1.5 var(--mono); white-space: pre-wrap; }
+body { margin: 0; font: 15px/24px var(--sans); -webkit-font-smoothing: antialiased; }
+main { max-width: 1120px; margin: 0 auto; padding: 24px 32px 40px; }
+:where(a, button, input, textarea, select, summary, [tabindex]):focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+
+/* Utility row: where you are and what this is, quietly — the report owns the first real line. */
+.utility { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font: 13px/20px var(--sans); color: var(--muted); }
+.utility a, .utility button { color: inherit; }
+.utility .spacer { flex: 1; }
+.utility button { font: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+
+/* OpenUI renders a chat card; here it is a document. Only the outer Card loses its box. */
+#root { margin-top: 24px; }
+#root > div > .openui-card, #root .openui-card.openui-card-full:first-child { background: transparent; border: 0; border-radius: 0; box-shadow: none; padding: 0; gap: 24px; }
+#root { --openui-background: var(--paper); --openui-foreground: var(--ink); --openui-text-neutral-primary: var(--ink); --openui-text-neutral-secondary: var(--muted); --openui-border-default: var(--rule); --openui-font-body: var(--sans); --openui-font-heading: var(--sans); --openui-font-label: var(--sans); --openui-font-numbers: var(--sans); }
+#root .openui-card-full > .openui-header:first-child .openui-header-top-left { font: 700 28px/34px var(--sans); letter-spacing: -.02em; color: var(--ink); }
+#root .openui-card-full > .openui-header:first-child .openui-header-bottom { margin-top: 6px; font: 400 14px/20px var(--sans); color: var(--muted); }
+#root .openui-header .openui-header-top-left { font: 600 18px/24px var(--sans); }
+#root .openui-markdown-renderer { max-width: 76ch; font-size: 15px; line-height: 24px; color: var(--ink); }
+#root .openui-markdown-renderer p { margin: 0 0 12px; }
+#root .openui-markdown-renderer p:last-child { margin-bottom: 0; }
+#root .openui-markdown-renderer h1, #root .openui-markdown-renderer h2, #root .openui-markdown-renderer h3 { font: 600 18px/24px var(--sans); margin: 32px 0 8px; }
+#root .openui-markdown-renderer:first-child h2:first-child { margin-top: 0; }
+
+/* Tables: rules not stripes, compact rows, numbers right-aligned in tabular figures (see markNumbers). */
+#root .openui-scrollable-table-wrapper { border: 1px solid var(--rule); border-radius: 6px; background: transparent; box-shadow: none; }
+#root table.openui-table { font: 14px/20px var(--sans); }
+#root .openui-table-head { font: 600 13px/20px var(--sans); color: var(--ink); background: var(--card); padding: 8px 12px; text-align: left; }
+#root .openui-table-cell { padding: 8px 12px; border-top: 1px solid var(--rule); background: transparent; }
+#root .openui-table-row:nth-child(even) .openui-table-cell { background: transparent; }
+#root .openui-table-body .openui-table-row:hover .openui-table-cell { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+#root .num { text-align: right; font-variant-numeric: tabular-nums; }
+#root th.num .openui-table-head-content, #root th.num .openui-table-head-label { justify-content: flex-end; }
+/* The scroll arrow OpenUI puts over a wide table was a blank white square in dark mode. */
+#root .openui-scrollable-table-control { background: var(--card); color: var(--ink); border: 1px solid var(--border); border-radius: 6px; box-shadow: none; }
+#root .openui-scrollable-table-control-disabled { display: none; }
+/* Metric names and trace IDs are long unbroken words; they must not widen the page. */
+#root .openui-markdown-renderer, #root .openui-text-callout { overflow-wrap: anywhere; }
+
+/* Tabs: a real control, not faint words. */
+#root .openui-tabs-list { overflow-x: auto; scrollbar-width: thin; }
+#root .openui-tabs-trigger { min-height: 40px; padding: 0 12px; font: 600 14px/20px var(--sans); color: var(--muted); white-space: nowrap; }
+#root .openui-tabs-trigger[aria-selected="true"], #root .openui-tabs-trigger[data-state="active"] { color: var(--ink); box-shadow: inset 0 -2px var(--accent); }
+
+/* Callouts: the limitation reads as one, not as a garish title. */
+#root .openui-text-callout { padding: 12px 16px; border-left: 3px solid var(--border); border-radius: 4px; background: var(--card); max-width: 76ch; }
+#root .openui-text-callout-warning { border-left-color: var(--warn-ink); background: var(--warn-bg); }
+#root .openui-text-callout-warning > :first-child { color: var(--warn-ink); }
+#root .openui-text-callout > :first-child { font: 600 14px/20px var(--sans); }
+#root .openui-text-callout > :not(:first-child) { font: 14px/22px var(--sans); color: var(--ink); }
+
+.loading { color: var(--muted); font-size: 14px; }
+.errors { margin-top: 16px; border-left: 3px solid var(--bad); background: var(--card); padding: 10px 14px; border-radius: 0 6px 6px 0; font: 14px/20px var(--sans); }
 .errors[hidden] { display: none; }
-.errors b { color: var(--bad); }
-.ask { margin-top: 40px; background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; padding: 14px 16px 12px; max-width: 78ch; }
-.ask textarea { font: 14px var(--sans); padding: 7px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--paper); color: var(--ink); width: 100%; box-sizing: border-box; min-height: 64px; resize: vertical; margin-top: 10px; }
-.ask .row { margin-top: 10px; display: flex; gap: 10px; align-items: center; }
-.ask .send { font: 600 13px var(--sans); padding: 7px 14px; border: 0; border-radius: 4px; background: var(--ink); color: var(--paper); cursor: pointer; }
-.ask .send:disabled { opacity: .5; }
-.status { font: 12px var(--mono); color: var(--muted); } .status.ok { color: var(--good); }
-footer { margin-top: 48px; padding-top: 14px; border-top: 1px solid var(--rule); font: 12px var(--mono); color: var(--muted); display: flex; gap: 18px; flex-wrap: wrap; }
+.errors summary { cursor: pointer; font-weight: 600; color: var(--bad); }
+.errors pre { margin: 8px 0 0; font: 13px/20px var(--mono); white-space: pre-wrap; max-height: 240px; overflow: auto; }
+
+/* Note to bough: a quiet utility at the end, opened on demand. */
+.ask { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--rule); max-width: 76ch; }
+.ask summary { cursor: pointer; font: 600 14px/20px var(--sans); color: var(--muted); }
+.ask[open] summary { color: var(--ink); }
+.ask label { display: block; margin-top: 12px; font: 600 13px/20px var(--sans); }
+.ask .help { margin: 0; font: 13px/20px var(--sans); color: var(--muted); }
+.ask textarea { font: 14px/22px var(--sans); padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--ink); width: 100%; min-height: 96px; resize: vertical; margin-top: 8px; }
+.ask .row { margin-top: 10px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.ask .send { font: 600 14px/20px var(--sans); min-height: 36px; padding: 0 14px; border: 0; border-radius: 6px; background: var(--ink); color: var(--paper); cursor: pointer; }
+.ask .send:disabled { opacity: .5; cursor: default; }
+.status { font: 13px/20px var(--sans); color: var(--muted); } .status.ok { color: var(--good); } .status.bad { color: var(--bad); }
+footer { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--rule); font: 13px/20px var(--sans); color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; }
 footer a { color: inherit; }
-.reload { position: fixed; right: 16px; bottom: 16px; font: 12px var(--mono); background: var(--ink); color: var(--paper); padding: 6px 10px; border-radius: 4px; opacity: 0; transition: opacity .3s; pointer-events: none; }
-.reload.on { opacity: .9; }
+.reload { position: fixed; right: 16px; bottom: 16px; font: 13px/20px var(--sans); background: var(--ink); color: var(--paper); padding: 6px 10px; border-radius: 6px; opacity: 0; transition: opacity .3s; pointer-events: none; }
+.reload.on { opacity: .92; }
+@media (max-width: 640px) {
+  main { padding: 16px 16px 32px; }
+  #root { margin-top: 16px; }
+  #root .openui-card-full > .openui-header:first-child .openui-header-top-left { font-size: 24px; line-height: 30px; }
+  .ask textarea { font-size: 16px; }
+  button, summary, #root .openui-tabs-trigger { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) { .reload { transition: none; } }
 </style>
 </head>
 <body>
 <main>
-  <div class="eyebrow" id="eyebrow">artifact</div>
-  <div id="root"></div>
-  <div class="errors" id="errors" hidden></div>
-  <div class="ask">
-    <div class="eyebrow">note to the agent</div>
-    <textarea id="notetext" placeholder="Anything you want the agent to know about this page…"></textarea>
-    <div class="row"><button class="send" id="notesend">Send</button><span class="status" id="notestatus"></span></div>
-  </div>
-  <div class="reload" id="reload">updated</div>
+  <nav class="utility" aria-label="Artifact">
+    <a href="/artifacts/">← Artifacts</a>
+    <span class="spacer"></span>
+    <span id="version"></span>
+    <time id="when"></time>
+    <a id="raw">OpenUI source (.ui)</a>
+    <button type="button" id="notejump">Note to bough</button>
+  </nav>
+  <div class="errors" id="errors" role="alert" hidden></div>
+  <div id="root" aria-busy="true"><p class="loading">Loading artifact…</p></div>
+  <details class="ask" id="ask">
+    <summary>Note to bough</summary>
+    <label for="notetext">Message</label>
+    <p class="help">Saved to this session for bough. It does not edit the page.</p>
+    <textarea id="notetext"></textarea>
+    <div class="row"><button class="send" id="notesend" disabled>Send note</button><span class="status" id="notestatus" role="status" aria-live="polite"></span></div>
+  </details>
+  <div class="reload" id="reload" aria-live="polite">updated</div>
   <footer>
-    <span>AI-generated — verify before relying on it</span>
-    <span id="when"></span>
-    <a id="raw">source</a>
-    <a href="/artifacts/">all artifacts</a>
+    <span>Published by bough · AI-generated, verify before relying on it</span>
   </footer>
 </main>
 <script src="/artifacts/_lib/openui-bundle.min.js"></script>
@@ -57,26 +129,54 @@ async function post(path, body) {
   if (!r.ok) throw new Error('not saved');
   return r.json();
 }
-const status = (node, text, ok) => { node.textContent = text; node.className = 'status' + (ok ? ' ok' : ''); if (ok) setTimeout(() => { if (node.textContent === text) node.textContent = ''; }, 2500); };
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function flash(text) { const chip = $('reload'); chip.textContent = text; chip.classList.add('on'); setTimeout(() => chip.classList.remove('on'), 1800); }
+// "14 Sep 2026, 14:53 UTC": incident evidence on these pages is in UTC, so the stamp is too.
+function utc(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.toLocaleString('en-GB', {day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC'}) + ' UTC';
+}
+
+// OpenUI's Table has no numeric-column hook: a column whose every cell is a
+// plain number gets right alignment and tabular figures, and integers of four
+// or more digits get thousands separators. Decimals keep the agent's precision.
+const NUM = /^[−-]?\d[\d,]*(\.\d+)?%?$/;
+function markNumbers(scope) {
+  for (const table of scope.querySelectorAll('table.openui-table')) {
+    const rows = [...table.querySelectorAll('tbody tr')];
+    const heads = [...table.querySelectorAll('thead th')];
+    heads.forEach((th, i) => {
+      const cells = rows.map(r => r.children[i]).filter(Boolean);
+      const vals = cells.map(td => td.textContent.trim()).filter(v => v !== '' && v !== '—' && v !== 'null');
+      if (!vals.length || !vals.every(v => NUM.test(v))) return;
+      th.classList.add('num');
+      for (const td of cells) {
+        td.classList.add('num');
+        const v = td.textContent.trim();
+        if (/^[−-]?\d{4,}$/.test(v) && td.childElementCount === 0) td.textContent = Number(v.replace('−', '-')).toLocaleString('en-US');
+        if (v === 'null' && td.childElementCount === 0) td.textContent = '—';
+      }
+    });
+  }
+}
 
 let root = null, state = {}, stateTimer = null, lastErrors = '';
 function draw() {
   const { React, createRoot, Renderer, openuiChatLibrary } = window.__OpenUI;
   document.title = PAGE.name;
-  $('eyebrow').textContent = 'artifact · ' + PAGE.name + ' · v' + PAGE.version;
-  if (PAGE.published) $('when').textContent = new Date(PAGE.published).toLocaleString();
+  $('version').textContent = 'v' + PAGE.version;
+  if (PAGE.published) { $('when').textContent = 'Published ' + utc(PAGE.published); $('when').dateTime = PAGE.published; }
   $('raw').href = base + '.ui';
-  if (!root) root = createRoot($('root'));
+  if (!root) { $('root').textContent = ''; root = createRoot($('root')); }
   root.render(React.createElement(Renderer, {
     response: PAGE.code, library: openuiChatLibrary, isStreaming: false, initialState: state,
     onAction: async (e) => {
       // A button, a follow-up, a form submit: send it to the agent.
       if (e.type === 'open_url' && e.params && e.params.url) { window.open(e.params.url, '_blank', 'noopener'); return; }
       const value = {type: e.type, message: e.humanFriendlyMessage, form: e.formName || null, params: e.params || {}, formState: e.formState || null};
-      try { await post('/answers', {kind: 'action', value, state: e.formState || state}); flash('sent to the agent'); }
-      catch (err) { flash('not sent — is bough running?'); }
+      try { await post('/answers', {kind: 'action', value, state: e.formState || state}); flash('Saved for bough'); }
+      catch (err) { flash('Not saved — is bough running?'); }
     },
     onStateUpdate: (s) => {
       state = s || {};
@@ -87,7 +187,8 @@ function draw() {
       const box = $('errors');
       const list = errors || [];
       box.hidden = list.length === 0;
-      box.innerHTML = list.map(e => '<b>' + esc(e.code || e.source) + '</b> ' + (e.statementId ? esc(e.statementId) + ': ' : '') + esc(e.message || '') + (e.hint ? '\n  ' + esc(e.hint) : '')).join('\n');
+      box.innerHTML = list.length ? '<details><summary>Rendering issues: ' + list.length + (list.length === 1 ? ' section' : ' sections') + ' may be incomplete</summary><pre>' +
+        list.map(e => esc(e.code || e.source) + ' ' + (e.statementId ? esc(e.statementId) + ': ' : '') + esc(e.message || '') + (e.hint ? '\n  ' + esc(e.hint) : '')).join('\n') + '</pre></details>' : '';
       // Tell the agent, once per distinct report per version.
       const key = PAGE.version + ':' + JSON.stringify(list);
       if (key === lastErrors) return;
@@ -95,20 +196,34 @@ function draw() {
       post('/errors', {version: PAGE.version, errors: list}).catch(() => {});
     },
   }));
+  $('root').removeAttribute('aria-busy');
 }
 
 async function main() {
   if (!PAGE) return;
-  try { const r = await fetch(base + '/answers'); if (r.ok) { const a = await r.json(); state = a.state || {}; } } catch (e) {}
+  // Restore form state, but never let a slow server hold the page back.
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 1500);
+    const r = await fetch(base + '/answers', {signal: ctl.signal}); clearTimeout(t);
+    if (r.ok) { const a = await r.json(); state = a.state || {}; }
+  } catch (e) {}
+  if (!window.__OpenUI) { $('root').innerHTML = '<p class="loading">The renderer did not load. <a href="' + esc(base) + '.ui">Read the OpenUI source</a>.</p>'; return; }
   draw();
-  const note = $('notetext'), st = $('notestatus'), send = $('notesend');
-  send.onclick = async () => {
+  new MutationObserver(() => markNumbers($('root'))).observe($('root'), {childList: true, subtree: true});
+  markNumbers($('root'));
+
+  const note = $('notetext'), st = $('notestatus'), send = $('notesend'), ask = $('ask');
+  $('notejump').onclick = () => { ask.open = true; ask.scrollIntoView({block: 'nearest'}); note.focus(); };
+  note.oninput = () => { send.disabled = !note.value.trim(); if (st.classList.contains('ok')) { st.textContent = ''; st.className = 'status'; } };
+  const submit = async () => {
     if (!note.value.trim()) return;
-    send.disabled = true;
-    try { await post('/answers', {kind: 'note', value: note.value.trim()}); note.value = ''; status(st, 'sent to the agent', true); }
-    catch (e) { status(st, 'not sent — is bough running?'); }
-    finally { send.disabled = false; }
+    send.disabled = true; st.className = 'status'; st.textContent = 'Saving…';
+    try { await post('/answers', {kind: 'note', value: note.value.trim()}); note.value = ''; st.textContent = 'Saved to this session'; st.className = 'status ok'; }
+    catch (e) { st.textContent = 'Not saved — is bough running? Try again.'; st.className = 'status bad'; send.disabled = false; }
   };
+  send.onclick = submit;
+  note.onkeydown = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } };
+
   // Live reload: the server says "update" when the program changes.
   try {
     const es = new EventSource(base + '/events');
@@ -119,7 +234,7 @@ async function main() {
       PAGE.version += 1;
       lastErrors = '';
       draw();
-      flash('updated');
+      flash('Updated');
     });
   } catch (e) {}
 }
