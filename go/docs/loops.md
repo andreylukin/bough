@@ -484,7 +484,7 @@ go/skills/folder-index/evals/example.yml
 ## orb
 
 ```
-go/skills/orb/SKILL.md
+go/plugins/orb/SKILL.md
 ```
 
 - `name: orb`, `description:` with `/orb <slug>`, `manual: true`, no scripts.
@@ -494,7 +494,7 @@ go/skills/orb/SKILL.md
 ## Area B file list
 
 ```
-go/skills/orb/SKILL.md
+go/plugins/orb/SKILL.md
 go/skills/multi-model-plan/SKILL.md
 go/skills/multi-model-plan/preflight.sh
 go/skills/folder-index/SKILL.md

@@ -208,7 +208,7 @@ is acceptable.
 - `promptSection` signature becomes
   `promptSection(root string, st iorb.State, def projectdef.Def, missing []string) string`.
 
-## 7. /orb skill outline (skills/orb/SKILL.md, `manual: true`, script-free)
+## 7. /orb skill outline (plugins/orb/SKILL.md, embedded and written to ~/.bough/skills/orb by the orb row, `manual: true`, script-free)
 
 0. Install: `ln -s "$PWD/go/skills/orb" ~/.bough/skills/orb`.
 1. Inspect: `bough project show <slug>`, then read each repo's Makefile,
@@ -269,5 +269,5 @@ stubs.)
 
 **C: prompt, startup check, skill, docs**
 - plugins/orb/orb.go, plugins/orb/envcheck.go (new), plugins/orb/orb_test.go, envcheck_test.go
-- skills/orb/SKILL.md (new)
+- plugins/orb/SKILL.md (new; installed like plugins/wiki's llm-wiki skill)
 - docs/orbs.md, docs/loops.md

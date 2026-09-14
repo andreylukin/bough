@@ -6,7 +6,9 @@
 package orb
 
 import (
+	"bytes"
 	"context"
+	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -78,10 +80,35 @@ func runtimeFor(name string) (container.Runtime, error) {
 	return nil, fmt.Errorf("orb: runtime %q: want apple, nerdctl, podman or fake", name)
 }
 
+// skillMD is the /orb skill: how to populate a project definition. Like
+// llm-wiki it ships in the binary and is written to ~/.bough/skills on every
+// run (both modes: a local session sets projects up too), so it matches the
+// `bough project` CLI it describes.
+//
+//go:embed SKILL.md
+var skillMD []byte
+
+// installSkill writes the /orb skill under home, only when it changed.
+func installSkill(home string) error {
+	p := filepath.Join(home, ".bough", "skills", "orb", "SKILL.md")
+	if b, err := os.ReadFile(p); err == nil && bytes.Equal(b, skillMD) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(p, skillMD, 0o644)
+}
+
 func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	for k := range cfg {
 		if k != "runtime" {
 			return fmt.Errorf("orb: unknown config key %q", k)
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if err := installSkill(home); err != nil {
+			fmt.Fprintf(os.Stderr, "bough: orb: install /orb skill: %v\n", err)
 		}
 	}
 	if mode, _ := kernel.Get[string](ctx, "session-mode"); mode != "project" {
