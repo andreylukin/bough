@@ -46,7 +46,7 @@ type Node struct {
 	Holdout   []string      `yaml:"holdout"`
 	Verdict   bool          `yaml:"verdict"`
 	Run       string        `yaml:"run"` // check
-	Cwd       string        `yaml:"cwd"` // check: agent node name or path
+	Cwd       string        `yaml:"cwd"` // check or agent: agent node name (its worktree) or path
 	Timeout   time.Duration `yaml:"timeout"`
 	Next      string        `yaml:"next"`
 	Pass      string        `yaml:"pass"`

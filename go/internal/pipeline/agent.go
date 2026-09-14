@@ -31,9 +31,9 @@ func (r *Runner) childArgs(model string) []string {
 // newSession creates a loop child under a pre-minted id and pins its
 // model with an idempotent /model line, so a respawn without the args
 // still runs the same model.
-func (r *Runner) newSession(mode, slug, model string) (string, error) {
+func (r *Runner) newSession(cwd, mode, slug, model string) (string, error) {
 	id := history.NewID()
-	if _, err := r.opt.Sessions.Create(serve.CreateOptions{ID: id, Cwd: r.p.Dir, Mode: mode, Slug: slug, Args: r.childArgs(model), Origin: "loop"}); err != nil {
+	if _, err := r.opt.Sessions.Create(serve.CreateOptions{ID: id, Cwd: cwd, Mode: mode, Slug: slug, Args: r.childArgs(model), Origin: "loop"}); err != nil {
 		return "", err
 	}
 	if plugin, name, ok := strings.Cut(model, "/"); ok {
@@ -117,8 +117,14 @@ func (r *Runner) agent(ctx context.Context, n *Node, prompt, sdir string, res *r
 	id := r.st.Sessions[n.Name]
 	r.mu.Unlock()
 	if n.Session != "resume" || id == "" {
-		var err error
-		if id, err = r.newSession(n.Mode, n.Project, n.Model); err != nil {
+		// cwd: <node> starts a validator in the coder's worktree; without
+		// it a local node read the pipeline's original repo, not the edits.
+		cwd, err := r.checkDir(n)
+		if err != nil {
+			res.Route, res.Reason = n.Fail, "cwd: "+err.Error()
+			return res.Reason
+		}
+		if id, err = r.newSession(cwd, n.Mode, n.Project, n.Model); err != nil {
 			res.Route, res.Reason = n.Fail, "create: "+err.Error()
 			return res.Reason
 		}

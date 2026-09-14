@@ -53,6 +53,7 @@ nodes:
     mode: local
     model: llm-openai/gpt-6
     session: fresh
+    cwd: coder                   # start in the coder's worktree; without it the validator reads the original repo, not the edits
     holdout: [acceptance/*.md]   # globs, relative to the pipeline file's dir
     prompt: |
       Review the coder's diff against the acceptance criteria in {{holdout_dir}}.
@@ -286,6 +287,7 @@ type CreateOptions struct {
   5. Any pending ask fails the visit with reason `ask`: the runner polls `PendingAsk` every 2 s and, when an ask is pending, calls `Kill`. Loop nodes are unattended.
 - **Check visit** (`check.go`):
   - Runs `sh -c run` on the host with a timeout and the combined output. It does not use an orb exec.
+  - `cwd` works on agent nodes too: the session starts there, so a validator with `cwd: coder` reads the coder's edits (a project node's edits live only in its worktree, never in the original checkout).
   - `cwd: <agent>` resolves to that node's worktree: `~/.bough/orbs/<session>/<repo>` for project nodes, the pipeline dir for local nodes.
   - Env is `os.Environ()` plus `BOUGH_LOOP_RUN=<id>`.
   - Limit: checks run with the user's full privileges. They are written by the pipeline author, not by agents.

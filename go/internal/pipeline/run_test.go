@@ -239,6 +239,63 @@ nodes:
 	}
 }
 
+// A validator with cwd: coder starts in the coder's worktree. Without it
+// the demo on the work machine read the untouched original repo and
+// failed a correct fix three times.
+func TestAgentCwdIsCoderWorktree(t *testing.T) {
+	yml := `
+name: w
+start: coder
+nodes:
+  coder:
+    type: agent
+    mode: project
+    project: demo
+    session: resume
+    prompt: "fix"
+    next: validator
+    fail: fail
+    max_visits: 1
+  validator:
+    type: agent
+    cwd: coder
+    prompt: "check"
+    verdict: true
+    pass: done
+    fail: fail
+    max_visits: 1
+`
+	p, err := writePipeline(t, yml, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newFake(func(_, prompt string) string {
+		if prompt == "check" {
+			return "VERDICT: PASS"
+		}
+		return "done"
+	})
+	home := t.TempDir()
+	writeProject(t, home, "demo", "repos:\n  - remote: https://example.com/x.git\n")
+	r, err := NewRunner(p, Options{Home: home, Sessions: f})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := r.Run(context.Background()); st.Status != StatusPassed {
+		t.Fatalf("status = %s", st.Status)
+	}
+	if len(f.created) != 2 {
+		t.Fatalf("created %d sessions, want 2", len(f.created))
+	}
+	want := filepath.Join(home, ".bough", "orbs", f.created[0].ID, "x")
+	if got := f.created[1].Cwd; got != want {
+		t.Errorf("validator cwd = %s, want the coder's worktree %s", got, want)
+	}
+	if got := f.created[0].Cwd; got != p.Dir {
+		t.Errorf("coder cwd = %s, want the pipeline dir %s", got, p.Dir)
+	}
+}
+
 func TestRunLeakWithheld(t *testing.T) {
 	yml := `
 name: l
