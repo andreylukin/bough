@@ -22,6 +22,14 @@ export const Running: S = { args: { row: rows[0] } };
 export const WaitingForYou: S = { args: { row: rows[1] } };
 export const Done: S = { args: { row: rows[2] } };
 export const Archived: S = { args: { row: { ...rows[2], archived: true } } };
+/** A project session whose setup failed: "Why?" beside the orb chip opens the error and the end of resume.log, with Refresh and Rebuild image. */
+export const OrbSetupFailed: S = {
+  args: { row: { ...rows[2], id: "orb-failed", mode: "project", project: "p2", orb: { project: "bough", status: "failed" }, status: "done" } },
+};
+/** A project session waiting on its image: "Log" opens the live build output with a running timer, following the end. */
+export const OrbBuilding: S = {
+  args: { row: { ...rows[0], id: "orb-building", mode: "project", project: "p2", orb: { project: "bough", status: "building" } } },
+};
 
 export const Empty: S = {
   render: () => (

@@ -142,7 +142,7 @@ const card = (lines: typeof subTurn) => () => (
   </div>
 );
 
-/** Finished, with "1 step error · 3 code blocks not run" on its second line and View steps in the body. */
+/** Finished, with "1 step error · 3 later blocks skipped after a failure" on its second line and View steps in the body. */
 export const SubagentFinishedWithStepError: StoryObj = { decorators: [], render: card(subStates.finishedStepError) };
 /** Started, nothing recorded since: "Waiting for the first recorded step." */
 export const SubagentRunningNoSteps: StoryObj = { decorators: [], render: card(subStates.runningNoSteps) };

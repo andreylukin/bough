@@ -124,7 +124,7 @@ export const api = {
   sessionOrbLog: (id: string) => req<{ status: string; error: string; image: string; text: string }>(`/api/sessions/${id}/orb/log`),
   /** The image build a session waits on, from offset: poll while its orb is building. */
   sessionBuildLog: (id: string, offset: number) =>
-    req<{ text: string; offset: number; state: string; status: string }>(`/api/sessions/${id}/orb/build/log?offset=${offset}`),
+    req<{ text: string; offset: number; state: string; status: string; startedAt?: string; endedAt?: string }>(`/api/sessions/${id}/orb/build/log?offset=${offset}`),
   stopOrb: (id: string) => post(`/api/sessions/${id}/orb/stop`),
   unarchive: (id: string) => post(`/api/sessions/${id}/unarchive`),
 };

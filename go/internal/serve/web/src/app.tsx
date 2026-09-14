@@ -2387,16 +2387,20 @@ function OrbBuildLog({ id, project, onRebuild, rebuildErr }: { id: string; proje
   const [err, setErr] = useState("");
   const [done, setDone] = useState("");
   const [run, setRun] = useState(0); // bumped by Rebuild: poll the new build from the start
+  // The timer: build.json's start, and its end once the build stops.
+  const [span, setSpan] = useState<{ start?: number; end?: number }>({});
+  const now = useNow(!done && span.start !== undefined);
   const pre = useRef<HTMLPreElement>(null);
   const follow = useRef(true);
   useEffect(() => {
     let off = 0, stop = false;
-    setText(""); setDone("");
+    setText(""); setDone(""); setSpan({});
     const tick = async () => {
       try {
         const r = await api.sessionBuildLog(id, off);
         if (stop) return;
         setErr("");
+        setSpan({ start: r.startedAt ? Date.parse(r.startedAt) : undefined, end: r.endedAt ? Date.parse(r.endedAt) : undefined });
         // A smaller offset means a new build truncated the log.
         if (r.offset < off) setText(r.text); else if (r.text) setText((t) => t + r.text);
         off = r.offset;
@@ -2419,7 +2423,10 @@ function OrbBuildLog({ id, project, onRebuild, rebuildErr }: { id: string; proje
   const tail = lines.length > 2000 ? lines.slice(-2000).join("\n") : text;
   return (
     <div className="block orb-failure" role="region" aria-label={`${project} image build log`}>
-      <p className="meta-line">{done ? `Build ${done === "ok" ? "finished" : done} · new sessions use this image` : `Building the ${project} image…`}</p>
+      <p className="meta-line">
+        {done ? `Build ${done === "ok" ? "finished" : done} · new sessions use this image` : `Building the ${project} image…`}
+        {span.start !== undefined && <span className="num" role="timer" aria-label="Build time"> · {duration(Math.max(0, (done && span.end ? span.end : now) - span.start))}</span>}
+      </p>
       {err && <p className="send-failed-text" role="alert">Couldn’t read the build log: {err}</p>}
       {rebuildErr && <p className="send-failed-text" role="alert">Couldn’t start a rebuild: {rebuildErr}</p>}
       {done && onRebuild && <button className="link orb-rebuild" onClick={async () => { await onRebuild(); setRun((n) => n + 1); }}>Rebuild</button>}

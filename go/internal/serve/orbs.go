@@ -512,8 +512,9 @@ func (a *API) sessionBuildLog(w http.ResponseWriter, r *http.Request) {
 	}
 	home := a.sup.Home()
 	state := ""
+	var started, ended time.Time // the web's build timer
 	if b, err := orb.ReadBuild(home, st.Project); err == nil {
-		state = b.State
+		state, started, ended = b.State, b.StartedAt, b.EndedAt
 	}
 	// A build serve just started (Rebuild) is building before EnsureImage
 	// rewrites build.json; without this the poller read the last build's
@@ -531,7 +532,14 @@ func (a *API) sessionBuildLog(w http.ResponseWriter, r *http.Request) {
 		text = string(buf)
 		offset += int64(len(buf))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"text": text, "offset": offset, "state": state, "status": st.Status})
+	resp := map[string]any{"text": text, "offset": offset, "state": state, "status": st.Status}
+	if !started.IsZero() {
+		resp["startedAt"] = started
+	}
+	if !ended.IsZero() && state != "building" {
+		resp["endedAt"] = ended
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (a *API) sessionOrb(w http.ResponseWriter, r *http.Request) {

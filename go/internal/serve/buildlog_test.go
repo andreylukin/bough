@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,9 +25,17 @@ func TestSessionBuildLog(t *testing.T) {
 	if err := os.WriteFile(logPath, []byte("#1 apt-get update\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	started := time.Now().Add(-90 * time.Second).UTC().Truncate(time.Second)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(logPath), "build.json"), []byte(`{"tag":"t","hash":"h","state":"building","startedAt":"`+started.Format(time.RFC3339)+`"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	code, body := f.do(t, "GET", "/api/sessions/waiting/orb/build/log?offset=0", "")
 	if code != http.StatusOK || body["text"] != "#1 apt-get update\n" || body["status"] != "building" {
 		t.Fatalf("first read = %d %v", code, body)
+	}
+	// The web's timer counts from the build's start; no end while building.
+	if got, _ := time.Parse(time.RFC3339, fmt.Sprint(body["startedAt"])); !got.Equal(started) || body["endedAt"] != nil {
+		t.Errorf("startedAt = %v, endedAt = %v; want %v and none", body["startedAt"], body["endedAt"], started)
 	}
 	off := int(body["offset"].(float64))
 

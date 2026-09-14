@@ -138,6 +138,9 @@ export const models = {
  * server, so answer the two endpoints from the fixtures above and let
  * everything else fall through to the real fetch.
  */
+let buildTick = 0, buildOffset = 0;
+const buildStarted = new Date(Date.now() - 83_000).toISOString();
+
 export function installFakeApi(): void {
   const real = globalThis.fetch.bind(globalThis);
   const routes: Record<string, unknown> = {
@@ -167,6 +170,16 @@ export function installFakeApi(): void {
     [/^\/api\/sessions\/[^/]+\/jobs\/\d+\/kill$/, () => later(300, () => json({ ok: true }))],
     [/^\/api\/sessions\/[^/]+\/stop$/, () => later(300, () => json({ ok: true, was: "running" }))],
     [/^\/api\/sessions\/gone-parent$/, () => json({ error: "no such session" }, 404)],
+    // The orb stories: a failed setup's log, and a build that keeps printing.
+    [/^\/api\/sessions\/orb-failed\/orb\/log$/, () => json({ status: "failed", error: "resume.sh: exit status 1", image: "bough-orb/bough:3f9a2c71d0be",
+      text: "== resume.sh start 2026-09-14T19:03:45Z\nresume.sh: line 6: DEVPI_URL: Private DevPI index required\n== resume.sh end 2026-09-14T19:03:45Z duration 142ms: exit status 1\n" })],
+    [/^\/api\/sessions\/orb-building\/orb\/build\/log\?offset=\d+$/, () => {
+      buildTick++;
+      const text = buildTick === 1 ? "#6 [linux/arm64 2/9] RUN bash /bough-setup/steps/01-apt.sh\n" : `#6 ${(buildTick * 1.7).toFixed(1)} Setting up package ${buildTick}\n`;
+      buildOffset += text.length;
+      return json({ text, offset: buildOffset, state: "building", status: "building", startedAt: buildStarted });
+    }],
+    [/^\/api\/projects\/[^/]+\/orb\/build$/, () => later(300, () => json({ build: { state: "building" } }, 202))],
   ];
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.pathname : input.url;

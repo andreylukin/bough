@@ -2,6 +2,8 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { CodeBlock, Entry, JobBlock, ResultBlock, TurnView } from "../app";
 import { Markdown, groupTurns } from "../render";
 import { jobLegacyFailed, jobTyped0, jobTyped2, jobTypedNoExit, markdown, turn } from "./fixtures";
+import { ExecNote } from "../work-ui";
+import type { Line } from "../types";
 
 const meta: Meta = {
   title: "Transcript",
@@ -12,6 +14,17 @@ export default meta;
 
 /** One prompt and everything the agent did before it stopped. */
 export const Turn: StoryObj = { render: () => <TurnView turn={groupTurns(turn)[0]} /> };
+
+const at = new Date(Date.now() - 4 * 60_000).toISOString();
+const wakeLines: Line[] = [
+  { seq: 901, at, kind: "input", text: "[background job] A command you started in the background has finished while you were idle. Deal with it if it needs anything, then reply to the user with what happened.\n\njob 8 [failed] # bash \"$BOUGH_SCRATCH/setup.sh\" > \"$BOUGH_SCRATCH/setup.log\" 2>&1 … (1m37s): exit status 137" },
+  { seq: 902, at, kind: "assistant", text: "The setup job was killed (exit 137, out of memory). I'll rerun it with fewer parallel builds." },
+  { seq: 903, at, kind: "done", text: "" },
+];
+/** A turn a finished background job started: a notice with the job's row, not a prompt you typed. */
+export const JobWakeUp: StoryObj = { render: () => <TurnView turn={groupTurns(wakeLines)[0]} /> };
+/** A failing block ends the reply; the blocks after it were skipped, and the notice says why. */
+export const SkippedBlocksNotice: StoryObj = { render: () => <ExecNote note={{ notRun: 2, reason: "this block failed." }} /> };
 
 export const Reply: StoryObj = { render: () => <Entry line={turn[2]} codes={[turn[3].text]} /> };
 export const Thinking: StoryObj = { render: () => <Entry line={turn[1]} codes={[]} /> };
