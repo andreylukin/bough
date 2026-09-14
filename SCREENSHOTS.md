@@ -1,21 +1,15 @@
 # Screenshots
 
+Everything here is recorded by [scripts/demo](scripts/demo) against the same small repo with two failing tests, using a real model. Re-run the scripts to refresh them.
+
 ## Terminal UI
 
-A turn: the model reads, patches and tests a file. Each program collapses to a one-line header.
+One turn: bough runs the failing tests, reads the code, patches `TopN`, and runs the tests green.
 
-<p align="center"><img src="assets/screenshot-conversation.png" width="720" alt="bough transcript: reading, patching, and testing a Go file"></p>
-
-An expanded program block.
-
-<p align="center"><img src="assets/screenshot-program.png" width="720" alt="an expanded code block"></p>
-
-The `/` command palette.
-
-<p align="center"><img src="assets/screenshot-palette.png" width="720" alt="the slash-command palette"></p>
+<p align="center"><img src="assets/demo.gif" width="820" alt="bough fixing two failing Go tests in one turn"></p>
 
 ## Web control room (`bough serve`)
 
-Every session in a sidebar, grouped by repo, with the open conversation beside it.
+A screenshot pasted into the composer goes to the model as an image.
 
-<p align="center"><img src="assets/screenshot-web.png" width="720" alt="the bough serve web control room"></p>
+<p align="center"><img src="assets/web-image.png" width="820" alt="a session started from a pasted image"></p>

@@ -1,82 +1,93 @@
-<p align="center"><img src="assets/logo-512.png" width="128" alt="bough logo"></p>
+<p align="center"><img src="assets/logo-512.png" width="112" alt="bough logo"></p>
 
 # bough
 
-**A coding agent that acts by writing programs, where everything is a plugin.**
+**A terminal coding agent where the model writes one program instead of calling tools one at a time.**
 
 [![ci](https://github.com/andreylukin/bough/actions/workflows/ci-go.yml/badge.svg)](https://github.com/andreylukin/bough/actions/workflows/ci-go.yml)
 [![release](https://img.shields.io/github/v/release/andreylukin/bough)](https://github.com/andreylukin/bough/releases/latest)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-The model has one tool: it writes JavaScript, bough runs it, and what the program prints goes back. A read, an edit and a test run can happen in one round trip. Everything else — the LLM provider, the loop, the tools, the UI, MCP, hooks, skills — is a row in a YAML config you can swap or hot-reload mid-session.
+<p align="center"><img src="assets/demo.gif" width="820" alt="bough fixing two failing Go tests in one turn"></p>
 
-<p align="center"><img src="assets/screenshot-conversation.png" width="720" alt="bough transcript: reading, patching, and testing a Go file"></p>
+## What's different
 
-More in [SCREENSHOTS.md](SCREENSHOTS.md).
+- **Code mode.** The model acts by writing JavaScript in a ```` ```js ```` block, which bough runs; what it prints goes back to the model. `tools.view`, `tools.patch`, `tools.bash`, `tools.spawn` and every MCP tool are ordinary functions inside it. A patch and the test run that checks it can be one step, and the model branches on results in code rather than in another round trip.
 
-> [!WARNING]
-> There is no isolation boundary. Agent programs run as you, with your full authority.
+  Here is one step from a recording of this demo, verbatim as `openai/gpt-6-astra` wrote it: patch, format, test and review the diff, in one program.
 
-## Install
+  ```js
+  console.log(tools.patch("wordfreq.go",
+  "\tsort.Slice(all, func(i, j int) bool { return all[i].N > all[j].N })\n\treturn all[:n]",
+  "\tsort.Slice(all, func(i, j int) bool {\n\t\tif all[i].N == all[j].N {\n\t\t\treturn all[i].Word < all[j].Word\n\t\t}\n\t\treturn all[i].N > all[j].N\n\t})\n\tif n > len(all) {\n\t\tn = len(all)\n\t}\n\treturn all[:n]"));
+  console.log(tools.bash("gofmt -w wordfreq.go; go test ./...; git diff --check; git diff -- wordfreq.go"));
+  ```
 
-macOS and Linux, x86-64 and arm64. One static binary.
+- **Everything is a plugin.** The provider, the loop, the tools, the UI, MCP, hooks and skills are rows in a YAML file. Swap one, disable one, or save the file mid-session and the running process reconciles.
+- **One binary, your keys, no telemetry.** Anthropic, OpenAI, OpenRouter or Cerebras. Sessions are append-only JSONL under `~/.bough/history`, so resume, search and switching models mid-conversation just work.
+
+## Try it
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/andreylukin/bough/main/install.sh | sh
+printf 'say hello\n' | bough --headless --set llm.plugin=llm-echo   # no key needed
 ```
 
-Or `brew tap andreylukin/bough https://github.com/andreylukin/bough && brew install bough`, or from source: `cd go && go build -o ~/.local/bin/bough ./cmd/bough` (Go 1.27+).
-
-Add a key and run it:
+Then add a key and start it in a repo:
 
 ```sh
-mkdir -p ~/.bough && echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.bough/env   # or OPENROUTER_ / OPENAI_ / CEREBRAS_API_KEY
+echo 'OPENROUTER_API_KEY=sk-or-...' >> ~/.bough/env   # or ANTHROPIC_ / OPENAI_ / CEREBRAS_API_KEY
 bough
 ```
 
-Or start bough and use `/connect <provider> <key>`. `/model` switches models at any time. `bough update` rebuilds from `main`.
+macOS and Linux, x86-64 and arm64. Also `brew tap andreylukin/bough https://github.com/andreylukin/bough && brew install bough`, or `cd go && go build ./cmd/bough` (Go 1.27+).
 
-## Use it
-
-Three front ends over the same sessions:
+## Three ways to drive it
 
 | | |
 |---|---|
-| `bough` | the terminal UI in the current directory (`-c` resume latest, `-r` pick) |
-| `bough serve` | the web control room: every session, live, in a browser (`serve status` / `serve stop`) |
-| `bough --headless` | stdin lines in, events out (`--json` for one object per line) |
+| `bough` | the terminal UI: `/` palette, `@file`, `!shell`, `esc esc` to rewind, `-c` to resume |
+| `bough serve` | a web control room for every session: live transcripts, questions waiting on you, pasted images |
+| `bough --headless` | stdin in, events out (`--json`), for scripts and benchmarks |
 
-In the TUI: `/` opens the command palette, `@path` attaches a file, `!cmd` runs a shell line, `esc` cancels a turn, `esc esc` rewinds, `ctrl+o` inspects history. `/init` writes an `AGENTS.md` briefing for a new repo. In the web composer you can paste images and long text; they attach as `[Image #N]` / `[Pasted text #N]` tags.
+<p align="center"><img src="assets/web-image.png" width="820" alt="bough serve: a session started from a pasted screenshot"></p>
 
-Other commands: `bough sessions`, `search`, `log`, `rows`, `mcp`, `wiki`, `sync-mcp`. `bough --help` lists them all.
+More in [SCREENSHOTS.md](SCREENSHOTS.md).
 
-## Configure
+## How it compares
 
-`./bough.yml` (else `~/.bough/bough.yml`) is laid over the embedded default by row id — list only the rows you change:
+bough is closest to Claude Code, opencode and pi, and borrows their conventions on purpose: `AGENTS.md`/`CLAUDE.md`, skills, hooks, MCP, subagents. The differences are architectural. Other agents expose a list of tools and loop once per call; bough exposes one program runner, so the model batches work and branches on results in code. And where those tools are applications you configure, bough is a small kernel where each part, including the UI, is a replaceable row.
+
+It is a personal project in daily use, not a product. Expect sharp edges.
+
+## Safety
+
+There is no sandbox. Programs the model writes run as you, with your files, your shell and your credentials, exactly like a script you ran yourself. Use it in repos under git, on a machine or container you're comfortable with, and read what it proposes. bough talks only to your LLM provider, the MCP servers you configure, and the public [models.dev](https://models.dev) price list.
+
+## Configure and extend
+
+`./bough.yml` (else `~/.bough/bough.yml`) overrides the [shipped rows](go/bough.yml) by id:
 
 ```yaml
 - id: llm
   plugin: llm-openrouter
   config:
-    model: deepseek/deepseek-chat
+    model: anthropic/claude-sonnet-5
 ```
 
-Saving the file reconciles the running process. The shipped tree is [go/bough.yml](go/bough.yml), commented row by row. Hooks live in `~/.bough/hooks/<event>/*.js`, skills in `~/.claude/skills/<name>/SKILL.md`, and `~/.bough/init.js` adds tools, commands, providers, keymaps and themes ([go/docs/INIT.md](go/docs/INIT.md)).
-
-No telemetry. Besides your LLM provider and MCP servers, bough only fetches the public [models.dev](https://models.dev) price list, weekly.
+`~/.bough/init.js` adds tools, commands and providers in a few lines ([INIT.md](go/docs/INIT.md)); a new row is a Go plugin ([PLUGINS.md](go/docs/PLUGINS.md)). The full reference is [go/README.md](go/README.md).
 
 ## Develop
 
 ```sh
 ./.githooks/install
 cd go && go build ./cmd/bough
-go test -race -parallel 4 ./...       # unit, headless and PTY e2e
-go test ./internal/vtreal             # real terminal (needs tmux)
-cd internal/serve/web && bun install && bun run build   # web UI → dist/ (committed)
-cd tests/web && npm ci && npx playwright install chromium && npm test
+go test -race -parallel 4 ./...
+(cd internal/serve/web && bun install && bun run build)   # web UI; dist/ is committed
+(cd tests/web && npm ci && npx playwright install chromium && npm test)
 ```
 
-CI runs on Linux and macOS and cross-compiles Windows (unsupported). Writing a plugin: [go/docs/PLUGINS.md](go/docs/PLUGINS.md). Full reference: [go/README.md](go/README.md). Conventions and traps: [AGENTS.md](AGENTS.md).
+The README recordings are scripts: [scripts/demo](scripts/demo). Conventions and traps are in [AGENTS.md](AGENTS.md).
 
 ## License
 
