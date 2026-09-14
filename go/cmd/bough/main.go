@@ -36,7 +36,7 @@ import (
 	_ "github.com/andreylukin/bough/plugins/llm"
 	_ "github.com/andreylukin/bough/plugins/loop"
 	_ "github.com/andreylukin/bough/plugins/mcp"
-	_ "github.com/andreylukin/bough/plugins/orb"
+	orbplugin "github.com/andreylukin/bough/plugins/orb"
 	_ "github.com/andreylukin/bough/plugins/prompts"
 	_ "github.com/andreylukin/bough/plugins/replay"
 	_ "github.com/andreylukin/bough/plugins/rules"
@@ -268,6 +268,14 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "bough:", err)
 		os.Exit(2)
+	}
+	// Built-in skills land before anything lists skills: the orb row only
+	// writes /orb when a session starts, so `bough serve`'s picker missed it
+	// until one had.
+	if home, err := os.UserHomeDir(); err == nil {
+		if err := orbplugin.InstallSkill(home); err != nil {
+			fmt.Fprintf(os.Stderr, "bough: install /orb skill: %v\n", err)
+		}
 	}
 	switch cmd {
 	case "log":

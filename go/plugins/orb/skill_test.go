@@ -10,7 +10,7 @@ import (
 func TestInstallSkill(t *testing.T) {
 	home := t.TempDir()
 	p := filepath.Join(home, ".bough", "skills", "orb", "SKILL.md")
-	if err := installSkill(home); err != nil {
+	if err := InstallSkill(home); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(p); !bytes.Equal(b, skillMD) || !bytes.Contains(b, []byte("name: orb")) {
@@ -20,7 +20,7 @@ func TestInstallSkill(t *testing.T) {
 	if err := os.WriteFile(p, []byte("stale"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := installSkill(home); err != nil {
+	if err := InstallSkill(home); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(p); !bytes.Equal(b, skillMD) {

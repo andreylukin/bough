@@ -88,8 +88,8 @@ func runtimeFor(name string) (container.Runtime, error) {
 //go:embed SKILL.md
 var skillMD []byte
 
-// installSkill writes the /orb skill under home, only when it changed.
-func installSkill(home string) error {
+// InstallSkill writes the /orb skill under home, only when it changed.
+func InstallSkill(home string) error {
 	p := filepath.Join(home, ".bough", "skills", "orb", "SKILL.md")
 	if b, err := os.ReadFile(p); err == nil && bytes.Equal(b, skillMD) {
 		return nil
@@ -107,7 +107,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		}
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		if err := installSkill(home); err != nil {
+		if err := InstallSkill(home); err != nil {
 			fmt.Fprintf(os.Stderr, "bough: orb: install /orb skill: %v\n", err)
 		}
 	}
