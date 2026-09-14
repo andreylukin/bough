@@ -149,14 +149,11 @@ Tool-level safety given a safely shareable dir:
 - uv: cache is lock-protected and content-addressed; safe to share.
   Set `UV_CACHE_DIR=/root/.cache/uv` and `UV_LINK_MODE=copy` (venv on
   rootfs, cache on another fs: hardlinks fail, uv warns and falls back).
-- cargo: the package-cache lock is `$CARGO_HOME/.package-cache`, i.e. in
-  CARGO_HOME, not in `registry/`. Sharing only `registry/`+`git/` would let
-  two containers race extraction. So share a whole CARGO_HOME:
-  `CARGO_HOME=/cache/cargo` (volume), toolchain stays in the image
-  (`RUSTUP_HOME=/root/.rustup`, binaries on PATH via `/root/.cargo/bin`).
-  Requires flock to work across containers on the chosen backing (tested in
-  the same blocking check; if it does not, cargo cache is shared read-mostly
-  and first-writer serialisation is documented as a known limit).
+- cargo: NOT shared. Its package-cache lock is `$CARGO_HOME/.package-cache`,
+  a flock, and the live check found flock does not cross containers on
+  virtiofs (a second container took the lock while the first held it), so
+  two sessions sharing CARGO_HOME or `registry/` race extraction. Each
+  container keeps its own CARGO_HOME; the toolchain stays in the image.
 - pip: `PIP_CACHE_DIR=/root/.cache/pip` if used; safe.
 - NEVER share: venvs, `target/`, database data dirs, node_modules.
 
@@ -243,5 +240,5 @@ Area A — bough code (repo, go/):
 Area B — smart-scheduler on the work laptop (only via `bough project` there,
 after Area A is built there; drafts in a scratch dir first):
 - ~/.bough/projects/smart-scheduler/setup.sh: step markers (apt, uv-python, rust, circleci)
-- ~/.bough/projects/smart-scheduler/project.yml: `caches: [/root/.cache/uv, /cache/cargo]`, env `UV_CACHE_DIR`, `UV_LINK_MODE=copy`, `CARGO_HOME=/cache/cargo`
+- ~/.bough/projects/smart-scheduler/project.yml: `caches: [/root/.cache/uv]`, env `UV_CACHE_DIR`, `UV_LINK_MODE=copy` (no shared CARGO_HOME, see §4)
 - ~/.bough/projects/smart-scheduler/resume.sh: keep install per venv; drop nothing that needs secrets; rely on caches
