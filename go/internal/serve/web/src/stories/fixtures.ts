@@ -158,3 +158,19 @@ export function installFakeApi(): void {
     return real(input, init);
   };
 }
+
+/** A session with background agents: one running here, one handed off to a project orb, one queued. */
+export const agentRows: Row[] = [
+  { id: "p-lead", title: "Split the serve API by resource", cwd: "/w/bough", repo: "andreylukin/bough", branch: "main",
+    status: "running", live: true, archived: false, entries: 20, modified: hoursAgo(0.2), lastAt: hoursAgo(0.2), mode: "local",
+    agents: { running: 2, queued: 1, total: 4 } },
+  { id: "k-routes01", title: "Map every route in api.go", cwd: "/w/bough", repo: "andreylukin/bough", status: "running",
+    live: true, archived: false, entries: 6, modified: hoursAgo(0.1), lastAt: hoursAgo(0.1), mode: "local", spawnedBy: "p-lead" },
+  { id: "k-tests002", title: "Move handler tests to per-file suites", cwd: "/w/bough", repo: "andreylukin/bough", status: "running",
+    live: true, archived: false, entries: 9, modified: hoursAgo(0.1), lastAt: hoursAgo(0.1), mode: "project",
+    orb: { project: "p2", status: "running" }, spawnedBy: "p-lead" },
+  { id: "k-docs0003", title: "", cwd: "/w/bough", repo: "andreylukin/bough", status: "queued", queued: true,
+    live: false, archived: false, entries: 0, modified: hoursAgo(0.1), lastAt: hoursAgo(0.1), mode: "local", spawnedBy: "p-lead" },
+  { id: "k-grep0004", title: "Find callers of writeJSON", cwd: "/w/bough", repo: "andreylukin/bough", status: "done",
+    live: false, archived: false, entries: 4, modified: hoursAgo(0.5), lastAt: hoursAgo(0.5), mode: "local", spawnedBy: "p-lead" },
+];

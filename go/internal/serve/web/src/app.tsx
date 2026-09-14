@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, subscribe, type Change, type TurnLine } from "./api";
 import type { Line, Project, Row } from "./types";
@@ -6,7 +6,7 @@ import { STATUS, StatusMark, Working, hasFailure, hasQuestion, sessionSignal } f
 import { ProjectsView } from "./projects";
 import { ModeChip, ModePicker, type ModeValue } from "./mode";
 import { Select, type Option } from "./select";
-import { DialogHost, askText } from "./dialog";
+import { DialogHost, askChoice, askText } from "./dialog";
 import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath } from "./code";
 import { finishedJobs, lastTestRun } from "./runs";
@@ -201,10 +201,20 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
   // where a session ran, and whether it is still recent.
   // Runs nobody started by hand always fold into Background — the person
   // chose that; one that needs attention lights the section header instead.
-  const { recent, inactive, background, archived } = useMemo(() => {
+  const { recent, inactive, background, archived, kids } = useMemo(() => {
     const now = Date.now();
     const recent: Row[] = [], inactive: Row[] = [], background: Row[] = [], archived: Row[] = [];
+    // A background agent sits under the session that started it, when that
+    // session is on the list in the same archived state; otherwise it is
+    // an ordinary top-level row, so nothing is ever hidden by nesting.
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const kids = new Map<string, Row[]>();
     for (const r of rows) {
+      const parent = r.spawnedBy ? byId.get(r.spawnedBy) : undefined;
+      if (parent && parent.archived === r.archived && !parent.spawnedBy) {
+        kids.set(parent.id, [...(kids.get(parent.id) ?? []), r]);
+        continue;
+      }
       // A session opened and never sent a message holds nothing to go back
       // to. It shows while it is open, while its child is up (one just made
       // with New), or when a search asks for it.
@@ -216,7 +226,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
       else if (sessionSignal(r) < 2 || now - Date.parse(r.lastAt) < INACTIVE_MS) recent.push(r);
       else inactive.push(r);
     }
-    return { recent: byWorkspace(recent), inactive, background, archived };
+    return { recent: byWorkspace(recent), inactive, background, archived, kids };
   }, [rows, selected, query]);
 
   // Inactive stays shut until asked, and the way you left it across reloads.
@@ -427,7 +437,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
 
   const q = query.trim().toLowerCase();
   // `twin`: a sibling row reads the same, so this one adds its id tail.
-  const session = (r: Row, twin = false) => {
+  const session = (r: Row, twin = false): React.ReactNode => {
     // A search hides the logs: they are not what matched.
     const open = Boolean(r.turns) && expanded.has(r.id) && !q;
     const log = logs[r.id];
@@ -450,8 +460,10 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     // Done is what the check mark already says; the row keeps only the age then.
     const label = failed ? capital(failed) + (asking ? "; waiting for you" : "") : r.status === "done" ? "" : STATUS[r.status]?.label ?? r.status;
     const lines = log?.lines && !allTurns.has(r.id) && log.lines.length > 3 ? log.lines.slice(-3) : log?.lines;
+    const children = kids.get(r.id);
     return (
-      <div key={r.id} className="session">
+      <Fragment key={r.id}>
+      <div className="session">
         <div className={"row-wrap" + (open ? " row-open" : "")}>
           <button role="treeitem" onClick={() => onSelect(r.id)} data-id={r.id}
                   onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
@@ -518,6 +530,12 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
           </ol>
         )}
       </div>
+      {children && (
+        <div className="session-kids" role="group" aria-label={`Agents started by ${name || "session"}`}>
+          {children.map((k) => session(k))}
+        </div>
+      )}
+      </Fragment>
     );
   };
 
@@ -2017,7 +2035,49 @@ function sendError(e?: string) {
   return `${m[2] || words[m[1]] || "Request failed"} (${m[1]})`;
 }
 
-export function Thread({ row, lines, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy, jump, sending = [], setSending = () => {}, onStopOrb }: {
+/**
+ * How many background agents a session has going, opening the list of
+ * them. Hidden when none run or wait: a finished agent is in the sidebar.
+ */
+export function AgentsChip({ row, rows, onOpen }: { row: Row; rows: Row[]; onOpen: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault(); e.stopPropagation(); setOpen(false);
+      ref.current?.querySelector<HTMLButtonElement>("button.head-agents")?.focus();
+    };
+    const away = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    window.addEventListener("keydown", key, true);
+    document.addEventListener("mousedown", away);
+    return () => { window.removeEventListener("keydown", key, true); document.removeEventListener("mousedown", away); };
+  }, [open]);
+  const n = (row.agents?.running ?? 0) + (row.agents?.queued ?? 0);
+  if (n === 0) return null;
+  const list = rows.filter((r) => r.spawnedBy === row.id);
+  return (
+    <span className="head-more" ref={ref}>
+      <button className="status mono head-agents" aria-expanded={open} aria-controls={"agents-" + row.id} onClick={() => setOpen((v) => !v)}>
+        {n} {n === 1 ? "agent" : "agents"}
+      </button>
+      {open && (
+        <div className="head-pop head-agents-pop" role="dialog" aria-label="Background agents" id={"agents-" + row.id}>
+          {list.length ? list.map((k) => (
+            <button key={k.id} className="head-pop-item" onClick={() => { setOpen(false); onOpen(k.id); }}>
+              <StatusMark status={k.status} bare /><span className="row-title">{plainTitle(k.title) || k.id.slice(-6)}</span><ModeChip row={k} />
+            </button>
+          )) : <p className="meta-line list-none">Agents not loaded yet.</p>}
+        </div>
+      )}
+    </span>
+  );
+}
+
+export function Thread({ row, lines, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession }: {
+  /** Loaded sessions: names the parent of a background agent and lists this session's agents. */
+  rows?: Row[]; onOpenSession?: (id: string) => void;
   row: Row; lines: Line[]; loading?: boolean; stream?: DeltaRun[];
   /** The first read failed: there is no transcript to show. */
   loadError?: string;
@@ -2405,6 +2465,12 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             <span className="status head-trouble"><StatusMark status="error" bare />{capital(row.trouble)}</span>
           ) : row.status === "done" ? <span className="status head-idle">Idle</span> : <StatusMark status={row.status} />}
           <ModeChip row={row} />
+          {onOpenSession && <AgentsChip row={row} rows={rows} onOpen={onOpenSession} />}
+          {row.spawnedBy && (
+            <span className="meta-line head-parent">spawned by <button className="link" onClick={() => onOpenSession?.(row.spawnedBy!)}>
+              {plainTitle(rows.find((r) => r.id === row.spawnedBy)?.title ?? "") || row.spawnedBy.slice(-6)}
+            </button></span>
+          )}
           {row.orb?.status === "running" && onStopOrb && <button className="btn head-ack" onClick={onStopOrb}>Stop orb</button>}
           {/* A test failure is the Tests chip's to say, once. */}
           {running && turns[turns.length - 1]?.prompt?.at && !turns[turns.length - 1]?.done && <RunClock since={turns[turns.length - 1].prompt!.at} />}
@@ -2976,6 +3042,18 @@ export default function App() {
     finally { setBusy(false); await refresh(); }
   };
 
+  // Archiving a session leaves its background agents running unless you
+  // say otherwise: they may be doing work you still want, so ask.
+  const archiveRow = async (r: Row) => {
+    if (r.archived) return act(() => api.unarchive(r.id));
+    const n = (r.agents?.running ?? 0) + (r.agents?.queued ?? 0);
+    if (n === 0) return act(() => api.archive(r.id));
+    const pick = await askChoice(`Archive ${plainTitle(r.title) || untitled(r.id)}?`,
+      `Stop its ${n} running ${n === 1 ? "agent" : "agents"} too?`, ["Stop and archive", "Archive only"]);
+    if (!pick) return false;
+    return act(() => api.archive(r.id, { stopChildren: pick === "Stop and archive" }));
+  };
+
   // What the chrome can do, the keyboard can do. Session-scoped
   // commands only appear when one is open, so the list never offers
   // something that would fail.
@@ -3031,7 +3109,7 @@ export default function App() {
         hint: "Context", run: () => { setContext(true); setPane("thread"); } },
       { id: "s:archive", group: "This conversation",
         label: row.archived ? "Unarchive this conversation" : "Archive this conversation",
-        run: () => act(() => (row.archived ? api.unarchive(row.id) : api.archive(row.id))) },
+        run: () => archiveRow(row) },
       ...(row.status === "running" ? [{
         id: "s:stop", group: "This conversation", label: "Stop this turn",
         run: () => act(() => api.interrupt(row.id)),
@@ -3086,7 +3164,8 @@ export default function App() {
           onSend={(t) => deliverTo(row.id, () => api.prompt(row.id, t))}
           onAnswer={(t, ask) => deliverTo(row.id, () => api.answer(row.id, t, ask))}
           onInterrupt={() => act(() => api.interrupt(row.id))}
-          onArchive={() => act(() => (row.archived ? api.unarchive(row.id) : api.archive(row.id)))}
+          onArchive={() => archiveRow(row)}
+          rows={rows} onOpenSession={openSession}
           onRename={async (t) => { await api.rename(row.id, t); await refresh(); }}
           onModel={(m) => act(() => api.model(row.id, m))}
           onEffort={(e) => act(() => api.effort(row.id, e))}

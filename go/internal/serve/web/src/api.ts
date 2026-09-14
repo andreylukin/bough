@@ -75,7 +75,13 @@ export const api = {
   answer: (id: string, text: string, ask?: string) => post(`/api/sessions/${id}/answer`, { text, ask }),
   interrupt: (id: string) => post(`/api/sessions/${id}/interrupt`),
   rename: (id: string, title: string) => post(`/api/sessions/${id}/rename`, { title }),
-  archive: (id: string) => post(`/api/sessions/${id}/archive`),
+  /** stopChildren stops its running and queued background agents first. */
+  archive: (id: string, opts?: { stopChildren?: boolean }) =>
+    post(`/api/sessions/${id}/archive`, opts?.stopChildren ? { stopChildren: true } : undefined),
+  /** The background agents a session started, queued ones included. */
+  children: (id: string) => req<{ children: Row[] }>(`/api/sessions/${id}/children`).then((r) => r.children ?? []),
+  /** Interrupt a running background agent, or drop a queued one. */
+  stopAgent: (id: string) => req<{ ok: true; was: "running" | "queued" | "idle" }>(`/api/sessions/${id}/stop`, { method: "POST", body: "{}" }),
   model: (id: string, model: string) => post(`/api/sessions/${id}/model`, { model }),
   effort: (id: string, effort: string) => post(`/api/sessions/${id}/effort`, { effort }),
   assign: (id: string, project: string) => post(`/api/sessions/${id}/project`, { project }),

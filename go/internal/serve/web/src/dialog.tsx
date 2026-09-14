@@ -14,7 +14,9 @@ type Req =
   | { kind: "text"; title: string; initial: string; placeholder?: string; action: string; allowEmpty: boolean;
       onSubmit?: (v: string) => Promise<void>; resolve: (v: string | null) => void }
   | { kind: "confirm"; title: string; body: string; action: string; danger: boolean;
-      resolve: (v: boolean) => void };
+      resolve: (v: boolean) => void }
+  | { kind: "choice"; title: string; body: string; actions: string[];
+      resolve: (v: string | null) => void };
 
 let push: ((r: Req) => void) | null = null;
 
@@ -72,6 +74,14 @@ export function askConfirm(title: string, body: string, opts: { action?: string;
   return new Promise((resolve) => {
     if (!push) { resolve(window.confirm(title)); return; }
     push({ kind: "confirm", title, body, action: opts.action ?? "Confirm", danger: opts.danger ?? false, resolve });
+  });
+}
+
+/** The action chosen, or null when dismissed. The first action is the primary one. */
+export function askChoice(title: string, body: string, actions: string[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    if (!push) { resolve(window.confirm(title) ? actions[0] ?? null : null); return; }
+    push({ kind: "choice", title, body, actions, resolve });
   });
 }
 
@@ -142,12 +152,12 @@ export function DialogHost() {
 
   if (!req) return null;
 
-  const dismiss = () => { if (!saving) finish(req.kind === "text" ? null : false); };
+  const dismiss = () => { if (!saving) finish(req.kind === "confirm" ? false : null); };
   const finish = (result: string | null | boolean) => {
     const r = req;
     setReq(null);
-    if (r.kind === "text") r.resolve(result as string | null);
-    else r.resolve(result as boolean);
+    if (r.kind === "confirm") r.resolve(result as boolean);
+    else r.resolve(result as string | null);
   };
   // Blank is allowed where it means something (a session title handed
   // back); the same text again is not a change worth a request.
@@ -155,7 +165,8 @@ export function DialogHost() {
     (!req.allowEmpty && !text.trim()) || (text.trim() === req.initial.trim() && text.trim() !== ""));
   const submit = async () => {
     if (blocked || saving) return;
-    if (req.kind !== "text") { finish(true); return; }
+    if (req.kind === "confirm") { finish(true); return; }
+    if (req.kind !== "text") return;
     const v = text.trim();
     if (req.onSubmit) {
       setSaving(true); setFailed("");
@@ -171,7 +182,7 @@ export function DialogHost() {
       <div ref={box} className="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-title" aria-busy={saving || undefined}
            onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); dismiss(); } }}>
         <h2 id="dlg-title" className="dlg-title">{req.title}</h2>
-        {req.kind === "confirm" && <p className="dlg-body">{req.body}</p>}
+        {req.kind !== "text" && <p className="dlg-body">{req.body}</p>}
         {req.kind === "text" && (
           <input ref={input} className="field dlg-input" value={text} placeholder={req.placeholder}
                  aria-labelledby="dlg-title" readOnly={saving} aria-invalid={failed ? true : undefined}
@@ -182,10 +193,13 @@ export function DialogHost() {
         {failed && <p id="dlg-err" className="dlg-err" role="alert">Not saved: {failed}</p>}
         <div className="dlg-actions">
           <button className="btn" onClick={dismiss} disabled={saving}>Cancel</button>
-          <button ref={ok} className={"btn " + (req.kind === "confirm" && req.danger ? "btn-danger" : "btn-primary")}
+          {req.kind === "choice" ? [...req.actions].reverse().map((a, i, all) => (
+            <button key={a} ref={i === all.length - 1 ? ok : undefined} className={"btn" + (i === all.length - 1 ? " btn-primary" : "")}
+                    onClick={() => finish(a)}>{a}</button>
+          )) : <button ref={ok} className={"btn " + (req.kind === "confirm" && req.danger ? "btn-danger" : "btn-primary")}
                   disabled={blocked || saving} onClick={submit}>
             {saving ? req.action.replace(/e?$/, "ing…") : req.action}
-          </button>
+          </button>}
         </div>
       </div>
     </div>,

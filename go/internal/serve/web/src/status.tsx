@@ -85,6 +85,17 @@ export const STATUS: Record<Status, { label: string; tone: string; glyph: React.
     tone: "var(--text-2)",
     glyph: <path d="M9 6.5v11M15 6.5v11" />,
   },
+  // Hollow clock, dashed: waiting its turn for a slot, not waiting on you.
+  queued: {
+    label: "Queued",
+    tone: "var(--text-3)",
+    glyph: (
+      <>
+        <circle cx="12" cy="12" r="8.5" strokeDasharray="3 3" />
+        <path d="M12 8.5v3.5l2.5 1.5" />
+      </>
+    ),
+  },
   idle: {
     label: "Idle",
     tone: "var(--text-3)",

@@ -57,8 +57,8 @@ glue around them.
 
 | Family | Members |
 |---|---|
-| Shell | `.app`, `.sidebar`, `.side-bar`, `.side-new`, `.thread`, `.thread-head`, `.scroll` |
-| Rows | `.ws-head`, `.ws-name`, `.sec-fold`, `.row-wrap`, `.row`, `.row-on`, `.row-title`, `.row-meta`, `.row-meta-live`, `.turn-line` |
+| Shell | `.app`, `.sidebar`, `.side-bar`, `.side-new`, `.thread`, `.thread-head`, `.scroll`, `.head-agents`, `.head-agents-pop`, `.head-parent` |
+| Rows | `.ws-head`, `.ws-name`, `.sec-fold`, `.row-wrap`, `.row`, `.row-on`, `.row-title`, `.row-meta`, `.row-meta-live`, `.turn-line`, `.session-kids` |
 | Transcript | `.transcript`, `.turn`, `.turn-body`, `.prompt`, `.say`, `.say-who`, `.block`, `.block-label`, `.block-detail`, `.block-lines`, `.block-failed`, `.thinking`, `.think-body`, `.err`, `.md` |
 | Composer | `.composer`, `.composer-wrap`, `.controls`, `.ctl`, `.ctl-label`, `.hint`, `.ask`, `.ask-q` |
 | Controls | `.btn`, `.btn-primary`, `.field`, `.field-label`, `.link`, `.back`, `.more` |

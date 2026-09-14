@@ -11,7 +11,9 @@ export type Status =
   | "needs-you"
   | "error"
   | "stopped"
-  | "done";
+  | "done"
+  /** A background agent waiting for a running slot; never derived from history. */
+  | "queued";
 
 export interface Ask {
   id: string;
@@ -75,6 +77,12 @@ export interface Row {
   /** Absent from a server older than orbs: read as local. */
   mode?: SessionMode;
   orb?: { project: string; status: OrbStatus };
+  /** The session that started this one as a background agent. */
+  spawnedBy?: string;
+  /** A background agent waiting for a running slot (status "queued"). */
+  queued?: boolean;
+  /** Background agents this session started; absent when it started none. */
+  agents?: { running: number; queued: number; total: number };
 }
 
 export interface Job { id: number; cmd: string; started: string }

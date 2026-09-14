@@ -172,6 +172,16 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 /* Model stays in the header because it changes mid-session; project,
    rename and archive are rarer and wait in a popover under More. */
 .head-more{position:relative;display:flex}
+/* Background agents: nested under the session that started them, with a rule down the left. */
+.session-kids{margin-inline-start:16px;padding-inline-start:4px;border-inline-start:1px solid var(--line)}
+.head-agents{height:24px;padding:0 8px;border:1px solid var(--line-strong);border-radius:6px;background:none;color:var(--text-2);font-size:12px;cursor:pointer;white-space:nowrap}
+.head-agents:hover,.head-agents[aria-expanded="true"]{background:var(--sel);color:var(--text-1)}
+.head-agents-pop{inset-inline:0 auto}
+.head-agents-pop .head-pop-item{width:100%;gap:8px}
+.head-agents-pop .row-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.head-parent{white-space:nowrap}
+.head-parent .link{color:var(--text-2);text-decoration:underline}
+@media (max-width:720px){.session-kids{margin-inline-start:8px}.head-agents{height:32px}.head-parent{white-space:normal}.head-agents-pop{inset-inline:12px}}
 .head-pop{position:absolute;top:calc(100% + 8px);inset-inline-end:0;z-index:40;width:280px;padding:4px;
           display:flex;flex-direction:column;background:var(--raised);border:1px solid var(--line-strong);border-radius:10px;
           box-shadow:0 1px 2px rgb(0 0 0/.4),0 12px 32px rgb(0 0 0/.45)}
