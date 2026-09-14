@@ -2569,15 +2569,19 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     setAttachErr("");
     // The tag lands at paste time, where the caret was; its path follows.
     // Until it does, the slot is "" and Send waits.
+    // Images and other files share the slots; only the tag differs. A
+    // non-image goes to the session's scratchpad and is sent as its path.
+    const isImage = (f: File) => /^image\/(png|jpeg|gif|webp)$/.test(f.type);
+    const tag = (f: File, i: number) => `${isImage(f) ? "Image" : "File"} #${i + 1}`;
     const slots = files.map(() => images.current.push("") - 1);
-    insert(slots.map((i) => `[Image #${i + 1}] `).join(""));
+    insert(slots.map((i, k) => `[${tag(files[k], i)}] `).join(""));
     for (const [k, f] of files.entries()) {
       setUploading((n) => n + 1);
       try {
-        images.current[slots[k]] = await api.attach(f);
+        images.current[slots[k]] = isImage(f) ? await api.attach(f) : await api.attachFile(row.id, f);
         try { sessionStorage.setItem(attsKey, JSON.stringify({ pastes: pastes.current, images: images.current })); } catch { /* storage off */ }
       } catch (err) {
-        setAttachErr(`Image #${slots[k] + 1} not attached: ${(err as Error).message}`);
+        setAttachErr(`${tag(f, slots[k])} not attached: ${(err as Error).message}`);
       } finally {
         setUploading((n) => n - 1);
       }
@@ -2587,13 +2591,8 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   // insert, so short text lands through insert() instead of the browser.
   const take = (e: { dataTransfer: DataTransfer; preventDefault(): void }, drop: boolean) => {
     pasted.current = true;
-    const files = [...e.dataTransfer.files].filter((f) => /^image\/(png|jpeg|gif|webp)$/.test(f.type));
+    const files = [...e.dataTransfer.files];
     if (files.length) { e.preventDefault(); void attach(files); return; }
-    if (drop && e.dataTransfer.files.length) {
-      e.preventDefault();
-      setAttachErr("Only png, jpeg, gif or webp images can be attached");
-      return;
-    }
     const text = e.dataTransfer.getData("text/plain").replace(/\r\n?/g, "\n");
     const n = text.split("\n").length;
     if (drop) e.preventDefault();
@@ -2603,7 +2602,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     insert(`[Pasted text #${pastes.current.length} +${n} lines] `);
   };
   const expand = (t: string) => t
-    .replace(/\[Image #(\d+)\]/g, (m, i) => (images.current[i - 1] ? `[Image #${i}: ${images.current[i - 1]}]` : m))
+    .replace(/\[(Image|File) #(\d+)\]/g, (m, k, i) => (images.current[i - 1] ? `[${k} #${i}: ${images.current[i - 1]}]` : m))
     .replace(/\[Pasted text #(\d+) \+\d+ lines\]/g, (m, i) => pastes.current[i - 1] ?? m);
 
   const send = async () => {
@@ -2611,7 +2610,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     // Enter reaches here even while the Send button is disabled.
     if (!t || busy || uploading || askChanged) return;
     // A tag whose content is gone is never sent as its placeholder.
-    const lost = [...t.matchAll(/\[Image #(\d+)\]|\[Pasted text #(\d+) \+\d+ lines\]/g)]
+    const lost = [...t.matchAll(/\[(?:Image|File) #(\d+)\]|\[Pasted text #(\d+) \+\d+ lines\]/g)]
       .filter((m) => m[1] ? !images.current[+m[1] - 1] : pastes.current[+m[2] - 1] === undefined);
     if (lost.length) { setAttachErr(`Attachment unavailable: remove ${lost.map((m) => m[0]).join(", ")}`); return; }
     setDraft("");

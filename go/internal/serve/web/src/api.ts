@@ -77,6 +77,13 @@ export const api = {
     if (!res.ok || !body.path) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
     return body.path;
   },
+  /** Save any other file into the session's scratchpad; returns its path. */
+  attachFile: async (id: string, f: File) => {
+    const res = await fetch(`/api/sessions/${id}/files?name=${encodeURIComponent(f.name)}`, { method: "POST", body: f });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    return body.path as string;
+  },
   attachmentURL: (path: string) => `/api/attachments?path=${encodeURIComponent(path)}`,
   answer: (id: string, text: string, ask?: string) => post(`/api/sessions/${id}/answer`, { text, ask }),
   interrupt: (id: string) => post(`/api/sessions/${id}/interrupt`),

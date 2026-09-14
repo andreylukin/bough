@@ -63,6 +63,56 @@ func (a *API) upload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"path": f.Name()})
 }
 
+// maxFileBytes caps a non-image file dropped or pasted into the composer.
+const maxFileBytes = 64 << 20
+
+// uploadFile saves any other file into the session's scratchpad,
+// ~/.bough/scratch/<id>, which the scratchpad plugin names after the
+// session's history file; the prompt then carries its path.
+func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := a.info(id); !ok {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: unknown session %q", id))
+		return
+	}
+	name := filepath.Base(filepath.Clean("/" + r.URL.Query().Get("name")))
+	if name == "/" || name == "." {
+		name = "file"
+	}
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxFileBytes))
+	if err != nil {
+		writeErr(w, http.StatusRequestEntityTooLarge, fmt.Errorf("serve: api: file over the %d MB limit", maxFileBytes>>20))
+		return
+	}
+	dir := filepath.Join(a.home, ".bough", "scratch", id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: %w", err))
+		return
+	}
+	// A second drop of the same name keeps both.
+	ext := filepath.Ext(name)
+	path := filepath.Join(dir, name)
+	for i := 2; ; i++ {
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if os.IsExist(err) {
+			path = filepath.Join(dir, fmt.Sprintf("%s-%d%s", strings.TrimSuffix(name, ext), i, ext))
+			continue
+		}
+		if err == nil {
+			_, err = f.Write(data)
+			if cerr := f.Close(); err == nil {
+				err = cerr
+			}
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: %w", err))
+			return
+		}
+		break
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"path": path})
+}
+
 func (a *API) attachment(w http.ResponseWriter, r *http.Request) {
 	p := filepath.Clean(r.URL.Query().Get("path"))
 	if filepath.Dir(p) != a.attachDir() || llm.ImageMIME(p) == "" {
