@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/rivo/uniseg"
+
+	"github.com/andreylukin/bough/internal/hookmeta"
 )
 
 // A background job is a shell command that outlives the code block
@@ -371,20 +373,26 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 			return nil, fmt.Errorf("bash: until %q is not a valid regexp: %v", until, err)
 		}
 	}
+	project := j.project
+	if j.runCtx != nil {
+		if rc := j.runCtx(); rc != nil && hookmeta.OnHost(rc) {
+			project = nil // a hook's job runs on the host, like its bash
+		}
+	}
 	// Script in a file, stdin /dev/null: a stdin reader must not eat the script.
-	script, err := j.project.script(cmd)
+	script, err := project.script(cmd)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(j.ctx, limit)
-	c, err := j.project.command(ctx, script)
+	c, err := project.command(ctx, script)
 	if err != nil {
 		cancel()
 		os.Remove(script)
 		return nil, fmt.Errorf("bash: %w", err)
 	}
 	ownProcessGroup(c)
-	c.Cancel = j.project.cancel(c)
+	c.Cancel = project.cancel(c)
 	c.WaitDelay = 2 * time.Second
 
 	owner := j.session()

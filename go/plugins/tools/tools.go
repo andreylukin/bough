@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andreylukin/bough/internal/hookmeta"
 	iorb "github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
@@ -346,6 +347,10 @@ func (s *Stats) bash(cmd string, opts ...any) (string, error) {
 	if s.runCtx != nil {
 		parent = s.runCtx()
 	}
+	project := s.project
+	if hookmeta.OnHost(parent) {
+		project = nil // a hook is the user's script: it runs on the host
+	}
 	ctx, cancel := context.WithTimeout(parent, bashTimeout)
 	defer cancel()
 	// The script goes in a file, not as an argument: a heredoc'd file
@@ -359,12 +364,12 @@ func (s *Stats) bash(cmd string, opts ...any) (string, error) {
 	if d := os.Getenv("BOUGH_SCRATCH"); d != "" {
 		_ = os.MkdirAll(d, 0o755)
 	}
-	script, err := s.project.script(cmd)
+	script, err := project.script(cmd)
 	if err != nil {
 		return "", err
 	}
 	defer os.Remove(script)
-	c, err := s.project.command(ctx, script)
+	c, err := project.command(ctx, script)
 	if err != nil {
 		return "", fmt.Errorf("bash: %w", err)
 	}
@@ -372,7 +377,7 @@ func (s *Stats) bash(cmd string, opts ...any) (string, error) {
 	// the command, and killing sh alone leaves a sleep, a server, a
 	// build running after the turn was cancelled.
 	ownProcessGroup(c)
-	c.Cancel = s.project.cancel(c)
+	c.Cancel = project.cancel(c)
 	c.WaitDelay = 2 * time.Second
 	out, err := c.CombinedOutput()
 	// ErrWaitDelay means sh exited 0 but a backgrounded child (`cmd &`)

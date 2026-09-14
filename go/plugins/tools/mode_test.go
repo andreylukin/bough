@@ -156,6 +156,43 @@ func TestProjectWithoutOrbNeverRunsOnHost(t *testing.T) {
 	}
 }
 
+// A hook is the user's own script: its bash runs on the host even in a
+// project session, where the agent's own bash never does.
+func TestProjectHookBashRunsOnHost(t *testing.T) {
+	t.Parallel()
+	ctx := kernel.NewContext()
+	cm := codemode.New(5 * time.Second)
+	ctx.Provide("codemode", cm)
+	ctx.Provide("session-mode", "project")
+	if err := (plugin{}).Apply(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	fg, bg := filepath.Join(dir, "fg"), filepath.Join(dir, "bg")
+	body := `tools.bash("touch ` + fg + `"); tools.bash("touch ` + bg + `", 10);`
+	if _, err := cm.RunHook(context.Background(), body, map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(fg); err != nil {
+		t.Fatalf("hook bash did not run on the host: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(bg); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("hook background bash did not run on the host")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// Outside the hook, the agent's bash still refuses to use the host.
+	st, _ := kernel.Get[*Stats](ctx, "turn-stats")
+	if _, err := st.bash("true"); err == nil || !strings.Contains(err.Error(), "orb not ready") {
+		t.Errorf("agent bash err = %v", err)
+	}
+}
+
 // guestOrb's commands carry a Cancel standing in for the runtime's guest
 // kill, which tools must still call after its own process-group kill.
 type guestOrb struct {

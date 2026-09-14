@@ -19,6 +19,7 @@ import (
 	"github.com/dop251/goja"
 
 	"encoding/json"
+	"github.com/andreylukin/bough/internal/hookmeta"
 	"github.com/andreylukin/bough/kernel"
 	"reflect"
 )
@@ -395,6 +396,11 @@ func (cm *CodeMode) Interrupt() {
 func (cm *CodeMode) RunHook(ctx context.Context, fileBody string, event map[string]any) (map[string]any, error) {
 	nested := cm.lock()
 	defer cm.unlock(nested)
+	// Host calls made by the hook (tools.bash) see a hook context, so a
+	// project session runs them on the host, not in the orb.
+	prevCtx := cm.runCtx
+	cm.runCtx = hookmeta.WithHost(ctx)
+	defer func() { cm.runCtx = prevCtx }()
 
 	v, err := cm.vm.RunString("(function(event){\n" + fileBody + "\n})")
 	if err != nil {
