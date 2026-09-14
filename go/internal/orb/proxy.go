@@ -47,6 +47,10 @@ func (p *proxy) serve(w http.ResponseWriter, r *http.Request) {
 		p.tunnel(w, r)
 		return
 	}
+	if r.URL.Host == "" && r.Method == http.MethodPost && r.URL.Path == "/bough/exec" {
+		relayExec(w, r)
+		return
+	}
 	// Plain HTTP through a proxy arrives with an absolute URI.
 	if r.URL.Host == "" {
 		http.Error(w, "orb proxy: absolute URI or CONNECT required", http.StatusBadRequest)

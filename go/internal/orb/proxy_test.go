@@ -2,15 +2,79 @@ package orb
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestRelayRunsOnlyMCPOnHost(t *testing.T) {
+	// Not parallel: it swaps hostBough.
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "bough")
+	os.WriteFile(fake, []byte("#!/bin/sh\necho \"host: $*\"; cat; echo oops >&2; exit 3\n"), 0o755)
+	prev := hostBough
+	hostBough = func() (string, error) { return fake, nil }
+	defer func() { hostBough = prev }()
+	p, err := startProxy("127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+
+	post := func(body string) (*http.Response, relayResponse) {
+		resp, err := http.Post(p.URL()+"/bough/exec", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var rr relayResponse
+		json.NewDecoder(resp.Body).Decode(&rr)
+		return resp, rr
+	}
+	resp, rr := post(`{"args":["mcp","call","linear-server/x","{}"],"stdin":"in"}`)
+	if resp.StatusCode != 200 || rr.Stdout != "host: mcp call linear-server/x {}\nin" || rr.Stderr != "oops\n" || rr.Exit != 3 {
+		t.Fatalf("relay: %d %+v", resp.StatusCode, rr)
+	}
+	if resp, _ := post(`{"args":["update"]}`); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-mcp command got %d", resp.StatusCode)
+	}
+}
+
+func TestShimRelaysThroughHost(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not installed")
+	}
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "host-bough")
+	os.WriteFile(fake, []byte("#!/bin/sh\necho \"host: $*\"; exit 2\n"), 0o755)
+	prev := hostBough
+	hostBough = func() (string, error) { return fake, nil }
+	defer func() { hostBough = prev }()
+	p, err := startProxy("127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	scratch := t.TempDir()
+	if err := writeShim(scratch); err != nil {
+		t.Fatal(err)
+	}
+	c := exec.Command(filepath.Join(shimDir(scratch), "bough"), "mcp", "list")
+	c.Env = append(os.Environ(), "BOUGH_HOST="+p.URL())
+	out, err := c.Output()
+	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 2 || string(out) != "host: mcp list\n" {
+		t.Fatalf("shim: %q %v", out, err)
+	}
+}
 
 func TestProxyForwardsHTTPAndConnect(t *testing.T) {
 	t.Parallel()

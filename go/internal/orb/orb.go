@@ -183,6 +183,11 @@ func (o *Orb) execEnv(proxyURL string) []string {
 	env := append(o.coreEnv(), identityEnv()...)
 	if proxyURL != "" {
 		env = append(env, proxyEnv(proxyURL)...)
+		env = append(env, "BOUGH_HOST="+proxyURL)
+	}
+	if o.scratch != "" {
+		// The shim's dir first, so `bough` in the guest is the relay.
+		env = append(env, "PATH="+shimDir(o.scratch)+":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
 	}
 	return append(env, envList(o.project.Def.Env)...)
 }
@@ -220,6 +225,11 @@ func (o *Orb) ensureProxyLocked(ctx context.Context) {
 // script leaves the container usable so the agent can fix it.
 func (o *Orb) resumeLocked(ctx context.Context) {
 	o.ensureProxyLocked(ctx)
+	if o.scratch != "" {
+		if err := writeShim(o.scratch); err != nil {
+			fmt.Fprintf(os.Stderr, "bough: orb: bough shim: %v\n", err)
+		}
+	}
 	o.state.Status, o.state.Error = StatusRunning, ""
 	script := filepath.Join(o.project.Dir, projectdef.FileResume)
 	if _, err := os.Stat(script); err == nil {

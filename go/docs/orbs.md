@@ -344,6 +344,11 @@ own shell; it only isolates file changes.
   VM bridge, so the child runs an HTTP/CONNECT proxy on the guest's
   gateway IP (its resolv.conf nameserver) and sets `HTTPS_PROXY` and
   friends per exec. Stop closes it; a restart reopens it.
+- **bough / MCP**: the host bough is a macOS binary and MCP grants live in
+  the keychain, so the guest's `bough` is a shim at
+  `$BOUGH_SCRATCH/.bin/bough` (first on the exec `PATH`) that POSTs its
+  args to `$BOUGH_HOST/bough/exec` on the proxy; the host runs its own
+  bough (only the `mcp` subcommand) and returns stdout, stderr and exit.
 
 ## 2. Session mode (area: session-mode)
 
