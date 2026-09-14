@@ -1,12 +1,14 @@
 package serve
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/andreylukin/bough/internal/container"
 	"github.com/andreylukin/bough/internal/projectdef"
 	"github.com/andreylukin/bough/plugins/history"
 )
@@ -35,6 +37,31 @@ const (
 type queuedChild struct {
 	id, dir, prompt string
 	extra           []string
+}
+
+// ChildTask is a queued child's start as meta.json keeps it.
+type ChildTask struct {
+	Dir    string   `json:"dir,omitempty"`
+	Prompt string   `json:"prompt,omitempty"`
+	Extra  []string `json:"extra,omitempty"`
+}
+
+// requeueLocked rebuilds the queue from persisted tasks, oldest first
+// (ids are time-ordered). Caller holds s.mu or owns s alone.
+func (s *Supervisor) requeueLocked() {
+	var ids []string
+	for id, m := range s.meta {
+		if m.Task != nil {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		m := s.meta[id]
+		m.Queued = true
+		s.meta[id] = m
+		s.queue = append(s.queue, queuedChild{id: id, dir: m.Task.Dir, prompt: m.Task.Prompt, extra: m.Task.Extra})
+	}
 }
 
 // ChildInfo is one background agent as its parent sees it.
@@ -111,6 +138,7 @@ func (s *Supervisor) CreateChild(opt CreateOptions, maxPerSession, maxRunning in
 	}
 	if len(s.running) >= s.maxRunning {
 		m.Queued = true
+		m.Task = &ChildTask{Dir: q.dir, Prompt: q.prompt, Extra: q.extra}
 		s.meta[q.id] = m
 		s.queue = append(s.queue, q)
 		err := s.saveMetaLocked()
@@ -122,7 +150,8 @@ func (s *Supervisor) CreateChild(opt CreateOptions, maxPerSession, maxRunning in
 	// running status: a burst of spawns would otherwise all see zero
 	// running while their processes boot.
 	s.running[q.id] = true
-	ch := &child{id: q.id, done: make(chan struct{})}
+	ch := newChild(q.id)
+	ch.booting = true
 	s.kids[q.id] = ch
 	if err := s.saveMetaLocked(); err != nil {
 		s.mu.Unlock()
@@ -145,11 +174,22 @@ func firstDir(dirs ...string) string {
 	return ""
 }
 
-// launch starts a reserved child and hands it its task.
+// launch starts a reserved child and hands it its task. A stop that
+// arrived while the process booted wins: the child is killed before it
+// ever reads its task, since SIGINT to an idle process cancels nothing
+// and the prompt would then run in full.
 func (s *Supervisor) launch(ch *child, q queuedChild) error {
 	if err := s.start(ch, q.dir, "", q.extra); err != nil {
 		s.abandon(ch)
 		return err
+	}
+	s.mu.Lock()
+	stop := ch.stopReq
+	ch.booting = false
+	s.mu.Unlock()
+	if stop {
+		s.killChild(ch)
+		return nil
 	}
 	if q.prompt != "" {
 		if err := s.write(ch, q.prompt); err != nil {
@@ -190,11 +230,21 @@ func (s *Supervisor) drainQueue() {
 		s.queue = s.queue[1:]
 		m := s.meta[q.id]
 		m.Queued = false
+		m.Task = nil
 		s.meta[q.id] = m
 		s.running[q.id] = true
-		ch := &child{id: q.id, done: make(chan struct{})}
+		ch := newChild(q.id)
+		ch.booting = true
 		s.kids[q.id] = ch
+		// Saved before launch: a restart after this start must not
+		// start the same child a second time.
+		serr := s.saveMetaLocked()
 		s.mu.Unlock()
+		if serr != nil {
+			s.mu.Lock()
+			s.emitLocked(q.id, "error", serr.Error(), nil)
+			s.mu.Unlock()
+		}
 		if err := s.launch(ch, q); err != nil {
 			s.mu.Lock()
 			s.emitLocked(q.id, "error", err.Error(), nil)
@@ -296,11 +346,16 @@ func (s *Supervisor) report(id, parent, trigger string) {
 		break
 	}
 	s.mu.Lock()
-	if key <= s.reported[id] {
+	m, ok := s.meta[id]
+	if !ok || key <= m.Reported {
 		s.mu.Unlock()
 		return
 	}
-	s.reported[id] = key
+	m.Reported = key
+	s.meta[id] = m
+	// Best effort: a failed save risks one duplicate after a restart,
+	// which beats withholding the report.
+	_ = s.saveMetaLocked()
 	s.mu.Unlock()
 	// A parent that cannot be told (deleted file) has nobody to tell.
 	_ = s.notifyFrom(parent, id, reportText(id, s.childTitle(id), word, t.reply))
@@ -419,10 +474,34 @@ func (s *Supervisor) queuedIDs() []string {
 	return out
 }
 
-// StopChild interrupts a running child or drops a queued one.
-func (s *Supervisor) StopChild(id string) error {
-	_, err := s.stopChild(id)
-	return err
+// EndChild is archive's stop: it drops a queued child and kills a live
+// one whether it is mid-turn or idle, and stops a project child's orb.
+// stopChild's interrupt keeps the process by design, which under an
+// archived parent would orphan it and its container.
+func (s *Supervisor) EndChild(id string) error {
+	if was, err := s.stopChild(id); err != nil || was == "queued" {
+		return err
+	}
+	if err := s.Kill(id); err != nil {
+		return err
+	}
+	entries, _ := s.Entries(id)
+	if mode, _ := sessionMode(entries); mode != "project" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	name := container.OrbName(id)
+	if st, err := s.rt.Inspect(ctx, name); err != nil || st != container.StateRunning {
+		return nil // no container, or already down: nothing to stop
+	}
+	if err := s.rt.Stop(ctx, name); err != nil {
+		return fmt.Errorf("serve: supervisor: stop orb of %s: %w", id, err)
+	}
+	s.mu.Lock()
+	s.stoppedAt[id] = time.Now()
+	s.mu.Unlock()
+	return nil
 }
 
 // stopChild reports what the child was: "queued", "running" or "idle".
@@ -440,7 +519,13 @@ func (s *Supervisor) stopChild(id string) (string, error) {
 		}
 	}
 	running := s.running[id]
-	_, live := s.kids[id]
+	ch, live := s.kids[id]
+	if running && live && ch.booting {
+		// Still booting: launch sees this and kills instead of prompting.
+		ch.stopReq = true
+		s.mu.Unlock()
+		return "running", nil
+	}
 	s.mu.Unlock()
 	if !running || !live {
 		return "idle", nil

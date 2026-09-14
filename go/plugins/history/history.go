@@ -512,14 +512,20 @@ func (s *Store) catchUp() {
 	}
 	sc := bufio.NewScanner(io.NewSectionReader(f, s.off, st.Size()-s.off))
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	forked := false
 	for sc.Scan() {
 		var e Entry
 		if json.Unmarshal(sc.Bytes(), &e) == nil && e.Seq > s.seq {
 			s.seq = e.Seq
+			// serve's "notice" is a message dropped in the mailbox, not a
+			// second instance writing the session: it must not warn.
+			if e.Kind != "notice" {
+				forked = true
+			}
 		}
 	}
 	s.off = st.Size()
-	if !s.shared && s.seq > s.last {
+	if !s.shared && forked && s.seq > s.last {
 		s.shared = true
 		if w := (ConcurrentWriter{Seq: s.seq}); s.onErr != nil {
 			s.onErr(w)

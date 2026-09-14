@@ -62,8 +62,16 @@ type SessionMeta struct {
 	// SpawnedBy is the parent of a background agent, persisted so the
 	// tree survives a serve restart for children that ran.
 	SpawnedBy string `json:"spawnedBy,omitempty"`
-	// Queued is in memory only: the queue does not survive a restart.
+	// Queued is derived from Task on load.
 	Queued bool `json:"-"`
+	// Task is a queued child's pending start, persisted so the queue
+	// survives a serve restart instead of leaving a ghost that never
+	// runs yet counts against its parent's budget. Cleared on launch.
+	Task *ChildTask `json:"task,omitempty"`
+	// Reported is the seq of the child's last turn reported to its
+	// parent. On disk because a restarted serve that re-adopts a child
+	// would otherwise report its old turn again when the process exits.
+	Reported int64 `json:"reported,omitempty"`
 }
 
 // Project is a named grouping of sessions. It exists independently of
@@ -122,17 +130,25 @@ type pending struct {
 }
 
 type child struct {
+	// cmd and stdin are set once, before ready closes, and never again:
+	// a child is registered in kids before its process exists, so every
+	// reader waits on ready (or done, for a start that failed) first.
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
+	ready chan struct{}
 	inMu  sync.Mutex // one writer at a time: a torn line would be read as two prompts
 
 	done chan struct{} // closed once the process is reaped and the lease dropped
 
 	// Guarded by Supervisor.mu.
-	id      string
-	metaID  string // a session id the child volunteered on a "meta" line
-	buffer  []pending
-	dropped bool // the lease has already been handed back
+	// booting: a background agent reserved for launch that has not yet
+	// been handed its task. stopReq: stopped while booting, so launch
+	// kills it instead of prompting.
+	booting, stopReq bool
+	id               string
+	metaID           string // a session id the child volunteered on a "meta" line
+	buffer           []pending
+	dropped          bool // the lease has already been handed back
 }
 
 // Supervisor is safe for concurrent use. One mutex guards the lease
@@ -176,12 +192,10 @@ type Supervisor struct {
 	buildErr map[string]string
 
 	// Background agents (children.go): the FIFO of children waiting for
-	// a slot, the ones holding a slot, the global cap last requested,
-	// and the closing seq of the last turn reported per child.
+	// a slot, the ones holding a slot, and the global cap last requested.
 	queue      []queuedChild
 	running    map[string]bool
 	maxRunning int
-	reported   map[string]int64
 }
 
 // NewSupervisor loads the meta store and resolves the bough binary. A
@@ -231,7 +245,6 @@ func NewSupervisor(opt Options) (*Supervisor, error) {
 		meta:      map[string]SessionMeta{},
 		projects:  map[string]Project{},
 		running:   map[string]bool{},
-		reported:  map[string]int64{},
 	}
 	if opt.MetaPath != "" {
 		if err := os.MkdirAll(filepath.Dir(opt.MetaPath), 0o755); err != nil {
@@ -243,6 +256,10 @@ func NewSupervisor(opt Options) (*Supervisor, error) {
 	}
 	if err := s.adoptDefinitions(); err != nil {
 		return nil, err
+	}
+	// Children queued before a restart start now, as they would have.
+	if len(s.queue) > 0 {
+		go s.drainQueue()
 	}
 	return s, nil
 }
@@ -447,7 +464,7 @@ func (s *Supervisor) ensure(id string) (*child, error) {
 	}
 	// Reserve the lease before releasing the mutex, so a concurrent
 	// ensure waits for this spawn rather than starting a second one.
-	ch := &child{id: id, done: make(chan struct{})}
+	ch := newChild(id)
 	s.kids[id] = ch
 	s.mu.Unlock()
 
@@ -483,7 +500,7 @@ func (s *Supervisor) adoptDir(id string) string {
 
 // spawn starts a child that has no id yet (Create's case).
 func (s *Supervisor) spawn(cwd, id string, extra []string) (*child, error) {
-	ch := &child{done: make(chan struct{})}
+	ch := newChild("")
 	if err := s.start(ch, cwd, id, extra); err != nil {
 		close(ch.done)
 		return nil, err
@@ -495,6 +512,9 @@ func (s *Supervisor) spawn(cwd, id string, extra []string) (*child, error) {
 // it. NEVER a bare --resume: headless refuses it, prints the session
 // list and exits 2.
 func (s *Supervisor) start(ch *child, dir, id string, extra []string) error {
+	if ch.ready != nil {
+		defer close(ch.ready)
+	}
 	args := []string{"--headless", "--json"}
 	if id != "" {
 		args = append(args, "-r", id)
@@ -760,6 +780,7 @@ func (s *Supervisor) Answer(id, text string) error {
 }
 
 func (s *Supervisor) write(ch *child, text string) error {
+	ch.started()
 	ch.inMu.Lock()
 	defer ch.inMu.Unlock()
 	if ch.stdin == nil {
@@ -778,6 +799,24 @@ func (s *Supervisor) write(ch *child, text string) error {
 	return nil
 }
 
+func newChild(id string) *child {
+	return &child{id: id, ready: make(chan struct{}), done: make(chan struct{})}
+}
+
+// started waits until start has set cmd and stdin (or given up), so
+// they can be read without a lock. False: the child never started.
+func (ch *child) started() bool {
+	if ch.ready == nil {
+		return true // a test's hand-built child
+	}
+	select {
+	case <-ch.ready:
+		return ch.cmd != nil
+	case <-ch.done:
+		return false
+	}
+}
+
 // Interrupt SIGINTs the child and keeps the lease, so the session can
 // be prompted again without a respawn.
 func (s *Supervisor) Interrupt(id string) error {
@@ -787,7 +826,7 @@ func (s *Supervisor) Interrupt(id string) error {
 	if !ok {
 		return fmt.Errorf("serve: supervisor: %s: %w", id, ErrUnknownSession)
 	}
-	if ch.cmd == nil || ch.cmd.Process == nil {
+	if !ch.started() || ch.cmd == nil || ch.cmd.Process == nil {
 		return nil
 	}
 	if err := ch.cmd.Process.Signal(os.Interrupt); err != nil {
@@ -810,6 +849,10 @@ func (s *Supervisor) Kill(id string) error {
 }
 
 func (s *Supervisor) killChild(ch *child) {
+	if !ch.started() {
+		<-ch.done
+		return
+	}
 	if ch.cmd != nil && ch.cmd.Process != nil {
 		_ = ch.cmd.Process.Kill()
 	}
@@ -826,7 +869,17 @@ func (s *Supervisor) childPID(id string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ch, ok := s.kids[id]
-	if !ok || ch.cmd == nil || ch.cmd.Process == nil {
+	if !ok {
+		return 0
+	}
+	select {
+	case <-ch.ready:
+	default:
+		if ch.ready != nil {
+			return 0 // still starting; not waited for under s.mu
+		}
+	}
+	if ch.cmd == nil || ch.cmd.Process == nil {
 		return 0
 	}
 	return ch.cmd.Process.Pid
@@ -1131,6 +1184,7 @@ func (s *Supervisor) loadMeta() error {
 		for k, v := range f.Projects {
 			s.projects[k] = v
 		}
+		s.requeueLocked()
 		return nil
 	}
 	var m map[string]SessionMeta

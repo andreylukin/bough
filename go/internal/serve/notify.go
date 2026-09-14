@@ -25,7 +25,10 @@ func (s *Supervisor) notifyFrom(id, from, text string) error {
 	ch, live := s.kids[id]
 	s.mu.Unlock()
 	// Not Send: that refuses on a pending ask and would ensure a child.
-	if live && s.writeLine(ch, map[string]string{"notice": text}) == nil {
+	// A lease reserved but still starting gets the line once its stdin
+	// exists: a stored notice would land after the new process's loop
+	// has already read its file, and wait for a later mount.
+	if live && ch.started() && s.writeLine(ch, map[string]string{"notice": text}) == nil {
 		s.mu.Lock()
 		s.emitLocked(id, "notice", text, nil)
 		s.mu.Unlock()

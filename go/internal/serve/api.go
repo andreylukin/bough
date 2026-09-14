@@ -407,7 +407,7 @@ func (a *API) archive(w http.ResponseWriter, r *http.Request) {
 	a.metaVerb(w, id, func() error {
 		if body.StopChildren {
 			for _, c := range a.sup.Children(id) {
-				if err := a.sup.StopChild(c.ID); err != nil {
+				if err := a.sup.EndChild(c.ID); err != nil {
 					return err
 				}
 			}

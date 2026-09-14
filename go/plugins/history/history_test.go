@@ -642,3 +642,35 @@ func TestMetaModeAndCheckpoints(t *testing.T) {
 		t.Errorf("local meta = %v", es)
 	}
 }
+
+// A notice another process appended (serve reporting a background
+// agent to a parent it does not run) is mail, not a fork: no warning,
+// and the next own append still gets a seq past it.
+func TestForeignNoticeIsNotConcurrentWriter(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Append("input", nil)
+	s.Close()
+	a, err := OpenExisting(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []error
+	a.SetErrorSink(func(err error) { got = append(got, err) })
+	n, err := AppendFile(path, "notice", map[string]any{"id": "n1", "to": "s", "text": "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := a.Append("notice-delivered", map[string]any{"id": "n1"})
+	a.Close()
+	if len(got) != 0 {
+		t.Fatalf("sink got %v, want nothing for a foreign notice", got)
+	}
+	if e.Seq <= n.Seq {
+		t.Fatalf("own seq %d not past the notice's %d", e.Seq, n.Seq)
+	}
+}

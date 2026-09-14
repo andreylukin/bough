@@ -44,7 +44,7 @@ var (
 	hlHist    historyAppender
 	hlAnswer  askAnswers        // current mount's "ask-answers" service; nil = no asks
 	hlSteer   func(string) bool // current mount's "steer" service; nil = mid-turn lines queue
-	hlNotify  func(string)      // routes a {"notice"} line to job-notices; nil = dropped with an error
+	hlNotify  func(string) bool // routes a {"notice"} line to job-notices; false/nil = not mounted yet
 	hlUsage   llm.UsageReporter // current mount's "usage" service; nil = no usage lines
 	hlAsk     *hlAskState
 	hlPending atomic.Int64
@@ -132,7 +132,7 @@ type hlAskState struct {
 // inputs so a reload never sends into a closed channel. The printer
 // goroutine for a disposed mount leaks quietly (its broadcaster stops
 // publishing); one idle goroutine per reload is accepted.
-func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog historyAppender, ask askAnswers, steer func(string) bool, notify func(string)) func() {
+func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog historyAppender, ask askAnswers, steer func(string) bool, notify func(string) bool) func() {
 	events, _ := b.subscribe()
 	go func() {
 		for ev := range events {
@@ -295,17 +295,30 @@ func hlLineIn(line string) {
 	hlSubmit(line)
 }
 
+// hlNoticeWait bounds how long a notice waits for job-notices. serve
+// counted the stdin write as delivered and stored nothing, so dropping
+// in a reload gap loses the report for good; waiting forever would
+// wedge the stdin pump of a session that has no job-notices at all.
+var hlNoticeWait = 30 * time.Second
+
 // hlNotice hands a notice to the job-notices service, which queues it
 // and wakes an idle agent (or lands it before the next model step).
+// Like hlSubmit it waits out a mid-reload gap.
 func hlNotice(text string) {
-	hlMu.Lock()
-	notify := hlNotify
-	hlMu.Unlock()
-	if notify == nil {
-		hlLine(hlErr, "error", "ui: headless: notice dropped: no job-notices service", nil)
-		return
+	deadline := time.Now().Add(hlNoticeWait)
+	for {
+		hlMu.Lock()
+		notify := hlNotify
+		hlMu.Unlock()
+		if notify != nil && notify(text) {
+			return
+		}
+		if time.Now().After(deadline) {
+			hlLine(hlErr, "error", "ui: headless: notice dropped: no job-notices service", nil)
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	notify(text)
 }
 
 // hlSubmit sends one line to the loop as user input, waiting out a

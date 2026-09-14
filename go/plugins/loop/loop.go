@@ -994,6 +994,24 @@ func (r *runner) Context() string {
 // file count, so a fork does not re-deliver its parent's. Each is
 // marked delivered BEFORE it is queued: a crash between the two loses
 // the notice rather than delivering it twice.
+// storedNoticePoll is how often a running session looks for notices
+// appended to its file by another process: a report is not urgent to
+// the second, and a stat per second is free.
+const storedNoticePoll = time.Second
+
+// fileSize is the session file's size, 0 when there is none: a cheap
+// "did anything land" check before re-reading the whole file.
+func fileSize(h History) int64 {
+	if h == nil || h.Path() == "" {
+		return 0
+	}
+	st, err := os.Stat(h.Path())
+	if err != nil {
+		return 0
+	}
+	return st.Size()
+}
+
 func (r *runner) deliverStoredNotices() {
 	n, ok := r.notices.(interface{ Notify(string) })
 	if !ok || r.hist == nil || r.hist.Path() == "" {
@@ -2211,12 +2229,26 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		// finishes mid-turn is landed by landJobs instead, so the wake
 		// then finds nothing pending and starts nothing.
 		var wake <-chan struct{}
+		// serve appends a notice to the file of a parent it does not
+		// run (resumed in the TUI, a plain `bough -r`): a mount-time
+		// read alone would leave that live session deaf until remount.
+		var recheck <-chan time.Time
+		var seen int64
 		if r.notices != nil {
+			seen = fileSize(r.hist)
 			r.deliverStoredNotices()
 			wake = r.notices.Wake()
+			tick := time.NewTicker(storedNoticePoll)
+			defer tick.Stop()
+			recheck = tick.C
 		}
 		for {
 			select {
+			case <-recheck:
+				if n := fileSize(r.hist); n != seen {
+					seen = n
+					r.deliverStoredNotices()
+				}
 			case input, ok := <-inputs:
 				if !ok {
 					return
