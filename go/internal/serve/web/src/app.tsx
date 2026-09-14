@@ -2378,6 +2378,53 @@ function sendError(e?: string) {
 const TurnViewMemo = memo(TurnView);
 
 /**
+ * The image build a session waits on, live: polls the build log once a
+ * second from where it left off and follows the end unless you scrolled up.
+ * A session opened mid-build used to show only "building" for minutes.
+ */
+function OrbBuildLog({ id, project }: { id: string; project: string }) {
+  const [text, setText] = useState("");
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState("");
+  const pre = useRef<HTMLPreElement>(null);
+  const follow = useRef(true);
+  useEffect(() => {
+    let off = 0, stop = false;
+    const tick = async () => {
+      try {
+        const r = await api.sessionBuildLog(id, off);
+        if (stop) return;
+        setErr("");
+        // A smaller offset means a new build truncated the log.
+        if (r.offset < off) setText(r.text); else if (r.text) setText((t) => t + r.text);
+        off = r.offset;
+        if (r.status && r.status !== "building") { setDone(r.status); return; }
+      } catch (e) {
+        if (!stop) setErr((e as Error).message);
+      }
+      if (!stop) setTimeout(tick, 1000);
+    };
+    tick();
+    return () => { stop = true; };
+  }, [id]);
+  useLayoutEffect(() => {
+    const el = pre.current;
+    if (el && follow.current) el.scrollTop = el.scrollHeight;
+  }, [text]);
+  const lines = text.split("\n");
+  const tail = lines.length > 2000 ? lines.slice(-2000).join("\n") : text;
+  return (
+    <div className="block orb-failure" role="region" aria-label={`${project} image build log`}>
+      <p className="meta-line">{done ? `Build finished · ${done}` : `Building the ${project} image…`}</p>
+      {err && <p className="send-failed-text" role="alert">Couldn’t read the build log: {err}</p>}
+      {tail ? <pre className="mono" ref={pre} aria-live="off"
+                   onScroll={(e) => { const el = e.currentTarget; follow.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 8; }}>{tail}</pre>
+        : <p className="meta-line">Waiting for build output…</p>}
+    </div>
+  );
+}
+
+/**
  * A failed orb's "why": the orb chip only said "failed", with nothing to
  * open. The error and the tail of resume.log load when you open it, and
  * again on Refresh, so a fixed definition can be checked from here.
@@ -2978,6 +3025,12 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
               {orbWhy ? "Hide" : "Why?"}
             </button>
           )}
+          {row.orb?.status === "building" && (
+            <button className="link" aria-expanded={orbWhy} aria-label={orbWhy ? "Hide build log" : "Show the live build log"}
+                    onClick={() => setOrbWhy((v) => !v)}>
+              {orbWhy ? "Hide" : "Log"}
+            </button>
+          )}
           {/* A test failure is the Tests chip's to say, once. */}
           {running && turns[turns.length - 1]?.prompt?.at && !turns[turns.length - 1]?.done && <RunClock since={turns[turns.length - 1].prompt!.at} />}
           {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
@@ -3023,6 +3076,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
           )} />
       </header>
       {orbWhy && row.orb?.status === "failed" && <OrbFailure key={row.id} id={row.id} project={row.orb.project} />}
+      {orbWhy && row.orb?.status === "building" && <OrbBuildLog key={row.id} id={row.id} project={row.orb.project} />}
 
       <div className="scroll transcript" ref={scroller} onScroll={onScroll} onKeyDown={latestKey}
            onFocus={(e) => { const t = e.target as HTMLElement; if (t.matches("details.block > summary") && t !== rovingAt.current) rove(summaries(), t); }}

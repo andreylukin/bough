@@ -79,6 +79,7 @@ func (a *API) routeOrbs() {
 	a.mux.HandleFunc("GET /api/projects/{id}/orb/build/log", a.buildLog)
 	a.mux.HandleFunc("GET /api/sessions/{id}/orb", a.sessionOrb)
 	a.mux.HandleFunc("GET /api/sessions/{id}/orb/log", a.sessionOrbLog)
+	a.mux.HandleFunc("GET /api/sessions/{id}/orb/build/log", a.sessionBuildLog)
 	a.mux.HandleFunc("POST /api/sessions/{id}/orb/stop", a.stopOrb)
 }
 
@@ -488,6 +489,43 @@ func (a *API) sessionOrbLog(w http.ResponseWriter, r *http.Request) {
 		text = string(b)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": st.Status, "error": st.Error, "image": st.Image, "text": text})
+}
+
+// sessionBuildLog streams the image build a session is waiting on: the
+// project's build.log from offset, in chunks, like the project page's build
+// log. A session opened on a project mid-build only said "building".
+func (a *API) sessionBuildLog(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := a.info(id); !ok {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: unknown session %q", id))
+		return
+	}
+	offset, err := intParam(r, "offset")
+	if err != nil || offset < 0 {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: bad offset %q", r.URL.Query().Get("offset")))
+		return
+	}
+	st := a.orbState(id)
+	if st.Project == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"text": "", "offset": 0, "status": st.Status})
+		return
+	}
+	home := a.sup.Home()
+	state := ""
+	if b, err := orb.ReadBuild(home, st.Project); err == nil {
+		state = b.State
+	}
+	text := ""
+	if f, err := os.Open(orb.ImageLogPath(home, st.Project)); err == nil {
+		defer f.Close()
+		if fi, err := f.Stat(); err == nil && offset > fi.Size() {
+			offset = 0 // a newer build truncated it: start over
+		}
+		buf, _ := io.ReadAll(io.LimitReader(io.NewSectionReader(f, offset, maxLogChunk), maxLogChunk))
+		text = string(buf)
+		offset += int64(len(buf))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"text": text, "offset": offset, "state": state, "status": st.Status})
 }
 
 func (a *API) sessionOrb(w http.ResponseWriter, r *http.Request) {
