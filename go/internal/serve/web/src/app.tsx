@@ -129,26 +129,31 @@ export function useMedia(query: string): boolean {
 }
 
 /** Rows under their workspace, workspaces by what needs you, then their latest activity. */
-function byWorkspace(rows: Row[]): [string, Row[]][] {
-  // Grouped by the whole path, so two checkouts named alike stay apart;
-  // only then does a name take its parent to tell them apart.
+/** A group key: the project a session belongs to, else its checkout. */
+const groupKey = (r: Row) => (r.project ? `project:${r.project}` : r.repo || r.cwd);
+
+function byWorkspace(rows: Row[], projectNames: Map<string, string> = new Map()): [string, Row[], string][] {
+  // A session in a project groups under the project, whichever repo it ran
+  // in; the rest group by the whole path, so two checkouts named alike stay
+  // apart; only then does a name take its parent to tell them apart.
   const out = new Map<string, Row[]>();
   for (const r of rows) {
-    const k = r.repo || r.cwd;
+    const k = groupKey(r);
     if (!out.has(k)) out.set(k, []);
     out.get(k)!.push(r);
   }
   const names = new Map<string, number>();
-  for (const list of out.values()) names.set(workspaceOf(list[0]), (names.get(workspaceOf(list[0])) ?? 0) + 1);
+  for (const list of out.values()) if (!list[0].project) names.set(workspaceOf(list[0]), (names.get(workspaceOf(list[0])) ?? 0) + 1);
   const label = (r: Row) => {
+    if (r.project) return projectNames.get(r.project) ?? "Project";
     const name = workspaceOf(r);
     if ((names.get(name) ?? 0) < 2) return name;
     return (r.repo || r.cwd).split("/").filter(Boolean).slice(-2).join("/");
   };
   const latest = (list: Row[]) => Math.max(...list.map((r) => Date.parse(r.lastAt)));
   const signal = (list: Row[]) => Math.min(...list.map(sessionSignal));
-  return [...out.values()]
-    .map((list) => [label(list[0]), list.sort(byUrgency)] as [string, Row[]])
+  return [...out.entries()]
+    .map(([k, list]) => [label(list[0]), list.sort(byUrgency), k] as [string, Row[], string])
     .sort((a, b) => signal(a[1]) - signal(b[1]) || latest(b[1]) - latest(a[1]));
 }
 
@@ -182,8 +187,10 @@ const ICONS = {
   chevron: <path d="M9 6l6 6-6 6" />,
 };
 
-export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onFind, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry }: {
+export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onFind, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
+  /** Project labels, so a project group is headed by its name. */
+  projects?: Project[];
   /** The fleet's freshness: when the list last loaded (null before), and why the last refresh failed. */
   loadedAt?: number | null; loadErr?: string | null; onRetry?: () => void;
   /** Whether the rows hold archived sessions yet, once the section is open. */
@@ -212,6 +219,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
   // where a session ran, and whether it is still recent.
   // Runs nobody started by hand always fold into Background — the person
   // chose that; one that needs attention lights the section header instead.
+  const projectNames = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects]);
   const { recent, inactive, background, archived, kids } = useMemo(() => {
     const now = Date.now();
     const recent: Row[] = [], inactive: Row[] = [], background: Row[] = [], archived: Row[] = [];
@@ -237,8 +245,8 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
       else if (sessionSignal(r) < 2 || now - Date.parse(r.lastAt) < INACTIVE_MS) recent.push(r);
       else inactive.push(r);
     }
-    return { recent: byWorkspace(recent), inactive, background, archived, kids };
-  }, [rows, selected, query]);
+    return { recent: byWorkspace(recent, projectNames), inactive, background, archived, kids };
+  }, [rows, selected, query, projectNames]);
 
   // Inactive stays shut until asked, and the way you left it across reloads.
   const [unfolded, setUnfolded] = useState<Set<string>>(() => readSet("bough:unfolded"));
@@ -595,15 +603,15 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     );
   };
 
-  const workspaces = (groups: [string, Row[]][], sec: string) => groups.map(([ws, list]) => {
-    const key = `${sec}:${list[0].repo || list[0].cwd}`;
+  const workspaces = (groups: [string, Row[], string][], sec: string) => groups.map(([ws, list, gk]) => {
+    const key = `${sec}:${gk}`;
     const open = !(searchOn ? searchFolds : wsFolded).has(key);
     const urgent = list.filter((r) => sessionSignal(r) === 0);
     const seen = new Map<string, number>();
     for (const r of list) seen.set(displayTitle(r), (seen.get(displayTitle(r)) ?? 0) + 1);
     return (
       <div key={key} className="ws">
-        <button className="ws-head" role="treeitem" aria-expanded={open} onClick={() => toggleWs(key)} title={list[0].repo || list[0].cwd}>
+        <button className="ws-head" role="treeitem" aria-expanded={open} onClick={() => toggleWs(key)} title={list[0].project ? `Project ${ws}` : list[0].repo || list[0].cwd}>
           <Icon d={ICONS.chevron} size={12} /><Icon d={ICONS.folder} size={15} /><span className="ws-name">{ws}</span>
           {/* Folded, a group still says when something in it needs you. */}
           {!open && (urgent.length
@@ -721,9 +729,9 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
         )}
         {workspaces(recent, "recent")}
         {inactive.length > 0 && section("inactive", "Inactive · 72h+", foldOpen("inactive", unfolded.has("inactive")), foldToggle("inactive", () => toggleFold("inactive")),
-          inactive.length, workspaces(byWorkspace(inactive), "inactive"))}
+          inactive.length, workspaces(byWorkspace(inactive, projectNames), "inactive"))}
         {background.length > 0 && section("background", "Background", foldOpen("background", unfolded.has("background")), foldToggle("background", () => toggleFold("background")),
-          bgUrgent.length ? <span title={`${background.length} in all`}>{bgUrgent.length} need you</span> : background.length, workspaces(byWorkspace(background), "background"), bgAlert, bgSub || undefined)}
+          bgUrgent.length ? <span title={`${background.length} in all`}>{bgUrgent.length} need you</span> : background.length, workspaces(byWorkspace(background, projectNames), "background"), bgAlert, bgSub || undefined)}
         {/* Archived is not loaded until opened, so a search cannot have looked there. */}
         {section("archived", q && !showArchived ? "Archived not searched · Include" : "Archived", showArchived && !archFolded,
           // Once included, folding only hides the section; a search still covers it.
@@ -731,7 +739,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
           showArchived && archivedState === "ready" ? archived.length : null,
           archivedState === "loading" ? <p className="list-none">Loading archived…</p>
           : archivedState === "failed" ? <p className="list-none">Couldn’t load archived · <button className="link" onClick={onRetryArchived}>Retry</button></p>
-          : archived.length ? workspaces(byWorkspace(archived), "archived") : <p className="list-none">{q ? "No archived matches." : "Nothing archived."}</p>)}
+          : archived.length ? workspaces(byWorkspace(archived, projectNames), "archived") : <p className="list-none">{q ? "No archived matches." : "Nothing archived."}</p>)}
       </div>
       {nav}
     </div>
@@ -2334,7 +2342,10 @@ function ParentLink({ id, rows, onOpen }: { id: string; rows: Row[]; onOpen?: (i
   );
 }
 
-type Pending = { id: string; text: string; after: number };
+/** steer: whether a turn was running when you sent it. Read off the live
+ *  status instead, the message itself flipped the session to running before
+ *  the transcript showed it, so every new turn read "Steer pending…". */
+type Pending = { id: string; text: string; after: number; steer?: boolean };
 
 /** "503 Service Unavailable" or a bare "503" reads as what happened, code last. */
 function sendError(e?: string) {
@@ -2757,7 +2768,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     }
     // A retry is the same request, so it keeps its id.
     const id = retried?.id ?? (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
-    if (!answer) setSending((q) => [...q, { id, text: t, after: newest }]);
+    if (!answer) setSending((q) => [...q, { id, text: t, after: newest, steer: running }]);
     else setAnswering({ ask: ask ?? "", text: t });
     const error = await (answer ? onAnswer(t, ask) : onSend(t));
     if (answer) setAnswering(null);
@@ -2994,7 +3005,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
                   </button>
                 )}
               </div>
-              <span className="num prompt-time turn-sending-state" role="status">{running ? "Steer pending…" : "Sending…"}</span>
+              <span className="num prompt-time turn-sending-state" role="status">{p.steer ? "Steer pending…" : "Sending…"}</span>
             </div>
           </section>
         ))}
@@ -3695,7 +3706,7 @@ export default function App() {
                commands={commands} onOpenSession={openSession} initialQuery={palQuery} current={selected}
                onOpenWikiPage={(path) => goWiki({ at: "page", path })}
                onStart={home ? (text) => start(home, text) : undefined} />
-      <Sidebar rows={visible} selected={selected ?? lastId} active={pane === "list"}
+      <Sidebar rows={visible} projects={projects} selected={selected ?? lastId} active={pane === "list"}
                onSelect={openSession} query={query} onQuery={setQuery}
                onTurn={(id, turn) => { if (id !== selected || view !== "sessions" || sub) openSession(id); else setPane("thread"); setJump({ id, turn, at: Date.now() }); }}
                view={view} wikiFlags={wikiFlags} onNew={newSession} onFind={() => setPalette(true)}
