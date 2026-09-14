@@ -204,6 +204,41 @@ func TestRunPendingAskFailsVisit(t *testing.T) {
 	}
 }
 
+// A setup error after the run dir exists used to panic: the deferred Fail
+// ran on the named result r, which `return nil, err` had already nil'd.
+func TestNewRunnerSetupErrorDoesNotPanic(t *testing.T) {
+	yml := `
+name: s
+start: validator
+nodes:
+  validator:
+    type: agent
+    holdout: [acceptance/*.md]
+    prompt: "criteria in {{holdout_dir}}"
+    verdict: true
+    pass: done
+    fail: fail
+    max_visits: 1
+`
+	p, err := writePipeline(t, yml, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	r, err := NewRunner(p, Options{Home: home, Sessions: newFake(func(_, _ string) string { return "" })})
+	if err == nil || r != nil {
+		t.Fatalf("NewRunner = %v, %v; want an error for a holdout glob that matches nothing", r, err)
+	}
+	runs, _ := os.ReadDir(RunsDir(home))
+	if len(runs) != 1 {
+		t.Fatalf("run dirs = %d, want 1", len(runs))
+	}
+	st, _ := os.ReadFile(filepath.Join(RunsDir(home), runs[0].Name(), "state.json"))
+	if !strings.Contains(string(st), StatusError) {
+		t.Errorf("state.json = %s, want status %s", st, StatusError)
+	}
+}
+
 func TestRunLeakWithheld(t *testing.T) {
 	yml := `
 name: l

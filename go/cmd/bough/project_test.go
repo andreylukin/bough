@@ -17,6 +17,9 @@ func TestProjectCommand(t *testing.T) {
 		return out.String(), err
 	}
 
+	if _, err := run("", "show", "web"); err == nil {
+		t.Error("show of a missing project succeeded")
+	}
 	if _, err := run("", "create", "web", "~/repos/web"); err != nil {
 		t.Fatal(err)
 	}

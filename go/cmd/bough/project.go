@@ -64,6 +64,11 @@ func project(out io.Writer, in io.Reader, args []string) error {
 		if err := need(1); err != nil {
 			return err
 		}
+		// A missing project must fail, not print nothing: scripts test
+		// `show` to decide whether to create one.
+		if _, err := projectdef.Load(home, args[1]); err != nil {
+			return err
+		}
 		files := projectdef.EditableFiles
 		if len(args) > 2 {
 			files = args[2:3]

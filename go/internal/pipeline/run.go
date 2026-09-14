@@ -107,15 +107,16 @@ func NewRunner(p *Pipeline, opt Options) (r *Runner, err error) {
 	if id == "" {
 		id = history.NewID()
 	}
-	r = &Runner{p: p, opt: opt, id: id, dir: filepath.Join(RunsDir(opt.Home), id), active: map[string]int{}}
+	run := &Runner{p: p, opt: opt, id: id, dir: filepath.Join(RunsDir(opt.Home), id), active: map[string]int{}}
+	r = run
 	if err := os.MkdirAll(r.dir, 0o700); err != nil {
 		return nil, fmt.Errorf("pipeline: run dir: %w", err)
 	}
 	r.st = State{ID: id, Name: p.Name, Status: StatusRunning, Visits: map[string]int{}, Sessions: map[string]string{}, Pid: os.Getpid(), Started: time.Now()}
+	// run, not r: `return nil, err` has already set r to nil by now.
 	defer func() {
 		if err != nil {
-			r.Fail(err.Error())
-			r = nil
+			run.Fail(err.Error())
 		}
 	}()
 	raw := p.raw
