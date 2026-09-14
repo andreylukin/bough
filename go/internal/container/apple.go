@@ -333,7 +333,12 @@ func parseInspect(out []byte) (State, error) {
 	if len(items) == 0 {
 		return StateMissing, nil
 	}
-	if s, _ := items[0]["status"].(string); strings.EqualFold(s, "running") {
+	s, _ := items[0]["status"].(string)
+	// 1.1.0 live prints status as an object: {"state":"running",...}.
+	if obj, ok := items[0]["status"].(map[string]any); ok {
+		s, _ = obj["state"].(string)
+	}
+	if strings.EqualFold(s, "running") {
 		return StateRunning, nil
 	}
 	return StateStopped, nil

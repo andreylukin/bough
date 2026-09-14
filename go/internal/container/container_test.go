@@ -164,7 +164,7 @@ func TestAppleArgv(t *testing.T) {
 
 func TestParseInspect(t *testing.T) {
 	t.Parallel()
-	for in, want := range map[string]State{"": StateMissing, "[]": StateMissing, `[{"status":"running"}]`: StateRunning, `[{"status":"stopped"}]`: StateStopped} {
+	for in, want := range map[string]State{"": StateMissing, "[]": StateMissing, `[{"status":"running"}]`: StateRunning, `[{"status":"stopped"}]`: StateStopped, `[{"id":"n","status":{"state":"running","networks":[]}}]`: StateRunning, `[{"status":{"state":"stopped"}}]`: StateStopped} {
 		if got, err := parseInspect([]byte(in)); err != nil || got != want {
 			t.Fatalf("%q: %s %v", in, got, err)
 		}

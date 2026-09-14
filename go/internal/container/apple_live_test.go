@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -27,7 +28,13 @@ func TestAppleLive(t *testing.T) {
 	}
 	id := fmt.Sprint(time.Now().UnixNano())
 	name, tag, vol := "bough-orb-livetest-"+id, "bough-orb-livetest:"+id, "bough-orb-livetest-"+id
-	t.Cleanup(func() { _ = a.Remove(context.Background(), name) })
+	// Image and volume too: every run has a fresh id, so leaving them
+	// piles up hundreds of MB per run.
+	t.Cleanup(func() {
+		_ = a.Remove(context.Background(), name)
+		_ = exec.Command(a.Bin, "image", "delete", tag).Run()
+		_ = exec.Command(a.Bin, "volume", "delete", vol).Run()
+	})
 
 	bctx := t.TempDir()
 	_ = os.WriteFile(filepath.Join(bctx, "Dockerfile"), []byte("FROM "+DefaultBase+"\nRUN apt-get update -qq && apt-get install -y -qq procps >/dev/null\n"), 0o644)
@@ -88,7 +95,9 @@ func TestAppleLive(t *testing.T) {
 	_ = bare.Wait()
 	time.Sleep(time.Second)
 	t.Logf("client SIGKILL alone ends guest process: %v", !strings.Contains(run("ps", "-eo", "args"), "sleep 301"))
-	run("sh", "-c", "pkill -f 'sleep 301' || true")
+	// Anchored: an unanchored pattern also matches this sh's own argv
+	// and pkill kills the shell running it (exit 143).
+	run("sh", "-c", "pkill -f '^sleep 301' || true")
 
 	sibling := a.Command(ctx, name, ExecOptions{}, "sleep", "302")
 	sleeper := a.Command(ctx, name, ExecOptions{}, "sh", "-c", "sleep 300")
