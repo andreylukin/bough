@@ -325,7 +325,13 @@ func (m *model) dispatchAs(line, echo string) tea.Cmd {
 		out = "/" + name
 	}
 	m.log(cfg, "system", out)
-	m.blocks = append(m.blocks, block{id: m.nextID, kind: "system", text: out})
+	b := block{id: m.nextID, kind: "system", text: out}
+	if name == "context" && err == nil {
+		// The whole system prompt is ~18k chars: a closed block to open
+		// on demand, not a wall that buries the conversation.
+		b.kind, b.collapsed = "context", true
+	}
+	m.blocks = append(m.blocks, b)
 	m.nextID++
 	m.refresh()
 	m.vp.GotoBottom()

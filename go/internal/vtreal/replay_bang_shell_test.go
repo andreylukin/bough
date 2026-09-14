@@ -74,7 +74,7 @@ func TestBangShell(t *testing.T) {
 		a := bangShellStart(t)
 		bangShellRun(a, "!echo hi-bang-$((6*7))", "hi-bang-42")
 		s := a.settled()
-		if !strings.Contains(s, "! echo hi-bang-$((6*7))") {
+		if !strings.Contains(s, "Shell · echo hi-bang-$((6*7)) · exit 0") {
 			t.Fatalf("bang result block label missing:\n%s", s)
 		}
 		a.check("after !echo")
@@ -106,9 +106,9 @@ func TestBangShell(t *testing.T) {
 		for range 200 {
 			a.term.SendMouse(uv.MouseWheelEvent{X: 5, Y: 3, Button: uv.MouseWheelUp})
 		}
-		a.waitFor("! seq")
+		a.waitFor("Shell · seq")
 		for y, l := range a.lines() {
-			if i := strings.Index(l, "! seq"); i >= 0 {
+			if i := strings.Index(l, "Shell · seq"); i >= 0 {
 				a.click(i+1, y)
 				break
 			}
@@ -131,7 +131,7 @@ func TestBangShell(t *testing.T) {
 		a.typeText("!")
 		a.waitFor("!echo from-draft")
 		a.key(uv.KeyEnter, 0)
-		a.waitFor("! echo from-draft")
+		a.waitFor("Shell · echo from-draft")
 		a.check("after draft !")
 		bangShellNoTurn(a)
 	})

@@ -39,7 +39,7 @@ func TestBangRunsShellAndRendersLabeledBlock(t *testing.T) {
 	if !b.collapsible() {
 		t.Fatal("bang block must stay collapsible")
 	}
-	if p := d.plain(); !strings.Contains(p, "! echo hi-bang") || !strings.Contains(p, "hi-bang") {
+	if p := d.plain(); !strings.Contains(p, "Shell · echo hi-bang · exit 0 · 1 line") || !strings.Contains(p, "hi-bang") {
 		t.Fatalf("frame missing bang label/output:\n%s", p)
 	}
 	// History: command + system, never input.

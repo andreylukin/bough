@@ -163,6 +163,11 @@ func (m *model) replay() {
 // error row: it must be read, and a fresh session keeps its welcome
 // text above it.
 func (m *model) noteLaunch(cfg *uiCfg) {
+	if cfg.info != "" {
+		m.blocks = append(m.blocks, block{id: m.nextID, kind: "system", text: "ℹ " + cfg.info})
+		m.nextID++
+		m.welcome = false
+	}
 	if cfg.notice == "" {
 		return
 	}
@@ -504,6 +509,9 @@ func (m *model) pickerView(cfg *uiCfg) string {
 	} else if len(rows) == 0 {
 		lines = append(lines, th["dim"].Render("  (no sessions)"))
 	}
+	if len(rows) > 0 {
+		lines = append(lines, th["dim"].Render("  "+plural(len(rows), "session")), "")
+	}
 	cur := m.currentID(cfg)
 	cwd, _ := os.Getwd()
 	home, _ := os.UserHomeDir()
@@ -515,12 +523,16 @@ func (m *model) pickerView(cfg *uiCfg) string {
 		if i == m.pick {
 			marker, st = "▸ ", th["focus"]
 		}
-		row := fmt.Sprintf("%s%s%s  %3d entries  %s",
-			marker, s.prefix, s.ModTime.Local().Format("2006-01-02 15:04"), s.Entries, truncateCols(s.Title, pickerTitleWidth))
+		title := strings.TrimSpace(s.Title)
+		if title == "" {
+			title = "Untitled session · " + shortID(s.ID)
+		}
+		row := fmt.Sprintf("%s%s%s  %3d %-7s  %s",
+			marker, s.prefix, s.ModTime.Local().Format("2006-01-02 15:04"), s.Entries, pluralWord(s.Entries, "entry", "entries"), truncateCols(title, pickerTitleWidth))
 		if s.ID == cur {
 			row += " (current)"
 		}
-		row += "  " + shortDir(s.Cwd, cwd, home)
+		row += "  " + elideMiddle(shortDir(s.Cwd, cwd, home), 40)
 		if m.width > 2 {
 			row = ansi.Truncate(row, m.width-1, "…")
 		}
@@ -557,6 +569,44 @@ func shortDir(dir, cwd, home string) string {
 		return "~" + strings.TrimPrefix(dir, home)
 	}
 	return dir
+}
+
+func pluralWord(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// shortID is a session id's last eight characters: ids are time-ordered,
+// so sessions started within minutes share a prefix but not a suffix.
+func shortID(id string) string {
+	if r := []rune(id); len(r) > 8 {
+		return string(r[len(r)-8:])
+	}
+	return id
+}
+
+// elideMiddle caps a path at n runes by cutting whole segments out of
+// its middle ("~/…/scratch/1a2b…"), never through a segment such as an
+// opaque uuid; a path that cannot be cut keeps its last segment whole.
+func elideMiddle(path string, n int) string {
+	if len([]rune(path)) <= n {
+		return path
+	}
+	parts := strings.Split(path, "/")
+	if len(parts) < 3 {
+		return path
+	}
+	head, tail := parts[0], parts[len(parts)-1]
+	for i := len(parts) - 2; i > 0; i-- {
+		next := parts[i] + "/" + tail
+		if len([]rune(head+"/…/"+next)) > n {
+			break
+		}
+		tail = next
+	}
+	return head + "/…/" + tail
 }
 
 // truncateCols caps s at n cells, first line only, with an ellipsis;

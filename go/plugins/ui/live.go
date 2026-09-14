@@ -105,6 +105,7 @@ type uiCfg struct {
 	limit    contextLimiter // the usage service when it knows the model's context window; nil otherwise
 	mdStyle  string         // "dark"/"light" glamour override; "" = detect
 	notice   string         // launcher "notice" service: a first-row warning (stale binary)
+	info     string         // a first-row neutral note (the web row recovered from a port conflict)
 	collapse string         // "all" | "large" | "none": which code/result blocks start collapsed
 	draft    string         // text the composer opens with (a link that starts a chat about something)
 
@@ -258,7 +259,7 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	// The web row moved pages off its configured port (a stale or
 	// foreign server holds it): say where they are.
 	if w, err := kernel.Get[interface{ Notice() string }](ctx, "web"); err == nil && w.Notice() != "" {
-		cfg.notice = strings.TrimSpace(cfg.notice + "\n" + w.Notice())
+		cfg.info = w.Notice() // recovered: news, not a failure
 	}
 	cfg.cmds = cmds
 	cfg.hlog = hlog

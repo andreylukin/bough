@@ -65,6 +65,28 @@ func runBangCtx(ctx context.Context, cmd string, buf *bangBuf) string {
 	return s + "\n" + note
 }
 
+// bangExit reads how a "!" run ended from its result text (runBangCtx's
+// trailing "! <reason>" line): "exit N", "cancelled", "timeout",
+// "running" while it streams, "exit 0" otherwise.
+func bangExit(text string) string {
+	if text == "…" {
+		return "running"
+	}
+	lines := strings.Split(text, "\n")
+	last := lines[len(lines)-1]
+	switch {
+	case last == "! cancelled":
+		return "cancelled"
+	case strings.HasPrefix(last, "! timeout"):
+		return "timeout"
+	case strings.HasPrefix(last, "! exit status "):
+		return "exit " + strings.TrimPrefix(last, "! exit status ")
+	case strings.HasPrefix(last, "! "):
+		return "failed"
+	}
+	return "exit 0"
+}
+
 // bangBuf is the concurrency-safe output sink a running "!" command
 // writes and the UI's tick reads.
 type bangBuf struct {

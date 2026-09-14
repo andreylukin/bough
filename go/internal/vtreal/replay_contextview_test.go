@@ -96,7 +96,17 @@ func TestContextViewSlashCommand(t *testing.T) {
 
 	a.typeText("/context")
 	a.key(uv.KeyEnter, 0)
-	a.waitFor("stopAgent") // the tail of the tools section (background agents) lands at the bottom
+	// The ~18k-char prompt lands closed; clicking its header opens it.
+	a.waitFor("▸ context (")
+	row := -1
+	for i, l := range strings.Split(a.settled(), "\n") {
+		if strings.Contains(l, "▸ context (") {
+			row = i
+		}
+	}
+	a.click(2, row)
+	a.waitFor("Everything the model is told before your message") // opened in place
+	contextViewWheelUntil(a, uv.MouseWheelDown, "stopAgent")      // the tail of the tools section (background agents)
 	a.check("/context printed")
 
 	t.Run("scrolls", func(t *testing.T) {

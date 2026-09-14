@@ -68,8 +68,8 @@ func TestFocusCursorStyledByFocusToken(t *testing.T) {
 	if d.m.focusID != d.m.blocks[0].id {
 		t.Fatal("tab should focus the only collapsible block")
 	}
-	if stripANSI(before) != stripANSI(after) {
-		t.Fatal("focusing must not change the plain text")
+	if !strings.Contains(stripANSI(after), "> ▸ result") || strings.Contains(stripANSI(before), "> ▸") {
+		t.Fatal("the focused header carries a \"> \" text marker, and only while focused")
 	}
 	if before == after {
 		t.Error("focused header should restyle with the focus token")

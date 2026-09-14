@@ -146,6 +146,7 @@ func foldModelCheck(rt *rapid.T, d *drv, ref *foldModelState, step string) {
 		default:
 			continue
 		}
+		head := strings.TrimPrefix(rows[0], "> ") // the focused block's text marker
 		n := strings.Count(b.text, "\n") + 1
 		unit := "lines"
 		if n == 1 {
@@ -157,12 +158,12 @@ func foldModelCheck(rt *rapid.T, d *drv, ref *foldModelState, step string) {
 			rt.Fatalf("after %s: %s header %q lacks %q", step, b.kind, rows[0], count)
 		}
 		if b.collapsed {
-			if len(rows) != 1 || !strings.HasPrefix(rows[0], "▸ ") {
+			if len(rows) != 1 || !strings.HasPrefix(head, "▸ ") {
 				rt.Fatalf("after %s: collapsed %s %d renders %d rows: %q", step, b.kind, b.id, len(rows), rows)
 			}
 			continue
 		}
-		if !strings.HasPrefix(rows[0], "▾ ") {
+		if !strings.HasPrefix(head, "▾ ") {
 			rt.Fatalf("after %s: expanded %s header %q lacks ▾", step, b.kind, rows[0])
 		}
 		if got, want := foldModelBody(rows[1:]), strings.Join(strings.Fields(sanitizeText(b.text)), ""); got != want {

@@ -552,11 +552,19 @@ func (m *model) header(b *block, th theme) string {
 		st := th["dim"]
 		if m.focused(b) {
 			st = th["focus"]
+			head = "> " + head
 		}
 		return st.Render(head)
 	}
-	if b.kind != "code" || tag == "code js" {
+	if cmd, ok := strings.CutPrefix(b.label, "! "); ok && b.kind == "result" {
+		// A "!" shell result: the header says what ran and how it
+		// ended; the output lives only in the body, never twice.
+		head = fmt.Sprintf("%s Shell · %s · %s · %d %s", glyph, cmd, bangExit(b.text), n, unit)
+	} else if b.kind != "code" || tag == "code js" {
 		head += ": " + strings.SplitN(b.text, "\n", 2)[0]
+	}
+	if m.focused(b) {
+		head = "> " + head // a text marker: focus must not rely on color alone
 	}
 	if r := []rune(head); len(r) > m.width-1 && m.width > 2 {
 		head = string(r[:m.width-2]) + "…"

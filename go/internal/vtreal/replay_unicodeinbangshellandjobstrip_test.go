@@ -200,7 +200,7 @@ func TestUnicodeInBangShellAndJobStrip(t *testing.T) {
 		// Focus the result block by clicking its label, then copy it.
 		x, y := -1, -1
 		for i, l := range a.lines() {
-			if j := strings.Index(l, "! printf"); j >= 0 {
+			if j := strings.Index(l, "Shell · printf"); j >= 0 {
 				x, y = len([]rune(l[:j]))+1, i
 			}
 		}

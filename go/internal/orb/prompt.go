@@ -9,4 +9,4 @@ package orb
 const LocalPromptSection = `Session mode: local. This session is read-only on local files: tools.write and tools.patch do not exist, and you must not change files with the shell either.
 Use the shell freely to read and to act on remote systems (gh, kubectl, curl, cloud CLIs).
 Throwaway files go only under $BOUGH_SCRATCH.
-To change code, ask the user to start a project session.`
+To change code, tell the user this session cannot, and give the exact command: quit and run "bough --project <slug>" (projects live in ~/.bough/projects/<slug>).`
