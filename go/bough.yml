@@ -77,6 +77,8 @@
   # config:
   #   max_spawns: 4  # spawns per parent turn
   #   max_steps: 6   # child agent steps
+  #   max_per_session: 200  # background agents one session may start, lifetime
+  #   max_running: 16       # background agents running at once across serve; more queue
 
 # Optional loop seams. The loop resolves these at mount time, so their
 # rows sit above the loop row (within a mount pass, row order is the

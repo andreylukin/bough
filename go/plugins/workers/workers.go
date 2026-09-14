@@ -24,6 +24,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"net/http"
 	"os"
 	"regexp"
 	"strconv"
@@ -63,7 +64,12 @@ const promptSection = `Subagents — when to delegate:
 - Prefer spawnAll over several spawn calls: the children wait on the model in parallel, so N tasks take about as long as the slowest one.
 - Give each child one self-contained brief: what to find out, where to look, and what to report. It cannot see this conversation and cannot spawn.
 - Pass a JSON Schema as a second argument — tools.spawn(task, schema) or tools.spawnAll(tasks, schema) — when you want a VALUE rather than a paragraph: the child's report must then match it, is checked before it counts as finished, and comes back as a parsed object your program can index. Use it whenever you are going to pick fields out of the reply anyway.
-Both calls are synchronous — no await. Limits: at most %d spawns per turn and %d steps per child, so scope each child's task to fit and do small things yourself.`
+Both calls are synchronous — no await. Limits: at most %d spawns per turn and %d steps per child, so scope each child's task to fit and do small things yourself.
+
+Background agents — for work that should keep going while you continue:
+- tools.spawn(task, {background: true}) starts a SEPARATE session under bough serve and returns {session, status: "running" | "queued"} at once. Add project: "<name>" to run it in that project's container, where it can write. When its turn ends you get a note "[agent <title> · <id> finished] <reply>" and a turn to act on it; do not poll.
+- tools.agent(id) -> {status, title, reply, project} reads one; tools.stopAgent(id) interrupts it.
+- A background agent cannot start agents of its own. Past the per-session limit spawn throws: do the rest yourself.`
 
 // sections is the slice of the loop's "prompt-sections" service we need:
 // Set to advertise tools.spawn to the parent, Text to hand the child the
@@ -150,49 +156,15 @@ type Workers struct {
 	maxSteps  int
 	spawns    int  // spawns this parent turn; reset on the loop's "done"
 	inChild   bool // a child run is active: no nested spawns
-	bg        int  // background children mid-step: their blocks may not spawn
 	nextID    int  // worker numbering, monotonic per session
-}
 
-// Background runs a child outside any turn: a plugin's own job (a PR
-// watcher answering review comments) rather than the model's
-// delegation. It lives under ctx, not a turn, so esc does not kill it
-// and it does not spend the turn's spawn budget; it still cannot spawn
-// (depth one), and its steps show in the transcript as sub:* like any
-// child's. Provided as the "spawn-background" service.
-// sink, when given, receives the child's steps (kind, text) instead of
-// the transcript and history: a job nobody asked for in this session
-// must not paint its screen.
-func (w *Workers) Background(ctx context.Context, task string, shape map[string]any, sink func(kind, text string)) (any, error) {
-	w.mu.Lock()
-	w.nextID++
-	id := w.nextID
-	w.mu.Unlock()
-	run := func(code string) (string, error) {
-		w.mu.Lock()
-		w.bg++
-		w.mu.Unlock()
-		defer func() {
-			w.mu.Lock()
-			w.bg--
-			w.mu.Unlock()
-		}()
-		return w.runBlock(ctx, id, code)
-	}
-	var sch schema.Schema
-	if len(shape) > 0 {
-		sch = schema.Schema(shape)
-	}
-	reply, err := w.runChildTo(ctx, task, id, run, false, sch, sink)
-	if err != nil {
-		return "", err
-	}
-	if len(sch) > 0 {
-		if v, issues := sch.ValidateJSON(reply); len(issues) == 0 {
-			return v, nil
-		}
-	}
-	return reply, nil
+	// Background agents (background.go): serve sessions, not children
+	// of this process.
+	home          string              // where ~/.bough/serve.pid is looked up
+	kctx          *kernel.Context     // for the per-call session lookups
+	maxPerSession int                 // sent to serve with every create
+	maxRunning    int                 // sent to serve with every create
+	httpClient    func() *http.Client // nil = http.DefaultClient
 }
 
 // spawn is tools.spawn(task) -> final reply. A returned error becomes a
@@ -201,17 +173,15 @@ func (w *Workers) spawn(task string, shape ...map[string]any) (any, error) {
 	if strings.TrimSpace(task) == "" {
 		return "", fmt.Errorf("workers: spawn needs a non-empty task")
 	}
+	if len(shape) > 0 {
+		if _, ok := shape[0]["background"]; ok {
+			return w.spawnBackground(task, shape[0])
+		}
+	}
 	w.mu.Lock()
 	if w.inChild {
 		w.mu.Unlock()
 		return "", fmt.Errorf("workers: subagent depth 1 only")
-	}
-	if w.bg > 0 {
-		// Blocks serialize, so this is a background child's own step
-		// asking (refused: depth one) or, rarely, a parent block that
-		// queued behind one; the message covers both.
-		w.mu.Unlock()
-		return "", fmt.Errorf("workers: a background job's subagent is mid-step and cannot spawn; if you are the main agent, retry in a moment")
 	}
 	if w.spawns >= w.maxSpawns {
 		w.mu.Unlock()
@@ -265,9 +235,8 @@ func shapeOf(shape []map[string]any) schema.Schema {
 }
 
 // turnCtx is the context a spawned child lives under: the parent
-// turn's, so pressing esc kills the children with it. Background jobs
-// deliberately do NOT hang off this — they outlive the turn. Falls
-// back to the plugin's context when there is no block in flight.
+// turn's, so pressing esc kills the children with it. Falls back to the
+// plugin's context when there is no block in flight.
 func (w *Workers) turnCtx() context.Context {
 	if w.turn != nil {
 		if c := w.turn(); c != nil {
@@ -358,11 +327,6 @@ func (w *Workers) spawnAll(tasks []string, shape ...map[string]any) ([]any, erro
 	if w.inChild {
 		w.mu.Unlock()
 		return nil, fmt.Errorf("workers: subagent depth 1 only")
-	}
-	if w.bg > 0 {
-		// Same guard as spawn: a background child's step cannot fan out.
-		w.mu.Unlock()
-		return nil, fmt.Errorf("workers: a background job's subagent is mid-step and cannot spawn; if you are the main agent, retry in a moment")
 	}
 	if w.spawns+len(tasks) > w.maxSpawns {
 		left := w.maxSpawns - w.spawns
@@ -455,20 +419,10 @@ func (w *Workers) spawnAll(tasks []string, shape ...map[string]any) ([]any, erro
 // task, up to maxSteps llm steps, js blocks executed via codemode. The
 // final plain-text reply (no js block) is the result.
 func (w *Workers) runChild(ctx context.Context, task string, id int, run func(string) (string, error), announced bool, sch schema.Schema) (string, error) {
-	return w.runChildTo(ctx, task, id, run, announced, sch, nil)
-}
-
-// runChildTo is runChild with the child's steps sent to sink instead of
-// the transcript and history when sink is not nil.
-func (w *Workers) runChildTo(ctx context.Context, task string, id int, run func(string) (string, error), announced bool, sch schema.Schema, sink func(kind, text string)) (string, error) {
 	// note mirrors child activity: a "sub:<kind>" session-history entry
 	// (when history is mounted) and a "loop/event" with the same kind,
 	// both carrying the worker number.
 	note := func(kind, text string, extra map[string]any) {
-		if sink != nil {
-			sink(kind, text)
-			return
-		}
 		data := map[string]any{"text": text, "worker": id}
 		maps.Copy(data, extra)
 		if w.hist != nil {
@@ -657,10 +611,30 @@ func (plugin) Inject() []string { return []string{"llm", "codemode"} }
 // on unmount (codemode has no UnregisterTool); a codemode remount
 // re-registers cleanly.
 func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
+	home, _ := os.UserHomeDir()
+	return apply(kctx, cfg, home)
+}
+
+// apply is Apply with HOME explicit, so a test points serve discovery
+// at its own t.TempDir() without touching the process environment.
+func apply(kctx *kernel.Context, cfg map[string]any, home string) error {
 	for k := range cfg {
-		if k != "max_spawns" && k != "max_steps" {
+		switch k {
+		case "max_spawns", "max_steps", "max_per_session", "max_running":
+		default:
 			return fmt.Errorf("workers: unknown config key %q", k)
 		}
+	}
+	maxPerSession, err := intOpt(cfg, "max_per_session", defaultMaxPerSession)
+	if err != nil {
+		return err
+	}
+	maxRunning, err := intOpt(cfg, "max_running", defaultMaxRunning)
+	if err != nil {
+		return err
+	}
+	if maxPerSession < 1 || maxRunning < 1 {
+		return fmt.Errorf("workers: max_per_session and max_running must be >= 1 (got %d, %d)", maxPerSession, maxRunning)
 	}
 	maxSpawns, err := intOpt(cfg, "max_spawns", defaultMaxSpawns)
 	if err != nil {
@@ -682,7 +656,8 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 	if err != nil {
 		return err
 	}
-	w := &Workers{llm: l, code: cm, maxSpawns: maxSpawns, maxSteps: maxSteps}
+	w := &Workers{llm: l, code: cm, maxSpawns: maxSpawns, maxSteps: maxSteps,
+		home: home, kctx: kctx, maxPerSession: maxPerSession, maxRunning: maxRunning}
 	// Optional seam: without history, sub:* entries are events only.
 	if h, err := kernel.Get[History](kctx, "history"); err == nil {
 		w.hist = h
@@ -719,9 +694,12 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 
 	cm.RegisterTool("spawn", w.spawn)
 	cm.RegisterTool("spawnAll", w.spawnAll)
-	kctx.Provide("spawn-background", w.Background)
+	cm.RegisterTool("agent", w.agent)
+	cm.RegisterTool("stopAgent", w.stopAgent)
 	if d, ok := cm.(interface{ Describe(name, line string) }); ok {
-		d.Describe("spawn", `tools.spawn(task) -> string: run ONE bounded child agent (same tools, fresh context, no nested spawns) and get its report.`)
+		d.Describe("spawn", `tools.spawn(task) -> string: run ONE bounded child agent (same tools, fresh context, no nested spawns) and get its report. tools.spawn(task, {background: true, project?}) -> {session, status} starts a separate background agent session instead and returns at once.`)
+		d.Describe("agent", `tools.agent(id) -> {status, title, reply, project}: a background agent you started.`)
+		d.Describe("stopAgent", `tools.stopAgent(id) -> "stopped" | "not running": interrupt a background agent you started.`)
 		d.Describe("spawnAll", `tools.spawnAll([task, …]) -> [report, …]: run several children AT ONCE; N tasks take about as long as the slowest.`)
 	}
 	// Optional seam: the loop's prompt-sections registry, so the model

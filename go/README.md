@@ -282,6 +282,32 @@ number (never part of the parent's model context). Config:
 `max_spawns` (per parent turn, default 4), `max_steps` (child steps,
 default 6).
 
+**Background agents (`workers` row + `bough serve`).**
+`tools.spawn(task, {background: true})` starts a SEPARATE session under
+`bough serve` (found through `~/.bough/serve.pid`) and returns
+`{session, status: "running" | "queued"}` at once; without a running
+serve it throws ``background agents need bough serve (start it with
+`bough serve`)``. The child inherits the parent's mode; `project:
+"<name>"` runs it as a project session in that orb instead, so a local
+(read-only) parent can hand writing work to a container without asking.
+The child's meta entry records `spawned_by`, and a child cannot start
+agents of its own (depth 1). When a child's turn ends serve notifies the
+parent exactly once — `[agent <title> · <id> finished|failed|stopped]
+<reply, 2000 runes>` — as a `{"notice"}` line to a live parent or a
+stored `notice` entry a stopped parent delivers at its next mount; a
+report never starts a stopped parent. `tools.agent(id)` returns
+`{status, title, reply, project}` with the full reply;
+`tools.stopAgent(id)` interrupts a running child or drops a queued one.
+Settings: `max_per_session` (background agents one session may start,
+default 200; past it spawn throws and the agent does the rest itself)
+and `max_running` (children running at once across serve, default 16;
+more queue and start in order, never an error). Serve API:
+`POST /api/sessions` with `spawnedBy` (+`slug`, `maxPerSession`,
+`maxRunning`), `GET /api/sessions/{id}/children`,
+`GET /api/sessions/{id}/agent?parent=`, `POST /api/sessions/{id}/stop`,
+`POST /api/sessions/{id}/notify`, and `archive` with `stopChildren`.
+Queued children do not survive a serve restart.
+
 **TODO list (`todo` row).** Three surfaces over one list: the `/todo`
 command (`/todo`, `/todo add <text>`, `/todo done <id>`, `/todo
 clear`), `tools.todo` for the model (`add(text) -> id`, `done(id)`,

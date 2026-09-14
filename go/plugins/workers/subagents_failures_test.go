@@ -286,28 +286,6 @@ func TestSubagentsChildCallsSpawnAll(t *testing.T) {
 	subagentsAlive(t, r, l)
 }
 
-func TestSubagentsBackgroundChildCannotSpawnAll(t *testing.T) {
-	l := subagentsTape(map[string][]string{
-		"bg":  {"```js\ntools.spawnAll(['sub'])\n```", "Status: ok\ndone"},
-		"sub": {"NESTED_RAN"},
-	})
-	r := subagentsMount(t, 5*time.Second, nil, l)
-	bg, err := kernel.Get[func(context.Context, string, map[string]any, func(string, string)) (any, error)](r.kctx, "spawn-background")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var mu sync.Mutex
-	var steps []string
-	if _, err := bg(context.Background(), "bg", nil, func(k, txt string) { mu.Lock(); steps = append(steps, k+": "+txt); mu.Unlock() }); err != nil {
-		t.Fatal(err)
-	}
-	for _, s := range steps {
-		if strings.Contains(s, "NESTED_RAN") {
-			t.Fatalf("a background child spawned a grandchild: %q", steps)
-		}
-	}
-}
-
 func TestSubagentsEmptyTask(t *testing.T) {
 	l := subagentsTape(map[string][]string{"": {"CHILD_RAN_ON_EMPTY"}, "   ": {"CHILD_RAN_ON_EMPTY"}})
 	r := subagentsMount(t, 5*time.Second, nil, l)
