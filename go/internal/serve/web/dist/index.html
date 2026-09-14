@@ -93,6 +93,9 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .field::placeholder{color:var(--text-3)}
 /* A workspace, and the sections below: a muted name and a thin rule filling the row. */
 .ws{display:flex;flex-direction:column}
+.ws-older{align-self:flex-start;height:24px;margin:2px 0 4px 34px;padding:0 6px;background:none;border:0;border-radius:6px;color:var(--text-3);font:12px var(--sans);cursor:pointer}
+.ws-older:hover{color:var(--text-1)}
+.ws-older:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .ws-head,.sec-fold{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;color:var(--text-3);font:13px var(--sans)}
 .ws-head{width:100%;height:26px;gap:6px;background:none;border:0;border-radius:8px;cursor:pointer;text-align:start;font:600 12px/16px var(--sans)}
 .ws-head:hover{color:var(--text-1)}
@@ -285,7 +288,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .transcript:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 /* Left-aligned under the header, as wide as a wide window allows:
    commands, output and tables use the width; prose keeps a measure. */
-.transcript>*{width:100%;max-width:960px;margin-inline:0}
+.transcript>*{width:100%;max-width:960px;margin-inline:auto}
 .transcript .prompt{max-width:none}
 .transcript .say{max-width:none}
 /* Prose keeps its measure; a table takes the column's full width. */
@@ -725,6 +728,9 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .block.thin>.think-body{background:none;padding-top:10px}
 .block.thin.toolrun>.toolrun-body{gap:2px;padding:2px 0 4px 10px;margin-inline-start:7px;border-top:0;border-left:1px solid var(--line);background:none}
 .turn-body>.block.thin+.block.thin{margin-top:-10px}
+/* thinking and tool rows sit tight against the reply around them */
+.turn-body>.block.thin{margin-block:-6px}
+.block.thin>summary{padding-block:2px;min-height:24px}
 .sub-body>.block.thin+.block.thin{margin-top:-8px}
 .thin-pop{position:fixed;z-index:60;max-height:min(240px,calc(100vh - 32px));overflow:auto;max-width:min(640px,calc(100vw - 32px));
   display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:2px 10px;padding:6px 10px;
@@ -790,7 +796,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 /* The composer shares the transcript's column, so what you type
    lines up with what you are reading. */
 .composer-wrap{position:relative;flex-shrink:0;padding:8px 24px 12px}
-.composer-wrap>*{width:100%;max-width:960px;margin-inline:0}
+.composer-wrap>*{width:100%;max-width:960px;margin-inline:auto}
 .send-failed{margin-bottom:8px;padding-inline:12px;line-height:18px;color:var(--text-2);font-size:13px;
              display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;column-gap:8px}
 .send-failed>details{min-width:0}

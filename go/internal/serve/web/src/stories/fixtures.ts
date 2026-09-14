@@ -25,7 +25,8 @@ export const rows: Row[] = [
   { id: "s5", title: "Rename the scratch dir", cwd: "/w/bough", status: "stopped", live: false,
     archived: false, entries: 3, modified: hoursAgo(24 * 5), lastAt: hoursAgo(24 * 5) },
   // Recorded test failures: every surface must rank these as needing you,
-  // past 72h, in Background, and after being marked seen (no trouble).
+  // past 72h (never folded under "older"), in Background, and after being
+  // marked seen (no trouble).
   { id: "s7", title: "Retry budget for the TLS dialer", cwd: "/w/bough", repo: "andreylukin/bough", status: "done",
     testsFailed: true, trouble: "tests failed", live: false, archived: false, entries: 9, modified: hoursAgo(24 * 4), lastAt: hoursAgo(24 * 4) },
   { id: "s8", title: "Nightly bench sweep", cwd: "/w/bench", status: "done", background: true, testsFailed: true,

@@ -74,6 +74,8 @@ const writeSet = (key: string, s: Set<string>) => {
 
 /** Sessions untouched this long leave their workspace for the Inactive section. */
 const INACTIVE_MS = 72 * 3_600_000;
+/** Quiet for 72h and nothing waiting on you: folded under its group. */
+const isOld = (r: Row, now: number) => sessionSignal(r) >= 2 && now - Date.parse(r.lastAt) >= INACTIVE_MS;
 
 /** Where a session ran, as the sidebar names it: the repo, else the folder. */
 function workspaceOf(r: Row): string {
@@ -158,7 +160,7 @@ function byWorkspace(rows: Row[], projectNames: Map<string, string> = new Map())
 }
 
 /** What the sidebar's arrows walk; one of them at a time is the tab stop. */
-const TREE_ITEMS = "button.sec-fold, button.ws-head, button.row, button.turn-line";
+const TREE_ITEMS = "button.sec-fold, button.ws-head, button.row, button.ws-older, button.turn-line";
 
 /** The query's first match in text, marked. */
 function marked(text: string, q: string): React.ReactNode {
@@ -220,9 +222,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   // Runs nobody started by hand always fold into Background — the person
   // chose that; one that needs attention lights the section header instead.
   const projectNames = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects]);
-  const { recent, inactive, background, archived, kids } = useMemo(() => {
-    const now = Date.now();
-    const recent: Row[] = [], inactive: Row[] = [], background: Row[] = [], archived: Row[] = [];
+  const { recent, background, archived, kids } = useMemo(() => {
+    const recent: Row[] = [], background: Row[] = [], archived: Row[] = [];
     // A background agent is not a row of its own: its parent's row counts
     // the running ones, and the parent's Work panel lists them. Only an
     // agent whose parent is gone from the list keeps a row, so none is lost.
@@ -242,10 +243,10 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
       if (r.empty && !r.live && r.orb?.status !== "failed" && r.id !== selected && !query) continue;
       if (r.archived) archived.push(r);
       else if (r.background) background.push(r);
-      else if (sessionSignal(r) < 2 || now - Date.parse(r.lastAt) < INACTIVE_MS) recent.push(r);
-      else inactive.push(r);
+      // Old sessions stay in their project's group, folded under "older".
+      else recent.push(r);
     }
-    return { recent: byWorkspace(recent, projectNames), inactive, background, archived, kids };
+    return { recent: byWorkspace(recent, projectNames), background, archived, kids };
   }, [rows, selected, query, projectNames]);
 
   // Inactive stays shut until asked, and the way you left it across reloads.
@@ -415,7 +416,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     onQuery("");
     const path = r.repo || r.cwd;
     setWsFolded((cur) => { const next = new Set([...cur].filter((k) => !k.endsWith(":" + path))); writeSet("bough:ws-folded", next); return next; });
-    const sec = r.background ? "background" : sessionSignal(r) < 2 || Date.now() - Date.parse(r.lastAt) < INACTIVE_MS ? "" : "inactive";
+    // An old session sits folded under its group's "older" line.
+    const sec = r.background ? "background" : isOld(r, Date.now()) ? `older:recent:${groupKey(r)}` : "";
     if (sec) setUnfolded((cur) => { const next = new Set(cur).add(sec); writeSet("bough:unfolded", next); return next; });
     requestAnimationFrame(() => {
       const el = document.querySelector<HTMLElement>(`.sidebar button.row[data-id="${r.id}"]`);
@@ -618,7 +620,27 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
             ? <span className={"num sec-count sec-count-" + (urgent.some(hasFailure) ? "trouble" : "needs-you")}>{urgent.length} need{urgent.length === 1 ? "s" : ""} you</span>
             : <span className="num sec-count">{list.length}</span>)}
         </button>
-        {open && <div role="group">{list.map((r) => session(r, (seen.get(displayTitle(r)) ?? 0) > 1))}</div>}
+        {open && (() => {
+          // Sessions quiet for 72h fold under one line at the group's foot;
+          // a search shows them all.
+          const now = Date.now();
+          const fresh = list.filter((r) => !isOld(r, now)), older = list.filter((r) => isOld(r, now));
+          const olderKey = `older:${key}`;
+          const olderOpen = foldOpen(olderKey, unfolded.has(olderKey));
+          const dup = (r: Row) => (seen.get(displayTitle(r)) ?? 0) > 1;
+          return (
+            <div role="group">
+              {fresh.map((r) => session(r, dup(r)))}
+              {older.length > 0 && (
+                <button type="button" className="ws-older" role="treeitem" aria-expanded={olderOpen}
+                        onClick={foldToggle(olderKey, () => toggleFold(olderKey))}>
+                  {olderOpen ? "Hide older" : `${older.length} older`}
+                </button>
+              )}
+              {olderOpen && older.map((r) => session(r, dup(r)))}
+            </div>
+          );
+        })()}
       </div>
     );
   });
@@ -669,7 +691,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   const nav = onView && <ViewNav view={view} onView={onView} wikiFlags={wikiFlags} icons={folded} />;
   if (folded) return <div className="sidebar sidebar-closed">{toolbar}<div className="rail-gap" />{nav}</div>;
 
-  const total = recent.length + inactive.length + background.length + archived.length;
+  const total = recent.length + background.length + archived.length;
   // While something in Background needs you, its count says how many, not the total.
   const bgUrgent = background.filter((r) => sessionSignal(r) === 0);
   const bgAlert = background.some(hasFailure) ? "trouble" : bgUrgent.length ? "needs-you" : undefined;
@@ -728,8 +750,6 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
           <p className="list-none">{query ? `No sessions match “${query}”.` : "No sessions yet."}</p>
         )}
         {workspaces(recent, "recent")}
-        {inactive.length > 0 && section("inactive", "Inactive · 72h+", foldOpen("inactive", unfolded.has("inactive")), foldToggle("inactive", () => toggleFold("inactive")),
-          inactive.length, workspaces(byWorkspace(inactive, projectNames), "inactive"))}
         {background.length > 0 && section("background", "Background", foldOpen("background", unfolded.has("background")), foldToggle("background", () => toggleFold("background")),
           bgUrgent.length ? <span title={`${background.length} in all`}>{bgUrgent.length} need you</span> : background.length, workspaces(byWorkspace(background, projectNames), "background"), bgAlert, bgSub || undefined)}
         {/* Archived is not loaded until opened, so a search cannot have looked there. */}
