@@ -4,15 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/andreylukin/bough/internal/container"
 	"github.com/andreylukin/bough/internal/projectdef"
+	"github.com/andreylukin/bough/internal/secrets"
 )
 
 // Orb is one session's live container. Methods are safe for concurrent
@@ -28,6 +31,8 @@ type Orb struct {
 	state State
 	spec  container.RunSpec
 	proxy *proxy // host egress for the guest; nil when it could not start
+
+	secretWarned sync.Map // secret names already reported unresolved
 }
 
 // Open prepares a session's orb; see docs/orbs.md §1c.
@@ -156,7 +161,7 @@ func (o *Orb) prepareMounts(ctx context.Context) ([]container.Mount, error) {
 		}
 		add(container.Mount{Source: vol, Target: dir, Volume: true})
 	}
-	for _, m := range identityMounts(o.home) {
+	for _, m := range identityMounts(o.home, p.Def.Identity) {
 		add(m)
 	}
 	return mounts, nil
@@ -178,7 +183,8 @@ func (o *Orb) coreEnv() []string {
 
 // execEnv is passed on every exec because the engine does not inherit the
 // host environment: the base env, the user's identity and the proxy.
-// Project env comes last so a project can override any of it.
+// Project env comes last so a project can override any of it. Secrets
+// go separately in ExecOptions.Secrets, so they never reach argv.
 func (o *Orb) execEnv(proxyURL string) []string {
 	env := append(o.coreEnv(), identityEnv()...)
 	if proxyURL != "" {
@@ -190,6 +196,29 @@ func (o *Orb) execEnv(proxyURL string) []string {
 		env = append(env, "PATH="+shimDir(o.scratch)+":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
 	}
 	return append(env, envList(o.project.Def.Env)...)
+}
+
+// secretEnv resolves the project's secrets, sorted by name. Refs are
+// re-read from project.yml on every exec, so a secret added mid-session
+// applies to the next command. An unresolved ref is left out and reported
+// once per name.
+func (o *Orb) secretEnv() []string {
+	def := o.project.Def
+	if p, err := projectdef.Load(o.home, o.project.Slug); err == nil {
+		def = p.Def
+	}
+	var env []string
+	for _, name := range slices.Sorted(maps.Keys(def.Secrets)) {
+		val, err := secrets.Resolve(def.Secrets[name])
+		if err != nil {
+			if _, seen := o.secretWarned.LoadOrStore(name, true); !seen {
+				fmt.Fprintf(os.Stderr, "bough: orb: secret %s unresolved: %v\n", name, err)
+			}
+			continue
+		}
+		env = append(env, name+"="+val)
+	}
+	return env
 }
 
 func (o *Orb) proxyURLLocked() string {
@@ -246,7 +275,7 @@ func (o *Orb) runResume(ctx context.Context, script string) error {
 		return err
 	}
 	defer f.Close()
-	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: o.state.Primary, Env: o.execEnv(o.proxyURLLocked())}, "sh", script)
+	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: o.state.Primary, Env: o.execEnv(o.proxyURLLocked()), Secrets: o.secretEnv()}, "sh", script)
 	cmd.Stdout, cmd.Stderr = f, f
 	return cmd.Run()
 }
@@ -277,7 +306,7 @@ func (o *Orb) Command(ctx context.Context, argv ...string) *exec.Cmd {
 		cmd.Err = fmt.Errorf("orb: %s: restart: %w", o.session, err)
 		return cmd
 	}
-	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: primary, Env: o.execEnv(proxyURL)}, argv...)
+	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: primary, Env: o.execEnv(proxyURL), Secrets: o.secretEnv()}, argv...)
 	// Killing the host `container exec` client does not end the guest
 	// processes, so cancel also kills them inside the orb. A caller that
 	// replaces Cancel (tools' process-group kill) must call this one too.

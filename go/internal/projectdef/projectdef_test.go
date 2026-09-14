@@ -42,6 +42,15 @@ func TestParseValidate(t *testing.T) {
 		{"neither", "repos:\n  - branch: main\n", "exactly one"},
 		{"dup", "repos:\n  - path: /a/x\n  - remote: git@h:b/x.git\n", "duplicate"},
 		{"unknown key", "repo:\n  - path: /x\n", "parse"},
+		{"secret ok", "repos:\n  - path: /x\nsecrets:\n  DEVPI_URL: keychain:bough/web/DEVPI_URL\n", ""},
+		{"secret bad name", "repos:\n  - path: /x\nsecrets:\n  1X: keychain:a\n", "secrets.1X: bad env name"},
+		{"secret reserved", "repos:\n  - path: /x\nsecrets:\n  PATH: keychain:a\n", "secrets.PATH: reserved env name"},
+		{"secret reserved prefix", "repos:\n  - path: /x\nsecrets:\n  GIT_CONFIG_COUNT: keychain:a\n", "secrets.GIT_CONFIG_COUNT: reserved env name"},
+		{"secret scheme", "repos:\n  - path: /x\nsecrets:\n  X: vault:a\n", `secrets.X: unknown ref scheme "vault" (want keychain:)`},
+		{"secret empty", "repos:\n  - path: /x\nsecrets:\n  X: 'keychain:'\n", "secrets.X: bad keychain service"},
+		{"secret space", "repos:\n  - path: /x\nsecrets:\n  X: keychain:a b\n", "secrets.X: bad keychain service"},
+		{"secret long", "repos:\n  - path: /x\nsecrets:\n  X: keychain:" + strings.Repeat("a", 201) + "\n", "secrets.X: bad keychain service"},
+		{"secret in env", "repos:\n  - path: /x\nenv: {X: y}\nsecrets:\n  X: keychain:a\n", "secrets.X: also set in env"},
 	}
 	for _, c := range cases {
 		_, err := Parse([]byte(c.yml))
@@ -163,6 +172,13 @@ func TestImageHash(t *testing.T) {
 	if hash() != h0 {
 		t.Fatal("unstable")
 	}
+	if err := SetSecret(home, "h", "DEVPI_URL", "keychain:bough/h/DEVPI_URL"); err != nil {
+		t.Fatal(err)
+	}
+	if hash() != h0 {
+		t.Fatal("a secret moved the hash")
+	}
+	WriteFile(home, "h", FileYAML, yml)
 	// Unrelated repo file and uncommitted lockfile edits do not rebuild.
 	os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main // x\n"), 0o644)
 	git(t, repo, "commit", "-qam", "code")
@@ -247,5 +263,35 @@ func TestSubdirLockfiles(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(want[0]); string(b) != "v2\n" {
 		t.Fatalf("go.sum = %q", b)
+	}
+}
+
+func TestSetSecret(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if _, err := Create(home, "s"); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteFile(home, "s", FileYAML, "repos:\n  - path: /x\nenv: {DEVPI_URL: https://user:pw@devpi}\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetSecret(home, "s", "DEVPI_URL", "keychain:bough/s/DEVPI_URL"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Load(home, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Def.Secrets["DEVPI_URL"] != "keychain:bough/s/DEVPI_URL" || len(p.Def.Env) != 0 {
+		t.Fatalf("def %+v", p.Def)
+	}
+	if b, _ := os.ReadFile(filepath.Join(p.Dir, FileYAML)); strings.Contains(string(b), "pw@devpi") {
+		t.Fatalf("value on disk: %s", b)
+	}
+	if err := SetSecret(home, "s", "X", "vault:y"); err == nil {
+		t.Fatal("bad ref written")
+	}
+	if err := SetSecret(home, "missing", "X", "keychain:y"); err == nil {
+		t.Fatal("missing project")
 	}
 }

@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 var LockfileNames = []string{"go.sum", "package-lock.json", "bun.lock", "bun.lockb", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "poetry.lock", "uv.lock", "requirements.txt", "Gemfile.lock"}
@@ -81,7 +83,7 @@ func ImageHash(home string, p Project) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("projectdef: hash %s: %w", p.Slug, err)
 		}
-		field(FileYAML, y)
+		field(FileYAML, withoutSecrets(y))
 	}
 	base := p.Def.Base
 	if base == "" {
@@ -145,6 +147,23 @@ func repoLockfiles(gitDir, ref string) []string {
 	return files
 }
 
+// withoutSecrets is project.yml with the secrets key removed, so adding a
+// secret never rebuilds the image. It is always re-marshaled, so a file
+// with and without secrets hashes alike; an unparseable one hashes as is.
+func withoutSecrets(y []byte) []byte {
+	d, err := Parse(y)
+	if err != nil {
+		return y
+	}
+	// Neither secrets nor identity mounts are part of the image.
+	d.Secrets, d.Identity = nil, nil
+	b, err := yaml.Marshal(d)
+	if err != nil {
+		return y
+	}
+	return b
+}
+
 // hashTree feeds every regular file under dir to field, by relative
 // path in walk (lexical) order.
 func hashTree(dir string, field func(string, []byte)) error {
@@ -157,6 +176,9 @@ func hashTree(dir string, field func(string, []byte)) error {
 			return err
 		}
 		rel, _ := filepath.Rel(dir, p)
+		if rel == FileYAML {
+			b = withoutSecrets(b)
+		}
 		field("ctx:"+filepath.ToSlash(rel), b)
 		return nil
 	})

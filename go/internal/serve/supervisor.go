@@ -115,6 +115,7 @@ type Options struct {
 
 var (
 	ErrNoAsk          = errors.New("serve: supervisor: no pending ask")
+	ErrBadAnswer      = errors.New("serve: supervisor: a secret answer cannot contain a newline")
 	ErrUnknownSession = errors.New("serve: supervisor: unknown session")
 	ErrArchived       = errors.New("serve: supervisor: session is archived")
 )
@@ -782,6 +783,7 @@ func askFrom(ev Event) *Ask {
 	if id, ok := ev.Extra["id"].(string); ok {
 		a.ID = id
 	}
+	a.Secret, _ = ev.Extra["secret"].(bool)
 	if opts, ok := ev.Extra["options"].([]any); ok {
 		for _, o := range opts {
 			if s, ok := o.(string); ok {
@@ -831,8 +833,14 @@ func (s *Supervisor) Send(id, text string) error {
 
 // Answer replies to the armed tools.ask over the same pipe.
 func (s *Supervisor) Answer(id, text string) error {
-	if s.PendingAsk(id) == nil {
+	p := s.PendingAsk(id)
+	if p == nil {
 		return ErrNoAsk
+	}
+	// A secret rides as one raw stdin line: a newline would split it
+	// (or wrap it as a prompt). Nothing here logs the text.
+	if p.Secret && strings.ContainsAny(text, "\r\n") {
+		return ErrBadAnswer
 	}
 	s.mu.Lock()
 	ch, ok := s.kids[id]

@@ -1,7 +1,9 @@
 package serve
 
 import (
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -311,5 +313,21 @@ func TestLastActivity(t *testing.T) {
 	es := entries(ent(1, "input", text("a")), ent(2, "done", nil))
 	if got := LastActivity(es); !got.Equal(es[1].At) {
 		t.Errorf("last = %v, want %v", got, es[1].At)
+	}
+}
+
+func TestStatusOfSecretAsk(t *testing.T) {
+	t.Parallel()
+	es := entries(ent(1, "input", text("x")), ent(2, "ask", map[string]any{"question": "Secret X for demo: y", "id": "ask-1", "secret": true}))
+	st, ask := StatusOf(es, true)
+	if st != StatusNeedsYou || ask == nil || !ask.Secret || ask.ID != "ask-1" {
+		t.Fatalf("status %s ask %+v, want needs-you secret ask", st, ask)
+	}
+	b, _ := json.Marshal(ask)
+	if !strings.Contains(string(b), `"secret":true`) {
+		t.Fatalf("wire ask lacks secret: %s", b)
+	}
+	if a := askFrom(Event{Kind: "ask", Extra: map[string]any{"id": "ask-1", "secret": true}}); !a.Secret {
+		t.Fatalf("askFrom dropped secret")
 	}
 }

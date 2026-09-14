@@ -125,6 +125,7 @@ func Interrupted() bool {
 type hlAskState struct {
 	id      string
 	options []string
+	secret  bool // tools.secret: the line is a credential, taken raw and never printed
 }
 
 // runHeadless wires this mount's inputs and broadcaster into the pump,
@@ -190,10 +191,14 @@ func hlPrint(ev Event) {
 	}
 	if ev.Kind == "ask" {
 		hlMu.Lock()
-		hlAsk = &hlAskState{id: ev.ID, options: ev.Options}
+		hlAsk = &hlAskState{id: ev.ID, options: ev.Options, secret: ev.Secret}
 		hlMu.Unlock()
 		if HeadlessJSON {
-			hlLine(hlOut, "ask", ev.Text, map[string]any{"id": ev.ID, "options": ev.Options})
+			extra := map[string]any{"id": ev.ID, "options": ev.Options}
+			if ev.Secret {
+				extra["secret"] = true
+			}
+			hlLine(hlOut, "ask", ev.Text, extra)
 			return
 		}
 		fmt.Fprintf(hlOut, "[ask] %s\n", ev.Text)
@@ -259,6 +264,14 @@ func headlessPump() {
 
 // hlLineIn routes one stdin line.
 func hlLineIn(line string) {
+	// A pending secret takes the raw line: no JSON sniffing, so a value
+	// that happens to start with "{" is still the answer.
+	hlMu.Lock()
+	secret := hlAsk != nil && hlAsk.secret
+	hlMu.Unlock()
+	if secret && hlAnswerPending(line) {
+		return
+	}
 	// A JSON object line {"prompt": "..."} is one multi-line prompt:
 	// the way a harness hands over a task brief with its newlines.
 	// {"notice": "..."} is serve reporting a background agent.

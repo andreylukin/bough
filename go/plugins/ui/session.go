@@ -93,7 +93,8 @@ func (m *model) replay() {
 		case "ask":
 			q, _ := e.Data["question"].(string)
 			id, _ := e.Data["id"].(string)
-			m.addEvent(Event{Kind: "ask", Text: q, ID: id, Options: strList(e.Data["options"])})
+			secret, _ := e.Data["secret"].(bool)
+			m.addEvent(Event{Kind: "ask", Text: q, ID: id, Options: strList(e.Data["options"]), Secret: secret})
 		case "ask/answer":
 			id, _ := e.Data["id"].(string)
 			for i := range m.blocks {

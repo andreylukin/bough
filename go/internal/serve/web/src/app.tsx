@@ -215,14 +215,14 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
   const { recent, inactive, background, archived, kids } = useMemo(() => {
     const now = Date.now();
     const recent: Row[] = [], inactive: Row[] = [], background: Row[] = [], archived: Row[] = [];
-    // A background agent sits under the session that started it, when that
-    // session is on the list in the same archived state; otherwise it is
-    // an ordinary top-level row, so nothing is ever hidden by nesting.
+    // A background agent is not a row of its own: its parent's row counts
+    // the running ones, and the parent's Work panel lists them. Only an
+    // agent whose parent is gone from the list keeps a row, so none is lost.
     const byId = new Map(rows.map((r) => [r.id, r]));
     const kids = new Map<string, Row[]>();
     for (const r of rows) {
       const parent = r.spawnedBy ? byId.get(r.spawnedBy) : undefined;
-      if (parent && parent.archived === r.archived && !parent.spawnedBy) {
+      if (parent) {
         kids.set(parent.id, [...(kids.get(parent.id) ?? []), r]);
         continue;
       }
@@ -505,7 +505,8 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     const lines = log?.lines && !allTurns.has(r.id) && log.lines.length > 3 ? log.lines.slice(-3) : log?.lines;
     const children = kids.get(r.id);
     const bg = children ? workCounts(agentsFromRows(r, children)) : null;
-    const bgText = bg ? [bg.running && `${bg.running} running`, bg.queued && `${bg.queued} queued`, bg.failed && `${bg.failed} failed`].filter(Boolean).join(" · ") || `${bg.total} ended` : "";
+    // Only what is live or needs a look: the count of running agents, and failures.
+    const bgText = bg ? [bg.running && `${bg.running} running`, bg.failed && `${bg.failed} failed`].filter(Boolean).join(" · ") : "";
     const stacked = Boolean(label || life || bgText);
     return (
       <Fragment key={r.id}>
@@ -590,11 +591,6 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
           </ol>
         )}
       </div>
-      {children && (
-        <div role="group" aria-label={`Agents started by ${name || "session"}`}>
-          {children.map((k) => session(k, false, true))}
-        </div>
-      )}
       </Fragment>
     );
   };
@@ -890,7 +886,7 @@ export function ResultBlock({ line, nested }: { line: Line; nested?: boolean }) 
   // The first line with a word in it: JSON output opens with a bare "[" or
   // "{", which made the row read "Result [".
   const head = lines.find((l) => /[\p{L}\p{N}]/u.test(l)) ?? lines.find((l) => l.trim()) ?? "";
-  const notice = note && <ExecNote note={note} reason={nested} />;
+  const notice = note && <ExecNote note={note} />;
   // Recorded, and empty: a line that says so, not an empty box to open.
   if (!body.trim()) return <><div className="tool-state"><span className="block-label">Result</span><span className="num">No output</span></div>{notice}</>;
   return (
@@ -961,7 +957,7 @@ export function Entry({ line, codes, nested }: { line: Line; codes: string[]; ne
     // The loop's "blocks dropped" marker is a notice about the reply, not part of it.
     const { text: said, note } = splitExecNote(line.text);
     const [body, program] = splitBareProgram(stripRunFences(said, codes));
-    if (blank(body) && !program) return note ? <ExecNote note={note} reason={nested} /> : null; // the reply was only the program it ran
+    if (blank(body) && !program) return note ? <ExecNote note={note} /> : null; // the reply was only the program it ran
     // Inside a subagent card the rail and the card's own header
     // already say whose words these are; repeating "subagent" above
     // every paragraph of a five-step run is noise.
@@ -980,7 +976,7 @@ export function Entry({ line, codes, nested }: { line: Line; codes: string[]; ne
             <div className="block-body"><Code text={program} lang="javascript" /></div>
           </details>
         )}
-        {note && <ExecNote note={note} reason={nested} />}
+        {note && <ExecNote note={note} />}
       </div>
     );
   }
@@ -1033,6 +1029,7 @@ export function Entry({ line, codes, nested }: { line: Line; codes: string[]; ne
   }
   if (k === "error" || k === "sub:error") return <div className="err">{line.text}</div>;
   if (k === "ask") return null; // the live ask renders as its own card below
+  if (k === "ask/answer" && line.data?.secret) return <div className="meta-line">secret stored</div>;
   if (k === "job") return <JobBlock line={line} />;
   if (k === "hook") {
     // Hooks fire on every tool call. One that passed through is not
@@ -1108,7 +1105,7 @@ export function SubAgentView({ agent, live, worker, all }: {
   const timing = [w.ms !== undefined ? duration(w.ms) : "", w.steps ? stepCount(w.steps) : ""].filter(Boolean).join(" · ");
   const line2 = [
     w.stepErrors ? `${w.stepErrors} step ${w.stepErrors === 1 ? "error" : "errors"}` : "",
-    w.notRun ? `${w.notRun} code ${w.notRun === 1 ? "block" : "blocks"} not run` : "",
+    w.notRun ? `${w.notRun} later ${w.notRun === 1 ? "block" : "blocks"} skipped after a failure` : "",
   ].filter(Boolean).join(" · ");
   const aria = `Subagent ${agent.worker}, ${stateText(w)}${w.ms !== undefined ? `, ${spokenDuration(w.ms)}` : ""}${w.steps ? `, ${stepCount(w.steps)}` : ""}${task ? `: ${task.slice(0, 80)}` : ""}`;
 
@@ -1944,6 +1941,30 @@ function Tip({ tip, label, className, children }: { tip: string; /** The accessi
       {children}
       <span className="rt-tip-body" role="tooltip" id={id}>{tip}</span>
     </button>
+  );
+}
+
+/** A secret ask's own field: the value goes straight to the answer call and
+ *  is never kept — no draft storage, no failure record holding it. */
+function SecretAnswer({ askId, onAnswer }: { askId: string; onAnswer: (t: string, ask?: string) => Promise<string | null> | void }) {
+  const [value, setValue] = useState("");
+  const [state, setState] = useState<"" | "sending" | "failed">("");
+  const submit = async (e: { preventDefault(): void }) => {
+    e.preventDefault();
+    if (!value || state === "sending") return;
+    const t = value;
+    setValue("");
+    setState("sending");
+    const error = await onAnswer(t, askId);
+    setState(error ? "failed" : "");
+  };
+  return (
+    <form className="ask-options" onSubmit={submit}>
+      <input type="password" autoComplete="off" aria-label="Secret value" value={value}
+             onChange={(e) => setValue(e.target.value)} disabled={state === "sending"} />
+      <button className="btn" type="submit" disabled={!value || state === "sending"}>{state === "sending" ? "Submitting…" : "Submit"}</button>
+      {state === "failed" && <span className="send-failed-text" role="alert">not sent, try again</span>}
+    </form>
   );
 }
 
@@ -2977,7 +2998,8 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             <StatusMark status="needs-you" size={16} />
             {/* Questions carry paths and commands in backticks; raw, they read as noise. */}
             <div className="ask-q"><Markdown text={row.ask.text} /></div>
-            {row.ask.options.length > 0 && (
+            {row.ask.secret && <SecretAnswer key={row.ask.id} askId={row.ask.id} onAnswer={onAnswer} />}
+            {!row.ask.secret && row.ask.options.length > 0 && (
               <div className="ask-options">
                 {/* Equal alternatives, so none of them is dressed as the primary action. */}
                 {row.ask.options.map((o) => (
@@ -3082,7 +3104,8 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             aria-label={draftAsk || (blank && row.ask) ? "Answer to agent question" : "Message"}
             aria-controls={pickerOpen ? "mention-list" : undefined}
             aria-activedescendant={pickerOpen ? activeOpt : undefined}
-            placeholder={row.ask && !askChanged ? "Answer…" : running ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Next turn…"}
+            disabled={Boolean(row.ask?.secret)}
+            placeholder={row.ask?.secret ? "Answer in the secret field" : row.ask && !askChanged ? "Answer…" : running ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Next turn…"}
             onPaste={(e) => take({ dataTransfer: e.clipboardData, preventDefault: () => e.preventDefault() }, false)}
             onChange={(e) => {
               setDraft(e.target.value);

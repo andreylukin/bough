@@ -191,6 +191,7 @@ type Def struct {
 	Base    string            `yaml:"base,omitempty"`    // setup-script base; "" = container.DefaultBase
 	Caches  []string          `yaml:"caches,omitempty"`  // guest dirs backed by named volumes, e.g. /root/.cache/go-build
 	Env     map[string]string `yaml:"env,omitempty"`
+	Secrets map[string]string `yaml:"secrets,omitempty"` // env name -> keychain:<service>; refs only
 	CPUs    int               `yaml:"cpus,omitempty"`
 	Memory  string            `yaml:"memory,omitempty"`
 }
@@ -233,6 +234,15 @@ func ImageHash(home string, p Project) (string, error)
 var LockfileNames = []string{"go.sum", "package-lock.json", "bun.lock", "bun.lockb", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "poetry.lock", "uv.lock", "requirements.txt", "Gemfile.lock"}
 func ImageTag(slug, hash string) string // "bough-orb/<slug>:<hash>"
 ```
+
+`Parse` validates `secrets`: names match `^[A-Za-z_][A-Za-z0-9_]*$`, refs
+are `keychain:<service>` (non-empty, at most 200 bytes, no whitespace or
+control characters), and a name can't be in both `env` and `secrets`.
+`ImageHash` hashes project.yml with `secrets` removed, so adding a secret
+never rebuilds the image (the re-marshal rebuilds every existing image
+once after upgrading); secrets never reach setup.sh or the Dockerfile.
+`SetSecret(home, slug, name, ref)` sets one and drops a same-named env.
+See docs/secrets.md.
 
 Remote repos are cloned once, bare, into `~/.bough/orbs/cache/<slug>/<name>.git`
 (fetched on each orb start); worktrees are added from there. Path repos add
@@ -308,8 +318,7 @@ type Build struct {
 func Open(ctx context.Context, rt container.Runtime, home, session string, p projectdef.Project, scratchDir string) (*Orb, error)
 func (o *Orb) State() State
 // Command is the exec seam: argv run inside the container, workdir =
-// Primary, env = BOUGH_SCRATCH/HOME/TERM + Def.Env (exec does not
-// inherit the host env). If the container is not running (stopped from
+// Primary, env = execEnv (exec does not inherit the host env). If the container is not running (stopped from
 // serve, engine restarted) Command first re-Starts it and re-runs
 // resume.sh, so a stop never strands a live child.
 func (o *Orb) Command(ctx context.Context, argv ...string) *exec.Cmd
@@ -318,6 +327,15 @@ func (o *Orb) Root() string
 func (o *Orb) Stop(ctx context.Context) error   // container stop; state Stopped; worktrees kept
 func Remove(ctx context.Context, rt container.Runtime, home, session string) error // rm container, git worktree remove, rm Dir
 ```
+
+`execEnv` builds every exec's env (Command and resume.sh) in this order,
+later names winning: coreEnv (`HOME`, `TERM`, `BOUGH_SCRATCH`);
+identityEnv (`GH_TOKEN`, `GIT_CONFIG_*`, host prefixes); proxy env,
+`BOUGH_HOST`, `PATH`; `Def.Env`; resolved secrets sorted by name. Refs
+are re-read from `projectdef.Load` on every exec (falling back to the
+Def captured at Open), so a secret added mid-session applies to the next
+command. An unresolved ref is left out, with one stderr line per name per
+orb. Secrets never go into the run env, which inspect shows.
 
 ### 1d. Identity, tools and egress
 
@@ -331,15 +349,27 @@ own shell; it only isolates file changes.
   uv and python3. `ImageHash` hashes the base tag, so editing the base
   rebuilds every project on it.
 - **File credentials**: `~/.aws`, `~/.kube`, `~/.config/gcx`,
-  `~/.config/argocd`, `~/.config/gcloud` are bind-mounted read-write at
-  `/root/...` when present, so SSO and kube token caches stay shared with
-  the host.
+  `~/.config/argocd`, `~/.config/gcloud`, `~/.circleci` are bind-mounted
+  read-write at `/root/...` when present, so SSO and kube token caches stay
+  shared with the host. A project adds its own with `identity: [.foo]`
+  (`bough project add-identity <slug> .foo`); `.ssh`, `.gnupg` and
+  `.bough` are refused, and the list is not part of the image hash.
 - **Keychain credentials**: `GH_TOKEN` is the host's `gh auth token`
   (cached 5 min), passed per exec, never in run env. Git gets
   `credential.https://github.com.helper=!gh auth git-credential` and the
   host's user.name/email through `GIT_CONFIG_*` env; the host gitconfig is
   not mounted (it names macOS binaries). Host `AWS_PROFILE`/`AWS_REGION`
   and `GRAFANA_*`/`ARGOCD_*`/`CIRCLECI_*`/`LINEAR_*` pass through.
+- **Secrets**: project.yml `secrets:` maps env names to
+  `keychain:<service>` refs (stored under account `bough`, read from any
+  account). `internal/secrets` resolves them on the host (5 min cache,
+  failures cached 30s) and every exec passes them as
+  `ExecOptions.Secrets`: argv carries `-e NAME` only, the value reaches
+  the `container exec` client through its own environment. Names that
+  every exec sets are rejected. Commands see the values, so output that
+  prints one (`env`, `echo $NAME`) lands in the tool result and history;
+  nothing scrubs it. Asked secrets are stored as `bough/<slug>/<NAME>`.
+  resume.log is on the host and is not scrubbed.
 - **Egress**: per-app VPNs (Jamf Trust Private Access) do not tunnel the
   VM bridge, so the child runs an HTTP/CONNECT proxy on the guest's
   gateway IP (its resolv.conf nameserver) and sets `HTTPS_PROXY` and
@@ -348,7 +378,7 @@ own shell; it only isolates file changes.
   the keychain, so the guest's `bough` is a shim at
   `$BOUGH_SCRATCH/.bin/bough` (first on the exec `PATH`) that POSTs its
   args to `$BOUGH_HOST/bough/exec` on the proxy; the host runs its own
-  bough (only the `mcp` subcommand) and returns stdout, stderr and exit.
+  bough (only the `mcp` and `project` subcommands) and returns stdout, stderr and exit.
 
 ## 2. Session mode (area: session-mode)
 
@@ -423,7 +453,11 @@ type orbExec interface {
   real chdir runs in the e2e subprocess), provide `orb` and `orb-state`,
   set prompt section `orb` (container, repos, checks.fast/full, "your
   shell runs in a Linux container; files under <root> are shared with the
-  host"). Effect on unmount: `Stop` (never Remove — resume reuses it).
+  host"), plus the blocked-verification rule (docs/secrets.md §5) and,
+  when `missingEnv` (plugins/orb/envcheck.go) finds env that resume.sh or
+  the checks reference but nothing sets, `Unset env referenced by
+  resume.sh/checks: A, B. ...`; the same list goes to stderr once per open
+  as `bough: orb: <slug>: unset env A, B (resume.sh/checks)`. Effect on unmount: `Stop` (never Remove — resume reuses it).
 - Open failure: row error names the row and wraps
   (`orb: open %s: %w`); state.json says failed so serve shows it.
 - `runtime.Available` failing => the same error path with the fix
@@ -459,6 +493,15 @@ type orbExec interface {
   error when `orb` is absent.
 - Mode (`session-mode`, provided by main before any row mounts) is read
   once at Apply to decide registration; the `orb` service is not.
+- `tools.secret(name, reason, project?)` (plugins/ask) asks the user for a
+  credential with a secret ask, stores it with `secrets.Store` under
+  `bough/<slug>/<NAME>` and adds the ref with `projectdef.SetSecret`. It
+  returns only the ref; declining throws `secret: user declined`.
+- History: a secret ask logs `ask/answer` as `{text:"[secret stored]",
+  secret:true}`, so export, wiki, serve lines and the TUI never see the
+  value; the TUI masks the composer and headless never echoes the line.
+  This covers the answer only: a command that prints the env is not
+  redacted.
 
 ## 3. Serve JSON API (area: serve-api)
 
@@ -554,6 +597,10 @@ export interface OrbState { session: string; project: string; status: OrbStatus;
 export interface OrbBuild { tag: string; hash: string; state: "" | "building" | "ok" | "failed"; startedAt: string; endedAt?: string; error?: string }
 export interface OrbDetail { project: Project; files: Record<"project.yml" | "Dockerfile" | "setup.sh" | "resume.sh", string>; hash: string; orb: OrbSummary; build: OrbBuild; orbs: OrbState[]; runtime: { name: string; available: boolean; error?: string } }
 ```
+
+`Ask` (existing) gains `secret?: boolean`: the card shows its own password
+field that calls `api.answer` directly, the composer is disabled, and an
+`ask/answer` line with `data.secret` renders `secret stored`.
 
 `api.ts`: `create(cwd, prompt, mode?: SessionMode, project?: string)`,
 `attachOrb(id, slug?)`, `detachOrb(id)`, `orb(id)`, `putOrbFile(id, name, text)`,
@@ -666,6 +713,14 @@ offline. Fake runtime everywhere except the one live test.
 - **web-ui**: `bun run build && bun run check`; stories render each state;
   existing projects stories unchanged; phone width checked in Storybook at
   400px.
+- **secrets** (docs/secrets.md): `internal/secrets` through the
+  `KeychainRead`/`KeychainWrite` seams, never the real keychain;
+  projectdef secrets validation, ImageHash ignoring secrets, SetSecret
+  file bytes free of the value; `internal/orb` exec env carries a resolved
+  secret for Command and resume.sh but not RunSpec env; ask/ui/serve
+  redaction tests; `plugins/orb` `TestMissingEnv` (defaults, single
+  quotes, lowercase, assigned, provided names) and the prompt section's
+  rule and unset-env line.
 - **update**: ensureContainerRuntime with fake run/look: darwin missing →
   brew install + system start; brew missing → warning only; start fails →
   warning, no panic; linux → no calls.

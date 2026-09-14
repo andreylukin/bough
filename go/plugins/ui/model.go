@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"unicode"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
@@ -64,6 +65,7 @@ type block struct {
 	answer   string
 	answered bool
 	expired  bool // turn ended (or replay found no answer entry) unanswered
+	secret   bool // tools.secret: the composer masks the answer, which is never shown
 
 	// spawn blocks only (see spawn.go): the subagent card's live state;
 	// label is the task, text the child's report.
@@ -199,7 +201,7 @@ func sameBlock(a, b block) bool {
 		a.pending == b.pending && slices.Equal(a.files, b.files) &&
 		(a.exit == nil) == (b.exit == nil) && (a.exit == nil || *a.exit == *b.exit) &&
 		a.askID == b.askID && slices.Equal(a.options, b.options) && a.answer == b.answer &&
-		a.answered == b.answered && a.expired == b.expired && a.sub == b.sub && a.live == b.live
+		a.answered == b.answered && a.expired == b.expired && a.secret == b.secret && a.sub == b.sub && a.live == b.live
 }
 
 // renderPart is render + fit, cached per block. Spawn cards (spinner,
@@ -1061,6 +1063,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.layoutComposer()
 			return m, nil
 		}
+		if m.secretPending() {
+			// A secret takes the raw paste: no placeholder tag or image
+			// probe, so the stored value is what was pasted.
+			m.input.InsertString(msg.Content)
+			m.layoutComposer()
+			return m, nil
+		}
 		if took, cmd := m.handlePaste(msg); took {
 			return m, cmd
 		}
@@ -1125,7 +1134,7 @@ func (m *model) addEvent(ev Event) {
 		m.flushTrailing()
 	case "ask":
 		m.blocks = append(m.blocks, block{id: id, kind: "ask", text: ev.Text,
-			askID: ev.ID, options: ev.Options})
+			askID: ev.ID, options: ev.Options, secret: ev.Secret})
 		if m.pendingAsk == "" {
 			// The draft is not the answer: set it aside until the ask
 			// is released (clearPendingAsk).
@@ -1637,13 +1646,23 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if handled, cmd := m.stopKey(key, cfg); handled {
 		return m, cmd
 	}
-	if handled, cmd := m.voiceKey(key, msg, cfg); handled {
-		return m, cmd
+	if !m.secretPending() {
+		if handled, cmd := m.voiceKey(key, msg, cfg); handled {
+			return m, cmd
+		}
+	}
+	// A secret answer is the raw draft: no "\\" newline, paste tags,
+	// "/" or "!" dispatch, and never input history, predict or voice.
+	if key == "enter" && !m.inspecting && m.secretPending() {
+		if v := m.input.Value(); v != "" {
+			m.answerPending(v)
+		}
+		return m, nil
 	}
 	// ctrl+v probes the clipboard for an image first (imagepaste.go);
 	// a text clipboard replays the key into the textarea. A keymap
 	// binding on ctrl+v takes it instead.
-	if key == "ctrl+v" && !m.inspecting && cfg.action[key] == "" {
+	if key == "ctrl+v" && !m.inspecting && cfg.action[key] == "" && !m.secretPending() {
 		return m, m.pasteKey(msg)
 	}
 	if handled, cmd := m.composerKey(key, msg); handled {
@@ -1882,7 +1901,15 @@ func (m model) frame() string {
 	if m.srch.open {
 		bar = m.searchLine(cfg)
 	}
-	out += "\n" + bar + "\n" + m.input.View()
+	input := m.input.View()
+	if m.secretPending() {
+		// textarea has no echo mode: render a copy holding a • per rune
+		// (View has a value receiver, so the real draft is untouched).
+		masked := m.input
+		masked.SetValue(strings.Repeat("•", utf8.RuneCountInString(m.input.Value())))
+		input = masked.View()
+	}
+	out += "\n" + bar + "\n" + input
 	if strip := m.jobStrip(cfg); strip != "" {
 		out += "\n" + strip
 	}

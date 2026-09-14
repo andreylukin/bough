@@ -20,14 +20,21 @@ import (
 // the host and passed in.
 
 // identityDirs are $HOME-relative config dirs mounted at /root/<dir>.
-var identityDirs = []string{".aws", ".kube", ".config/gcx", ".config/argocd", ".config/gcloud"}
+var identityDirs = []string{".aws", ".kube", ".config/gcx", ".config/argocd", ".config/gcloud", ".circleci"}
 
-// identityEnvPrefixes are host env vars passed through unchanged.
-var identityEnvPrefixes = []string{"AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION", "GRAFANA_", "ARGOCD_", "CIRCLECI_", "LINEAR_"}
+// IdentityEnvPrefixes are host env vars passed through unchanged.
+var IdentityEnvPrefixes = []string{"AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION", "GRAFANA_", "ARGOCD_", "CIRCLECI_", "LINEAR_"}
 
-func identityMounts(home string) []container.Mount {
+// identityMounts are the built-in dirs plus the project's own identity
+// list (validated by projectdef), each mounted once, when present.
+func identityMounts(home string, extra []string) []container.Mount {
 	var ms []container.Mount
-	for _, d := range identityDirs {
+	seen := map[string]bool{}
+	for _, d := range append(append([]string(nil), identityDirs...), extra...) {
+		if seen[d] {
+			continue
+		}
+		seen[d] = true
 		src := filepath.Join(home, d)
 		if fi, err := os.Stat(src); err == nil && fi.IsDir() {
 			ms = append(ms, container.Mount{Source: src, Target: filepath.Join("/root", d)})
@@ -91,7 +98,7 @@ func identityEnv() []string {
 	}
 	for _, e := range os.Environ() {
 		k, _, _ := strings.Cut(e, "=")
-		for _, p := range identityEnvPrefixes {
+		for _, p := range IdentityEnvPrefixes {
 			if k == p || (strings.HasSuffix(p, "_") && strings.HasPrefix(k, p)) {
 				env = append(env, e)
 				break

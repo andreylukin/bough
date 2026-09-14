@@ -657,6 +657,8 @@ func statusFor(err error) int {
 	switch {
 	case errors.Is(err, ErrUnknownSession):
 		return http.StatusNotFound
+	case errors.Is(err, ErrBadAnswer):
+		return http.StatusBadRequest
 	case errors.Is(err, ErrNoAsk), errors.Is(err, ErrArchived):
 		return http.StatusConflict
 	default:

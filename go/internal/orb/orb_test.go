@@ -12,6 +12,7 @@ import (
 
 	"github.com/andreylukin/bough/internal/container"
 	"github.com/andreylukin/bough/internal/projectdef"
+	"github.com/andreylukin/bough/internal/secrets"
 )
 
 func git(t *testing.T, dir string, args ...string) string {
@@ -358,5 +359,58 @@ func TestCommandCancelKillsGuest(t *testing.T) {
 	defer rt.mu.Unlock()
 	if len(rt.killed) != 1 || rt.killed[0] != container.OrbName("s6") {
 		t.Fatalf("guest kill = %v", rt.killed)
+	}
+}
+
+// Secrets reach resume.sh and Command through the exec env, re-read per
+// exec, and never the container's run env. Not parallel: it swaps the
+// keychain seam.
+func TestExecEnvSecrets(t *testing.T) {
+	old := secrets.KeychainRead
+	t.Cleanup(func() { secrets.KeychainRead = old })
+	secrets.KeychainRead = func(service string) (string, error) {
+		switch service {
+		case "bough/sec/DEVPI_URL":
+			return "https://devpi.test/one", nil
+		case "bough/sec/LATER":
+			return "later-value", nil
+		}
+		return "", secrets.ErrNotFound
+	}
+	ctx := context.Background()
+	home, scratch := t.TempDir(), t.TempDir()
+	newProject(t, home, "sec", "  - path: "+newRepo(t)+"\n")
+	projectdef.WriteFile(home, "sec", projectdef.FileResume, "#!/bin/sh\necho \"$DEVPI_URL\" > \"$BOUGH_SCRATCH/resume.out\"\n")
+	for name, ref := range map[string]string{"DEVPI_URL": "keychain:bough/sec/DEVPI_URL", "GONE": "keychain:bough/sec/GONE"} {
+		if err := projectdef.SetSecret(home, "sec", name, ref); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, err := projectdef.Load(home, "sec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := Open(ctx, container.NewFake(), home, "s7", p, scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(scratch, "resume.out")); strings.TrimSpace(string(b)) != "https://devpi.test/one" {
+		t.Fatalf("resume env %q", b)
+	}
+	for _, kv := range o.spec.Env {
+		if strings.Contains(kv, "devpi.test") || strings.HasPrefix(kv, "DEVPI_URL=") {
+			t.Fatalf("secret in RunSpec env: %v", o.spec.Env)
+		}
+	}
+	// Added mid-session: the next Command sees it without reopening.
+	if err := projectdef.SetSecret(home, "sec", "LATER", "keychain:bough/sec/LATER"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := o.Command(ctx, "sh", "-c", `echo "$DEVPI_URL|$LATER|${GONE-unset}"`).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "https://devpi.test/one|later-value|unset" {
+		t.Fatalf("command env %q", got)
 	}
 }

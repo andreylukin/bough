@@ -25,6 +25,7 @@ type Event struct {
 	Text    string
 	ID      string
 	Options []string
+	Secret  bool           // kind "ask": the answer is a credential (tools.secret)
 	Data    map[string]any // extra payload (e.g. done's files/exit); nil when absent
 }
 
@@ -225,6 +226,9 @@ func eventOf(payload any) Event {
 				if opts, ok := f.Interface().([]string); ok {
 					ev.Options = opts
 				}
+			}
+			if f := rv.FieldByName("Secret"); f.IsValid() && f.Kind() == reflect.Bool {
+				ev.Secret = f.Bool()
 			}
 			if f := rv.FieldByName("Data"); f.IsValid() && f.CanInterface() {
 				if d, ok := f.Interface().(map[string]any); ok {

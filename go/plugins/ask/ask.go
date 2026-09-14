@@ -10,10 +10,14 @@ package ask
 import (
 	"context"
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/andreylukin/bough/internal/projectdef"
+	"github.com/andreylukin/bough/internal/secrets"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/history"
 )
@@ -26,6 +30,7 @@ type Event struct {
 	Text    string // the question
 	ID      string
 	Options []string
+	Secret  bool // the answer is a credential: never echoed or recorded
 }
 
 // codemode is the slice of the "codemode" service we need: register
@@ -50,17 +55,35 @@ const defaultTimeout = 10 * time.Minute
 type Asker struct {
 	mu      sync.Mutex
 	seq     int64
-	pending map[string]chan string
+	pending map[string]pend
 	timeout time.Duration
 	code    codemode
 	emit    func(Event)
 	hist    appender // nil: no durable record
+	project string   // session-project; "" in a local session
 }
+
+// pend is one blocked ask: its answer channel, and whether the answer
+// is a secret that must never reach history.
+type pend struct {
+	ch     chan string
+	secret bool
+}
+
+// userHome is a test seam, as in plugins/orb.
+var userHome = os.UserHomeDir
+
+var secretName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // ask is the tools.ask implementation. It records the question, emits
 // the "ask" loop event for the UI, and blocks until Answer (or the
 // timeout, which is an error the model sees as the tool failing).
 func (a *Asker) ask(question string, options ...string) (string, error) {
+	return a.put(question, false, options...)
+}
+
+// put asks one question; secret marks the answer as a credential.
+func (a *Asker) put(question string, secret bool, options ...string) (string, error) {
 	if strings.TrimSpace(question) == "" {
 		return "", fmt.Errorf("ask: question is empty")
 	}
@@ -75,13 +98,17 @@ func (a *Asker) ask(question string, options ...string) (string, error) {
 	a.seq++
 	id := fmt.Sprintf("ask-%d", a.seq)
 	ch := make(chan string, 1)
-	a.pending[id] = ch
+	a.pending[id] = pend{ch: ch, secret: secret}
 	a.mu.Unlock()
 
 	if a.hist != nil {
-		a.hist.Append("ask", map[string]any{"question": question, "options": options, "id": id})
+		data := map[string]any{"question": question, "options": options, "id": id}
+		if secret {
+			data["secret"] = true
+		}
+		a.hist.Append("ask", data)
 	}
-	a.emit(Event{Kind: "ask", Text: question, ID: id, Options: options})
+	a.emit(Event{Kind: "ask", Text: question, ID: id, Options: options, Secret: secret})
 
 	// The run's context: a cancelled turn (ctrl+c) must release the
 	// blocked call — goja cannot interrupt a Go host call.
@@ -115,6 +142,56 @@ func (a *Asker) ask(question string, options ...string) (string, error) {
 	}
 }
 
+// askSecret is tools.secret: ask the user for a credential, store it
+// in the keychain and reference it from project.yml. The value is
+// never returned, recorded or put in an error.
+func (a *Asker) askSecret(name, reason string, project ...string) (string, error) {
+	if !secretName.MatchString(name) {
+		return "", fmt.Errorf("secret: invalid name %q", name)
+	}
+	slug := a.project
+	if len(project) > 0 {
+		slug = project[0]
+	}
+	if slug == "" {
+		return "", fmt.Errorf("secret: pass the project slug")
+	}
+	home, err := userHome()
+	if err != nil {
+		return "", fmt.Errorf("secret: home dir: %w", err)
+	}
+	if _, err := projectdef.Load(home, slug); err != nil {
+		return "", fmt.Errorf("secret: %w", err)
+	}
+	value, err := a.put(fmt.Sprintf("Secret %s for %s: %s", name, slug, reason), true)
+	if err != nil {
+		return "", fmt.Errorf("secret: %w", err)
+	}
+	// A pasted value often carries a trailing space or newline.
+	value = strings.TrimSpace(value)
+	if value == "" || value == "(declined)" {
+		return "", fmt.Errorf("secret: user declined")
+	}
+	service := secrets.Service(slug, name)
+	if err := secrets.Store(service, value); err != nil {
+		return "", fmt.Errorf("secret: store failed: %s", scrub(err.Error(), value))
+	}
+	ref := secrets.Ref(service)
+	if err := projectdef.SetSecret(home, slug, name, ref); err != nil {
+		return "", fmt.Errorf("secret: %s", scrub(err.Error(), value))
+	}
+	if a.project != slug {
+		return fmt.Sprintf("stored %s as %s; applies to project %s's next command or session", name, ref, slug), nil
+	}
+	return fmt.Sprintf("stored %s as %s; available to the next command", name, ref), nil
+}
+
+// scrub is belt and braces: an error from a lower layer must not carry
+// the value even if that layer slips.
+func scrub(msg, value string) string {
+	return strings.ReplaceAll(msg, value, "[secret]")
+}
+
 // Ask is ask for other rows: a question the harness itself has to put
 // to the user (a Codex rule that says "prompt" before a command).
 func (a *Asker) Ask(question string, options ...string) (string, error) {
@@ -126,16 +203,20 @@ func (a *Asker) Ask(question string, options ...string) (string, error) {
 // unknown (or already-resolved/timed-out) id is an error.
 func (a *Asker) Answer(id, text string) error {
 	a.mu.Lock()
-	ch, ok := a.pending[id]
+	p, ok := a.pending[id]
 	delete(a.pending, id)
 	a.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("ask: no pending ask %q", id)
 	}
 	if a.hist != nil {
-		a.hist.Append("ask/answer", map[string]any{"id": id, "text": text})
+		if p.secret {
+			a.hist.Append("ask/answer", map[string]any{"id": id, "text": "[secret stored]", "secret": true})
+		} else {
+			a.hist.Append("ask/answer", map[string]any{"id": id, "text": text})
+		}
 	}
-	ch <- text // buffered: never blocks the UI
+	p.ch <- text // buffered: never blocks the UI; the raw value reaches askSecret only
 	return nil
 }
 
@@ -144,13 +225,13 @@ func (a *Asker) Answer(id, text string) error {
 // so no answer can come). An unknown id is an error.
 func (a *Asker) Cancel(id string) error {
 	a.mu.Lock()
-	ch, ok := a.pending[id]
+	p, ok := a.pending[id]
 	delete(a.pending, id)
 	a.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("ask: no pending ask %q", id)
 	}
-	close(ch)
+	close(p.ch)
 	return nil
 }
 
@@ -180,7 +261,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		timeout = time.Duration(n) * time.Minute
 	}
 	a := &Asker{
-		pending: map[string]chan string{},
+		pending: map[string]pend{},
 		timeout: timeout,
 		code:    code,
 		emit:    func(ev Event) { ctx.Emit("loop/event", ev) },
@@ -188,6 +269,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if h, err := kernel.Get[appender](ctx, "history"); err == nil {
 		a.hist = h
 	}
+	a.project, _ = kernel.Get[string](ctx, "session-project")
 	// The loop documents tools.ask (and the separate-arguments nudge)
 	// in its system prompt when it sees this "ask-answers" service —
 	// NOT via a "cognition" provider here: two chaining cognition
@@ -196,6 +278,10 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	code.RegisterTool("ask", a.ask)
 	if d, ok := code.(interface{ Describe(name, line string) }); ok {
 		d.Describe("ask", `tools.ask(question, ...options) -> string: ask the USER a question and block until they answer. Pass each option as a separate argument so they render as clickable choices.`)
+	}
+	code.RegisterTool("secret", a.askSecret)
+	if d, ok := code.(interface{ Describe(name, line string) }); ok {
+		d.Describe("secret", `tools.secret(name, reason, project?) asks the user for a credential, stores it in the keychain and adds it to project.yml secrets. The value is not returned to you, but commands see it as env, so never print it.`)
 	}
 	ctx.Provide("ask-answers", a)
 	return nil

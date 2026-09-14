@@ -66,6 +66,21 @@ func TestProjectCommand(t *testing.T) {
 	if _, err := run("", "set", "web", "nope", "x"); err == nil {
 		t.Error("unknown key accepted")
 	}
+	if _, err := run("", "set", "web", "secrets.DEVPI_URL", "vault:x"); err == nil {
+		t.Error("bad secret ref accepted")
+	}
+	if _, err := run("", "set", "web", "secrets.GOFLAGS", "keychain:x"); err == nil {
+		t.Error("secret shadowing env accepted")
+	}
+	if out, err := run("", "set", "web", "secrets.DEVPI_URL", "keychain:bough/web/DEVPI_URL"); err != nil || !strings.Contains(out, "DEVPI_URL: keychain:bough/web/DEVPI_URL") {
+		t.Errorf("set secret: %v\n%s", err, out)
+	}
+	if _, err := run("", "set", "web", "secrets.DEVPI_URL", ""); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := projectdef.Load(home, "web"); len(p.Def.Secrets) != 0 {
+		t.Errorf("secret not removed: %+v", p.Def.Secrets)
+	}
 	if p, _ := projectdef.Load(home, "web"); len(p.Def.Repos) != 1 {
 		t.Errorf("after refused edits repos = %+v", p.Def.Repos)
 	}

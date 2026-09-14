@@ -148,8 +148,15 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			return fmt.Errorf("orb: chdir %s: %w", st.Primary, err)
 		}
 	}
+	resume, _ := projectdef.ReadFile(home, slug, projectdef.FileResume)
+	setup, _ := projectdef.ReadFile(home, slug, projectdef.FileSetup)
+	dockerfile, _ := projectdef.ReadFile(home, slug, projectdef.FileDockerfile)
+	missing := missingEnv(resume, p.Def.Checks, p.Def, setup+"\n"+dockerfile)
+	if len(missing) > 0 && !reused {
+		fmt.Fprintf(os.Stderr, "bough: orb: %s: unset env %s (resume.sh/checks)\n", slug, strings.Join(missing, ", "))
+	}
 	if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
-		s.Set("orb", promptSection(o.Root(), st, p.Def.Checks))
+		s.Set("orb", promptSection(o.Root(), st, p.Def, missing))
 		ctx.Effect(func() { s.Set("orb", "") })
 	}
 	ctx.Provide("orb", o)
@@ -197,7 +204,8 @@ func stopOrb(o *iorb.Orb) {
 }
 
 // promptSection tells the model where its shell runs and what to check.
-func promptSection(root string, st iorb.State, checks projectdef.Checks) string {
+func promptSection(root string, st iorb.State, def projectdef.Def, missing []string) string {
+	checks := def.Checks
 	var b strings.Builder
 	fmt.Fprintf(&b, "Project session: %s. Your shell runs in a Linux container (%s); files under %s are shared with the host at the same paths.\n", st.Project, st.Container, root)
 	b.WriteString("The shell acts as the user: gh, git, aws, kubectl, helm, helmfile, sops, just, gcx and argocd use the user's own credentials, and network traffic leaves through the host, so internal hosts the user can reach work here too.\n")
@@ -215,6 +223,10 @@ func promptSection(root string, st iorb.State, checks projectdef.Checks) string 
 	if checks.Full != "" {
 		fmt.Fprintf(&b, "Full check: %s\n", checks.Full)
 	}
+	if len(missing) > 0 {
+		fmt.Fprintf(&b, "Env referenced by resume.sh/checks that may be unset: %s. If so, set them (bough project set %s env.NAME / tools.secret) before trusting checks.\n", strings.Join(missing, ", "), st.Project)
+	}
+	b.WriteString("If a build or test is blocked by a missing credential, dependency or tool, do not fall back to weaker verification. Find what the repo expects (Makefile, docker-compose, CI config), fix the project definition with `bough project`, ask for secrets with `tools.secret`, and say plainly what stayed unverified.\n")
 	fmt.Fprintf(&b, "This project's definition (repos, checks, env, setup.sh, resume.sh) is yours to change with \"bough project ... %s ...\" (no args for usage); it validates, and changes apply to the next session.\n", st.Project)
 	return strings.TrimRight(b.String(), "\n")
 }

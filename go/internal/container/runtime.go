@@ -75,8 +75,11 @@ type RunSpec struct {
 }
 
 type ExecOptions struct {
-	Workdir     string
-	Env         []string
+	Workdir string
+	Env     []string
+	// Secrets are NAME=value pairs kept out of argv: the exec client gets
+	// only -e NAME and inherits the value from its own environment.
+	Secrets     []string
 	Interactive bool // attach stdin (-i)
 }
 

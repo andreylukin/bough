@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -24,7 +25,10 @@ const projectUsage = `usage: bough project <command>
   create <slug> <repo>...               new project; a repo is a local path (~ ok) or a git remote
   add-repo <slug> <repo> [--branch B] [--name N]
   remove-repo <slug> <name>
-  set <slug> <key> <value>              checks.fast, checks.full, base, memory, cpus, env.NAME; "" clears
+  add-identity <slug> <dir>             lend the container a $HOME config dir, e.g. .circleci (read-write at /root/<dir>)
+  remove-identity <slug> <dir>
+  set <slug> <key> <value>              checks.fast, checks.full, base, memory, cpus, env.NAME,
+                                        secrets.NAME keychain:<service>; "" clears
   write <slug> <file>                   replace a file with stdin (empty stdin deletes a script)
 Changes apply to the next session started in the project.`
 
@@ -114,6 +118,23 @@ func project(out io.Writer, in io.Reader, args []string) error {
 			d.Repos = append(d.Repos, r)
 			return nil
 		})
+	case "add-identity", "remove-identity":
+		if err := need(2); err != nil {
+			return err
+		}
+		dir := strings.TrimPrefix(strings.TrimPrefix(args[2], "~/"), "$HOME/")
+		return mutate(out, home, args[1], func(d *projectdef.Def) error {
+			i := slices.Index(d.Identity, dir)
+			switch {
+			case args[0] == "add-identity" && i < 0:
+				d.Identity = append(d.Identity, dir)
+			case args[0] == "remove-identity" && i >= 0:
+				d.Identity = slices.Delete(d.Identity, i, i+1)
+			case args[0] == "remove-identity":
+				return fmt.Errorf("no identity dir %q", dir)
+			}
+			return nil
+		})
 	case "remove-repo":
 		if err := need(2); err != nil {
 			return err
@@ -178,9 +199,20 @@ func setKey(d *projectdef.Def, key, val string) error {
 		}
 		d.CPUs = n
 	default:
+		if name, ok := strings.CutPrefix(key, "secrets."); ok && name != "" {
+			if val == "" {
+				delete(d.Secrets, name)
+			} else {
+				if d.Secrets == nil {
+					d.Secrets = map[string]string{}
+				}
+				d.Secrets[name] = val
+			}
+			return nil
+		}
 		name, ok := strings.CutPrefix(key, "env.")
 		if !ok || name == "" {
-			return fmt.Errorf("unknown key %q (checks.fast, checks.full, base, memory, cpus, env.NAME)", key)
+			return fmt.Errorf("unknown key %q (checks.fast, checks.full, base, memory, cpus, env.NAME, secrets.NAME)", key)
 		}
 		if val == "" {
 			delete(d.Env, name)

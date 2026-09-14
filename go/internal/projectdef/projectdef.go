@@ -8,12 +8,14 @@ package projectdef
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -37,8 +39,14 @@ type Def struct {
 	Base   string            `yaml:"base,omitempty"`   // setup-script base; "" = bough's base image (BaseTag)
 	Caches []string          `yaml:"caches,omitempty"` // guest dirs backed by named volumes
 	Env    map[string]string `yaml:"env,omitempty"`
-	CPUs   int               `yaml:"cpus,omitempty"`
-	Memory string            `yaml:"memory,omitempty"`
+	// Secrets maps an env name to a ref (keychain:<service>); values never
+	// live in this file.
+	Secrets map[string]string `yaml:"secrets,omitempty"`
+	// Identity lists extra $HOME-relative config dirs (".circleci") mounted
+	// read-write at /root/<dir>, on top of the built-in identity dirs.
+	Identity []string `yaml:"identity,omitempty"`
+	CPUs     int      `yaml:"cpus,omitempty"`
+	Memory   string   `yaml:"memory,omitempty"`
 }
 
 // Project is one definition on disk.
@@ -97,7 +105,85 @@ func Parse(b []byte) (Def, error) {
 	if d.CPUs < 0 {
 		return Def{}, fmt.Errorf("projectdef: %s: cpus must be >= 0", FileYAML)
 	}
+	for _, name := range slices.Sorted(maps.Keys(d.Secrets)) {
+		if err := checkSecret(name, d.Secrets[name]); err != nil {
+			return Def{}, fmt.Errorf("projectdef: %s: %w", FileYAML, err)
+		}
+		if _, ok := d.Env[name]; ok {
+			return Def{}, fmt.Errorf("projectdef: %s: secrets.%s: also set in env", FileYAML, name)
+		}
+	}
+	for _, dir := range d.Identity {
+		if err := CheckIdentity(dir); err != nil {
+			return Def{}, fmt.Errorf("projectdef: %s: identity: %w", FileYAML, err)
+		}
+	}
 	return d, nil
+}
+
+var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// ReservedEnv is what every orb exec sets itself (core, identity, proxy);
+// a secret must not shadow it. BOUGH_ and GIT_CONFIG_ are reserved as
+// prefixes.
+var ReservedEnv = []string{"HOME", "TERM", "PATH", "BOUGH_SCRATCH", "BOUGH_HOST", "GH_TOKEN",
+	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+	"SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE",
+	"AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION"}
+
+func reservedEnv(name string) bool {
+	return slices.Contains(ReservedEnv, name) || strings.HasPrefix(name, "BOUGH_") || strings.HasPrefix(name, "GIT_CONFIG_")
+}
+
+// CheckIdentity accepts a clean $HOME-relative dir that is not a key store
+// or bough's own state: a project may lend its container a CLI's login,
+// never the user's SSH or GPG keys, nor ~/.bough (definitions, keys,
+// other sessions).
+func CheckIdentity(dir string) error {
+	if dir == "" || filepath.IsAbs(dir) || strings.HasPrefix(dir, "~") || filepath.Clean(dir) != dir || dir == "." || dir == ".." || strings.HasPrefix(dir, "../") {
+		return fmt.Errorf("%q: want a clean path relative to $HOME, like .circleci", dir)
+	}
+	top := strings.SplitN(dir, "/", 2)[0]
+	if slices.Contains([]string{".ssh", ".gnupg", ".bough"}, top) {
+		return fmt.Errorf("%q: %s is never mounted into a project container", dir, top)
+	}
+	return nil
+}
+
+func checkSecret(name, ref string) error {
+	if !envNameRE.MatchString(name) {
+		return fmt.Errorf("secrets.%s: bad env name", name)
+	}
+	if reservedEnv(name) {
+		return fmt.Errorf("secrets.%s: reserved env name (set by every exec)", name)
+	}
+	scheme, service, ok := strings.Cut(ref, ":")
+	if !ok || scheme != "keychain" {
+		return fmt.Errorf("secrets.%s: unknown ref scheme %q (want keychain:)", name, scheme)
+	}
+	if service == "" || len(service) > 200 || strings.IndexFunc(service, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return fmt.Errorf("secrets.%s: bad keychain service %q", name, service)
+	}
+	return nil
+}
+
+// SetSecret points name at ref in the project's secrets, dropping an env
+// entry of the same name, and writes project.yml through WriteFile.
+func SetSecret(home, slug, name, ref string) error {
+	p, err := Load(home, slug)
+	if err != nil {
+		return err
+	}
+	if p.Def.Secrets == nil {
+		p.Def.Secrets = map[string]string{}
+	}
+	p.Def.Secrets[name] = ref
+	delete(p.Def.Env, name)
+	b, err := yaml.Marshal(p.Def)
+	if err != nil {
+		return fmt.Errorf("projectdef: set secret %s: %w", name, err)
+	}
+	return WriteFile(home, slug, FileYAML, string(b))
 }
 
 // RepoName is the worktree directory name: Name, else the basename of the

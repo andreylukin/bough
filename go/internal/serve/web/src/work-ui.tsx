@@ -48,13 +48,18 @@ export function splitExecNote(text: string): { text: string; note: { notRun: num
   return note ? { text: text.replace(NOTE_RE, "").trimEnd(), note } : { text, note: null };
 }
 
-/** "2 code blocks were not run": a notice, never a paragraph of the reply. Inside steps it keeps the loop's reason. */
-export function ExecNote({ note, reason = false }: { note: { notRun: number; reason: string }; reason?: boolean }) {
+/**
+ * "2 later code blocks skipped: the block before them failed": a notice,
+ * never a paragraph of the reply. The loop runs every block but stops at the
+ * first failure, so the reason always shows: "not run" alone read as if
+ * blocks were being dropped for no reason.
+ */
+export function ExecNote({ note }: { note: { notRun: number; reason: string } }) {
   const n = note.notRun;
-  const words = `${n} code ${n === 1 ? "block was" : "blocks were"} not run`;
+  const why = /failed/.test(note.reason) ? "the block before them failed" : note.reason;
   return (
-    <p className="exec-note" title={note.reason || undefined}>
-      {words}{reason && note.reason ? ` · ${note.reason.charAt(0).toUpperCase() + note.reason.slice(1)}` : ""}
+    <p className="exec-note">
+      {n} later code {n === 1 ? "block" : "blocks"} skipped{why ? `: ${why}` : ""}
     </p>
   );
 }

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -129,6 +130,15 @@ func TestAppleArgv(t *testing.T) {
 	c1, c2 := (&Apple{Bin: "container"}).Command(ctx, "n", ExecOptions{Env: []string{"B=2"}}, "ls"), (&Apple{Bin: "container"}).Command(ctx, "n", ExecOptions{}, "ls")
 	if id1, id2 := execID(c1), execID(c2); id1 == "" || id1 == id2 || c1.Args[len(c1.Args)-2] != "n" {
 		t.Fatalf("exec ids %q %q args %q", id1, id2, c1.Args)
+	}
+
+	// Secret values never reach argv: -e NAME only, value via cmd.Env.
+	c3 := (&Apple{Bin: "container"}).Command(ctx, "n", ExecOptions{Env: []string{"B=2"}, Secrets: []string{"DEVPI_TOKEN=fake-s3cr3t"}}, "true")
+	if strings.Contains(strings.Join(c3.Args, " "), "fake-s3cr3t") || !slices.Contains(c3.Args, "DEVPI_TOKEN") {
+		t.Fatalf("secret argv %q", c3.Args)
+	}
+	if !slices.Contains(c3.Env, "DEVPI_TOKEN=fake-s3cr3t") {
+		t.Fatal("secret missing from the exec client's env")
 	}
 
 	// Missing container: inspect fails => run; Remove is a no-op.

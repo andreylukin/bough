@@ -34,6 +34,7 @@ type Ask struct {
 	Text    string   `json:"text"`
 	Options []string `json:"options"`
 	Seq     int64    `json:"seq"`
+	Secret  bool     `json:"secret,omitempty"` // tools.secret: the answer is a credential
 }
 
 // Line is one transcript row on the wire: a history entry with its
@@ -140,6 +141,7 @@ func askOf(e history.Entry) *Ask {
 		Text: str(e.Data["question"]),
 		Seq:  e.Seq,
 	}
+	a.Secret, _ = e.Data["secret"].(bool)
 	if a.Text == "" {
 		a.Text = history.EntryText(e)
 	}

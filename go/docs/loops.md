@@ -481,9 +481,20 @@ go/skills/folder-index/evals/example.yml
   - It prints a TSV summary.
   - Uses `BOUGH_WEB_ADDR=127.0.0.1:0`.
 
+## orb
+
+```
+go/skills/orb/SKILL.md
+```
+
+- `name: orb`, `description:` with `/orb <slug>`, `manual: true`, no scripts.
+- Walks a project definition from what its repos expect: image, setup.sh vs
+  resume.sh, env, secrets, checks, then a manual verify. See docs/secrets.md §7.
+
 ## Area B file list
 
 ```
+go/skills/orb/SKILL.md
 go/skills/multi-model-plan/SKILL.md
 go/skills/multi-model-plan/preflight.sh
 go/skills/folder-index/SKILL.md

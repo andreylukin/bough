@@ -54,6 +54,12 @@ func (m *model) renderAsk(b *block, th theme) string {
 	return strings.Join(lines, "\n")
 }
 
+// secretPending reports whether the composer is routed to a secret ask.
+func (m *model) secretPending() bool {
+	b := m.pendingBlock()
+	return b != nil && b.secret
+}
+
 // pendingBlock finds the ask block the composer is routed to.
 func (m *model) pendingBlock() *block {
 	if m.pendingAsk == "" {
@@ -99,6 +105,9 @@ func (m *model) answerAsk(b *block, text string) {
 		m.flash = err.Error()
 	} else {
 		b.answered, b.answer = true, text
+		if b.secret {
+			b.answer = "[secret stored]"
+		}
 	}
 	if m.pendingAsk == b.askID {
 		m.clearPendingAsk()
@@ -122,6 +131,14 @@ func (m *model) expireAsks() {
 }
 
 func (m *model) clearPendingAsk() {
+	// A secret draft left in the composer would render unmasked and go
+	// out as a prompt on the next Enter.
+	for i := range m.blocks {
+		if b := &m.blocks[i]; b.kind == "ask" && b.askID == m.pendingAsk && b.secret {
+			m.input.Reset()
+			break
+		}
+	}
 	m.pendingAsk = ""
 	m.input.Placeholder = "say something"
 	if m.input.Value() == "" {

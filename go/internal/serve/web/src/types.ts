@@ -20,6 +20,8 @@ export interface Ask {
   text: string;
   options: string[];
   seq: number;
+  /** tools.secret: the answer is a credential, typed into its own password field. */
+  secret?: boolean;
 }
 
 /** A named grouping of conversations. A label, not a container. */

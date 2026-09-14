@@ -95,7 +95,7 @@ func (f *Fake) Command(ctx context.Context, name string, opt ExecOptions, argv .
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = opt.Workdir
 	// Host env is kept so PATH resolves; opt.Env overrides like -e does.
-	cmd.Env = append(os.Environ(), opt.Env...)
+	cmd.Env = append(append(os.Environ(), opt.Env...), opt.Secrets...)
 	if !running {
 		cmd.Err = fmt.Errorf("container: fake: %s is not running", name)
 	}

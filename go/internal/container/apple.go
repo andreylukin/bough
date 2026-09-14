@@ -245,7 +245,11 @@ var execSeq atomic.Uint64
 func (a *Apple) Command(ctx context.Context, name string, opt ExecOptions, argv ...string) *exec.Cmd {
 	id := fmt.Sprintf("%d-%d", os.Getpid(), execSeq.Add(1))
 	opt.Env = append(append([]string(nil), opt.Env...), execIDVar+"="+id)
-	return exec.CommandContext(ctx, a.Bin, execArgs(name, opt, argv)...)
+	cmd := exec.CommandContext(ctx, a.Bin, execArgs(name, opt, argv)...)
+	if len(opt.Secrets) > 0 {
+		cmd.Env = append(os.Environ(), opt.Secrets...)
+	}
+	return cmd
 }
 
 // execID recovers the tag Command put in cmd's argv.
@@ -268,6 +272,10 @@ func execArgs(name string, opt ExecOptions, argv []string) []string {
 	}
 	for _, e := range opt.Env {
 		args = append(args, "-e", e)
+	}
+	for _, e := range opt.Secrets {
+		k, _, _ := strings.Cut(e, "=")
+		args = append(args, "-e", k)
 	}
 	args = append(args, name)
 	return append(args, argv...)
