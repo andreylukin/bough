@@ -58,6 +58,23 @@ func coachRig(t *testing.T, c Coach, coachReply string, setup func(f *fakeSessio
 
 func on() *atomic.Bool { b := &atomic.Bool{}; b.Store(true); return b }
 
+// Every tick asks the same coach session: one per tick in project mode
+// started a container per tick on the work machine, and none stopped.
+func TestCoachReusesOneSession(t *testing.T) {
+	c := Coach{Name: "c", Target: "coder", Every: 15 * time.Millisecond, Cooldown: time.Hour, MaxSteers: 3, Prompt: "watch"}
+	_, f, _ := coachRig(t, c, "NONE", nil, on())
+	coaches := f.created[1:] // created[0] is the target t1
+	if len(coaches) != 1 {
+		t.Fatalf("coach sessions created = %d, want 1 reused across ticks", len(coaches))
+	}
+	if n := len(f.sentTo(coaches[0].ID)); n < 2 {
+		t.Errorf("coach session asked %d times, want several ticks on it", n)
+	}
+	if !contains(f.killed, coaches[0].ID) {
+		t.Errorf("coach session %s not killed when the coach stopped", coaches[0].ID)
+	}
+}
+
 func TestCoachSteersOnceThenCooldown(t *testing.T) {
 	c := Coach{Name: "c", Target: "coder", Every: 15 * time.Millisecond, Cooldown: time.Hour, MaxSteers: 3, Prompt: "watch"}
 	steers, f, r := coachRig(t, c, "Run the tests before editing more.", nil, on())

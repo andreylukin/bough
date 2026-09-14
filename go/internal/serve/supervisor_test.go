@@ -2,6 +2,7 @@ package serve
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -439,6 +440,44 @@ func TestSupervisorKillDropsTheLease(t *testing.T) {
 	// Kill on a session with no child is not an error.
 	if err := f.sup.Kill("sess-nobody"); err != nil {
 		t.Errorf("Kill of an unrun session = %v, want nil", err)
+	}
+}
+
+// SIGKILL skips the child's own orb unmount, so Kill stops the container;
+// the loop demo on the work machine left four running.
+func TestSupervisorKillStopsProjectOrb(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed(t, "sess-orb")
+	ctx := context.Background()
+	name := container.OrbName("sess-orb")
+	if err := f.rt.Build(ctx, container.BuildSpec{Tag: "img"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.rt.Start(ctx, container.RunSpec{Name: name, Image: "img"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.sup.Adopt("sess-orb"); err != nil {
+		t.Fatalf("Adopt: %v", err)
+	}
+	waitFor(t, "the child", func() bool { return f.startCount(t) == 1 })
+	if err := f.sup.Kill("sess-orb"); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if st, _ := f.rt.Inspect(ctx, name); st != container.StateStopped {
+		t.Errorf("orb after Kill = %v, want stopped", st)
+	}
+	// A session without a container is left alone: no stop call.
+	f.seed(t, "sess-local")
+	if err := f.sup.Adopt("sess-local"); err != nil {
+		t.Fatalf("Adopt: %v", err)
+	}
+	waitFor(t, "the local child", func() bool { return f.startCount(t) == 2 })
+	f.sup.Kill("sess-local")
+	for _, c := range f.rt.CallList() {
+		if c == "stop "+container.OrbName("sess-local") {
+			t.Errorf("Kill of a local session stopped a container: %v", f.rt.CallList())
+		}
 	}
 }
 

@@ -8,6 +8,7 @@ package serve
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -916,7 +917,26 @@ func (s *Supervisor) Kill(id string) error {
 		return nil
 	}
 	s.killChild(ch)
+	s.stopKilledOrb(id)
 	return nil
+}
+
+// stopKilledOrb stops a killed project child's container. The child stops
+// its own orb when its row unmounts, but SIGKILL skips that, so every
+// killed project session (a loop node, a coach, an archived agent) left a
+// container running. Stop, never Remove: a resume reuses it.
+func (s *Supervisor) stopKilledOrb(id string) {
+	if s.rt == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	name := container.OrbName(id)
+	if st, err := s.rt.Inspect(ctx, name); err == nil && st == container.StateRunning {
+		if err := s.rt.Stop(ctx, name); err != nil {
+			fmt.Fprintf(os.Stderr, "bough: serve: stop orb %s: %v\n", name, err)
+		}
+	}
 }
 
 func (s *Supervisor) killChild(ch *child) {

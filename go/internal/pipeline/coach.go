@@ -35,6 +35,14 @@ func (r *Runner) coach(ctx context.Context, c Coach, target func() (id string, r
 		cooldown = coachCooldown
 	}
 	s := r.opt.Sessions
+	// One coach session for the whole run: a project-mode coach per tick
+	// started a container every tick, and none was ever stopped.
+	var sess string
+	defer func() {
+		if sess != "" {
+			_ = s.Kill(sess)
+		}
+	}()
 	var lastSeq int64
 	var lastSteer time.Time
 	steers, n := 0, 0
@@ -72,7 +80,7 @@ func (r *Runner) coach(ctx context.Context, c Coach, target func() (id string, r
 		lastSeq = top
 		visit := r.inflight(c.Target)
 
-		reply, err := r.askCoach(ctx, c, tail)
+		reply, err := r.askCoach(ctx, c, &sess, tail)
 		n++
 		verdict, why := "skipped", ""
 		reply = strings.TrimSpace(reply)
@@ -125,19 +133,26 @@ func (r *Runner) steer(node, id string, visit int, text string) error {
 	return s.Send(id, text)
 }
 
-// askCoach runs one fresh coach session and returns its reply. It runs in
-// its target's mode and project, so it can read no more than the coder:
-// a local coach could read the holdout off the host.
-func (r *Runner) askCoach(ctx context.Context, c Coach, tail string) (string, error) {
-	id := history.NewID()
-	t := r.p.Nodes[c.Target]
-	if _, err := r.opt.Sessions.Create(serve.CreateOptions{ID: id, Cwd: r.p.Dir, Mode: t.Mode, Slug: t.Project, Args: r.childArgs(c.Model), Origin: "loop"}); err != nil {
-		return "", err
+// askCoach asks the run's coach session, creating it on first use (or
+// again if it died), and returns its reply. It runs in its target's mode
+// and project, so it can read no more than the coder: a local coach could
+// read the holdout off the host.
+func (r *Runner) askCoach(ctx context.Context, c Coach, sess *string, tail string) (string, error) {
+	s := r.opt.Sessions
+	if *sess == "" || !s.Live(*sess) {
+		if *sess != "" {
+			_ = s.Kill(*sess)
+		}
+		id := history.NewID()
+		t := r.p.Nodes[c.Target]
+		if _, err := s.Create(serve.CreateOptions{ID: id, Cwd: r.p.Dir, Mode: t.Mode, Slug: t.Project, Args: r.childArgs(c.Model), Origin: "loop"}); err != nil {
+			return "", err
+		}
+		*sess = id
 	}
-	defer r.opt.Sessions.Kill(id)
 	tctx, cancel := context.WithTimeout(ctx, coachTurnWait)
 	defer cancel()
-	reply, _, end := r.turn(tctx, id, c.Prompt+"\n\nGoal: "+r.p.Goal+"\n\nRecent activity:\n"+tail, nil)
+	reply, _, end := r.turn(tctx, *sess, c.Prompt+"\n\nGoal: "+r.p.Goal+"\n\nRecent activity:\n"+tail, nil)
 	if end != "done" {
 		return "", fmt.Errorf("coach turn ended: %s", end)
 	}
