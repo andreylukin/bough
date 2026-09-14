@@ -165,7 +165,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .thread-head>.back{grid-area:back}
 .thread-head>.head-main{grid-area:main}
 .thread-head>.head-side{grid-area:side}
-.thread-head>.runtime-strip{grid-area:strip;display:flex;flex-wrap:nowrap;min-width:0}
+.thread-head>.runtime-strip{grid-area:strip;display:flex;flex-wrap:wrap;gap:8px 16px;min-width:0}
 .thread-head .status{font:500 12px/16px var(--sans)}
 .head-trouble{display:inline-flex;align-items:center;gap:7px}
 /* A failing check next to a finished agent: the mark carries the red, the Tests chip the words. */
@@ -1289,27 +1289,142 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .subrun{display:flex;flex-direction:column;gap:0;padding-inline-start:14px;
         border-inline-start:2px solid var(--line-strong)}
 .sub{background:none;border-radius:0;overflow:hidden;border-bottom:1px solid var(--line)}
-.sub>summary{display:flex;align-items:center;gap:2px 10px;flex-wrap:wrap;padding:8px;cursor:pointer;min-height:52px;
-             list-style:none;min-height:36px}
+/* Chevron, id, task, state, timing: fixed columns so a stack of cards
+   lines up; the task stays one line open or shut. */
+.sub>summary{display:grid;grid-template-columns:16px 96px minmax(0,1fr) 128px 128px;align-items:center;column-gap:8px;
+             padding:6px 12px;cursor:pointer;list-style:none;min-height:40px}
 .sub>summary::-webkit-details-marker{display:none}
-.sub>summary::before{content:"\203a";color:var(--text-3);font-family:var(--mono);width:8px;flex-shrink:0}
+.sub>summary::before{content:"\203a";color:var(--text-3);font-family:var(--mono);width:8px}
 .sub[open]>summary::before{content:"\2304"}
-.sub-tag{font-size:12px;color:var(--text-3);flex-shrink:0}
-.sub-task{font-size:13px;font-weight:500;color:var(--text-2);min-width:0;flex:1 1 16ch;
+.sub-tag{font-size:12px;line-height:16px;font-weight:600;color:var(--text-2);white-space:nowrap}
+.sub-task{font-size:13px;line-height:18px;font-weight:500;color:var(--text-1);min-width:0;
           white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sub-state{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--text-3);flex-shrink:0}
-.sub-failed .sub-state{color:var(--red)}
-.sub-failed .sub-task{color:var(--red)}
-.sub-live .sub-state{color:var(--text-2)}
-.sub-steps{font-size:12px;color:var(--text-3);flex-shrink:0}
-.sub[open] .sub-task{white-space:normal}
-.sub-body{display:flex;flex-direction:column;gap:10px;padding:10px 8px 14px;
+.sub-state{display:inline-flex;align-items:center;gap:5px;font-size:12px;line-height:16px;color:var(--text-2);white-space:nowrap}
+.sub-failed{box-shadow:inset 2px 0 var(--red)}
+.sub-steps{font-size:12px;line-height:16px;color:var(--text-3);text-align:end;white-space:nowrap;font-variant-numeric:tabular-nums}
+.sub-line2{grid-column:3/-1;font-size:12px;line-height:16px;color:var(--amber);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sub-body{display:flex;flex-direction:column;gap:10px;padding:10px 12px 14px;
           border-top:1px solid var(--line)}
 .sub-body .say{gap:6px}
-@media (max-width:720px){
-  .subrun{padding-inline-start:10px}
-  .sub-task{flex-basis:100%;order:3}
+.subrun-head{display:flex;align-items:center;gap:8px;min-height:32px;font-size:12px;line-height:16px;
+             color:var(--text-2);font-variant-numeric:tabular-nums}
+.subrun-head .link{margin-inline-start:auto}
+@media (max-width:720px){.subrun{padding-inline-start:10px}}
+
+/* Shared lifecycle word: glyph + word, colour carries state only where
+   it means something (running, queued, failed). */
+.work-state{display:inline-flex;align-items:center;gap:4px;font:600 12px/16px var(--sans);color:var(--text-2);
+            white-space:nowrap;font-variant-numeric:tabular-nums}
+.work-state[data-life="running"]{color:var(--accent)}
+.work-state[data-life="queued"]{color:var(--amber)}
+.work-state[data-life="failed"]{color:var(--red)}
+.work-state[data-life="finished"],.work-state[data-life="stopped"],.work-state[data-life="unknown"]{color:var(--text-2)}
+
+/* Job rows: identity, command, outcome, time, action. The action column
+   is reserved even when empty so rows do not shift when a job ends. */
+.job-group-head{display:flex;align-items:center;min-height:32px;font:600 12px/16px var(--sans);color:var(--text-2);font-variant-numeric:tabular-nums}
+.job-summary{display:grid;grid-template-columns:16px 56px minmax(0,1fr) 140px 56px 112px;align-items:center;column-gap:8px;
+             min-height:40px;padding:4px 12px;list-style:none;cursor:pointer}
+.job-summary::-webkit-details-marker{display:none}
+.job-summary:has(.job-meta+.job-meta),.job-summary:has(.sub-line2){min-height:56px}
+.job-failed{box-shadow:inset 2px 0 var(--red)}
+.job-cmd{min-width:0;font:12px/18px var(--mono);color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.job-meta{font-size:12px;line-height:16px;color:var(--text-3);text-align:end;white-space:nowrap;font-variant-numeric:tabular-nums}
+.job-action{display:flex;justify-content:flex-end}
+.exec-note{display:flex;align-items:center;gap:6px;min-height:24px;font-size:12px;line-height:16px;color:var(--amber)}
+
+.stop-work{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:0 10px;border-radius:6px;
+           background:none;border:1px solid var(--line-strong);color:var(--text-2);font:500 12px/16px var(--sans);
+           white-space:nowrap;cursor:pointer}
+.stop-work:hover:not(:disabled){background:var(--raised);color:var(--text-1)}
+.stop-work:disabled{cursor:default;color:var(--text-3)}
+.stop-work[data-state="error"]{border-color:var(--red);color:var(--red)}
+@media (pointer:coarse){.stop-work{min-height:44px}}
+
+/* The main pane is the container: a narrow pane beside a wide window
+   stacks rows the same as a phone does. */
+.thread{container-type:inline-size}
+@container (max-width:759px){
+  .sub>summary{grid-template-columns:16px minmax(0,1fr) auto;row-gap:2px}
+  .sub>summary>.sub-tag{grid-column:2}
+  .sub>summary>.sub-state{grid-column:3;grid-row:1;justify-self:end}
+  .sub>summary>.sub-task{grid-column:2/-1}
+  .sub>summary>.sub-steps{grid-column:2/-1;text-align:start}
+  .sub-line2{grid-column:2/-1}
+  .job-summary{grid-template-columns:16px 56px minmax(0,1fr) auto;row-gap:2px}
+  .job-summary>.job-cmd{grid-column:2/-1;grid-row:2}
+  .job-summary>.job-meta{grid-row:3;grid-column:2/4;text-align:start}
+  .job-summary>.job-action{grid-column:4;grid-row:1/4}
+  .job-summary>.work-state{grid-column:3;grid-row:1}
+  .work-summary{flex-direction:column;align-items:flex-start}
+  .work-summary-2{display:block}
 }
+
+/* Work: the header button, the popover on wide panes, the sheet on phones. */
+.work-summary{display:inline-flex;align-items:center;gap:0 6px;min-height:32px;max-inline-size:100%;padding:0 8px;border-radius:6px;
+              background:none;border:1px solid var(--line);color:var(--text-2);font:500 12px/16px var(--sans);
+              font-variant-numeric:tabular-nums;text-align:start;cursor:pointer}
+.work-summary:hover{background:var(--raised);color:var(--text-1)}
+.work-summary-2{display:none;color:var(--text-3)}
+.work-popover{position:absolute;z-index:40;inset-inline-end:16px;width:min(760px,calc(100cqi - 32px));max-height:min(560px,70vh);
+              display:flex;flex-direction:column;overflow:hidden;background:var(--raised);border:1px solid var(--line-strong);border-radius:10px}
+.work-popover>header{display:flex;align-items:center;gap:8px;min-height:48px;padding:0 12px;border-bottom:1px solid var(--line)}
+.work-filters{display:flex;flex-wrap:wrap;gap:4px;padding:8px 12px;border-bottom:1px solid var(--line)}
+.work-filters button{min-height:28px;padding:0 10px;border-radius:6px;background:none;border:1px solid transparent;
+                     color:var(--text-2);font:500 12px/16px var(--sans);cursor:pointer}
+.work-filters button[aria-pressed="true"]{background:var(--sel);border-color:var(--line-strong);color:var(--text-1)}
+.work-group-head{margin:0;padding:12px 12px 4px;font:600 12px/16px var(--sans);color:var(--text-2);font-variant-numeric:tabular-nums}
+.work-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:8px;min-height:56px;
+          padding:8px 12px;border-bottom:1px solid var(--line)}
+.work-row[data-life="failed"]{box-shadow:inset 2px 0 var(--red)}
+.work-row-task{font-size:13px;line-height:18px;font-weight:500;color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.work-row-meta{font-size:12px;line-height:16px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.work-row-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px}
+.work-row-preview{grid-column:1/-1;margin-top:8px;font-size:13px;line-height:20px;color:var(--text-2);overflow-wrap:anywhere}
+.work-row-preview pre{max-height:240px;overflow:auto;margin:4px 0 0;font:12px/18px var(--mono);white-space:pre-wrap}
+.work-popover>.work-body,.work-sheet>.work-body{overflow:auto}
+.work-sheet{position:fixed;z-index:60;inset:auto 0 0 0;height:80dvh;display:flex;flex-direction:column;overflow:hidden;
+            background:var(--raised);border-top:1px solid var(--line-strong);border-radius:12px 12px 0 0;
+            padding-inline:env(safe-area-inset-left) env(safe-area-inset-right);padding-bottom:env(safe-area-inset-bottom)}
+.work-sheet>header{display:flex;align-items:center;gap:8px;height:48px;flex-shrink:0;padding:0 16px;border-bottom:1px solid var(--line)}
+@media (max-width:480px){
+  .work-summary{min-height:44px;flex-direction:column;align-items:flex-start;justify-content:center}
+  .work-summary-2{display:block}
+  .work-sheet .work-row-actions>*,.work-sheet header button,.work-filters button{min-height:44px}
+  /* At sheet width the actions take their own line: beside the title they
+     squeezed it to a few characters. */
+  .work-sheet .work-row{grid-template-columns:minmax(0,1fr)}
+  .work-sheet .work-row-actions{justify-content:flex-start;margin-top:8px}
+}
+@media (pointer:coarse){.work-row-actions>*,.work-filters button{min-height:44px}}
+
+/* Child sessions: the way back to the parent and the tree rows. */
+.child-parent-link{display:inline-flex;align-items:center;gap:4px;min-height:32px;padding:0;background:none;border:0;
+                   color:var(--text-2);font:500 12px/16px var(--sans);cursor:pointer}
+.child-parent-link:hover{color:var(--text-1)}
+.session-child{min-height:48px;margin-inline-start:20px;border-inline-start:1px solid var(--line)}
+.bg-summary{font-size:12px;line-height:16px;color:var(--text-2);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (prefers-reduced-motion:reduce){.work-state .spin-mark,.job-summary .spin-mark,.sub .spin-mark{animation:none}}
+/* A job row is a .block (the summaries' arrow keys walk it) laid out as the job grid.
+   Stop sits over the reserved action column, beside the details rather than in them. */
+.job-wrap{position:relative}
+.turn-body>.job-wrap+.job-wrap,.turn-body>.block+.job-wrap,.turn-body>.job-wrap+.block{margin-top:-6px}
+.block.job>.job-summary{display:grid;gap:0 8px;padding:4px 12px;min-height:40px;border-radius:0}
+.job-wrap>.job-stop{position:absolute;top:4px;inset-inline-end:12px;display:flex;align-items:center;min-height:32px}
+.job-action[data-stop]{min-width:112px}
+.job-body{display:flex;flex-direction:column;gap:8px;padding:8px 12px}
+.job-sec{display:flex;flex-direction:column;gap:4px}
+.block .job-out{max-height:240px;overflow:auto}
+.sub-sec{display:flex;flex-direction:column;gap:4px}
+.sub-fail-head{color:var(--red)}
+.sub-trace{max-height:240px;overflow:auto;margin:0;padding:0;border:0;font:12px/18px var(--mono);white-space:pre-wrap;color:var(--text-1)}
+.work-title{margin:0;font:600 14px/20px var(--sans);color:var(--text-1)}
+.work-note{margin:0;padding:8px 12px}
+.head-main:has(>.child-parent-link){flex-wrap:wrap;row-gap:0}
+.head-main>.child-parent-link{flex-basis:100%}
+.sec-fold.sec-fold-2{height:auto;min-height:44px}
+.sec-stack{display:flex;flex-direction:column;align-items:flex-start;min-width:0}
+.session-child .row-meta{overflow:visible;text-overflow:clip}
 
 /* The wiki. A claim and its evidence are one grid row, so the note sits
    beside the sentence it supports rather than at the foot of the page;

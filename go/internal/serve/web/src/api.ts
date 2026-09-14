@@ -93,6 +93,9 @@ export const api = {
     post(`/api/sessions/${id}/archive`, opts?.stopChildren ? { stopChildren: true } : undefined),
   /** The background agents a session started, queued ones included. */
   children: (id: string) => req<{ children: Row[] }>(`/api/sessions/${id}/children`).then((r) => r.children ?? []),
+  /** A background agent's status, title and last reply, read on behalf of the parent that started it. */
+  agent: (id: string, parent: string) =>
+    req<{ status: string; title: string; reply: string; project: string; spawnedBy: string }>(`/api/sessions/${id}/agent?parent=${encodeURIComponent(parent)}`),
   /** Interrupt a running background agent, or drop a queued one. */
   stopAgent: (id: string) => req<{ ok: true; was: "running" | "queued" | "idle" }>(`/api/sessions/${id}/stop`, { method: "POST", body: "{}" }),
   model: (id: string, model: string) => post(`/api/sessions/${id}/model`, { model }),

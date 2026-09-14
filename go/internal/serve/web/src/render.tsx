@@ -405,3 +405,20 @@ export function stepCount(n: number): string {
 export function lineCount(n: number): string {
   return n === 1 ? "1 line" : `${n} lines`;
 }
+
+/**
+ * The loop's note that later blocks of a reply did not run, as a count and
+ * the loop's own reason: "[2 further code block(s) dropped — …]" or
+ * "[the 2 code block(s) after this one … were not run: this block failed.]".
+ */
+export function execNote(text: string): { notRun: number; reason: string } | null {
+  const m = /\[(\d+) further code block\(s\) dropped\s*(?:—\s*)?([^\]]*)\]/.exec(text)
+    ?? /\[the (\d+) code block\(s\) after this one[^\]]*?were not run:?\s*([^\]]*)\]/.exec(text);
+  if (!m) return null;
+  return { notRun: Number(m[1]), reason: m[2].trim().replace(/\.$/, "") };
+}
+
+/** A result line's label: never payload characters, a SubRun's results counted. */
+export function resultLabel(subRunCount?: number | null): string {
+  return subRunCount ? `Subagent results · ${subRunCount}` : "Result";
+}

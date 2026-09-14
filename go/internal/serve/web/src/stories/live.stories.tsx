@@ -3,7 +3,7 @@ import { StreamView, SubRun, Thread, TurnView } from "../app";
 import { Mentions } from "../mention";
 import { StatusMark, Working } from "../status";
 import { groupSubs, groupTurns } from "../render";
-import { openTurn, projects, rows, streamRuns, subTurn } from "./fixtures";
+import { openTurn, projects, rows, streamRuns, subStates, subTurn } from "./fixtures";
 
 const noop = () => {};
 const handlers = {
@@ -134,6 +134,27 @@ export const FilePickerOpen: StoryObj = {
     </div>
   ),
 };
+
+/** One card per state, each from its own recorded turn. */
+const card = (lines: typeof subTurn) => () => (
+  <div style={{ padding: 24, maxWidth: 820 }}>
+    <div className="transcript" style={{ padding: 0 }}>{groupTurns(lines).map((t) => <TurnView key={t.seq} turn={t} />)}</div>
+  </div>
+);
+
+/** Finished, with "1 step error · 3 code blocks not run" on its second line and View steps in the body. */
+export const SubagentFinishedWithStepError: StoryObj = { decorators: [], render: card(subStates.finishedStepError) };
+/** Started, nothing recorded since: "Waiting for the first recorded step." */
+export const SubagentRunningNoSteps: StoryObj = { decorators: [], render: card(subStates.runningNoSteps) };
+/** Finished without a payload: "Result not recorded". */
+export const SubagentMissingResult: StoryObj = { decorators: [], render: card(subStates.missingResult) };
+/** Failed opens itself onto the failure. */
+export const SubagentFailed: StoryObj = { decorators: [], render: card(subStates.failed) };
+export const SubagentStopped: StoryObj = { decorators: [], render: card(subStates.stopped) };
+/** The turn ended without this worker's sub:done: nothing establishes an outcome. */
+export const SubagentOutcomeUnknown: StoryObj = { decorators: [], render: card(subStates.unknown) };
+/** "3 subagents · 2 running · 1 finished", and the parent waiting on the two. */
+export const SubRunParentWaiting: StoryObj = { decorators: [], render: card(subStates.waiting) };
 
 /** One turn, subagents and all, at phone width. */
 export const SubagentsNarrow: StoryObj = {

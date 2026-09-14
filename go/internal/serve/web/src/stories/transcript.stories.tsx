@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { CodeBlock, Entry, JobBlock, ResultBlock, TurnView } from "../app";
 import { Markdown, groupTurns } from "../render";
-import { markdown, turn } from "./fixtures";
+import { jobLegacyFailed, jobTyped0, jobTyped2, jobTypedNoExit, markdown, turn } from "./fixtures";
 
 const meta: Meta = {
   title: "Transcript",
@@ -19,6 +19,14 @@ export const Code: StoryObj = { render: () => <CodeBlock line={turn[3]} /> };
 export const Result: StoryObj = { render: () => <ResultBlock line={turn[4]} /> };
 export const Job: StoryObj = { render: () => <JobBlock line={turn[5]} /> };
 export const JobFailed: StoryObj = { render: () => <JobBlock line={turn[6]} /> };
+/** A typed record only: exit 0 is Finished, and there is no output to show. */
+export const JobTypedExit0: StoryObj = { render: () => <JobBlock line={jobTyped0} /> };
+/** Exit 2 is Failed · exit 2. */
+export const JobTypedExitNonZero: StoryObj = { render: () => <JobBlock line={jobTyped2} /> };
+/** Finished with no exit recorded: Outcome unknown, "Exit not recorded.", no timer, no Stop. */
+export const JobTypedExitAbsent: StoryObj = { render: () => <JobBlock line={jobTypedNoExit} /> };
+/** The loop's [failed] notice carries no exit code, so none is shown. */
+export const JobLegacyFailed: StoryObj = { render: () => <JobBlock line={jobLegacyFailed} /> };
 export const Error: StoryObj = { render: () => <Entry line={turn[7]} codes={[]} /> };
 export const Subagent: StoryObj = { render: () => <Entry line={turn[8]} codes={[]} /> };
 

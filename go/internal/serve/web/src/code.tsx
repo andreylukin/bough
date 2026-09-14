@@ -196,3 +196,16 @@ export function Code({ text, lang }: { text: string; lang: string }) {
   if (html === null) return <pre className="mono hl">{text}</pre>;
   return <pre className="mono hl" dangerouslySetInnerHTML={{ __html: html }} />;
 }
+
+/**
+ * A job tool call read as what it did: "jobWait(177, 15)" is "Waiting for
+ * Job 177 · limit 15s", not the call. Null when the program is not a job call.
+ */
+export function toolCallLabel(code: string): string | null {
+  const wait = /tools\.jobWait\(\s*(\d+)\s*(?:,\s*(\d+)\s*)?\)/.exec(code);
+  if (wait) return `Waiting for Job ${wait[1]}` + (wait[2] ? ` · limit ${wait[2]}s` : "");
+  const job = /tools\.job\(\s*(\d+)\s*\)/.exec(code);
+  if (job) return `Read output from Job ${job[1]}`;
+  if (/tools\.jobs\(\s*\)/.test(code)) return "Listed jobs";
+  return null;
+}

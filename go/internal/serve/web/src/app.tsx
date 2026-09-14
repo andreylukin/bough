@@ -7,9 +7,11 @@ import { ProjectsView } from "./projects";
 import { ModeChip, ModePicker, type ModeValue } from "./mode";
 import { Select, type Option } from "./select";
 import { DialogHost, askChoice, askConfirm, askText } from "./dialog";
-import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, type Item, type SubAgent, type Turn, lineCount } from "./render";
-import { Code, parseCall, langForPath } from "./code";
-import { finishedJobs, lastTestRun } from "./runs";
+import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, execNote, type Item, type SubAgent, type Turn, lineCount } from "./render";
+import { Code, parseCall, langForPath, toolCallLabel } from "./code";
+import { lastTestRun } from "./runs";
+import { agentsFromRows, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
+import { ExecNote, JobLines, JobRow, LIFE_WORD, WorkButton, WorkContext, WorkDialog, WorkState, agentReports, jobIdOf, spokenDuration, splitExecNote, stateText, useChildren, useStopStore, useWork, useWorkAnnouncer, type WorkCtx } from "./work-ui";
 import { SkillPicker } from "./skills";
 import { Mentions, triggerAt, type Trigger } from "./mention";
 import { FireInspection, HooksPage, type Fire, type Load, type Save } from "./hooks";
@@ -246,6 +248,15 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     writeSet("bough:unfolded", next);
     return next;
   });
+  // Background opens itself once, the first time it holds something running
+  // or failed; after that it stays the way you leave it.
+  const bgRunning = background.filter((r) => r.status === "running").length;
+  const bgFailed = background.filter(hasFailure).length;
+  useEffect(() => {
+    if (!bgRunning && !bgFailed) return;
+    try { if (localStorage.getItem("bough:bg-auto") === "1") return; localStorage.setItem("bough:bg-auto", "1"); } catch { return; }
+    setUnfolded((cur) => { if (cur.has("background")) return cur; const next = new Set(cur).add("background"); writeSet("bough:unfolded", next); return next; });
+  }, [bgRunning > 0 || bgFailed > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // On a desktop the whole sidebar folds away to a rail, and stays folded.
   const narrow = useMedia("(max-width:720px)");
@@ -442,6 +453,8 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     if (cur.classList.contains("sec-fold") || cur.classList.contains("ws-head")) {
       const open = cur.getAttribute("aria-expanded") === "true";
       // Right on an open group steps into its first child; left on a shut one steps out.
+      // A section's → shares its click's one state: it opens, and never moves on.
+      if (right && open && cur.classList.contains("sec-fold")) return;
       if (right && open) go(items[items.indexOf(cur) + 1]);
       else if (right || open) cur.click();
       else if (cur.classList.contains("ws-head")) go(cur.closest(".sec")?.querySelector<HTMLElement>("button.sec-fold"));
@@ -464,7 +477,8 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
 
   const q = query.trim().toLowerCase();
   // `twin`: a sibling row reads the same, so this one adds its id tail.
-  const session = (r: Row, twin = false): React.ReactNode => {
+  // `child`: a background agent under the session that started it.
+  const session = (r: Row, twin = false, child = false): React.ReactNode => {
     // A search hides the logs: they are not what matched.
     const open = Boolean(r.turns) && expanded.has(r.id) && !q;
     const log = logs[r.id];
@@ -481,22 +495,28 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     // title, a hit elsewhere gets its own line centred on it.
     const hit = getSearchMatch(r, q);
     // A late hit starts its excerpt a few characters before it, so a narrow row still shows it.
-    const title = displayTitle(r);
+    const title = displayTitle(r) || (child && r.status === "queued" ? "Queued agent" : "");
     const shown = hit?.field === "title" && hit.at > 24 ? excerpt(title, hit.at, 6).text : title;
     const reason = hit && hit.field !== "title" ? excerpt(hit.text, hit.at, 6) : undefined;
     // Done is what the check mark already says; the row keeps only the age then.
-    const label = failed ? capital(failed) + (asking ? "; waiting for you" : "") : r.status === "done" ? "" : STATUS[r.status]?.label ?? r.status;
+    // A background agent says its own lifecycle once, in its words; a parent says what its agents are doing.
+    const life = child ? agentsFromRows({ ...r, id: r.spawnedBy ?? "" }, [r])[0]?.life ?? "unknown" : undefined;
+    const label = child ? "" : failed ? capital(failed) + (asking ? "; waiting for you" : "") : r.status === "done" ? "" : STATUS[r.status]?.label ?? r.status;
     const lines = log?.lines && !allTurns.has(r.id) && log.lines.length > 3 ? log.lines.slice(-3) : log?.lines;
     const children = kids.get(r.id);
+    const bg = children ? workCounts(agentsFromRows(r, children)) : null;
+    const bgText = bg ? [bg.running && `${bg.running} running`, bg.queued && `${bg.queued} queued`, bg.failed && `${bg.failed} failed`].filter(Boolean).join(" · ") || `${bg.total} ended` : "";
+    const stacked = Boolean(label || life || bgText);
     return (
       <Fragment key={r.id}>
-      <div className="session">
+      <div className={"session" + (child ? " session-child" : "")}>
         <div className={"row-wrap" + (open ? " row-open" : "")}>
           <button role="treeitem" onClick={() => onSelect(r.id)} data-id={r.id}
                   onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
                   onBlur={unpeek}
                   aria-describedby={card?.id === r.id ? "row-card" : undefined}
-                  className={"row" + (label ? " row-2" : "") + (on ? " row-on" : "") + (r.turns && !q ? " row-has-log" : "") + (r.trouble && onAck ? " row-has-ack" : "")}
+                  aria-label={`${title || "Untitled session"}, ${life ? LIFE_WORD[life] : why}, ${ago(r.lastAt)} ago${r.branch ? `, branch ${r.branch}` : ""}${bgText ? `, background: ${bgText}` : ""}`}
+                  className={"row" + (stacked ? " row-2" : "") + (on ? " row-on" : "") + (r.turns && !q ? " row-has-log" : "") + (r.trouble && onAck ? " row-has-ack" : "")}
                   aria-current={on ? "true" : undefined}
                   title={`${why} · ${ago(r.lastAt)} ago${r.branch ? ` · ${r.branch}` : ""}`}>
             {/* A failure you have not seen is a red mark; the reason is its label. */}
@@ -506,7 +526,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
                 : <StatusMark status={r.status} size={16} bare />}
             </span>
             {/* Status metadata goes under the title, so a chip never cuts the name. */}
-            <span className={label ? "row-stack" : "row-line"}>
+            <span className={stacked ? "row-stack" : "row-line"}>
             <span className="row-name">
             {title
               ? <><span className="row-title" title={shown !== title ? title : undefined}>{marked(shown, q)}</span>{twin && <span className="mono row-id">{r.id.slice(-6)}</span>}</>
@@ -516,6 +536,11 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
             {label && <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : "") + (failed || asking || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
               <ModeChip row={r} />{label} · {ago(failed === "tests failed" && r.testsAt ? r.testsAt : r.lastAt)}
             </span>}
+            {/* State and time, never cut: the title is what gives way. */}
+            {life && <span className={"num row-meta row-meta-live" + (life === "failed" ? " row-meta-bad" : "")} aria-hidden="true">
+              <ModeChip row={r} />{LIFE_WORD[life]} · {life === "queued" ? `waiting ${ago(r.lastAt)}` : ago(r.lastAt)}
+            </span>}
+            {bgText && <span className="bg-summary" aria-hidden="true">Background: {bgText}</span>}
             </span>
             {r.jobs && r.jobs.length > 0 && (
               <span className="num row-jobs" title={r.jobs.map((j) => j.cmd).join("\n")}>
@@ -523,7 +548,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
               </span>
             )}
             {/* Touch has no hover card: a phone reads status and age off the row. */}
-            {!label && <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : "") + (failed || asking || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
+            {!label && !life && <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : "") + (failed || asking || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
               <ModeChip row={r} />{ago(r.lastAt)}
             </span>}
           </button>
@@ -566,8 +591,8 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
         )}
       </div>
       {children && (
-        <div className="session-kids" role="group" aria-label={`Agents started by ${name || "session"}`}>
-          {children.map((k) => session(k))}
+        <div role="group" aria-label={`Agents started by ${name || "session"}`}>
+          {children.map((k) => session(k, false, true))}
         </div>
       )}
       </Fragment>
@@ -595,11 +620,12 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
   });
 
   // A section folds, during a search too, which starts with every match open.
-  const section = (key: string, label: string, open: boolean, toggle: () => void, count: React.ReactNode, body: React.ReactNode, alert?: "trouble" | "needs-you") => (
+  // `sub` is a second line under the heading ("1 running · 2 failed").
+  const section = (key: string, label: string, open: boolean, toggle: () => void, count: React.ReactNode, body: React.ReactNode, alert?: "trouble" | "needs-you", sub?: string) => (
     <div className="sec">
-      <button className="sec-fold" role="treeitem" aria-expanded={open} onClick={toggle} aria-controls={`sec-${key}`}>
+      <button type="button" className={"sec-fold" + (sub ? " sec-fold-2" : "")} role="treeitem" aria-expanded={open} onClick={toggle} aria-controls={`sec-${key}`}>
         <Icon d={ICONS.chevron} size={12} />
-        <span>{label}</span>
+        {sub ? <span className="sec-stack"><span>{label}</span><span className="bg-summary">{sub}</span></span> : <span>{label}</span>}
         <span className="ws-rule" />{count !== null && <span className={"num sec-count" + (alert ? " sec-count-" + alert : "")}>{count}</span>}
       </button>
       {open && <div className="sec-body" role="group" id={`sec-${key}`}>{body}</div>}
@@ -643,6 +669,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
   // While something in Background needs you, its count says how many, not the total.
   const bgUrgent = background.filter((r) => sessionSignal(r) === 0);
   const bgAlert = background.some(hasFailure) ? "trouble" : bgUrgent.length ? "needs-you" : undefined;
+  const bgSub = [bgRunning && `${bgRunning} running`, bgFailed && `${bgFailed} failed`].filter(Boolean).join(" · ");
   const foldOpen = (key: string, open: boolean) => (searchOn ? !searchFolds.has(key) : open);
   const foldToggle = (key: string, toggle: () => void) => () => (searchOn ? setSearchFolds((cur) => flip(cur, key)) : toggle());
   const cardRow = card ? rows.find((r) => r.id === card.id) : undefined;
@@ -700,7 +727,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
         {inactive.length > 0 && section("inactive", "Inactive · 72h+", foldOpen("inactive", unfolded.has("inactive")), foldToggle("inactive", () => toggleFold("inactive")),
           inactive.length, workspaces(byWorkspace(inactive), "inactive"))}
         {background.length > 0 && section("background", "Background", foldOpen("background", unfolded.has("background")), foldToggle("background", () => toggleFold("background")),
-          bgUrgent.length ? <span title={`${background.length} in all`}>{bgUrgent.length} need you</span> : background.length, workspaces(byWorkspace(background), "background"), bgAlert)}
+          bgUrgent.length ? <span title={`${background.length} in all`}>{bgUrgent.length} need you</span> : background.length, workspaces(byWorkspace(background), "background"), bgAlert, bgSub || undefined)}
         {/* Archived is not loaded until opened, so a search cannot have looked there. */}
         {section("archived", q && !showArchived ? "Archived not searched · Include" : "Archived", showArchived && !archFolded,
           // Once included, folding only hides the section; a search still covers it.
@@ -852,18 +879,22 @@ function firstLine(text: string): string {
   return text.split("\n").find((x) => x.trim()) ?? "";
 }
 
-export function ResultBlock({ line }: { line: Line }) {
+export function ResultBlock({ line, nested }: { line: Line; nested?: boolean }) {
   // history.EntryText prepends a result's own code to its text (the
   // command is as memorable as its output). Here the code already has
   // its own block directly above, so showing it again doubles every
   // result. data.code is that prefix.
   const code = typeof line.data?.code === "string" ? (line.data.code as string) : "";
-  const body = code && line.text.startsWith(code) ? line.text.slice(code.length).trimStart() : line.text;
+  const { text: body, note } = splitExecNote(code && line.text.startsWith(code) ? line.text.slice(code.length).trimStart() : line.text);
   const lines = body.split("\n");
-  const head = lines.find((l) => l.trim()) ?? "";
+  // The first line with a word in it: JSON output opens with a bare "[" or
+  // "{", which made the row read "Result [".
+  const head = lines.find((l) => /[\p{L}\p{N}]/u.test(l)) ?? lines.find((l) => l.trim()) ?? "";
+  const notice = note && <ExecNote note={note} reason={nested} />;
   // Recorded, and empty: a line that says so, not an empty box to open.
-  if (!body.trim()) return <div className="tool-state"><span className="block-label">Result</span><span className="num">No output</span></div>;
+  if (!body.trim()) return <><div className="tool-state"><span className="block-label">Result</span><span className="num">No output</span></div>{notice}</>;
   return (
+    <>
     <details className="block thin">
       <summary>
         <span className="block-label">Result</span>
@@ -875,6 +906,8 @@ export function ResultBlock({ line }: { line: Line }) {
         <Code text={body} lang={resultLang(line)} />
       </div>
     </details>
+    {notice}
+    </>
   );
 }
 
@@ -890,27 +923,31 @@ function resultLang(line: Line): string {
 }
 
 /**
- * A background job records its whole run as one entry: a header line
- * ("job 49 [exited 0] <cmd> (3s)") then everything it printed. Shown
- * as running text that is an unreadable wall — a push with a diff in
- * it fills the pane. It is a result, so it reads like one.
+ * A background job, status first: which job, what it ran, how it ended.
+ * Its output was once a wall of running text; it now waits one click in.
  */
 export function JobBlock({ line }: { line: Line }) {
-  const all = (line.text || "").split("\n");
-  const head = all[0] ?? "";
-  const body = all.slice(1).join("\n").trim();
-  const exit = /\[exited ([0-9]+)\]/.exec(head);
-  const failed = exit ? exit[1] !== "0" : false;
-  return (
-    <details className={"block thin" + (failed ? " block-failed" : "")}>
-      <summary>
-        <span className="block-label">{failed ? "Job failed" : "Job"}</span>
-        <span className="mono block-detail">{head.replace(/^job\s+/, "").slice(0, 90)}</span>
-        <span className="num block-lines">{body ? lineCount(body.split("\n").length) : "No output"}</span>
-      </summary>
-      {body && <pre className="mono">{body}</pre>}
-    </details>
-  );
+  const ctx = useWork();
+  const id = jobIdOf(line);
+  // A notice that is not an outcome ("matched … while running") stays a quiet line.
+  if (id === undefined) {
+    const [head = "", ...rest] = (line.text || "").split("\n");
+    const body = rest.join("\n").trim();
+    return (
+      <details className="block thin">
+        <summary>
+          <span className="block-label">Job</span>
+          <span className="mono block-detail">{head.replace(/^job\s+/, "")}</span>
+          <span className="num block-lines">{body ? lineCount(body.split("\n").length) : "No output"}</span>
+        </summary>
+        {body && <pre className="mono">{body}</pre>}
+      </details>
+    );
+  }
+  // One job is a typed start, a typed finish and a notice, merged by id: one row, where it first appears.
+  if (ctx && ctx.jobFirst.get(String(id)) !== line.seq) return null;
+  const w = ctx?.jobs.get(String(id)) ?? jobsFromLines([line], ctx?.session ?? "", false)[0];
+  return w ? <JobRow w={w} /> : null;
 }
 
 export /** Entry data is JSON: read a field as a string without trusting it. */
@@ -921,8 +958,10 @@ function str(v: unknown): string {
 export function Entry({ line, codes, nested }: { line: Line; codes: string[]; nested?: boolean }) {
   const k = line.kind;
   if (k === "assistant" || k === "sub:assistant") {
-    const [body, program] = splitBareProgram(stripRunFences(line.text, codes));
-    if (blank(body) && !program) return null; // the reply was only the program it ran
+    // The loop's "blocks dropped" marker is a notice about the reply, not part of it.
+    const { text: said, note } = splitExecNote(line.text);
+    const [body, program] = splitBareProgram(stripRunFences(said, codes));
+    if (blank(body) && !program) return note ? <ExecNote note={note} reason={nested} /> : null; // the reply was only the program it ran
     // Inside a subagent card the rail and the card's own header
     // already say whose words these are; repeating "subagent" above
     // every paragraph of a five-step run is noise.
@@ -941,6 +980,7 @@ export function Entry({ line, codes, nested }: { line: Line; codes: string[]; ne
             <div className="block-body"><Code text={program} lang="javascript" /></div>
           </details>
         )}
+        {note && <ExecNote note={note} reason={nested} />}
       </div>
     );
   }
@@ -970,13 +1010,15 @@ export function Entry({ line, codes, nested }: { line: Line; codes: string[]; ne
     );
   }
   if (k === "code" || k === "sub:code") return <CodeBlock line={line} />;
-  if (k === "result" || k === "sub:result") return <ResultBlock line={line} />;
+  if (k === "result" || k === "sub:result") return <ResultBlock line={line} nested={nested} />;
   if (k === "thinking") {
     // A column of rows all reading just "Thinking" says nothing about
     // which one is worth opening. Carry the same preview and line
     // count every other block has.
     const lines = (line.text || "").split("\n");
-    const head = lines.find((l) => l.trim()) ?? "";
+    // The first line with a word in it: JSON output opens with a bare "[" or
+  // "{", which made the row read "Result [".
+  const head = lines.find((l) => /[\p{L}\p{N}]/u.test(l)) ?? lines.find((l) => l.trim()) ?? "";
     return (
       <details className="block thin thinking">
         <summary>
@@ -1022,56 +1064,156 @@ export function Entry({ line, codes, nested }: { line: Line; codes: string[]; ne
 
 /* ---------------- subagents ---------------- */
 
-/** How a finished subagent is described: a word, a glyph, never a hue alone. */
-function subState(status: string, live: boolean): { word: string; cls: string } {
-  if (status === "error") return { word: "Failed", cls: "sub-failed" };
-  if (status === "ok") return { word: "Finished", cls: "sub-ok" };
-  // No done record and its turn is over: it is not working, we just never heard.
-  if (!live) return { word: "Completion not recorded", cls: "sub-unknown" };
-  return { word: "Working", cls: "sub-live" };
+/** What a recognised step is doing, for a running card's activity line. */
+const ING: Record<string, string> = {
+  Ran: "Running", Wrote: "Writing", Patched: "Patching", Read: "Reading", Test: "Testing",
+  Search: "Searching", Build: "Building", Fetch: "Fetching", Vet: "Vetting", Delegate: "Delegating",
+};
+
+/**
+ * A card's worker when no thread index holds it (a story): rebuilt from
+ * the card's own records, under the same rules the work index uses.
+ */
+function soloWorker(agent: SubAgent, live: boolean): Worker {
+  const last = agent.lines.length ? agent.lines[agent.lines.length - 1].seq : agent.seq;
+  const body: Line[] = [
+    { seq: agent.seq, at: agent.from, kind: "sub:start", text: agent.task, data: { worker: agent.worker } },
+    ...agent.lines,
+    ...(agent.status ? [{ seq: last + 1, at: agent.to, kind: "sub:done", text: "", data: { worker: agent.worker, status: agent.status, steps: agent.steps } }] : []),
+  ];
+  return subagentsFromTurn({ seq: agent.seq, prompt: null, body, done: live ? null : { seq: last + 2, at: agent.to, kind: "done", text: "" } }, "", live)[0];
 }
 
-export function SubAgentView({ agent, live }: { agent: SubAgent; live: boolean }) {
-  const st = subState(agent.status, live);
-  const working = agent.status === "" && live;
+export function SubAgentView({ agent, live, worker, all }: {
+  agent: SubAgent; live: boolean;
+  /** Its entry in the thread's work index; a story without one derives it. */
+  worker?: Worker;
+  /** Collapse all / Expand all from the run's head; `at` makes a repeat count. */
+  all?: { open: boolean; at: number } | null;
+}) {
+  const ctx = useWork();
+  const w = worker ?? soloWorker(agent, live);
+  const failed = w.life === "failed";
+  // A failure is the one you opened the thread to read, so it opens
+  // itself — once. A manual collapse stays collapsed, and nothing scrolls.
+  const [open, setOpen] = useState(failed);
+  const touched = useRef(false);
+  useEffect(() => { if (failed && !touched.current) setOpen(true); }, [failed]);
+  useEffect(() => { if (all) { touched.current = true; setOpen(all.open); } }, [all]);
+  const now = useNow(w.life === "running");
+  const steps = useRef<HTMLDetailsElement>(null);
+
   const codes = agent.lines.filter((l) => l.kind === "sub:code").map((l) => l.text);
-  const task = firstLine(plainTitle(agent.task)) || "Task not recorded";
-  // While it works, the line says what it is doing right now.
-  const lastCode = working ? [...agent.lines].reverse().find((l) => l.kind === "sub:code") : undefined;
-  const op = lastCode ? parseCall(lastCode.text) : null;
-  const ms = Date.parse(agent.to) - Date.parse(agent.from);
-  const errors = agent.status === "error" ? agent.lines.filter((l) => l.kind === "sub:error") : [];
-  const entries = agent.lines.map((l) => <Entry key={l.seq} line={l} codes={codes} nested />);
-  // A run that failed is the one you opened the thread to read, so it
-  // opens itself — onto the error, with its steps one level further in.
-  // The rest stay folded: a subagent reads as one thing that happened.
+  const task = firstLine(plainTitle(agent.task));
+  const timing = [w.ms !== undefined ? duration(w.ms) : "", w.steps ? stepCount(w.steps) : ""].filter(Boolean).join(" · ");
+  const line2 = [
+    w.stepErrors ? `${w.stepErrors} step ${w.stepErrors === 1 ? "error" : "errors"}` : "",
+    w.notRun ? `${w.notRun} code ${w.notRun === 1 ? "block" : "blocks"} not run` : "",
+  ].filter(Boolean).join(" · ");
+  const aria = `Subagent ${agent.worker}, ${stateText(w)}${w.ms !== undefined ? `, ${spokenDuration(w.ms)}` : ""}${w.steps ? `, ${stepCount(w.steps)}` : ""}${task ? `: ${task.slice(0, 80)}` : ""}`;
+
+  // Each step keeps its seq, so "View steps" can land on the first one that went wrong.
+  const entry = (l: Line) => <div key={l.seq} data-step-seq={l.seq} style={{ display: "contents" }}><Entry line={l} codes={codes} nested /></div>;
+  const recorded = w.recordedSteps ?? 0;
+  const stepsDisclosure = (label?: string, lines = agent.lines) => lines.length ? (
+    <details className="block thin" ref={steps} data-open-key={w.key + ":steps"}>
+      <summary><span className="block-label">{label ?? (w.steps && w.steps > recorded ? `Steps · ${recorded} of ${w.steps} recorded` : `Steps · ${recorded || lines.length}`)}</span></summary>
+      <div className="sub-body">{lines.map(entry)}</div>
+    </details>
+  ) : <p className="meta-line">No steps were recorded</p>;
+  const taskDisclosure = agent.task ? (
+    <details className="block thin" data-open-key={w.key + ":task"}>
+      <summary><span className="block-label">Task</span></summary>
+      <div className="sub-body"><Markdown text={agent.task} /></div>
+    </details>
+  ) : null;
+  const resultSection = (
+    <div className="sub-sec">
+      <span className="block-label">Result</span>
+      {w.result ? <Markdown text={w.result} /> : <p className="meta-line">Result not recorded</p>}
+    </div>
+  );
+  const viewSteps = () => {
+    const d = steps.current;
+    if (!d) return;
+    d.open = true;
+    const first = agent.lines.find((l) => l.kind === "sub:error" || execNote(l.text));
+    const at = first ? d.querySelector<HTMLElement>(`[data-step-seq="${first.seq}"]`)?.firstElementChild as HTMLElement | null : null;
+    const el = at ?? d;
+    el.scrollIntoView({ block: "nearest" });
+    (el.querySelector<HTMLElement>("summary") ?? d.querySelector<HTMLElement>("summary"))?.focus({ preventScroll: true });
+  };
+
+  let body: React.ReactNode;
+  if (w.life === "running") {
+    // What it is doing now, from its latest recorded call; a verb only when the call names one.
+    const lastCode = [...agent.lines].reverse().find((l) => l.kind === "sub:code");
+    const op = lastCode ? parseCall(lastCode.text) : null;
+    const since = `last activity ${duration(Math.max(0, now - Date.parse(agent.to)))} ago`;
+    const latest = lastCode ? agent.lines.filter((l) => l.seq >= lastCode.seq) : [];
+    const earlier = lastCode ? agent.lines.filter((l) => l.seq < lastCode.seq) : [];
+    body = <>
+      {op ? <p className="meta-line sub-activity">{ING[op.verb] ? `${ING[op.verb]} ${gistOf(op.gist)}` : "Latest recorded step"} · {since}</p>
+        : <p className="meta-line">Waiting for the first recorded step.</p>}
+      {latest.map(entry)}
+      {taskDisclosure}
+      {earlier.length > 0 && stepsDisclosure(`Earlier steps · ${earlier.length}`, earlier)}
+    </>;
+  } else if (w.life === "failed") {
+    const errors = agent.lines.filter((l) => l.kind === "sub:error");
+    body = <>
+      <div className="sub-sec">
+        <span className="block-label sub-fail-head">Failure</span>
+        {w.error ? <pre className="mono sub-trace">{w.error}</pre> : <p className="meta-line">Failure details not recorded.</p>}
+      </div>
+      {errors.length > 1 && (
+        <details className="block thin" data-open-key={w.key + ":errors"}>
+          <summary><span className="block-label">Error details · {errors.length}</span></summary>
+          <div className="sub-body">{errors.map((l) => <pre key={l.seq} className="mono sub-trace">{l.text}</pre>)}</div>
+        </details>
+      )}
+      {w.result && resultSection}
+      {taskDisclosure}
+      {stepsDisclosure()}
+    </>;
+  } else if (w.life === "stopped") {
+    const last = agent.lines.slice(-1);
+    body = <>
+      <p className="meta-line">Stopped</p>
+      {last.map(entry)}
+      {w.result && resultSection}
+      {taskDisclosure}
+      {stepsDisclosure()}
+    </>;
+  } else if (w.life === "finished") {
+    body = <>{resultSection}{taskDisclosure}{stepsDisclosure()}</>;
+  } else {
+    body = <>
+      <p className="meta-line">{w.life === "queued" ? "Waiting to start." : "The recorded history does not establish an outcome."}</p>
+      {taskDisclosure}
+      {stepsDisclosure()}
+    </>;
+  }
+
   return (
-    <details className={"sub " + st.cls} open={agent.status === "error"}>
-      <summary>
-        <span className="sub-task" title={agent.task || undefined}>{task}</span>
+    <details className={"sub" + (failed ? " sub-failed" : "")} open={open} onToggle={(e) => setOpen(e.currentTarget.open)}
+             data-work-key={w.key} data-open-key={w.key}>
+      <summary aria-label={aria} onClick={() => {
+        touched.current = true;
+        // Opening onto a recorded result or error is reading it; a default-open failure is not.
+        if (!open && (w.result || w.error)) ctx?.review.markReviewed(w);
+      }}>
         <span className="num sub-tag">Subagent {agent.worker}</span>
-        <span className="sub-state">
-          {working && (
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                 strokeLinecap="round" className="spin-mark" aria-hidden="true">
-              <circle cx="12" cy="12" r="8.5" strokeDasharray="40 14" />
-            </svg>
-          )}
-          {st.word}
-        </span>
-        {op && <span className="mono sub-op">{op.verb} {gistOf(op.gist)}</span>}
-        {ms >= 1000 && <span className="num sub-steps">{duration(ms)}</span>}
-        {agent.steps > 0 && <span className="num sub-steps">{stepCount(agent.steps)}</span>}
+        <span className="sub-task" title={agent.task || undefined}>{task}</span>
+        <span className="sub-state"><WorkState w={w} /></span>
+        <span className="num sub-steps">{timing}</span>
+        {line2 && <span className="sub-line2">{line2}</span>}
       </summary>
       <div className="sub-body">
-        {errors.length > 0 ? <>
-          {errors.map((l) => <div key={l.seq} className="err">{l.text}</div>)}
-          <details className="block thin">
-            <summary><span className="block-label">All steps</span></summary>
-            <div className="sub-body">{entries}</div>
-          </details>
-        </> : entries}
-        {agent.lines.length === 0 && <p className="meta-line">Nothing recorded yet.</p>}
+        {line2 && agent.lines.length > 0 && (
+          <p className="exec-note">{line2} · <button type="button" className="link" onClick={viewSteps}>View steps</button></p>
+        )}
+        {body}
       </div>
     </details>
   );
@@ -1083,10 +1225,32 @@ export function SubAgentView({ agent, live }: { agent: SubAgent; live: boolean }
  * so they are dealt back into one card per agent — otherwise the
  * transcript reads as one agent with a split personality.
  */
-export function SubRun({ agents, live }: { agents: SubAgent[]; live: boolean }) {
+export function SubRun({ agents, live, seq, turn }: { agents: SubAgent[]; live: boolean; /** The run's seq and turn, to find its workers in the index. */ seq?: number; turn?: Turn }) {
+  const ctx = useWork();
+  const session = ctx?.session ?? "";
+  const workers = useMemo(() => {
+    const all = turn && seq !== undefined ? subagentsFromTurn(turn, session, live).filter((w) => w.subrunSeq === seq) : [];
+    return agents.map((a) => all.find((w) => w.key.endsWith(`:${a.worker}:${a.seq}`)) ?? soloWorker(a, live));
+  }, [agents, live, seq, turn, session]);
+  const [all, setAll] = useState<{ open: boolean; at: number } | null>(null);
+  const c = workCounts(workers);
+  const parts = (["running", "finished", "failed", "stopped", "unknown"] as const).filter((k) => c[k]).map((k) => `${c[k]} ${k}`);
+  // The parent waits only while this run is unresolved: on the members still running.
+  const waiting = c.running;
   return (
     <div className="subrun">
-      {agents.map((a) => <SubAgentView key={a.worker + ":" + a.seq} agent={a} live={live} />)}
+      {(agents.length >= 2 || waiting > 0) && (
+        <div className="subrun-head">
+          <span>{agents.length} {agents.length === 1 ? "subagent" : "subagents"}{parts.length ? ` · ${parts.join(" · ")}` : ""}</span>
+          {waiting > 0 && <span className="work-state" data-life="running">Parent waiting on {waiting} {waiting === 1 ? "subagent" : "subagents"}</span>}
+          {agents.length >= 2 && (
+            <button type="button" className="link" onClick={() => setAll({ open: !all?.open, at: Date.now() })}>
+              {all?.open ? "Collapse all" : "Expand all"}
+            </button>
+          )}
+        </div>
+      )}
+      {agents.map((a, i) => <SubAgentView key={a.worker + ":" + a.seq} agent={a} live={live} worker={workers[i]} all={all} />)}
     </div>
   );
 }
@@ -1260,6 +1424,12 @@ export function ToolRun({ lines, codes, live, stopped, failSeq }: { lines: Line[
       }
       facts.push(callFacts(l, result));
       rows.push(<ToolCall key={l.seq} code={l} result={result} live={live} stopped={stopped} current={failSeq !== undefined && result?.seq === failSeq} />);
+    } else if (l.kind === "job") {
+      // Consecutive job rows share one head.
+      let j = i;
+      while (j < lines.length && lines[j].kind === "job") j++;
+      rows.push(<JobLines key={l.seq} lines={lines.slice(i, j)} render={(x) => <JobBlock line={x} />} />);
+      i = j - 1;
     } else {
       rows.push(<Entry key={l.seq} line={l} codes={codes} />);
     }
@@ -1299,7 +1469,7 @@ export function ToolRun({ lines, codes, live, stopped, failSeq }: { lines: Line[
   const target = first ? (fileish ? first.split("/").pop()! : first) : "";
   const more = targets.length - 1;
   return (
-    <details className="block thin toolrun" ref={box} open={holdsFail || undefined}>
+    <details className="block thin toolrun" ref={box} open={holdsFail || undefined} data-open-key={"tools:" + lines[0].seq}>
       <summary {...handlers}>
         <span className="block-label">{label}</span>
         {target && <span className="mono block-detail" title={targets[0]}>{target}</span>}
@@ -1320,7 +1490,12 @@ export function ToolRun({ lines, codes, live, stopped, failSeq }: { lines: Line[
  */
 export function ToolCall({ code, result, live, stopped, current }: { code: Line; result?: Line; /** Its turn is still running. */ live?: boolean; stopped?: boolean; /** The failure its turn ended on: open, with the diagnosis. */ current?: boolean }) {
   const call = useMemo(() => parseCall(code.text), [code.text]);
-  const out = result ? resultBody(result) : "";
+  // The loop's "blocks not run" marker rides on the output; it is a notice, shown under the row.
+  const { text: out, note } = splitExecNote(result ? resultBody(result) : "");
+  // A job call reads as what it did; a wait that returned says it waited.
+  const jobLabel = toolCallLabel(code.text);
+  const label = jobLabel && result ? jobLabel.replace(/^Waiting for (Job \d+).*$/, "Waited for $1") : jobLabel;
+  const continues = /^job (\d+) started in the background/.exec(out)?.[1];
   // Recorded evidence, when the loop stamped it: the block's own exit code
   // and how long it ran. Older results carry neither and show neither.
   const exit = typeof result?.data?.exit === "number" ? (result.data.exit as number) : undefined;
@@ -1341,7 +1516,7 @@ export function ToolCall({ code, result, live, stopped, current }: { code: Line;
   }]);
   // The recorded exit and time, success or not: "exit 0" is evidence too.
   const empty = Boolean(result) && !out.trim();
-  const meta = [failed ? "Failed" : "", exit !== undefined ? `exit ${exit}` : "", empty ? "No output" : "", ms !== undefined ? `Command: ${duration(ms)}` : ""];
+  const meta = [continues ? `Continues as Job ${continues}` : "", failed ? "Failed" : "", exit !== undefined ? `exit ${exit}` : "", empty ? "No output" : "", ms !== undefined ? `Command: ${duration(ms)}` : ""];
   const what = call.lang === "bash" ? "Command" : call.lang === "javascript" ? "Program" : "Content";
   // No result: still running, cut off by a stop, or never recorded. Each says which.
   const missing = result ? null : live ? "running" : stopped ? "Interrupted · result not recorded" : "Result not recorded";
@@ -1351,10 +1526,11 @@ export function ToolCall({ code, result, live, stopped, current }: { code: Line;
   const diag = failed ? out.split("\n").filter((l) => l.trim()).slice(-10) : [];
   const cmdText = call.lang === "bash" ? call.body : call.raw;
   return (
+    <>
     <details className={"block thin toolcall" + (failed ? " block-failed" : "")} data-seq={result?.seq} open={current || undefined}>
       <summary {...handlers}>
-        <span className="block-label">{timedOut ? "Question timed out" : call.verb}</span>
-        <span className="mono block-detail" title={call.gist}>{timedOut ? timedOut[1] : phone ? tailPath(gistOf(call.gist)) : gistOf(call.gist)}</span>
+        <span className="block-label">{timedOut ? "Question timed out" : label ?? call.verb}</span>
+        {!label && <span className="mono block-detail" title={call.gist}>{timedOut ? timedOut[1] : phone ? tailPath(gistOf(call.gist)) : gistOf(call.gist)}</span>}
         {meta.some(Boolean) && (
           <span className={"num tool-meta" + (failed ? " tool-meta-failed" : "")}>{meta.filter(Boolean).join(" · ")}</span>
         )}
@@ -1400,6 +1576,8 @@ export function ToolCall({ code, result, live, stopped, current }: { code: Line;
         )}
       </div>
     </details>
+    {note && <ExecNote note={note} />}
+    </>
   );
 }
 
@@ -1548,7 +1726,7 @@ function TurnFooter({ turn, fail }: { turn: Turn; /** The result the turn's fail
  * actually answering. The window is only named when the session records
  * its model; a default model is not guessed at.
  */
-function RuntimeStrip({ row, lines, paused, onRetry, onContext }: { row: Row; lines: Line[]; paused?: number; onRetry?: () => void; onContext?: () => void }) {
+function RuntimeStrip({ row, lines, paused, onRetry, onContext, work }: { row: Row; lines: Line[]; paused?: number; onRetry?: () => void; onContext?: () => void; /** The Work button, after the metrics. */ work?: React.ReactNode }) {
   const [limits, setLimits] = useState<Record<string, number>>({});
   useEffect(() => {
     fetch("/api/models").then((r) => r.json()).then((c: { providers?: ProviderInfo[] }) => {
@@ -1572,7 +1750,7 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext }: { row: Row; li
   const pct = u && limit ? Math.min(100, Math.round((u.lastIn / limit) * 100)) : undefined;
   const strip = useRef<HTMLDivElement>(null);
   usePopovers(strip);
-  // Jobs, cache and changes stand on their own: a session with no usage
+  // Work, cache and changes stand on their own: a session with no usage
   // recorded can still have a server running.
   return (
     <div className="runtime-strip" ref={strip}>
@@ -1615,7 +1793,7 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext }: { row: Row; li
       <ChangesChip row={row} tick={lines.length} />
       <TestsChip lines={lines} running={row.status === "running"} />
       {row.cache && <CacheChip cache={row.cache} model={row.model} />}
-      <JobsChip session={row.id} jobs={row.jobs ?? []} lines={lines} />
+      {work}
     </div>
   );
 }
@@ -1769,69 +1947,6 @@ function Tip({ tip, label, className, children }: { tip: string; /** The accessi
   );
 }
 
-/**
- * Background jobs: running ones one click from their command and Stop,
- * finished ones (the last hour) with their exit and output until dismissed.
- */
-function JobsChip({ session, jobs, lines }: { session: string; jobs: NonNullable<Row["jobs"]>; lines: Line[] }) {
-  const now = useNow(jobs.length > 0);
-  // A stop is asked of the child and lands when the job's own entry does;
-  // until then the row says so, and a refused ask says that instead.
-  const [stop, setStop] = useState<Record<number, "stopping" | "failed">>({});
-  const [shown, setShown] = useState<string | null>(null);
-  const [dismissed, setDismissed] = useState(0);
-  const done = useMemo(() => finishedJobs(lines).filter((j) => j.seq > dismissed && Date.now() - Date.parse(j.at) < 3_600_000 && !jobs.some((r) => r.id === j.id)), [lines, dismissed, jobs]);
-  const kill = (id: number) => {
-    setStop((m) => ({ ...m, [id]: "stopping" }));
-    api.killJob(session, id).catch(() => setStop((m) => ({ ...m, [id]: "failed" })));
-  };
-  if (!jobs.length && !done.length) return null;
-  const failed = done.some((j) => j.exit !== "exited 0");
-  return (
-    <details className="rt rt-jobs">
-      <summary>
-        <span className="rt-label">Jobs</span>
-        <span className={"num rt-value" + (!jobs.length && failed ? " rt-del" : "")}>
-          {jobs.length ? `${jobs.length} running` : `${done.length} finished${failed ? " · failed" : ""}`}
-        </span>
-      </summary>
-      <ul className="rt-pop rt-jobs-pop">
-        {jobs.map((j) => {
-          const key = `r${j.id}`;
-          return (
-            <li key={key} className="rt-job">
-              <button type="button" className="rt-link rt-job-row" aria-expanded={shown === key} onClick={() => setShown((v) => v === key ? null : key)}>
-                <span className="mono rt-job-cmd">{j.cmd}</span>
-                <span className="num rt-label">running · {duration(now - Date.parse(j.started))}</span>
-              </button>
-              <button className="btn rt-stop" disabled={stop[j.id] === "stopping"} onClick={() => kill(j.id)}>
-                {stop[j.id] === "stopping" ? "Stopping…" : stop[j.id] === "failed" ? "Couldn’t stop · Retry" : "Stop"}
-              </button>
-              {shown === key && <pre className="mono rt-job-out">{j.cmd}</pre>}
-            </li>
-          );
-        })}
-        {done.map((j) => {
-          const key = `d${j.seq}`;
-          const bad = j.exit !== "exited 0";
-          return (
-            <li key={key} className="rt-job">
-              <button type="button" className="rt-link rt-job-row" aria-expanded={shown === key} onClick={() => setShown((v) => v === key ? null : key)}>
-                <span className="mono rt-job-cmd">{j.cmd}</span>
-                <span className={"num " + (bad ? "rt-del" : "rt-label")}>{j.exit}{j.took ? ` · ${j.took}` : ""}</span>
-              </button>
-              {shown === key && <pre className="mono rt-job-out">{j.cmd + "\n\n" + (j.output || "No output")}</pre>}
-            </li>
-          );
-        })}
-        {done.length > 0 && (
-          <li><button className="btn rt-stop" onClick={() => setDismissed(done[done.length - 1].seq)}>Dismiss finished</button></li>
-        )}
-      </ul>
-    </details>
-  );
-}
-
 /** The ask repeats the title when it carries most of the title's words. */
 function askSaysTitle(ask: string, title: string): boolean {
   const words = (t: string) => t.toLowerCase().match(/[a-z0-9]+/g) ?? [];
@@ -1841,6 +1956,7 @@ function askSaysTitle(ask: string, title: string): boolean {
 }
 
 export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode; /** 1-based position, so the turn log can land on it. */ n?: number }) {
+  const ctx = useWork();
   const codes = turn.body.filter((l) => l.kind === "code" || l.kind === "sub:code").map((l) => l.text);
   const hooks = useMemo(() => turn.body.filter(isHookLine), [turn.body]);
   const items = useMemo<Item[]>(
@@ -1927,11 +2043,19 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
         </div>
       )}
       <div className="turn-body">
-        {items.map((it) => it.kind === "sub"
-          ? <SubRun key={"sub" + it.seq} agents={it.agents} live={!turn.done && !turn.stopped} />
-          : it.kind === "tools"
-          ? <ToolRun key={"tools" + it.seq} lines={it.lines} codes={codes} live={!turn.done && !turn.stopped} stopped={turn.stopped || turn.done?.kind === "cancelled"} failSeq={fail?.seq} />
-          : <Entry key={it.seq} line={it.line} codes={codes} />)}
+        {items.map((it, i) => {
+          if (it.kind === "sub") return <SubRun key={"sub" + it.seq} agents={it.agents} seq={it.seq} turn={turn} live={(ctx?.live ?? true) && !turn.done && !turn.stopped} />;
+          if (it.kind === "tools") return <ToolRun key={"tools" + it.seq} lines={it.lines} codes={codes} live={!turn.done && !turn.stopped} stopped={turn.stopped || turn.done?.kind === "cancelled"} failSeq={fail?.seq} />;
+          if (it.line.kind === "job") {
+            // Consecutive job rows share one head, rendered at the first of them.
+            const prev = items[i - 1];
+            if (prev?.kind === "line" && prev.line.kind === "job") return null;
+            const run: Line[] = [];
+            for (let j = i; j < items.length; j++) { const x = items[j]; if (x.kind !== "line" || x.line.kind !== "job") break; run.push(x.line); }
+            return <JobLines key={"jobs" + it.seq} lines={run} render={(x) => <Entry line={x} codes={codes} />} />;
+          }
+          return <Entry key={it.seq} line={it.line} codes={codes} />;
+        })}
         {tail}
         <TurnHooks lines={hooks} />
       </div>
@@ -2158,8 +2282,36 @@ export function Back({ onBack }: { onBack?: () => void }) {
   );
 }
 
-/** Where each session was read, kept for this tab only. */
-const scrollMemo = new Map<string, { top: number; follow: boolean }>();
+/**
+ * Where each session was read, kept for this tab only: the scroll, which
+ * cards and steps were open or shut, and the control focus came from.
+ */
+const scrollMemo = new Map<string, { top: number; follow: boolean; open?: string[]; shut?: string[]; focus?: string }>();
+/** Where focus lands when a session is arrived at from elsewhere ("head": its title). */
+const arrivals = new Map<string, string>();
+
+/**
+ * The way back from a background agent to the session that started it.
+ * A parent the list does not hold is looked up; one that cannot be found
+ * is said plainly, not offered as a link.
+ */
+function ParentLink({ id, rows, onOpen }: { id: string; rows: Row[]; onOpen?: (id: string) => void }) {
+  const known = rows.find((r) => r.id === id);
+  const [looked, setLooked] = useState<{ title: string } | "failed" | null>(null);
+  useEffect(() => {
+    if (known) return;
+    let on = true;
+    api.session(id).then((r) => { if (on) setLooked({ title: r.session.title }); }, () => { if (on) setLooked("failed"); });
+    return () => { on = false; };
+  }, [id, Boolean(known)]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!known && looked === "failed") return <span className="child-parent-link">Parent unavailable</span>;
+  const title = plainTitle(known?.title ?? (looked && looked !== "failed" ? looked.title : ""));
+  return (
+    <button type="button" className="child-parent-link" onClick={() => onOpen?.(id)}>
+      <span aria-hidden="true">←</span>{title ? `Parent: ${title}` : "Parent session"}
+    </button>
+  );
+}
 
 type Pending = { id: string; text: string; after: number };
 
@@ -2169,46 +2321,6 @@ function sendError(e?: string) {
   if (!m) return e || "No response";
   const words: Record<string, string> = { "500": "Server error", "502": "Bad gateway", "503": "Service unavailable", "504": "Gateway timeout" };
   return `${m[2] || words[m[1]] || "Request failed"} (${m[1]})`;
-}
-
-/**
- * How many background agents a session has going, opening the list of
- * them. Hidden when none run or wait: a finished agent is in the sidebar.
- */
-export function AgentsChip({ row, rows, onOpen }: { row: Row; rows: Row[]; onOpen: (id: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const key = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.preventDefault(); e.stopPropagation(); setOpen(false);
-      ref.current?.querySelector<HTMLButtonElement>("button.head-agents")?.focus();
-    };
-    const away = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
-    window.addEventListener("keydown", key, true);
-    document.addEventListener("mousedown", away);
-    return () => { window.removeEventListener("keydown", key, true); document.removeEventListener("mousedown", away); };
-  }, [open]);
-  const n = (row.agents?.running ?? 0) + (row.agents?.queued ?? 0);
-  if (n === 0) return null;
-  const list = rows.filter((r) => r.spawnedBy === row.id);
-  return (
-    <span className="head-more" ref={ref}>
-      <button className="status mono head-agents" aria-expanded={open} aria-controls={"agents-" + row.id} onClick={() => setOpen((v) => !v)}>
-        {n} {n === 1 ? "agent" : "agents"}
-      </button>
-      {open && (
-        <div className="head-pop head-agents-pop" role="dialog" aria-label="Background agents" id={"agents-" + row.id}>
-          {list.length ? list.map((k) => (
-            <button key={k.id} className="head-pop-item" onClick={() => { setOpen(false); onOpen(k.id); }}>
-              <StatusMark status={k.status} bare /><span className="row-title">{plainTitle(k.title) || k.id.slice(-6)}</span><ModeChip row={k} />
-            </button>
-          )) : <p className="meta-line list-none">Agents not loaded yet.</p>}
-        </div>
-      )}
-    </span>
-  );
 }
 
 export function Thread({ row, lines, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
@@ -2379,12 +2491,111 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   useEffect(() => {
     if (loading || restoredAt.current) return;
     restoredAt.current = true;
-    if (memo && !memo.follow && scroller.current) { scroller.current.scrollTop = memo.top; awayAt.current = newest; setAway(true); }
+    const root = scroller.current;
+    // Folds first, so the scroll lands on the layout that was left; then focus.
+    const fold = (keys: string[] | undefined, on: boolean) => {
+      for (const k of keys ?? []) { const d = root?.querySelector<HTMLDetailsElement>(`details[data-open-key="${CSS.escape(k)}"]`); if (d) d.open = on; }
+    };
+    fold(memo?.shut, false);
+    fold(memo?.open, true);
+    if (memo && !memo.follow && root) { root.scrollTop = memo.top; awayAt.current = newest; setAway(true); }
+    const focus = arrivals.get(row.id) ?? memo?.focus;
+    arrivals.delete(row.id);
+    if (focus === "head") headRef.current?.focus({ preventScroll: true });
+    else if (focus === "work") workBtn.current?.focus({ preventScroll: true });
+    else if (focus) root?.querySelector<HTMLElement>(`[data-open-key="${CSS.escape(focus)}"] > summary`)?.focus({ preventScroll: true });
   }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (atBottom.current) end.current?.scrollIntoView({ block: "end" });
   }, [lines.length, streamLen]);
   const turns = useMemo(() => groupTurns(lines), [lines]);
+
+  // The session's Work: its jobs, its subagents and its direct background
+  // agents, one index the transcript, the Work button and its dialog read.
+  const kids = useChildren(row, rows, lines.length);
+  const review = useReviewed(row.id);
+  const reports = useMemo(() => agentReports(lines), [lines]);
+  const workers = useMemo(() => workIndex({ session: row.id, lines, turns, row, rows, children: kids.children, live: row.live })
+    // A child's report to this session is its result; nothing else carries one.
+    .map((w) => (w.kind === "agent" && reports.has(w.id) ? { ...w, result: reports.get(w.id) } : w)), [row, lines, turns, rows, kids.children, reports]);
+  const byKey = useMemo(() => new Map(workers.map((w) => [w.key, w])), [workers]);
+  const { stops, requestStop } = useStopStore(byKey, review);
+  const workCtx = useMemo<WorkCtx>(() => {
+    const jobs = new Map(workers.filter((w) => w.kind === "job").map((w) => [w.id, w]));
+    const jobFirst = new Map<string, number>();
+    for (const l of lines) {
+      const id = l.kind === "job" ? jobIdOf(l) : undefined;
+      if (id !== undefined && !jobFirst.has(String(id))) jobFirst.set(String(id), l.seq);
+    }
+    return { session: row.id, live: row.live, workers, byKey, jobs, jobFirst, review, stops, requestStop };
+  }, [row.id, row.live, workers, byKey, lines, review, stops, requestStop]);
+  const counts = workCounts(workers, review.isNew);
+  // Visible whenever there is work, and while background agents are still being looked up.
+  const showWork = counts.total > 0 || kids.state === "loading" || kids.state === "error";
+  const [workOpen, setWorkOpen] = useState(false);
+  const [workTop, setWorkTop] = useState<number>();
+  const workBtn = useRef<HTMLButtonElement>(null);
+  const headRef = useRef<HTMLHeadingElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+  // Narrow is the pane, not the window: a thin pane beside a wide sidebar reads the same as a phone.
+  const [paneNarrow, setPaneNarrow] = useState(false);
+  useEffect(() => {
+    const el = threadRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setPaneNarrow(el.clientWidth < 760));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const sheet = useMedia("(max-width:480px)");
+  const openWork = () => {
+    const b = workBtn.current?.getBoundingClientRect(), t = threadRef.current?.getBoundingClientRect();
+    if (b && t) setWorkTop(b.bottom - t.top + 4);
+    setWorkOpen(true);
+  };
+  const closeWork = useCallback((refocus: boolean) => {
+    setWorkOpen(false);
+    if (refocus) requestAnimationFrame(() => workBtn.current?.focus());
+  }, []);
+  // Where focus came from when this session is left for another, restored on the way back.
+  const origin = useRef<string | null>(null);
+  const viewInTranscript = (w: Worker) => {
+    setWorkOpen(false);
+    // After the dialog is gone and the page is no longer inert.
+    requestAnimationFrame(() => {
+      const el = scroller.current?.querySelector<HTMLElement>(`[data-work-key="${CSS.escape(w.key)}"]`);
+      if (!el) { workBtn.current?.focus(); return; }
+      atBottom.current = false;
+      // Opened for you, so not reviewed: only your own click on it is.
+      for (let d: HTMLElement | null = el; d; d = d.parentElement?.closest("details") ?? null) if (d instanceof HTMLDetailsElement) d.open = true;
+      el.scrollIntoView({ block: "center" });
+      el.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
+    });
+  };
+  const openAgent = (w: Worker) => {
+    setWorkOpen(false);
+    origin.current = "work";
+    arrivals.set(w.id, "head");
+    onOpenSession?.(w.id);
+  };
+  const announce = useWorkAnnouncer(workers, !loading);
+  // Leaving: remember which folds were open or shut, and the control focus was on.
+  useLayoutEffect(() => {
+    const root = scroller.current;
+    return () => {
+      if (!root) return;
+      const folds = [...root.querySelectorAll<HTMLDetailsElement>("details[data-open-key]")];
+      const a = document.activeElement as HTMLElement | null;
+      const focus = origin.current ?? (a && root.contains(a) ? a.closest<HTMLElement>("[data-open-key]")?.dataset.openKey : undefined);
+      const m = scrollMemo.get(row.id);
+      scrollMemo.set(row.id, {
+        top: m?.top ?? root.scrollTop, follow: m?.follow ?? atBottom.current,
+        open: folds.filter((d) => d.open).map((d) => d.dataset.openKey!),
+        shut: folds.filter((d) => !d.open && d.classList.contains("sub")).map((d) => d.dataset.openKey!),
+        focus,
+      });
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // A turn picked from the log: land on it once the transcript holds it,
   // flash it, and stop following the bottom so it stays put.
   const jumped = useRef(0);
@@ -2650,11 +2861,13 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   }); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="thread">
+    <WorkContext.Provider value={workCtx}>
+    <div className="thread" ref={threadRef}>
       <header className="thread-head">
         <Back onBack={onBack} />
         <div className="head-main">
-          <h1 title={row.title}>{plainTitle(row.title) || untitled(row.id)}</h1>
+          {row.spawnedBy && <ParentLink id={row.spawnedBy} rows={rows} onOpen={onOpenSession} />}
+          <h1 title={row.title} ref={headRef} tabIndex={-1}>{plainTitle(row.title) || untitled(row.id)}</h1>
           {(row.repo || row.branch) && (
             <span className="mono head-repo">
               {row.repo?.split("/").pop()}
@@ -2666,12 +2879,6 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             <span className="status head-trouble"><StatusMark status="error" bare />{capital(row.trouble)}</span>
           ) : row.status === "done" ? <span className="status head-idle">Run: Idle</span> : <StatusMark status={row.status} />}
           <ModeChip row={row} />
-          {onOpenSession && <AgentsChip row={row} rows={rows} onOpen={onOpenSession} />}
-          {row.spawnedBy && (
-            <span className="meta-line head-parent">spawned by <button className="link" onClick={() => onOpenSession?.(row.spawnedBy!)}>
-              {plainTitle(rows.find((r) => r.id === row.spawnedBy)?.title ?? "") || row.spawnedBy.slice(-6)}
-            </button></span>
-          )}
           {row.orb?.status === "running" && onStopOrb && <button className="btn head-ack" onClick={onStopOrb}>Stop orb</button>}
           {/* A test failure is the Tests chip's to say, once. */}
           {running && turns[turns.length - 1]?.prompt?.at && !turns[turns.length - 1]?.done && <RunClock since={turns[turns.length - 1].prompt!.at} />}
@@ -2710,7 +2917,12 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             )}
           </div>
         </div>
-        <RuntimeStrip row={row} lines={lines} paused={paused} onRetry={onRetry} onContext={onContext} />
+        <RuntimeStrip row={row} lines={lines} paused={paused} onRetry={onRetry} onContext={onContext}
+          work={showWork && (
+            <WorkButton btnRef={workBtn} counts={counts} loading={kids.state === "loading"} unavailable={kids.state === "error"}
+                        paused={paused !== undefined} narrow={paneNarrow || sheet} expanded={workOpen}
+                        onClick={() => (workOpen ? closeWork(true) : openWork())} />
+          )} />
       </header>
 
       <div className="scroll transcript" ref={scroller} onScroll={onScroll} onKeyDown={latestKey}
@@ -2870,7 +3082,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             aria-label={draftAsk || (blank && row.ask) ? "Answer to agent question" : "Message"}
             aria-controls={pickerOpen ? "mention-list" : undefined}
             aria-activedescendant={pickerOpen ? activeOpt : undefined}
-            placeholder={row.ask && !askChanged ? "Answer…" : running ? "Steer the running turn…" : "Next turn…"}
+            placeholder={row.ask && !askChanged ? "Answer…" : running ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Next turn…"}
             onPaste={(e) => take({ dataTransfer: e.clipboardData, preventDefault: () => e.preventDefault() }, false)}
             onChange={(e) => {
               setDraft(e.target.value);
@@ -2965,7 +3177,14 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
           )}
         </div>
       </div>
+      {workOpen && (
+        <WorkDialog workers={workers} sheet={sheet} top={workTop} childState={kids.state} onRetryChildren={kids.retry}
+                    paused={paused !== undefined} parent={row.id} onClose={closeWork} onView={viewInTranscript} onOpenAgent={openAgent} />
+      )}
+      {/* Transitions after the first load, batched: never a clock ticking. */}
+      <span className="visually-hidden" role="status" aria-live="polite">{announce}</span>
     </div>
+    </WorkContext.Provider>
   );
 }
 
