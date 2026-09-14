@@ -833,7 +833,7 @@ button.toast{font:13px/1.45 var(--sans);text-align:start;cursor:pointer}
 .mode-stopped{color:var(--text-3)}
 .row-meta .mode-chip{margin-inline-end:6px}
 .mode-start{flex-wrap:wrap;align-items:center;padding:16px 32px 0}
-.proj-orb{display:grid;gap:10px;padding:12px 14px;margin-block:4px 8px;background:var(--surface);border-radius:8px}
+.proj-orb{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;padding:12px 14px;margin-block:4px 8px;background:var(--surface);border-radius:8px}
 .orb-line{margin:0;font-size:13px;color:var(--text-2);overflow-wrap:anywhere}
 .orb-tabs{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .orb-tabs .btn{height:32px;padding-inline:10px}
@@ -950,7 +950,7 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .back{display:inline-flex}
   /* A phone stacks it: identity (title over status), the run setting, then the budget wrapping. */
   .thread-head{padding:4px 12px 6px 8px;gap:2px 8px;grid-template-columns:44px minmax(0,1fr) auto 44px;
-               grid-template-rows:44px 44px 24px;grid-template-areas:"back main main more" "model model effort effort" "strip strip strip strip"}
+               grid-template-rows:minmax(44px,auto) 44px 24px;grid-template-areas:"back main main more" "model model effort effort" "strip strip strip strip"}
   .thread-head>.head-side,.head-side>.controls,.head-side .ctl-run{display:contents}
   .head-side>.head-more{grid-area:more}
   .head-side .ctl-run>:first-child{grid-area:model;min-width:0}

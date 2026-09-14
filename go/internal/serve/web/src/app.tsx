@@ -208,7 +208,9 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
       // A session opened and never sent a message holds nothing to go back
       // to. It shows while it is open, while its child is up (one just made
       // with New), or when a search asks for it.
-      if (r.empty && !r.live && r.id !== selected && !query) continue;
+      // A project session whose orb failed to start is empty and dead too,
+      // but hiding it would swallow the failure and the prompt it lost.
+      if (r.empty && !r.live && r.orb?.status !== "failed" && r.id !== selected && !query) continue;
       if (r.archived) archived.push(r);
       else if (r.background) background.push(r);
       else if (sessionSignal(r) < 2 || now - Date.parse(r.lastAt) < INACTIVE_MS) recent.push(r);
