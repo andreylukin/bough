@@ -25,7 +25,7 @@ func TestManualSkillNotInvokedByAPathSegment(t *testing.T) {
 			t.Errorf("Inject(%q) injected %d blocks, want none", in, len(got))
 		}
 	}
-	for _, in := range []string{"/orb smart-scheduler", "please run /orb now", "/ORB"} {
+	for _, in := range []string{"/orb example-app", "please run /orb now", "/ORB"} {
 		if got := s.Inject(in); len(got) != 1 {
 			t.Errorf("Inject(%q) injected %d blocks, want 1", in, len(got))
 		}
