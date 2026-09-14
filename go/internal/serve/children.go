@@ -179,7 +179,7 @@ func firstDir(dirs ...string) string {
 // ever reads its task, since SIGINT to an idle process cancels nothing
 // and the prompt would then run in full.
 func (s *Supervisor) launch(ch *child, q queuedChild) error {
-	if err := s.start(ch, q.dir, "", q.extra); err != nil {
+	if err := s.start(ch, q.dir, "", q.extra, nil); err != nil {
 		s.abandon(ch)
 		return err
 	}
@@ -306,6 +306,13 @@ func lastTurn(entries []history.Entry) turnEnd {
 		}
 	}
 	return t
+}
+
+// LastTurn is the last turn's reply and whether it errored, for callers
+// outside serve (the loop runner) that drive a child turn by turn.
+func LastTurn(entries []history.Entry) (reply string, errored bool) {
+	t := lastTurn(entries)
+	return t.reply, t.errored
 }
 
 // report tells the parent a child's turn ended, exactly once per turn.

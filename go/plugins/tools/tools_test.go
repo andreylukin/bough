@@ -284,3 +284,40 @@ func TestClosestMatch(t *testing.T) {
 		t.Fatalf("nearestLines past EOF = %q, want empty", got)
 	}
 }
+
+func TestProjectViewConfined(t *testing.T) {
+	t.Setenv("BOUGH_SCRATCH", "")
+	ctx := kernel.NewContext()
+	ctx.Provide("codemode", codemode.New(5*time.Second))
+	ctx.Provide("session-mode", "project")
+	if err := (plugin{}).Apply(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := kernel.Get[*Stats](ctx, "turn-stats")
+	o := &fakeOrb{root: t.TempDir()}
+	ctx.Provide("orb", o)
+
+	inside := filepath.Join(o.root, "f.txt")
+	secret := filepath.Join(t.TempDir(), "secret.md")
+	for _, p := range []string{inside, secret} {
+		if err := os.WriteFile(p, []byte("hello\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if out, err := st.view(inside); err != nil || !strings.Contains(out, "hello") {
+		t.Errorf("view inside = %q, %v", out, err)
+	}
+	if _, err := st.view(secret); err == nil || !strings.Contains(err.Error(), "outside this project session") {
+		t.Errorf("view outside err = %v", err)
+	}
+	link := filepath.Join(o.root, "link.md")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.view(link); err == nil {
+		t.Error("view through a symlink out of the worktree allowed")
+	}
+	if _, err := st.write(link, "x"); err == nil {
+		t.Error("write through a symlink out of the worktree allowed")
+	}
+}

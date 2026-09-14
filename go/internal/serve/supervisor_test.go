@@ -63,7 +63,7 @@ func fakeChild() {
 	if dir != "" && id != "" && os.Getenv(envNoHist) == "" {
 		cwd, _ := os.Getwd()
 		appendEntry(filepath.Join(dir, id+".jsonl"), history.Entry{
-			Seq: 1, At: time.Now(), Kind: "meta", Data: map[string]any{"cwd": cwd, "origin": os.Getenv("BOUGH_ORIGIN"), "mode": os.Getenv("BOUGH_MODE"), "project": os.Getenv("BOUGH_PROJECT"), "spawned_by": os.Getenv("BOUGH_SPAWNED_BY")},
+			Seq: 1, At: time.Now(), Kind: "meta", Data: map[string]any{"cwd": cwd, "origin": os.Getenv("BOUGH_ORIGIN"), "mode": os.Getenv("BOUGH_MODE"), "project": os.Getenv("BOUGH_PROJECT"), "spawned_by": os.Getenv("BOUGH_SPAWNED_BY"), "args": strings.Join(os.Args[1:], " ")},
 		})
 	}
 	meta := map[string]any{"kind": "meta", "text": "ready"}
@@ -640,5 +640,51 @@ func TestSupervisorCloseKillsEveryChild(t *testing.T) {
 	}
 	if err := f.sup.Adopt("sess-a"); err == nil {
 		t.Error("adopted a session on a closed supervisor")
+	}
+}
+
+// A pre-minted ID is the child's BOUGH_SESSION_ID: Create waits for that
+// one file, even with an unrelated file appearing (BOUGH_FAKE_NEWID would
+// have named another), and Args and Origin reach the child.
+func TestCreateWithPreMintedID(t *testing.T) {
+	f := newFixture(t, envNewID+"=not-this-one", envTurns+"=1")
+	f.seed(t, "someone-else")
+	id, err := f.sup.Create(CreateOptions{ID: "loop-child-1", Cwd: f.home, Args: []string{"--set", "llm.model=x"}, Origin: "loop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "loop-child-1" {
+		t.Fatalf("id = %q", id)
+	}
+	if !f.sup.Live(id) {
+		t.Fatal("pre-minted session not leased")
+	}
+	b, err := os.ReadFile(filepath.Join(f.hist, id+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var meta history.Entry
+	if err := json.Unmarshal([]byte(strings.SplitN(string(b), "\n", 2)[0]), &meta); err != nil {
+		t.Fatal(err)
+	}
+	if args, _ := meta.Data["args"].(string); !strings.Contains(args, "--headless --json --set llm.model=x") {
+		t.Errorf("argv = %q", args)
+	}
+	if o, _ := meta.Data["origin"].(string); o != "loop" {
+		t.Errorf("origin = %q", o)
+	}
+	if _, err := os.Stat(filepath.Join(f.hist, "not-this-one.jsonl")); err == nil {
+		t.Error("child used BOUGH_FAKE_NEWID over the pre-minted id")
+	}
+	// A respawn after the child dies keeps the recorded Args.
+	f.sup.Kill(id)
+	waitFor(t, "child gone", func() bool { return !f.sup.Live(id) })
+	if err := f.sup.Send(id, "again"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "respawned", func() bool { return f.startCount(t) == 2 })
+	st, _ := os.ReadFile(f.starts)
+	if !strings.Contains(string(st), id) {
+		t.Errorf("starts = %q", st)
 	}
 }

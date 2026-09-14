@@ -150,12 +150,31 @@ func (p *projectMode) allowed(tool, path string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", tool, err)
 	}
+	// Symlinks resolve first: a link inside the worktree must not reach
+	// a host file outside it.
+	abs = resolveExisting(abs)
 	for _, r := range roots {
-		if rel, err := filepath.Rel(filepath.Clean(r), abs); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if rel, err := filepath.Rel(resolveExisting(filepath.Clean(r)), abs); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return nil
 		}
 	}
 	return fmt.Errorf("%s: %s is outside this project session; write under %s", tool, path, strings.Join(roots, ", "))
+}
+
+// resolveExisting is EvalSymlinks on the longest existing prefix of an
+// absolute path, so a file write is about to create still resolves
+// through its parent's links.
+func resolveExisting(abs string) string {
+	rest := ""
+	for p := abs; ; p = filepath.Dir(p) {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return filepath.Join(r, rest)
+		}
+		if filepath.Dir(p) == p {
+			return abs
+		}
+		rest = filepath.Join(filepath.Base(p), rest)
+	}
 }
 
 // SetPolicy installs (or, with nil, removes) the command policy.
@@ -546,6 +565,11 @@ const unchangedNote = "\n[you already read this in this turn and it has not chan
 
 // view is Stats.view: the read, plus the note when it repeats.
 func (s *Stats) view(path string, rng ...int) (string, error) {
+	// A project session reads only what it may write: the host outside
+	// the orb (a loop's holdout among it) is not the project's.
+	if err := s.project.allowed("view", path); err != nil {
+		return "", err
+	}
 	out, err := readView(path, rng...)
 	if err != nil {
 		return out, err

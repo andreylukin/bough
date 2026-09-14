@@ -1,0 +1,7 @@
+# Questions about bough's go/ tree; expect_path is relative to that dir.
+- q: Where does a skill opt out of being injected on a mention?
+  expect_path: plugins/skills/skills.go
+- q: Which file prints the usage line after a headless turn ends?
+  expect_path: plugins/ui/headless.go
+- q: Where is the --headless flag defined?
+  expect_path: cmd/bough/main.go

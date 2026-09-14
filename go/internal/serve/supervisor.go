@@ -89,7 +89,11 @@ type Project struct {
 // CreateOptions is what a new session starts as. Mode "" is local.
 type CreateOptions struct {
 	Cwd, Prompt, Mode, Slug string
-	SpawnedBy               string // "" = a person's session
+	SpawnedBy               string   // "" = a person's session
+	ID                      string   // pre-minted id -> BOUGH_SESSION_ID, no dir-diff discovery
+	Args                    []string // extra argv after --headless --json (e.g. --set llm.model=x)
+	Env                     []string // extra env
+	Origin                  string   // BOUGH_ORIGIN override; "" = web
 }
 
 // Options configures a Supervisor. Every path is explicit so tests can
@@ -196,7 +200,13 @@ type Supervisor struct {
 	queue      []queuedChild
 	running    map[string]bool
 	maxRunning int
+
+	// spawnArgs is the extra argv and env a Create asked for, per id, so
+	// a respawn through ensure starts the session the same way.
+	spawnArgs map[string]spawnSpec
 }
+
+type spawnSpec struct{ args, env []string }
 
 // NewSupervisor loads the meta store and resolves the bough binary. A
 // missing meta.json is an empty store, not an error.
@@ -347,6 +357,13 @@ func (s *Supervisor) Create(opt CreateOptions) (string, error) {
 	default:
 		return "", fmt.Errorf("serve: supervisor: unknown session mode %q", opt.Mode)
 	}
+	extra = append(extra, opt.Env...)
+	if opt.Origin != "" {
+		extra = append(extra, "BOUGH_ORIGIN="+opt.Origin) // after web's: the last value wins
+	}
+	if opt.ID != "" {
+		return s.createWithID(opt.ID, cwd, prompt, extra, opt.Args)
+	}
 	s.createMu.Lock()
 	defer s.createMu.Unlock()
 
@@ -359,7 +376,7 @@ func (s *Supervisor) Create(opt CreateOptions) (string, error) {
 		before[in.ID] = true
 	}
 
-	ch, err := s.spawn(cwd, "", extra)
+	ch, err := s.spawn(cwd, "", extra, nil)
 	if err != nil {
 		return "", err
 	}
@@ -392,6 +409,58 @@ func (s *Supervisor) Create(opt CreateOptions) (string, error) {
 		if time.Now().After(deadline) {
 			s.killChild(ch)
 			return "", fmt.Errorf("serve: supervisor: no new session id in %s under %s", createTimeout, s.opt.HistDir)
+		}
+		time.Sleep(createPoll)
+	}
+}
+
+// createWithID starts a session under an id the caller minted, the
+// way CreateChild does: the child names its history file after
+// BOUGH_SESSION_ID, so discovery is waiting for that one file.
+func (s *Supervisor) createWithID(id, cwd, prompt string, extra, args []string) (string, error) {
+	extra = append(slices.Clone(extra), "BOUGH_SESSION_ID="+id)
+	s.mu.Lock()
+	if s.spawnArgs == nil {
+		s.spawnArgs = map[string]spawnSpec{}
+	}
+	// Mode and BOUGH_SESSION_ID are not kept: a resumed child reads
+	// its mode from its own file and is started with -r.
+	var env []string
+	for _, kv := range extra {
+		if strings.HasPrefix(kv, "BOUGH_ORIGIN=") {
+			env = append(env, kv)
+		}
+	}
+	s.spawnArgs[id] = spawnSpec{args: slices.Clone(args), env: env}
+	s.mu.Unlock()
+
+	ch, err := s.spawn(cwd, "", extra, args)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(s.opt.HistDir, id+".jsonl")
+	deadline := time.Now().Add(createTimeout)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			if err := s.claim(ch, id); err != nil {
+				s.killChild(ch)
+				return "", err
+			}
+			if prompt != "" {
+				if err := s.write(ch, prompt); err != nil {
+					return id, err
+				}
+			}
+			return id, nil
+		}
+		select {
+		case <-ch.done:
+			return "", fmt.Errorf("serve: supervisor: session exited before writing history")
+		default:
+		}
+		if time.Now().After(deadline) {
+			s.killChild(ch)
+			return "", fmt.Errorf("serve: supervisor: %s did not appear in %s", path, createTimeout)
 		}
 		time.Sleep(createPoll)
 	}
@@ -466,9 +535,10 @@ func (s *Supervisor) ensure(id string) (*child, error) {
 	// ensure waits for this spawn rather than starting a second one.
 	ch := newChild(id)
 	s.kids[id] = ch
+	spec := s.spawnArgs[id]
 	s.mu.Unlock()
 
-	if err := s.start(ch, s.adoptDir(id), id, nil); err != nil {
+	if err := s.start(ch, s.adoptDir(id), id, spec.env, spec.args); err != nil {
 		s.mu.Lock()
 		if s.kids[id] == ch {
 			delete(s.kids, id)
@@ -499,9 +569,9 @@ func (s *Supervisor) adoptDir(id string) string {
 }
 
 // spawn starts a child that has no id yet (Create's case).
-func (s *Supervisor) spawn(cwd, id string, extra []string) (*child, error) {
+func (s *Supervisor) spawn(cwd, id string, extra, args []string) (*child, error) {
 	ch := newChild("")
-	if err := s.start(ch, cwd, id, extra); err != nil {
+	if err := s.start(ch, cwd, id, extra, args); err != nil {
 		close(ch.done)
 		return nil, err
 	}
@@ -511,11 +581,12 @@ func (s *Supervisor) spawn(cwd, id string, extra []string) (*child, error) {
 // start builds and launches the process and the goroutines that read
 // it. NEVER a bare --resume: headless refuses it, prints the session
 // list and exits 2.
-func (s *Supervisor) start(ch *child, dir, id string, extra []string) error {
+func (s *Supervisor) start(ch *child, dir, id string, extra, more []string) error {
 	if ch.ready != nil {
 		defer close(ch.ready)
 	}
 	args := []string{"--headless", "--json"}
+	args = append(args, more...)
 	if id != "" {
 		args = append(args, "-r", id)
 	}
