@@ -3042,6 +3042,15 @@ export default function App() {
     finally { setBusy(false); await refresh(); }
   };
 
+  // A queued agent has not started, so calling it running overstates what
+  // stopping would interrupt.
+  const agentWords = (running: number, queued: number) => {
+    const noun = running + queued === 1 ? "agent" : "agents";
+    if (!queued) return `${running} running ${noun}`;
+    if (!running) return `${queued} queued ${noun}`;
+    return `${running} running and ${queued} queued ${noun}`;
+  };
+
   // Archiving a session leaves its background agents running unless you
   // say otherwise: they may be doing work you still want, so ask.
   const archiveRow = async (r: Row) => {
@@ -3049,7 +3058,7 @@ export default function App() {
     const n = (r.agents?.running ?? 0) + (r.agents?.queued ?? 0);
     if (n === 0) return act(() => api.archive(r.id));
     const pick = await askChoice(`Archive ${plainTitle(r.title) || untitled(r.id)}?`,
-      `Stop its ${n} running ${n === 1 ? "agent" : "agents"} too?`, ["Stop and archive", "Archive only"]);
+      `Stop its ${agentWords(r.agents?.running ?? 0, r.agents?.queued ?? 0)} too?`, ["Stop and archive", "Archive only"]);
     if (!pick) return false;
     return act(() => api.archive(r.id, { stopChildren: pick === "Stop and archive" }));
   };

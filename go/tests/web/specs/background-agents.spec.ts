@@ -89,7 +89,7 @@ for (const [pick, want] of [['Stop and archive', { stopChildren: true }], ['Arch
     await page.goto(serve + '/#/s/p-lead');
     await page.getByRole('button', { name: 'Session settings' }).click();
     await page.locator('.head-pop-item', { hasText: /^Archive$/ }).click();
-    await expect(page.getByText('Stop its 2 running agents too?')).toBeVisible();
+    await expect(page.getByText('Stop its 1 running and 1 queued agents too?')).toBeVisible();
     await page.getByRole('button', { name: pick, exact: true }).click();
     await expect.poll(() => archived).toEqual([want]);
   });
