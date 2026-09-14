@@ -4,6 +4,7 @@ import { api, subscribe, type Change, type TurnLine } from "./api";
 import type { Line, Project, Row } from "./types";
 import { STATUS, StatusMark, Working, hasFailure, hasQuestion, sessionSignal } from "./status";
 import { ProjectsView } from "./projects";
+import { ModeChip, ModePicker, type ModeValue } from "./mode";
 import { Select, type Option } from "./select";
 import { DialogHost, askText } from "./dialog";
 import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, type Item, type SubAgent, type Turn, lineCount } from "./render";
@@ -474,7 +475,7 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
             )}
             {/* Touch has no hover card: a phone reads status and age off the row. */}
             <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : "") + (failed || asking || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
-              {label ? `${label} · ` : ""}{ago(r.lastAt)}
+              <ModeChip row={r} />{label ? `${label} · ` : ""}{ago(r.lastAt)}
             </span>
           </button>
           {/* The disclosure and Seen are siblings of the row, not inside
@@ -2014,7 +2015,7 @@ function sendError(e?: string) {
   return `${m[2] || words[m[1]] || "Request failed"} (${m[1]})`;
 }
 
-export function Thread({ row, lines, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy, jump, sending = [], setSending = () => {} }: {
+export function Thread({ row, lines, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy, jump, sending = [], setSending = () => {}, onStopOrb }: {
   row: Row; lines: Line[]; loading?: boolean; stream?: DeltaRun[];
   /** The first read failed: there is no transcript to show. */
   loadError?: string;
@@ -2027,6 +2028,8 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   jump?: { turn: number; at: number; seq?: number } | null;
   onSend: (t: string) => Promise<string | null> | void; onAnswer: (t: string, ask?: string) => Promise<string | null> | void; onInterrupt: () => Promise<boolean> | void;
   onArchive: () => void; onRename: (t: string) => Promise<void>; onContext?: () => void; onAck?: () => void;
+  /** Stop a project session's container; the child restarts it on its next command. */
+  onStopOrb?: () => void;
   onModel: (m: string) => Promise<boolean> | void; onEffort: (e: string) => Promise<boolean> | void; onAssign: (p: string) => void;
   /** This session's unrecorded sends, kept by the app across session switches. */
   sending?: Pending[]; setSending?: (f: (q: Pending[]) => Pending[]) => void;
@@ -2399,6 +2402,8 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             // One status: the reason replaces "Done".
             <span className="status head-trouble"><StatusMark status="error" bare />{capital(row.trouble)}</span>
           ) : row.status === "done" ? <span className="status head-idle">Idle</span> : <StatusMark status={row.status} />}
+          <ModeChip row={row} />
+          {row.orb?.status === "running" && onStopOrb && <button className="btn head-ack" onClick={onStopOrb}>Stop orb</button>}
           {/* A test failure is the Tests chip's to say, once. */}
           {running && turns[turns.length - 1]?.prompt?.at && !turns[turns.length - 1]?.done && <RunClock since={turns[turns.length - 1].prompt!.at} />}
           {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
@@ -2683,6 +2688,9 @@ export default function App() {
   // When the list last refreshed; null until the first read lands.
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
   const [view, setView] = useState<View>("sessions");
+  // Where the next new conversation runs; local unless someone picks a project.
+  const [newMode, setNewMode] = useState<ModeValue>({ mode: "local" });
+  const [orbOpen, setOrbOpen] = useState<string>();
   const [projects, setProjects] = useState<Project[]>([]);
   // Only a narrow window reads this (see the 720px media query): a
   // phone shows the list or the thread, never both.
@@ -2850,7 +2858,9 @@ export default function App() {
     const read = () => {
       const h = window.location.hash.replace(/^#\/?/, "");
       // A direct link to a page shows that page, on a phone too.
-      if (h === "hooks" || h === "projects") { setView(h); setContext(false); setPane("thread"); return; }
+      if (h === "hooks" || h === "projects") { setView(h); setContext(false); setPane("thread"); if (h === "projects") setOrbOpen(undefined); return; }
+      const po = /^projects\/([^/]+)\/orb$/.exec(h);
+      if (po) { setView("projects"); setOrbOpen(po[1]); setContext(false); setPane("thread"); return; }
       const wr = parseWikiHash(h);
       if (wr) { setView("wiki"); setWikiRoute(wr); setContext(false); setPane("thread"); return; }
       const m = /^s\/([^/]+)(\/context)?$/.exec(h);
@@ -2876,7 +2886,7 @@ export default function App() {
   // through. Opening a conversation pushes (see openSession).
   useEffect(() => {
     const want = view === "hooks" ? "#/hooks"
-      : view === "projects" ? "#/projects"
+      : view === "projects" ? (orbOpen ? `#/projects/${orbOpen}/orb` : "#/projects")
       : view === "wiki" ? `#/${wikiHash(wikiRoute)}`
       : selected ? `#/s/${selected}${context ? "/context" : ""}`
       : "#/";
@@ -2967,8 +2977,8 @@ export default function App() {
   // What the chrome can do, the keyboard can do. Session-scoped
   // commands only appear when one is open, so the list never offers
   // something that would fail.
-  const start = (cwd: string, prompt: string) => act(async () => {
-    const created = await api.create(cwd, prompt);
+  const start = (cwd: string, prompt: string, mode?: ModeValue) => act(async () => {
+    const created = await api.create(cwd, prompt, mode?.mode, mode?.project);
     openSession(created.id);
   });
 
@@ -2983,6 +2993,11 @@ export default function App() {
       hint: shortPath(row.cwd, home),
       run: () => start(row.cwd, ""),
     }] : []),
+    // A project session runs in that project's orb; home is only where serve records it.
+    ...(home ? projects.filter((p) => p.slug).map((p) => ({
+      id: `new:orb:${p.id}`, group: "Start", label: `New conversation in ${p.name}`,
+      hint: "orb", run: () => start(home, "", { mode: "project" as const, project: p.id }),
+    })) : []),
     { id: "new:project", group: "Start", label: "New project…",
       run: async () => {
         const n = await askText("New project", { placeholder: "What is this work?", action: "Create" });
@@ -3057,7 +3072,8 @@ export default function App() {
             await refresh();
             return ids.filter((_, i) => out[i].status === "rejected");
           }}
-          onDelete={(id) => act(() => api.deleteProject(id))} />
+          onDelete={(id) => act(() => api.deleteProject(id))}
+          orbOpen={orbOpen} onOrbOpen={setOrbOpen} onOrbChanged={refresh} />
       ) : row && context ? (
         <ContextPage session={row.id} model={row.model} used={loadedFor === row.id ? sessionUsage(lines)?.lastIn : undefined} onBack={() => setContext(false)} />
       ) : row ? (
@@ -3074,12 +3090,19 @@ export default function App() {
           onEffort={(e) => act(() => api.effort(row.id, e))}
           onAssign={(p) => act(() => api.assign(row.id, p))}
           onContext={() => setContext(true)}
-          onAck={() => act(() => api.ack(row.id))} />
+          onAck={() => act(() => api.ack(row.id))}
+          onStopOrb={() => act(() => api.stopOrb(row.id))} />
       ) : (
         <div className={"thread" + (selected ? " empty" : "")}>
-          {!selected ? (
+          {!selected ? (<>
+            {home && (
+              <div className="controls mode-start">
+                <ModePicker projects={projects} value={newMode} onChange={setNewMode} />
+                <button className="btn" onClick={() => { void start(home, "", newMode); }}>New conversation</button>
+              </div>
+            )}
             <ControlOverview rows={rows} onOpenFailure={(id, seq) => { openSession(id); if (seq) setJump({ id, turn: 0, seq, at: Date.now() }); }} onReveal={(id) => { setPane("list"); setQuery(""); setReveal({ id, at: Date.now() }); }} loadedAt={loadedAt} loadErr={loadErr} onRetry={refresh} />
-          ) : rows.length > 0 && (
+          </>) : rows.length > 0 && (
             // A link to a session this list does not hold.
             <div>
               <h1>Session not found</h1>

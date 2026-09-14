@@ -6,7 +6,7 @@ const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString
 
 export const projects: Project[] = [
   { id: "p1", name: "Incident 42" },
-  { id: "p2", name: "Control room" },
+  { id: "p2", name: "Control room", slug: "bough", orb: { slug: "bough", image: "bough-orb/bough:3f9a2c71d0be", built: true, build: "ok" } },
 ];
 
 export const rows: Row[] = [

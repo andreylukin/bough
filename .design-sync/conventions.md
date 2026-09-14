@@ -63,6 +63,7 @@ glue around them.
 | Composer | `.composer`, `.composer-wrap`, `.controls`, `.ctl`, `.ctl-label`, `.hint`, `.ask`, `.ask-q` |
 | Controls | `.btn`, `.btn-primary`, `.field`, `.field-label`, `.link`, `.back`, `.more` |
 | Projects | `.proj`, `.proj-head`, `.proj-row`, `.proj-body`, `.proj-count`, `.proj-empty`, `.proj-none`, `.proj-when`, `.proj-move`, `.proj-open` |
+| Orbs (Projects) | `.mode-chip`, `.mode-running`, `.mode-busy`, `.mode-failed`, `.mode-stopped`, `.mode-start`, `.proj-orb`, `.orb-editor`, `.orb-tabs`, `.orb-line`, `.orb-log`, `.orb-detach` |
 | Text | `.mono`, `.meta-line`, `.num`, `.status`, `.toast` |
 
 `.mono` is the one you will reach for most: ids, branches, paths, durations

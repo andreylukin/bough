@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Project, Row } from "./types";
+import type { OrbDetail, OrbFile, Project, Row } from "./types";
+import { api } from "./api";
+import { ProjectOrb } from "./orb";
 import { StatusMark, shownStatus } from "./status";
 import { plainTitle, untitled } from "./render";
 import { Back } from "./app";
@@ -41,6 +43,64 @@ function Conversation({ row, projects, onOpen, onAssign, picked, onPick, locked 
   );
 }
 
+
+/**
+ * The orb surface for one label, with its fetching: the detail, and the
+ * build log polled once a second while a build runs (the log endpoint
+ * hands back an offset, so each poll reads only what is new).
+ */
+function OrbSection({ project, onOpen, onChanged }: {
+  project: Project; onOpen: (id: string) => void; onChanged: () => Promise<void> | void;
+}) {
+  const [detail, setDetail] = useState<OrbDetail>();
+  const [err, setErr] = useState("");
+  const [log, setLog] = useState("");
+  const offset = useRef(0);
+
+  const load = useCallback(() => {
+    if (!project.slug) return;
+    api.orb(project.id).then((d) => { setDetail(d); setErr(""); }, (e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
+  }, [project.id, project.slug]);
+  useEffect(load, [load]);
+
+  const state = detail?.build.state;
+  useEffect(() => {
+    if (!project.slug) return;
+    let stop = false;
+    offset.current = 0; setLog("");
+    const tick = async () => {
+      try {
+        const r = await api.buildLog(project.id, offset.current);
+        if (stop) return;
+        if (r.text) setLog((l) => l + r.text);
+        offset.current = r.offset;
+        if (r.state === "building") { setTimeout(tick, 1000); return; }
+        // It finished between polls: the detail's image and state are stale.
+        if (state === "building") load();
+      } catch { /* no log yet is the common case, not an error worth a banner */ }
+    };
+    void tick();
+    return () => { stop = true; };
+  }, [project.id, project.slug, state, load]);
+
+  const run = async (fn: () => Promise<unknown>) => {
+    try { await fn(); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    await onChanged(); load();
+  };
+
+  return (
+    <ProjectOrb project={project} detail={detail} log={log} error={err} onOpen={onOpen}
+      onAttach={() => { void run(() => api.attachOrb(project.id)); }}
+      onDetach={async () => {
+        const ok = await askConfirm(`Detach the orb from “${project.name}”?`,
+          `The files in ~/.bough/projects/${project.slug} stay.`, { action: "Detach", danger: true });
+        if (ok) { setDetail(undefined); void run(() => api.detachOrb(project.id)); }
+      }}
+      onSave={async (name: OrbFile, text: string) => { await api.putOrbFile(project.id, name, text); load(); }}
+      onBuild={() => { void run(() => api.buildOrb(project.id)); }}
+      onStopOrb={(session) => { void run(() => api.stopOrb(session)); }} />
+  );
+}
 
 interface RepoGroup { repo: string; count: number; sessions: string[] }
 
@@ -127,8 +187,13 @@ export function suggestName(repos: string[]): string {
   return useful.length > 0 ? useful.join("-") : "";
 }
 
-export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssignMany, onCreate, onRename, onDelete }: {
+export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssignMany, onCreate, onRename, onDelete, orbOpen, onOrbOpen, onOrbChanged = () => {} }: {
   projects: Project[]; rows: Row[];
+  /** The project whose orb section is expanded (#/projects/<id>/orb). */
+  orbOpen?: string;
+  onOrbOpen?: (id: string | undefined) => void;
+  /** An orb was attached, detached or built: the project list is stale. */
+  onOrbChanged?: () => Promise<void> | void;
   onOpen: (id: string) => void;
   onBack?: () => void;
   onAssign: (id: string, project: string) => void;
@@ -142,6 +207,10 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
   // The page's one selection, whichever list or repo it was ticked from.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [target, setTarget] = useState("");
+  // Controlled by the route when the app passes it; a story drives it locally.
+  const [orbLocal, setOrbLocal] = useState<string>();
+  const orbId = onOrbOpen ? orbOpen : orbLocal;
+  const toggleOrb = (id: string) => (onOrbOpen ?? setOrbLocal)(orbId === id ? undefined : id);
 
   const needle = filter.trim().toLowerCase();
   const shown = useMemo(() => needle
@@ -244,7 +313,11 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
                     { action: "Delete project", danger: true });
                   if (ok) onDelete(p.id);
                 }}>Delete</button>
+                <button className="link" aria-expanded={orbId === p.id} onClick={() => toggleOrb(p.id)}>
+                  {p.slug ? "Orb" : "Add orb"}
+                </button>
               </div>
+              {orbId === p.id && <OrbSection project={p} onOpen={onOpen} onChanged={onOrbChanged} />}
               {rs.length === 0
                 ? <p className="proj-none">{needle ? "Nothing here matches the filter." : "Nothing here yet. Move a conversation in from below."}</p>
                 : list(rs)}

@@ -1,5 +1,5 @@
 // The one place that knows the wire. Everything else takes typed values.
-import type { Ask, Event, Line, Project, Row } from "./types";
+import type { Ask, Event, Line, OrbBuild, OrbDetail, OrbFile, OrbState, OrbSummary, Project, Row, SessionMode } from "./types";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -56,10 +56,11 @@ export const api = {
       `/api/sessions/${id}${since > 0 ? `?since=${since}` : ""}`,
     ),
 
-  create: (cwd: string, prompt: string) =>
+  /** mode omitted is local; project names a label that carries an orb slug. */
+  create: (cwd: string, prompt: string, mode?: SessionMode, project?: string) =>
     req<{ session: Row }>("/api/sessions", {
       method: "POST",
-      body: JSON.stringify({ cwd, prompt }),
+      body: JSON.stringify(mode === "project" ? { cwd, prompt, mode, project } : { cwd, prompt }),
     }).then((r) => r.session),
 
   prompt: (id: string, text: string) => post(`/api/sessions/${id}/prompt`, { text }),
@@ -85,6 +86,19 @@ export const api = {
       .then((r) => r.project),
   renameProject: (id: string, name: string) => post(`/api/projects/${id}/rename`, { name }),
   deleteProject: (id: string) => req<{ ok: true }>(`/api/projects/${id}`, { method: "DELETE" }),
+  /** Create a skeleton definition for a label, or attach an existing one. */
+  attachOrb: (id: string, slug?: string) =>
+    req<{ project: Project; orb: OrbSummary }>(`/api/projects/${id}/orb`, { method: "POST", body: JSON.stringify(slug ? { slug } : {}) }),
+  /** Detach only: the files under ~/.bough/projects stay. */
+  detachOrb: (id: string) => req<{ ok: true }>(`/api/projects/${id}/orb`, { method: "DELETE" }),
+  orb: (id: string) => req<OrbDetail>(`/api/projects/${id}/orb`),
+  putOrbFile: (id: string, name: OrbFile, text: string) =>
+    req<{ ok: true; orb: OrbSummary }>(`/api/projects/${id}/orb/files/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ text }) }),
+  buildOrb: (id: string) => req<{ build: OrbBuild }>(`/api/projects/${id}/orb/build`, { method: "POST", body: "{}" }),
+  buildLog: (id: string, offset: number) =>
+    req<{ text: string; offset: number; state: OrbBuild["state"] }>(`/api/projects/${id}/orb/build/log?offset=${offset}`),
+  sessionOrb: (id: string) => req<{ orb: OrbState | null }>(`/api/sessions/${id}/orb`).then((r) => r.orb),
+  stopOrb: (id: string) => post(`/api/sessions/${id}/orb/stop`),
   unarchive: (id: string) => post(`/api/sessions/${id}/unarchive`),
 };
 

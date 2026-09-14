@@ -24,7 +24,19 @@ export interface Ask {
 export interface Project {
   id: string;
   name: string;
+  /** The ~/.bough/projects/<slug> definition this label runs its orb from; absent for a label only. */
+  slug?: string;
+  orb?: OrbSummary;
 }
+
+/** local runs on the host and changes no files; project runs in the project's orb. */
+export type SessionMode = "local" | "project";
+export type OrbStatus = "" | "building" | "starting" | "running" | "stopped" | "failed";
+export interface OrbSummary { slug: string; image: string; built: boolean; build?: string; error?: string }
+export interface OrbState { session: string; project: string; status: OrbStatus; image?: string; container?: string; worktrees?: Record<string, string>; primary?: string; error?: string; updatedAt: string }
+export interface OrbBuild { tag: string; hash: string; state: "" | "building" | "ok" | "failed"; startedAt: string; endedAt?: string; error?: string }
+export type OrbFile = "project.yml" | "Dockerfile" | "setup.sh" | "resume.sh";
+export interface OrbDetail { project: Project; files: Record<OrbFile, string>; hash: string; orb: OrbSummary; build: OrbBuild; orbs: OrbState[]; runtime: { name: string; available: boolean; error?: string } }
 
 /** One session, as GET /api/sessions returns it. */
 export interface Row {
@@ -60,6 +72,9 @@ export interface Row {
   testsFailed?: boolean;
   /** Lines in the session's running log (GET /api/sessions/{id}/turns); absent when none. */
   turns?: number;
+  /** Absent from a server older than orbs: read as local. */
+  mode?: SessionMode;
+  orb?: { project: string; status: OrbStatus };
 }
 
 export interface Job { id: number; cmd: string; started: string }

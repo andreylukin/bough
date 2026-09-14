@@ -5,6 +5,8 @@
 export * from "./src/app";
 export { default as App } from "./src/app";
 export * from "./src/projects";
+export { ModePicker, ModeChip } from "./src/mode";
+export { ProjectOrb } from "./src/orb";
 export * from "./src/skills";
 export * from "./src/status";
 export * from "./src/render";

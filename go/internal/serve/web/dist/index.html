@@ -833,6 +833,28 @@ button.toast{font:13px/1.45 var(--sans);text-align:start;cursor:pointer}
 .proj-move .sel-btn{height:28px;font-size:12px;max-width:20ch}
 .proj-empty{max-width:56ch;color:var(--text-3)}
 .proj-empty-title{margin:0 0 6px;font-size:16px;font-weight:600;color:var(--text-2)}
+/* orbs: a project session's container state, and the definition behind it */
+.mode-chip{font:500 12px/16px var(--mono)}
+.mode-running{color:var(--accent)}
+.mode-busy{color:var(--amber)}
+.mode-failed{color:var(--red)}
+.mode-stopped{color:var(--text-3)}
+.row-meta .mode-chip{margin-inline-end:6px}
+.mode-start{flex-wrap:wrap;align-items:center;padding:16px 32px 0}
+.proj-orb{display:grid;gap:10px;padding:12px 14px;margin-block:4px 8px;background:var(--surface);border-radius:8px}
+.orb-line{margin:0;font-size:13px;color:var(--text-2);overflow-wrap:anywhere}
+.orb-tabs{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.orb-tabs .btn{height:32px;padding-inline:10px}
+.orb-detach{margin-inline-start:auto}
+.orb-editor{min-height:16rem;width:100%;resize:vertical;background:var(--raised);font:13px/1.6 var(--mono);padding:10px 12px;box-sizing:border-box}
+.orb-log{max-height:24rem;overflow:auto;white-space:pre}
+@media (max-width:720px){
+  .orb-tabs .btn{height:44px}
+  .orb-editor{font-size:16px}
+  .orb-log{overflow-x:auto}
+  .mode-start{padding:12px 12px 0}
+  .mode-start .btn{height:44px}
+}
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 /* Dialogs: asked in the page's own voice, not the browser's grey sheet. */
 .dlg-scrim{position:fixed;inset:0 0 auto;height:var(--vvh,100dvh);z-index:60;display:grid;place-items:center;padding:16px;background:rgb(0 0 0/.55)}
