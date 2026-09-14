@@ -459,13 +459,27 @@ func (m *model) splitProse(b *block, want string) (string, bool) {
 // flushTrailing appends the held-back prose (if any) as an assistant
 // block.
 func (m *model) flushTrailing() {
-	if m.trailing == "" {
+	text := strings.TrimSpace(stripUnrunPrograms(m.trailing))
+	m.trailing = ""
+	if text == "" {
 		return
 	}
-	text := m.trailing
-	m.trailing = ""
 	m.addAssistant(text)
 }
+
+// stripUnrunPrograms drops ```js fences that call tools. The loop runs
+// only a reply's first program, so any later one never ran and has no
+// code block; left in the prose it showed as a raw console.log(tools…).
+func stripUnrunPrograms(text string) string {
+	return fenceRe.ReplaceAllStringFunc(text, func(f string) string {
+		if toolCallRe.MatchString(f) {
+			return ""
+		}
+		return f
+	})
+}
+
+var toolCallRe = regexp.MustCompile(`\btools\.\w+\s*\(`)
 
 // finishTurn appends the turn-end marker(s) for a done event: an
 // explicit "turn ended without a reply" error when nothing visible was

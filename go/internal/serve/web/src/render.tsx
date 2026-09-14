@@ -128,11 +128,14 @@ export function sessionUsage(lines: Line[]): Usage | null {
  * A reply carries the fenced program it wants run, and the loop records
  * that program again as its own `code` entry. Rendering both shows the
  * same code twice — the TUI de-duplicates it for the same reason.
+ * The loop runs only a reply's first program; any further program
+ * fences never ran and have no entry, so they rendered as raw
+ * `console.log(tools.bash(...))` boxes. A fence that calls tools is a
+ * program, not prose, and is dropped whether it ran or not.
  */
 export function stripRunFences(text: string, codes: string[]): string {
-  if (!codes.length) return text;
   return text.replace(/```[a-zA-Z]*\n([\s\S]*?)```/g, (whole, inner: string) =>
-    codes.some((c) => c.trim() === inner.trim()) ? "" : whole,
+    codes.some((c) => c.trim() === inner.trim()) || /\btools\.\w+\s*\(/.test(inner) ? "" : whole,
   ).replace(/\n{3,}/g, "\n\n").trim();
 }
 
