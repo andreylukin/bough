@@ -452,12 +452,27 @@ function PluginRow({ p, off, setOff, onOff }: {
 
 function Decision({ fire }: { fire: Fire }) {
   if (fire.error) return <span className="hk-state hk-bad">Errored — {fire.error}</span>;
-  if (!fire.decision) return <span className="hk-when">Passed through</span>;
+  // No decision is the hook letting the call through unchanged, not a skipped hook.
+  if (!fire.decision) return <span className="hk-when">Passed through · no decision</span>;
   const loud = fire.decision === "denied" || fire.decision === "blocked";
   return (
     <span className={"hk-state " + (loud ? "hk-bad" : "hk-shadow")}>
       {fire.decision[0].toUpperCase() + fire.decision.slice(1)}
     </span>
+  );
+}
+
+/** One kind with nothing configured: where it goes, copyable, and how, behind a click. */
+function SetupItem({ title, path, children }: { title: string; path: string; children: React.ReactNode }) {
+  return (
+    <details className="ctx-empty hk-setup-item">
+      <summary>
+        <span className="hk-setup-name">{title}</span>
+        <code className="mono hk-path">{path}</code>
+        <span className="link">Add {title.toLowerCase()}…</span>
+      </summary>
+      <p>{children}{" "}<button className="link" onClick={() => void navigator.clipboard?.writeText(path)}>Copy path</button></p>
+    </details>
   );
 }
 
@@ -516,6 +531,12 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
     () => [...fires].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)),
     [fires],
   );
+  // A fire with no file behind it came from a handler compiled into bough.
+  const builtin = useMemo(() => fires.filter((f) => !f.path).length, [fires]);
+  const empty = [
+    watchers.length === 0 && "Watchers", byEvent.length === 0 && "Hooks",
+    rules.length === 0 && "Rules", plugins.length === 0 && "Plugins",
+  ].filter(Boolean) as string[];
   // Runs of identical quiet fires fold to one row with ×N; anything that
   // decided, errored or left a note always keeps its own row.
   const runs = useMemo(() => {
@@ -547,15 +568,21 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
         )}
         {/* What needs attention, before any list: on a page of five
             sections the counts are the only thing most visits need. */}
+        {/* Configured now and recorded history are different questions: a
+            built-in handler records events with nothing configured at all. */}
         <div className="hk2-sum">
+          <span className="hk2-sum-group">Configured now</span>
           <span><span className="hk2-sum-n">{active}</span>{" "}
             <span className="hk2-sum-lab">active</span></span>
           <span><span className={"hk2-sum-n" + (broken ? " hk2-bad" : "")}>{broken}</span>{" "}
             <span className="hk2-sum-lab">failing</span></span>
           <span><span className="hk2-sum-n">{offCount}</span>{" "}
             <span className="hk2-sum-lab">turned off</span></span>
+          <span className="hk2-sum-group">Recorded history</span>
           <span><span className="hk2-sum-n">{recent.length}</span>{" "}
-            <span className="hk2-sum-lab">events recorded</span></span>
+            <span className="hk2-sum-lab">events</span></span>
+          <span><span className="hk2-sum-n">{builtin}</span>{" "}
+            <span className="hk2-sum-lab">from built-in handlers</span></span>
         </div>
         {recent.length === 0
           ? <EmptySection title="Recent decisions">Nothing recorded yet. Every time a hook runs — passing a call through, blocking, rewriting, throwing or leaving a note — it lands here.</EmptySection>
@@ -564,6 +591,9 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
           <div className="proj-head">
             <h2>Recent decisions</h2>
             <span className="num proj-count">newest first</span>
+          </div>
+          <div className="hk-main hk-cols" aria-hidden="true">
+            <span>Time</span><span>Hook</span><span>Session</span><span>Event</span><span>Took</span><span>Outcome</span><span />
           </div>
           {runs.map(({ f, n, key, all }, i) => (
               <div key={key} className="hk-fire">
@@ -612,11 +642,25 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
             ))}
         </section>
           )}
-        {watchers.length === 0 ? (
-              <EmptySection title="Watchers">A watcher is a <code className="mono">.js</code> file in <code className="mono">~/.bough/watchers</code> that
-                   bough runs on an interval and that can wake a session. Drop one in — say
-                   <code className="mono"> ci.js</code> — and it shows up here on the next tick.</EmptySection>
-        ) : (
+        {empty.length > 0 && (
+          <section className="proj hk-setup">
+            <div className="proj-head">
+              <h2>{empty.length === 4 ? "No custom automation configured" : `Not configured: ${empty.join(" · ")}`}</h2>
+            </div>
+            {watchers.length === 0 && <SetupItem title="Watchers" path="~/.bough/watchers">A <code className="mono">.js</code> file
+                   bough runs on an interval that can wake a session. Drop one in — say
+                   <code className="mono"> ci.js</code> — and it shows up here on the next tick.</SetupItem>}
+            {byEvent.length === 0 && <SetupItem title="Hooks" path="~/.bough/hooks">A <code className="mono">.js</code> file here
+                   (yours everywhere) or in <code className="mono">.bough/hooks</code> in a repo (that repo only). The file name is the
+                   hook name; the event it listens for comes from the file itself.</SetupItem>}
+            {rules.length === 0 && <SetupItem title="Rules" path="~/.claude/rules">A <code className="mono">.md</code> file here
+                   (every repo) or in <code className="mono">.claude/rules</code> in a repo (that repo only). It appears here, and in the
+                   Context panel of every session it applies to.</SetupItem>}
+            {plugins.length === 0 && <SetupItem title="Plugins" path="~/.claude/settings.json">Add a marketplace to this file and install
+                   a plugin; the skills and slash commands it brings are listed here.</SetupItem>}
+          </section>
+        )}
+        {watchers.length > 0 && (
         <section className="proj">
           <div className="proj-head">
             <h2>Watchers</h2>
@@ -631,11 +675,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
         </section>
         )}
 
-        {byEvent.length === 0 ? (
-              <EmptySection title="Hooks">A hook is a <code className="mono">.js</code> file in <code className="mono">~/.bough/hooks</code> (yours
-                   everywhere) or <code className="mono">.bough/hooks</code> in a repo (that repo only). The file name is the
-                   hook name; the event it listens for comes from the file itself.</EmptySection>
-        ) : (
+        {byEvent.length > 0 && (
         <section className="proj">
           <div className="proj-head">
             <h2>Hooks</h2>
@@ -656,12 +696,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
         </section>
         )}
 
-        {rules.length === 0 ? (
-              <EmptySection title="Rules">A rule is a <code className="mono">.md</code> file in <code className="mono">~/.claude/rules</code> (every
-                   repo) or <code className="mono">.claude/rules</code> in a repo (that repo only). Write one — say
-                   <code className="mono"> python-standards.md</code> — and it appears here, and in the Context panel of
-                   every session it applies to.</EmptySection>
-        ) : (
+        {rules.length > 0 && (
         <section className="proj">
           <div className="proj-head">
             <h2>Rules</h2>
@@ -694,11 +729,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
         </section>
         )}
 
-        {plugins.length === 0 ? (
-              <EmptySection title="Plugins">A plugin comes from a marketplace listed in <code className="mono">~/.claude/settings.json</code> and
-                   brings skills and slash commands with it. Add a marketplace and install one — say
-                   <code className="mono"> uni-common</code> — and everything it contributes is listed here.</EmptySection>
-        ) : (
+        {plugins.length > 0 && (
         <section className="proj">
           <div className="proj-head">
             <h2>Plugins</h2>

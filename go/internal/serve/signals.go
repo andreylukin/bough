@@ -131,6 +131,14 @@ var testCmd = regexp.MustCompile(`\b(go test|(?:npm|pnpm|yarn|bun)(?: run)? test
 // lastTestFailed reports whether the most recent test command recorded a
 // non-zero exit on its result.
 func lastTestFailed(entries []history.Entry) bool {
+	failed, _ := lastTest(entries)
+	return failed
+}
+
+// lastTest is the most recent test command with a recorded exit: whether
+// it failed and when its result was written (zero when there is none).
+// The web view ages test status from this, never from the last entry.
+func lastTest(entries []history.Entry) (bool, time.Time) {
 	for i := len(entries) - 1; i > 0; i-- {
 		r, c := entries[i], entries[i-1]
 		if r.Kind != "result" || c.Kind != "code" {
@@ -144,10 +152,10 @@ func lastTestFailed(entries []history.Entry) bool {
 		}
 		code, _ := c.Data["text"].(string)
 		if ok && testCmd.MatchString(code) {
-			return exit != 0
+			return exit != 0, r.At
 		}
 	}
-	return false
+	return false, time.Time{}
 }
 
 // Cache is the prompt cache as of the last turn that reported one: when

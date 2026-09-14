@@ -1,20 +1,20 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api, subscribe, type Change, type TurnLine } from "./api";
+import { api, subscribe, type Scope, type TurnLine } from "./api";
 import type { Line, Project, Row } from "./types";
 import { STATUS, StatusMark, Working, hasFailure, hasQuestion, sessionSignal } from "./status";
 import { ProjectsView } from "./projects";
 import { ModeChip, ModePicker, type ModeValue } from "./mode";
 import { Select, type Option } from "./select";
-import { DialogHost, askChoice, askText } from "./dialog";
+import { DialogHost, askChoice, askConfirm, askText } from "./dialog";
 import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath } from "./code";
 import { finishedJobs, lastTestRun } from "./runs";
-import { capped } from "./code";
 import { SkillPicker } from "./skills";
 import { Mentions, triggerAt, type Trigger } from "./mention";
 import { FireInspection, HooksPage, type Fire, type Load, type Save } from "./hooks";
 import { ContextPage } from "./context";
+import { ChangesBody, ChangesPage, countOf, useChanges } from "./changes";
 import { Palette, usePaletteKey, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
 
@@ -47,6 +47,13 @@ function ago(iso: string): string {
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}d`;
+}
+
+/** Focus a region's own stop: the composer, the tree's current row, the transcript, else its first control. */
+function focusRegion(r: HTMLElement) {
+  const el = r.querySelector<HTMLElement>("#composer, [role=tree] [tabindex='0']")
+    ?? (r.tabIndex >= 0 ? r : [...r.querySelectorAll<HTMLElement>("button:not([disabled]), a[href], input, [tabindex='0']")].find((c) => c.offsetParent));
+  (el ?? r).focus();
 }
 
 /** ⌘ on a Mac, Ctrl everywhere else. */
@@ -106,7 +113,7 @@ function excerpt(text: string, at: number, lead: number): { text: string; at: nu
 }
 
 /** A media query as state, following the window as it changes. */
-function useMedia(query: string): boolean {
+export function useMedia(query: string): boolean {
   const [on, setOn] = useState(() => typeof window !== "undefined" && Boolean(window.matchMedia?.(query).matches));
   useEffect(() => {
     const m = window.matchMedia?.(query);
@@ -173,7 +180,7 @@ const ICONS = {
   chevron: <path d="M9 6l6 6-6 6" />,
 };
 
-export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry }: {
+export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onFind, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
   /** The fleet's freshness: when the list last loaded (null before), and why the last refresh failed. */
   loadedAt?: number | null; loadErr?: string | null; onRetry?: () => void;
@@ -188,6 +195,8 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
   wikiFlags?: number;
   /** Starting work is the other half of a control room; it opens the palette's Start group. */
   onNew?: () => void;
+  /** Search from the folded rail: the palette, so opening a result never unfolds it. */
+  onFind?: () => void;
   /** Mark a troubled session seen without opening it. */
   onAck?: (id: string) => void;
   /** Whether the list is on screen; coming back to it puts focus on the row you left. */
@@ -245,6 +254,22 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     setClosed(c);
     try { localStorage.setItem("bough:side-closed", c ? "1" : "0"); } catch { /* storage off */ }
   };
+  // ⌘B (Ctrl+B) folds and unfolds, never inside a text field; the palette sends the same event.
+  const closedRef = useRef(closed);
+  closedRef.current = closed;
+  useEffect(() => {
+    const flipSide = () => setSide(!closedRef.current);
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "b") return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      e.preventDefault();
+      flipSide();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("bough:toggle-side", flipSide);
+    return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("bough:toggle-side", flipSide); };
+  }, []);
 
   // Search sits behind the toolbar; a filter in force keeps it open.
   const [searching, setSearching] = useState(false);
@@ -295,9 +320,11 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
       id: r.id,
       top: Math.max(8, Math.min(rect.top, window.innerHeight - 200)),
       left: Math.min(rect.right + 8, window.innerWidth - 372),
-    }), 350);
+    }), 300);
   };
   const unpeek = () => { clearTimeout(peekTimer.current); peekTimer.current = setTimeout(() => setCard(null), 150); };
+  // A card for the session you just left is stale.
+  useEffect(() => { clearTimeout(peekTimer.current); setCard(null); }, [selected]);
 
   // Workspaces fold too, kept across reloads; a search folds on its own
   // and forgets it when cleared, so 54 Background hits can be put away.
@@ -467,9 +494,9 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
         <div className={"row-wrap" + (open ? " row-open" : "")}>
           <button role="treeitem" onClick={() => onSelect(r.id)} data-id={r.id}
                   onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
-                  onFocus={(e) => peek(r, e.currentTarget)} onBlur={unpeek}
+                  onBlur={unpeek}
                   aria-describedby={card?.id === r.id ? "row-card" : undefined}
-                  className={"row" + (on ? " row-on" : "") + (r.turns && !q ? " row-has-log" : "") + (r.trouble && onAck ? " row-has-ack" : "")}
+                  className={"row" + (label ? " row-2" : "") + (on ? " row-on" : "") + (r.turns && !q ? " row-has-log" : "") + (r.trouble && onAck ? " row-has-ack" : "")}
                   aria-current={on ? "true" : undefined}
                   title={`${why} · ${ago(r.lastAt)} ago${r.branch ? ` · ${r.branch}` : ""}`}>
             {/* A failure you have not seen is a red mark; the reason is its label. */}
@@ -478,19 +505,27 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
                 ? <span className="status"><svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{STATUS.error.glyph}</svg><span className="visually-hidden">{why}</span></span>
                 : <StatusMark status={r.status} size={16} bare />}
             </span>
+            {/* Status metadata goes under the title, so a chip never cuts the name. */}
+            <span className={label ? "row-stack" : "row-line"}>
+            <span className="row-name">
             {title
               ? <><span className="row-title" title={shown !== title ? title : undefined}>{marked(shown, q)}</span>{twin && <span className="mono row-id">{r.id.slice(-6)}</span>}</>
               // No title: the id tail alone tells rows apart.
               : <span className="row-title mono row-untitled">{r.id.slice(-6)}</span>}
+            </span>
+            {label && <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : "") + (failed || asking || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
+              <ModeChip row={r} />{label} · {ago(failed === "tests failed" && r.testsAt ? r.testsAt : r.lastAt)}
+            </span>}
+            </span>
             {r.jobs && r.jobs.length > 0 && (
               <span className="num row-jobs" title={r.jobs.map((j) => j.cmd).join("\n")}>
                 {r.jobs.length}<span className="visually-hidden"> {r.jobs.length === 1 ? "job" : "jobs"}</span>
               </span>
             )}
             {/* Touch has no hover card: a phone reads status and age off the row. */}
-            <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : "") + (failed || asking || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
-              <ModeChip row={r} />{label ? `${label} · ` : ""}{ago(r.lastAt)}
-            </span>
+            {!label && <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : "") + (failed || asking || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
+              <ModeChip row={r} />{ago(r.lastAt)}
+            </span>}
           </button>
           {/* The disclosure and Seen are siblings of the row, not inside
               it: a button in a button is invalid and would open it too. */}
@@ -577,17 +612,23 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
   const toolbar = (
     <div className="side-bar">
       <button className="side-icon side-collapse" onClick={() => setSide(!closed)} aria-expanded={!closed}
-              aria-label={closed ? "Show sidebar" : "Hide sidebar"} title={closed ? "Show sidebar" : "Hide sidebar"}>
+              aria-label={closed ? "Show sidebar" : "Hide sidebar"} title={`${closed ? "Show sidebar" : "Hide sidebar"} (${modKey()}B)`}>
         <Icon d={ICONS.panel} />
       </button>
-      {!folded && <>
+      {folded ? <>
+        {/* The rail keeps what the toolbar does; search is the palette, which leaves the rail folded. */}
+        {onFind && <button className="side-icon" onClick={onFind} aria-label="Search sessions" title={`Search sessions (${modKey()}K)`}><Icon d={ICONS.search} /></button>}
+        {onNew && <button className="side-new" onClick={onNew} aria-label="New session" title="New session"><Icon d={ICONS.compose} /></button>}
+        <button className="side-icon" onClick={() => window.history.back()} aria-label="Back" title="Back"><Icon d={ICONS.back} /></button>
+        <button className="side-icon" onClick={() => window.history.forward()} aria-label="Forward" title="Forward"><Icon d={ICONS.forward} /></button>
+      </> : <>
         <button className="side-icon" onClick={() => window.history.back()} aria-label="Back" title="Back"><Icon d={ICONS.back} /></button>
         <button className="side-icon" onClick={() => window.history.forward()} aria-label="Forward" title="Forward"><Icon d={ICONS.forward} /></button>
         <button ref={searchBtn} className={"side-icon" + (showSearch ? " side-icon-on" : "")} aria-expanded={showSearch} aria-controls="q"
                 onClick={() => { if (showSearch) { onQuery(""); setSearching(false); } else setSearching(true); }}
                 aria-label="Search sessions" title="Search sessions (/)"><Icon d={ICONS.search} /></button>
         {onNew && (
-          <button className="side-new" onClick={onNew} aria-label="New conversation" title={`New conversation (${modKey()}K)`}>
+          <button className="side-new" onClick={onNew} aria-label="New session" title="New session">
             <Icon d={ICONS.compose} />
           </button>
         )}
@@ -595,7 +636,8 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
     </div>
   );
 
-  if (folded) return <div className="sidebar sidebar-closed">{toolbar}</div>;
+  const nav = onView && <ViewNav view={view} onView={onView} wikiFlags={wikiFlags} icons={folded} />;
+  if (folded) return <div className="sidebar sidebar-closed">{toolbar}<div className="rail-gap" />{nav}</div>;
 
   const total = recent.length + inactive.length + background.length + archived.length;
   // While something in Background needs you, its count says how many, not the total.
@@ -668,24 +710,40 @@ export function Sidebar({ rows, selected, onSelect, onTurn, query, onQuery, show
           : archivedState === "failed" ? <p className="list-none">Couldn’t load archived · <button className="link" onClick={onRetryArchived}>Retry</button></p>
           : archived.length ? workspaces(byWorkspace(archived), "archived") : <p className="list-none">{q ? "No archived matches." : "Nothing archived."}</p>)}
       </div>
-      {onView && (
-        <nav className="side-nav" aria-label="Views">
-          {([["projects", "Projects", ICONS.projects], ["hooks", "Hooks", ICONS.hooks], ["wiki", "Wiki", ICONS.wiki]] as const).map(([v, label, icon]) => (
-            <button key={v} className={"side-nav-item" + (view === v ? " side-nav-on" : "")}
-                    aria-current={view === v ? "page" : undefined}
-                    onClick={() => onView(v)}>
-              <Icon d={icon} size={20} />
-              <span>{label}</span>
-              {v === "wiki" && wikiFlags > 0 && (
-                <span className="nav-count" title={`${wikiFlags} claims to review`}>
-                  {wikiFlags}<span className="visually-hidden"> claims to review</span>
-                </span>
-              )}
-            </button>
-          ))}
-        </nav>
-      )}
+      {nav}
     </div>
+  );
+}
+
+const NAV_HREF: Record<View, string> = { sessions: "#/", projects: "#/projects", hooks: "#/hooks", wiki: "#/wiki" };
+
+/**
+ * The pages beside sessions, as links: they have routes, so they open in a
+ * new tab and copy as a URL. A plain click still goes through onView, which
+ * pushes history the way the rest of the app does. `phone` adds Sessions:
+ * there it is the shell's bottom bar, not the sidebar's foot.
+ */
+export function ViewNav({ view, onView, wikiFlags = 0, icons = false, phone = false }: {
+  view: View; onView: (v: View) => void; wikiFlags?: number; icons?: boolean; phone?: boolean;
+}) {
+  const items = ([["sessions", "Sessions", ICONS.search], ["projects", "Projects", ICONS.projects], ["hooks", "Hooks", ICONS.hooks], ["wiki", "Wiki", ICONS.wiki]] as const)
+    .filter(([v]) => phone || v !== "sessions");
+  return (
+    <nav className={phone ? "side-nav phone-nav" : "side-nav" + (icons ? " side-nav-rail" : "")} aria-label="Views">
+      {items.map(([v, label, icon]) => (
+        <a key={v} href={NAV_HREF[v]} className={"side-nav-item" + (view === v ? " side-nav-on" : "")}
+           aria-current={view === v ? "page" : undefined} title={icons ? label : undefined}
+           onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); onView(v); }}>
+          <Icon d={icon} size={20} />
+          <span className={icons ? "visually-hidden" : undefined}>{label}</span>
+          {v === "wiki" && wikiFlags > 0 && (
+            <span className="nav-count" title={`${wikiFlags} claims to review`}>
+              {wikiFlags}<span className="visually-hidden"> claims to review</span>
+            </span>
+          )}
+        </a>
+      ))}
+    </nav>
   );
 }
 
@@ -801,8 +859,10 @@ export function ResultBlock({ line }: { line: Line }) {
   // result. data.code is that prefix.
   const code = typeof line.data?.code === "string" ? (line.data.code as string) : "";
   const body = code && line.text.startsWith(code) ? line.text.slice(code.length).trimStart() : line.text;
-  const lines = (body || "(no output)").split("\n");
+  const lines = body.split("\n");
   const head = lines.find((l) => l.trim()) ?? "";
+  // Recorded, and empty: a line that says so, not an empty box to open.
+  if (!body.trim()) return <div className="tool-state"><span className="block-label">Result</span><span className="num">No output</span></div>;
   return (
     <details className="block thin">
       <summary>
@@ -812,7 +872,7 @@ export function ResultBlock({ line }: { line: Line }) {
         <CopyButton text={body} what="output" />
       </summary>
       <div className="block-body">
-        <Code text={body || "(no output)"} lang={resultLang(line)} />
+        <Code text={body} lang={resultLang(line)} />
       </div>
     </details>
   );
@@ -846,9 +906,9 @@ export function JobBlock({ line }: { line: Line }) {
       <summary>
         <span className="block-label">{failed ? "Job failed" : "Job"}</span>
         <span className="mono block-detail">{head.replace(/^job\s+/, "").slice(0, 90)}</span>
-        {body && <span className="num block-lines">{lineCount(body.split("\n").length)}</span>}
+        <span className="num block-lines">{body ? lineCount(body.split("\n").length) : "No output"}</span>
       </summary>
-      <pre className="mono">{body || "(no output)"}</pre>
+      {body && <pre className="mono">{body}</pre>}
     </details>
   );
 }
@@ -876,7 +936,7 @@ export function Entry({ line, codes, nested }: { line: Line; codes: string[]; ne
           <details className="block thin">
             <summary>
               <span className="block-label">Program</span>
-              <span className="block-detail">execution not recorded</span>
+              <span className="tool-unrecorded"><WarnMark />Execution not recorded</span>
             </summary>
             <div className="block-body"><Code text={program} lang="javascript" /></div>
           </details>
@@ -1031,6 +1091,13 @@ export function SubRun({ agents, live }: { agents: SubAgent[]; live: boolean }) 
   );
 }
 
+/** A path cut from the left, keeping its last directory and filename: "…/serve/", "…/serve/app.tsx". */
+function tailPath(p: string): string {
+  if (/\s/.test(p) || !p.includes("/")) return p;
+  const parts = p.split("/");
+  return parts.length > 2 ? "…/" + parts.slice(-2).join("/") : p;
+}
+
 /** A command's first line; the line's own width truncates it, not a count. */
 function gistOf(text: string): string {
   return firstLine(text);
@@ -1071,20 +1138,25 @@ function useThinPop(rows: CallFacts[]) {
     const scroll = (e: Event) => { if (!ref.current?.contains(e.target as Node)) hide(); };
     window.addEventListener("keydown", key, true);
     window.addEventListener("scroll", scroll, true);
-    return () => { window.removeEventListener("keydown", key, true); window.removeEventListener("scroll", scroll, true); };
+    // Moving to another session or view leaves nothing to describe.
+    window.addEventListener("hashchange", hide);
+    window.addEventListener("popstate", hide);
+    return () => {
+      window.removeEventListener("keydown", key, true); window.removeEventListener("scroll", scroll, true);
+      window.removeEventListener("hashchange", hide); window.removeEventListener("popstate", hide);
+    };
   }, [at, hide]);
   useEffect(() => () => clearTimeout(timer.current), []);
   const show = (e: React.SyntheticEvent<HTMLElement>) => {
     const el = e.currentTarget;
     if ((el.parentElement as HTMLDetailsElement | null)?.open) return;
-    // Keyboard focus shows it on any device; a click's focus does not.
-    const keyboard = e.type === "focus" && el.matches(":focus-visible");
-    if (!keyboard && (e.type === "focus" || !canHover())) return;
+    // A fine pointer only: focus walking the summaries never opens a preview.
+    if (!canHover()) return;
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => setAt(el.getBoundingClientRect()), keyboard ? 0 : 350);
+    timer.current = setTimeout(() => setAt(el.getBoundingClientRect()), 300);
   };
   const handlers = {
-    onMouseEnter: show, onFocus: show, onMouseLeave: hideSoon, onBlur: hide, onClick: hide,
+    onMouseEnter: show, onMouseLeave: hideSoon, onBlur: hide, onClick: hide,
     "aria-describedby": at ? id : undefined,
   };
   // Placed from its own measured size: below the line if it fits, else
@@ -1137,11 +1209,37 @@ function resultBody(l: Line): string {
   return code && l.text.startsWith(code) ? l.text.slice(code.length).trimStart() : l.text;
 }
 
+/** Verbs parseCall classifies; anything else is a group without an invented name. */
+const KNOWN_VERBS = new Set(["Ran", "Wrote", "Patched", "Read", "Delegate", "Asked you", "Test", "Search", "Build", "Fetch", "Vet"]);
+
+function WarnMark() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3 2 21h20L12 3z" /><path d="M12 10v5M12 18h.01" />
+    </svg>
+  );
+}
+
+/** A labelled copy button, for where an icon alone is not enough. */
+function CopyText({ text, label }: { text: string; label: string }) {
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    if (!done) return;
+    const t = setTimeout(() => setDone(false), 1400);
+    return () => clearTimeout(t);
+  }, [done]);
+  return (
+    <button type="button" className="btn" onClick={() => navigator.clipboard?.writeText(text).then(() => setDone(true), () => {})}>
+      {done ? "Copied" : label}
+    </button>
+  );
+}
+
 /**
  * A run of tool calls as one row: how many, the last thing it did, and
  * whether any failed. Opened, each call is its own block again.
  */
-export function ToolRun({ lines, codes }: { lines: Line[]; codes: string[] }) {
+export function ToolRun({ lines, codes, live, stopped, failSeq }: { lines: Line[]; codes: string[]; live?: boolean; stopped?: boolean; /** The result seq of the failure the turn ended on: it opens itself. */ failSeq?: number }) {
   // Pair each call with the result recorded for it: one row per thing
   // done, not a "Ran" row and a "Result" row saying half each. A result
   // names its call in data.code, so notes in between never split the
@@ -1161,7 +1259,7 @@ export function ToolRun({ lines, codes }: { lines: Line[]; codes: string[] }) {
         if (code ? code.trim() === l.text.trim() : j === i + 1) { result = r; used.add(j); break; }
       }
       facts.push(callFacts(l, result));
-      rows.push(<ToolCall key={l.seq} code={l} result={result} />);
+      rows.push(<ToolCall key={l.seq} code={l} result={result} live={live} stopped={stopped} current={failSeq !== undefined && result?.seq === failSeq} />);
     } else {
       rows.push(<Entry key={l.seq} line={l} codes={codes} />);
     }
@@ -1169,6 +1267,7 @@ export function ToolRun({ lines, codes }: { lines: Line[]; codes: string[] }) {
   const { handlers, pop } = useThinPop(facts);
   const box = useRef<HTMLDetailsElement>(null);
   const calls = facts.length;
+  const holdsFail = failSeq !== undefined && lines.some((l) => l.seq === failSeq);
   if (calls < 2) return <>{rows}</>;
   const failed = facts.filter((f) => f.failed).length;
   const timed = facts.every((f) => f.ms !== undefined);
@@ -1188,13 +1287,23 @@ export function ToolRun({ lines, codes }: { lines: Line[]; codes: string[] }) {
   // The line names the work: what kind of calls, then what they were
   // aimed at. The count and time are secondary; the full targets sit in
   // the hover list and the expansion.
-  const verbs = [...new Set(facts.map((f) => f.verb))].map((v, i) => (i ? v.toLowerCase() : v));
+  // Only the failure count is red: one failed child does not make the work a failure.
+  const verbs = [...new Set(facts.map((f) => f.verb))];
+  const known = verbs.every((v) => KNOWN_VERBS.has(v));
+  const label = !known || verbs.length > 2 ? "Tool group" : verbs.map((v, i) => (i ? v.toLowerCase() : v)).join(" and ");
   const targets = [...new Set(facts.map((f) => f.gist).filter(Boolean))];
+  const fileish = verbs.every((v) => v === "Wrote" || v === "Patched" || v === "Read");
+  // A path keeps its filename: the leading directories are what gets cut.
+  // A program's gist carries its own " +N"; the row counts "N more" once, itself.
+  const first = (targets[0] ?? "").replace(/ \+\d+$/, "");
+  const target = first ? (fileish ? first.split("/").pop()! : first) : "";
+  const more = targets.length - 1;
   return (
-    <details className="block thin toolrun" ref={box}>
+    <details className="block thin toolrun" ref={box} open={holdsFail || undefined}>
       <summary {...handlers}>
-        <span className={"block-label" + (failed ? " thin-failed" : "")}>{capped(verbs, 2, " + ")}</span>
-        <span className="mono block-detail">{capped(targets, 1, " · ")}</span>
+        <span className="block-label">{label}</span>
+        {target && <span className="mono block-detail" title={targets[0]}>{target}</span>}
+        {more > 0 && <span className="num tool-more">{more} more {fileish ? (more === 1 ? "file" : "files") : ""}</span>}
         <span className="num tool-meta">{calls} calls{timed ? ` · ${duration(totalMs)}` : ""}</span>
         {failed > 0 && <button type="button" className="link num toolrun-failed" onClick={openFailed}>{failed} failed</button>}
       </summary>
@@ -1209,7 +1318,7 @@ export function ToolRun({ lines, codes }: { lines: Line[]; codes: string[] }) {
  * was done and how much it printed; opened, the program and its output
  * sit together, with the raw call one level further in.
  */
-export function ToolCall({ code, result }: { code: Line; result?: Line }) {
+export function ToolCall({ code, result, live, stopped, current }: { code: Line; result?: Line; /** Its turn is still running. */ live?: boolean; stopped?: boolean; /** The failure its turn ended on: open, with the diagnosis. */ current?: boolean }) {
   const call = useMemo(() => parseCall(code.text), [code.text]);
   const out = result ? resultBody(result) : "";
   // Recorded evidence, when the loop stamped it: the block's own exit code
@@ -1231,26 +1340,54 @@ export function ToolCall({ code, result }: { code: Line; result?: Line }) {
     preview: result ? shown.join("\n") + (more > 0 ? `\n+${lineCount(more)}` : "") : undefined,
   }]);
   // The recorded exit and time, success or not: "exit 0" is evidence too.
-  const meta = [failed ? "Failed" : "", exit !== undefined ? `exit ${exit}` : "", ms !== undefined ? duration(ms) : ""];
+  const empty = Boolean(result) && !out.trim();
+  const meta = [failed ? "Failed" : "", exit !== undefined ? `exit ${exit}` : "", empty ? "No output" : "", ms !== undefined ? `Command: ${duration(ms)}` : ""];
   const what = call.lang === "bash" ? "Command" : call.lang === "javascript" ? "Program" : "Content";
+  // No result: still running, cut off by a stop, or never recorded. Each says which.
+  const missing = result ? null : live ? "running" : stopped ? "Interrupted · result not recorded" : "Result not recorded";
+  const [full, setFull] = useState(false);
+  const phone = useMedia("(max-width:720px)");
+  // The last lines of a failure are where the diagnosis is.
+  const diag = failed ? out.split("\n").filter((l) => l.trim()).slice(-10) : [];
+  const cmdText = call.lang === "bash" ? call.body : call.raw;
   return (
-    <details className={"block thin" + (failed ? " block-failed" : "")} data-seq={result?.seq}>
+    <details className={"block thin toolcall" + (failed ? " block-failed" : "")} data-seq={result?.seq} open={current || undefined}>
       <summary {...handlers}>
         <span className="block-label">{timedOut ? "Question timed out" : call.verb}</span>
-        <span className="mono block-detail">{timedOut ? timedOut[1] : gistOf(call.gist)}</span>
+        <span className="mono block-detail" title={call.gist}>{timedOut ? timedOut[1] : phone ? tailPath(gistOf(call.gist)) : gistOf(call.gist)}</span>
         {meta.some(Boolean) && (
           <span className={"num tool-meta" + (failed ? " tool-meta-failed" : "")}>{meta.filter(Boolean).join(" · ")}</span>
         )}
-        <CopyButton text={out || call.body || call.raw} what={result ? "output" : call.verb.toLowerCase() + " block"} />
+        {missing === "running" && (
+          <span className="num tool-meta tool-running">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                 strokeLinecap="round" className="spin-mark" aria-hidden="true"><circle cx="12" cy="12" r="8.5" strokeDasharray="40 14" /></svg>
+            Running
+          </span>
+        )}
+        {missing && missing !== "running" && <span className="tool-unrecorded"><WarnMark />{missing}</span>}
+        {!empty && <CopyButton text={out || call.body || call.raw} what={result ? "output" : call.verb.toLowerCase() + " block"} />}
       </summary>
       {pop}
       <div className="block-body">
         {/* Output first; the call that made it is one disclosure, once. */}
         {!result && call.body && <Code text={call.body} lang={call.lang} />}
+        {failed && diag.length > 0 && (
+          <div className="fail-diag">
+            <pre className="mono fail-cmd">{cmdText}</pre>
+            <pre className="mono">{diag.join("\n")}</pre>
+            <div className="fail-actions">
+              <CopyText text={cmdText} label="Copy command" />
+              {diag.length < out.split("\n").length && (
+                <button type="button" className="btn" aria-expanded={full} onClick={() => setFull((v) => !v)}>{full ? "Hide full output" : "Full output"}</button>
+              )}
+            </div>
+          </div>
+        )}
         {/* Output keeps its columns: a docker ps or a table wrapped at the
             block's edge scatters every row across three lines. */}
-        {result && <div className="tool-output"><Code text={out || "(no output)"} lang={resultLang(result)} /></div>}
-        {result ? (
+        {result && !empty && (!failed || full || !diag.length) && <div className="tool-output"><Code text={out} lang={resultLang(result)} /></div>}
+        {result && failed && diag.length > 0 ? null : result ? (
           <details className="block-inner">
             <summary><span className="block-label">{what}</span></summary>
             <Code text={call.body || call.raw} lang={call.body ? call.lang : "javascript"} />
@@ -1336,27 +1473,68 @@ export function TurnHooks({ lines, load, save }: { lines: Line[]; load?: Load; s
  * changed. A bare "Finished" told a programmer none of that. Nothing is
  * estimated — a provider that recorded no usage shows only the outcome.
  */
-function TurnFooter({ turn }: { turn: Turn }) {
+function TurnFooter({ turn, fail }: { turn: Turn; /** The result the turn's failure came from, when recorded. */ fail?: Line }) {
   const done = turn.done!;
   const u = usageOf(done);
   const files = Array.isArray(done.data?.files) ? (done.data!.files as string[]) : [];
-  const exit = done.data?.exit;
+  const exit = typeof done.data?.exit === "number" ? done.data.exit : fail?.data?.exit;
   const failed = typeof exit === "number" && exit !== 0;
   const facts: string[] = [];
-  if (turn.prompt?.at) facts.push(duration(Date.parse(done.at) - Date.parse(turn.prompt.at)));
+  if (turn.prompt?.at) facts.push(`Turn: ${duration(Date.parse(done.at) - Date.parse(turn.prompt.at))}`);
+  // What failed, said where the turn ends: a phone has no hover to read it from.
+  const failCmd = fail ? gistOf(parseCall(str(fail.data?.code)).gist) : "";
+  const failOut = fail ? resultBody(fail).split("\n").filter((l) => l.trim()).slice(-3) : [];
+  const failName = fail ? /--- FAIL: (\S+)/.exec(resultBody(fail))?.[1] ?? failCmd : "";
+  // The failed call already open on screen says it all; the footer then only points at it.
+  const [shownOpen, setShownOpen] = useState(Boolean(fail));
+  useEffect(() => {
+    if (!fail) return;
+    const check = () => {
+      const el = document.querySelector<HTMLDetailsElement>(`details.block[data-seq="${fail.seq}"]`);
+      let open = Boolean(el?.open);
+      for (let d = el?.parentElement?.closest("details") ?? null; d && open; d = d.parentElement?.closest("details") ?? null) open = (d as HTMLDetailsElement).open;
+      setShownOpen(open);
+    };
+    check();
+    document.addEventListener("toggle", check, true);
+    return () => document.removeEventListener("toggle", check, true);
+  }, [fail]);
+  const model = str(done.data?.model);
+  const show = () => {
+    const el = document.querySelector<HTMLElement>(`details.block[data-seq="${fail?.seq}"]`);
+    if (!el) return;
+    for (let d: HTMLElement | null = el; d; d = d.parentElement?.closest("details") ?? null) if (d instanceof HTMLDetailsElement) d.open = true;
+    el.scrollIntoView({ block: "center" });
+    el.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
+  };
   // The strip above owns session totals; a turn says what it took, with
   // its tokens on the price rather than as a third figure.
   if (u) facts.push(`${tokenCount(u.in)} in · ${tokenCount(u.out)} out`);
   if (u?.cost !== undefined) facts.push(money(u.cost));
   return (
     <div className="turn-foot">
-      <span className={"turn-outcome" + (failed ? " turn-failed" : "")}>
-        {turn.stopped || done.kind === "cancelled" ? "Stopped" : failed ? `Finished · last command exit ${exit}` : "Finished"}
-      </span>
+      {failed && fail && shownOpen && !(turn.stopped || done.kind === "cancelled") ? (
+        <span className="turn-fail-row">
+          <span className="turn-failed">{failName || "Command"} failed · exit {exit}</span>
+          <span aria-hidden="true">·</span>
+          <button type="button" className="link turn-fail-jump" onClick={show}>Jump to command</button>
+        </span>
+      ) : (
+        <span className={"turn-outcome" + (failed ? " turn-failed" : "")}>
+          {turn.stopped || done.kind === "cancelled" ? "Stopped" : failed ? `Finished with a failed command · exit ${exit}` : "Finished"}
+        </span>
+      )}
+      {model && <span className="mono">{model.split("/").pop()}</span>}
       {facts.map((f) => <span key={f} className="num">{f}</span>)}
+      {failed && fail && !shownOpen && (
+        <div className="turn-fail" role="note">
+          <button type="button" className="link mono turn-fail-cmd" onClick={show}>{failCmd || "Show the failed command"}</button>
+          {failOut.length > 0 && <pre className="mono">{failOut.join("\n")}</pre>}
+        </div>
+      )}
       {files.length > 0 && (
         <details className="turn-files">
-          <summary>{files.length} {files.length === 1 ? "file" : "files"} changed</summary>
+          <summary>This turn: {files.length} {files.length === 1 ? "file" : "files"}</summary>
           <ul>{files.map((f) => <li key={f} className="mono">{f}</li>)}</ul>
         </details>
       )}
@@ -1403,15 +1581,17 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext }: { row: Row; li
           Updates paused · last synced {clock(new Date(paused).toISOString())} · <button className="link" onClick={onRetry}>Retry</button>
         </span>
       )}
-      {u && (() => {
-        // The reading is the way into Context; there is no second button for it.
-        const tip = limit ? `${u.lastIn.toLocaleString()} of ${limit.toLocaleString()} tokens, read by ${row.model}`
+      {(() => {
+        // The reading is the way into Context; there is no second button for
+        // it, and it stays when nothing was reported so the way in does too.
+        const tip = !u ? "No input tokens have been reported for this session"
+          : limit ? `${u.lastIn.toLocaleString()} of ${limit.toLocaleString()} tokens, read by ${row.model}`
           : !row.model ? "No model is recorded for this session, so headroom is not known"
           : switched ? "The model changed after this input was read; headroom shows once the new model answers"
           : `${row.model} has no context window in the catalogue`;
         const body = <>
-          <span className="rt-label">{limit ? "Context" : "Last input"}</span>
-          <span className="num rt-value">{tokenCount(u.lastIn)}{limit ? ` · ${tokenCount(Math.max(0, limit - u.lastIn))} left` : ""}</span>
+          <span className="rt-label">Context</span>
+          <span className={"num rt-value" + (u ? "" : " rt-stale")}>{!u ? "Not reported" : `${tokenCount(u.lastIn)}${limit ? ` · ${tokenCount(Math.max(0, limit - u.lastIn))} left` : " · window unknown"}`}</span>
           {pct !== undefined && (
             <span className="rt-bar" role="meter" aria-label="Context used" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
               <span className={pct >= 80 ? "rt-hot" : undefined} style={{ width: `${pct}%` }} />
@@ -1422,6 +1602,11 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext }: { row: Row; li
           ? <button type="button" className="rt rt-link" title={`${tip} · open Context`} aria-label={`Context: ${tip}`} onClick={onContext}>{body}</button>
           : <Tip tip={tip}>{body}</Tip>;
       })()}
+      {u?.cost === undefined && (
+        <Tip tip="The provider has not reported a cost for this session">
+          <span className="rt-label">Cost</span><span className="num rt-value rt-stale">Not reported</span>
+        </Tip>
+      )}
       {u?.cost !== undefined && (
         <Tip tip={`Session cost: ${u.in.toLocaleString()} tokens in · ${u.out.toLocaleString()} out`}>
           <span className="rt-label">Cost</span><span className="num rt-value">{money(u.cost)}</span>
@@ -1464,91 +1649,32 @@ function usePopovers(root: React.RefObject<HTMLElement | null>) {
 }
 
 /**
- * What is uncommitted where the session works, read from git whenever the
- * transcript grows. It is the repository's state, not a tally of what the
- * agent claimed, so an edit made by hand shows too. Every state is said:
- * reading, clean, not a repository, or a failed read (the last result
- * kept and marked stale). A file opens its diff.
+ * What the session changed, scoped and named: its own edits by default
+ * (from its checkpoints, so dirt already in the tree is not the agent's),
+ * the working tree one tab away. A phone has no room for a popover and
+ * goes to the full page, #/s/<id>/changes.
  */
 function ChangesChip({ row, tick }: { row: Row; tick: number }) {
-  const id = row.id;
-  const [state, setState] = useState<{ files: Change[] | null; repo: boolean; failed: boolean; at?: number; seen?: number }>({ files: null, repo: true, failed: false });
-  const [nonce, setNonce] = useState(0);
-  const [diff, setDiff] = useState<{ path: string; sig: string; text: string | null; failed?: boolean } | null>(null);
-  useEffect(() => {
-    let live = true;
-    // A hand edit or another session changes the tree without a transcript
-    // entry, so it is re-read on a timer too.
-    const read = () => api.changes(id)
-      .then((r) => { if (live) setState((s) => ({ files: r.files, repo: r.repo, failed: false, at: Date.now(), seen: r.repo ? Date.now() : s.seen })); })
-      .catch(() => { if (live) setState((s) => ({ ...s, failed: true })); });
-    read();
-    const t = setInterval(read, 10_000);
-    return () => { live = false; clearInterval(t); };
-  }, [id, tick, nonce]);
-  const sigOf = (f?: Change) => f ? `${f.add}/${f.del}/${f.new}` : "gone";
-  const open = (path: string) => {
-    const sig = sigOf(state.files?.find((f) => f.path === path));
-    setDiff({ path, sig, text: null });
-    api.diff(id, path).then((text) => setDiff((d) => d?.path === path ? { path, sig, text } : d),
-      () => setDiff((d) => d?.path === path ? { path, sig, text: null, failed: true } : d));
-  };
-  const { files, repo, failed, at, seen } = state;
-  if (files === null && !failed) return <span className="rt"><span className="rt-label">Changes…</span></span>;
-  const add = (files ?? []).reduce((n, f) => n + Math.max(0, f.add), 0);
-  const del = (files ?? []).reduce((n, f) => n + Math.max(0, f.del), 0);
-  // One disclosure in every state: what was read, where, and when.
-  const value = files === null ? "unavailable"
-    : !repo ? "not a Git repository"
-    : !files.length ? "clean"
-    : null;
+  const data = useChanges(row.id, tick);
+  const phone = useMedia("(max-width:720px)");
+  const [scope, setScope] = useState<Scope>("session");
+  const c = countOf(data.session);
+  const t = countOf(data.tree);
+  const href = `#/s/${row.id}/changes`;
+  const aria = `Session edits: ${c.text}${c.add !== undefined ? `, ${c.add} added, ${c.del} removed` : ""}. Working tree: ${t.text}${data.session.failed || data.tree.failed ? ", stale" : ""}`;
+  const body = <>
+    <span className="rt-label">Session edits</span>
+    <span className={"num rt-value" + (c.quiet ? " rt-stale" : "")}>{c.text}{c.add !== undefined && <> <span className="rt-add">+{c.add}</span> <span className="rt-del">−{c.del}</span></>}</span>
+  </>;
+  if (phone && c.text === "None") return <span className="rt" aria-label={aria}>{body}</span>;
+  if (phone) return <a className="rt rt-link" href={href} aria-label={aria}>{body}</a>;
   return (
-    <details className="rt rt-jobs" onToggle={(e) => { if (!e.currentTarget.open) setDiff(null); }}>
-      <summary aria-label={`Working-tree changes: ${value ?? `${files!.length} files, ${add} added, ${del} removed`}${failed ? ", stale" : ""}`}>
-        <span className="rt-label">Changes</span>
-        {value ? <span className={"rt-value" + (value === "clean" ? "" : " rt-stale")}>{value}</span>
-          : <span className="num rt-value">{files!.length} <span className="rt-add">+{add}</span> <span className="rt-del">−{del}</span></span>}
-        {failed && files !== null && <span className="rt-label">· stale</span>}
-      </summary>
-      {diff ? (
-        <div className="rt-pop rt-diff">
-          <button className="head-pop-item rt-back" aria-label="Back to files" onClick={() => setDiff(null)}>← Back to files · <span className="mono">{diff.path}</span></button>
-          {diff.text !== null && sigOf(files?.find((f) => f.path === diff.path)) !== diff.sig && (
-            <button className="btn rt-stop" onClick={() => open(diff.path)}>File changed since opened · Reload</button>
-          )}
-          {diff.text !== null ?<pre className="mono rt-diff-body">{diff.text.split("\n").map((l, i) => (
-              <span key={i} className={l.startsWith("+") && !l.startsWith("+++") ? "rt-add" : l.startsWith("-") && !l.startsWith("---") ? "rt-del" : l.startsWith("@@") ? "rt-label" : undefined}>{l + "\n"}</span>
-            ))}</pre>
-            : diff.failed ? <button className="btn rt-stop" onClick={() => open(diff.path)}>Couldn’t read the diff · Retry</button>
-            : <p className="rt-label">Reading diff…</p>}
-        </div>
-      ) : (
-        <ul className="rt-pop rt-changes">
-          <li className="rt-pop-head">
-            <span>Working-tree changes</span>
-            <span className="mono rt-label rt-job-cmd" title={row.cwd}>{row.cwd}{row.branch ? ` · ${row.branch}` : ""}</span>
-            <span className="rt-label">{at ? `Read ${clock(new Date(at).toISOString())}` : "Not read yet"} · current working tree, not this session’s edits</span>
-          </li>
-          {failed && (
-            <li><span className="rt-label">{files === null ? "Couldn’t read git status" : "Stale: the last refresh failed"}</span>
-              <button className="btn rt-stop" onClick={() => setNonce((n) => n + 1)}>Retry</button></li>
-          )}
-          {files !== null && !repo && <li className="rt-label">Not a Git repository{seen ? ` · last seen as one ${clock(new Date(seen).toISOString())}` : ""}</li>}
-          {files !== null && repo && !files.length && <li className="rt-label">No uncommitted changes</li>}
-          {(files ?? []).map((f) => (
-            <li key={f.path}>
-              <button className="rt-link rt-file" title={f.path} onClick={() => open(f.path)}>
-                <span className="mono rt-job-cmd">{f.path}</span>
-                <span className="num">
-                  {f.new ? <span className="rt-add">new</span>
-                    : f.add < 0 ? <span className="rt-label">binary</span>
-                    : <><span className="rt-add">+{f.add}</span> <span className="rt-del">−{f.del}</span></>}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+    <details className="rt rt-jobs">
+      <summary aria-label={aria}>{body}</summary>
+      <div className="rt-pop rt-diff">
+        <ChangesBody row={row} data={data} scope={scope} onScope={setScope} />
+        <a className="link chg-full" href={href}>Open full view</a>
+      </div>
     </details>
   );
 }
@@ -1575,9 +1701,9 @@ function TestsChip({ lines, running }: { lines: Line[]; running: boolean }) {
               el.scrollIntoView({ block: "center" });
               (el.querySelector<HTMLElement>("summary,button") ?? el).focus();
             }}>
-      <span className="rt-label">Tests</span>
+      <span className="rt-label">Last tests</span>
       <span className={"num rt-value " + (failed ? "rt-del" : last.state === "passed" ? "rt-add" : "rt-stale")}>{failed && <span aria-hidden="true" className="rt-mark"><StatusMark status="error" bare /></span>}{word}</span>
-      {last.state !== "running" && <span className="num rt-label">{ago(last.at)} ago</span>}
+      {(last.state === "passed" || last.state === "failed") && <span className="num rt-label">{ago(last.at)} ago</span>}
     </button>
   );
 }
@@ -1730,6 +1856,15 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
   // A pasted image rides as "[Image #N: path]": show the tag and the picture, not the path.
   const images = [...raw.matchAll(/\[Image #\d+: ([^\]\n]+)\]/g)].map((m) => m[1]);
   const said = raw.replace(/\[Image (#\d+): [^\]\n]+\]/g, "[Image $1]");
+  // A turn that ended on a failed command opens that command, and only that one:
+  // an earlier failure the agent went on to fix is history, still counted.
+  const exit = turn.done?.data?.exit;
+  const bad = (l?: Line) => typeof l?.data?.exit === "number" && l.data.exit !== 0;
+  // A done that recorded no exit still ended on a failure when its last result failed.
+  const lastResult = [...turn.body].reverse().find((l) => l.kind === "result");
+  const fail = !turn.done || turn.stopped ? undefined
+    : typeof exit === "number" ? (exit !== 0 ? [...turn.body].reverse().find((l) => l.kind === "result" && bad(l)) : undefined)
+    : bad(lastResult) ? lastResult : undefined;
   const [full, setFull] = useState(false);
   const [opened, setOpened] = useState<number | null>(null);
   const long = said.length > 420 || said.split("\n").length > 4;
@@ -1795,12 +1930,12 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
         {items.map((it) => it.kind === "sub"
           ? <SubRun key={"sub" + it.seq} agents={it.agents} live={!turn.done && !turn.stopped} />
           : it.kind === "tools"
-          ? <ToolRun key={"tools" + it.seq} lines={it.lines} codes={codes} />
+          ? <ToolRun key={"tools" + it.seq} lines={it.lines} codes={codes} live={!turn.done && !turn.stopped} stopped={turn.stopped || turn.done?.kind === "cancelled"} failSeq={fail?.seq} />
           : <Entry key={it.seq} line={it.line} codes={codes} />)}
         {tail}
         <TurnHooks lines={hooks} />
       </div>
-      {turn.done && <TurnFooter turn={turn} />}
+      {turn.done && <TurnFooter turn={turn} fail={fail} />}
     </section>
   );
 }
@@ -1906,8 +2041,9 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
       {only !== "rest" && (
         // What the next turn runs as is one setting: the model and how hard
         // it thinks, side by side, on every screen.
-        <div className="ctl ctl-run">
-          <Select label="Model" value={row.model ?? ""} options={models} searchable align="end" note="Applies to the next turn"
+        <div className="ctl ctl-run" title="Model and effort for the next turn">
+          <span className="ctl-label ctl-next">Next turn</span>
+          <Select label="Next turn model" value={row.model ?? ""} options={models} searchable align="end" note="Applies to the next turn"
                   detailHeading="Context tokens"
                   footer={(o) => {
                     const m = o && cat?.providers.flatMap((p) => p.models ?? []).find((x) => x.id === o.value);
@@ -1916,7 +2052,7 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
                   }}
                   onChange={(v) => (v ? onModel(v) : undefined)} />
           {efforts.length > 0 && (
-            <Select label="Effort" value={row.effort ?? ""} align="end" note="Applies to the next turn" onChange={(v) => (v ? onEffort(v) : undefined)}
+            <Select label="Next turn effort" value={row.effort ?? ""} align="end" note="Applies to the next turn" onChange={(v) => (v ? onEffort(v) : undefined)}
                     options={[...(row.effort ? [] : [{ value: "", label: "Provider default" }]), ...efforts.map((e) => ({ value: e, label: effortLabel(e) }))]} />
           )}
           {catFailed && <button className="btn" onClick={() => setNonce((n) => n + 1)}>Models unavailable · Retry</button>}
@@ -2075,7 +2211,7 @@ export function AgentsChip({ row, rows, onOpen }: { row: Row; rows: Row[]; onOpe
   );
 }
 
-export function Thread({ row, lines, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession }: {
+export function Thread({ row, lines, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
   /** Loaded sessions: names the parent of a background agent and lists this session's agents. */
   rows?: Row[]; onOpenSession?: (id: string) => void;
   row: Row; lines: Line[]; loading?: boolean; stream?: DeltaRun[];
@@ -2092,6 +2228,9 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   onArchive: () => void; onRename: (t: string) => Promise<void>; onContext?: () => void; onAck?: () => void;
   /** Stop a project session's container; the child restarts it on its next command. */
   onStopOrb?: () => void;
+  /** Start a project session in this project's orb, carrying the draft over unsent. */
+  onStartProject?: (project: string, draft: string) => void;
+  onNewProject?: () => void;
   onModel: (m: string) => Promise<boolean> | void; onEffort: (e: string) => Promise<boolean> | void; onAssign: (p: string) => void;
   /** This session's unrecorded sends, kept by the app across session switches. */
   sending?: Pending[]; setSending?: (f: (q: Pending[]) => Pending[]) => void;
@@ -2201,8 +2340,33 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     end.current?.scrollIntoView({ block: "end", behavior: still ? "auto" : "smooth" });
   };
+  // The block summaries are one tab stop: the current one is tabbable, and
+  // so are its own controls; every other summary and its Copy wait for ↑/↓.
+  const summaries = () => [...(scroller.current?.querySelectorAll<HTMLElement>("details.block > summary") ?? [])].filter((s) => s.offsetParent);
+  const rovingAt = useRef<HTMLElement | null>(null);
+  const rove = (all: HTMLElement[], on: HTMLElement) => {
+    rovingAt.current = on;
+    for (const s of all) {
+      s.tabIndex = s === on ? 0 : -1;
+      for (const b of s.querySelectorAll<HTMLElement>("button,a[href]")) {
+        if (s === on) b.removeAttribute("tabindex"); else b.tabIndex = -1;
+      }
+    }
+  };
+  useEffect(() => {
+    const all = summaries();
+    if (all.length) rove(all, rovingAt.current && all.includes(rovingAt.current) ? rovingAt.current : all[0]);
+  }); // eslint-disable-line react-hooks/exhaustive-deps
   // Cmd/Ctrl+End with focus in the transcript; elsewhere it is the page's.
   const latestKey = (e: React.KeyboardEvent) => {
+    // ↑/↓ walk the block summaries, only when one has focus: never in text or output.
+    const t = e.target as HTMLElement;
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !e.altKey && t.matches("details.block > summary")) {
+      const all = summaries();
+      const i = all.indexOf(t) + (e.key === "ArrowDown" ? 1 : -1);
+      if (i >= 0 && i < all.length) { e.preventDefault(); rove(all, all[i]); all[i].focus(); }
+      return;
+    }
     if (e.key !== "End" || !(e.metaKey || e.ctrlKey)) return;
     e.preventDefault();
     toLatest();
@@ -2448,6 +2612,36 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     await deliver(full, Boolean(draftAsk), draftAsk || undefined);
   };
 
+  // Enter steers a running turn; ⌘/Ctrl+Enter holds the message until the
+  // turn ends. The queue is per session and survives a reload.
+  const queueKey = "bough:queue:" + row.id;
+  const [queued, setQueued] = useState<{ id: string; text: string }[]>(() => {
+    try { return JSON.parse(sessionStorage.getItem(queueKey) ?? "[]"); } catch { return []; }
+  });
+  useEffect(() => {
+    try { queued.length ? sessionStorage.setItem(queueKey, JSON.stringify(queued)) : sessionStorage.removeItem(queueKey); } catch { /* storage off */ }
+  }, [queued, queueKey]);
+  const enqueue = () => {
+    const t = draft.trim();
+    if (!t || uploading || draftAsk || askChanged) return;
+    setDraft("");
+    const full = expand(t);
+    pastes.current = []; images.current = [];
+    setQueued((q) => [...q, { id: `${Date.now()}-${Math.random()}`, text: full }]);
+  };
+  // One queued message per ended turn: the next waits for the turn this one starts.
+  // A send is done flushing when its turn starts or ends, or when it fails.
+  const flushing = useRef(false);
+  const doneTurns = turns.filter((t) => t.done).length;
+  useEffect(() => { flushing.current = false; }, [running, doneTurns, failures.length]);
+  useEffect(() => {
+    if (running || loading || busy || row.ask || flushing.current || unlanded.length || !queued.length) return;
+    flushing.current = true;
+    const [next, ...rest] = queued;
+    setQueued(rest);
+    void deliver(next.text, false);
+  }); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="thread">
       <header className="thread-head">
@@ -2463,7 +2657,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
           {row.trouble && row.trouble !== "tests failed" ? (
             // One status: the reason replaces "Done".
             <span className="status head-trouble"><StatusMark status="error" bare />{capital(row.trouble)}</span>
-          ) : row.status === "done" ? <span className="status head-idle">Idle</span> : <StatusMark status={row.status} />}
+          ) : row.status === "done" ? <span className="status head-idle">Run: Idle</span> : <StatusMark status={row.status} />}
           <ModeChip row={row} />
           {onOpenSession && <AgentsChip row={row} rows={rows} onOpen={onOpenSession} />}
           {row.spawnedBy && (
@@ -2475,6 +2669,8 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
           {/* A test failure is the Tests chip's to say, once. */}
           {running && turns[turns.length - 1]?.prompt?.at && !turns[turns.length - 1]?.done && <RunClock since={turns[turns.length - 1].prompt!.at} />}
           {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
+          {/* A phone keeps the run setting as words; its pickers are under Settings. */}
+          <span className="head-run">{row.model?.split("/").pop() ?? "Default model"} · Effort: {row.effort ? effortLabel(row.effort) : "Default"}</span>
         </div>
         <div className="head-side">
           <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" />
@@ -2495,6 +2691,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
                 const here = document.activeElement;
                 if ((e.shiftKey && (here === first || here === e.currentTarget)) || (!e.shiftKey && here === last)) { e.preventDefault(); closeMore(true); }
               }}>
+                <div className="head-pop-run"><Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" /></div>
                 <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="rest" />
                 <button className="head-pop-item" onClick={async () => {
                   closeMore(false);
@@ -2510,6 +2707,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
       </header>
 
       <div className="scroll transcript" ref={scroller} onScroll={onScroll} onKeyDown={latestKey}
+           onFocus={(e) => { const t = e.target as HTMLElement; if (t.matches("details.block > summary") && t !== rovingAt.current) rove(summaries(), t); }}
            tabIndex={0} role="region" aria-label="Transcript">
         {loading && loadError && (
           <p className="meta-line transcript-state transcript-retry" role="alert">
@@ -2548,7 +2746,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
                   </button>
                 )}
               </div>
-              <span className="num prompt-time turn-sending-state" role="status">Sending…</span>
+              <span className="num prompt-time turn-sending-state" role="status">{running ? "Steer pending…" : "Sending…"}</span>
             </div>
           </section>
         ))}
@@ -2628,6 +2826,20 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             </span>
           </div>
         ))}
+        {queued.length > 0 && (
+          <ol className="queued" aria-label="Queued until the turn ends">
+            {queued.map((m) => (
+              <li key={m.id} className="queued-row">
+                <span className="queued-tag">Queued</span>
+                <span className="queued-text">{m.text}</span>
+                {/* Edit never lands on a newer draft, as with a failed send. */}
+                <button className="link" disabled={Boolean(draft.trim())} title={draft.trim() ? "Send or clear the current draft first" : undefined}
+                  onClick={() => { setDraft(m.text); setQueued((q) => q.filter((x) => x.id !== m.id)); composer.current?.focus(); }}>Edit</button>
+                <button className="link" onClick={() => setQueued((q) => q.filter((x) => x.id !== m.id))}>Remove</button>
+              </li>
+            ))}
+          </ol>
+        )}
         <div className={"composer" + (multi || narrow ? " composer-multi" : "")}>
           <Mentions trigger={trigger} session={row.id}
             onPick={(t, value) => {
@@ -2680,10 +2892,12 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
               // An open picker takes its keys before this runs (capture),
               // including Enter in its empty, loading and error states.
               // Enter that confirms an IME composition is not a send.
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                if (running && (e.metaKey || e.ctrlKey)) enqueue(); else send();
+              }
             }} />
           <div className="composer-bar">
-            {!pickerOpen && <span className="hint" title="Shift + Return for a newline">@ files · / skills · ↵ send</span>}
             {uploading > 0 && <span className="attach-note">Attaching image…</span>}
             {attachErr && <span className="attach-note attach-err" role="alert">{attachErr}</span>}
             <div className="composer-actions">
@@ -2709,11 +2923,37 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
                   {stopping === "stopping" ? "Stopping…" : stopping === "failed" ? "Couldn’t stop · Retry" : "Stop"}
                 </button>
               )}
-              <button className="btn btn-primary" onClick={send} disabled={busy || uploading > 0 || blank || askChanged}>
-                {(blank ? row.ask : draftAsk) ? "Answer" : running && draft.trim() ? "Send to running turn" : "Send"}
+              {running && !draftAsk && (
+                <button className="btn" onClick={enqueue} disabled={uploading > 0 || blank || askChanged}
+                        title={modKey() + "Enter: send when this turn ends"}>Queue</button>
+              )}
+              <button className="btn btn-primary" onClick={send} disabled={busy || uploading > 0 || blank || askChanged}
+                      title={running && !draftAsk ? "Enter: steer the running turn" : undefined}>
+                {(blank ? row.ask : draftAsk) ? "Answer" : running ? "Steer" : "Send"}
               </button>
             </div>
           </div>
+        </div>
+        <div className="composer-foot">
+          {row.mode !== "project" && (
+            <span className="composer-local">
+              <span className="mode-local" title="A local session reads your files but cannot change them">Local · read-only</span>
+              {onStartProject && projects.some((p) => p.slug) ? (
+                <Select label="Start project session" value="" placeholder="Start project session…" align="start"
+                        note="Your draft moves to the new session, unsent"
+                        options={projects.filter((p) => p.slug).map((p) => ({ value: p.id, label: p.name }))}
+                        onChange={(id) => onStartProject(id, expand(draft))} />
+              ) : onNewProject && (
+                // No project to run in yet: the palette's project flow; the draft stays here.
+                <button type="button" className="btn composer-start" onClick={onNewProject}>Start project session…</button>
+              )}
+            </span>
+          )}
+          {!pickerOpen && (
+            <span className="hint composer-hint">
+              {running && !draftAsk ? `Enter steer · ${modKey()}Enter queue · Shift+Enter newline` : "Enter send · Shift+Enter newline"} · / commands · @ files
+            </span>
+          )}
         </div>
       </div>
     </div>
@@ -2733,6 +2973,8 @@ export default function App() {
   // The open transcript's read state: a first read that failed, and since
   // when catching up has been failing. Retry re-reads or catches up now.
   const [loadFail, setLoadFail] = useState<string | null>(null);
+  // Only an authoritative 404 says a session is not here; other failures can be retried.
+  const [missing, setMissing] = useState(false);
   const [paused, setPaused] = useState<number | undefined>(undefined);
   const [loadTry, setLoadTry] = useState(0);
   const retryRef = useRef<() => void>(() => {});
@@ -2751,10 +2993,12 @@ export default function App() {
   // the next poll; a send or action that failed is something you did that
   // did not happen, so it stays until you dismiss it — the 4s poll used to
   // clear it before it could be read.
-  const [err, setErr] = useState<string | null>(null);
+  // What failed, named, with the call that failed so Retry repeats it on the same target.
+  const [err, setErr] = useState<{ label: string; msg: string; retry: () => void } | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   // When the list last refreshed; null until the first read lands.
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
+  const [looked, setLooked] = useState<Row | null>(null);
   const [view, setView] = useState<View>("sessions");
   // Where the next new conversation runs; local unless someone picks a project.
   const [newMode, setNewMode] = useState<ModeValue>({ mode: "local" });
@@ -2766,7 +3010,9 @@ export default function App() {
   const [reveal, setReveal] = useState<{ id: string; at: number } | null>(null);
   // The Context panel takes over the thread pane for the open session,
   // and closes when a different one is opened.
-  const [context, setContext] = useState(false);
+  // A session's sub-page: its context inspector or its changes review.
+  const [sub, setSub] = useState<"context" | "changes" | null>(null);
+  const context = sub === "context";
   const [wikiRoute, setWikiRoute] = useState<WikiRoute>({ at: "index" });
   // The review count on the nav item. Polled slowly: it changes when an
   // ingest lands, which is minutes apart at the fastest.
@@ -2800,14 +3046,15 @@ export default function App() {
     setLines([]);
     setLoadedFor(null);
     lastSeq.current = 0; // the cursor belongs to the session just left
-    setLoadFail(null); setPaused(undefined);
+    setLoadFail(null); setPaused(undefined); setMissing(false);
     // Its failure is the transcript's own state, with a retry, not a toast.
     api.session(selected).then((r) => {
       if (!live) return;
       setLines(r.entries);
       setLoadedFor(selected);
+      setLooked(r.session);
       setRows((prev) => prev.map((x) => (x.id === r.session.id ? r.session : x)));
-    }).catch((e) => { if (live) setLoadFail(e instanceof Error ? e.message : String(e)); });
+    }).catch((e) => { if (live) { setLoadFail(e instanceof Error ? e.message : String(e)); setMissing((e as { status?: number }).status === 404); } });
 
     setStream([]);
     // How many delta runs were already on screen when the last recorded
@@ -2841,6 +3088,7 @@ export default function App() {
         synced = Date.now();
         setPaused(undefined);
         setRows((rs) => rs.map((x) => (x.id === r.session.id ? r.session : x)));
+        setLooked(r.session);
         if (!r.entries.length) return;
         superseded = Math.max(0, superseded - drop);
         // The recorded entries are in hand; the fragments they were
@@ -2897,7 +3145,9 @@ export default function App() {
     return rows.filter((r) => getSearchMatch(r, q));
   }, [rows, query]);
 
-  const row = rows.find((r) => r.id === selected) ?? null;
+  // A linked session the list does not hold (archived, not yet listed) is
+  // still the session: its own lookup fills in.
+  const row = rows.find((r) => r.id === selected) ?? (looked?.id === selected ? looked : null);
 
   // A preview outlives its turn only if the entry it was previewing
   // never arrived. Once the session is no longer running there is
@@ -2926,18 +3176,18 @@ export default function App() {
     const read = () => {
       const h = window.location.hash.replace(/^#\/?/, "");
       // A direct link to a page shows that page, on a phone too.
-      if (h === "hooks" || h === "projects") { setView(h); setContext(false); setPane("thread"); if (h === "projects") setOrbOpen(undefined); return; }
+      if (h === "hooks" || h === "projects") { setView(h); setSub(null); setPane("thread"); if (h === "projects") setOrbOpen(undefined); return; }
       const po = /^projects\/([^/]+)\/orb$/.exec(h);
-      if (po) { setView("projects"); setOrbOpen(po[1]); setContext(false); setPane("thread"); return; }
+      if (po) { setView("projects"); setOrbOpen(po[1]); setSub(null); setPane("thread"); return; }
       const wr = parseWikiHash(h);
-      if (wr) { setView("wiki"); setWikiRoute(wr); setContext(false); setPane("thread"); return; }
-      const m = /^s\/([^/]+)(\/context)?$/.exec(h);
+      if (wr) { setView("wiki"); setWikiRoute(wr); setSub(null); setPane("thread"); return; }
+      const m = /^s\/([^/]+)\/?(context|changes)?$/.exec(h);
       if (m) {
-        setView("sessions"); setSelected(m[1]); setContext(Boolean(m[2])); setPane("thread");
+        setView("sessions"); setSelected(m[1]); setSub((m[2] as "context" | "changes" | undefined) ?? null); setPane("thread");
       } else if (h === "") {
         // No session named: on a phone that is the list. The thread pane
         // held only "Choose a session", with no list and no way back to it.
-        setView("sessions"); setSelected(null); setContext(false); setPane("list");
+        setView("sessions"); setSelected(null); setSub(null); setPane("list");
       }
     };
     read();
@@ -2956,27 +3206,33 @@ export default function App() {
     const want = view === "hooks" ? "#/hooks"
       : view === "projects" ? (orbOpen ? `#/projects/${orbOpen}/orb` : "#/projects")
       : view === "wiki" ? `#/${wikiHash(wikiRoute)}`
-      : selected ? `#/s/${selected}${context ? "/context" : ""}`
+      : selected ? `#/s/${selected}${sub ? `/${sub}` : ""}`
       : "#/";
     if (window.location.hash !== want) {
       window.history.replaceState(null, "", want);
     }
-  }, [view, selected, context, wikiRoute]);
+  }, [view, selected, sub, wikiRoute]);
 
   // Moving around the wiki pushes, like opening a conversation: Back
   // from a cited entry returns to the page, and from a page to the index.
   const goWiki = useCallback((r: WikiRoute) => {
-    setWikiRoute(r); setView("wiki"); setContext(false); setPane("thread");
+    setWikiRoute(r); setView("wiki"); setSub(null); setPane("thread");
     const want = `#/${wikiHash(r)}`;
     if (window.location.hash !== want) window.history.pushState(null, "", want);
   }, []);
 
   usePaletteKey(useCallback(() => setPalette(true), []));
+  const narrow = useMedia("(max-width:720px)");
+  const onView = (v: View) => {
+    if (v === "wiki") goWiki({ at: "index" });
+    else if (v === "sessions") { if (narrow) goList(); else { setView(v); setSub(null); } }
+    else { setView(v); setSub(null); setPane("thread"); if (window.location.hash !== NAV_HREF[v]) window.history.pushState(null, "", NAV_HREF[v]); }
+  };
 
   // Back on a phone goes to the list and says so in the URL: it only
   // swapped panes, so a reload landed back in the thread it had left.
   const goList = useCallback(() => {
-    setSelected(null); setContext(false); setView("sessions"); setPane("list");
+    setSelected(null); setSub(null); setView("sessions"); setPane("list");
     if (window.location.hash !== "#/") window.history.pushState(null, "", "#/");
   }, []);
 
@@ -3008,14 +3264,30 @@ export default function App() {
       if (a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT" || a.isContentEditable)) return;
       if (document.querySelector(".dlg-scrim, .sel-pop, .skills-pop, .mention")) return;
       e.preventDefault();
-      if (context) setContext(false); else goList();
+      if (sub) setSub(null); else goList();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [palette, view, selected, context, goList]);
+  }, [palette, view, selected, sub, goList]);
+
+  // F6 / Shift+F6 cycle the regions: sidebar, header, transcript, composer.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "F6" || e.defaultPrevented) return;
+      const regions = [".sidebar", ".thread-head", ".transcript", ".composer-wrap"]
+        .map((s) => document.querySelector<HTMLElement>(s)).filter((el): el is HTMLElement => Boolean(el?.offsetParent));
+      if (!regions.length) return;
+      e.preventDefault();
+      const here = regions.findIndex((r) => r.contains(document.activeElement));
+      const next = regions[(here < 0 ? 0 : here + (e.shiftKey ? regions.length - 1 : 1)) % regions.length];
+      focusRegion(next);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const openSession = useCallback((id: string) => {
-    setSelected(id); setContext(false); setView("sessions"); setPane("thread");
+    setSelected(id); setSub(null); setView("sessions"); setPane("thread");
     // A push, so Back returns to where you were rather than leaving.
     if (window.location.hash !== `#/s/${id}`) {
       window.history.pushState(null, "", `#/s/${id}`);
@@ -3035,13 +3307,15 @@ export default function App() {
   // switching away and back still shows what is on its way.
   const [pending, setPending] = useState<Record<string, Pending[]>>({});
 
-  const act = async (fn: () => Promise<unknown>): Promise<boolean> => {
+  // `label` finishes "Couldn’t …". fn closes over its own session id, so a
+  // Retry after navigating away still addresses the session that failed.
+  const act = async (fn: () => Promise<unknown>, label = "do that"): Promise<boolean> => {
     setBusy(true);
     try { await fn(); setErr(null); return true; }
-    catch (e) { setErr(e instanceof Error ? e.message : String(e)); return false; }
+    catch (e) { setErr({ label, msg: e instanceof Error ? e.message : String(e), retry: () => { void act(fn, label); } }); return false; }
     finally { setBusy(false); await refresh(); }
   };
-
+  // Archiving names the session and waits for a yes; Cancel is where focus starts.
   // A queued agent has not started, so calling it running overstates what
   // stopping would interrupt.
   const agentWords = (running: number, queued: number) => {
@@ -3054,13 +3328,17 @@ export default function App() {
   // Archiving a session leaves its background agents running unless you
   // say otherwise: they may be doing work you still want, so ask.
   const archiveRow = async (r: Row) => {
-    if (r.archived) return act(() => api.unarchive(r.id));
+    if (r.archived) return act(() => api.unarchive(r.id), "unarchive");
     const n = (r.agents?.running ?? 0) + (r.agents?.queued ?? 0);
-    if (n === 0) return act(() => api.archive(r.id));
+    if (n === 0) {
+      const ok = await askConfirm("Archive this session?", `“${plainTitle(r.title) || "Untitled session"}” leaves the list. It stays under Archived and can be restored.`,
+        { action: "Archive", safe: true });
+      return ok ? act(() => api.archive(r.id), "archive") : false;
+    }
     const pick = await askChoice(`Archive ${plainTitle(r.title) || untitled(r.id)}?`,
       `Stop its ${agentWords(r.agents?.running ?? 0, r.agents?.queued ?? 0)} too?`, ["Stop and archive", "Archive only"]);
     if (!pick) return false;
-    return act(() => api.archive(r.id, { stopChildren: pick === "Stop and archive" }));
+    return act(() => api.archive(r.id, { stopChildren: pick === "Stop and archive" }), "archive");
   };
 
   // What the chrome can do, the keyboard can do. Session-scoped
@@ -3069,22 +3347,33 @@ export default function App() {
   const start = (cwd: string, prompt: string, mode?: ModeValue) => act(async () => {
     const created = await api.create(cwd, prompt, mode?.mode, mode?.project);
     openSession(created.id);
-  });
+  }, "start a session");
+  // New starts where the open session works, and the new session's header
+  // shows that folder before anything is sent. With none open, the palette
+  // asks where: never a silent Home.
+  const newSession = () => { if (row?.cwd) void start(row.cwd, ""); else setPalette(true); };
+  const folderName = (p: string) => p.replace(/\/+$/, "").split("/").pop() || p;
 
+  // The newest call whose recorded exit was not zero, in the open session.
+  let latestFail: number | undefined;
+  for (let i = lines.length - 1; row && i >= 0; i--) {
+    const x = lines[i].data?.exit;
+    if (lines[i].kind === "result" && typeof x === "number" && x !== 0) { latestFail = lines[i].seq; break; }
+  }
   const commands: Command[] = [
-    ...(home ? [{
-      id: "new:here", group: "Start", label: "New conversation",
-      hint: shortPath(home, home),
-      run: () => start(home, ""),
-    }] : []),
     ...(home && row?.cwd && row.cwd !== home ? [{
-      id: "new:cwd", group: "Start", label: "New conversation where this one is",
-      hint: shortPath(row.cwd, home),
+      id: "new:cwd", group: "Start", label: `New session in ${folderName(row.cwd)}`, suggest: true,
+      hint: "Folder: " + shortPath(row.cwd, home),
       run: () => start(row.cwd, ""),
+    }] : []),
+    ...(home ? [{
+      id: "new:here", group: "Start", label: "New session in home", suggest: !row?.cwd || row.cwd === home,
+      hint: "Folder: " + shortPath(home, home),
+      run: () => start(home, ""),
     }] : []),
     // A project session runs in that project's orb; home is only where serve records it.
     ...(home ? projects.filter((p) => p.slug).map((p) => ({
-      id: `new:orb:${p.id}`, group: "Start", label: `New conversation in ${p.name}`,
+      id: `new:orb:${p.id}`, group: "Start", label: `New session in ${p.name}`,
       hint: "orb", run: () => start(home, "", { mode: "project" as const, project: p.id }),
     })) : []),
     { id: "new:project", group: "Start", label: "New project…",
@@ -3092,54 +3381,69 @@ export default function App() {
         const n = await askText("New project", { placeholder: "What is this work?", action: "Create" });
         if (n) act(() => api.newProject(n));
       } },
-    { id: "go:sessions", group: "Go to", label: "Sessions", run: () => goList() },
-    { id: "go:projects", group: "Go to", label: "Projects",
+    { id: "go:sessions", group: "Navigation", label: "Sessions", run: () => goList() },
+    { id: "go:projects", group: "Navigation", label: "Projects",
       run: () => { setView("projects"); setPane("thread"); } },
-    { id: "go:hooks", group: "Go to", label: "Hooks",
+    { id: "go:hooks", group: "Navigation", label: "Hooks",
       run: () => { setView("hooks"); setPane("thread"); } },
-    { id: "go:wiki", group: "Go to", label: "Wiki", run: () => goWiki({ at: "index" }) },
+    { id: "go:wiki", group: "Navigation", label: "Wiki", run: () => goWiki({ at: "index" }) },
+    { id: "go:side", group: "Navigation", label: "Toggle sidebar", hint: `${modKey()}B`,
+      run: () => window.dispatchEvent(new Event("bough:toggle-side")) },
     { id: "wiki:review", group: "Wiki", label: "Review flagged claims",
       hint: wikiFlags ? `${wikiFlags} flagged` : undefined, run: () => goWiki({ at: "review" }) },
     { id: "wiki:activity", group: "Wiki", label: "Wiki activity", run: () => goWiki({ at: "activity" }) },
     { id: "wiki:ingest", group: "Wiki", label: "Ingest now",
       hint: "compiles finished sessions into the wiki",
-      run: () => act(() => wikiApi.ingest()).then((ok) => { if (ok) goWiki({ at: "activity" }); }) },
+      run: () => act(() => wikiApi.ingest(), "start an ingest").then((ok) => { if (ok) goWiki({ at: "activity" }); }) },
     // Draining a backlog one "Mark seen" at a time is a chore; this is the
     // once-a-week sweep, kept off the screen because it is rare.
     ...(rows.some((r) => r.trouble) ? [{
       id: "ack:all", group: "Start", label: `Mark every failure seen (${rows.filter((r) => r.trouble).length})`,
-      run: () => act(() => Promise.all(rows.filter((r) => r.trouble).map((r) => api.ack(r.id)))),
+      run: () => act(() => Promise.all(rows.filter((r) => r.trouble).map((r) => api.ack(r.id))), "mark failures seen"),
     }] : []),
-    { id: "go:archived", group: "Go to",
-      label: archived ? "Hide archived conversations" : "Show archived conversations",
+    { id: "go:archived", group: "Navigation",
+      label: archived ? "Hide archived sessions" : "Show archived sessions",
       run: () => setArchived((v) => !v) },
     ...(row ? [
-      { id: "s:context", group: "This conversation", label: "Show what is shaping this conversation",
-        hint: "Context", run: () => { setContext(true); setPane("thread"); } },
-      { id: "s:archive", group: "This conversation",
-        label: row.archived ? "Unarchive this conversation" : "Archive this conversation",
-        run: () => archiveRow(row) },
+      { id: "s:changes", group: "This session", label: "Review changes", suggest: true,
+        hint: "Session edits", run: () => { setSub("changes"); setPane("thread"); } },
+      { id: "s:context", group: "This session", label: "Inspect context", suggest: true,
+        hint: "Context", run: () => { setSub("context"); setPane("thread"); } },
+      // Searchable only, and it asks first: never one Enter away from an empty box.
+      { id: "s:archive", group: "This session",
+        label: row.archived ? "Unarchive this session" : "Archive this session",
+        run: () => { void archiveRow(row); } },
+      ...(latestFail !== undefined ? [{
+        id: "s:fail", group: "This session", label: "Jump to latest failed call", suggest: true,
+        run: () => { setView("sessions"); setSub(null); setPane("thread"); setJump({ id: row.id, turn: 0, seq: latestFail, at: Date.now() }); },
+      }] : []),
       ...(row.status === "running" ? [{
-        id: "s:stop", group: "This conversation", label: "Stop this turn",
-        run: () => act(() => api.interrupt(row.id)),
+        id: "s:stop", group: "This session", label: "Stop this turn", suggest: true,
+        run: () => act(() => api.interrupt(row.id), "stop the turn"),
       }] : []),
     ] : []),
   ];
 
   return (
     <div className="app" data-pane={pane}>
+      {row && !sub && view === "sessions" && (
+        <div className="skip-links">
+          <button className="skip-link" onClick={() => { const t = document.querySelector<HTMLElement>(".transcript"); if (t) focusRegion(t); }}>Skip to transcript</button>
+          <button className="skip-link" onClick={() => document.getElementById("composer")?.focus()}>Skip to composer</button>
+        </div>
+      )}
       <Palette open={palette} onClose={() => { setPalette(false); setPalQuery(""); }} rows={rows}
-               commands={commands} onOpenSession={openSession} initialQuery={palQuery}
+               commands={commands} onOpenSession={openSession} initialQuery={palQuery} current={selected}
                onOpenWikiPage={(path) => goWiki({ at: "page", path })}
                onStart={home ? (text) => start(home, text) : undefined} />
       <Sidebar rows={visible} selected={selected ?? lastId} active={pane === "list"}
                onSelect={openSession} query={query} onQuery={setQuery}
-               onTurn={(id, turn) => { if (id !== selected || view !== "sessions" || context) openSession(id); else setPane("thread"); setJump({ id, turn, at: Date.now() }); }}
-               view={view} wikiFlags={wikiFlags} onNew={() => setPalette(true)}
-               onView={(v) => { if (v === "wiki") goWiki({ at: "index" }); else if (v === "sessions") { setView(v); setContext(false); } else { setView(v); setPane("thread"); } }}
+               onTurn={(id, turn) => { if (id !== selected || view !== "sessions" || sub) openSession(id); else setPane("thread"); setJump({ id, turn, at: Date.now() }); }}
+               view={view} wikiFlags={wikiFlags} onNew={newSession} onFind={() => setPalette(true)}
+               onView={onView}
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)}
                archivedState={!archived || rowsAll ? "ready" : loadErr ? "failed" : "loading"} onRetryArchived={refresh}
-               onAck={(id) => act(() => api.ack(id))}
+               onAck={(id) => act(() => api.ack(id), "mark it seen")}
                onShowList={() => setPane("list")} reveal={reveal}
                loadedAt={loadedAt} loadErr={loadErr} onRetry={refresh} />
       {view === "wiki" ? (
@@ -3152,7 +3456,7 @@ export default function App() {
           projects={projects} rows={rows}
           onOpen={openSession}
           onBack={goList}
-          onAssign={(id, p) => act(() => api.assign(id, p))}
+          onAssign={(id, p) => act(() => api.assign(id, p), "move the session")}
           onCreate={async (name) => { const p = await api.newProject(name); await refresh(); return p; }}
           onRename={async (id, name) => { await api.renameProject(id, name); await refresh(); }}
           onAssignMany={async (ids, p) => {
@@ -3161,10 +3465,12 @@ export default function App() {
             await refresh();
             return ids.filter((_, i) => out[i].status === "rejected");
           }}
-          onDelete={(id) => act(() => api.deleteProject(id))}
+          onDelete={(id) => act(() => api.deleteProject(id), "delete the project")}
           orbOpen={orbOpen} onOrbOpen={setOrbOpen} onOrbChanged={refresh} />
+      ) : row && sub === "changes" ? (
+        <ChangesPage row={row} tick={lines.length} onBack={() => setSub(null)} />
       ) : row && context ? (
-        <ContextPage session={row.id} model={row.model} used={loadedFor === row.id ? sessionUsage(lines)?.lastIn : undefined} onBack={() => setContext(false)} />
+        <ContextPage session={row.id} model={row.model} used={loadedFor === row.id ? sessionUsage(lines)?.lastIn : undefined} onBack={() => setSub(null)} />
       ) : row ? (
         <Thread key={row.id} row={row} lines={lines} jump={jump?.id === row.id ? jump : null} loading={loadedFor !== row.id} loadError={loadFail ?? undefined} paused={paused}
           onRetry={() => (loadedFor === row.id ? retryRef.current() : setLoadTry((n) => n + 1))} stream={stream} activity={activity} projects={projects} busy={busy || Boolean(locked[row.id])} onBack={goList}
@@ -3172,38 +3478,73 @@ export default function App() {
           setSending={(f) => setPending((m) => ({ ...m, [row.id]: f(m[row.id] ?? []) }))}
           onSend={(t) => deliverTo(row.id, () => api.prompt(row.id, t))}
           onAnswer={(t, ask) => deliverTo(row.id, () => api.answer(row.id, t, ask))}
-          onInterrupt={() => act(() => api.interrupt(row.id))}
+          onInterrupt={() => act(() => api.interrupt(row.id), "stop the turn")}
           onArchive={() => archiveRow(row)}
           rows={rows} onOpenSession={openSession}
           onRename={async (t) => { await api.rename(row.id, t); await refresh(); }}
-          onModel={(m) => act(() => api.model(row.id, m))}
-          onEffort={(e) => act(() => api.effort(row.id, e))}
-          onAssign={(p) => act(() => api.assign(row.id, p))}
-          onContext={() => setContext(true)}
-          onAck={() => act(() => api.ack(row.id))}
-          onStopOrb={() => act(() => api.stopOrb(row.id))} />
+          onModel={(m) => act(() => api.model(row.id, m), "change model")}
+          onEffort={(e) => act(() => api.effort(row.id, e), "change effort")}
+          onAssign={(p) => act(() => api.assign(row.id, p), "move the session")}
+          onContext={() => setSub("context")}
+          onAck={() => act(() => api.ack(row.id), "mark it seen")}
+          onStopOrb={() => act(() => api.stopOrb(row.id), "stop the orb")}
+          onNewProject={() => { setPalQuery("New project"); setPalette(true); }}
+          onStartProject={home ? (project, draft) => act(async () => {
+            // The draft moves, unsent: the new session's composer holds it.
+            const created = await api.create(home, "", "project", project);
+            try {
+              if (draft.trim()) sessionStorage.setItem("bough:draft:" + created.id, draft);
+              sessionStorage.removeItem("bough:draft:" + row.id);
+              sessionStorage.removeItem("bough:draft-atts:" + row.id);
+            } catch { /* storage off */ }
+            openSession(created.id);
+          }, "start a project session") : undefined} />
       ) : (
         <div className={"thread" + (selected ? " empty" : "")}>
           {!selected ? (<>
             {home && (
               <div className="controls mode-start">
                 <ModePicker projects={projects} value={newMode} onChange={setNewMode} />
-                <button className="btn" onClick={() => { void start(home, "", newMode); }}>New conversation</button>
+                <button className="btn" onClick={() => { void start(home, "", newMode); }}>New session</button>
               </div>
             )}
             <ControlOverview rows={rows} onOpenFailure={(id, seq) => { openSession(id); if (seq) setJump({ id, turn: 0, seq, at: Date.now() }); }} onReveal={(id) => { setPane("list"); setQuery(""); setReveal({ id, at: Date.now() }); }} loadedAt={loadedAt} loadErr={loadErr} onRetry={refresh} />
-          </>) : rows.length > 0 && (
-            // A link to a session this list does not hold.
-            <div>
-              <h1>Session not found</h1>
-              <button className="btn" onClick={goList}>All sessions</button>
+          </>) : (
+            // A link to a session the list does not hold: looked up on its
+            // own, so an empty or slow list never leaves a blank pane.
+            <div className="lookup" role={missing ? undefined : "status"}>
+              {missing ? (<>
+                <h1 className="lookup-title">Session not found</h1>
+                <p className="lookup-body">This session isn’t on this server. It may be archived or deleted.</p>
+                <div className="lookup-actions">
+                  <button className="btn" onClick={goList}>Show all sessions</button>
+                  <button className="btn" onClick={() => { setArchived(true); setPane("list"); setPalQuery(""); setPalette(true); }}>Search archived</button>
+                </div>
+              </>) : loadFail ? (<>
+                <h1 className="lookup-title">Couldn’t load this session</h1>
+                <p className="lookup-body">{loadFail}</p>
+                <div className="lookup-actions">
+                  <button className="btn" onClick={() => setLoadTry((n) => n + 1)}>Retry</button>
+                  <button className="btn" onClick={goList}>Show all sessions</button>
+                </div>
+              </>) : <p className="lookup-body">Loading session…</p>}
             </div>
           )}
         </div>
       )}
       <DialogHost />
+      {narrow && (pane === "list" || view !== "sessions") && (
+        <ViewNav phone view={pane === "list" ? "sessions" : view} onView={onView} wikiFlags={wikiFlags} />
+      )}
       {err ? (
-        <button className="toast" role="alert" onClick={() => setErr(null)} title="Dismiss">{err}</button>
+        // Stays until dismissed or a later action succeeds; the buttons are the only controls.
+        <div className="toast" role="alert">
+          <p className="toast-msg">Couldn’t {err.label} — {err.msg}</p>
+          <div className="toast-actions">
+            <button className="btn" disabled={busy} onClick={err.retry}>Retry</button>
+            <button className="btn" onClick={() => setErr(null)}>Dismiss</button>
+          </div>
+        </div>
       ) : null}
     </div>
   );

@@ -82,7 +82,7 @@ export function EmptySection({ title, children }: { title: string; children?: Re
       {children
         ? (
           <details className="proj-empty ctx-empty">
-            <summary><h2 className="proj-empty-title">{title}</h2> <span className="ctx-none">none</span> <span className="link">How to add</span></summary>
+            <summary><h2 className="proj-empty-title">{title}</h2> <span className="ctx-none">none</span> <span className="link">How to add {title.toLowerCase()}</span></summary>
             <p>{children}</p>
           </details>
         )
@@ -110,8 +110,8 @@ function SkillRow({ s, off, setOff, onOff }: {
 
 /** "49,210 / 1,050,000 tokens · 1,000,790 remaining", or says what is not known. */
 function usageLine(used?: number, limit?: number): string {
-  if (!used) return "Context usage unavailable";
-  if (!limit) return `Last input ${used.toLocaleString()} tokens · limit unknown`;
+  if (!used) return "Not reported";
+  if (!limit) return `Last input ${used.toLocaleString()} tokens · window unknown`;
   return `${used.toLocaleString()} / ${limit.toLocaleString()} tokens · ${Math.max(0, limit - used).toLocaleString()} remaining`;
 }
 
@@ -136,10 +136,14 @@ export function ContextView({ data, onBack, load = hooksApi.read, save = hooksAp
       </header>
 
       <div className="scroll proj-body">
-        <p className="ctx-lede">
-          <span className="num ctx-usage">{usageLine(used, limit)}</span>
-          <span>Disabling anything here disables it in every session.</span>
-        </p>
+        {/* The inventory first: what is in force here, counted, before any of it is opened. */}
+        <dl className="ctx-inv">
+          <div><dt>Context</dt><dd className="num">{usageLine(used, limit)}</dd></div>
+          <div><dt>Context files</dt><dd className="num">{found.length} read{missing.length ? ` · ${missing.length} not found` : ""}</dd></div>
+          <div><dt>Rules</dt><dd className="num">{rules.length}</dd></div>
+          <div><dt>Skills</dt><dd className="num">{skills.length}{skills.length ? ` · ${skills.filter((x) => isOff(x.id, x.off)).length} off` : ""}</dd></div>
+        </dl>
+        <p className="ctx-lede">Disabling anything here disables it in every session.</p>
 
         {found.length === 0 && missing.length === 0
           ? (

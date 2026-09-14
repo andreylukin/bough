@@ -15,7 +15,9 @@ export function Markdown({ text }: { text: string }) {
   // A wide table scrolls in its own box; a fade on the right says there is more.
   const html = DOMPurify.sanitize(marked.parse(text, { async: false }) as string)
     .replace(/<table>/g, '<div class="md-table"><div class="md-table-scroll" tabindex="0" role="region" aria-label="Table, scrolls sideways"><table>')
-    .replace(/<\/table>/g, "</table></div></div>");
+    .replace(/<\/table>/g, "</table></div></div>")
+    // An empty fence is a recorded fact, not a grey box that looks like loading.
+    .replace(/<pre><code[^>]*>\s*<\/code><\/pre>/g, '<p class="md-empty">Empty code block</p>');
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const boxes = [...(ref.current?.querySelectorAll<HTMLElement>(".md-table-scroll") ?? [])];

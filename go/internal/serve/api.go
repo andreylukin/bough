@@ -73,6 +73,8 @@ type Row struct {
 	// TestsFailed is the last test run's recorded non-zero exit; unlike
 	// Trouble it outlives being marked seen, since seen is not fixed.
 	TestsFailed bool `json:"testsFailed,omitempty"`
+	// TestsAt is when that last test run's result was recorded.
+	TestsAt *time.Time `json:"testsAt,omitempty"`
 	// Turns counts the lines of the session's running log (GET .../turns).
 	Turns int `json:"turns,omitempty"`
 	// Background marks a run nobody started by hand (a wiki ingest, a
@@ -143,6 +145,7 @@ func NewAPI(sup *Supervisor) *API {
 	a.mux.HandleFunc("GET /api/sessions/{id}/context", a.sessionContext)
 	a.mux.HandleFunc("GET /api/sessions/{id}/changes", a.changes)
 	a.mux.HandleFunc("GET /api/sessions/{id}/diff", a.diff)
+	a.mux.HandleFunc("GET /api/sessions/{id}/edits", a.edits)
 	a.mux.HandleFunc("GET /api/sessions/{id}/turns", a.turns)
 	a.mux.HandleFunc("POST /api/sessions/{id}/jobs/{job}/kill", a.killJob)
 	a.mux.HandleFunc("POST /api/off", a.setOff)
@@ -561,6 +564,7 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 		Trouble:  Troubled(st, entries, meta.Ack, time.Now()),
 
 		TestsFailed: lastTestFailed(entries),
+		TestsAt:     testsAt(entries),
 		Turns:       countTurns(entries),
 
 		Background: in.Background,
@@ -667,4 +671,12 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func writeErr(w http.ResponseWriter, code int, err error) {
 	writeJSON(w, code, map[string]any{"error": err.Error()})
+}
+
+// testsAt is when the last recorded test run ended, or nil.
+func testsAt(entries []history.Entry) *time.Time {
+	if _, at := lastTest(entries); !at.IsZero() {
+		return &at
+	}
+	return nil
 }

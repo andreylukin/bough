@@ -72,6 +72,8 @@ export interface Row {
   trouble?: string;
   /** The last test run exited non-zero; stays after Seen, which is not a fix. */
   testsFailed?: boolean;
+  /** When that last test run's result was recorded: test status is aged from this. */
+  testsAt?: string;
   /** Lines in the session's running log (GET /api/sessions/{id}/turns); absent when none. */
   turns?: number;
   /** Absent from a server older than orbs: read as local. */

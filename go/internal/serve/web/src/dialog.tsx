@@ -13,8 +13,9 @@ import { createPortal } from "react-dom";
 type Req =
   | { kind: "text"; title: string; initial: string; placeholder?: string; action: string; allowEmpty: boolean;
       onSubmit?: (v: string) => Promise<void>; resolve: (v: string | null) => void }
-  | { kind: "confirm"; title: string; body: string; action: string; danger: boolean;
+  | { kind: "confirm"; title: string; body: string; action: string; danger: boolean; safe: boolean;
       resolve: (v: boolean) => void }
+
   | { kind: "choice"; title: string; body: string; actions: string[];
       resolve: (v: string | null) => void };
 
@@ -70,10 +71,10 @@ export function askText(title: string, opts: { initial?: string; placeholder?: s
 }
 
 /** True only when the action was chosen. */
-export function askConfirm(title: string, body: string, opts: { action?: string; danger?: boolean } = {}): Promise<boolean> {
+export function askConfirm(title: string, body: string, opts: { action?: string; danger?: boolean; safe?: boolean } = {}): Promise<boolean> {
   return new Promise((resolve) => {
     if (!push) { resolve(window.confirm(title)); return; }
-    push({ kind: "confirm", title, body, action: opts.action ?? "Confirm", danger: opts.danger ?? false, resolve });
+    push({ kind: "confirm", title, body, action: opts.action ?? "Confirm", danger: opts.danger ?? false, safe: opts.safe ?? false, resolve });
   });
 }
 
@@ -118,6 +119,7 @@ export function DialogHost() {
   const [failed, setFailed] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const ok = useRef<HTMLButtonElement>(null);
+  const cancel = useRef<HTMLButtonElement>(null);
   const opener = useRef<HTMLElement | null>(null);
   const box = useRef<HTMLDivElement>(null);
   useModal(box, req !== null);
@@ -146,7 +148,8 @@ export function DialogHost() {
     if (!req) return;
     requestAnimationFrame(() => {
       if (req.kind === "text") { input.current?.focus(); input.current?.select(); }
-      else ok.current?.focus();
+      // A safe confirm starts on Cancel: Enter alone never archives.
+      else (req.kind === "confirm" && req.safe ? cancel : ok).current?.focus();
     });
   }, [req]);
 
@@ -192,7 +195,7 @@ export function DialogHost() {
         )}
         {failed && <p id="dlg-err" className="dlg-err" role="alert">Not saved: {failed}</p>}
         <div className="dlg-actions">
-          <button className="btn" onClick={dismiss} disabled={saving}>Cancel</button>
+          <button ref={cancel} className="btn" onClick={dismiss} disabled={saving}>Cancel</button>
           {req.kind === "choice" ? [...req.actions].reverse().map((a, i, all) => (
             <button key={a} ref={i === all.length - 1 ? ok : undefined} className={"btn" + (i === all.length - 1 ? " btn-primary" : "")}
                     onClick={() => finish(a)}>{a}</button>

@@ -19,6 +19,8 @@ export interface Command {
   run: () => void;
   /** Shown under the row while it is selected: why this result is here. */
   detail?: string;
+  /** Offered before anything is typed; the rest wait to be searched for. */
+  suggest?: boolean;
 }
 
 interface WikiHit { path: string; title: string; topic: string; excerpt: string; counts: { cited: number } }
@@ -102,7 +104,7 @@ function useFullText(q: string, open: boolean): { hits: SearchHit[]; state: Sear
   return { hits: forQ === q.trim() ? hits : [], state };
 }
 
-export function Palette({ open, onClose, rows, commands, onOpenSession, onStart, onOpenWikiPage, initialQuery = "" }: {
+export function Palette({ open, onClose, rows, commands, onOpenSession, onStart, onOpenWikiPage, initialQuery = "", current = null }: {
   open: boolean;
   onClose: () => void;
   rows: Row[];
@@ -114,9 +116,13 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
   onOpenWikiPage?: (path: string) => void;
   /** Seeds the box. Only a story uses it: nothing can type for us there. */
   initialQuery?: string;
+  /** The open session: it ranks below other matches and says it is the one you are in. */
+  current?: string | null;
 }) {
   const [q, setQ] = useState(initialQuery);
-  const [at, setAt] = useState(0);
+  // The selection is a result, not a position: results that land late
+  // (full-text, wiki) never move Enter onto something else.
+  const [atId, setAtId] = useState<string | null>(null);
   const field = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(null);
@@ -136,7 +142,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     if (!open) return;
     opener.current = document.activeElement;
     setQ(initialQuery);
-    setAt(0);
+    setAtId(null);
     field.current?.focus();
   }, [open, initialQuery]);
 
@@ -145,19 +151,27 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
 
   const hits = useMemo(() => {
     const needle = q.trim().toLowerCase();
+    // With no query: what you would do next, not the sitemap.
     const cmds = commands
+      .filter((c) => needle || c.suggest)
       .map((c) => ({ c, s: needle ? score(c.label, needle, true) : 10 }))
       .filter((x) => x.s >= 0);
     const sessions = rows
       .map((r) => {
         const title = plainTitle(r.title) || "Untitled session";
-        return { r, title, s: needle ? Math.max(score(title, needle, false), score(r.repo ?? "", needle, false)) : 0 };
+        const s = needle ? Math.max(score(title, needle, false), score(r.repo ?? "", needle, false)) : 0;
+        // The one you are in is rarely where you want to go.
+        return { r, title, s: s >= 0 && r.id === current ? Math.min(s, 51) : s };
       })
-      // With no query, commands only: a list of 150 titles is the
-      // sidebar again, and the palette is for aiming at one.
-      .filter((x) => (needle ? x.s >= 0 : false))
       // Best first, then the cap: slicing first dropped strong matches.
+      .filter((x) => needle && x.s >= 0)
       .sort((a, b) => b.s - a.s);
+    // With no query, the three sessions you touched last (not this one):
+    // a list of 150 titles is the sidebar again.
+    const recent = needle ? [] : rows
+      .filter((r) => !r.archived && !r.empty && r.id !== current)
+      .sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt))
+      .slice(0, 3);
     // Same-named sessions are told apart under the active row: branch,
     // age, and the line the full-text search matched, when it did.
     const foundBy = new Map(found.map((h) => [h.id, h]));
@@ -167,7 +181,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     for (const h of found) {
       const r = rows.find((x) => x.id === h.id);
       if (!r || byId.has(h.id)) continue;
-      byId.set(h.id, { r, title: plainTitle(r.title) || plainTitle(h.title) || "Untitled session", s: 50 });
+      byId.set(h.id, { r, title: plainTitle(r.title) || plainTitle(h.title) || "Untitled session", s: h.id === current ? 49 : 50 });
     }
     const cands = [...byId.values()].sort((a, b) => b.s - a.s);
     // Titles that repeat carry the id's tail, the one thing always different.
@@ -184,13 +198,20 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     // One relevance order across commands and titles, so a weak match
     // in one kind never leapfrogs a strong one in the other.
     const ranked = [
+      ...recent.map((r) => ({ s: 20, c: {
+        id: "s:" + r.id,
+        label: plainTitle(r.title) || "Untitled session",
+        hint: [r.repo?.split("/").pop(), r.lastAt ? agoShort(r.lastAt) : ""].filter(Boolean).join(" · "),
+        group: "Recent sessions",
+        run: () => onOpenSession(r.id),
+      } as Command })),
       ...cmds.map((x) => ({ s: x.s, c: x.c })),
       ...cands.map(({ r, title, s }) => ({ s, c: {
         id: "s:" + r.id,
         label: title,
-        hint: [(r.repo || foundBy.get(r.id)?.repo)?.split("/").pop(), r.testsFailed ? "tests failed" : shownStatus(r) === "error" ? "failed" : r.status,
+        hint: [r.id === current ? "Current" : "", (r.repo || foundBy.get(r.id)?.repo)?.split("/").pop(), r.testsFailed ? "tests failed" : shownStatus(r) === "error" ? "failed" : r.status,
                twice.has(same(title)) ? r.id.slice(-6) : ""].filter(Boolean).join(" · "),
-        group: s === 50 ? "Found in the conversation" : "Conversations",
+        group: s <= 50 ? "Found in the conversation" : "Sessions",
         detail: detailFor(r, title),
         run: () => onOpenSession(r.id),
       } as Command })),
@@ -233,16 +254,17 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     if (onStart && typed.length >= 2 && !typed.includes(":")) {
       capped.push({
         id: "start:" + typed,
-        label: `Start a conversation: “${typed}”`,
+        label: `Start a session: “${typed}”`,
         hint: "sends it as the first message",
         group: "Start",
         run: () => onStart(typed),
       });
     }
     return capped;
-  }, [q, rows, commands, onOpenSession, found, onStart, pages, onOpenWikiPage]);
+  }, [q, rows, commands, onOpenSession, found, onStart, pages, onOpenWikiPage, current]);
 
-  useEffect(() => { setAt(0); }, [q]);
+  const at = Math.max(0, hits.findIndex((c) => c.id === atId));
+  const setAt = (f: (i: number) => number) => { const c = hits[f(at)]; if (c) setAtId(c.id); };
   useEffect(() => {
     list.current?.querySelector('[data-at="1"]')?.scrollIntoView({ block: "nearest" });
   }, [at, hits.length]);
@@ -264,10 +286,10 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     <div ref={box} style={{ display: "contents" }}>
       <div className="pal-scrim" onClick={close} />
       <div className="pal" role="dialog" aria-modal="true" aria-label="Quick access">
-        <input ref={field} className="pal-field" value={q} onChange={(e) => setQ(e.target.value)}
-               onKeyDown={keys} placeholder="Find a conversation, or type a command"
-               aria-label="Find a conversation, or type a command"
-               role="combobox" aria-expanded aria-controls="pal-list"
+        <input ref={field} className="pal-field" value={q} onChange={(e) => { setQ(e.target.value); setAtId(null); }}
+               onKeyDown={keys} placeholder="Search sessions or run a command…"
+               aria-label="Search sessions or run a command"
+               role="combobox" aria-expanded={hits.length > 0} aria-controls="pal-list" aria-autocomplete="list"
                aria-activedescendant={hits[at] ? "pal-" + hits[at].id : undefined} />
         <div id="pal-list" ref={list} className="pal-list" role="listbox" aria-label="Results">
           {hits.map((c, i) => {
@@ -278,7 +300,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
                 <button id={"pal-" + c.id} role="option" aria-selected={i === at} tabIndex={-1}
                         data-at={i === at ? 1 : 0}
                         className={"pal-item" + (i === at ? " pal-on" : "")}
-                        onMouseEnter={() => setAt(i)} onClick={() => pick(c)}>
+                        onMouseEnter={() => setAtId(c.id)} onClick={() => pick(c)}>
                   <span className="pal-label">{c.label}</span>
                   {c.hint && <span className="pal-hint">{c.hint}</span>}
                 </button>
@@ -286,9 +308,11 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
               </div>
             );
           })}
-          {hits.length === 0 && searching === "idle" && (
-            <p className="pal-none">
-              {q.trim() ? `Nothing matches “${q.trim()}”.` : "Type to search your conversations."}
+          {hits.length === 0 && (
+            <p className="pal-none" role="status">
+              {searching === "loading" ? "Searching…"
+                : searching === "error" ? "Search failed. Titles only, and none match."
+                : q.trim() ? "No matching sessions or commands." : "Type to search your sessions."}
             </p>
           )}
         </div>

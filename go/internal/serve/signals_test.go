@@ -89,3 +89,15 @@ func TestTroubled(t *testing.T) {
 		t.Fatal("a failure older than the window is history, not a queue item")
 	}
 }
+
+func TestLastTestAt(t *testing.T) {
+	t.Parallel()
+	es := entries(ent(1, "code", text(`tools.bash("go test ./...")`)), ent(2, "result", map[string]any{"text": "", "exit": 1}), ent(3, "input", text("later")))
+	failed, at := lastTest(es)
+	if !failed || at != es[1].At {
+		t.Fatalf("lastTest = %v %v, want failed at the result's time %v", failed, at, es[1].At)
+	}
+	if testsAt(es[2:]) != nil {
+		t.Fatal("no test run has no test time")
+	}
+}

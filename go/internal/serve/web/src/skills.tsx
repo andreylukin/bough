@@ -50,7 +50,7 @@ export function SkillPicker({ onPick }: { onPick: (name: string, known: string[]
 
   return (
     <div className="skills-anchor">
-      <button ref={trigger} className="btn" aria-expanded={open} aria-haspopup="dialog"
+      <button ref={trigger} className="btn skills-btn" aria-expanded={open} aria-haspopup="dialog"
         onClick={() => setOpen((v) => !v)}>Skills</button>
 
       {open && (

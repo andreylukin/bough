@@ -16,7 +16,8 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       /* a non-JSON error body is not worth masking the status */
     }
-    throw new Error(detail);
+    // The status rides along: a 404 is "not here", anything else is "could not ask".
+    throw Object.assign(new Error(detail), { status: res.status });
   }
   return (await res.json()) as T;
 }
@@ -25,6 +26,9 @@ const post = (path: string, body?: unknown) =>
   req<{ ok: true }>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
 
 export interface Change { path: string; add: number; del: number; new?: boolean }
+export interface Edit extends Change { patch: boolean }
+/** Session edits (what its turns changed) or the working tree (everything uncommitted). */
+export type Scope = "session" | "tree";
 /** One line of a session's running log, written by the small model per turn. */
 export interface TurnLine { turn: number; text: string; at: string; test?: { cmd: string; exit: number } }
 
@@ -34,7 +38,9 @@ export const api = {
   /** What is uncommitted in the session's working tree, live from git. */
   changes: (id: string) => req<{ repo: boolean; files: Change[] }>(`/api/sessions/${id}/changes`),
   /** One file's unified diff against HEAD, 3 lines of context. */
-  diff: (id: string, path: string) => req<{ diff: string }>(`/api/sessions/${id}/diff?path=${encodeURIComponent(path)}`).then((r) => r.diff),
+  diff: (id: string, path: string, scope: Scope = "tree") => req<{ diff: string }>(`/api/sessions/${id}/diff?path=${encodeURIComponent(path)}${scope === "session" ? "&scope=session" : ""}`).then((r) => r.diff),
+  /** The files this session's turns changed, measured from its first checkpoint; patch false when none was recorded. */
+  edits: (id: string) => req<{ repo: boolean; files: Edit[] }>(`/api/sessions/${id}/edits`),
   /** Ask the session to stop one of its background jobs. */
   killJob: (id: string, job: number) => post(`/api/sessions/${id}/jobs/${job}/kill`),
   /** Mark what a session has recorded so far as seen, taking it out of Needs you. */

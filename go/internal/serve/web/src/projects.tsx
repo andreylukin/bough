@@ -11,14 +11,17 @@ import { askConfirm, askText } from "./dialog";
 const clock = (iso: string) =>
   new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
-function Conversation({ row, projects, onOpen, onAssign, picked, onPick, locked }: {
+function Conversation({ row, repo, projects, onOpen, onAssign, picked, onPick, locked }: {
   row: Row; projects: Project[];
+  /** The session's repo, own or inferred; omitted where a group head already names it. */
+  repo?: string;
   onOpen: (id: string) => void; onAssign: (id: string, project: string) => void;
   picked: boolean; onPick: (id: string) => void;
   /** A bulk move is running: the selection it snapshotted cannot change under it. */
   locked: boolean;
 }) {
-  const title = plainTitle(row.title) || untitled(row.id);
+  // No title yet: what the session is about beats an opaque id.
+  const title = plainTitle(row.title) || row.summary?.split(/(?<=[.!?])\s/)[0] || untitled(row.id);
   return (
     <div className={"proj-row" + (picked ? " proj-picked" : "")}>
       <label className="proj-check">
@@ -28,6 +31,7 @@ function Conversation({ row, projects, onOpen, onAssign, picked, onPick, locked 
       {/* Title and when in one target, so a phone row is two short lines, not three. */}
       <button className="proj-open" onClick={() => onOpen(row.id)}>
         <span className="proj-title">{title}</span>
+        {repo && <span className="mono proj-repo">{repo}</span>}
         <span className="num proj-when">{clock(row.modified)}</span>
       </button>
       <StatusMark status={shownStatus(row)} />
@@ -105,17 +109,13 @@ function OrbSection({ project, onOpen, onChanged }: {
 interface RepoGroup { repo: string; count: number; sessions: string[] }
 
 /**
- * Every session here started in the home directory, so it records no
- * repo — but the paths it touched name one. Ticking a repo selects its
- * unassigned sessions in the page's one selection; the bar below files
- * them, so there is no second list to keep in step.
+ * Sessions started in the home directory record no repo, but the paths
+ * they touched name one (GET /api/projects/by-repo). A session's own repo
+ * wins; the inferred one is the fallback; neither is "Unknown repo".
  */
-function ByRepo({ unassigned, selected, onPickMany }: {
-  unassigned: Set<string>; selected: Set<string>; onPickMany: (ids: string[], on: boolean) => void;
-}) {
+function useInferredRepos() {
   const [groups, setGroups] = useState<RepoGroup[] | null>(null);
   const [err, setErr] = useState("");
-
   const load = useCallback(() => {
     setErr("");
     fetch("/api/projects/by-repo")
@@ -124,46 +124,10 @@ function ByRepo({ unassigned, selected, onPickMany }: {
       .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
   }, []);
   useEffect(load, [load]);
-
-  // A failure or a slow read is a row that says so, not a missing feature.
-  if (err || groups === null) {
-    return (
-      <p className="rp-state" role="status">
-        {err ? <>Repo grouping unavailable · {err} <button className="link" onClick={load}>Retry</button></> : "Reading repos…"}
-      </p>
-    );
-  }
-  if (groups.length === 0) return null;
-  // Unique unassigned sessions: one conversation can touch more than one
-  // repo, and one already filed is not coverage of the unassigned ones.
-  const total = new Set(groups.flatMap((g) => g.sessions).filter((id) => unassigned.has(id))).size;
-
-  return (
-    <details className="proj rp-group">
-      <summary className="proj-head">
-        <h2>Select unassigned by repo</h2>
-        <span className="num proj-count">
-          {total} of {unassigned.size} have an inferred repo, across {groups.length} {groups.length === 1 ? "repo" : "repos"}
-        </span>
-      </summary>
-      {groups.map((g) => {
-        const ids = g.sessions.filter((id) => unassigned.has(id));
-        const on = ids.length > 0 && ids.every((id) => selected.has(id));
-        return (
-          <div key={g.repo} className="hk2-row">
-            <label className="hk2-line rp-pick">
-              <input type="checkbox" checked={on} disabled={ids.length === 0} onChange={() => onPickMany(ids, !on)} />
-              <span className="mono hk2-name">{g.repo}</span>
-              <span className="hk2-facts">
-                {ids.length} {ids.length === 1 ? "conversation" : "conversations"}
-              </span>
-            </label>
-          </div>
-        );
-      })}
-    </details>
-  );
+  return { groups, err, load };
 }
+
+const UNKNOWN = "Unknown repo";
 
 /**
  * A first guess at what a set of repos is called: what they share,
@@ -228,7 +192,24 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
   }, [shown]);
 
   const unassigned = byProject.get("") ?? [];
-  const unassignedAll = useMemo(() => new Set(rows.filter((r) => !r.project).map((r) => r.id)), [rows]);
+  const inferred = useInferredRepos();
+  const repoOf = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const g of inferred.groups ?? []) for (const id of g.sessions) if (!m.has(id)) m.set(id, g.repo);
+    return (r: Row) => r.repo?.split("/").pop() || m.get(r.id) || UNKNOWN;
+  }, [inferred.groups]);
+  // Unassigned sessions grouped by repo by default, the unknown ones last.
+  const byRepo = useMemo(() => {
+    const m = new Map<string, Row[]>();
+    for (const r of unassigned) {
+      const k = repoOf(r);
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(r);
+    }
+    return [...m.entries()].sort(([a, x], [b, y]) => (a === UNKNOWN ? 1 : b === UNKNOWN ? -1 : y.length - x.length));
+  }, [unassigned, repoOf]);
+  // The same repo identities the sidebar shows, counted across every session.
+  const detected = useMemo(() => new Set(rows.map(repoOf).filter((k) => k !== UNKNOWN)).size, [rows, repoOf]);
 
   // While a move runs its selection is locked: a second move cannot overlap it.
   const [moving, setMoving] = useState(false);
@@ -262,14 +243,31 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
         const id = made.current ?? (await onCreate(name)).id;
         made.current = id;
         // With a selection, the new project is where it goes.
-        if (ids.length && !(await assign(id))) throw new Error("the project exists, but some conversations did not move");
+        if (ids.length && !(await assign(id))) throw new Error("the project exists, but some sessions did not move");
       } });
     // Done or cancelled, the next creation is a new project.
     made.current = null;
   };
 
-  const list = (rs: Row[]) => rs.map((r) => (
-    <Conversation key={r.id} row={r} projects={projects} onOpen={onOpen} onAssign={onAssign}
+  // Explicit: names the project after the repo, asks first, and files only that repo's unassigned sessions.
+  const fromRepo = async (repo: string, rs: Row[]) => {
+    const batch = rs.map((r) => r.id);
+    await askText(`Create project from ${repo}`, { initial: repo, action: "Create and move",
+      placeholder: "What is this work?",
+      onSubmit: async (name) => {
+        const id = made.current ?? (await onCreate(name)).id;
+        made.current = id;
+        setFailed(null); setMoving(true);
+        let left: string[];
+        try { left = await onAssignMany(batch, id); } catch { left = batch; }
+        setMoving(false);
+        if (left.length) { setSelected(new Set(left)); setFailed({ project: id, n: left.length }); throw new Error("the project exists, but some sessions did not move"); }
+      } });
+    made.current = null;
+  };
+
+  const list = (rs: Row[], grouped = false) => rs.map((r) => (
+    <Conversation key={r.id} row={r} repo={grouped ? undefined : repoOf(r)} projects={projects} onOpen={onOpen} onAssign={onAssign}
                   picked={selected.has(r.id)} onPick={pick} locked={moving} />
   ));
 
@@ -280,7 +278,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
         <div className="head-main">
           <h1>Projects</h1>
           <span className="head-repo">
-            {projects.length} {projects.length === 1 ? "project" : "projects"}
+            {projects.length} configured {projects.length === 1 ? "project" : "projects"} · {detected} detected {detected === 1 ? "repo" : "repos"}
           </span>
         </div>
         <div className="head-side">
@@ -290,10 +288,11 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
 
       <div className="scroll proj-body">
         <div className="proj-filter">
-          <input className="field" type="search" value={filter} placeholder="Filter conversations by title or repo"
-                 aria-label="Filter conversations" onChange={(e) => setFilter(e.target.value)} />
+          <input className="field" type="search" value={filter} placeholder="Filter sessions by title or repo"
+                 aria-label="Filter sessions" onChange={(e) => setFilter(e.target.value)} />
         </div>
-        <ByRepo unassigned={unassignedAll} selected={selected} onPickMany={pickMany} />
+        <p className="proj-lede">A project groups sessions from any repo under one name. Select sessions to move them into
+          a project; moving only files them here, and nothing inside a session changes.</p>
 
         {projects.map((p) => {
           const rs = byProject.get(p.id) ?? [];
@@ -302,14 +301,14 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
               <div className="proj-head">
                 <h2>{p.name}</h2>
                 <span className="num proj-count">
-                  {rs.length} {rs.length === 1 ? "conversation" : "conversations"}
+                  {rs.length} {rs.length === 1 ? "session" : "sessions"}
                 </span>
                 <button className="link" onClick={() => {
                   void askText("Rename project", { initial: p.name, action: "Rename", onSubmit: (name) => onRename(p.id, name) });
                 }}>Rename</button>
                 <button className="link" onClick={async () => {
                   const ok = await askConfirm(`Delete “${p.name}”?`,
-                    `Its ${rs.length} conversation${rs.length === 1 ? "" : "s"} stay, unassigned.`,
+                    `Its ${rs.length} session${rs.length === 1 ? "" : "s"} stay, unassigned.`,
                     { action: "Delete project", danger: true });
                   if (ok) onDelete(p.id);
                 }}>Delete</button>
@@ -319,7 +318,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
               </div>
               {orbId === p.id && <OrbSection project={p} onOpen={onOpen} onChanged={onOrbChanged} />}
               {rs.length === 0
-                ? <p className="proj-none">{needle ? "Nothing here matches the filter." : "Nothing here yet. Move a conversation in from below."}</p>
+                ? <p className="proj-none">{needle ? "Nothing here matches the filter." : "Nothing here yet. Move a session in from below."}</p>
                 : list(rs)}
             </section>
           );
@@ -329,7 +328,8 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
           <div className="proj-head">
             <h2>Unassigned</h2>
             <span className="num proj-count">
-              {unassigned.length} {unassigned.length === 1 ? "conversation" : "conversations"}
+              {unassigned.length} {unassigned.length === 1 ? "session" : "sessions"}
+              {(() => { const n = byRepo.filter(([k]) => k !== UNKNOWN).length; return n > 0 && ` · ${n} ${n === 1 ? "repo" : "repos"}`; })()}
             </span>
             {unassigned.length > 0 && (
               <button className="link" onClick={() => pickMany(unassigned.map((r) => r.id), !unassigned.every((r) => selected.has(r.id)))}>
@@ -337,14 +337,35 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
               </button>
             )}
           </div>
+          {inferred.err
+            ? <p className="rp-state" role="status">Inferred repos unavailable · {inferred.err} <button className="link" onClick={inferred.load}>Retry</button></p>
+            : inferred.groups === null && <p className="rp-state" role="status">Reading repos…</p>}
           {unassigned.length === 0
-            ? <p className="proj-none">{needle ? "Nothing unassigned matches the filter." : "Every conversation is in a project."}</p>
-            : list(unassigned)}
+            ? <p className="proj-none">{needle ? "Nothing unassigned matches the filter." : "Every session is in a project."}</p>
+            : byRepo.map(([repo, rs]) => {
+              const on = rs.every((r) => selected.has(r.id));
+              return (
+                <div key={repo} className="rp-repo">
+                  <div className="rp-repo-head">
+                    <label className="rp-pick">
+                      <input type="checkbox" checked={on} disabled={moving} onChange={() => pickMany(rs.map((r) => r.id), !on)} />
+                      <span className="mono hk2-name">{repo}</span>
+                      <span className="visually-hidden">: select all</span>
+                    </label>
+                    <span className="num proj-count">{rs.length} {rs.length === 1 ? "session" : "sessions"}</span>
+                    {repo !== UNKNOWN && (
+                      <button className="link" disabled={moving} onClick={() => { void fromRepo(repo, rs); }}>Create project from repo…</button>
+                    )}
+                  </div>
+                  {list(rs, true)}
+                </div>
+              );
+            })}
         </section>
       </div>
 
       {ids.length > 0 && (
-        <div className="rp-bar" role="region" aria-label="Selected conversations" aria-busy={moving || undefined}>
+        <div className="rp-bar" role="region" aria-label="Selected sessions" aria-busy={moving || undefined}>
           <span className="num rp-count">{moving ? `Moving ${ids.length}…` : `${ids.length} selected`}</span>
           {projects.length > 0 && (
             <>

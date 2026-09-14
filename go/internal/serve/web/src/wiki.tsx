@@ -251,6 +251,24 @@ function Crumbs({ onIndex, trail, title }: { onIndex?: () => void; trail?: strin
   );
 }
 
+/** "/private/tmp/x/.bough/wiki" → "…/.bough/wiki": the last two segments say where. */
+const elide = (dir: string) => {
+  const parts = dir.split("/").filter(Boolean);
+  return parts.length > 2 ? "…/" + parts.slice(-2).join("/") : dir;
+};
+
+function CopyCommand({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <p className="wk-cmd">
+      <code className="mono">{text}</code>
+      <button className="btn" onClick={() => {
+        void navigator.clipboard?.writeText(text).then(() => { setDone(true); setTimeout(() => setDone(false), 1500); });
+      }}>{done ? "Copied" : "Copy command"}</button>
+    </p>
+  );
+}
+
 // ——— Index ———————————————————————————————————————————————————————
 
 export function WikiIndexView({ data, onOpen, onReview, onActivity, check, onBack }: {
@@ -276,11 +294,12 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, check, onBac
 
   return (
     <div className="thread">
-      <header className="thread-head">
+      <header className="thread-head page-head">
         <Back onBack={onBack} />
         <div className="head-main">
           <h1>Wiki</h1>
-          <span className="mono head-repo">{data.dir}</span>
+          <span className="mono wk-dir" title={data.dir}>{elide(data.dir)}</span>
+          <button className="link" onClick={() => void navigator.clipboard?.writeText(data.dir)}>Copy full path</button>
         </div>
         {data.exists && (
           <div className="hk-acts">
@@ -292,12 +311,20 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, check, onBac
 
       <div className="scroll proj-body">
         {!data.exists ? (
-          <div className="proj-empty">
-            <p className="proj-empty-title">No wiki yet</p>
-            <p>The wiki is markdown compiled from your session history, one cited claim at a time.
-               Run <code className="mono">bough wiki install</code> and a scheduler ingests finished
-               sessions every five minutes; pages appear here as it writes them.</p>
-          </div>
+          h.installed || h.ingesting ? (
+            <div className="proj-empty">
+              <p className="proj-empty-title">Indexing</p>
+              <p>The scheduler is on{h.every ? ` (every ${h.every})` : ""} and {plural(h.pending, "session")} {h.pending === 1 ? "is" : "are"} waiting.
+                 Pages appear here as the first ingest writes them.</p>
+            </div>
+          ) : (
+            <div className="proj-empty">
+              <p className="proj-empty-title">Not enabled</p>
+              <p>The wiki is markdown compiled from your session history, one cited claim at a time. Enabling it
+                 installs a background scheduler that ingests finished sessions every five minutes. Run this in a terminal:</p>
+              <CopyCommand text="bough wiki install" />
+            </div>
+          )
         ) : (
           <>
             {/* Health: three components, each one word and its facts. */}
@@ -341,7 +368,7 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, check, onBac
 
             {pages === 0 ? (
               <div className="proj-empty">
-                <p className="proj-empty-title">Nothing compiled yet</p>
+                <p className="proj-empty-title">{h.ingesting ? "Indexing" : "No pages yet"}</p>
                 <p>An ingest reads each finished session and writes a page only when there is something a
                    later session would want. Most sessions are not that. Activity shows every run.</p>
               </div>
@@ -555,7 +582,7 @@ export function WikiPageView({ page, cite, source, sourceError, onCite, onCloseS
   const c = page.counts;
   return (
     <div className="thread">
-      <header className="thread-head">
+      <header className="thread-head page-head">
         <Back onBack={onBack} />
         <Crumbs onIndex={onIndex} trail={page.topic ? [page.topic] : []} title={page.title} />
         <div className="hk-acts">
@@ -672,7 +699,7 @@ export function WikiReviewView({ data, onOpenPage, onAct, onSearch, onIngest, on
 
   return (
     <div className="thread">
-      <header className="thread-head">
+      <header className="thread-head page-head">
         <Back onBack={onBack} />
         <Crumbs onIndex={onIndex} title="Review" />
         <span className="head-repo">
@@ -788,7 +815,7 @@ export function WikiActivityView({ data, onIngest, onOpenPage, onOpenSession, on
   const t = data.today;
   return (
     <div className="thread">
-      <header className="thread-head">
+      <header className="thread-head page-head">
         <Back onBack={onBack} />
         <Crumbs onIndex={onIndex} title="Activity" />
         {onIngest && (
@@ -890,7 +917,27 @@ function useLoad<T>(load: (() => Promise<T>) | null, key: string, poll = 0) {
   return { data, err, reload };
 }
 
-function Loading({ what, err }: { what: string; err: string }) {
+function Loading({ what, err, onBack, onRetry }: { what: string; err: string; onBack?: () => void; onRetry?: () => void }) {
+  if (onRetry) {
+    // The index keeps its head: a read failure is a state of the wiki, not a blank page.
+    return (
+      <div className="thread">
+        <header className="thread-head page-head">
+          <Back onBack={onBack} />
+          <div className="head-main"><h1>Wiki</h1></div>
+        </header>
+        <div className="scroll proj-body">
+          {err ? (
+            <div className="proj-empty">
+              <p className="proj-empty-title">Read failed</p>
+              <p>The wiki directory could not be read: {err}</p>
+              <p><button className="btn" onClick={onRetry}>Retry</button></p>
+            </div>
+          ) : <p className="proj-none">Loading the wiki…</p>}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="thread empty">
       <div>
@@ -928,7 +975,7 @@ export function WikiPage({ route, onRoute, onBack, onOpenSession, onSearch }: {
         ? <WikiIndexView data={index.data} onBack={onBack} onOpen={(p) => toPage(p)}
                          onReview={() => onRoute({ at: "review" })} onActivity={() => onRoute({ at: "activity" })}
                          check={wikiApi.check} />
-        : <Loading what="The wiki" err={index.err} />;
+        : <Loading what="The wiki" err={index.err} onBack={onBack} onRetry={() => { void index.reload(); }} />;
     case "review":
       return review.data
         ? <WikiReviewView data={review.data} onBack={onBack} onIndex={toIndex} onSearch={onSearch}
