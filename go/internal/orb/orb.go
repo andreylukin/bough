@@ -275,7 +275,8 @@ func (o *Orb) runResume(ctx context.Context, script string) error {
 		return err
 	}
 	defer f.Close()
-	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: o.state.Primary, Env: o.execEnv(o.proxyURLLocked()), Secrets: o.secretEnv()}, "sh", script)
+	text, _ := os.ReadFile(script)
+	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: o.state.Primary, Env: o.execEnv(o.proxyURLLocked()), Secrets: o.secretEnv()}, container.ScriptArgv(text, script)...)
 	cmd.Stdout, cmd.Stderr = f, f
 	return cmd.Run()
 }

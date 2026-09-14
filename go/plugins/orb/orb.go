@@ -162,7 +162,18 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	o := prev.o
 	if !reused {
 		if o, err = iorb.Open(octx, rt, home, session, p, pad.Dir()); err != nil {
-			return fmt.Errorf("orb: open %s: %w", slug, err)
+			// Not a row failure: the first mount is strict, so an error here
+			// killed the whole session process before it read stdin, and a
+			// message sent to it vanished with no error anywhere. A broken
+			// setup.sh made the session unreachable. The session stays up
+			// without an orb (tools.bash refuses: "project orb not ready"),
+			// says why, and the next start retries the build.
+			fmt.Fprintf(os.Stderr, "bough: orb: %s: %v\n", slug, err)
+			if s, serr := kernel.Get[sections](ctx, "prompt-sections"); serr == nil {
+				s.Set("orb", failedPromptSection(slug, err))
+				ctx.Effect(func() { s.Set("orb", "") })
+			}
+			return nil
 		}
 	}
 	st := o.State()
@@ -228,6 +239,14 @@ func stopOrb(o *iorb.Orb) {
 	if err := o.Stop(sctx); err != nil {
 		fmt.Fprintf(os.Stderr, "bough: orb: stop: %v\n", err)
 	}
+}
+
+// failedPromptSection tells the model its project container did not start,
+// so it explains the error and the fix instead of trying commands that
+// cannot run.
+func failedPromptSection(slug string, err error) string {
+	return fmt.Sprintf("Project session: %s. Its container failed to start, so tools.bash, write and patch are unavailable in this session:\n%v\n"+
+		"Tell the user this error plainly. If it comes from the project definition (setup.sh, Dockerfile, resume.sh, project.yml), say what to change and give the exact command, e.g. `bough project show %s setup.sh` and `bough project write %s setup.sh < fixed.sh`; the next session start rebuilds.", slug, err, slug, slug)
 }
 
 // promptSection tells the model where its shell runs and what to check.

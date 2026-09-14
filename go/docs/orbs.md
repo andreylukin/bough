@@ -155,7 +155,8 @@ test and records the real shape in apple.go: `container image list --format json
 the `--mount type=volume` syntax (fallback `-v NAME:DST`), and that
 `--mount`/`-v` of a named volume works. There is NO commit verb in 1.1.0:
 Commit writes a temp context dir (setup.sh + Files) and a Dockerfile
-(`FROM base`, `ENV`, `COPY . /bough-setup`, `RUN sh /bough-setup/setup.sh`)
+(`FROM base`, `ENV`, `COPY . /bough-setup`, `RUN <interpreter> /bough-setup/setup.sh`, the
+interpreter taken from the script's `#!` line, else `sh`; resume.sh runs the same way)
 and calls Build; documented in apple.go.
 Exec env: `container exec` does NOT inherit the host environment, so the
 caller must pass every variable the command needs via `ExecOptions.Env`

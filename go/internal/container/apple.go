@@ -157,7 +157,8 @@ func writeCommitContext(dir string, spec CommitSpec) error {
 		k, v, _ := strings.Cut(e, "=")
 		fmt.Fprintf(&df, "ENV %s=%s\n", k, strconv.Quote(v))
 	}
-	df.WriteString("COPY . /bough-setup\nRUN sh /bough-setup/setup.sh\n")
+	script, _ := os.ReadFile(spec.Script)
+	fmt.Fprintf(&df, "COPY . /bough-setup\nRUN %s\n", strings.Join(ScriptArgv(script, "/bough-setup/setup.sh"), " "))
 	return os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(df.String()), 0o644)
 }
 
