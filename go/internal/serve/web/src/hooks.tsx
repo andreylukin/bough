@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Back } from "./app";
 import { EmptySection, Pending } from "./context";
 import { plainTitle } from "./render";
 
-// The hooks wire types live here, not in types.ts: they are read by this
-// view and nothing else, and GET /api/hooks always sends every field.
+// Shared wire types for the Hooks page and per-turn inspection.
 export interface Hook {
   id: string;
   off: boolean;
@@ -41,6 +40,15 @@ export interface Fire {
   error: string;
   notice: string;
   truncated: string[];
+  path?: string;
+  input?: unknown;
+  output?: unknown;
+  inputBytes?: number;
+  outputBytes?: number;
+  inputTruncated?: boolean;
+  outputTruncated?: boolean;
+  inputError?: string;
+  outputError?: string;
 }
 
 /**
@@ -186,43 +194,53 @@ export type DryRun = (path: string, event: string) => Promise<{ result: unknown;
  * first expand rather than with the list: most visits never open one,
  * and the list is the answer to "is this thing even loaded?".
  */
-function Source({ path, event, load, save, dryrun }: {
-  path: string; event?: string; load: Load; save: Save; dryrun?: DryRun;
+function Source({ path, event, load, save, dryrun, definition = false }: {
+  path: string; event?: string; load: Load; save: Save; dryrun?: DryRun; definition?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [body, setBody] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
-  const id = `src-${path.replace(/\W+/g, "-")}`;
+  const [saving, setSaving] = useState(false);
+  const id = useId();
+
+  const read = () => {
+    setErr("");
+    load(path).then(setBody).catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
+  };
 
   const expand = () => {
     const next = !open;
     setOpen(next);
     if (!next || body !== null) return;
-    load(path).then(setBody).catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
+    read();
   };
 
   return (
-    <div className="hk-src">
-      <button className="hk-toggle" aria-expanded={open} aria-controls={id} onClick={expand}>
-        {open ? "Hide file" : "Open file"}
-      </button>
+    <div className={definition ? "hk-src hk-definition" : "hk-src"}>
+      <div className="hk-source-head">
+        {definition && <span className="mono hk-path">{path}</span>}
+        <button className="hk-toggle" aria-expanded={open} aria-controls={id} onClick={expand}>
+          {definition ? (open ? "Hide definition" : "Open definition") : (open ? "Hide file" : "Open file")}
+        </button>
+      </div>
+      {definition && <p className="hk2-note">Current file; may differ from this run. Saving affects future runs.</p>}
       <div className="hk-panel" id={id} hidden={!open}>
         <p className="mono hk-path">{path}</p>
-        {err && <p className="err">{err}</p>}
+        {err && <p className="err" role="alert">{err}</p>}
         {body === null
-          ? !err && <p className="proj-none">Loading…</p>
+          ? err ? <button className="btn" onClick={read}>Retry</button> : <p className="proj-none">Loading…</p>
           : (
             <>
               <label className="visually-hidden" htmlFor={`${id}-body`}>File contents</label>
               <textarea id={`${id}-body`} className="hk-edit mono" rows={10} spellCheck={false}
-                        value={body} onChange={(e) => setBody(e.target.value)} />
+                        value={body} disabled={saving} onChange={(e) => { setBody(e.target.value); setNote(""); }} />
               <div className="hk-acts">
-                <button className="btn btn-primary" onClick={() => {
-                  setNote(""); setErr("");
+                <button className="btn btn-primary" disabled={saving} onClick={() => {
+                  setNote(""); setErr(""); setSaving(true);
                   save(path, body).then(() => setNote("Saved.")).catch((e: unknown) =>
-                    setErr(e instanceof Error ? e.message : String(e)));
-                }}>Save</button>
+                    setErr(e instanceof Error ? e.message : String(e))).finally(() => setSaving(false));
+                }}>{saving ? "Saving…" : "Save"}</button>
                 {dryrun && event && (
                   <button className="btn" onClick={() => {
                     setNote(""); setErr("");
@@ -237,6 +255,38 @@ function Source({ path, event, load, save, dryrun }: {
             </>
           )}
       </div>
+    </div>
+  );
+}
+
+function Payload({ fire, side }: { fire: Partial<Fire>; side: "input" | "output" }) {
+  const value = fire[side];
+  const bytes = fire[side === "input" ? "inputBytes" : "outputBytes"];
+  const cut = fire[side === "input" ? "inputTruncated" : "outputTruncated"];
+  const error = fire[side === "input" ? "inputError" : "outputError"];
+  const label = side === "input" ? "Input" : "Output";
+  return (
+    <section className="hk-payload" aria-label={label}>
+      <h4>{label}{bytes !== undefined && <span className="num hk-when"> · {bytes.toLocaleString()} bytes</span>}</h4>
+      {error ? <p className="hk-bad">Capture error — {error}</p>
+        : cut ? <p className="hk-when">Oversize — omitted in full at the 64 KiB capture cap. No partial payload was stored.</p>
+        : value === undefined ? <p className="hk-when">Unavailable — this record has no captured {side} (legacy records did not capture payloads).</p>
+        : value === null ? <p className="hk-when"><code className="mono">null</code> — {side === "output" ? "no output returned" : "no input"}</p>
+        : <pre className="mono" tabIndex={0}>{JSON.stringify(value, null, 2)}</pre>}
+    </section>
+  );
+}
+
+/** Uses only recorded identity: a name cannot distinguish home, project or Go hooks. */
+export function FireInspection({ fire, load = hooksApi.read, save = hooksApi.write, showDefinition = true }: {
+  fire: Partial<Fire>; load?: Load; save?: Save; showDefinition?: boolean;
+}) {
+  return (
+    <div className="hk-inspect">
+      <div className="hk-io"><Payload fire={fire} side="input" /><Payload fire={fire} side="output" /></div>
+      {showDefinition && (fire.path
+        ? <Source key={fire.path} path={fire.path} load={load} save={save} definition />
+        : <p className="hk2-note">Definition unavailable — no file path was recorded. Legacy and Go hooks are not matched to files by name.</p>)}
     </div>
   );
 }
@@ -292,8 +342,8 @@ function WatcherRow({ w, off, setOff, onOff, load, save }: {
   );
 }
 
-function HookRow({ h, off, setOff, onOff, load, save, dryrun }: {
-  h: Hook; off: boolean; setOff: SetOff; onOff: (off: boolean) => void;
+function HookRow({ h, latest, off, setOff, onOff, load, save, dryrun }: {
+  h: Hook; latest?: Fire; off: boolean; setOff: SetOff; onOff: (off: boolean) => void;
   load: Load; save: Save; dryrun: DryRun;
 }) {
   return (
@@ -310,7 +360,16 @@ function HookRow({ h, off, setOff, onOff, load, save, dryrun }: {
       alert={h.failing ? h.error : h.shadowed ? "A project file of the same name wins over this one." : ""}
       actions={<OffToggle id={offId("hook", h.id)} off={off} what={`the hook ${h.name}`}
                           setOff={setOff} onChange={onOff} />}
-      detail={<Source path={h.path} event={h.event} load={load} save={save} dryrun={dryrun} />}
+      detail={<>
+        <Source path={h.path} event={h.event} load={load} save={save} dryrun={dryrun} definition />
+        {latest ? <details className="hk2-more">
+          <summary>Latest recorded input / output · {clock(latest.at)}</summary>
+          <div className="hk2-more-body">
+            <p className="hk2-note">{stamp(latest.at)} · {latest.event} · {latest.ms}ms · <Decision fire={latest} />{latest.session && <> · <a className="hk-session" href={`#/s/${latest.session}`} title={latest.session}>{latest.session.slice(-8)}</a></>}</p>
+            <FireInspection fire={latest} load={load} save={save} showDefinition={false} />
+          </div>
+        </details> : <p className="hk2-note">Input / output never captured for this file in the available history.</p>}
+      </>}
     />
   );
 }
@@ -460,7 +519,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
     recent.forEach((f, i) => {
       const last = out[out.length - 1];
       if (last && quiet(f) && quiet(last.f) && last.f.name === f.name && last.f.event === f.event
-          && last.f.session === f.session && day(last.f.at) === day(f.at)) { last.n++; last.all.push(f); return; }
+          && last.f.path === f.path && last.f.session === f.session && day(last.f.at) === day(f.at)) { last.n++; last.all.push(f); return; }
       out.push({ f, n: 1, key: `${f.at}-${f.name}-${i}`, all: [f] });
     });
     return out;
@@ -527,7 +586,10 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
                   </p>
                   <ul className="hk-runs">
                     {all.map((x, j) => (
-                      <li key={j} className="num hk-when">{stamp(x.at)} · {x.ms}ms</li>
+                      <li key={j}>
+                        <p className="num hk-when">{stamp(x.at)} · {x.ms}ms</p>
+                        <FireInspection fire={x} load={load} save={save} />
+                      </li>
                     ))}
                   </ul>
                 </div>
@@ -582,7 +644,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
               <div key={event} className="hk-event">
                 <h3 className="mono hk-event-name">{event}</h3>
                 {list.map((h) => (
-                  <HookRow key={h.path} h={h} load={load} save={save} dryrun={dryrun} setOff={setOff}
+                  <HookRow key={h.path} h={h} latest={recent.find((f) => !!h.path && f.path === h.path)} load={load} save={save} dryrun={dryrun} setOff={setOff}
                            off={isOff(offId("hook", h.id), h.off)} onOff={mark(offId("hook", h.id))} />
                 ))}
               </div>

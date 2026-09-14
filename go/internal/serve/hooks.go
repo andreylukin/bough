@@ -8,6 +8,7 @@ package serve
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -77,8 +78,17 @@ type HookFire struct {
 	// Notice is what a hook wanted the human to know. It never reached
 	// the model — that is the point of the channel — so this page is
 	// the only place it is visible after the turn scrolls away.
-	Notice    string   `json:"notice"`
-	Truncated []string `json:"truncated"`
+	Notice          string          `json:"notice"`
+	Truncated       []string        `json:"truncated"`
+	Path            string          `json:"path,omitempty"`
+	Input           json.RawMessage `json:"input,omitempty"`
+	Output          json.RawMessage `json:"output,omitempty"`
+	InputTruncated  bool            `json:"inputTruncated,omitempty"`
+	OutputTruncated bool            `json:"outputTruncated,omitempty"`
+	InputBytes      int64           `json:"inputBytes,omitempty"`
+	OutputBytes     int64           `json:"outputBytes,omitempty"`
+	InputError      string          `json:"inputError,omitempty"`
+	OutputError     string          `json:"outputError,omitempty"`
 }
 
 // dryrunTimeout bounds a hand-run hook. A dry run is a person waiting
@@ -155,6 +165,15 @@ func withLast(rows []HookRow, fires []HookFire) []HookRow {
 			if f.Name != row.Name || f.Event != row.Event {
 				continue
 			}
+			if f.Path != "" {
+				if !sameDir(f.Path, row.Path) {
+					continue
+				}
+			} else if row.Shadowed || f.Input != nil || f.InputTruncated || f.InputError != "" {
+				// Inspected Go hooks have no disk definition. Legacy fires
+				// can only be attributed to the unshadowed name.
+				continue
+			}
 			at := f.At
 			rows[i].LastFired = &at
 			rows[i].LastDecision = f.Decision
@@ -192,15 +211,24 @@ func (a *API) fires() []HookFire {
 				continue
 			}
 			out = append(out, HookFire{
-				At:        e.At,
-				Session:   si.ID,
-				Event:     str(e.Data["event"]),
-				Name:      str(e.Data["name"]),
-				Ms:        num(e.Data["ms"]),
-				Decision:  str(e.Data["decision"]),
-				Error:     str(e.Data["error"]),
-				Notice:    str(e.Data["notice"]),
-				Truncated: strs(e.Data["truncated"]),
+				At:              e.At,
+				Session:         si.ID,
+				Event:           str(e.Data["event"]),
+				Name:            str(e.Data["name"]),
+				Ms:              num(e.Data["ms"]),
+				Decision:        str(e.Data["decision"]),
+				Error:           str(e.Data["error"]),
+				Notice:          str(e.Data["notice"]),
+				Truncated:       strs(e.Data["truncated"]),
+				Path:            str(e.Data["path"]),
+				Input:           historyPayload(e.Data, "input"),
+				Output:          historyPayload(e.Data, "output"),
+				InputTruncated:  e.Data["inputTruncated"] == true,
+				OutputTruncated: e.Data["outputTruncated"] == true,
+				InputBytes:      num(e.Data["inputBytes"]),
+				OutputBytes:     num(e.Data["outputBytes"]),
+				InputError:      str(e.Data["inputError"]),
+				OutputError:     str(e.Data["outputError"]),
 			})
 		}
 	}
@@ -209,6 +237,19 @@ func (a *API) fires() []HookFire {
 		out = out[:fireLimit]
 	}
 	return out
+}
+
+// A missing history key is not the same as a captured JSON null.
+func historyPayload(data map[string]any, key string) json.RawMessage {
+	v, ok := data[key]
+	if !ok {
+		return nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 // strs reads a history entry's list of strings; JSON gives []any.

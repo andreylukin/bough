@@ -12,7 +12,7 @@ import { finishedJobs, lastTestRun } from "./runs";
 import { capped } from "./code";
 import { SkillPicker } from "./skills";
 import { Mentions, triggerAt, type Trigger } from "./mention";
-import { HooksPage } from "./hooks";
+import { FireInspection, HooksPage, type Fire, type Load, type Save } from "./hooks";
 import { ContextPage } from "./context";
 import { Palette, usePaletteKey, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
@@ -1252,7 +1252,7 @@ export function ToolCall({ code, result }: { code: Line; result?: Line }) {
  */
 const DECIDED: Record<string, string> = { block: "blocked", deny: "denied", allow: "allowed", ask: "asked", rewrite: "rewritten", approve: "approved" };
 
-export function TurnHooks({ lines }: { lines: Line[] }) {
+export function TurnHooks({ lines, load, save }: { lines: Line[]; load?: Load; save?: Save }) {
   const fires = lines.filter((l) => l.kind === "hook");
   // A "hook <event>: notice" line a fire already carries is that fire,
   // said twice; one no fire carries is shown once, here.
@@ -1288,15 +1288,19 @@ export function TurnHooks({ lines }: { lines: Line[] }) {
           const d = l.data ?? {};
           const err = str(d.error), decision = str(d.decision), notice = str(d.notice);
           return (
-            <p key={l.seq} className="hook-line">
-              <span className="mono">{str(d.name)}</span>{" · "}{str(d.event)}{" · "}
-              <span className={err ? "hook-bad" : decision ? "hook-act" : "hook-why"}>
-                {err ? "errored" : decision || "passed"}
-              </span>
-              {notice && <span className="hook-why"> — {notice}</span>}
-              {err && <span className="hook-why"> {err}</span>}
-              {typeof d.ms === "number" && <span className="num hook-why"> · {d.ms} ms</span>}
-            </p>
+            <details key={l.seq} className="hook-invocation">
+              <summary className="hook-line">
+                <span className="mono">{str(d.name)}</span>{" · "}{str(d.event)}{" · "}
+                <span className={err ? "hook-bad" : decision ? "hook-act" : "hook-why"}>
+                  {err ? "errored" : decision || "passed"}
+                </span>
+                {notice && <span className="hook-why"> — {notice}</span>}
+                {err && <span className="hook-why"> {err}</span>}
+                {typeof d.ms === "number" && <span className="num hook-why"> · {d.ms} ms</span>}
+                <span className="hook-why"> · input / output</span>
+              </summary>
+              <FireInspection fire={d as Partial<Fire>} load={load} save={save} />
+            </details>
           );
         })}
         {loose.map((l) => <p key={l.seq} className="hook-line hook-why">{l.text}</p>)}

@@ -7,6 +7,7 @@ package hooks
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -66,6 +67,17 @@ type Fire struct {
 	// Truncated names the keys capped at maxHookOutput, so a shortened
 	// result is visible rather than mysterious.
 	Truncated []string `json:"truncated"`
+	Path      string   `json:"path,omitempty"`
+	// Nil snapshots mean unavailable (including legacy records); JSON null
+	// means the hook was inspected and had no output.
+	Input           json.RawMessage `json:"input,omitempty"`
+	Output          json.RawMessage `json:"output,omitempty"`
+	InputTruncated  bool            `json:"inputTruncated,omitempty"`
+	OutputTruncated bool            `json:"outputTruncated,omitempty"`
+	InputBytes      int             `json:"inputBytes,omitempty"`
+	OutputBytes     int             `json:"outputBytes,omitempty"`
+	InputError      string          `json:"inputError,omitempty"`
+	OutputError     string          `json:"outputError,omitempty"`
 }
 
 // SetSession names the session the fires that follow belong to. The
@@ -99,11 +111,39 @@ func (s *Service) record(f Fire) {
 // consumes this and must not import this package: the in-package test
 // here imports the loop, so the pair would be a cycle.
 func (s *Service) TakeFireRecords() []map[string]any {
-	out := make([]map[string]any, 0, len(s.pending))
-	for _, f := range s.TakeFires() {
+	fires := s.TakeFires()
+	out := make([]map[string]any, 0, len(fires))
+	for _, f := range fires {
 		rec := map[string]any{
 			"event": f.Event, "name": f.Name, "ms": f.Ms,
 			"decision": f.Decision, "error": f.Error,
+		}
+		if f.Path != "" {
+			rec["path"] = f.Path
+		}
+		if f.Input != nil {
+			rec["input"] = f.Input
+		}
+		if f.Output != nil {
+			rec["output"] = f.Output
+		}
+		if f.InputTruncated {
+			rec["inputTruncated"] = true
+		}
+		if f.OutputTruncated {
+			rec["outputTruncated"] = true
+		}
+		if f.InputBytes != 0 {
+			rec["inputBytes"] = f.InputBytes
+		}
+		if f.OutputBytes != 0 {
+			rec["outputBytes"] = f.OutputBytes
+		}
+		if f.InputError != "" {
+			rec["inputError"] = f.InputError
+		}
+		if f.OutputError != "" {
+			rec["outputError"] = f.OutputError
 		}
 		// Absent rather than empty: the loop decides whether a fire is
 		// worth keeping by looking for these, and a present-but-empty
@@ -128,7 +168,10 @@ func (s *Service) TakeFires() []Fire {
 	if len(s.pending) == 0 {
 		return nil
 	}
-	out := s.pending
+	out := make([]Fire, len(s.pending))
+	for i, f := range s.pending {
+		out[i] = cloneFire(f)
+	}
 	s.pending = nil
 	return out
 }
@@ -144,7 +187,7 @@ func (s *Service) Fires(limit int) []Fire {
 	}
 	out := make([]Fire, 0, n)
 	for i := 0; i < n; i++ {
-		out = append(out, s.fires[len(s.fires)-1-i])
+		out = append(out, cloneFire(s.fires[len(s.fires)-1-i]))
 	}
 	return out
 }
@@ -268,12 +311,15 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 		if off(event, h.name) {
 			continue
 		}
+		f := Fire{Event: event, Name: h.name}
+		f.captureInput(payload)
 		start := time.Now()
 		res := h.fn(payload)
 		cut := capKeys(res)
-		s.record(Fire{At: start, Event: event, Name: h.name,
-			Ms: time.Since(start).Milliseconds(), Decision: decision(payload, res),
-			Notice: notice(res), Truncated: cut})
+		f.At, f.Ms = start, time.Since(start).Milliseconds()
+		f.Decision, f.Notice, f.Truncated = decision(payload, res), notice(res), cut
+		f.captureOutput(res)
+		s.record(f)
 		if res == nil {
 			continue
 		}
@@ -306,11 +352,15 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 		if off(event, name) {
 			continue
 		}
+		definition, _ := filepath.Abs(path)
+		f := Fire{Event: event, Name: name, Path: definition}
+		f.captureInput(payload)
 		start := time.Now()
 		body, err := os.ReadFile(path)
 		if err != nil {
-			s.record(Fire{At: start, Event: event, Name: name,
-				Ms: time.Since(start).Milliseconds(), Error: err.Error()})
+			f.At, f.Ms, f.Error = start, time.Since(start).Milliseconds(), err.Error()
+			f.captureOutput(nil)
+			s.record(f)
 			failed = append(failed, fmt.Errorf("%s: %w", path, err))
 			continue
 		}
@@ -319,15 +369,17 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 			return merged, nil // the turn was cancelled: not a hook failure
 		}
 		if err != nil {
-			s.record(Fire{At: start, Event: event, Name: name,
-				Ms: time.Since(start).Milliseconds(), Error: err.Error()})
+			f.At, f.Ms, f.Error = start, time.Since(start).Milliseconds(), err.Error()
+			f.captureOutput(nil)
+			s.record(f)
 			failed = append(failed, fmt.Errorf("%s: %w", path, err))
 			continue
 		}
 		cut := capKeys(res)
-		s.record(Fire{At: start, Event: event, Name: name,
-			Ms: time.Since(start).Milliseconds(), Decision: decision(payload, res),
-			Notice: notice(res), Truncated: cut})
+		f.At, f.Ms = start, time.Since(start).Milliseconds()
+		f.Decision, f.Notice, f.Truncated = decision(payload, res), notice(res), cut
+		f.captureOutput(res)
+		s.record(f)
 		if res == nil {
 			continue
 		}

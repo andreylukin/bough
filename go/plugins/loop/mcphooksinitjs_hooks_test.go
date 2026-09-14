@@ -2,6 +2,7 @@ package loop
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,6 +194,23 @@ func TestFireIsRecordedToHistory(t *testing.T) {
 	}
 	if denied["decision"] != "denied" {
 		t.Errorf("decision = %v, want denied", denied["decision"])
+	}
+	b, err := json.Marshal(denied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted map[string]any
+	if err := json.Unmarshal(b, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted["output"].(map[string]any)["deny"] != "not allowed" {
+		t.Fatalf("effective output not persisted: %s", b)
+	}
+	if _, ok := persisted["input"].(map[string]any); !ok {
+		t.Fatalf("input not persisted: %s", b)
+	}
+	if path, _ := persisted["path"].(string); !filepath.IsAbs(path) || filepath.Base(path) != "guard.js" {
+		t.Fatalf("definition not persisted: %s", b)
 	}
 }
 

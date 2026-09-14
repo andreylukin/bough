@@ -1284,6 +1284,28 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .dlg-scrim{top:var(--vvt,0px)}
 .hk-fold:not(.hk-group) .hk-chev{visibility:visible}
 .hk-fold:not(.hk-group)>summary{cursor:pointer}
+.hk-inspect{min-width:0;margin:8px 0 12px}
+.hk-io{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:12px}
+.hk-payload{min-width:0;border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow:hidden}
+.hk-payload h4{margin:0;padding:8px 12px;border-bottom:1px solid var(--line);font-size:12px;font-weight:600;color:var(--text-2)}
+.hk-payload h4 span{font-weight:400}
+.hk-payload p{margin:0;padding:12px;font-size:12px;overflow-wrap:anywhere}
+.hk-payload pre{margin:0;padding:12px;max-height:320px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.6;color:var(--text-1)}
+.hk-definition{overflow-wrap:anywhere}
+.hk-source-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.hk-source-head .hk-path{min-width:0}
+.hk-definition .hk-toggle{color:var(--text-1);font-weight:500;text-decoration:underline;text-underline-offset:3px;min-height:28px}
+.hk-definition .hk-toggle:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+@media (pointer:coarse){.hk-definition .hk-toggle{min-height:44px}}
+.hk-runs>li+li{border-top:1px solid var(--line);padding-top:8px}
+.hook-invocation>summary{cursor:pointer;min-height:28px;padding-block:4px}
+.hook-invocation>summary:hover{color:var(--text-1)}
+.turn-hooks-body{max-height:none}
+@media (max-width:720px){
+  .hk-io{grid-template-columns:minmax(0,1fr)}
+  .hk-fold-body{padding-inline-start:0}
+  .hook-invocation>summary,.hk-inspect .hk-toggle{min-height:44px}
+}
 .ov-fails{display:flex;flex-direction:column;max-width:720px}
 .ov-fail{display:flex;align-items:center;gap:12px;min-height:40px;border-bottom:1px solid var(--line);font-size:13px;color:var(--text-2)}
 .ov-fail-what{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);color:var(--text-1)}
