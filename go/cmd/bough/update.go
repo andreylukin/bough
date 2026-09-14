@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -67,6 +68,7 @@ func runUpdate(args []string) {
 		step("build", modDir, "go", "build", "-o", target, "./cmd/bough")
 	}
 	fmt.Printf("bough: installed %s\n", target)
+	ensureContainerRuntime(os.Stdout, runQuiet, exec.LookPath, runtime.GOOS)
 
 	if err := restartWeb(home, target, os.Stdout); err != nil {
 		fatal(err)
