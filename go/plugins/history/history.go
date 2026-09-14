@@ -232,6 +232,34 @@ type SessionInfo struct {
 	Origin string
 	// Background is Classify's verdict: a run nobody sat in front of.
 	Background bool
+	// Mode is "local" or "project" from the meta entry; files written
+	// before modes existed read as "local". Project is the projectdef
+	// slug of a project session, "" otherwise.
+	Mode    string
+	Project string
+}
+
+// metaMode reads a meta entry's mode and project, normalizing the
+// missing mode of an old file to "local".
+func metaMode(data map[string]any) (mode, project string) {
+	mode, _ = data["mode"].(string)
+	project, _ = data["project"].(string)
+	if mode == "" {
+		mode = "local"
+	}
+	return mode, project
+}
+
+// sessionMode is the launcher's "session-mode" service, local when
+// absent: an old config tree or a bare test context must behave as the
+// safe default, never as a writable project session.
+func sessionMode(ctx *kernel.Context) (mode, project string) {
+	mode, _ = kernel.Get[string](ctx, "session-mode")
+	if mode != "project" {
+		return "local", ""
+	}
+	project, _ = kernel.Get[string](ctx, "session-project")
+	return mode, project
 }
 
 // Origins a person drives; everything else is automation.
@@ -317,6 +345,7 @@ func List(dir string) ([]SessionInfo, error) {
 		}
 		title, summary, cwd, from := "", "", "", ""
 		repo, branch := "", ""
+		mode, project := "local", ""
 		var atSeq int64
 		origin := entriesOrigin(entries)
 		for _, e := range entries {
@@ -333,6 +362,7 @@ func List(dir string) ([]SessionInfo, error) {
 			}
 			if e.Kind == "meta" && cwd == "" {
 				cwd, _ = e.Data["cwd"].(string)
+				mode, project = metaMode(e.Data)
 				repo, _ = e.Data["repo"].(string)
 				branch, _ = e.Data["branch"].(string)
 				if src, _ := e.Data["forked_from"].(string); src != "" {
@@ -365,6 +395,8 @@ func List(dir string) ([]SessionInfo, error) {
 			AtSeq:      atSeq,
 			Origin:     origin,
 			Background: Classify(origin, cwd, firstInput(entries), home) != "",
+			Mode:       mode,
+			Project:    project,
 		})
 	}
 	slices.SortFunc(infos, func(a, b SessionInfo) int {
@@ -629,9 +661,15 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	// $BOUGH_ORIGIN, else the ui mode). It is bookkeeping for listings;
 	// the loop's projection never reads meta or origin entries.
 	origin, _ := kernel.Get[string](ctx, "origin")
+	mode, project := sessionMode(ctx)
 	if created {
 		if cwd, err := os.Getwd(); err == nil {
-			data := map[string]any{"cwd": cwd}
+			// Meta is immutable once written, so the mode is fixed here
+			// for the session's life; resume reads it back from the file.
+			data := map[string]any{"cwd": cwd, "mode": mode}
+			if project != "" {
+				data["project"] = project
+			}
 			if origin != "" {
 				data["origin"] = origin
 			}
@@ -671,7 +709,12 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		}
 	}
 	ctx.Provide("history", s)
-	ctx.Provide("checkpoints", &Checkpoints{session: strings.TrimSuffix(filepath.Base(s.Path()), ".jsonl")})
+	// Only a project session changes files, so only it snapshots turns;
+	// a local session is read-only on local files and a checkpoint of ~
+	// would be a slow no-op (the loop treats the service as optional).
+	if mode == "project" {
+		ctx.Provide("checkpoints", &Checkpoints{session: strings.TrimSuffix(filepath.Base(s.Path()), ".jsonl")})
+	}
 	ctx.Effect(func() {
 		if err := s.Close(); err != nil {
 			fmt.Fprintf(os.Stderr, "bough: history close: %v\n", err)

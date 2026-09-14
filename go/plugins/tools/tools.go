@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	iorb "github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/llm"
@@ -47,6 +48,23 @@ type runContexter interface {
 	RunContext() context.Context
 }
 
+// orbExec is the "orb" service (plugins/orb) in a project session,
+// declared here structurally so tools never imports another plugin.
+type orbExec interface {
+	// Command runs argv inside the session's container.
+	Command(ctx context.Context, argv ...string) *exec.Cmd
+	// Root is ~/.bough/orbs/<session>: every worktree lives under it.
+	Root() string
+}
+
+// LocalPromptSection is the local session's read-only section. The orb
+// row sets it, not this row: see internal/orb.LocalPromptSection.
+const LocalPromptSection = iorb.LocalPromptSection
+
+// errOrbNotReady is what a project session's bash and file tools say
+// while the orb row is pending or failed: never fall back to the host.
+var errOrbNotReady = errors.New("project orb not ready: see the orb row")
+
 // pauser is codemode's seam for a tool that blocks longer than the
 // script timeout (tools.ask uses it too); tools.jobWait needs it.
 type pauser interface{ Pause() func() }
@@ -69,6 +87,59 @@ type Stats struct {
 	// policy, when set, is asked before every bash command; its error
 	// is the refusal the model sees (the rules row's Codex rules).
 	policy func(cmd string) error
+	// project is set in a project session: bash runs through the orb
+	// and write/patch stay inside its roots. nil = local/host.
+	project *projectMode
+}
+
+// projectMode is a project session's routing: orb is resolved at call
+// time because the orb row may mount after this one (Inject order).
+type projectMode struct {
+	slug string
+	orb  func() (orbExec, error)
+}
+
+// command builds `sh script` on the host, or inside the orb in a
+// project session; a missing orb is an error, never a host fallback.
+func (p *projectMode) command(ctx context.Context, script string) (*exec.Cmd, error) {
+	if p == nil {
+		return exec.CommandContext(ctx, "sh", script), nil
+	}
+	o, err := p.orb()
+	if err != nil {
+		return nil, err
+	}
+	return o.Command(ctx, "sh", script), nil
+}
+
+// allowed refuses a write outside the orb's worktrees, the scratchpad
+// and the session's own project definition: those are the only paths
+// shared with (or meant for) the project.
+func (p *projectMode) allowed(tool, path string) error {
+	if p == nil {
+		return nil
+	}
+	o, err := p.orb()
+	if err != nil {
+		return fmt.Errorf("%s: %w", tool, err)
+	}
+	roots := []string{o.Root()}
+	if d := os.Getenv("BOUGH_SCRATCH"); d != "" {
+		roots = append(roots, d)
+	}
+	if home, err := os.UserHomeDir(); err == nil && p.slug != "" {
+		roots = append(roots, filepath.Join(home, ".bough", "projects", p.slug))
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("%s: %w", tool, err)
+	}
+	for _, r := range roots {
+		if rel, err := filepath.Rel(filepath.Clean(r), abs); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s: %s is outside this project session; write under %s", tool, path, strings.Join(roots, ", "))
 }
 
 // SetPolicy installs (or, with nil, removes) the command policy.
@@ -131,6 +202,20 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		return err
 	}
 	st := &Stats{}
+	// Mode is fixed before any row mounts, so reading it once here is
+	// safe; absent (old tree, bare test context) means local.
+	mode, _ := kernel.Get[string](ctx, "session-mode")
+	local := mode != "project"
+	if !local {
+		slug, _ := kernel.Get[string](ctx, "session-project")
+		st.project = &projectMode{slug: slug, orb: func() (orbExec, error) {
+			o, err := kernel.Get[orbExec](ctx, "orb")
+			if err != nil {
+				return nil, errOrbNotReady
+			}
+			return o, nil
+		}}
+	}
 	if rc, ok := reg.(runContexter); ok {
 		st.runCtx = rc.RunContext
 	}
@@ -139,6 +224,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	jctx, cancelJobs := context.WithCancel(context.Background())
 	st.jobs = newJobs(jctx)
 	st.jobs.runCtx = st.runCtx
+	st.jobs.project = st.project
 	st.jobs.stop = cancelJobs
 	ctx.Effect(st.jobs.Stop)
 	if p, ok := reg.(pauser); ok {
@@ -165,6 +251,9 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			{"write", `tools.write(path, content) -> string: create or overwrite a whole file (use this for new files and rewrites, never a shell heredoc).`},
 			{"patch", `tools.patch(path, old, new) -> string: replace ONE exact occurrence of old with new (copy old verbatim from view, enough lines to be unique).`},
 		} {
+			if local && (doc[0] == "write" || doc[0] == "patch") {
+				continue
+			}
 			d.Describe(doc[0], doc[1])
 		}
 	}
@@ -189,8 +278,10 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		ctx.Effect(func() { cmds.Unregister("jobkill") })
 	}
 	reg.RegisterTool("view", st.view)
-	reg.RegisterTool("patch", st.patch)
-	reg.RegisterTool("write", st.write)
+	if !local {
+		reg.RegisterTool("patch", st.patch)
+		reg.RegisterTool("write", st.write)
+	}
 	ctx.Provide("turn-stats", st)
 	return nil
 }
@@ -240,18 +331,21 @@ func (s *Stats) bash(cmd string, opts ...any) (string, error) {
 	// byte no longer makes exec fail with "invalid argument". Not on
 	// stdin either: a stdin reader (cat, read, ssh) would eat the rest
 	// of the script. stdin is /dev/null.
-	script, err := bashScript(cmd)
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(script)
 	// $BOUGH_SCRATCH (the scratchpad row) is promised to the command
 	// as a usable directory; it is made lazily and may have been
 	// removed since, so make sure it exists before the command runs.
 	if d := os.Getenv("BOUGH_SCRATCH"); d != "" {
 		_ = os.MkdirAll(d, 0o755)
 	}
-	c := exec.CommandContext(ctx, "sh", script)
+	script, err := s.project.script(cmd)
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(script)
+	c, err := s.project.command(ctx, script)
+	if err != nil {
+		return "", fmt.Errorf("bash: %w", err)
+	}
 	// Its own process group, killed as a group: `sh -c` execs or forks
 	// the command, and killing sh alone leaves a sleep, a server, a
 	// build running after the turn was cancelled.
@@ -306,6 +400,9 @@ func tail(out string) string {
 // directories. The plain way to put a whole file down: no heredoc
 // quoting, no shell at all.
 func (s *Stats) write(path, content string) (string, error) {
+	if err := s.project.allowed("write", path); err != nil {
+		return "", err
+	}
 	before, hadFile := os.ReadFile(path)
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -694,6 +791,9 @@ func lockPath(path string) func() {
 // must match exactly once (include more context when it repeats). An
 // empty old creates the file with new when it does not exist yet.
 func (s *Stats) patch(path, old, new string) (string, error) {
+	if err := s.project.allowed("patch", path); err != nil {
+		return "", err
+	}
 	// Every Stats (one per agent) shares this lock, so the
 	// read-modify-write below never interleaves with another patch.
 	unlock := lockPath(path)
@@ -754,9 +854,21 @@ func (s *Stats) patch(path, old, new string) (string, error) {
 		strings.Count(new, "\n")-strings.Count(old, "\n")) + lineDiff(old, new), nil
 }
 
+// script writes cmd for `sh <file>`. In a project session the file goes
+// in $BOUGH_SCRATCH, which the container mounts at the same path; the
+// host temp dir is invisible inside it.
+func (p *projectMode) script(cmd string) (string, error) {
+	if p == nil {
+		return bashScript(cmd)
+	}
+	return bashScriptIn(os.Getenv("BOUGH_SCRATCH"), cmd)
+}
+
 // bashScript writes cmd to a temp file for `sh <file>`; the caller removes it.
-func bashScript(cmd string) (string, error) {
-	f, err := os.CreateTemp("", "bough-bash-*.sh")
+func bashScript(cmd string) (string, error) { return bashScriptIn("", cmd) }
+
+func bashScriptIn(dir, cmd string) (string, error) {
+	f, err := os.CreateTemp(dir, "bough-bash-*.sh")
 	if err != nil {
 		return "", fmt.Errorf("bash: script file: %v", err)
 	}

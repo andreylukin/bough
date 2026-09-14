@@ -11,7 +11,6 @@ package vtreal
 import (
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -80,34 +79,23 @@ func undoWhileStreamingFile(t *testing.T, home, name string) string {
 func undoWhileStreamingTree(t *testing.T, a *app, where string, want map[string]string) {
 	t.Helper()
 	for name, w := range want {
-		if got := undoWhileStreamingFile(t, a.home, name); got != w {
+		if got := undoWhileStreamingFile(t, a.wt, name); got != w {
 			t.Errorf("%s: %s = %q, want %q:\n%s", where, name, got, w, a.text())
 		}
 	}
 }
 
-// undoWhileStreamingStart boots bough in a git-repo $HOME holding
-// a.txt="before\n" and keep.txt, with the tape beside them.
+// undoWhileStreamingStart boots project session vt whose repo holds
+// a.txt="before\n" and keep.txt; the tape sits in $HOME.
 func undoWhileStreamingStart(t *testing.T, delayMS int) *app {
 	t.Helper()
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command("git", "-C", home, "init", "-q").CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v %s", err, out)
-	}
-	for name, s := range map[string]string{
-		".gitignore": ".bough/\nbough.yml\nuws-tape.jsonl\n",
-		"a.txt":      "before\n",
-		"keep.txt":   "keep\n",
-	} {
-		if err := os.WriteFile(filepath.Join(home, name), []byte(s), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	projectRepo(t, home, map[string]string{"a.txt": "before\n", "keep.txt": "keep\n"})
 	tape := undoWhileStreamingTape(t, home)
-	return undoStart(t, home, 100, 30, undoWhileStreamingConfig(tape, delayMS))
+	return projectStart(t, home, 100, 30, undoWhileStreamingConfig(tape, delayMS))
 }
 
 var (
@@ -122,7 +110,7 @@ func undoWhileStreamingMidTurn(t *testing.T, a *app) {
 	a.typeText("write then talk")
 	a.key(uv.KeyEnter, 0)
 	deadline := time.Now().Add(30 * time.Second)
-	for undoWhileStreamingFile(t, a.home, "new.txt") != "created\n" {
+	for undoWhileStreamingFile(t, a.wt, "new.txt") != "created\n" {
 		if time.Now().After(deadline) {
 			t.Fatalf("the block never wrote new.txt:\n%s", a.text())
 		}

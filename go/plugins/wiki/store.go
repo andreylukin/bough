@@ -836,12 +836,12 @@ type EntryLine struct {
 // Source is a cited entry in place, with what surrounds it and the
 // pages that cite it.
 type Source struct {
-	Session SessionRef `json:"session"`
-	Seq     int64      `json:"seq"`
-	At      time.Time  `json:"at"`
-	Total   int64      `json:"total"`
+	Session SessionRef  `json:"session"`
+	Seq     int64       `json:"seq"`
+	At      time.Time   `json:"at"`
+	Total   int64       `json:"total"`
 	Lines   []EntryLine `json:"lines"`
-	CitedBy []PageRef  `json:"citedBy"`
+	CitedBy []PageRef   `json:"citedBy"`
 }
 
 const around = 4 // entries shown either side of a cited one

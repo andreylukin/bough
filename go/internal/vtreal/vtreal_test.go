@@ -85,6 +85,7 @@ type app struct {
 	cols int
 	rows int
 	home string
+	wt   string // a project session's worktree (projectStart)
 }
 
 func start(t *testing.T, cols, rows int) *app { return startCfg(t, cols, rows, config) }

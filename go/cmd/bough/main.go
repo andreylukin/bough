@@ -36,6 +36,7 @@ import (
 	_ "github.com/andreylukin/bough/plugins/llm"
 	_ "github.com/andreylukin/bough/plugins/loop"
 	_ "github.com/andreylukin/bough/plugins/mcp"
+	_ "github.com/andreylukin/bough/plugins/orb"
 	_ "github.com/andreylukin/bough/plugins/prompts"
 	_ "github.com/andreylukin/bough/plugins/replay"
 	_ "github.com/andreylukin/bough/plugins/rules"
@@ -308,6 +309,8 @@ func main() {
 		dump     = flag.Bool("dump-config", false, "mount the config tree, print the row state table, and exit")
 		verbose  = flag.Bool("verbose", false, "print kernel/mcp/config diagnostics on stderr")
 		showVer  = flag.Bool("version", false, "print the version and exit")
+		projectF = flag.String("project", "", "start a project session in this project's orb (~/.bough/projects/<slug>)")
+		localF   = flag.Bool("local", false, "start a local session (the default): read-only on local files")
 		sets     setFlags
 	)
 	flag.Var(&sets, "set", "override row config: id.key=value (repeatable)")
@@ -384,6 +387,14 @@ func main() {
 		return
 	}
 
+	// The mode is fixed before any row mounts: history writes it into
+	// meta and tools decides at Apply whether write/patch exist.
+	sessMode, sessProject, err := chooseMode(*projectF, *localF, sets)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "bough:", err)
+		os.Exit(2)
+	}
+
 	// Catch interrupts BEFORE the mount: the headless ui row interrupts
 	// the process on stdin EOF, which on a fast run can fire before main
 	// reaches the wait below — with no handler installed yet the default
@@ -405,6 +416,8 @@ func main() {
 	ctx := kernel.NewContext()
 	ctx.Provide("ui-mode", mode)
 	ctx.Provide("origin", sessionOrigin(mode))
+	ctx.Provide("session-mode", sessMode)
+	ctx.Provide("session-project", sessProject)
 	// A dev install running a build older than its checkout: say so
 	// where a person will see it (the ui shows the "notice" service as
 	// its first row; headless prints it), naming `bough update`.
@@ -706,6 +719,9 @@ const usageText = `usage: bough [flags]                 start the TUI
 flags:
   -c, --continue          resume the most recent session
   -r, --resume [id]       resume a session by id, or pick from a list
+      --project <slug>    project session: shell runs in the project's
+                          container, files change only in its worktrees
+      --local             local session (default): read-only on local files
       --set id.key=value  override a row's config (repeatable);
                           id.plugin=name swaps a row's plugin
       --config <path>     rows laid over the embedded default by id

@@ -5,12 +5,11 @@ package vtreal
 // during the sleep. The cancelled turn must still be undoable: a.txt
 // back to its original bytes, b.txt never created, and the undo
 // listing naming only a.txt. Codemode and tools-basic are real (see
-// undoWhileStreamingConfig), $HOME is a temp git repo.
+// undoWhileStreamingConfig); a project session, files in its worktree.
 
 import (
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -57,19 +56,9 @@ func undoAfterCancelledEditToolStart(t *testing.T) *app {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command("git", "-C", home, "init", "-q").CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v %s", err, out)
-	}
-	for name, s := range map[string]string{
-		".gitignore": ".bough/\nbough.yml\nuace-tape.jsonl\n",
-		"a.txt":      undoAfterCancelledEditToolOrig,
-	} {
-		if err := os.WriteFile(filepath.Join(home, name), []byte(s), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
+	projectRepo(t, home, map[string]string{"a.txt": undoAfterCancelledEditToolOrig})
 	tape := undoAfterCancelledEditToolTape(t, home)
-	return undoStart(t, home, 100, 30, undoWhileStreamingConfig(tape, 5))
+	return projectStart(t, home, 100, 30, undoWhileStreamingConfig(tape, 5))
 }
 
 func TestUndoAfterCancelledEditTool(t *testing.T) {
@@ -78,7 +67,7 @@ func TestUndoAfterCancelledEditTool(t *testing.T) {
 	a.typeText("edit then sleep")
 	a.key(uv.KeyEnter, 0)
 	deadline := time.Now().Add(30 * time.Second)
-	for undoWhileStreamingFile(t, a.home, "a.txt") != "UACE edited\n" {
+	for undoWhileStreamingFile(t, a.wt, "a.txt") != "UACE edited\n" {
 		if time.Now().After(deadline) {
 			t.Fatalf("the block never wrote a.txt:\n%s", a.text())
 		}
@@ -97,7 +86,7 @@ func TestUndoAfterCancelledEditTool(t *testing.T) {
 
 	t.Run("CancelStoppedTheBlock", func(t *testing.T) {
 		time.Sleep(6 * time.Second) // past where the sleep would have ended
-		if got := undoWhileStreamingFile(t, a.home, "b.txt"); got != "<absent>" {
+		if got := undoWhileStreamingFile(t, a.wt, "b.txt"); got != "<absent>" {
 			t.Errorf("b.txt written after esc: %q\n%s", got, a.text())
 		}
 		if s := a.settled(); strings.Contains(s, "UACEEND") {
@@ -115,11 +104,11 @@ func TestUndoAfterCancelledEditTool(t *testing.T) {
 		if strings.Contains(s, "b.txt") {
 			t.Errorf("undo listing names b.txt:\n%s", s)
 		}
-		got, err := os.ReadFile(filepath.Join(a.home, "a.txt"))
+		got, err := os.ReadFile(filepath.Join(a.wt, "a.txt"))
 		if err != nil || string(got) != undoAfterCancelledEditToolOrig {
 			t.Errorf("a.txt = %q (%v), want %q:\n%s", got, err, undoAfterCancelledEditToolOrig, s)
 		}
-		if _, err := os.Stat(filepath.Join(a.home, "b.txt")); !os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(a.wt, "b.txt")); !os.IsNotExist(err) {
 			t.Errorf("b.txt exists after /undo: %v", err)
 		}
 		a.check("after /undo")

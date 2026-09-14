@@ -183,6 +183,8 @@ type Jobs struct {
 	// it, and a jobWait blocked in Go only notices through it.
 	runCtx func() context.Context
 	owner  func() string // the mounted session's file; nil or "" = one session
+	// project routes jobs through the orb in a project session (nil = host).
+	project *projectMode
 
 	mu      sync.Mutex
 	next    int
@@ -366,12 +368,17 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 		}
 	}
 	// Script in a file, stdin /dev/null: a stdin reader must not eat the script.
-	script, err := bashScript(cmd)
+	script, err := j.project.script(cmd)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(j.ctx, limit)
-	c := exec.CommandContext(ctx, "sh", script)
+	c, err := j.project.command(ctx, script)
+	if err != nil {
+		cancel()
+		os.Remove(script)
+		return nil, fmt.Errorf("bash: %w", err)
+	}
 	ownProcessGroup(c)
 	c.Cancel = func() error { return killProcessGroup(c) }
 	c.WaitDelay = 2 * time.Second

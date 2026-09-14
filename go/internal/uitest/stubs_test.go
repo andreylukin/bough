@@ -404,7 +404,11 @@ func TestDoneChipShowsWrittenFile(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/note.txt"
 	stub := &uitest.Script{Replies: []string{uitest.JS(fmt.Sprintf("tools.patch(%q, \"\", \"hello\")", path)), "wrote it"}}
-	d := mountLLM(t, stub)
+	// Only a project session has tools.patch.
+	d := uitest.Mount(t, func(c *kernel.Context) {
+		c.Provide("llm", stub)
+		uitest.ProjectMode(c, dir)
+	}, "codemode", "tools-basic", "loop")
 	d.Say("x")
 	turnDone(d, "wrote it")
 	fits(t, d)

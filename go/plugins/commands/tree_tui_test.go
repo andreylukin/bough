@@ -26,8 +26,11 @@ func TestUndoRendersSystemBlock(t *testing.T) {
 	t.Chdir(repo)
 	t.Setenv("HOME", t.TempDir()) // the history row's fresh session file
 	script := &uitest.Script{Replies: []string{uitest.JS(`tools.write("made.txt", "hello")`), "wrote it"}}
-	d := uitest.Mount(t, func(c *kernel.Context) { c.Provide("llm", script) },
-		"history", "codemode", "tools-basic", "commands", "loop")
+	// Project mode: only it has tools.write and turn checkpoints.
+	d := uitest.Mount(t, func(c *kernel.Context) {
+		c.Provide("llm", script)
+		uitest.ProjectMode(c, repo)
+	}, "history", "codemode", "tools-basic", "commands", "loop")
 
 	d.Say("make a file")
 	d.WaitFor("wrote it")
@@ -70,8 +73,10 @@ func TestUndoRevertsCancelledTurn(t *testing.T) {
 	repo := newRepo(t)
 	t.Chdir(repo)
 	t.Setenv("HOME", t.TempDir())
-	d := uitest.Mount(t, func(c *kernel.Context) { c.Provide("llm", &writeThenHang{}) },
-		"history", "codemode", "tools-basic", "commands", "loop")
+	d := uitest.Mount(t, func(c *kernel.Context) {
+		c.Provide("llm", &writeThenHang{})
+		uitest.ProjectMode(c, repo)
+	}, "history", "codemode", "tools-basic", "commands", "loop")
 
 	d.Say("make a file")
 	d.WaitUntil(func(string) bool { _, err := os.Stat("made.txt"); return err == nil }, "made.txt to be written")

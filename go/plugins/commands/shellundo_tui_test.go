@@ -33,8 +33,11 @@ func TestUndoRevertsWhatTheShellWrote(t *testing.T) {
 		uitest.JS(`tools.bash("printf 'after\n' > keep.txt")`),
 		"edited it",
 	}}
-	d := uitest.Mount(t, func(c *kernel.Context) { c.Provide("llm", script) },
-		"history", "codemode", "tools-basic", "commands", "loop")
+	// Project mode: only it checkpoints turns, which /undo reverts.
+	d := uitest.Mount(t, func(c *kernel.Context) {
+		c.Provide("llm", script)
+		uitest.ProjectMode(c, repo)
+	}, "history", "codemode", "tools-basic", "commands", "loop")
 
 	start := time.Now()
 	d.Say("edit through the shell")

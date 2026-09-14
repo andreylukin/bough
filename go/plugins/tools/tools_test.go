@@ -17,6 +17,7 @@ import (
 func TestToolsViaCodemode(t *testing.T) {
 	ctx := kernel.NewContext()
 	ctx.Provide("codemode", codemode.New(5*time.Second))
+	provideHostProject(ctx) // write/patch exist only in a project session
 	if err := (plugin{}).Apply(ctx, nil); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -64,6 +65,7 @@ func TestBashTimeoutMessage(t *testing.T) {
 func TestTurnStats(t *testing.T) {
 	ctx := kernel.NewContext()
 	ctx.Provide("codemode", codemode.New(5*time.Second))
+	provideHostProject(ctx) // write/patch exist only in a project session
 	if err := (plugin{}).Apply(ctx, nil); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}

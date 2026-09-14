@@ -592,3 +592,53 @@ func TestConcurrentWriterIsReported(t *testing.T) {
 		t.Errorf("a's sink got %v before b wrote anything", aGot)
 	}
 }
+
+// A new file's meta records the launcher's mode; only a project
+// session gets checkpoints; an old meta with no mode lists as local.
+func TestMetaModeAndCheckpoints(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	local := kernel.NewContext()
+	if err := (plugin{}).Apply(local, map[string]any{"file": filepath.Join(dir, "local.jsonl")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := kernel.Get[*Checkpoints](local, "checkpoints"); err == nil {
+		t.Error("local session provides checkpoints")
+	}
+	local.Unmount()
+
+	proj := kernel.NewContext()
+	proj.Provide("session-mode", "project")
+	proj.Provide("session-project", "demo")
+	if err := (plugin{}).Apply(proj, map[string]any{"file": filepath.Join(dir, "proj.jsonl")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := kernel.Get[*Checkpoints](proj, "checkpoints"); err != nil {
+		t.Errorf("project session lacks checkpoints: %v", err)
+	}
+	proj.Unmount()
+
+	old := `{"seq":1,"at":"2026-01-01T00:00:00Z","kind":"meta","data":{"cwd":"/x"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "old.jsonl"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	infos, err := List(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string][2]string{}
+	for _, in := range infos {
+		got[in.ID] = [2]string{in.Mode, in.Project}
+	}
+	want := map[string][2]string{"local": {"local", ""}, "proj": {"project", "demo"}, "old": {"local", ""}}
+	for id, w := range want {
+		if got[id] != w {
+			t.Errorf("%s: mode/project = %v, want %v", id, got[id], w)
+		}
+	}
+	es, _ := Read(filepath.Join(dir, "local.jsonl"))
+	if len(es) == 0 || es[0].Data["mode"] != "local" {
+		t.Errorf("local meta = %v", es)
+	}
+}

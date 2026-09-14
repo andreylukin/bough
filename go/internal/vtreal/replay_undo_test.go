@@ -22,7 +22,8 @@ import (
 )
 
 // undoStart is startCfg with a HOME the test has already populated.
-func undoStart(t *testing.T, home string, cols, rows int, yml string) *app {
+// args are extra flags, e.g. --project.
+func undoStart(t *testing.T, home string, cols, rows int, yml string, args ...string) *app {
 	t.Helper()
 	cfg := filepath.Join(home, "bough.yml")
 	if err := os.WriteFile(cfg, []byte(yml), 0o644); err != nil {
@@ -32,7 +33,7 @@ func undoStart(t *testing.T, home string, cols, rows int, yml string) *app {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(bin, "-config", cfg)
+	cmd := exec.Command(bin, append([]string{"-config", cfg}, args...)...)
 	cmd.Dir = home
 	cmd.Env = append(os.Environ(),
 		"HOME="+home, "TERM=xterm-256color", "COLORTERM=truecolor",

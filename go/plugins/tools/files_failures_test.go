@@ -379,6 +379,7 @@ func TestFilesConcurrentPatchesFromTwoAgents(t *testing.T) {
 func TestFilesFailuresThroughCodemode(t *testing.T) {
 	ctx := kernel.NewContext()
 	ctx.Provide("codemode", codemode.New(5*time.Second))
+	provideHostProject(ctx) // write/patch exist only in a project session
 	if err := (plugin{}).Apply(ctx, nil); err != nil {
 		t.Fatal(err)
 	}

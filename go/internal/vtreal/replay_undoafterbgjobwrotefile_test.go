@@ -13,7 +13,6 @@ package vtreal
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -31,27 +30,21 @@ const undoAfterBgJobWroteFileTape = `{"seq":1,"at":"2026-09-11T10:00:00Z","kind"
 {"seq":8,"at":"2026-09-11T10:00:07Z","kind":"done","data":{"text":""}}
 `
 
-// undoAfterBgJobWroteFileStart boots on the tape, makes $HOME a git
-// repo with a.txt="before" and a fifo, and returns the app.
+// undoAfterBgJobWroteFileStart boots on the tape as a
+// project session whose worktree holds a.txt="before" and a fifo.
 func undoAfterBgJobWroteFileStart(t *testing.T) *app {
 	t.Helper()
 	tape := filepath.Join(t.TempDir(), "tape.jsonl")
 	if err := os.WriteFile(tape, []byte(undoAfterBgJobWroteFileTape), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	a := startCfg(t, 100, 30, jobsConfig(tape))
-	if out, err := exec.Command("git", "-C", a.home, "init", "-q").CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v %s", err, out)
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
 	}
-	for name, s := range map[string]string{
-		".gitignore": ".bough/\nbough.yml\ngate.fifo\n",
-		"a.txt":      "before\n",
-	} {
-		if err := os.WriteFile(filepath.Join(a.home, name), []byte(s), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := syscall.Mkfifo(filepath.Join(a.home, "gate.fifo"), 0o644); err != nil {
+	projectRepo(t, home, map[string]string{".gitignore": "gate.fifo\n", "a.txt": "before\n"})
+	a := projectStart(t, home, 100, 30, jobsConfig(tape))
+	if err := syscall.Mkfifo(filepath.Join(a.wt, "gate.fifo"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return a
@@ -63,7 +56,7 @@ func undoAfterBgJobWroteFileOpenGate(t *testing.T, a *app) {
 	t.Helper()
 	done := make(chan error, 1)
 	go func() {
-		f, err := os.OpenFile(filepath.Join(a.home, "gate.fifo"), os.O_WRONLY, 0)
+		f, err := os.OpenFile(filepath.Join(a.wt, "gate.fifo"), os.O_WRONLY, 0)
 		if err == nil {
 			_, err = f.WriteString("go\n")
 			f.Close()
@@ -81,7 +74,7 @@ func undoAfterBgJobWroteFileOpenGate(t *testing.T, a *app) {
 }
 
 func undoAfterBgJobWroteFileRead(a *app, name string) string {
-	b, _ := os.ReadFile(filepath.Join(a.home, name))
+	b, _ := os.ReadFile(filepath.Join(a.wt, name))
 	return string(b)
 }
 
@@ -97,7 +90,7 @@ func TestUndoAfterBgJobWroteFile(t *testing.T) {
 		if got := undoAfterBgJobWroteFileRead(a, "a.txt"); got != "turn\n" {
 			t.Fatalf("a.txt after the turn = %q, want %q:\n%s", got, "turn\n", a.text())
 		}
-		if _, err := os.Stat(filepath.Join(a.home, "job.txt")); !os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(a.wt, "job.txt")); !os.IsNotExist(err) {
 			t.Fatalf("job.txt exists before the gate opened: %v", err)
 		}
 	})
