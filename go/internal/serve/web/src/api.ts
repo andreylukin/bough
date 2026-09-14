@@ -120,6 +120,8 @@ export const api = {
   buildLog: (id: string, offset: number) =>
     req<{ text: string; offset: number; state: OrbBuild["state"] }>(`/api/projects/${id}/orb/build/log?offset=${offset}`),
   sessionOrb: (id: string) => req<{ orb: OrbState | null }>(`/api/sessions/${id}/orb`).then((r) => r.orb),
+  /** Why a session's orb failed: its error and the tail of resume.log. */
+  sessionOrbLog: (id: string) => req<{ status: string; error: string; image: string; text: string }>(`/api/sessions/${id}/orb/log`),
   stopOrb: (id: string) => post(`/api/sessions/${id}/orb/stop`),
   unarchive: (id: string) => post(`/api/sessions/${id}/unarchive`),
 };

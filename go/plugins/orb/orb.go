@@ -269,6 +269,11 @@ func promptSection(root string, st iorb.State, def projectdef.Def, missing []str
 	if checks.Full != "" {
 		fmt.Fprintf(&b, "Full check: %s\n", checks.Full)
 	}
+	if st.Status == iorb.StatusFailed && st.Error != "" {
+		// The container is up but setup did not finish: without this the
+		// agent worked on as if dependencies were installed.
+		fmt.Fprintf(&b, "Setup did not finish: %s. Its output is in %s. Read it, tell the user what failed, and fix the definition or ask for the right secret before relying on dependencies.\n", st.Error, filepath.Join(root, "resume.log"))
+	}
 	if len(missing) > 0 {
 		fmt.Fprintf(&b, "Env referenced by resume.sh/checks that may be unset: %s. If so, set them (bough project set %s env.NAME / tools.secret) before trusting checks.\n", strings.Join(missing, ", "), st.Project)
 	}

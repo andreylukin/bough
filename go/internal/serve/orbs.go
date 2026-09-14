@@ -78,6 +78,7 @@ func (a *API) routeOrbs() {
 	a.mux.HandleFunc("POST /api/projects/{id}/orb/build", a.buildOrb)
 	a.mux.HandleFunc("GET /api/projects/{id}/orb/build/log", a.buildLog)
 	a.mux.HandleFunc("GET /api/sessions/{id}/orb", a.sessionOrb)
+	a.mux.HandleFunc("GET /api/sessions/{id}/orb/log", a.sessionOrbLog)
 	a.mux.HandleFunc("POST /api/sessions/{id}/orb/stop", a.stopOrb)
 }
 
@@ -466,6 +467,27 @@ func (a *API) buildLog(w http.ResponseWriter, r *http.Request) {
 		offset += int64(len(buf))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"text": text, "offset": offset, "state": state, "error": msg})
+}
+
+// sessionOrbLog is the tail of a session's resume.log with the orb's
+// status and error, so a "failed" orb can be opened and read instead of
+// being a dead label. The script's own output only: bough writes no
+// secret values there, and the tail is capped like the build log.
+func (a *API) sessionOrbLog(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := a.info(id); !ok {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: unknown session %q", id))
+		return
+	}
+	st := a.orbState(id)
+	text := ""
+	if b, err := os.ReadFile(filepath.Join(orb.Dir(a.sup.Home(), id), "resume.log")); err == nil {
+		if len(b) > maxLogChunk {
+			b = b[len(b)-maxLogChunk:]
+		}
+		text = string(b)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": st.Status, "error": st.Error, "image": st.Image, "text": text})
 }
 
 func (a *API) sessionOrb(w http.ResponseWriter, r *http.Request) {

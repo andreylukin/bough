@@ -2377,6 +2377,42 @@ function sendError(e?: string) {
 // tail does while you type.
 const TurnViewMemo = memo(TurnView);
 
+/**
+ * A failed orb's "why": the orb chip only said "failed", with nothing to
+ * open. The error and the tail of resume.log load when you open it, and
+ * again on Refresh, so a fixed definition can be checked from here.
+ */
+function OrbFailure({ id, project }: { id: string; project: string }) {
+  const [open, setOpen] = useState(false);
+  const [log, setLog] = useState<{ error: string; text: string } | null>(null);
+  const [err, setErr] = useState("");
+  const load = () => {
+    setErr("");
+    api.sessionOrbLog(id).then((l) => setLog({ error: l.error, text: l.text }), (e) => setErr((e as Error).message));
+  };
+  useEffect(() => { if (open && !log) load(); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tail = log?.text ? log.text.split("\n").slice(-120).join("\n") : "";
+  return (
+    <>
+      <button className="btn head-ack" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        {open ? "Hide setup error" : "Why did setup fail?"}
+      </button>
+      {open && (
+        <div className="block orb-failure" role="region" aria-label={`${project} setup failure`}>
+          {err ? <p className="send-failed-text" role="alert">Couldn’t load the log: {err}</p>
+            : !log ? <p className="meta-line">Loading…</p>
+            : <>
+                <p className="meta-line">{log.error || "The orb failed without an error message."}</p>
+                {tail ? <pre className="mono">{tail}</pre> : <p className="meta-line">resume.log is empty.</p>}
+                <p className="meta-line">Fix the definition with <code>bough project show {project}</code> / <code>bough project write {project} &lt;file&gt;</code>; the next session start retries.</p>
+              </>}
+          <button className="link" onClick={load}>Refresh</button>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function Thread({ row, lines, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
   /** Loaded sessions: names the parent of a background agent and lists this session's agents. */
   rows?: Row[]; onOpenSession?: (id: string) => void;
@@ -2936,6 +2972,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
           ) : row.status === "done" ? <span className="status head-idle">Run: Idle</span> : <StatusMark status={row.status} />}
           <ModeChip row={row} />
           {row.orb?.status === "running" && onStopOrb && <button className="btn head-ack" onClick={onStopOrb}>Stop orb</button>}
+          {row.orb?.status === "failed" && <OrbFailure id={row.id} project={row.orb.project} />}
           {/* A test failure is the Tests chip's to say, once. */}
           {running && turns[turns.length - 1]?.prompt?.at && !turns[turns.length - 1]?.done && <RunClock since={turns[turns.length - 1].prompt!.at} />}
           {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
