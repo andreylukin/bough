@@ -185,6 +185,10 @@ type Jobs struct {
 	owner  func() string // the mounted session's file; nil or "" = one session
 	// project routes jobs through the orb in a project session (nil = host).
 	project *projectMode
+	// record appends a typed history entry (the "history-record"
+	// service); nil = none. serve reads job state from these instead of
+	// regexing the model-facing text.
+	record func(kind string, data map[string]any)
 
 	mu      sync.Mutex
 	next    int
@@ -400,6 +404,7 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 		b.mu.Unlock()
 		return nil, fmt.Errorf("bash: %v", err)
 	}
+	j.recordJob(b, "started", 0)
 	j.running.Add(1)
 	go func() {
 		defer j.running.Done()
@@ -422,11 +427,28 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 				b.exit = ee.ExitCode()
 			}
 		}
-		line, out := b.line(), b.output()
+		line, out, exit := b.line(), b.output(), b.exit
 		b.mu.Unlock()
+		j.recordJob(b, "finished", exit)
 		j.notify(b.owner, line+"\n"+tailLines(out, 40))
 	}()
 	return b, nil
+}
+
+// recordJob writes a typed "job" entry; "event" tells it apart from the
+// loop's notice job entries, which carry only text.
+func (j *Jobs) recordJob(b *job, event string, exit int) {
+	if j.record == nil {
+		return
+	}
+	data := map[string]any{"id": b.id, "event": event, "cmd": firstLine(b.cmd)}
+	if b.until != nil {
+		data["until"] = b.until.String()
+	}
+	if event == "finished" {
+		data["exit"] = exit
+	}
+	j.record("job", data)
 }
 
 // jobWriter feeds a job's capture buffer and fires its until pattern.

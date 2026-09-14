@@ -11,6 +11,7 @@
 package loop
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -628,6 +629,11 @@ func DefaultProject(entries []history.Entry) []llm.Message {
 			// The loop's own push-back on a turn that stopped mid-plan.
 			msgs = append(msgs, llm.Message{Role: "user", Content: text})
 		case "job":
+			// Typed entries (tools' "event") are bookkeeping for serve;
+			// the text note below says the same thing to the model.
+			if _, typed := e.Data["event"].(string); typed {
+				continue
+			}
 			// A background job finished (or matched its watch) while
 			// the model was working: its notice is a user-side fact,
 			// exactly like tool output.
@@ -979,6 +985,47 @@ func (r *runner) Context() string {
 		fmt.Fprintf(&b, "## %s — %s\n\n%s\n\n", p.name, size(p.text), strings.TrimRight(p.text, "\n"))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// deliverStoredNotices queues the "notice" entries serve appended to
+// this session's file while no process ran it, exactly once. It reads
+// the raw file, all branches: a notice appended while another process
+// held the file sits on a side branch. Only notices addressed to this
+// file count, so a fork does not re-deliver its parent's. Each is
+// marked delivered BEFORE it is queued: a crash between the two loses
+// the notice rather than delivering it twice.
+func (r *runner) deliverStoredNotices() {
+	n, ok := r.notices.(interface{ Notify(string) })
+	if !ok || r.hist == nil || r.hist.Path() == "" {
+		return // marking without a queue would lose the notice
+	}
+	entries, err := history.ReadFile(r.hist.Path())
+	if err != nil {
+		return
+	}
+	own := strings.TrimSuffix(filepath.Base(r.hist.Path()), ".jsonl")
+	done := map[string]bool{}
+	for _, e := range entries {
+		if e.Kind == "notice-delivered" {
+			id, _ := e.Data["id"].(string)
+			done[id] = true
+		}
+	}
+	var todo []history.Entry
+	for _, e := range entries {
+		id, _ := e.Data["id"].(string)
+		if e.Kind != "notice" || id == "" || done[id] || e.Data["to"] != own {
+			continue
+		}
+		done[id] = true
+		todo = append(todo, e)
+	}
+	slices.SortFunc(todo, func(a, b history.Entry) int { return cmp.Compare(a.Seq, b.Seq) })
+	for _, e := range todo {
+		r.hist.Append("notice-delivered", map[string]any{"id": e.Data["id"]})
+		text, _ := e.Data["text"].(string)
+		n.Notify(text)
+	}
 }
 
 // landJobs records every notice a background job has queued as a "job"
@@ -2165,6 +2212,7 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		// then finds nothing pending and starts nothing.
 		var wake <-chan struct{}
 		if r.notices != nil {
+			r.deliverStoredNotices()
 			wake = r.notices.Wake()
 		}
 		for {

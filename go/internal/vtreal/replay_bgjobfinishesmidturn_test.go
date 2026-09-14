@@ -133,7 +133,7 @@ func TestBgjobFinishesMidTurn(t *testing.T) {
 		}
 		for _, e := range es[in2+1 : done2] {
 			text, _ := e.Data["text"].(string)
-			if e.Kind == "input" || e.Kind == "job" || strings.Contains(text, "[background job]") {
+			if e.Kind == "input" || (e.Kind == "job" && e.Data["event"] == nil) || strings.Contains(text, "[background job]") {
 				t.Errorf("job notice landed inside turn 2: %s %q", e.Kind, text)
 			}
 		}

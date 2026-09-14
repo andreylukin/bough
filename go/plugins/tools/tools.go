@@ -253,6 +253,13 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		}
 		return ""
 	}
+	// Same provider row as "history", so no new remount edge; resolved
+	// per write for the same reason owner is.
+	st.jobs.record = func(kind string, data map[string]any) {
+		if rec, err := kernel.Get[func(string, map[string]any)](ctx, "history-record"); err == nil {
+			rec(kind, data)
+		}
+	}
 	ctx.Provide("job-notices", st.jobs)
 	if d, ok := reg.(describer); ok {
 		for _, doc := range [][2]string{

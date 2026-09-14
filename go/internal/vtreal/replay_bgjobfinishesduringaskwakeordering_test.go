@@ -104,7 +104,7 @@ func TestBgjobFinishesDuringAskWakeOrdering(t *testing.T) {
 		for _, e := range jobsHistory(a) {
 			text, _ := e.Data["text"].(string)
 			switch {
-			case e.Kind == "ask/answer" || e.Kind == "job":
+			case e.Kind == "ask/answer" || (e.Kind == "job" && e.Data["event"] == nil):
 				t.Errorf("job finish produced %s %q while the ask was pending", e.Kind, text)
 			case e.Kind == "input" && text != "start the job" && text != "now ask me":
 				t.Errorf("job finish injected an input while the ask was pending: %q", text)

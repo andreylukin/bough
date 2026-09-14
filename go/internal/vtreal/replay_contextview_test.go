@@ -96,7 +96,7 @@ func TestContextViewSlashCommand(t *testing.T) {
 
 	a.typeText("/context")
 	a.key(uv.KeyEnter, 0)
-	a.waitFor("spawnAll") // the tail of the tools section lands at the bottom
+	a.waitFor("stopAgent") // the tail of the tools section (background agents) lands at the bottom
 	a.check("/context printed")
 
 	t.Run("scrolls", func(t *testing.T) {

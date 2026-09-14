@@ -77,7 +77,17 @@ func (p *plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			hlUsage = u
 		}
 		hlMu.Unlock()
-		ctx.Effect(runHeadless(inputs, b, cmds, hlog, ask, steer))
+		// Resolved per notice, not at mount: the tools row may mount
+		// after ui, and a mount-time Get would remount this row with it.
+		notify := func(text string) {
+			n, err := kernel.Get[interface{ Notify(string) }](ctx, "job-notices")
+			if err != nil {
+				hlLine(hlErr, "error", "ui: headless: notice dropped: no job-notices service", nil)
+				return
+			}
+			n.Notify(text)
+		}
+		ctx.Effect(runHeadless(inputs, b, cmds, hlog, ask, steer, notify))
 		return nil
 	}
 

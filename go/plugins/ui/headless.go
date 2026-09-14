@@ -44,6 +44,7 @@ var (
 	hlHist    historyAppender
 	hlAnswer  askAnswers        // current mount's "ask-answers" service; nil = no asks
 	hlSteer   func(string) bool // current mount's "steer" service; nil = mid-turn lines queue
+	hlNotify  func(string)      // routes a {"notice"} line to job-notices; nil = dropped with an error
 	hlUsage   llm.UsageReporter // current mount's "usage" service; nil = no usage lines
 	hlAsk     *hlAskState
 	hlPending atomic.Int64
@@ -131,7 +132,7 @@ type hlAskState struct {
 // inputs so a reload never sends into a closed channel. The printer
 // goroutine for a disposed mount leaks quietly (its broadcaster stops
 // publishing); one idle goroutine per reload is accepted.
-func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog historyAppender, ask askAnswers, steer func(string) bool) func() {
+func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog historyAppender, ask askAnswers, steer func(string) bool, notify func(string)) func() {
 	events, _ := b.subscribe()
 	go func() {
 		for ev := range events {
@@ -145,6 +146,7 @@ func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog h
 	hlHist = hlog
 	hlAnswer = ask
 	hlSteer = steer
+	hlNotify = notify
 	hlMu.Unlock()
 	hlOnce.Do(func() { go headlessPump() })
 
@@ -155,6 +157,7 @@ func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog h
 		hlHist = nil
 		hlAnswer = nil
 		hlSteer = nil
+		hlNotify = nil
 		hlMu.Unlock()
 	}
 }
@@ -241,31 +244,7 @@ func headlessPump() {
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024) // a task brief can be long
 	for sc.Scan() {
-		line := sc.Text()
-		// A JSON object line {"prompt": "..."} is one multi-line prompt:
-		// the way a harness hands over a task brief with its newlines.
-		if strings.HasPrefix(line, "{") {
-			var obj struct {
-				Prompt string `json:"prompt"`
-			}
-			if err := json.Unmarshal([]byte(line), &obj); err == nil && obj.Prompt != "" {
-				line = obj.Prompt
-			}
-		}
-		if hlAnswerPending(line) {
-			continue // the line answered a pending tools.ask
-		}
-		if strings.HasPrefix(line, "/") && hlDispatch(line) {
-			continue // dispatched: never reaches the loop/LLM
-		}
-		if strings.HasPrefix(line, "!") {
-			hlBang(line)
-			continue // ran as a shell command: never reaches the loop/LLM
-		}
-		if hlSteerLine(line) {
-			continue // mid-turn: steered the running turn (its own done still ends it)
-		}
-		hlSubmit(line)
+		hlLineIn(sc.Text())
 	}
 
 	// EOF: no line can answer an ask now, so fail a pending one (and
@@ -276,6 +255,57 @@ func headlessPump() {
 	hlCancelAsk()
 	drainHeadless()
 	interruptSelf()
+}
+
+// hlLineIn routes one stdin line.
+func hlLineIn(line string) {
+	// A JSON object line {"prompt": "..."} is one multi-line prompt:
+	// the way a harness hands over a task brief with its newlines.
+	// {"notice": "..."} is serve reporting a background agent.
+	if strings.HasPrefix(line, "{") {
+		var obj struct {
+			Prompt string `json:"prompt"`
+			Notice string `json:"notice"`
+		}
+		if err := json.Unmarshal([]byte(line), &obj); err == nil {
+			// Before hlAnswerPending: a pending tools.ask would take the
+			// notice as its answer. Not a prompt, so no done is owed.
+			if obj.Notice != "" {
+				hlNotice(obj.Notice)
+				return
+			}
+			if obj.Prompt != "" {
+				line = obj.Prompt
+			}
+		}
+	}
+	if hlAnswerPending(line) {
+		return // the line answered a pending tools.ask
+	}
+	if strings.HasPrefix(line, "/") && hlDispatch(line) {
+		return // dispatched: never reaches the loop/LLM
+	}
+	if strings.HasPrefix(line, "!") {
+		hlBang(line)
+		return // ran as a shell command: never reaches the loop/LLM
+	}
+	if hlSteerLine(line) {
+		return // mid-turn: steered the running turn (its own done still ends it)
+	}
+	hlSubmit(line)
+}
+
+// hlNotice hands a notice to the job-notices service, which queues it
+// and wakes an idle agent (or lands it before the next model step).
+func hlNotice(text string) {
+	hlMu.Lock()
+	notify := hlNotify
+	hlMu.Unlock()
+	if notify == nil {
+		hlLine(hlErr, "error", "ui: headless: notice dropped: no job-notices service", nil)
+		return
+	}
+	notify(text)
 }
 
 // hlSubmit sends one line to the loop as user input, waiting out a

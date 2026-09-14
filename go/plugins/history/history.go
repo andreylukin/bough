@@ -237,6 +237,9 @@ type SessionInfo struct {
 	// slug of a project session, "" otherwise.
 	Mode    string
 	Project string
+	// SpawnedBy is the parent session id of a background agent, from
+	// the meta entry; "" for a person's session.
+	SpawnedBy string
 }
 
 // metaMode reads a meta entry's mode and project, normalizing the
@@ -345,7 +348,7 @@ func List(dir string) ([]SessionInfo, error) {
 		}
 		title, summary, cwd, from := "", "", "", ""
 		repo, branch := "", ""
-		mode, project := "local", ""
+		mode, project, spawnedBy := "local", "", ""
 		var atSeq int64
 		origin := entriesOrigin(entries)
 		for _, e := range entries {
@@ -365,6 +368,7 @@ func List(dir string) ([]SessionInfo, error) {
 				mode, project = metaMode(e.Data)
 				repo, _ = e.Data["repo"].(string)
 				branch, _ = e.Data["branch"].(string)
+				spawnedBy, _ = e.Data["spawned_by"].(string)
 				if src, _ := e.Data["forked_from"].(string); src != "" {
 					from = strings.TrimSuffix(filepath.Base(src), ".jsonl")
 					// at_seq round-trips through JSON as a float64.
@@ -397,6 +401,7 @@ func List(dir string) ([]SessionInfo, error) {
 			Background: Classify(origin, cwd, firstInput(entries), home) != "",
 			Mode:       mode,
 			Project:    project,
+			SpawnedBy:  spawnedBy,
 		})
 	}
 	slices.SortFunc(infos, func(a, b SessionInfo) int {
@@ -652,7 +657,13 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		if err != nil {
 			return fmt.Errorf("history: home dir: %w", err)
 		}
-		name := NewID() + ".jsonl"
+		// serve mints a queued background agent's id before its process
+		// exists, so the child must create exactly that file.
+		id, _ := kernel.Get[string](ctx, "session-id")
+		if id == "" {
+			id = NewID()
+		}
+		name := id + ".jsonl"
 		if s, err = Open(filepath.Join(home, ".bough", "history", name)); err != nil {
 			return err
 		}
@@ -672,6 +683,11 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			}
 			if origin != "" {
 				data["origin"] = origin
+			}
+			// Recorded on meta so depth 1 holds for a resumed child,
+			// which serve restarts without the env.
+			if by, _ := kernel.Get[string](ctx, "session-spawned-by"); by != "" {
+				data["spawned_by"] = by
 			}
 			// Only when the session starts inside a checkout. Started
 			// from a directory that merely holds repos, there is no
@@ -709,6 +725,9 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		}
 	}
 	ctx.Provide("history", s)
+	// A plain func so tools can write typed entries without importing
+	// this plugin for the Entry type.
+	ctx.Provide("history-record", func(kind string, data map[string]any) { s.Append(kind, data) })
 	// Only a project session changes files, so only it snapshots turns;
 	// a local session is read-only on local files and a checkpoint of ~
 	// would be a slow no-op (the loop treats the service as optional).
@@ -822,3 +841,42 @@ func filePrompts(path, cwd string) (prompts []string, ok bool) {
 // Read parses a session JSONL without opening it for append (a plugin
 // mining other sessions must not hold their files).
 func Read(path string) ([]Entry, error) { return readEntries(path) }
+
+// ReadFile returns every line of a session file, all branches, in file
+// order. A notice appended while another process held the file sits on
+// a side branch, so a branch walk would miss it.
+func ReadFile(path string) ([]Entry, error) { return readEntries(path) }
+
+// AppendFile appends one entry to a session file that the caller does
+// not hold (it MAY still be held by another bough), chaining Seq/Parent
+// from the file's last line under the same flock Store.Append takes, so
+// a holder's catchUp skips past its seq and no line is torn.
+func AppendFile(path, kind string, data map[string]any) (Entry, error) {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0o644)
+	if err != nil {
+		return Entry{}, fmt.Errorf("history: append %s: %w", path, err)
+	}
+	defer f.Close()
+	unlock := lockFile(f)
+	defer unlock()
+	entries, err := readEntries(path)
+	if err != nil {
+		return Entry{}, fmt.Errorf("history: append %s: %w", path, err)
+	}
+	var seq, last int64
+	for _, e := range entries {
+		seq = max(seq, e.Seq)
+	}
+	if n := len(entries); n > 0 {
+		last = entries[n-1].Seq
+	}
+	e := Entry{Seq: seq + 1, At: time.Now(), Kind: kind, Data: data, Parent: last}
+	line, err := json.Marshal(e)
+	if err != nil {
+		return Entry{}, fmt.Errorf("history: append %s: %w", path, err)
+	}
+	if _, err := f.Write(append(line, '\n')); err != nil {
+		return Entry{}, fmt.Errorf("history: append %s: %w", path, err)
+	}
+	return e, nil
+}

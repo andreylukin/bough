@@ -23,10 +23,19 @@ type Job struct {
 	Started time.Time `json:"started"`
 }
 
+// Legacy fallback: history files written before typed job entries only
+// carry the model-facing text, so these regexes read it.
 var (
 	jobStarted  = regexp.MustCompile(`(?m)^job (\d+) started in the background \([^)]*\): (.*)$`)
 	jobFinished = regexp.MustCompile(`^job (\d+) \[`)
 )
+
+// typedJob reports whether e is a typed job entry (tools writes "event";
+// the loop's notice job entries carry only text).
+func typedJob(e history.Entry) bool {
+	_, ok := e.Data["event"].(string)
+	return e.Kind == "job" && ok
+}
 
 // RunningJobs lists the jobs started and not yet finished, oldest first.
 // Job ids restart with the child, so a later start of the same id
@@ -36,7 +45,25 @@ func RunningJobs(entries []history.Entry, childAlive bool) []Job {
 		return nil
 	}
 	open := map[int]Job{}
+	typed := false
 	for _, e := range entries {
+		if !typedJob(e) {
+			continue
+		}
+		typed = true
+		id := int(num(e.Data["id"]))
+		switch e.Data["event"] {
+		case "started":
+			cmd, _ := e.Data["cmd"].(string)
+			open[id] = Job{ID: id, Cmd: cmd, Started: e.At}
+		case "finished":
+			delete(open, id)
+		}
+	}
+	for _, e := range entries {
+		if typed {
+			break
+		}
 		t, _ := e.Data["text"].(string)
 		switch e.Kind {
 		case "result":

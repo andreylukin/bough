@@ -159,7 +159,7 @@ func TestResumeMidBgjobOutput(t *testing.T) {
 		}
 		for _, e := range crashResumeIntegrityLines(t, session) {
 			text, _ := e.Data["text"].(string)
-			if e.Kind == "job" || (e.Kind == "input" && strings.HasPrefix(text, "[background job]")) {
+			if (e.Kind == "job" && e.Data["event"] == nil) || (e.Kind == "input" && strings.HasPrefix(text, "[background job]")) {
 				t.Errorf("dead job produced a %s entry after resume: %q", e.Kind, text)
 			}
 		}

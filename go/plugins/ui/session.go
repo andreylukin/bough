@@ -70,8 +70,13 @@ func (m *model) replay() {
 			open = true // closed on resume after a crash: mark it, not "stopped by you"
 			continue
 		}
+		// Typed job entries are serve's bookkeeping; the text job note
+		// for the same event renders.
+		if _, typed := e.Data["event"].(string); typed && e.Kind == "job" {
+			continue
+		}
 		switch e.Kind {
-		case "meta", "origin", "undo", "hook", "turn-summary":
+		case "meta", "origin", "undo", "hook", "turn-summary", "notice", "notice-delivered":
 			// session bookkeeping (cwd, a /undo's revert record —
 			// its system row follows; a hook fire, the control room's
 			// ledger — any notice it carried was recorded as its own
