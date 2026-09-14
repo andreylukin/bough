@@ -2589,6 +2589,11 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     pasted.current = true;
     const files = [...e.dataTransfer.files].filter((f) => /^image\/(png|jpeg|gif|webp)$/.test(f.type));
     if (files.length) { e.preventDefault(); void attach(files); return; }
+    if (drop && e.dataTransfer.files.length) {
+      e.preventDefault();
+      setAttachErr("Only png, jpeg, gif or webp images can be attached");
+      return;
+    }
     const text = e.dataTransfer.getData("text/plain").replace(/\r\n?/g, "\n");
     const n = text.split("\n").length;
     if (drop) e.preventDefault();
@@ -2843,7 +2848,9 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             ))}
           </ol>
         )}
-        <div className={"composer" + (multi || narrow ? " composer-multi" : "")}>
+        <div className={"composer" + (multi || narrow ? " composer-multi" : "")}
+             onDragOver={(e) => e.preventDefault()}
+             onDrop={(e) => { composer.current?.focus(); take(e, true); }}>
           <Mentions trigger={trigger} session={row.id}
             onPick={(t, value) => {
               // Replace the token being typed, and leave a trailing
@@ -2866,8 +2873,6 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             aria-activedescendant={pickerOpen ? activeOpt : undefined}
             placeholder={row.ask && !askChanged ? "Answer…" : running ? "Steer the running turn…" : "Next turn…"}
             onPaste={(e) => take({ dataTransfer: e.clipboardData, preventDefault: () => e.preventDefault() }, false)}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => { e.currentTarget.focus(); take(e, true); }}
             onChange={(e) => {
               setDraft(e.target.value);
               // The change a paste produces carries a caret at the end
