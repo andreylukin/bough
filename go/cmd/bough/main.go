@@ -35,6 +35,7 @@ import (
 	_ "github.com/andreylukin/bough/plugins/initjs"
 	_ "github.com/andreylukin/bough/plugins/llm"
 	_ "github.com/andreylukin/bough/plugins/loop"
+	_ "github.com/andreylukin/bough/plugins/lsp"
 	_ "github.com/andreylukin/bough/plugins/mcp"
 	orbplugin "github.com/andreylukin/bough/plugins/orb"
 	_ "github.com/andreylukin/bough/plugins/prompts"

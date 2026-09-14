@@ -92,6 +92,11 @@ type Stats struct {
 	// policy, when set, is asked before every bash command; its error
 	// is the refusal the model sees (the rules row's Codex rules).
 	policy func(cmd string) error
+	// afterEdit, when set, is asked after every write and patch; what it
+	// returns is appended to the tool's result (the lsp row's
+	// diagnostics). bashNote does the same for a bash command's output.
+	afterEdit func(path string) string
+	bashNote  func(cmd string) string
 	// project is set in a project session: bash runs through the orb
 	// and write/patch stay inside its roots. nil = local/host.
 	project *projectMode
@@ -206,6 +211,36 @@ func (s *Stats) SetPolicy(fn func(cmd string) error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.policy = fn
+}
+
+// SetAfterEdit sets (nil clears) the hook whose text follows every
+// write and patch result.
+func (s *Stats) SetAfterEdit(fn func(path string) string) {
+	s.mu.Lock()
+	s.afterEdit = fn
+	s.mu.Unlock()
+}
+
+// SetBashNote sets (nil clears) the hook whose text follows a
+// successful foreground bash command's output.
+func (s *Stats) SetBashNote(fn func(cmd string) string) {
+	s.mu.Lock()
+	s.bashNote = fn
+	s.mu.Unlock()
+}
+
+// edited is the afterEdit hook's text for path, or "".
+func (s *Stats) edited(path string) string {
+	s.mu.Lock()
+	fn := s.afterEdit
+	s.mu.Unlock()
+	if fn == nil {
+		return ""
+	}
+	if note := fn(path); note != "" {
+		return "\n" + note
+	}
+	return ""
 }
 
 // Take returns the files written and the last bash exit code (ran is
@@ -452,6 +487,14 @@ func (s *Stats) bash(cmd string, opts ...any) (string, error) {
 		return "", fmt.Errorf("bash: %s: %v%s", firstLine(cmd), err, tail(string(out)))
 	}
 	s.exited(0)
+	s.mu.Lock()
+	note := s.bashNote
+	s.mu.Unlock()
+	if note != nil {
+		if n := note(cmd); n != "" {
+			return string(out) + "\n" + n, nil
+		}
+	}
 	return string(out), nil
 }
 
@@ -490,7 +533,7 @@ func (s *Stats) write(path, content string) (string, error) {
 	if hadFile == nil {
 		out += lineDiff(string(before), content)
 	}
-	return out, nil
+	return out + s.edited(path), nil
 }
 
 // lineCount counts lines the way wc -l plus an unterminated tail does:
@@ -929,7 +972,7 @@ func (s *Stats) patch(path, old, new string) (string, error) {
 	}
 	s.wrote(path)
 	return fmt.Sprintf("patched %s (%+d lines)", path,
-		strings.Count(new, "\n")-strings.Count(old, "\n")) + lineDiff(old, new), nil
+		strings.Count(new, "\n")-strings.Count(old, "\n")) + lineDiff(old, new) + s.edited(path), nil
 }
 
 // script writes cmd for `sh <file>`. In a project session the file goes

@@ -167,6 +167,16 @@
   #                           # Nothing is summarised and the history log
   #                           # is untouched either way.
 
+# Language servers on the host (basedpyright/pyright, rust-analyzer,
+# typescript-language-server, gopls — whichever are installed), started
+# on first use per project root: tools.lsp.def/refs/hover/outline/
+# symbols/diagnostics, errors appended to every write and patch, and a
+# note when a grep looks for a symbol. After loop so its prompt section
+# lands. A project session's worktrees share host paths, so the servers
+# read them directly.
+- id: lsp
+  plugin: lsp
+
 # The agent's own directory: values that survive a code block, notes
 # that survive the context window, and somewhere to put a throwaway
 # file that is not the user's checkout. $BOUGH_SCRATCH points at it.
