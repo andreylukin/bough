@@ -64,18 +64,24 @@ It is a personal project in daily use, not a product. Expect sharp edges.
 
 There is no sandbox. Programs the model writes run as you, with your files, your shell and your credentials, exactly like a script you ran yourself. Use it in repos under git, on a machine or container you're comfortable with, and read what it proposes. bough talks only to your LLM provider, the MCP servers you configure, and the public [models.dev](https://models.dev) price list.
 
-## Configure and extend
+## A plugin tree, like DeepSeek Harness
 
-`./bough.yml` (else `~/.bough/bough.yml`) overrides the [shipped rows](go/bough.yml) by id:
+bough is built the way [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) is: a small kernel of services, events and a row loader, and everything else is a plugin. The provider, the loop, the tools, subagents, history, MCP, hooks, skills, the TUI and the web UI are rows in `bough.yml` that find each other only through service keys. `./bough.yml` (else `~/.bough/bough.yml`) overrides the [shipped rows](go/bough.yml) by id:
 
 ```yaml
 - id: llm
   plugin: llm-openrouter
   config:
-    model: anthropic/claude-sonnet-5
+    model: openai/gpt-6-astra
 ```
 
-`~/.bough/init.js` adds tools, commands and providers in a few lines ([INIT.md](go/docs/INIT.md)); a new row is a Go plugin ([PLUGINS.md](go/docs/PLUGINS.md)). The full reference is [go/README.md](go/README.md).
+Save it mid-session and only the changed rows and their dependents remount; the conversation survives because context is rebuilt from the session log. `bough rows` shows the live tree. `~/.bough/init.js` adds tools, commands and whole providers in a few lines ([INIT.md](go/docs/INIT.md)); a new row is a Go plugin ([PLUGINS.md](go/docs/PLUGINS.md)).
+
+## An LLM wiki of your own work
+
+Every session is an append-only log. `bough wiki install` has an agent compile those logs, every few minutes, into `~/.bough/wiki`: markdown pages of decisions, root causes and gotchas, where every claim cites the exact log entry it came from. Nothing is injected into prompts; an agent reads the wiki when asked, and `bough wiki check` verifies every citation. `bough serve` shows each page as claims beside their evidence.
+
+**[EXAMPLES.md](EXAMPLES.md)** walks through all of it with working snippets: plugin rows, what the model's programs look like, subagents, `init.js`, hooks, skills and rules, MCP, the wiki, scripting and replay. The full reference is [go/README.md](go/README.md).
 
 ## Develop
 
