@@ -403,11 +403,14 @@ type orbExec interface {
 
 ### Tools (`plugins/tools`)
 
-- Local: do not `RegisterTool("write"/"patch")`, do not Describe them, and
-  set prompt section `mode` to `LocalPromptSection` (exported const, ~4
-  lines: this session is read-only on local files; use shell for remote
-  systems; write throwaway files only under $BOUGH_SCRATCH; start a
-  project session to change code). `view` stays.
+- Local: do not `RegisterTool("write"/"patch")`, do not Describe them.
+  `view` stays. The prompt section `mode` (`internal/orb.LocalPromptSection`,
+  ~4 lines: read-only on local files; shell for remote systems; throwaway
+  files only under $BOUGH_SCRATCH; start a project session to change code)
+  is set by the ORB row in local mode, not tools: tools mounts before the
+  loop, so an Apply-time prompt-sections lookup reloads tools, which
+  re-provides turn-stats and reloads loop and ui mid-startup (headless
+  lost its input and hung). tools re-exports the const.
 - Project: `bash` foreground and `jobs.start` resolve `orb` with
   `kernel.Get[orbExec]` AT CALL TIME and build the command via
   `orb.Command(ctx, "sh", script)` instead of `exec.CommandContext(ctx,

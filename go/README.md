@@ -38,6 +38,10 @@ example in `plugins/example/`:
 | `runner`   | plugins/loop       | (internal)      |
 | `inputs`   | plugins/loop       | ui              |
 | `ui-mode`  | launcher           | ui              |
+| `session-mode` | launcher     | history, tools, orb |
+| `session-project` | launcher  | history, orb    |
+| `orb`      | plugins/orb        | tools (project sessions) |
+| `orb-state` | plugins/orb       | ui              |
 | `hooks`    | plugins/hooks      | loop (optional) |
 | `skills`   | plugins/skills     | loop (optional) |
 | `context-md` | plugins/contextmd | loop (optional) |
@@ -62,6 +66,8 @@ go build ./cmd/bough
 ./bough                      # native TUI (bubbletea)
 ./bough --web 127.0.0.1:7681 # browser UI (sip)
 ./bough --headless           # stdin/stdout
+./bough --project <slug>     # project session: shell in the project's container
+./bough --local              # local session (default): read-only on local files
 ./bough --set llm.model=claude-haiku-4-5   # override any row config
 ./bough --set llm.plugin=llm-echo          # swap a row's plugin
 ./bough rows                 # print the row state table and exit

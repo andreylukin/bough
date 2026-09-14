@@ -177,6 +177,14 @@
 - id: scratchpad
   plugin: scratchpad
 
+# A project session's container ("orb"): git worktrees under
+# ~/.bough/orbs/<session>, the project's image, and the exec seam that
+# tools.bash runs through. It needs the scratchpad's directory (mounted
+# into the container), hence after it. A local session mounts nothing.
+# config: {runtime: apple|nerdctl|podman|fake}
+- id: orb
+  plugin: orb
+
 # While the agent works, a small model says what it is doing in a few
 # words, on the bottom line. Needs the llm-small row; without it the
 # plugin is quiet (a status line is not worth the agent's own model).

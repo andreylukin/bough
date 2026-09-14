@@ -1,0 +1,295 @@
+// Package projectdef reads and writes project definitions: the
+// ~/.bough/projects/<slug>/ directory holding project.yml plus a
+// Dockerfile or setup.sh and an optional resume.sh. Definitions live
+// outside every repo on purpose — they describe the user's machine
+// setup, not the code, and are never committed.
+package projectdef
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"sort"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+type Repo struct {
+	Remote string `yaml:"remote,omitempty"` // git URL; one of Remote/Path
+	Path   string `yaml:"path,omitempty"`   // local checkout on the host, ~ expanded
+	Branch string `yaml:"branch,omitempty"` // base branch; "" = remote HEAD / current
+	Name   string `yaml:"name,omitempty"`   // worktree dir name; "" = basename
+}
+
+type Checks struct {
+	Fast string `yaml:"fast,omitempty"`
+	Full string `yaml:"full,omitempty"`
+}
+
+type Def struct {
+	Repos  []Repo            `yaml:"repos"`
+	Checks Checks            `yaml:"checks,omitempty"`
+	LSP    []string          `yaml:"lsp,omitempty"`    // roots; parsed, unused this run
+	Base   string            `yaml:"base,omitempty"`   // setup-script base; "" = container.DefaultBase
+	Caches []string          `yaml:"caches,omitempty"` // guest dirs backed by named volumes
+	Env    map[string]string `yaml:"env,omitempty"`
+	CPUs   int               `yaml:"cpus,omitempty"`
+	Memory string            `yaml:"memory,omitempty"`
+}
+
+// Project is one definition on disk.
+type Project struct {
+	Slug string // directory name: [a-z0-9][a-z0-9-]{0,62}
+	Dir  string // ~/.bough/projects/<slug>
+	Def  Def
+}
+
+const (
+	FileYAML       = "project.yml"
+	FileDockerfile = "Dockerfile"
+	FileSetup      = "setup.sh"
+	FileResume     = "resume.sh"
+)
+
+var EditableFiles = []string{FileYAML, FileDockerfile, FileSetup, FileResume}
+
+var slugRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+func Root(home string) string { return filepath.Join(home, ".bough", "projects") }
+
+func ValidSlug(s string) error {
+	if !slugRE.MatchString(s) {
+		return fmt.Errorf("projectdef: bad slug %q (want [a-z0-9][a-z0-9-]{0,62})", s)
+	}
+	return nil
+}
+
+// Parse decodes and validates project.yml. Unknown keys are rejected so a
+// typo ("repo:" for "repos:") fails loudly instead of building nothing.
+func Parse(b []byte) (Def, error) {
+	var d Def
+	dec := yaml.NewDecoder(strings.NewReader(string(b)))
+	dec.KnownFields(true)
+	if err := dec.Decode(&d); err != nil {
+		return Def{}, fmt.Errorf("projectdef: parse %s: %w", FileYAML, err)
+	}
+	if len(d.Repos) == 0 {
+		return Def{}, fmt.Errorf("projectdef: %s: at least one repo is required", FileYAML)
+	}
+	seen := map[string]bool{}
+	for i, r := range d.Repos {
+		if (r.Remote == "") == (r.Path == "") {
+			return Def{}, fmt.Errorf("projectdef: %s: repos[%d]: set exactly one of remote or path", FileYAML, i)
+		}
+		n := r.RepoName()
+		if n == "" || n == "." || n == ".." || strings.ContainsAny(n, `/\`) || n == "cache" {
+			return Def{}, fmt.Errorf("projectdef: %s: repos[%d]: bad name %q", FileYAML, i, n)
+		}
+		if seen[n] {
+			return Def{}, fmt.Errorf("projectdef: %s: repos[%d]: duplicate name %q (set name:)", FileYAML, i, n)
+		}
+		seen[n] = true
+	}
+	if d.CPUs < 0 {
+		return Def{}, fmt.Errorf("projectdef: %s: cpus must be >= 0", FileYAML)
+	}
+	return d, nil
+}
+
+// RepoName is the worktree directory name: Name, else the basename of the
+// path or remote without a trailing .git.
+func (r Repo) RepoName() string {
+	if r.Name != "" {
+		return r.Name
+	}
+	src := r.Path
+	if src == "" {
+		src = r.Remote
+	}
+	src = strings.TrimRight(src, "/")
+	if i := strings.LastIndexAny(src, "/:"); i >= 0 {
+		src = src[i+1:]
+	}
+	return strings.TrimSuffix(src, ".git")
+}
+
+// ExpandPath resolves a Path repo against home (~ expansion).
+func ExpandPath(home, p string) string {
+	if p == "~" {
+		return home
+	}
+	if strings.HasPrefix(p, "~/") {
+		return filepath.Join(home, p[2:])
+	}
+	return p
+}
+
+func Load(home, slug string) (Project, error) {
+	if err := ValidSlug(slug); err != nil {
+		return Project{}, err
+	}
+	dir := filepath.Join(Root(home), slug)
+	b, err := os.ReadFile(filepath.Join(dir, FileYAML))
+	if err != nil {
+		return Project{}, fmt.Errorf("projectdef: load %s: %w", slug, err)
+	}
+	d, err := Parse(b)
+	if err != nil {
+		return Project{}, fmt.Errorf("projectdef: load %s: %w", slug, err)
+	}
+	return Project{Slug: slug, Dir: dir, Def: d}, nil
+}
+
+// List returns every valid definition sorted by slug. A broken one is
+// skipped but reported, so one bad yaml never hides the others.
+func List(home string) ([]Project, error) {
+	ents, err := os.ReadDir(Root(home))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("projectdef: list: %w", err)
+	}
+	var out []Project
+	var errs []error
+	for _, e := range ents {
+		if !e.IsDir() || ValidSlug(e.Name()) != nil {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(Root(home), e.Name(), FileYAML)); err != nil {
+			continue
+		}
+		p, err := Load(home, e.Name())
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
+	return out, errors.Join(errs...)
+}
+
+const skeletonYAML = `# bough project definition. Lives outside every repo; never committed.
+repos:
+  - path: ~/repos/example   # or remote: git@github.com:you/example.git
+    branch: main
+checks:
+  fast: ""
+  full: ""
+# caches: [/root/.cache/go-build]
+# env: {GOFLAGS: -mod=mod}
+`
+
+const skeletonSetup = `#!/bin/sh
+# Runs once on the base image; the result is snapshotted as the orb image.
+# Repo lockfiles are copied next to this script as <repo>/<lockfile>.
+set -e
+apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+`
+
+func Create(home, slug string) (Project, error) {
+	if err := ValidSlug(slug); err != nil {
+		return Project{}, err
+	}
+	dir := filepath.Join(Root(home), slug)
+	if err := os.MkdirAll(Root(home), 0o755); err != nil {
+		return Project{}, fmt.Errorf("projectdef: create %s: %w", slug, err)
+	}
+	// Mkdir (not MkdirAll) makes "exists" an error atomically.
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		return Project{}, fmt.Errorf("projectdef: create %s: %w", slug, err)
+	}
+	if err := atomicWrite(filepath.Join(dir, FileYAML), []byte(skeletonYAML), 0o644); err != nil {
+		return Project{}, fmt.Errorf("projectdef: create %s: %w", slug, err)
+	}
+	if err := atomicWrite(filepath.Join(dir, FileSetup), []byte(skeletonSetup), 0o755); err != nil {
+		return Project{}, fmt.Errorf("projectdef: create %s: %w", slug, err)
+	}
+	return Load(home, slug)
+}
+
+func ReadFile(home, slug, name string) (string, error) {
+	if err := checkName(slug, name); err != nil {
+		return "", err
+	}
+	b, err := os.ReadFile(filepath.Join(Root(home), slug, name))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("projectdef: read %s/%s: %w", slug, name, err)
+	}
+	return string(b), nil
+}
+
+func WriteFile(home, slug, name, text string) error {
+	if err := checkName(slug, name); err != nil {
+		return err
+	}
+	dir := filepath.Join(Root(home), slug)
+	if _, err := os.Stat(dir); err != nil {
+		return fmt.Errorf("projectdef: write %s/%s: %w", slug, name, err)
+	}
+	path := filepath.Join(dir, name)
+	if name == FileYAML {
+		if _, err := Parse([]byte(text)); err != nil {
+			return err
+		}
+	} else if text == "" {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("projectdef: delete %s/%s: %w", slug, name, err)
+		}
+		return nil
+	}
+	mode := os.FileMode(0o644)
+	if strings.HasSuffix(name, ".sh") {
+		mode = 0o755
+	}
+	if err := atomicWrite(path, []byte(text), mode); err != nil {
+		return fmt.Errorf("projectdef: write %s/%s: %w", slug, name, err)
+	}
+	return nil
+}
+
+func checkName(slug, name string) error {
+	if err := ValidSlug(slug); err != nil {
+		return err
+	}
+	if !slices.Contains(EditableFiles, name) {
+		return fmt.Errorf("projectdef: %q is not an editable file (want one of %s)", name, strings.Join(EditableFiles, ", "))
+	}
+	return nil
+}
+
+// UsesDockerfile reports whether the build uses the Dockerfile; it wins
+// over setup.sh when both exist.
+func (p Project) UsesDockerfile() bool {
+	_, err := os.Stat(filepath.Join(p.Dir, FileDockerfile))
+	return err == nil
+}
+
+func atomicWrite(path string, b []byte, mode os.FileMode) error {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp) // no-op after a successful rename
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Chmod(mode); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}

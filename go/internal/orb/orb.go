@@ -1,0 +1,258 @@
+package orb
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+
+	"github.com/andreylukin/bough/internal/container"
+	"github.com/andreylukin/bough/internal/projectdef"
+)
+
+// Orb is one session's live container. Methods are safe for concurrent
+// use: tools run bash and background jobs in parallel.
+type Orb struct {
+	rt      container.Runtime
+	home    string
+	session string
+	project projectdef.Project
+	scratch string
+
+	mu    sync.Mutex
+	state State
+	spec  container.RunSpec
+}
+
+// Open prepares a session's orb; see docs/orbs.md §1c.
+func Open(ctx context.Context, rt container.Runtime, home, session string, p projectdef.Project, scratchDir string) (*Orb, error) {
+	if session == "" || strings.ContainsAny(session, `/\`) || session == "cache" || session == "images" {
+		return nil, fmt.Errorf("orb: open: bad session id %q", session)
+	}
+	// Read before any writeState below overwrites it: the previous image
+	// tells us whether an existing container is stale.
+	prev, _ := ReadState(home, session)
+	o := &Orb{rt: rt, home: home, session: session, project: p, scratch: scratchDir}
+	o.state = State{Session: session, Project: p.Slug, Container: container.OrbName(session), PID: os.Getpid()}
+	fail := func(err error) (*Orb, error) {
+		o.state.Status, o.state.Error = StatusFailed, err.Error()
+		writeState(home, o.state)
+		return nil, fmt.Errorf("orb: open %s: %w", session, err)
+	}
+	if err := os.MkdirAll(Dir(home, session), 0o755); err != nil {
+		return fail(err)
+	}
+	if err := rt.Available(ctx); err != nil {
+		return fail(fmt.Errorf("%w (run `bough update` or `container system start`)", err))
+	}
+	// Clone remote repos BEFORE hashing so their lockfiles count.
+	for _, r := range p.Def.Repos {
+		if r.Remote != "" {
+			if err := syncCache(ctx, home, p.Slug, r); err != nil {
+				return fail(err)
+			}
+		}
+	}
+
+	o.state.Status = StatusBuilding
+	writeState(home, o.state)
+	tag, err := EnsureImage(ctx, rt, home, p, nil)
+	if err != nil {
+		return fail(err)
+	}
+	o.state.Image = tag
+	o.state.Status = StatusStarting
+	writeState(home, o.state)
+
+	mounts, err := o.prepareMounts(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	o.spec = container.RunSpec{
+		Name: o.state.Container, Image: tag, Mounts: mounts,
+		Env: o.env(), Workdir: o.state.Primary, CPUs: p.Def.CPUs, Memory: p.Def.Memory,
+	}
+	// An existing container from an older image must not be reused.
+	if st, err := rt.Inspect(ctx, o.spec.Name); err == nil && st != container.StateMissing {
+		if prev.Image != "" && prev.Image != tag {
+			rt.Remove(ctx, o.spec.Name)
+		}
+	}
+	if err := rt.Start(ctx, o.spec); err != nil {
+		return fail(err)
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.resumeLocked(ctx)
+	return o, nil
+}
+
+func (o *Orb) prepareMounts(ctx context.Context) ([]container.Mount, error) {
+	p := o.project
+	o.state.Worktrees = map[string]string{}
+	var mounts []container.Mount
+	seen := map[string]bool{}
+	add := func(m container.Mount) {
+		if !seen[m.Target] {
+			seen[m.Target] = true
+			mounts = append(mounts, m)
+		}
+	}
+	for i, r := range p.Def.Repos {
+		dst := filepath.Join(Dir(o.home, o.session), r.RepoName())
+		if err := addWorktree(ctx, o.home, p.Slug, o.session, r, dst); err != nil {
+			return nil, fmt.Errorf("worktree %s: %w", r.RepoName(), err)
+		}
+		o.state.Worktrees[r.RepoName()] = dst
+		if i == 0 {
+			o.state.Primary = dst
+		}
+		add(container.Mount{Source: dst, Target: dst})
+		common, err := commonGitDir(ctx, dst)
+		if err != nil {
+			return nil, fmt.Errorf("worktree %s: %w", r.RepoName(), err)
+		}
+		add(container.Mount{Source: common, Target: common})
+	}
+	if o.scratch != "" {
+		// The scratchpad makes its dir on first write, but a bind mount
+		// needs the source now, and job scripts land there before any
+		// scratch write.
+		if err := os.MkdirAll(o.scratch, 0o755); err != nil {
+			return nil, fmt.Errorf("scratch %s: %w", o.scratch, err)
+		}
+		add(container.Mount{Source: o.scratch, Target: o.scratch})
+	}
+	// Read-only so resume.sh is runnable in the guest; the agent edits the
+	// definition through host tools, never from inside the container.
+	add(container.Mount{Source: p.Dir, Target: p.Dir, ReadOnly: true})
+	for n, dir := range p.Def.Caches {
+		vol := fmt.Sprintf("bough-cache-%s-%d", p.Slug, n)
+		if err := o.rt.CreateVolume(ctx, vol); err != nil {
+			return nil, fmt.Errorf("cache volume %s: %w", vol, err)
+		}
+		add(container.Mount{Source: vol, Target: dir, Volume: true})
+	}
+	return mounts, nil
+}
+
+// env is passed on every exec because the engine does not inherit the
+// host environment.
+func (o *Orb) env() []string {
+	env := []string{"HOME=/root", "TERM=dumb"}
+	if o.scratch != "" {
+		env = append(env, "BOUGH_SCRATCH="+o.scratch)
+	}
+	return append(env, envList(o.project.Def.Env)...)
+}
+
+// resumeLocked runs resume.sh and settles Running or Failed. A failing
+// script leaves the container usable so the agent can fix it.
+func (o *Orb) resumeLocked(ctx context.Context) {
+	o.state.Status, o.state.Error = StatusRunning, ""
+	script := filepath.Join(o.project.Dir, projectdef.FileResume)
+	if _, err := os.Stat(script); err == nil {
+		if err := o.runResume(ctx, script); err != nil {
+			o.state.Status, o.state.Error = StatusFailed, "resume.sh: "+err.Error()
+		}
+	}
+	writeState(o.home, o.state)
+}
+
+func (o *Orb) runResume(ctx context.Context, script string) error {
+	f, err := os.OpenFile(filepath.Join(Dir(o.home, o.session), "resume.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: o.state.Primary, Env: o.env()}, "sh", script)
+	cmd.Stdout, cmd.Stderr = f, f
+	return cmd.Run()
+}
+
+func (o *Orb) State() State {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	s := o.state
+	s.Worktrees = make(map[string]string, len(o.state.Worktrees))
+	for k, v := range o.state.Worktrees {
+		s.Worktrees[k] = v
+	}
+	return s
+}
+
+func (o *Orb) Root() string { return Dir(o.home, o.session) }
+
+// Command is the exec seam. A container stopped behind the child's back
+// (serve's Stop button, engine restart) is started again first.
+func (o *Orb) Command(ctx context.Context, argv ...string) *exec.Cmd {
+	o.mu.Lock()
+	err := o.ensureRunningLocked(ctx)
+	primary := o.state.Primary
+	o.mu.Unlock()
+	if err != nil {
+		cmd := exec.CommandContext(ctx, "false")
+		cmd.Err = fmt.Errorf("orb: %s: restart: %w", o.session, err)
+		return cmd
+	}
+	return o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: primary, Env: o.env()}, argv...)
+}
+
+func (o *Orb) ensureRunningLocked(ctx context.Context) error {
+	st, err := o.rt.Inspect(ctx, o.spec.Name)
+	if err != nil {
+		return err
+	}
+	if st == container.StateRunning {
+		return nil
+	}
+	if err := o.rt.Start(ctx, o.spec); err != nil {
+		o.state.Status, o.state.Error = StatusFailed, err.Error()
+		writeState(o.home, o.state)
+		return err
+	}
+	o.resumeLocked(ctx)
+	return nil
+}
+
+// Stop keeps worktrees and the container so resume is fast.
+func (o *Orb) Stop(ctx context.Context) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if err := o.rt.Stop(ctx, o.spec.Name); err != nil {
+		return fmt.Errorf("orb: stop %s: %w", o.session, err)
+	}
+	o.state.Status = StatusStopped
+	return writeState(o.home, o.state)
+}
+
+// Remove deletes the container, the session's worktrees and its orb dir.
+// The bough/<session> branches are kept: they may hold unmerged work.
+func Remove(ctx context.Context, rt container.Runtime, home, session string) error {
+	if session == "" || strings.ContainsAny(session, `/\`) || session == "cache" || session == "images" {
+		return fmt.Errorf("orb: remove: bad session id %q", session)
+	}
+	var errs []error
+	if err := rt.Remove(ctx, container.OrbName(session)); err != nil {
+		errs = append(errs, err)
+	}
+	dir := Dir(home, session)
+	ents, _ := os.ReadDir(dir)
+	for _, e := range ents {
+		wt := filepath.Join(dir, e.Name())
+		if fi, err := os.Stat(filepath.Join(wt, ".git")); err == nil && !fi.IsDir() {
+			removeWorktree(ctx, wt)
+		}
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		errs = append(errs, err)
+	}
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("orb: remove %s: %w", session, err)
+	}
+	return nil
+}
