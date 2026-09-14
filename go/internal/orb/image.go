@@ -116,9 +116,34 @@ func build(ctx context.Context, rt container.Runtime, home string, p projectdef.
 	}
 	base := p.Def.Base
 	if base == "" {
-		base = container.DefaultBase
+		if base, err = EnsureBase(ctx, rt, w); err != nil {
+			return err
+		}
 	}
 	return rt.Commit(ctx, container.CommitSpec{Base: base, Script: script, Files: files, FilesRoot: tmp, Env: envList(p.Def.Env), Tag: tag}, w)
+}
+
+// EnsureBase builds bough's embedded base image when its tag is missing.
+func EnsureBase(ctx context.Context, rt container.Runtime, log io.Writer) (string, error) {
+	tag := projectdef.BaseTag()
+	if ok, err := rt.ImageExists(ctx, tag); err != nil {
+		return "", fmt.Errorf("orb: base image %s: %w", tag, err)
+	} else if ok {
+		return tag, nil
+	}
+	dir, err := os.MkdirTemp("", "bough-orb-base-*")
+	if err != nil {
+		return "", fmt.Errorf("orb: base image %s: %w", tag, err)
+	}
+	defer os.RemoveAll(dir)
+	df := filepath.Join(dir, "Dockerfile")
+	if err := os.WriteFile(df, projectdef.BaseDockerfile, 0o644); err != nil {
+		return "", fmt.Errorf("orb: base image %s: %w", tag, err)
+	}
+	if err := rt.Build(ctx, container.BuildSpec{Dir: dir, Dockerfile: df, Tag: tag}, log); err != nil {
+		return "", fmt.Errorf("orb: base image %s: %w", tag, err)
+	}
+	return tag, nil
 }
 
 // envList sorts so the generated image recipe is deterministic.

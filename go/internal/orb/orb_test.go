@@ -88,8 +88,12 @@ func TestEnsureImage(t *testing.T) {
 	}
 	// A Dockerfile wins and changes the tag.
 	projectdef.WriteFile(home, "img", projectdef.FileDockerfile, "FROM debian\n")
-	if _, err := EnsureImage(ctx, rt, home, p, nil); err != nil || count(rt.CallList(), "build ") != 1 {
+	if _, err := EnsureImage(ctx, rt, home, p, nil); err != nil || count(rt.CallList(), "build bough-orb/img:") != 1 {
 		t.Fatalf("dockerfile build: %v %v", err, rt.CallList())
+	}
+	// The setup-script build made the base once; the Dockerfile build did not need it.
+	if n := count(rt.CallList(), "build "+projectdef.BaseTag()); n != 1 {
+		t.Fatalf("base built %d times: %v", n, rt.CallList())
 	}
 }
 
@@ -119,6 +123,10 @@ func TestEnsureImageFailed(t *testing.T) {
 	home := t.TempDir()
 	p := newProject(t, home, "bad", "  - path: "+newRepo(t)+"\n")
 	rt := container.NewFake()
+	// The base exists, so the failure is the project's own commit.
+	if err := rt.Build(context.Background(), container.BuildSpec{Tag: projectdef.BaseTag()}, nil); err != nil {
+		t.Fatal(err)
+	}
 	rt.FailBuild = errors.New("boom")
 	var tee strings.Builder
 	if _, err := EnsureImage(context.Background(), rt, home, p, &tee); err == nil {

@@ -2,6 +2,7 @@ package projectdef
 
 import (
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"fmt"
 	"io/fs"
@@ -15,9 +16,18 @@ import (
 
 var LockfileNames = []string{"go.sum", "package-lock.json", "bun.lock", "bun.lockb", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "poetry.lock", "uv.lock", "requirements.txt", "Gemfile.lock"}
 
-// DefaultBase mirrors container.DefaultBase. It is duplicated rather than
-// imported so projectdef stays a leaf package the runtime could depend on.
-const DefaultBase = "docker.io/library/debian:bookworm"
+// BaseDockerfile is bough's orb base: the user's everyday CLIs. A project
+// with no `base` builds its setup.sh on top of it.
+//
+//go:embed base.Dockerfile
+var BaseDockerfile []byte
+
+// BaseTag names the base image by its Dockerfile, so editing it rebuilds
+// the base and, through ImageHash, every project built on it.
+func BaseTag() string {
+	sum := sha256.Sum256(BaseDockerfile)
+	return "bough-orb/base:" + hex.EncodeToString(sum[:])[:12]
+}
 
 func ImageTag(slug, hash string) string { return "bough-orb/" + slug + ":" + hash }
 
@@ -75,7 +85,7 @@ func ImageHash(home string, p Project) (string, error) {
 	}
 	base := p.Def.Base
 	if base == "" {
-		base = DefaultBase
+		base = BaseTag()
 	}
 	field("base", []byte(base))
 	for _, r := range p.Def.Repos {

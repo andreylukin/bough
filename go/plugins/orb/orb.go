@@ -200,6 +200,7 @@ func stopOrb(o *iorb.Orb) {
 func promptSection(root string, st iorb.State, checks projectdef.Checks) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Project session: %s. Your shell runs in a Linux container (%s); files under %s are shared with the host at the same paths.\n", st.Project, st.Container, root)
+	b.WriteString("The shell acts as the user: gh, git, aws, kubectl, helm, helmfile, sops, just, gcx and argocd use the user's own credentials, and network traffic leaves through the host, so internal hosts the user can reach work here too.\n")
 	names := make([]string, 0, len(st.Worktrees))
 	for n := range st.Worktrees {
 		names = append(names, n)

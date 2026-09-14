@@ -319,6 +319,32 @@ func (o *Orb) Stop(ctx context.Context) error   // container stop; state Stopped
 func Remove(ctx context.Context, rt container.Runtime, home, session string) error // rm container, git worktree remove, rm Dir
 ```
 
+### 1d. Identity, tools and egress
+
+A project session acts as the user, with the same permissions as their
+own shell; it only isolates file changes.
+
+- **Tools**: `projectdef.BaseDockerfile` (embedded `base.Dockerfile`) is
+  built as `projectdef.BaseTag()` = `bough-orb/base:<sha12>` by
+  `orb.EnsureBase` before any setup-script project whose `base` is empty.
+  It carries gh, aws, kubectl, helm, helmfile, sops, just, gcx, argocd,
+  uv and python3. `ImageHash` hashes the base tag, so editing the base
+  rebuilds every project on it.
+- **File credentials**: `~/.aws`, `~/.kube`, `~/.config/gcx`,
+  `~/.config/argocd`, `~/.config/gcloud` are bind-mounted read-write at
+  `/root/...` when present, so SSO and kube token caches stay shared with
+  the host.
+- **Keychain credentials**: `GH_TOKEN` is the host's `gh auth token`
+  (cached 5 min), passed per exec, never in run env. Git gets
+  `credential.https://github.com.helper=!gh auth git-credential` and the
+  host's user.name/email through `GIT_CONFIG_*` env; the host gitconfig is
+  not mounted (it names macOS binaries). Host `AWS_PROFILE`/`AWS_REGION`
+  and `GRAFANA_*`/`ARGOCD_*`/`CIRCLECI_*`/`LINEAR_*` pass through.
+- **Egress**: per-app VPNs (Jamf Trust Private Access) do not tunnel the
+  VM bridge, so the child runs an HTTP/CONNECT proxy on the guest's
+  gateway IP (its resolv.conf nameserver) and sets `HTTPS_PROXY` and
+  friends per exec. Stop closes it; a restart reopens it.
+
 ## 2. Session mode (area: session-mode)
 
 ### Choosing the mode

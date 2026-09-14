@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +27,7 @@ type Orb struct {
 	mu    sync.Mutex
 	state State
 	spec  container.RunSpec
+	proxy *proxy // host egress for the guest; nil when it could not start
 }
 
 // Open prepares a session's orb; see docs/orbs.md §1c.
@@ -69,7 +71,7 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 	}
 	o.spec = container.RunSpec{
 		Name: o.state.Container, Image: tag, Mounts: mounts,
-		Env: o.env(), Workdir: o.state.Primary, CPUs: p.Def.CPUs, Memory: p.Def.Memory,
+		Env: o.baseEnv(), Workdir: o.state.Primary, CPUs: p.Def.CPUs, Memory: p.Def.Memory,
 	}
 	// An existing container is reused only when the last state we wrote
 	// proves it runs this tag: a missing or unreadable state.json says
@@ -154,22 +156,70 @@ func (o *Orb) prepareMounts(ctx context.Context) ([]container.Mount, error) {
 		}
 		add(container.Mount{Source: vol, Target: dir, Volume: true})
 	}
+	for _, m := range identityMounts(o.home) {
+		add(m)
+	}
 	return mounts, nil
 }
 
-// env is passed on every exec because the engine does not inherit the
-// host environment.
-func (o *Orb) env() []string {
+// baseEnv is the container's own env; it holds no secrets, because run
+// env is fixed for the container's life and visible to inspect.
+func (o *Orb) baseEnv() []string {
+	return append(o.coreEnv(), envList(o.project.Def.Env)...)
+}
+
+func (o *Orb) coreEnv() []string {
 	env := []string{"HOME=/root", "TERM=dumb"}
 	if o.scratch != "" {
 		env = append(env, "BOUGH_SCRATCH="+o.scratch)
 	}
+	return env
+}
+
+// execEnv is passed on every exec because the engine does not inherit the
+// host environment: the base env, the user's identity and the proxy.
+// Project env comes last so a project can override any of it.
+func (o *Orb) execEnv(proxyURL string) []string {
+	env := append(o.coreEnv(), identityEnv()...)
+	if proxyURL != "" {
+		env = append(env, proxyEnv(proxyURL)...)
+	}
 	return append(env, envList(o.project.Def.Env)...)
+}
+
+func (o *Orb) proxyURLLocked() string {
+	if o.proxy == nil {
+		return ""
+	}
+	return o.proxy.URL()
+}
+
+// ensureProxyLocked starts the host egress proxy on the guest's gateway
+// address, read from the guest's resolv.conf (the engine's DNS forwarder
+// lives on the gateway). A failure only costs internal-host reachability.
+func (o *Orb) ensureProxyLocked(ctx context.Context) {
+	if o.proxy != nil {
+		return
+	}
+	out, err := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{}, "sh", "-c", "awk '/^nameserver/{print $2; exit}' /etc/resolv.conf").Output()
+	ip := net.ParseIP(strings.TrimSpace(string(out)))
+	if err != nil || ip == nil || ip.IsLoopback() {
+		return
+	}
+	p, err := startProxy(ip.String())
+	if err != nil {
+		if o.rt.Name() != "fake" {
+			fmt.Fprintf(os.Stderr, "bough: orb: proxy on %s: %v\n", ip, err)
+		}
+		return
+	}
+	o.proxy = p
 }
 
 // resumeLocked runs resume.sh and settles Running or Failed. A failing
 // script leaves the container usable so the agent can fix it.
 func (o *Orb) resumeLocked(ctx context.Context) {
+	o.ensureProxyLocked(ctx)
 	o.state.Status, o.state.Error = StatusRunning, ""
 	script := filepath.Join(o.project.Dir, projectdef.FileResume)
 	if _, err := os.Stat(script); err == nil {
@@ -186,7 +236,7 @@ func (o *Orb) runResume(ctx context.Context, script string) error {
 		return err
 	}
 	defer f.Close()
-	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: o.state.Primary, Env: o.env()}, "sh", script)
+	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: o.state.Primary, Env: o.execEnv(o.proxyURLLocked())}, "sh", script)
 	cmd.Stdout, cmd.Stderr = f, f
 	return cmd.Run()
 }
@@ -210,13 +260,14 @@ func (o *Orb) Command(ctx context.Context, argv ...string) *exec.Cmd {
 	o.mu.Lock()
 	err := o.ensureRunningLocked(ctx)
 	primary := o.state.Primary
+	proxyURL := o.proxyURLLocked()
 	o.mu.Unlock()
 	if err != nil {
 		cmd := exec.CommandContext(ctx, "false")
 		cmd.Err = fmt.Errorf("orb: %s: restart: %w", o.session, err)
 		return cmd
 	}
-	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: primary, Env: o.env()}, argv...)
+	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: primary, Env: o.execEnv(proxyURL)}, argv...)
 	// Killing the host `container exec` client does not end the guest
 	// processes, so cancel also kills them inside the orb. A caller that
 	// replaces Cancel (tools' process-group kill) must call this one too.
@@ -254,6 +305,10 @@ func (o *Orb) Stop(ctx context.Context) error {
 	defer o.mu.Unlock()
 	if err := o.rt.Stop(ctx, o.spec.Name); err != nil {
 		return fmt.Errorf("orb: stop %s: %w", o.session, err)
+	}
+	if o.proxy != nil {
+		o.proxy.Close()
+		o.proxy = nil
 	}
 	o.state.Status = StatusStopped
 	return writeState(o.home, o.state)

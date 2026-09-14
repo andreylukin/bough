@@ -34,7 +34,7 @@ type Def struct {
 	Repos  []Repo            `yaml:"repos"`
 	Checks Checks            `yaml:"checks,omitempty"`
 	LSP    []string          `yaml:"lsp,omitempty"`    // roots; parsed, unused this run
-	Base   string            `yaml:"base,omitempty"`   // setup-script base; "" = container.DefaultBase
+	Base   string            `yaml:"base,omitempty"`   // setup-script base; "" = bough's base image (BaseTag)
 	Caches []string          `yaml:"caches,omitempty"` // guest dirs backed by named volumes
 	Env    map[string]string `yaml:"env,omitempty"`
 	CPUs   int               `yaml:"cpus,omitempty"`
