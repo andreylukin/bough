@@ -143,3 +143,29 @@ components will re-grade (their sources moved), which is correct.
 - Still unverified: the phone stories render the desktop layout (capture
   viewport), StreamView and TurnView capture 6 of 10 stories, and SkillPicker
   still has only the closed story.
+
+## Re-sync 2026-09-14 — orb panels, build log, job wake-up, sidebar counts
+
+- Driver found 4 changed (Sidebar, StreamView, Thread, TurnView), 1 added
+  (ProjectOrb — `orb.stories.tsx` now maps to the `ProjectOrb` export), 0
+  removed. App, HooksView and Palette re-graded after pipeline churn;
+  StatusMark and SkillPicker spot-checked clean. Every captured story `match`.
+- **The barrel fell behind again.** `work.stories.tsx`, `live.stories.tsx`
+  and `transcript.stories.tsx` import from `../work-ui` and `../work`, which
+  `ds-entry.ts` did not export. Added `export * from "./src/work-ui"` and
+  `export * from "./src/work"` (no name collisions with the other modules).
+  Check `grep -hoE 'from "\.\./[a-z-]+"' src/stories/*.tsx` against the
+  barrel before every re-sync.
+- **`TurnView` → `cardMode: "column"`** — `[GRID_OVERFLOW] wide` on Turn and
+  the job stories. Presentation-only; grades carried.
+- **Still dropped as `[TITLE_UNMAPPED]`:** `Backgroundagents`, `Inspection`,
+  `Mode`, `Work`. They showcase pieces (`ModeChip`/`ModePicker`, `WorkButton`/
+  `WorkDialog`, hook inspection, background agents) rather than one composed
+  component; map them in `titleMap` only if the pane should card them.
+- The orb stories (`Thread › OrbSetupFailed`, `OrbBuilding`) rely on fake
+  endpoints in `installFakeApi()` (`/api/sessions/orb-*/orb/...`). Like the
+  other fixtures they are preview-only; a real Claude Design render of those
+  panels has no server behind it.
+- Still unverified (unchanged): phone stories at desktop width; TurnView and
+  StreamView capture 6 stories each (TurnView now has 12 — the tail, incl.
+  JobTyped* and MarkdownReply, is ungraded).

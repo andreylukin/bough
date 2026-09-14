@@ -17,3 +17,5 @@ export * from "./src/context";
 export * from "./src/mention";
 export * from "./src/palette";
 export * from "./src/wiki";
+export * from "./src/work-ui";
+export * from "./src/work";

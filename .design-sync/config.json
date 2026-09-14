@@ -47,6 +47,9 @@
     "ProjectsView": {
       "cardMode": "column",
       "viewport": "1200x820"
+    },
+    "TurnView": {
+      "cardMode": "column"
     }
   },
   "readmeHeader": ".design-sync/conventions.md"
