@@ -389,6 +389,7 @@ func main() {
 
 	// The mode is fixed before any row mounts: history writes it into
 	// meta and tools decides at Apply whether write/patch exist.
+	spawnedBy, sessionID := takeSessionEnv()
 	sessMode, sessProject, err := chooseMode(*projectF, *localF, sets)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "bough:", err)
@@ -418,6 +419,8 @@ func main() {
 	ctx.Provide("origin", sessionOrigin(mode))
 	ctx.Provide("session-mode", sessMode)
 	ctx.Provide("session-project", sessProject)
+	ctx.Provide("session-spawned-by", spawnedBy)
+	ctx.Provide("session-id", sessionID)
 	// A dev install running a build older than its checkout: say so
 	// where a person will see it (the ui shows the "notice" service as
 	// its first row; headless prints it), naming `bough update`.

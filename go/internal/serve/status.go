@@ -173,6 +173,11 @@ func Transcript(entries []history.Entry, sinceSeq int64, limit int) []Line {
 		if limit > 0 && len(out) >= limit {
 			break
 		}
+		// Typed job entries are serve bookkeeping; the transcript shows
+		// the loop's text job note for the same event.
+		if typedJob(e) {
+			continue
+		}
 		l := Line{Seq: e.Seq, At: e.At, Kind: e.Kind, Text: history.EntryText(e)}
 		// Text is already lifted out; leaving it in Data would double
 		// every assistant message on the wire.

@@ -29,6 +29,9 @@ const (
 	envNoise  = "BOUGH_FAKE_NOISE"
 	envNoHist = "BOUGH_FAKE_NOHIST"
 	envMetaID = "BOUGH_FAKE_METAID" // volunteer the id on the meta line
+	// envTurns makes the fake record input/assistant/done in its history
+	// file like the real loop, so background-agent reports can read them.
+	envTurns = "BOUGH_FAKE_TURNS"
 )
 
 func TestMain(m *testing.M) {
@@ -42,6 +45,9 @@ func TestMain(m *testing.M) {
 // fakeChild stands in for `bough --headless --json [-r id]`.
 func fakeChild() {
 	id := os.Getenv(envNewID)
+	if v := os.Getenv("BOUGH_SESSION_ID"); v != "" {
+		id = v
+	}
 	for i, a := range os.Args {
 		if a == "-r" && i+1 < len(os.Args) {
 			id = os.Args[i+1]
@@ -57,7 +63,7 @@ func fakeChild() {
 	if dir != "" && id != "" && os.Getenv(envNoHist) == "" {
 		cwd, _ := os.Getwd()
 		appendEntry(filepath.Join(dir, id+".jsonl"), history.Entry{
-			Seq: 1, At: time.Now(), Kind: "meta", Data: map[string]any{"cwd": cwd, "origin": os.Getenv("BOUGH_ORIGIN"), "mode": os.Getenv("BOUGH_MODE"), "project": os.Getenv("BOUGH_PROJECT")},
+			Seq: 1, At: time.Now(), Kind: "meta", Data: map[string]any{"cwd": cwd, "origin": os.Getenv("BOUGH_ORIGIN"), "mode": os.Getenv("BOUGH_MODE"), "project": os.Getenv("BOUGH_PROJECT"), "spawned_by": os.Getenv("BOUGH_SPAWNED_BY")},
 		})
 	}
 	meta := map[string]any{"kind": "meta", "text": "ready"}
@@ -77,6 +83,10 @@ func fakeChild() {
 			say(map[string]any{"kind": "done", "text": ""})
 			continue
 		}
+		if os.Getenv(envTurns) != "" && dir != "" && id != "" {
+			fakeTurn(filepath.Join(dir, id+".jsonl"), line)
+			continue
+		}
 		if os.Getenv(envNoise) != "" {
 			fmt.Println("this line is not json")
 		}
@@ -90,6 +100,46 @@ func fakeChild() {
 		say(map[string]any{"kind": "done", "text": ""})
 	}
 	os.Exit(0)
+}
+
+// fakeTurn records one turn the way the loop does. The line picks the
+// shape: HANG leaves it open, EXIT dies mid-turn, CANCEL is interrupted,
+// FAIL records an error, RACE says done before the entries reach disk.
+func fakeTurn(path, line string) {
+	rec := func(kind string, data map[string]any) {
+		appendEntry(path, history.Entry{Seq: nextSeq(path), At: time.Now(), Kind: kind, Data: data})
+	}
+	rec("input", map[string]any{"text": line})
+	say(map[string]any{"kind": "input", "text": line})
+	switch {
+	case strings.HasPrefix(line, "HANG"):
+	case strings.HasPrefix(line, "EXIT"):
+		os.Exit(0)
+	case strings.HasPrefix(line, "CANCEL"):
+		rec("cancelled", nil)
+		say(map[string]any{"kind": "cancelled"})
+		rec("done", nil)
+		say(map[string]any{"kind": "done"})
+	case strings.HasPrefix(line, "RACE"):
+		say(map[string]any{"kind": "done"})
+		time.Sleep(300 * time.Millisecond)
+		rec("assistant", map[string]any{"text": "echo " + line})
+		rec("done", nil)
+	default:
+		if strings.HasPrefix(line, "FAIL") {
+			rec("error", map[string]any{"text": "boom"})
+			say(map[string]any{"kind": "error", "text": "boom"})
+		}
+		rec("assistant", map[string]any{"text": "echo " + line})
+		say(map[string]any{"kind": "assistant", "text": "echo " + line})
+		rec("done", nil)
+		say(map[string]any{"kind": "done"})
+	}
+}
+
+func nextSeq(path string) int64 {
+	b, _ := os.ReadFile(path)
+	return int64(strings.Count(string(b), "\n")) + 1
 }
 
 func say(obj map[string]any) {

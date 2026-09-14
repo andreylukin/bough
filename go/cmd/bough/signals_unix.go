@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"syscall"
+
+	"github.com/andreylukin/bough/internal/servepid"
 )
 
 // notifyFreshSession asks the runtime to deliver the "start a new
@@ -30,13 +32,7 @@ func detach(c *exec.Cmd) { c.SysProcAttr = &syscall.SysProcAttr{Setsid: true} }
 
 // alive reports whether pid exists. Signal 0 checks without delivering;
 // EPERM means it is there and not ours.
-func alive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, 0)
-	return err == nil || err == syscall.EPERM
-}
+func alive(pid int) bool { return servepid.Alive(pid) }
 
 // askFreshSession tells a running session to start a new one.
 func askFreshSession(pid int) error { return syscall.Kill(pid, syscall.SIGUSR1) }

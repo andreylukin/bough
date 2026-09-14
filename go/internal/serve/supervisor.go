@@ -59,6 +59,11 @@ type SessionMeta struct {
 	// unexpected interruption recorded after it still needs them; one at
 	// or before it has been dealt with. A later failure resurfaces.
 	Ack int64 `json:"ack,omitempty"`
+	// SpawnedBy is the parent of a background agent, persisted so the
+	// tree survives a serve restart for children that ran.
+	SpawnedBy string `json:"spawnedBy,omitempty"`
+	// Queued is in memory only: the queue does not survive a restart.
+	Queued bool `json:"-"`
 }
 
 // Project is a named grouping of sessions. It exists independently of
@@ -76,6 +81,7 @@ type Project struct {
 // CreateOptions is what a new session starts as. Mode "" is local.
 type CreateOptions struct {
 	Cwd, Prompt, Mode, Slug string
+	SpawnedBy               string // "" = a person's session
 }
 
 // Options configures a Supervisor. Every path is explicit so tests can
@@ -168,6 +174,14 @@ type Supervisor struct {
 	// buildErr is the last failed build per slug this serve started,
 	// kept so a failure build.json never recorded still shows.
 	buildErr map[string]string
+
+	// Background agents (children.go): the FIFO of children waiting for
+	// a slot, the ones holding a slot, the global cap last requested,
+	// and the closing seq of the last turn reported per child.
+	queue      []queuedChild
+	running    map[string]bool
+	maxRunning int
+	reported   map[string]int64
 }
 
 // NewSupervisor loads the meta store and resolves the bough binary. A
@@ -216,6 +230,8 @@ func NewSupervisor(opt Options) (*Supervisor, error) {
 		deltas:    map[string]*deltaState{},
 		meta:      map[string]SessionMeta{},
 		projects:  map[string]Project{},
+		running:   map[string]bool{},
+		reported:  map[string]int64{},
 	}
 	if opt.MetaPath != "" {
 		if err := os.MkdirAll(filepath.Dir(opt.MetaPath), 0o755); err != nil {
@@ -649,6 +665,7 @@ func (s *Supervisor) emitLocked(id, kind, text string, extra map[string]any) {
 		// ask nobody is waiting on any more.
 		delete(s.asks, id)
 	}
+	s.childEventLocked(id, kind)
 
 	s.fanoutLocked(id, ev)
 }
@@ -1171,6 +1188,7 @@ func (s *Supervisor) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
+	s.queue = nil
 	for id, st := range s.deltas {
 		if st.timer != nil {
 			st.timer.Stop()

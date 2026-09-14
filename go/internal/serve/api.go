@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sort"
@@ -85,6 +86,18 @@ type Row struct {
 	Mode string `json:"mode"`
 	// Orb is a project session's container state, nil for local.
 	Orb *RowOrb `json:"orb,omitempty"`
+	// SpawnedBy is the parent of a background agent; Queued marks one
+	// waiting for a slot; Agents counts a parent's children (nil at 0).
+	SpawnedBy string      `json:"spawnedBy,omitempty"`
+	Queued    bool        `json:"queued,omitempty"`
+	Agents    *AgentCount `json:"agents,omitempty"`
+}
+
+// AgentCount is a parent's background agents.
+type AgentCount struct {
+	Running int `json:"running"`
+	Queued  int `json:"queued"`
+	Total   int `json:"total"`
 }
 
 // RowOrb is the cheap orb summary a session row carries.
@@ -144,6 +157,10 @@ func NewAPI(sup *Supervisor) *API {
 	a.mux.HandleFunc("DELETE /api/projects/{id}", a.deleteProject)
 	a.mux.HandleFunc("POST /api/sessions/{id}/project", a.assignProject)
 	a.mux.HandleFunc("GET /api/sessions/{id}/events", a.events)
+	a.mux.HandleFunc("GET /api/sessions/{id}/children", a.children)
+	a.mux.HandleFunc("GET /api/sessions/{id}/agent", a.agent)
+	a.mux.HandleFunc("POST /api/sessions/{id}/stop", a.stopAgent)
+	a.mux.HandleFunc("POST /api/sessions/{id}/notify", a.notify)
 	a.routeOrbs()
 	a.mux.HandleFunc("GET /api/wiki", a.wikiIndex)
 	a.mux.HandleFunc("GET /api/wiki/page", a.wikiPage)
@@ -198,6 +215,12 @@ func (a *API) listSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = append(rows, row)
 	}
+	// Queued children have no history file yet, so List cannot see them.
+	if cwd == "" {
+		for _, id := range a.sup.queuedIDs() {
+			rows = append(rows, a.queuedRow(id))
+		}
+	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Modified.After(rows[j].Modified) })
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": rows})
 }
@@ -243,8 +266,17 @@ func (a *API) createSession(w http.ResponseWriter, r *http.Request) {
 		Prompt  string `json:"prompt"`
 		Mode    string `json:"mode"`
 		Project string `json:"project"` // label id, project mode only
+		// Background agent fields: a session starting a child.
+		Slug          string `json:"slug"`
+		SpawnedBy     string `json:"spawnedBy"`
+		MaxPerSession int    `json:"maxPerSession"`
+		MaxRunning    int    `json:"maxRunning"`
 	}
 	if !decode(w, r, &body) {
+		return
+	}
+	if body.SpawnedBy != "" {
+		a.createChild(w, CreateOptions{Cwd: body.Cwd, Prompt: body.Prompt, Slug: body.Slug, SpawnedBy: body.SpawnedBy}, body.MaxPerSession, body.MaxRunning)
 		return
 	}
 	switch body.Mode {
@@ -362,7 +394,26 @@ func (a *API) rename(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) archive(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	a.metaVerb(w, id, func() error { return a.sup.SetArchived(id, true) })
+	var body struct {
+		StopChildren bool `json:"stopChildren"`
+	}
+	// The body is optional: a bare POST archives as it always did.
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: bad request body: %w", err))
+			return
+		}
+	}
+	a.metaVerb(w, id, func() error {
+		if body.StopChildren {
+			for _, c := range a.sup.Children(id) {
+				if err := a.sup.StopChild(c.ID); err != nil {
+					return err
+				}
+			}
+		}
+		return a.sup.SetArchived(id, true)
+	})
 }
 
 func (a *API) unarchive(w http.ResponseWriter, r *http.Request) {
@@ -517,6 +568,9 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 
 		Mode: mode,
 		Orb:  rowOrb,
+
+		SpawnedBy: firstDir(in.SpawnedBy, meta.SpawnedBy),
+		Agents:    a.agentCount(in.ID),
 	}
 }
 

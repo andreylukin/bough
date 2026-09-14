@@ -77,6 +77,17 @@ func takeModeEnv() (mode, project string) {
 	return mode, project
 }
 
+// takeSessionEnv reads and clears BOUGH_SPAWNED_BY/BOUGH_SESSION_ID,
+// which serve sets on a background agent: left in the environment, a
+// `bough -p` the agent runs through tools.bash would nest under the
+// wrong parent or try to create the agent's own history file.
+func takeSessionEnv() (spawnedBy, sessionID string) {
+	spawnedBy, sessionID = os.Getenv("BOUGH_SPAWNED_BY"), os.Getenv("BOUGH_SESSION_ID")
+	os.Unsetenv("BOUGH_SPAWNED_BY")
+	os.Unsetenv("BOUGH_SESSION_ID")
+	return spawnedBy, sessionID
+}
+
 // sessionFile is the history file this run resumes ("" = fresh): the
 // last history.file override, which is where -c/-r land too.
 func sessionFile(sets setFlags) string {

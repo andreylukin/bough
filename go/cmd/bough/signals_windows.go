@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+
+	"github.com/andreylukin/bough/internal/servepid"
 )
 
 // notifyFreshSession does nothing: there is no spare user signal to
@@ -36,22 +38,7 @@ func detach(c *exec.Cmd) {
 
 // alive reports whether pid exists. FindProcess succeeds for any pid on
 // Windows, so the handle is opened and its exit code queried instead.
-func alive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	h, err := syscall.OpenProcess(syscall.PROCESS_QUERY_INFORMATION, false, uint32(pid))
-	if err != nil {
-		return false
-	}
-	defer syscall.CloseHandle(h)
-	var code uint32
-	if syscall.GetExitCodeProcess(h, &code) != nil {
-		return false
-	}
-	const stillActive = 259
-	return code == stillActive
-}
+func alive(pid int) bool { return servepid.Alive(pid) }
 
 // askFreshSession has no signal to send here (see notifyFreshSession).
 func askFreshSession(int) error {
