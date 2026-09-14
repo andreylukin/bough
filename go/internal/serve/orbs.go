@@ -515,6 +515,12 @@ func (a *API) sessionBuildLog(w http.ResponseWriter, r *http.Request) {
 	if b, err := orb.ReadBuild(home, st.Project); err == nil {
 		state = b.State
 	}
+	// A build serve just started (Rebuild) is building before EnsureImage
+	// rewrites build.json; without this the poller read the last build's
+	// "ok" and stopped at once.
+	if a.building(st.Project) {
+		state = "building"
+	}
 	text := ""
 	if f, err := os.Open(orb.ImageLogPath(home, st.Project)); err == nil {
 		defer f.Close()

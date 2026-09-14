@@ -2382,14 +2382,16 @@ const TurnViewMemo = memo(TurnView);
  * second from where it left off and follows the end unless you scrolled up.
  * A session opened mid-build used to show only "building" for minutes.
  */
-function OrbBuildLog({ id, project }: { id: string; project: string }) {
+function OrbBuildLog({ id, project, onRebuild, rebuildErr }: { id: string; project: string; onRebuild?: () => Promise<void>; rebuildErr?: string }) {
   const [text, setText] = useState("");
   const [err, setErr] = useState("");
   const [done, setDone] = useState("");
+  const [run, setRun] = useState(0); // bumped by Rebuild: poll the new build from the start
   const pre = useRef<HTMLPreElement>(null);
   const follow = useRef(true);
   useEffect(() => {
     let off = 0, stop = false;
+    setText(""); setDone("");
     const tick = async () => {
       try {
         const r = await api.sessionBuildLog(id, off);
@@ -2398,7 +2400,9 @@ function OrbBuildLog({ id, project }: { id: string; project: string }) {
         // A smaller offset means a new build truncated the log.
         if (r.offset < off) setText(r.text); else if (r.text) setText((t) => t + r.text);
         off = r.offset;
-        if (r.status && r.status !== "building") { setDone(r.status); return; }
+        // The project's build state ends the poll: a rebuild started from
+        // here never marks this session "building".
+        if (r.state && r.state !== "building") { setDone(r.state); return; }
       } catch (e) {
         if (!stop) setErr((e as Error).message);
       }
@@ -2406,7 +2410,7 @@ function OrbBuildLog({ id, project }: { id: string; project: string }) {
     };
     tick();
     return () => { stop = true; };
-  }, [id]);
+  }, [id, run]);
   useLayoutEffect(() => {
     const el = pre.current;
     if (el && follow.current) el.scrollTop = el.scrollHeight;
@@ -2415,8 +2419,10 @@ function OrbBuildLog({ id, project }: { id: string; project: string }) {
   const tail = lines.length > 2000 ? lines.slice(-2000).join("\n") : text;
   return (
     <div className="block orb-failure" role="region" aria-label={`${project} image build log`}>
-      <p className="meta-line">{done ? `Build finished · ${done}` : `Building the ${project} image…`}</p>
+      <p className="meta-line">{done ? `Build ${done === "ok" ? "finished" : done} · new sessions use this image` : `Building the ${project} image…`}</p>
       {err && <p className="send-failed-text" role="alert">Couldn’t read the build log: {err}</p>}
+      {rebuildErr && <p className="send-failed-text" role="alert">Couldn’t start a rebuild: {rebuildErr}</p>}
+      {done && onRebuild && <button className="link orb-rebuild" onClick={async () => { await onRebuild(); setRun((n) => n + 1); }}>Rebuild</button>}
       {tail ? <pre className="mono" ref={pre} aria-live="off"
                    onScroll={(e) => { const el = e.currentTarget; follow.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 8; }}>{tail}</pre>
         : <p className="meta-line">Waiting for build output…</p>}
@@ -2429,7 +2435,7 @@ function OrbBuildLog({ id, project }: { id: string; project: string }) {
  * open. The error and the tail of resume.log load when you open it, and
  * again on Refresh, so a fixed definition can be checked from here.
  */
-function OrbFailure({ id, project }: { id: string; project: string }) {
+function OrbFailure({ id, project, onRebuild, rebuildErr }: { id: string; project: string; onRebuild?: () => Promise<void>; rebuildErr?: string }) {
   const [log, setLog] = useState<{ error: string; text: string } | null>(null);
   const [err, setErr] = useState("");
   const load = () => {
@@ -2452,7 +2458,11 @@ function OrbFailure({ id, project }: { id: string; project: string }) {
             {tail ? <pre className="mono" ref={pre}>{tail}</pre> : <p className="meta-line">resume.log is empty.</p>}
             <p className="meta-line">Fix the definition with <code>bough project show {project}</code> / <code>bough project write {project} &lt;file&gt;</code>; the next session start retries.</p>
           </>}
-      <button className="link" onClick={load}>Refresh</button>
+      {rebuildErr && <p className="send-failed-text" role="alert">Couldn’t start a rebuild: {rebuildErr}</p>}
+      <span className="orb-actions">
+        <button className="link" onClick={load}>Refresh</button>
+        {onRebuild && <button className="link" onClick={onRebuild}>Rebuild image</button>}
+      </span>
     </div>
   );
 }
@@ -2758,7 +2768,21 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     return () => clearTimeout(t);
   }, [loading]);
   const running = row.status === "running";
-  const [orbWhy, setOrbWhy] = useState(false);
+  // Which orb panel is open under the header: the failure's why, or the live
+  // build log (while building, or after you pressed Rebuild).
+  const [orbView, setOrbView] = useState<"" | "why" | "build">("");
+  const [rebuildErr, setRebuildErr] = useState("");
+  const rebuild = async () => {
+    if (!row.project) return;
+    setRebuildErr("");
+    try {
+      await api.buildOrb(row.project);
+    } catch (e) {
+      // 409: a build is already running; the log shows it.
+      if ((e as { status?: number }).status !== 409) { setRebuildErr((e as Error).message); return; }
+    }
+    setOrbView("build");
+  };
 
   const [multi, setMulti] = useState(false);
   const [narrow, setNarrow] = useState(false);
@@ -3020,15 +3044,15 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
           {/* A short link beside the chip: a full button pushed the title row
               past its 32px and covered the strip below. */}
           {row.orb?.status === "failed" && (
-            <button className="link" aria-expanded={orbWhy} aria-label={orbWhy ? "Hide why setup failed" : "Why did setup fail?"}
-                    onClick={() => setOrbWhy((v) => !v)}>
-              {orbWhy ? "Hide" : "Why?"}
+            <button className="link" aria-expanded={orbView === "why"} aria-label={orbView === "why" ? "Hide why setup failed" : "Why did setup fail?"}
+                    onClick={() => setOrbView((v) => (v === "why" ? "" : "why"))}>
+              {orbView === "why" ? "Hide" : "Why?"}
             </button>
           )}
           {row.orb?.status === "building" && (
-            <button className="link" aria-expanded={orbWhy} aria-label={orbWhy ? "Hide build log" : "Show the live build log"}
-                    onClick={() => setOrbWhy((v) => !v)}>
-              {orbWhy ? "Hide" : "Log"}
+            <button className="link" aria-expanded={orbView === "build"} aria-label={orbView === "build" ? "Hide build log" : "Show the live build log"}
+                    onClick={() => setOrbView((v) => (v === "build" ? "" : "build"))}>
+              {orbView === "build" ? "Hide" : "Log"}
             </button>
           )}
           {/* A test failure is the Tests chip's to say, once. */}
@@ -3075,8 +3099,8 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
                         onClick={() => (workOpen ? closeWork(true) : openWork())} />
           )} />
       </header>
-      {orbWhy && row.orb?.status === "failed" && <OrbFailure key={row.id} id={row.id} project={row.orb.project} />}
-      {orbWhy && row.orb?.status === "building" && <OrbBuildLog key={row.id} id={row.id} project={row.orb.project} />}
+      {orbView === "why" && row.orb?.status === "failed" && <OrbFailure key={row.id} id={row.id} project={row.orb.project} onRebuild={row.project ? rebuild : undefined} rebuildErr={rebuildErr} />}
+      {orbView === "build" && row.orb && <OrbBuildLog key={row.id} id={row.id} project={row.orb.project} onRebuild={row.project ? rebuild : undefined} rebuildErr={rebuildErr} />}
 
       <div className="scroll transcript" ref={scroller} onScroll={onScroll} onKeyDown={latestKey}
            onFocus={(e) => { const t = e.target as HTMLElement; if (t.matches("details.block > summary") && t !== rovingAt.current) rove(summaries(), t); }}
