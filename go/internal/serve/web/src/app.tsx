@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, subscribe, type Scope, type TurnLine } from "./api";
 import type { Line, Project, Row } from "./types";
@@ -2344,6 +2344,12 @@ function sendError(e?: string) {
   return `${m[2] || words[m[1]] || "Request failed"} (${m[1]})`;
 }
 
+// The composer's draft is Thread state, so every keystroke re-rendered the
+// whole transcript (markdown, highlighting): typing lagged in long sessions.
+// A turn re-renders only when its own props change; only the open turn's
+// tail does while you type.
+const TurnViewMemo = memo(TurnView);
+
 export function Thread({ row, lines, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
   /** Loaded sessions: names the parent of a background agent and lists this session's agents. */
   rows?: Row[]; onOpenSession?: (id: string) => void;
@@ -2530,6 +2536,8 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     if (atBottom.current) end.current?.scrollIntoView({ block: "end" });
   }, [lines.length, streamLen]);
   const turns = useMemo(() => groupTurns(lines), [lines]);
+  // Numbered by prompt, as the turn log counts; once per transcript, not a rescan per turn per render.
+  const turnNums = useMemo(() => { let n = 0; return turns.map((t) => (t.prompt ? ++n : undefined)); }, [turns]);
 
   // The session's Work: its jobs, its subagents and its direct background
   // agents, one index the transcript, the Work button and its dialog read.
@@ -2961,7 +2969,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
         {turns.map((t, i) => (
           // Numbered by prompt, as the turn log counts: a leading /model
           // section has no prompt and no number.
-          <TurnView key={t.seq} turn={t} n={t.prompt ? turns.slice(0, i + 1).filter((x) => x.prompt).length : undefined}
+          <TurnViewMemo key={t.seq} turn={t} n={turnNums[i]}
             // The preview belongs to the turn that is still open, so it
             // sits where the recorded entry will appear and is replaced
             // in place rather than jumping up the page.
