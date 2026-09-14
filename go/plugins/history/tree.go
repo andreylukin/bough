@@ -63,6 +63,15 @@ func Snapshot(dir string) (string, error) {
 		if err := os.WriteFile(tmp.Name(), data, 0o600); err != nil {
 			return "", err
 		}
+		// git trusts a cached stat only for files older than the index
+		// itself. A copy stamped "now" made an edit written just after
+		// the real index (a fresh worktree, an agent's first write)
+		// look clean, and the checkpoint kept the old content.
+		if st, err := os.Stat(index); err == nil {
+			if err := os.Chtimes(tmp.Name(), st.ModTime(), st.ModTime()); err != nil {
+				return "", err
+			}
+		}
 	} else if err := os.Remove(tmp.Name()); err != nil {
 		// No index yet (fresh `git init`): git reads a missing index
 		// file as empty but rejects a zero-byte one.
