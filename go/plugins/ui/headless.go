@@ -217,11 +217,21 @@ func hlPrint(ev Event) {
 		hlAsk = nil
 		hlMu.Unlock()
 	}
-	if ev.Kind == "error" {
-		hlErrored.Store(true)
+	switch ev.Kind {
+	case "error":
+		// Held until the turn ends: a failed code block is followed by the
+		// model trying again, and a run that recovered is not a failure (the
+		// wiki ingest updated its pages and still exited 1).
+		hlTurnErr.Store(true)
 		hlLine(hlErr, "error", ev.Text, nil)
-	} else {
+	case "assistant", "code", "result":
+		hlTurnErr.Store(false)
 		hlLine(hlOut, ev.Kind, ev.Text, nil)
+	default:
+		hlLine(hlOut, ev.Kind, ev.Text, nil)
+	}
+	if ev.Kind == "done" && hlTurnErr.Swap(false) {
+		hlErrored.Store(true) // the turn ended on the error
 	}
 	if ev.Kind == "done" {
 		hlMu.Lock()
@@ -386,6 +396,11 @@ func hlAnswerPending(line string) bool {
 	}
 	return true
 }
+
+// hlTurnErr is an error the running turn has not recovered from yet: set
+// by an "error" event, cleared by later progress, and turned into an
+// errored run only if the turn's done arrives first.
+var hlTurnErr atomic.Bool
 
 // askCanceler is the optional Cancel half of the "ask-answers" service.
 type askCanceler interface {
