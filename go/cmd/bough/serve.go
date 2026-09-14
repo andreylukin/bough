@@ -233,6 +233,7 @@ func serveForeground(home, addr string) error {
 		Exe:      resolveExe(),
 		HistDir:  sessionsDir(),
 		MetaPath: filepath.Join(home, ".bough", "serve", "meta.json"),
+		Home:     home,
 	})
 	if err != nil {
 		return fmt.Errorf("serve: supervisor: %w", err)

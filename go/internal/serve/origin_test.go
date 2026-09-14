@@ -14,7 +14,7 @@ import (
 func TestSupervisorChildrenAreWebOrigin(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, envNewID+"=sess-origin")
-	id, err := f.sup.Create(f.home, "")
+	id, err := f.sup.Create(CreateOptions{Cwd: f.home})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

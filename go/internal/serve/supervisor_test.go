@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andreylukin/bough/internal/container"
 	"github.com/andreylukin/bough/plugins/history"
 )
 
@@ -56,7 +57,7 @@ func fakeChild() {
 	if dir != "" && id != "" && os.Getenv(envNoHist) == "" {
 		cwd, _ := os.Getwd()
 		appendEntry(filepath.Join(dir, id+".jsonl"), history.Entry{
-			Seq: 1, At: time.Now(), Kind: "meta", Data: map[string]any{"cwd": cwd, "origin": os.Getenv("BOUGH_ORIGIN")},
+			Seq: 1, At: time.Now(), Kind: "meta", Data: map[string]any{"cwd": cwd, "origin": os.Getenv("BOUGH_ORIGIN"), "mode": os.Getenv("BOUGH_MODE"), "project": os.Getenv("BOUGH_PROJECT")},
 		})
 	}
 	meta := map[string]any{"kind": "meta", "text": "ready"}
@@ -114,6 +115,7 @@ type fixture struct {
 	home   string
 	hist   string
 	starts string
+	rt     *container.Fake
 }
 
 func newFixture(t *testing.T, extraEnv ...string) *fixture {
@@ -135,7 +137,10 @@ func newFixture(t *testing.T, extraEnv ...string) *fixture {
 		"HOME=" + home,
 		"PATH=" + os.Getenv("PATH"),
 	}, extraEnv...)
+	// Always a Fake: the default runtime on darwin is the real Apple CLI.
+	rt := container.NewFake()
 	sup, err := NewSupervisor(Options{
+		Runtime:  rt,
 		Exe:      exe,
 		HistDir:  hist,
 		MetaPath: filepath.Join(home, ".bough", "serve", "meta.json"),
@@ -146,7 +151,7 @@ func newFixture(t *testing.T, extraEnv ...string) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { sup.Close() })
-	return &fixture{sup: sup, home: home, hist: hist, starts: starts}
+	return &fixture{sup: sup, home: home, hist: hist, starts: starts, rt: rt}
 }
 
 // seed writes a session file so Adopt has something to resume.
@@ -205,7 +210,7 @@ func TestSupervisorCreateAndPrompt(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, envNewID+"=sess-create")
 
-	id, err := f.sup.Create(f.home, "hello")
+	id, err := f.sup.Create(CreateOptions{Cwd: f.home, Prompt: "hello"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -242,7 +247,7 @@ func TestSupervisorCreateAndPrompt(t *testing.T) {
 func TestSupervisorCreatePrefersMetaID(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, envNewID+"=sess-meta", envMetaID+"=1")
-	id, err := f.sup.Create(f.home, "")
+	id, err := f.sup.Create(CreateOptions{Cwd: f.home})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

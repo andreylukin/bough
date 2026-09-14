@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/internal/serve/watch"
 	"github.com/andreylukin/bough/plugins/history"
 )
@@ -79,6 +80,17 @@ type Row struct {
 	// Empty marks a session nobody has sent a message yet (opened, then
 	// left); the sidebar leaves these out unless one is open or live.
 	Empty bool `json:"empty,omitempty"`
+	// Mode is "local" or "project", from the session's meta entry; a
+	// meta written before modes existed reads as local.
+	Mode string `json:"mode"`
+	// Orb is a project session's container state, nil for local.
+	Orb *RowOrb `json:"orb,omitempty"`
+}
+
+// RowOrb is the cheap orb summary a session row carries.
+type RowOrb struct {
+	Project string     `json:"project"`
+	Status  orb.Status `json:"status"`
 }
 
 // maxBody caps every JSON request body. Prompts carry pasted logs and
@@ -132,6 +144,7 @@ func NewAPI(sup *Supervisor) *API {
 	a.mux.HandleFunc("DELETE /api/projects/{id}", a.deleteProject)
 	a.mux.HandleFunc("POST /api/sessions/{id}/project", a.assignProject)
 	a.mux.HandleFunc("GET /api/sessions/{id}/events", a.events)
+	a.routeOrbs()
 	a.mux.HandleFunc("GET /api/wiki", a.wikiIndex)
 	a.mux.HandleFunc("GET /api/wiki/page", a.wikiPage)
 	a.mux.HandleFunc("PUT /api/wiki/page", a.putWikiPage)
@@ -226,10 +239,21 @@ func (a *API) getSession(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) createSession(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Cwd    string `json:"cwd"`
-		Prompt string `json:"prompt"`
+		Cwd     string `json:"cwd"`
+		Prompt  string `json:"prompt"`
+		Mode    string `json:"mode"`
+		Project string `json:"project"` // label id, project mode only
 	}
 	if !decode(w, r, &body) {
+		return
+	}
+	switch body.Mode {
+	case "", "local":
+	case "project":
+		a.createProjectSession(w, body.Prompt, body.Project)
+		return
+	default:
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: unknown mode %q (have local, project)", body.Mode))
 		return
 	}
 	if body.Cwd == "" {
@@ -242,7 +266,7 @@ func (a *API) createSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: cwd %q is not a directory", body.Cwd))
 		return
 	}
-	id, err := a.sup.Create(body.Cwd, body.Prompt)
+	id, err := a.sup.Create(CreateOptions{Cwd: body.Cwd, Prompt: body.Prompt})
 	if err != nil {
 		writeErr(w, statusFor(err), fmt.Errorf("serve: api: create session: %w", err))
 		return
@@ -459,6 +483,11 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 	if model == "" {
 		model = lastModel(entries)
 	}
+	mode, slug := sessionMode(entries)
+	var rowOrb *RowOrb
+	if mode == "project" {
+		rowOrb = &RowOrb{Project: slug, Status: a.orbState(in.ID).Status}
+	}
 	return Row{
 		ID:       in.ID,
 		Title:    title,
@@ -485,6 +514,9 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 
 		Background: in.Background,
 		Empty:      !hasInput(entries),
+
+		Mode: mode,
+		Orb:  rowOrb,
 	}
 }
 

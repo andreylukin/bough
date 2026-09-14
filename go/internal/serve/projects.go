@@ -13,10 +13,6 @@ import (
 	"strings"
 )
 
-func (a *API) listProjects(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"projects": a.sup.Projects()})
-}
-
 func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name string `json:"name"`

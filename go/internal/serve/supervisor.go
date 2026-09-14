@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andreylukin/bough/internal/container"
+	"github.com/andreylukin/bough/internal/projectdef"
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
 )
@@ -65,6 +67,15 @@ type SessionMeta struct {
 type Project struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	// Slug names the ~/.bough/projects/<slug> definition this label
+	// carries, "" for a label-only project. The definition lives outside
+	// meta.json so the agent can edit it and a detach never loses it.
+	Slug string `json:"slug,omitempty"`
+}
+
+// CreateOptions is what a new session starts as. Mode "" is local.
+type CreateOptions struct {
+	Cwd, Prompt, Mode, Slug string
 }
 
 // Options configures a Supervisor. Every path is explicit so tests can
@@ -75,6 +86,12 @@ type Options struct {
 	MetaPath string   // $HOME/.bough/serve/meta.json
 	Env      []string // child env; nil => os.Environ()
 	Buffer   int      // per-session event ring; <=0 => 500
+	// Runtime answers image/container questions for orbs; nil =>
+	// container.Default(). A field so tests inject container.Fake.
+	Runtime container.Runtime
+	// Home holds .bough/projects and .bough/orbs; "" => HistDir's
+	// grandparent, which is HOME for the standard layout.
+	Home string
 }
 
 var (
@@ -121,6 +138,11 @@ type Supervisor struct {
 	exe  string
 	cwd  string
 	ring int
+	home string
+	rt   container.Runtime
+	// started is when this serve began: a state.json PID written before
+	// it, by a process that is not our child, may be a reused pid.
+	started time.Time
 
 	// createMu serializes Create so two callers cannot both claim the
 	// same freshly-appeared history id.
@@ -137,6 +159,12 @@ type Supervisor struct {
 	meta     map[string]SessionMeta
 	projects map[string]Project
 	closed   bool
+	// stoppedAt is when serve stopped a session's container. The child
+	// is state.json's only writer, so until it rewrites the file a
+	// stale "running" is read as stopped.
+	stoppedAt map[string]time.Time
+	// building is the slugs with an image build this serve started.
+	building map[string]bool
 }
 
 // NewSupervisor loads the meta store and resolves the bough binary. A
@@ -158,19 +186,32 @@ func NewSupervisor(opt Options) (*Supervisor, error) {
 	if ring <= 0 {
 		ring = defaultRing
 	}
+	home := opt.Home
+	if home == "" {
+		home = filepath.Dir(filepath.Dir(opt.HistDir))
+	}
+	rt := opt.Runtime
+	if rt == nil {
+		rt = container.Default()
+	}
 	s := &Supervisor{
-		opt:      opt,
-		exe:      exe,
-		cwd:      cwd,
-		ring:     ring,
-		kids:     map[string]*child{},
-		events:   map[string][]Event{},
-		seq:      map[string]int64{},
-		asks:     map[string]*Ask{},
-		subs:     map[string]map[int]chan Event{},
-		deltas:   map[string]*deltaState{},
-		meta:     map[string]SessionMeta{},
-		projects: map[string]Project{},
+		home:      home,
+		rt:        rt,
+		started:   time.Now(),
+		stoppedAt: map[string]time.Time{},
+		building:  map[string]bool{},
+		opt:       opt,
+		exe:       exe,
+		cwd:       cwd,
+		ring:      ring,
+		kids:      map[string]*child{},
+		events:    map[string][]Event{},
+		seq:       map[string]int64{},
+		asks:      map[string]*Ask{},
+		subs:      map[string]map[int]chan Event{},
+		deltas:    map[string]*deltaState{},
+		meta:      map[string]SessionMeta{},
+		projects:  map[string]Project{},
 	}
 	if opt.MetaPath != "" {
 		if err := os.MkdirAll(filepath.Dir(opt.MetaPath), 0o755); err != nil {
@@ -180,10 +221,51 @@ func NewSupervisor(opt Options) (*Supervisor, error) {
 			return nil, err
 		}
 	}
+	if err := s.adoptDefinitions(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
 func (s *Supervisor) HistDir() string { return s.opt.HistDir }
+
+// Home is the directory holding .bough/projects and .bough/orbs.
+func (s *Supervisor) Home() string { return s.home }
+
+// Runtime is the container engine orbs are asked about.
+func (s *Supervisor) Runtime() container.Runtime { return s.rt }
+
+// adoptDefinitions gives every project definition on disk that no label
+// points at a label of its own, so one the agent created shows up. A
+// definition that fails to parse is still a directory worth showing;
+// only listing itself failing outright would hide them all, and even
+// that must not stop serve.
+func (s *Supervisor) adoptDefinitions() error {
+	defs, _ := projectdef.List(s.home)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	attached := map[string]bool{}
+	for _, p := range s.projects {
+		if p.Slug != "" {
+			attached[p.Slug] = true
+		}
+	}
+	added := false
+	for _, d := range defs {
+		if attached[d.Slug] {
+			continue
+		}
+		p := Project{ID: newProjectID(), Name: d.Slug, Slug: d.Slug}
+		s.projects[p.ID] = p
+		attached[d.Slug] = true
+		added = true
+	}
+	if !added {
+		// Nothing new: leave meta.json byte-for-byte as it was.
+		return nil
+	}
+	return s.saveMetaLocked()
+}
 
 // Entries reads one session's history. An id with no file is
 // ErrUnknownSession, so callers can answer 404 without statting.
@@ -212,7 +294,22 @@ func (s *Supervisor) List() ([]history.SessionInfo, error) {
 // The child picks its own id, so discovery is a diff of history.List
 // before and after the spawn, bounded by createTimeout. createMu keeps
 // two Creates from racing over one new file.
-func (s *Supervisor) Create(cwd, prompt string) (string, error) {
+func (s *Supervisor) Create(opt CreateOptions) (string, error) {
+	cwd, prompt := opt.Cwd, opt.Prompt
+	var extra []string
+	switch opt.Mode {
+	case "", "local":
+	case "project":
+		if err := projectdef.ValidSlug(opt.Slug); err != nil {
+			return "", fmt.Errorf("serve: supervisor: project session: %w", err)
+		}
+		// The child builds its own orb and chdirs into the worktree; it
+		// starts from home so nothing ties it to serve's cwd.
+		cwd = s.home
+		extra = []string{"BOUGH_MODE=project", "BOUGH_PROJECT=" + opt.Slug}
+	default:
+		return "", fmt.Errorf("serve: supervisor: unknown session mode %q", opt.Mode)
+	}
 	s.createMu.Lock()
 	defer s.createMu.Unlock()
 
@@ -225,7 +322,7 @@ func (s *Supervisor) Create(cwd, prompt string) (string, error) {
 		before[in.ID] = true
 	}
 
-	ch, err := s.spawn(cwd, "")
+	ch, err := s.spawn(cwd, "", extra)
 	if err != nil {
 		return "", err
 	}
@@ -334,7 +431,7 @@ func (s *Supervisor) ensure(id string) (*child, error) {
 	s.kids[id] = ch
 	s.mu.Unlock()
 
-	if err := s.start(ch, s.adoptDir(id), id); err != nil {
+	if err := s.start(ch, s.adoptDir(id), id, nil); err != nil {
 		s.mu.Lock()
 		if s.kids[id] == ch {
 			delete(s.kids, id)
@@ -365,9 +462,9 @@ func (s *Supervisor) adoptDir(id string) string {
 }
 
 // spawn starts a child that has no id yet (Create's case).
-func (s *Supervisor) spawn(cwd, id string) (*child, error) {
+func (s *Supervisor) spawn(cwd, id string, extra []string) (*child, error) {
 	ch := &child{done: make(chan struct{})}
-	if err := s.start(ch, cwd, id); err != nil {
+	if err := s.start(ch, cwd, id, extra); err != nil {
 		close(ch.done)
 		return nil, err
 	}
@@ -377,7 +474,7 @@ func (s *Supervisor) spawn(cwd, id string) (*child, error) {
 // start builds and launches the process and the goroutines that read
 // it. NEVER a bare --resume: headless refuses it, prints the session
 // list and exits 2.
-func (s *Supervisor) start(ch *child, dir, id string) error {
+func (s *Supervisor) start(ch *child, dir, id string, extra []string) error {
 	args := []string{"--headless", "--json"}
 	if id != "" {
 		args = append(args, "-r", id)
@@ -390,7 +487,14 @@ func (s *Supervisor) start(ch *child, dir, id string) error {
 	}
 	// Every child serve runs is the person's: created from the page, or
 	// resumed because they sent it something.
-	cmd.Env = append(slices.Clone(cmd.Env), "BOUGH_ORIGIN=web")
+	// A serve that itself inherited a mode must not hand it to a local
+	// child, and a resumed child takes its mode from its own file: strip
+	// both, then add back only what this spawn asked for.
+	cmd.Env = slices.DeleteFunc(slices.Clone(cmd.Env), func(kv string) bool {
+		return strings.HasPrefix(kv, "BOUGH_MODE=") || strings.HasPrefix(kv, "BOUGH_PROJECT=")
+	})
+	cmd.Env = append(cmd.Env, "BOUGH_ORIGIN=web")
+	cmd.Env = append(cmd.Env, extra...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("serve: supervisor: stdin pipe: %w", err)
@@ -696,6 +800,17 @@ func (s *Supervisor) killChild(ch *child) {
 	<-ch.done
 }
 
+// childPID is the pid of the session's live child, 0 when none.
+func (s *Supervisor) childPID(id string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ch, ok := s.kids[id]
+	if !ok || ch.cmd == nil || ch.cmd.Process == nil {
+		return 0
+	}
+	return ch.cmd.Process.Pid
+}
+
 func (s *Supervisor) Live(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -852,6 +967,42 @@ func (s *Supervisor) DeleteProject(id string) error {
 	}
 	return s.saveMetaLocked()
 }
+
+// Project returns one label by id.
+func (s *Supervisor) Project(id string) (Project, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.projects[id]
+	return p, ok
+}
+
+// ErrSlugTaken is a definition already attached to another label: two
+// labels on one definition would make "which sessions" ambiguous.
+var ErrSlugTaken = errors.New("serve: supervisor: project definition already attached to another project")
+
+// SetProjectSlug attaches (slug != "") or detaches a definition. It
+// never touches the files: detaching is relabelling, not deleting.
+func (s *Supervisor) SetProjectSlug(id, slug string) (Project, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.projects[id]
+	if !ok {
+		return Project{}, fmt.Errorf("serve: supervisor: no project %q: %w", id, ErrUnknownProject)
+	}
+	if slug != "" {
+		for oid, o := range s.projects {
+			if oid != id && o.Slug == slug {
+				return Project{}, fmt.Errorf("%w: %q is on %q", ErrSlugTaken, slug, o.Name)
+			}
+		}
+	}
+	p.Slug = slug
+	s.projects[id] = p
+	return p, s.saveMetaLocked()
+}
+
+// ErrUnknownProject is a label id that does not exist.
+var ErrUnknownProject = errors.New("serve: supervisor: unknown project")
 
 // AssignProject puts a session in a grouping ("" removes it).
 func (s *Supervisor) AssignProject(sessionID, projectID string) error {
