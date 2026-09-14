@@ -2383,33 +2383,30 @@ const TurnViewMemo = memo(TurnView);
  * again on Refresh, so a fixed definition can be checked from here.
  */
 function OrbFailure({ id, project }: { id: string; project: string }) {
-  const [open, setOpen] = useState(false);
   const [log, setLog] = useState<{ error: string; text: string } | null>(null);
   const [err, setErr] = useState("");
   const load = () => {
     setErr("");
     api.sessionOrbLog(id).then((l) => setLog({ error: l.error, text: l.text }), (e) => setErr((e as Error).message));
   };
-  useEffect(() => { if (open && !log) load(); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(load, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   const tail = log?.text ? log.text.split("\n").slice(-120).join("\n") : "";
+  // The error is the log's last lines: open at the bottom, not at its first download line.
+  const pre = useRef<HTMLPreElement>(null);
+  useLayoutEffect(() => { if (pre.current) pre.current.scrollTop = pre.current.scrollHeight; }, [tail]);
+  // A sibling of the header, not a child: the header is a fixed-height grid,
+  // and inside it the log wrapped into a 200px-wide, 6000px-tall sliver.
   return (
-    <>
-      <button className="btn head-ack" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-        {open ? "Hide setup error" : "Why did setup fail?"}
-      </button>
-      {open && (
-        <div className="block orb-failure" role="region" aria-label={`${project} setup failure`}>
-          {err ? <p className="send-failed-text" role="alert">Couldn’t load the log: {err}</p>
-            : !log ? <p className="meta-line">Loading…</p>
-            : <>
-                <p className="meta-line">{log.error || "The orb failed without an error message."}</p>
-                {tail ? <pre className="mono">{tail}</pre> : <p className="meta-line">resume.log is empty.</p>}
-                <p className="meta-line">Fix the definition with <code>bough project show {project}</code> / <code>bough project write {project} &lt;file&gt;</code>; the next session start retries.</p>
-              </>}
-          <button className="link" onClick={load}>Refresh</button>
-        </div>
-      )}
-    </>
+    <div className="block orb-failure" role="region" aria-label={`${project} setup failure`}>
+      {err ? <p className="send-failed-text" role="alert">Couldn’t load the log: {err}</p>
+        : !log ? <p className="meta-line">Loading…</p>
+        : <>
+            <p className="meta-line">{log.error || "The orb failed without an error message."}</p>
+            {tail ? <pre className="mono" ref={pre}>{tail}</pre> : <p className="meta-line">resume.log is empty.</p>}
+            <p className="meta-line">Fix the definition with <code>bough project show {project}</code> / <code>bough project write {project} &lt;file&gt;</code>; the next session start retries.</p>
+          </>}
+      <button className="link" onClick={load}>Refresh</button>
+    </div>
   );
 }
 
@@ -2714,6 +2711,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     return () => clearTimeout(t);
   }, [loading]);
   const running = row.status === "running";
+  const [orbWhy, setOrbWhy] = useState(false);
 
   const [multi, setMulti] = useState(false);
   const [narrow, setNarrow] = useState(false);
@@ -2972,7 +2970,14 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
           ) : row.status === "done" ? <span className="status head-idle">Run: Idle</span> : <StatusMark status={row.status} />}
           <ModeChip row={row} />
           {row.orb?.status === "running" && onStopOrb && <button className="btn head-ack" onClick={onStopOrb}>Stop orb</button>}
-          {row.orb?.status === "failed" && <OrbFailure id={row.id} project={row.orb.project} />}
+          {/* A short link beside the chip: a full button pushed the title row
+              past its 32px and covered the strip below. */}
+          {row.orb?.status === "failed" && (
+            <button className="link" aria-expanded={orbWhy} aria-label={orbWhy ? "Hide why setup failed" : "Why did setup fail?"}
+                    onClick={() => setOrbWhy((v) => !v)}>
+              {orbWhy ? "Hide" : "Why?"}
+            </button>
+          )}
           {/* A test failure is the Tests chip's to say, once. */}
           {running && turns[turns.length - 1]?.prompt?.at && !turns[turns.length - 1]?.done && <RunClock since={turns[turns.length - 1].prompt!.at} />}
           {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
@@ -3017,6 +3022,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
                         onClick={() => (workOpen ? closeWork(true) : openWork())} />
           )} />
       </header>
+      {orbWhy && row.orb?.status === "failed" && <OrbFailure key={row.id} id={row.id} project={row.orb.project} />}
 
       <div className="scroll transcript" ref={scroller} onScroll={onScroll} onKeyDown={latestKey}
            onFocus={(e) => { const t = e.target as HTMLElement; if (t.matches("details.block > summary") && t !== rovingAt.current) rove(summaries(), t); }}
