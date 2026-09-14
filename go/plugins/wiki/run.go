@@ -60,6 +60,9 @@ func Run(p paths, exe string, all bool, maxSessions int, quiet time.Duration, on
 		// binary, whatever the shell's PATH resolves `bough` to (a login
 		// shell puts an older install first).
 		"BOUGH_BIN="+exe,
+		// The ingest writes wiki pages: without this it runs as a plain
+		// local session, read-only, and refused every run.
+		"BOUGH_WRITE_ROOTS="+p.wiki,
 		"PATH="+filepath.Dir(exe)+string(os.PathListSeparator)+os.Getenv("PATH"),
 	)
 	runErr := cmd.Run()

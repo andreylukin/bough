@@ -75,6 +75,10 @@ type pauser interface{ Pause() func() }
 type Stats struct {
 	runCtx func() context.Context // the running script's context; nil = none
 	jobs   *Jobs                  // background jobs (never nil after Apply)
+	// writeRoots, in a local session, are the only directories write and
+	// patch exist for ($BOUGH_WRITE_ROOTS, set by a job bough starts, like
+	// the wiki ingest). Empty: a local session has no write or patch.
+	writeRoots []string
 
 	mu    sync.Mutex
 	files []string
@@ -161,6 +165,26 @@ func (p *projectMode) allowed(tool, path string) error {
 	return fmt.Errorf("%s: %s is outside this project session; write under %s", tool, path, strings.Join(roots, ", "))
 }
 
+// canWrite confines write and patch: to the orb in a project session, to
+// the write roots in a local session that has them. A local session
+// without roots never registers either tool.
+func (s *Stats) canWrite(tool, path string) error {
+	if s.project != nil || len(s.writeRoots) == 0 {
+		return s.project.allowed(tool, path)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("%s: %w", tool, err)
+	}
+	abs = resolveExisting(abs)
+	for _, r := range s.writeRoots {
+		if rel, err := filepath.Rel(resolveExisting(r), abs); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s: %s is outside this session's writable directories; write under %s", tool, path, strings.Join(s.writeRoots, ", "))
+}
+
 // resolveExisting is EvalSymlinks on the longest existing prefix of an
 // absolute path, so a file write is about to create still resolves
 // through its parent's links.
@@ -241,6 +265,9 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	// safe; absent (old tree, bare test context) means local.
 	mode, _ := kernel.Get[string](ctx, "session-mode")
 	local := mode != "project"
+	if local {
+		st.writeRoots = iorb.LocalWriteRoots()
+	}
 	if !local {
 		slug, _ := kernel.Get[string](ctx, "session-project")
 		st.project = &projectMode{slug: slug, orb: func() (orbExec, error) {
@@ -293,7 +320,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			{"write", `tools.write(path, content) -> string: create or overwrite a whole file (use this for new files and rewrites, never a shell heredoc).`},
 			{"patch", `tools.patch(path, old, new) -> string: replace ONE exact occurrence of old with new (copy old verbatim from view, enough lines to be unique).`},
 		} {
-			if local && (doc[0] == "write" || doc[0] == "patch") {
+			if local && len(st.writeRoots) == 0 && (doc[0] == "write" || doc[0] == "patch") {
 				continue
 			}
 			d.Describe(doc[0], doc[1])
@@ -320,7 +347,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		ctx.Effect(func() { cmds.Unregister("jobkill") })
 	}
 	reg.RegisterTool("view", st.view)
-	if !local {
+	if !local || len(st.writeRoots) > 0 {
 		reg.RegisterTool("patch", st.patch)
 		reg.RegisterTool("write", st.write)
 	}
@@ -446,7 +473,7 @@ func tail(out string) string {
 // directories. The plain way to put a whole file down: no heredoc
 // quoting, no shell at all.
 func (s *Stats) write(path, content string) (string, error) {
-	if err := s.project.allowed("write", path); err != nil {
+	if err := s.canWrite("write", path); err != nil {
 		return "", err
 	}
 	before, hadFile := os.ReadFile(path)
@@ -842,7 +869,7 @@ func lockPath(path string) func() {
 // must match exactly once (include more context when it repeats). An
 // empty old creates the file with new when it does not exist yet.
 func (s *Stats) patch(path, old, new string) (string, error) {
-	if err := s.project.allowed("patch", path); err != nil {
+	if err := s.canWrite("patch", path); err != nil {
 		return "", err
 	}
 	// Every Stats (one per agent) shares this lock, so the
