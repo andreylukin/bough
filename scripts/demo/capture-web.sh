@@ -21,7 +21,12 @@ bough() { HOME="$dir/home" command bough "$@"; }
 fresh=1
 [ -n "$(ls "$dir/home/.bough/history" 2>/dev/null)" ] && fresh=0
 [ $fresh = 1 ] && "$here/setup.sh" "$dir" >/dev/null
-(cd "$repo" && bough serve "$addr" >/dev/null)
+# Local sessions are read-only; the demo lets them write to its own repo.
+(cd "$repo" && BOUGH_WRITE_ROOTS="$repo" bough serve "$addr" >/dev/null)
+# serve wants its per-install token on every /api call; the browser gets it
+# as a cookie when it loads the page.
+token=$(cat "$dir/home/.bough/serve.token")
+curl() { command curl -H "Authorization: Bearer $token" "$@"; }
 trap 'bough serve stop >/dev/null 2>&1 || true; agent-browser close >/dev/null 2>&1 || true' EXIT
 
 json() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"; }
@@ -57,12 +62,12 @@ if [ $fresh = 1 ]; then
 	rename "$ask" "Case-folding in Counts"
 fi
 
-agent-browser set viewport 1440 900 >/dev/null 2>&1 || true
+agent-browser set viewport 1440 900 2 >/dev/null 2>&1 || true
 agent-browser open "http://$addr/" >/dev/null
 agent-browser wait 2000 >/dev/null
 shoot() { # sidebar title prefix -> file [block label to expand]
-	# Sidebar sessions are treeitems named "<status> <title>".
-	ref=$(agent-browser snapshot 2>&1 | grep 'treeitem "' | grep -m1 " $1" | grep -o 'ref=e[0-9]*' | cut -d= -f2)
+	# Sidebar sessions are treeitems named "<title>, <status>, ...".
+	ref=$(agent-browser snapshot 2>&1 | grep -m1 "treeitem \"$1" | grep -o 'ref=e[0-9]*' | cut -d= -f2)
 	[ -n "$ref" ] || { echo "no sidebar row for: $1" >&2; exit 1; }
 	agent-browser click "@$ref" >/dev/null
 	agent-browser wait 2500 >/dev/null
@@ -70,6 +75,8 @@ shoot() { # sidebar title prefix -> file [block label to expand]
 		ref=$(agent-browser snapshot 2>&1 | grep -m1 -E "\"($3)" | grep -o 'ref=e[0-9]*' | cut -d= -f2)
 		[ -n "$ref" ] && agent-browser click "@$ref" >/dev/null && agent-browser wait 800 >/dev/null
 	fi
+	agent-browser mouse move 1400 880 >/dev/null 2>&1 || true # no hover cards
+	agent-browser wait 400 >/dev/null
 	agent-browser screenshot "$root/assets/$2" >/dev/null
 	echo "assets/$2"
 }

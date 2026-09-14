@@ -17,7 +17,7 @@ cat > "$dir/home/.bough/bough.yml" <<EOF
 - id: llm
   plugin: ${DEMO_PLUGIN:-llm-openrouter}
   config:
-    model: ${DEMO_MODEL:-openai/gpt-6-astra}
+    model: ${DEMO_MODEL:-anthropic/claude-sonnet-5}
 # The web row would contend for :7683 with the bough you already run;
 # artifacts needs it, so it goes too.
 - id: web

@@ -50,7 +50,7 @@ macOS and Linux, x86-64 and arm64. Also `brew tap andreylukin/bough https://gith
 | `bough serve` | a web control room for every session: live transcripts, questions waiting on you, pasted images |
 | `bough --headless` | stdin in, events out (`--json`), for scripts and benchmarks |
 
-<p align="center"><img src="assets/web-image.png" width="820" alt="bough serve: a session started from a pasted screenshot"></p>
+<p align="center"><img src="assets/web-thread.png" width="820" alt="bough serve: a session that fixed two failing tests and ran them green"></p>
 
 More in [SCREENSHOTS.md](SCREENSHOTS.md).
 
