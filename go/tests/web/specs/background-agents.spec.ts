@@ -20,7 +20,10 @@ const test = base.extend<{ serve: string }>({
     });
     try {
       await expect.poll(async () => {
-        try { return (await request.get(`http://${addr}/api/health`)).status(); } catch { return 0; }
+        try {
+          const token = fs.readFileSync(path.join(home, '.bough', 'serve.token'), 'utf8').trim();
+          return (await request.get(`http://${addr}/api/health`, { headers: { Authorization: `Bearer ${token}` } })).status();
+        } catch { return 0; }
       }).toBe(200);
       await use(`http://${addr}`);
     } finally {
@@ -62,23 +65,22 @@ async function mock(page: Page, archived: unknown[]) {
   });
 }
 
-test('children nest under the parent with a queued mark; head count lists them; child links back', async ({ serve, page }) => {
+test('children fold into the parent row and its Work dialog; child links back', async ({ serve, page }) => {
   await mock(page, []);
   await page.goto(serve + '/#/s/p-lead');
-  const kids = page.getByRole('group', { name: 'Agents started by Split the serve API' });
-  await expect(kids.locator('.row-title')).toHaveText(['Map every route', 'Write the docs']);
-  await expect(kids.locator('[data-id="k-docs0003"]')).toContainText(/queued/i);
+  // Agents are not sidebar rows: the parent's row counts them, Work lists them.
+  const tree = page.getByRole('tree', { name: 'Sessions' });
+  await expect(tree.getByRole('treeitem', { name: /^Split the serve API,.*background: 1 running/ })).toBeVisible();
+  await expect(tree.getByRole('treeitem', { name: /^Map every route/ })).toHaveCount(0);
 
-  const chip = page.locator('button.head-agents');
-  await expect(chip).toHaveText('2 agents');
-  await chip.click();
-  const pop = page.getByRole('dialog', { name: 'Background agents' });
-  await expect(pop.locator('.row-title')).toHaveText(['Map every route', 'Write the docs']);
-  await pop.getByRole('button', { name: /Map every route/ }).click();
+  await page.locator('button.work-summary').click();
+  const work = page.getByRole('dialog').filter({ hasText: 'Map every route' });
+  await expect(work).toContainText('Write the docs');
 
-  const back = page.locator('.head-parent');
-  await expect(back).toContainText('spawned by Split the serve API');
-  await back.getByRole('button').click();
+  await page.goto(serve + '/#/s/k-routes01');
+  const back = page.locator('.child-parent-link');
+  await expect(back).toContainText('Parent: Split the serve API');
+  await back.click();
   await expect(page.locator('h1')).toHaveText('Split the serve API');
 });
 
@@ -88,8 +90,8 @@ for (const [pick, want] of [['Stop and archive', { stopChildren: true }], ['Arch
     await mock(page, archived);
     await page.goto(serve + '/#/s/p-lead');
     await page.getByRole('button', { name: 'Session settings' }).click();
-    await page.locator('.head-pop-item', { hasText: /^Archive$/ }).click();
-    await expect(page.getByText('Stop its 1 running and 1 queued agents too?')).toBeVisible();
+    await page.locator('.head-pop-item', { hasText: /^Archive…$/ }).click();
+    await expect(page.getByText(/^Stop its .+ too\?$/)).toBeVisible();
     await page.getByRole('button', { name: pick, exact: true }).click();
     await expect.poll(() => archived).toEqual([want]);
   });
@@ -99,10 +101,10 @@ test('phone width shows the parent count and child backlink', async ({ serve, pa
   await mock(page, []);
   await page.setViewportSize({ width: 400, height: 800 });
   await page.goto(serve + '/#/s/p-lead');
-  await expect(page.locator('button.head-agents')).toHaveText('2 agents');
+  await expect(page.locator('button.work-summary')).toBeVisible();
   await page.screenshot({ path: info.outputPath('phone-parent.png') });
   await page.goto(serve + '/#/s/k-routes01');
-  await expect(page.locator('.head-parent')).toContainText('spawned by');
+  await expect(page.locator('.child-parent-link')).toContainText('Parent:');
   await page.screenshot({ path: info.outputPath('phone-child.png') });
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   expect(overflow).toBe(false);

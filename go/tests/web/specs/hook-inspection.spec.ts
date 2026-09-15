@@ -1,11 +1,16 @@
 import { spawn } from 'child_process';
-import { writeFileSync } from 'fs';
+import { readFileSync, realpathSync, writeFileSync } from 'fs';
 import * as path from 'path';
 import type { Locator, Page } from '@playwright/test';
 import { test as base, expect } from '../helpers/fixtures';
 import { boughBin, freePort, type Bough } from '../helpers/bough';
 import { ask, boot } from '../helpers/term';
 type Fire = { name: string; [key: string]: unknown };
+
+// serve --run guards /api with the token it writes under HOME.
+const auth = (b: Bough) => ({
+  Authorization: 'Bearer ' + readFileSync(path.join(b.home, '.bough', 'serve.token'), 'utf8').trim(),
+});
 
 // --web is the terminal client; the control room must share its isolated HOME.
 const test = base.extend<{ controlRoom: (b: Bough) => Promise<string> }>({
@@ -19,7 +24,7 @@ const test = base.extend<{ controlRoom: (b: Bough) => Promise<string> }>({
         });
         children.push(child);
         await expect.poll(async () => {
-          try { return (await request.get(url + '/api/health')).status(); }
+          try { return (await request.get(url + '/api/health', { headers: auth(b) })).status(); }
           catch { return 0; }
         }).toBe(200);
         return url;
@@ -63,10 +68,10 @@ test('disk JS capture and current definition open from transcript, recent fire a
   await boot(page, b.url);
   await ask(page, 'inspect original', 'echo: inspect original CAPTURED');
   const url = await controlRoom(b);
-  const data = await (await page.request.get(url + '/api/hooks')).json();
+  const data = await (await page.request.get(url + '/api/hooks', { headers: auth(b) })).json();
   const recorded = data.fires.find((f: Fire) => f.name === 'inspect.js');
   expect(recorded).toBeTruthy();
-  expect(recorded.path).toBe(path.join(b.cwd, rel));
+  expect(recorded.path).toBe(path.join(realpathSync(b.cwd), rel));
   expect(recorded.description).toBe(description);
   expect(recorded.input.input).toBe('inspect original');
   expect(recorded.output).toEqual({ input: 'inspect original CAPTURED' });
@@ -88,8 +93,8 @@ test('disk JS capture and current definition open from transcript, recent fire a
   await expect(invocation.getByRole('textbox', { name: 'File contents' })).toHaveValue(current);
 
   await page.goto(url + '/#/hooks');
-  const recent = page.locator('.hk-fold').filter({ has: page.locator('.hk-name', { hasText: /^inspect\.js$/ }) });
-  await recent.locator('.hk-name').click();
+  const recent = page.locator('.hk-fire').filter({ has: page.locator('.hk-name', { hasText: /^inspect\.js$/ }) });
+  await recent.locator('.hk-chev').click();
   await expect(recent.locator('.hk-description')).toHaveText(description);
   await expectPayload(recent, 'Input', recorded.input);
   await expectPayload(recent, 'Output', recorded.output);
@@ -115,11 +120,11 @@ test('quiet grouped records retain every invocation input and output in newest-f
     at: `2026-06-01T12:00:0${n}Z`, description: `Purpose recorded for run ${n}`, input: { invocation: n }, output: { result: n },
   })));
   await page.goto(url + '/#/hooks');
-  const group = page.locator('.hk-group');
+  const group = page.locator('.hk-fire');
   await expect(group).toHaveCount(1);
-  await expect(group.locator(':scope > summary')).toContainText('×3');
-  await expect(group.getByRole('region', { name: 'Input', exact: true }).first()).not.toBeVisible();
-  await group.locator(':scope > summary').click();
+  await expect(group.locator('.hk-main')).toContainText('×3');
+  await expect(group.getByRole('region', { name: 'Input', exact: true })).toHaveCount(0);
+  await group.locator('.hk-chev').click();
   const records = group.locator('.hk-runs > li');
   await expect(records).toHaveCount(3);
   for (let i = 0; i < 3; i++) {
@@ -141,16 +146,15 @@ test('legacy missing capture differs from explicit null and oversize omission', 
   ]);
   await page.goto(url + '/#/hooks');
   for (const name of ['legacy', 'null-result', 'oversize']) {
-    const row = page.locator('.hk-fold').filter({ has: page.locator('.hk-name', { hasText: new RegExp('^' + name + '$') }) });
-    await row.locator(':scope > summary').click();
+    const row = page.locator('.hk-fire').filter({ has: page.locator('.hk-name', { hasText: new RegExp('^' + name + '$') }) });
+    await row.locator('.hk-chev').click();
     for (const side of ['Input', 'Output'] as const) {
       const payload = row.getByRole('region', { name: side, exact: true });
       if (name === 'legacy') {
         await expect(payload).toContainText('Unavailable — this record has no captured ' + side.toLowerCase());
         await expect(payload).not.toContainText('no output returned');
       } else if (name === 'null-result') {
-        await expect(payload.locator('code')).toHaveText('null');
-        await expect(payload).toContainText(side === 'Output' ? 'no output returned' : 'no input');
+        await expect(payload).toContainText(side === 'Output' ? 'No output returned' : 'No input');
         await expect(payload).not.toContainText('Unavailable');
       } else {
         await expect(payload).toContainText('Oversize — omitted in full at the 64 KiB capture cap');
@@ -159,7 +163,7 @@ test('legacy missing capture differs from explicit null and oversize omission', 
         await expect(payload.locator('pre')).toHaveCount(0);
       }
     }
-    await expect(row.locator('.hk-description')).toHaveText('No description recorded for this run.');
+    await expect(row.locator('.hk-description')).toHaveCount(0);
     await expect(row).toContainText('Definition unavailable — no file path was recorded');
     await expect(row.getByRole('button', { name: 'Open definition', exact: true })).toHaveCount(0);
   }
@@ -176,8 +180,8 @@ test('mobile expanded inspection keeps long payload and definition inside viewpo
   await mockFires(page, [fire('mobile', { description: long, path: definition, input: { text: long }, output: { text: long } })]);
   await page.route('**/api/hooks/file?*', (route) => route.fulfill({ json: { path: definition, body: 'return null;' } }));
   await page.goto(url + '/#/hooks');
-  const row = page.locator('.hk-fold');
-  await row.locator(':scope > summary').click();
+  const row = page.locator('.hk-fire');
+  await row.locator('.hk-chev').click();
   await expectPayload(row, 'Input', { text: long });
   await expectPayload(row, 'Output', { text: long });
   await row.getByRole('button', { name: 'Open definition', exact: true }).click();

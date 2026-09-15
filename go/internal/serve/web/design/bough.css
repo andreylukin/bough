@@ -1986,7 +1986,7 @@ a.rt-link{text-decoration:none}
   .orb-row>.orb-st{grid-column:2;grid-row:1}
   .orb-row>.orb-act{grid-column:2;grid-row:2}
   /* A decision is a two-line card: "guard · Blocked", then time · event · session. */
-  .hk-main{grid-template-columns:auto auto minmax(0,1fr) 24px;grid-template-areas:"name dec dec chev" "time ev sess chev";
+  .hk-main{grid-template-columns:auto auto minmax(0,1fr) 44px;grid-template-areas:"name dec dec chev" "time ev sess chev";
            row-gap:2px;column-gap:var(--s-2);padding-block:var(--s-2);min-height:var(--row-touch)}
   .hk-main>.hk-name{display:block;grid-area:name;font-weight:500;color:var(--text-1)}
   .hk-main>.hk-dec{grid-area:dec;padding:0}
