@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Back } from "./app";
 import { EmptySection, Pending } from "./context";
-import { plainTitle } from "./render";
+import { Pending as Waiting } from "./loading";
+import { plainTitle, sessionTitle } from "./render";
 
 // Shared wire types for the Hooks page and per-turn inspection.
 export interface Hook {
@@ -187,6 +188,29 @@ function OffWord({ off }: { off: boolean }) {
   return off ? <span className="hk-state hk-offword">Off</span> : null;
 }
 
+/** An error a person can act on: a dropped connection is not "Failed to fetch". */
+function humanError(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e);
+  if (/failed to fetch|networkerror|load failed/i.test(m)) return "bough serve did not answer. Is it still running?";
+  if (/^404\b/.test(m)) return "The file no longer exists.";
+  if (/^403\b/.test(m)) return "bough serve refused to read this file.";
+  return m;
+}
+
+/** "1 command", "2 skills"; zero is left out by the caller. */
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** A marketplace version: "v1.2.0", or a commit hash as "commit e637cf0". */
+export function versionLabel(v: string): string {
+  if (/^[0-9a-f]{7,40}$/i.test(v)) return `commit ${v.slice(0, 7)}`;
+  return /^v\d/i.test(v) ? v : `v${v}`;
+}
+
+/** JSON as a reader wants it: indented, with newlines inside strings shown as line breaks. */
+export function formatJson(value: unknown): string {
+  return JSON.stringify(value, null, 2).replace(/(?<!\\)\\n/g, "\n");
+}
+
 export type Load = (path: string) => Promise<string>;
 export type Save = (path: string, body: string) => Promise<void>;
 export type DryRun = (path: string, event: string) => Promise<{ result: unknown; error: string; ms: number }>;
@@ -196,8 +220,10 @@ export type DryRun = (path: string, event: string) => Promise<{ result: unknown;
  * first expand rather than with the list: most visits never open one,
  * and the list is the answer to "is this thing even loaded?".
  */
-function Source({ path, event, load, save, dryrun, definition = false }: {
+function Source({ path, event, load, save, dryrun, definition = false, inRun = false }: {
   path: string; event?: string; load: Load; save: Save; dryrun?: DryRun; definition?: boolean;
+  /** Opened from a recorded run, where the file on disk may have changed since. */
+  inRun?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [body, setBody] = useState<string | null>(null);
@@ -208,7 +234,12 @@ function Source({ path, event, load, save, dryrun, definition = false }: {
 
   const read = () => {
     setErr("");
-    load(path).then(setBody).catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
+    // A hung request must not spin forever: after 15s it becomes an error with a Retry.
+    let late = false;
+    const t = setTimeout(() => { late = true; setErr("The file took too long to load."); }, 15000);
+    load(path).then((b) => { if (!late) setBody(b); })
+      .catch((e: unknown) => { if (!late) setErr(humanError(e)); })
+      .finally(() => clearTimeout(t));
   };
 
   const expand = () => {
@@ -226,12 +257,14 @@ function Source({ path, event, load, save, dryrun, definition = false }: {
           {definition ? (open ? "Hide definition" : "Open definition") : (open ? "Hide file" : "Open file")}
         </button>
       </div>
-      {definition && <p className="hk2-note">Current file; may differ from this run. Saving affects future runs.</p>}
+      {definition && inRun && <p className="hk2-note">Current file; may differ from this run. Saving affects future runs.</p>}
       <div className="hk-panel" id={id} hidden={!open}>
-        <p className="mono hk-path">{path}</p>
-        {err && <p className="err" role="alert">{err}</p>}
+        {!definition && <p className="mono hk-path">{path}</p>}
+        {err && body !== null && <p className="err" role="alert">{err}</p>}
         {body === null
-          ? err ? <button className="btn" onClick={read}>Retry</button> : <p className="proj-none">Loading…</p>
+          ? err
+            ? <p className="err hk-loaderr" role="alert">Could not open the file — {err} <button className="btn btn-sm" onClick={read}>Retry</button></p>
+            : <Waiting what="File" inline timeout={15_000} onRetry={read} />
           : (
             <>
               <label className="visually-hidden" htmlFor={`${id}-body`}>File contents</label>
@@ -267,14 +300,17 @@ function Payload({ fire, side }: { fire: Partial<Fire>; side: "input" | "output"
   const cut = fire[side === "input" ? "inputTruncated" : "outputTruncated"];
   const error = fire[side === "input" ? "inputError" : "outputError"];
   const label = side === "input" ? "Input" : "Output";
+  // What the model saw was cut at the 10,000-character cap: said once, where the output is.
+  const capped = side === "output" && (fire.truncated?.length ?? 0) > 0;
   return (
     <section className="hk-payload" aria-label={label}>
-      <h4>{label}{bytes !== undefined && <span className="num hk-when"> · {bytes.toLocaleString()} bytes</span>}</h4>
+      <h4>{label}{bytes !== undefined && value !== null && <span className="num hk-when"> · {bytes.toLocaleString()} bytes</span>}
+        {capped && <span className="num hk-when" title={`Truncated: ${fire.truncated!.join(", ")}`}> · truncated to 10,000 chars</span>}</h4>
       {error ? <p className="hk-bad">Capture error — {error}</p>
         : cut ? <p className="hk-when">Oversize — omitted in full at the 64 KiB capture cap. No partial payload was stored.</p>
         : value === undefined ? <p className="hk-when">Unavailable — this record has no captured {side} (legacy records did not capture payloads).</p>
-        : value === null ? <p className="hk-when"><code className="mono">null</code> — {side === "output" ? "no output returned" : "no input"}</p>
-        : <pre className="mono" tabIndex={0}>{JSON.stringify(value, null, 2)}</pre>}
+        : value === null ? <p className="hk-when">{side === "output" ? "No output returned" : "No input"}</p>
+        : <pre className="mono" tabIndex={0}>{formatJson(value)}</pre>}
     </section>
   );
 }
@@ -285,10 +321,10 @@ export function FireInspection({ fire, load = hooksApi.read, save = hooksApi.wri
 }) {
   return (
     <div className="hk-inspect">
-      <p className="hk2-note hk-description">{fire.description || "No description recorded for this run."}</p>
+      {fire.description && <p className="hk2-note hk-description">{fire.description}</p>}
       <div className="hk-io"><Payload fire={fire} side="input" /><Payload fire={fire} side="output" /></div>
       {showDefinition && (fire.path
-        ? <Source key={fire.path} path={fire.path} load={load} save={save} definition />
+        ? <Source key={fire.path} path={fire.path} load={load} save={save} definition inRun />
         : <p className="hk2-note">Definition unavailable — no file path was recorded. Legacy and Go hooks are not matched to files by name.</p>)}
     </div>
   );
@@ -345,9 +381,9 @@ function WatcherRow({ w, off, setOff, onOff, load, save }: {
   );
 }
 
-function HookRow({ h, latest, off, setOff, onOff, load, save, dryrun }: {
+function HookRow({ h, latest, off, setOff, onOff, load, save, dryrun, titles }: {
   h: Hook; latest?: Fire; off: boolean; setOff: SetOff; onOff: (off: boolean) => void;
-  load: Load; save: Save; dryrun: DryRun;
+  load: Load; save: Save; dryrun: DryRun; titles: Record<string, string>;
 }) {
   return (
     <Row
@@ -357,19 +393,22 @@ function HookRow({ h, latest, off, setOff, onOff, load, save, dryrun }: {
            : h.shadowed ? { word: "Shadowed", tone: "warn" }
            : undefined}
       tags={[h.scope === "home" ? "Home" : "Project"]}
+      // Passing a call through records a run with no decision: "no decisions" read as "never ran".
       facts={h.lastDecision
         ? <>last decided {when(h.lastFired, "never")} · {h.lastDecision}</>
-        : <>no decisions recorded</>}
+        : latest || h.lastFired
+          ? <>last ran {when(latest?.at ?? h.lastFired, "never")} · passed through</>
+          : <>no runs recorded</>}
       alert={h.failing ? h.error : h.shadowed ? "A project file of the same name wins over this one." : ""}
       actions={<OffToggle id={offId("hook", h.id)} off={off} what={`the hook ${h.name}`}
                           setOff={setOff} onChange={onOff} />}
       detail={<>
-        <p className="hk2-note hk-description">{h.description || "No description provided. Add a // Description: comment at the top of the hook file."}</p>
+        {h.description && <p className="hk2-note hk-description">{h.description}</p>}
         <Source path={h.path} event={h.event} load={load} save={save} dryrun={dryrun} definition />
         {latest ? <details className="hk2-more">
           <summary>Latest recorded input / output · {clock(latest.at)}</summary>
           <div className="hk2-more-body">
-            <p className="hk2-note">{stamp(latest.at)} · {latest.event} · {latest.ms}ms · <Decision fire={latest} />{latest.session && <> · <a className="hk-session" href={`#/s/${latest.session}`} title={latest.session}>{latest.session.slice(-8)}</a></>}</p>
+            <p className="hk2-note">{stamp(latest.at)} · {latest.event} · {latest.ms}ms · <Decision fire={latest} />{latest.session && <> · <a className="hk-session link" href={`#/s/${latest.session}`}>{sessionTitle({ id: latest.session, title: titles[latest.session] })}</a></>}</p>
             <FireInspection fire={latest} load={load} save={save} showDefinition={false} />
           </div>
         </details> : <p className="hk2-note">Input / output never captured for this file in the available history.</p>}
@@ -417,16 +456,18 @@ function PluginRow({ p, off, setOff, onOff }: {
     <Row
       name={p.name}
       off={off}
-      state={p.present ? undefined : { word: "Not present", tone: "bad" }}
+      // Absent is one badge; its explanation is the badge's tooltip, and the toggle has nothing to act on.
+      state={p.present ? undefined : { word: "Not installed", tone: "bad" }}
       tags={[p.scope === "user" ? "User" : "Project"]}
       facts={<>
-        <span className="num">v{p.version}</span> · {p.marketplace} ·{" "}
-        {gives.length === 0 ? "no skills or commands"
-          : `${p.skills.length} skills, ${p.commands.length} commands`}
+        <span className="num" title={p.version}>{versionLabel(p.version)}</span> · {p.marketplace}
+        {gives.length === 0 ? " · no skills or commands"
+          : " · " + [p.skills.length > 0 && plural(p.skills.length, "skill"), p.commands.length > 0 && plural(p.commands.length, "command")].filter(Boolean).join(", ")}
       </>}
-      alert={p.present ? "" : "Nothing is installed at its path, so it contributes nothing."}
-      actions={<OffToggle id={offId("plugin", p.id)} off={off} what={`the plugin ${p.name}`}
-                          setOff={setOff} onChange={onOff} />}
+      actions={p.present
+        ? <OffToggle id={offId("plugin", p.id)} off={off} what={`the plugin ${p.name}`}
+                     setOff={setOff} onChange={onOff} />
+        : <span className="hk2-facts">Nothing installed at its path</span>}
       detail={gives.length === 0 && !p.projectPath ? undefined : (
         <details className="hk2-more">
           <summary>What it brings</summary>
@@ -464,15 +505,24 @@ function Decision({ fire }: { fire: Fire }) {
 
 /** One kind with nothing configured: where it goes, copyable, and how, behind a click. */
 function SetupItem({ title, path, children }: { title: string; path: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
   return (
-    <details className="ctx-empty hk-setup-item">
-      <summary>
-        <span className="hk-setup-name">{title}</span>
-        <code className="mono hk-path">{path}</code>
-        <span className="link">Add {title.toLowerCase()}…</span>
-      </summary>
-      <p>{children}{" "}<button className="link" onClick={() => void navigator.clipboard?.writeText(path)}>Copy path</button></p>
-    </details>
+    <section className="proj hk-setup">
+      <div className="proj-head">
+        <h2>{title}</h2>
+        <span className="hk2-state hk2-muted">Not configured</span>
+        <span className="proj-count" />
+        <button className="link" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
+          Add {title.toLowerCase()}…
+        </button>
+      </div>
+      <div className="ctx-empty hk-setup-item" id={id} hidden={!open}>
+        <p><code className="mono hk-path">{path}</code>{" "}
+          <button className="link" onClick={() => void navigator.clipboard?.writeText(path)}>Copy path</button></p>
+        <p>{children}</p>
+      </div>
+    </section>
   );
 }
 
@@ -533,10 +583,6 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
   );
   // A fire with no file behind it came from a handler compiled into bough.
   const builtin = useMemo(() => fires.filter((f) => !f.path).length, [fires]);
-  const empty = [
-    watchers.length === 0 && "Watchers", byEvent.length === 0 && "Hooks",
-    rules.length === 0 && "Rules", plugins.length === 0 && "Plugins",
-  ].filter(Boolean) as string[];
   // Runs of identical quiet fires fold to one row with ×N; anything that
   // decided, errored or left a note always keeps its own row.
   const runs = useMemo(() => {
@@ -577,7 +623,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
           <span><span className={"hk2-sum-n" + (broken ? " hk2-bad" : "")}>{broken}</span>{" "}
             <span className="hk2-sum-lab">failing</span></span>
           <span><span className="hk2-sum-n">{offCount}</span>{" "}
-            <span className="hk2-sum-lab">turned off</span></span>
+            <span className="hk2-sum-lab">disabled</span></span>
           <span className="hk2-sum-group">Recorded history</span>
           <span><span className="hk2-sum-n">{recent.length}</span>{" "}
             <span className="hk2-sum-lab">events</span></span>
@@ -587,17 +633,24 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
         {recent.length === 0
           ? <EmptySection title="Recent decisions">Nothing recorded yet. Every time a hook runs — passing a call through, blocking, rewriting, throwing or leaving a note — it lands here.</EmptySection>
           : (
-        <section className="proj">
+        <section className="proj hk-decisions">
           <div className="proj-head">
             <h2>Recent decisions</h2>
             <span className="num proj-count">newest first</span>
           </div>
           <div className="hk-main hk-cols" aria-hidden="true">
-            <span>Time</span><span>Hook</span><span>Session</span><span>Event</span><span>Took</span><span>Outcome</span><span />
+            <span>Time</span><span>Hook</span><span>Session</span><span>Event</span><span className="hk-took">Took</span><span>Outcome</span><span />
           </div>
-          {runs.map(({ f, n, key, all }, i) => (
+          {/* One wrapper per day, so the day heading stays stuck while its rows scroll. */}
+          {runs.reduce<(typeof runs)[]>((days, r, i) => {
+            if (i === 0 || day(runs[i - 1].f.at) !== day(r.f.at)) days.push([]);
+            days[days.length - 1].push(r);
+            return days;
+          }, []).map((group) => (
+            <div key={group[0].key} className="hk-dayrun">
+            <h3 className="hk-day">{day(group[0].f.at)}</h3>
+          {group.map(({ f, n, key, all }) => (
               <div key={key} className="hk-fire">
-                {(i === 0 || day(runs[i - 1].f.at) !== day(f.at)) && <h3 className="hk-day">{day(f.at)}</h3>}
                 {/* The row opens: a folded run lists every fire in it, and on a
                     phone the event and timing live here instead of the row. */}
                 <details className={"hk-fold" + (n > 1 ? " hk-group" : "")}>
@@ -609,7 +662,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
                     ? <span className="hk-when hk-sess" title={titles[f.session] || f.session}>{titles[f.session] || f.session.slice(0, 8)}</span>
                     : <span />}
                   <span className="mono hk-when" title={f.event}>{f.event}</span>
-                  <span className="num hk-when">{f.ms}ms</span>
+                  <span className="num hk-when hk-took">{f.ms}ms</span>
                   <span className="hk-dec"><Decision fire={f} />{n > 1 && <span className="num hk-when"> ×{n}</span>}</span>
                   <span className="hk-chev" aria-hidden="true">›</span>
                 </summary>
@@ -617,9 +670,8 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
                   {/* On a phone the row keeps time, session and decision; the rest is here. */}
                   <p className="hk-when hk-tech">
                     <span className="mono">{f.name}</span> · <span className="mono">{f.event}</span>
-                    {f.session && <> · <span className="mono">{f.session}</span></>}
                   </p>
-                  {f.session && <p className="hk-when"><a className="link" href={`#/s/${f.session}`}>Open in session</a></p>}
+                  {f.session && <p className="hk-when"><a className="link" href={`#/s/${f.session}`}>Open {sessionTitle({ id: f.session, title: titles[f.session] })}</a></p>}
                   <ul className="hk-runs">
                     {all.map((x, j) => (
                       <li key={j}>
@@ -635,33 +687,12 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
                      place it survives after the turn scrolls away. */
                   <p className="hk-notice">{f.notice}</p>
                 )}
-                {f.truncated?.length > 0 && (
-                  <p className="hk-notice hk-cut">
-                    Truncated at the 10,000-character cap: {f.truncated.join(", ")}
-                  </p>
-                )}
               </div>
             ))}
+            </div>
+          ))}
         </section>
           )}
-        {empty.length > 0 && (
-          <section className="proj hk-setup">
-            <div className="proj-head">
-              <h2>{empty.length === 4 ? "No custom automation configured" : `Not configured: ${empty.join(" · ")}`}</h2>
-            </div>
-            {watchers.length === 0 && <SetupItem title="Watchers" path="~/.bough/watchers">A <code className="mono">.js</code> file
-                   bough runs on an interval that can wake a session. Drop one in — say
-                   <code className="mono"> ci.js</code> — and it shows up here on the next tick.</SetupItem>}
-            {byEvent.length === 0 && <SetupItem title="Hooks" path="~/.bough/hooks">A <code className="mono">.js</code> file here
-                   (yours everywhere) or in <code className="mono">.bough/hooks</code> in a repo (that repo only). The file name is the
-                   hook name; the event it listens for comes from the file itself.</SetupItem>}
-            {rules.length === 0 && <SetupItem title="Rules" path="~/.claude/rules">A <code className="mono">.md</code> file here
-                   (every repo) or in <code className="mono">.claude/rules</code> in a repo (that repo only). It appears here, and in the
-                   Context panel of every session it applies to.</SetupItem>}
-            {plugins.length === 0 && <SetupItem title="Plugins" path="~/.claude/settings.json">Add a marketplace to this file and install
-                   a plugin; the skills and slash commands it brings are listed here.</SetupItem>}
-          </section>
-        )}
         {watchers.length > 0 && (
         <section className="proj">
           <div className="proj-head">
@@ -686,11 +717,14 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
               {byEvent.length === 1 ? "event" : "events"}
             </span>
           </div>
+          {hooks.some((h) => !h.description) && (
+            <p className="hk2-note">A hook describes itself here with a <code className="mono">// Description:</code> comment at the top of its file.</p>
+          )}
           {byEvent.map(([event, list]) => (
               <div key={event} className="hk-event">
                 <h3 className="mono hk-event-name">{event}</h3>
                 {list.map((h) => (
-                  <HookRow key={h.path} h={h} latest={recent.find((f) => !!h.path && f.path === h.path)} load={load} save={save} dryrun={dryrun} setOff={setOff}
+                  <HookRow key={h.path} h={h} latest={recent.find((f) => !!h.path && f.path === h.path)} load={load} save={save} dryrun={dryrun} setOff={setOff} titles={titles}
                            off={isOff(offId("hook", h.id), h.off)} onOff={mark(offId("hook", h.id))} />
                 ))}
               </div>
@@ -744,6 +778,19 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
             ))}
         </section>
         )}
+
+        {/* What is not configured comes after what is, one section per kind. */}
+        {watchers.length === 0 && <SetupItem title="Watchers" path="~/.bough/watchers">A <code className="mono">.js</code> file
+               bough runs on an interval that can wake a session. Drop one in — say
+               <code className="mono"> ci.js</code> — and it shows up here on the next tick.</SetupItem>}
+        {byEvent.length === 0 && <SetupItem title="Hooks" path="~/.bough/hooks">A <code className="mono">.js</code> file here
+               (yours everywhere) or in <code className="mono">.bough/hooks</code> in a repo (that repo only). The file name is the
+               hook name; the event it listens for comes from the file itself.</SetupItem>}
+        {rules.length === 0 && <SetupItem title="Rules" path="~/.claude/rules">A <code className="mono">.md</code> file here
+               (every repo) or in <code className="mono">.claude/rules</code> in a repo (that repo only). It appears here, and in the
+               Context panel of every session it applies to.</SetupItem>}
+        {plugins.length === 0 && <SetupItem title="Plugins" path="~/.claude/settings.json">Add a marketplace to this file and install
+               a plugin; the skills and slash commands it brings are listed here.</SetupItem>}
 
       </div>
     </div>

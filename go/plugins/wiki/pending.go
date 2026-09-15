@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/andreylukin/bough/plugins/history"
@@ -77,20 +78,20 @@ func FindPending(p paths, quiet time.Duration, all bool, now time.Time) ([]Pendi
 		if now.Sub(in.ModTime) < quiet {
 			continue
 		}
-		entries, err := history.Read(in.Path)
-		if err != nil {
+		marks, ok := marksOf(in)
+		if !ok {
 			continue
 		}
 		from := done[in.ID]
 		var to int64
 		talk := false
-		for _, e := range entries {
-			to = max(to, e.Seq)
-			if !base.IsZero() && e.At.Before(base) {
-				from = max(from, e.Seq) // before the wiki existed: seen
+		for _, e := range marks {
+			to = max(to, e.seq)
+			if !base.IsZero() && e.at.Before(base) {
+				from = max(from, e.seq) // before the wiki existed: seen
 				continue
 			}
-			if e.Seq > from && (e.Kind == "input" || e.Kind == "assistant") {
+			if e.seq > from && e.talk {
 				talk = true
 			}
 		}
@@ -101,6 +102,51 @@ func FindPending(p paths, quiet time.Duration, all bool, now time.Time) ([]Pendi
 	}
 	slices.SortFunc(out, func(a, b Pending) int { return a.Last.Compare(b.Last) })
 	return out, nil
+}
+
+// mark is the little of an entry FindPending reads.
+type mark struct {
+	seq  int64
+	at   time.Time
+	talk bool
+}
+
+type marked struct {
+	size  int64
+	mod   time.Time
+	marks []mark
+}
+
+var (
+	marksMu    sync.Mutex
+	marksCache = map[string]marked{}
+)
+
+// marksOf reads a session's marks, cached on the file's size and mtime:
+// the index asks on every load, and most sessions never change again.
+func marksOf(in history.SessionInfo) ([]mark, bool) {
+	st, err := os.Stat(in.Path)
+	if err != nil {
+		return nil, false
+	}
+	marksMu.Lock()
+	c, hit := marksCache[in.Path]
+	marksMu.Unlock()
+	if hit && c.size == st.Size() && c.mod.Equal(st.ModTime()) {
+		return c.marks, true
+	}
+	entries, err := history.Read(in.Path)
+	if err != nil {
+		return nil, false
+	}
+	marks := make([]mark, len(entries))
+	for i, e := range entries {
+		marks[i] = mark{seq: e.Seq, at: e.At, talk: e.Kind == "input" || e.Kind == "assistant"}
+	}
+	marksMu.Lock()
+	marksCache[in.Path] = marked{size: st.Size(), mod: st.ModTime(), marks: marks}
+	marksMu.Unlock()
+	return marks, true
 }
 
 func sameDir(a, b string) bool {

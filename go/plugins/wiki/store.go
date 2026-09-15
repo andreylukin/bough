@@ -23,6 +23,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -100,6 +101,37 @@ type PageRef struct {
 	Summary string `json:"summary"`
 	Updated string `json:"updated"`
 	Counts  Counts `json:"counts"`
+	// Problems says the page itself is damaged (an ingest wrote editor
+	// line numbers into it, say), so it is not rendered as if it were fine.
+	Problems []string `json:"problems,omitempty"`
+}
+
+var (
+	lineNumRE      = regexp.MustCompile(`^\s*\d+\|`)
+	emptySessionRE = regexp.MustCompile(`Sessions:\s*,{2,}`)
+)
+
+// malformed names what is wrong with a compiled page's text: lines that
+// start with an editor's "N|" gutter, or a Sessions list of bare commas.
+func malformed(body string) []string {
+	var out []string
+	numbered, nonEmpty := 0, 0
+	for _, l := range strings.Split(body, "\n") {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		nonEmpty++
+		if lineNumRE.MatchString(l) {
+			numbered++
+		}
+	}
+	if numbered >= 2 && numbered*4 >= nonEmpty {
+		out = append(out, fmt.Sprintf("%d of %d lines start with editor line numbers (\"N|\"); the page was written from a numbered view and needs recompiling", numbered, nonEmpty))
+	}
+	if emptySessionRE.MatchString(body) {
+		out = append(out, "the Sessions line is a list of empty values")
+	}
+	return out
 }
 
 // Page is one page, read for display.
@@ -124,7 +156,7 @@ var (
 // parsePage splits a page into blocks. Citations stay unresolved: the
 // caller decides whether reading history is worth it.
 func parsePage(rel, body string) Page {
-	pg := Page{PageRef: PageRef{Path: rel, Topic: topicOf(rel)}, Body: body, Blocks: []Block{}, Sessions: []string{}, LinkedFrom: []PageRef{}}
+	pg := Page{PageRef: PageRef{Path: rel, Topic: topicOf(rel), Problems: malformed(body)}, Body: body, Blocks: []Block{}, Sessions: []string{}, LinkedFrom: []PageRef{}}
 	lines := strings.Split(body, "\n")
 	var cur *Block
 	var buf []string
@@ -246,7 +278,10 @@ func classify(b *Block, text string) {
 	}
 	for _, m := range citeRE.FindAllStringSubmatch(text, -1) {
 		seq, _ := strconv.ParseInt(m[2], 10, 64)
-		b.Cites = append(b.Cites, Cite{Session: m[1], Seq: seq})
+		// The same entry cited twice in one block is one piece of evidence.
+		if !slices.ContainsFunc(b.Cites, func(c Cite) bool { return c.Session == m[1] && c.Seq == seq }) {
+			b.Cites = append(b.Cites, Cite{Session: m[1], Seq: seq})
+		}
 	}
 	b.Text = stripCites(text)
 	if b.Kind != "claim" {
@@ -315,24 +350,80 @@ func shortDuration(d time.Duration) string {
 // fill resolves c; claim is the text citing it, so the excerpt can start
 // at the part of the entry that claim is about rather than its first line.
 func (r *resolver) fill(c *Cite, claim string) {
-	es := r.session(c.Session)
-	if es == nil {
+	d, found, ok := r.cited(c.Session, c.Seq)
+	if !ok {
 		c.Problem = "cites a session that does not exist: " + c.Session
 		return
 	}
+	if !found {
+		c.Problem = fmt.Sprintf("cites entry #%d, which session %s does not have", c.Seq, c.Session)
+		return
+	}
+	c.At = d.at.Format(time.RFC3339)
+	c.Label, c.Excerpt = d.label, redact(excerpt(focus(d.text, claim), 6))
+}
+
+// citedEntry is one cited entry as describe reads it.
+type citedEntry struct {
+	label, text string
+	at          time.Time
+	found       bool
+}
+
+type citeKey struct {
+	path string
+	seq  int64
+}
+
+type citeVal struct {
+	size int64
+	mod  time.Time
+	d    citedEntry
+}
+
+// citeCache outlives a request: every index load resolves every citation,
+// and a cited session's file rarely changes after it is cited.
+var (
+	citeMu    sync.Mutex
+	citeCache = map[citeKey]citeVal{}
+)
+
+// cited looks up one entry; ok is false when the session file is missing.
+func (r *resolver) cited(id string, seq int64) (d citedEntry, found, ok bool) {
+	if strings.ContainsAny(id, `/\`) {
+		return d, false, false
+	}
+	path := filepath.Join(r.hist, id+".jsonl")
+	st, err := os.Stat(path)
+	if err != nil {
+		return d, false, false
+	}
+	key := citeKey{path, seq}
+	citeMu.Lock()
+	v, hit := citeCache[key]
+	citeMu.Unlock()
+	if hit && v.size == st.Size() && v.mod.Equal(st.ModTime()) {
+		return v.d, v.d.found, true
+	}
+	es := r.session(id)
+	if es == nil {
+		return d, false, false
+	}
 	for _, e := range es {
-		if e.Seq != c.Seq {
+		if e.Seq != seq {
 			continue
 		}
-		c.At = e.At.Format(time.RFC3339)
 		label, text, _, ok := describe(e)
 		if !ok {
 			label, text = e.Kind, ""
 		}
-		c.Label, c.Excerpt = label, excerpt(focus(text, claim), 6)
-		return
+		d = citedEntry{label: label, text: text, at: e.At, found: true}
+		break
 	}
-	c.Problem = fmt.Sprintf("cites entry #%d, which session %s does not have", c.Seq, c.Session)
+	citeMu.Lock()
+	citeCache[key] = citeVal{size: st.Size(), mod: st.ModTime(), d: d}
+	citeMu.Unlock()
+	return d, d.found, true
 }
 
 // resolve fills every citation on the page and counts its states.
@@ -948,7 +1039,7 @@ func (s *Store) Source(id string, seq int64) (Source, error) {
 		if !ok {
 			label, text = e.Kind, ""
 		}
-		src.Lines = append(src.Lines, EntryLine{Seq: e.Seq, Label: label, Text: excerpt(text, 20)})
+		src.Lines = append(src.Lines, EntryLine{Seq: e.Seq, Label: label, Text: redact(excerpt(text, 20))})
 	}
 	if infos, err := history.List(s.p.hist); err == nil {
 		for _, in := range infos {

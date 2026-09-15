@@ -9,6 +9,7 @@ package history
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -29,7 +30,11 @@ import (
 // git runs one git command in dir with extra env, returning trimmed
 // stdout; stderr rides along in the error.
 func git(dir string, env []string, args ...string) (string, error) {
-	c := exec.Command("git", args...)
+	return gitCtx(context.Background(), dir, env, args...)
+}
+
+func gitCtx(ctx context.Context, dir string, env []string, args ...string) (string, error) {
+	c := exec.CommandContext(ctx, "git", args...)
 	c.Dir = dir
 	c.Env = append(os.Environ(), env...)
 	var out, stderr bytes.Buffer
@@ -45,7 +50,12 @@ func git(dir string, env []string, args ...string) (string, error) {
 // a temporary index seeded from the real one — so only changed files
 // are hashed — and touches neither the index nor HEAD. An error means
 // dir is not in a git repo (or git is missing).
-func Snapshot(dir string) (string, error) {
+func Snapshot(dir string) (string, error) { return SnapshotContext(context.Background(), dir) }
+
+// SnapshotContext is Snapshot bounded by ctx: `git add -A` over a huge
+// tree is the slow part of reading a session's edits.
+func SnapshotContext(ctx context.Context, dir string) (string, error) {
+	git := func(dir string, env []string, args ...string) (string, error) { return gitCtx(ctx, dir, env, args...) }
 	index, err := git(dir, nil, "rev-parse", "--git-path", "index")
 	if err != nil {
 		return "", err

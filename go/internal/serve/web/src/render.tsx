@@ -33,7 +33,22 @@ export function Markdown({ text }: { text: string }) {
     // A resize or a streamed row changes the overflow, not only a scroll.
     const ro = new ResizeObserver(() => boxes.forEach(mark));
     boxes.forEach((b) => { mark(b); ro.observe(b); if (b.firstElementChild) ro.observe(b.firstElementChild); b.addEventListener("scroll", on, { passive: true }); });
-    return () => { ro.disconnect(); boxes.forEach((b) => b.removeEventListener("scroll", on)); };
+    // A code block copies like a tool output does.
+    const copies = [...(ref.current?.querySelectorAll<HTMLElement>("pre") ?? [])].map((pre) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "copy-btn md-copy";
+      btn.title = btn.ariaLabel = "Copy code";
+      btn.textContent = "Copy";
+      btn.onclick = () => navigator.clipboard?.writeText(pre.querySelector("code")?.textContent ?? pre.textContent ?? "").then(() => {
+        btn.textContent = "Copied";
+        setTimeout(() => { btn.textContent = "Copy"; }, 1400);
+      }, () => {});
+      pre.classList.add("md-pre");
+      pre.appendChild(btn);
+      return btn;
+    });
+    return () => { ro.disconnect(); boxes.forEach((b) => b.removeEventListener("scroll", on)); copies.forEach((c) => c.remove()); };
   }, [html]);
   return <div className="md" ref={ref} dangerouslySetInnerHTML={{ __html: html }} />;
 }
@@ -167,9 +182,17 @@ export function blank(text: string): boolean {
   return !text.replace(/<[^>\n]*>/g, "").trim();
 }
 
-/** Five "Untitled session" rows are indistinguishable; an id tail is not. */
-export function untitled(id: string): string {
-  return "Session " + id.slice(-6);
+/** No title yet: when it was, not an opaque hex id. The id tail belongs in a secondary chip. */
+export function untitled(_id: string, at?: string): string {
+  const d = at ? new Date(at) : null;
+  return d && !Number.isNaN(d.getTime())
+    ? `Untitled · ${d.toLocaleDateString([], { month: "short", day: "numeric" })}`
+    : "Untitled session";
+}
+
+/** Titles that would read the same once cut to a row's width collide too. */
+export function titleKey(t: string): string {
+  return t.trim().toLowerCase().slice(0, 40);
 }
 
 /** Titles can arrive as raw markdown ("## What I found"). Show the words. */
@@ -177,9 +200,14 @@ export function plainTitle(t: string): string {
   return t.replace(/^#{1,6}\s+/, "").replace(/[*_`]/g, "").trim();
 }
 
-/** One name for a session on every surface: its title, else "Session <id tail>". */
-export function sessionTitle(r: { id: string; title?: string }): string {
-  return plainTitle(r.title ?? "") || untitled(r.id);
+/** One name for a session on every surface: its title, else the summary's first sentence, else "Untitled · <date>". */
+export function sessionTitle(r: { id: string; title?: string; summary?: string; lastAt?: string }): string {
+  return plainTitle(r.title ?? "") || (r.summary ?? "").split(/(?<=[.!?])\s/)[0].trim() || untitled(r.id, r.lastAt);
+}
+
+/** Whether a session's name is only the fallback, so its id tail should show beside it. */
+export function hasOwnTitle(r: { title?: string; summary?: string }): boolean {
+  return Boolean(plainTitle(r.title ?? "") || (r.summary ?? "").trim());
 }
 
 const QUIET = new Set(["job", "hook", "usage", "system", "nudge", "command", "meta", "title", "turn-summary", "undo"]);

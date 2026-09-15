@@ -61,15 +61,29 @@ func Changes(ctx context.Context, dir string) (files []Change, ok bool) {
 	return files, true
 }
 
+// changesTimeout bounds one session's git reads, so a huge tree answers
+// with an error instead of holding the request open.
+const changesTimeout = 5 * time.Second
+
+// Seams for tests: each request runs its own git, with no shared lock.
+var (
+	changesOf    = Changes
+	sessionEdits = SessionEdits
+)
+
 func (a *API) changes(w http.ResponseWriter, r *http.Request) {
 	in, ok := a.info(r.PathValue("id"))
 	if !ok {
 		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: unknown session %q", r.PathValue("id")))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), changesTimeout)
 	defer cancel()
-	files, repo := Changes(ctx, in.Cwd)
+	files, repo := changesOf(ctx, in.Cwd)
+	if ctx.Err() != nil {
+		writeErr(w, http.StatusGatewayTimeout, fmt.Errorf("serve: api: reading uncommitted changes took longer than %s (a large working tree?)", changesTimeout))
+		return
+	}
 	if files == nil {
 		files = []Change{}
 	}
@@ -133,7 +147,7 @@ func SessionEdits(ctx context.Context, dir string, entries []history.Entry) (edi
 	}
 	var now string
 	if base != "" {
-		now, _ = history.Snapshot(dir)
+		now, _ = history.SnapshotContext(ctx, dir)
 	}
 	if now == "" {
 		for _, f := range files {
@@ -201,9 +215,13 @@ func (a *API) edits(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: read session %q: %w", id, err))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), changesTimeout)
 	defer cancel()
-	files, repo := SessionEdits(ctx, in.Cwd, entries)
+	files, repo := sessionEdits(ctx, in.Cwd, entries)
+	if ctx.Err() != nil {
+		writeErr(w, http.StatusGatewayTimeout, fmt.Errorf("serve: api: reading this session's edits took longer than %s (a large working tree?)", changesTimeout))
+		return
+	}
 	if files == nil {
 		files = []Edit{}
 	}

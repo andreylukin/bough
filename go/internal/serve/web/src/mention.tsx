@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Spinner } from "./loading";
 
 /**
  * The composer's / and @ pickers.
@@ -71,7 +72,8 @@ export function useSkills(on: boolean) {
   useEffect(() => {
     if (!on) return;
     let live = true;
-    catalogue ??= fetch("/api/skills").then((r) => {
+    // Bounded: a read that never answers is shown as a failure with Retry, not "Loading" forever.
+    catalogue ??= fetch("/api/skills", { signal: AbortSignal.timeout(15_000) }).then((r) => {
       if (!r.ok) throw new Error(String(r.status));
       return r.json();
     // An empty answer is not cached: skills installed since show on the next open.
@@ -203,7 +205,7 @@ export function Mentions({ trigger, session, onPick, onClose, onOpen, onActive }
     const q = trigger.token ? ` match “${trigger.token}”` : "";
     const msg = failed ? <>Couldn’t load {isFiles ? "files" : "skills"}. <button className="link" onMouseDown={(e) => e.preventDefault()}
         onClick={isFiles ? retryFiles : retrySkills}>Retry</button></>
-      : !loaded ? (slow ? (isFiles ? "Finding files…" : "Loading skills…") : null)
+      : !loaded ? (slow ? <><Spinner /> {isFiles ? "Finding files…" : "Loading skills…"}</> : null)
       : !isFiles && skills?.length === 0 ? "No skills installed"
       : `No ${isFiles ? "files" : "skills"}${q || " found"}`;
     return msg && (

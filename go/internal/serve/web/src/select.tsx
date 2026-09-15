@@ -17,7 +17,7 @@ export interface Option { value: string; label: string; detail?: string; group?:
  * Keyboard: ↓/↑/Enter/Space open it; inside, ↓↑ move, Enter picks,
  * Esc closes and gives focus back to the button.
  */
-export function Select({ value, options, onChange, label, placeholder = "Choose", searchable = false, align = "start", note, detailHeading, footer, disabled = false }: {
+export function Select({ value, options: given, onChange, label, placeholder = "Choose", searchable = false, align = "start", note, detailHeading, footer, disabled = false }: {
   value: string;
   /** Shown but not choosable, when the setting does not apply yet. */
   disabled?: boolean;
@@ -36,6 +36,8 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
   /** A fixed line under the list about the highlighted option. */
   footer?: (o: Option | undefined) => React.ReactNode;
 }) {
+  // A placeholder is what the button says with nothing chosen; it is never a checked option.
+  const options = useMemo(() => given.filter((o) => !(o.value === "" && o.label === placeholder)), [given, placeholder]);
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [at, setAt] = useState(0);

@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useModal } from "./dialog";
 import type { Row } from "./types";
-import { plainTitle, sessionTitle } from "./render";
-import { shownStatus } from "./status";
+import { hasOwnTitle, plainTitle, sessionTitle, titleKey } from "./render";
+import { STATUS, shownStatus } from "./status";
 
 /**
  * ⌘K. With 150 conversations the sidebar is a scroll, not an index —
@@ -33,16 +33,30 @@ function useWikiHits(q: string, open: boolean, on: boolean): WikiHit[] {
   useEffect(() => {
     const needle = q.trim();
     if (!on || !open || needle.length < 2) { setHits([]); return; }
-    let live = true;
+    const ctl = new AbortController();
     const t = setTimeout(() => {
-      fetch("/api/wiki/search?q=" + encodeURIComponent(needle))
-        .then((r) => r.json())
-        .then((d) => { if (live) setHits(d.hits ?? []); })
-        .catch(() => { if (live) setHits([]); });
+      getJSON<{ hits?: WikiHit[] }>("/api/wiki/search?q=" + encodeURIComponent(needle), ctl.signal)
+        .then((d) => setHits(Array.isArray(d.hits) ? d.hits : []))
+        .catch(() => { if (!ctl.signal.aborted) setHits([]); });
     }, 180);
-    return () => { live = false; clearTimeout(t); };
+    return () => { ctl.abort(); clearTimeout(t); };
   }, [q, open, on]);
   return hits;
+}
+
+/**
+ * A search read that always settles: a bad status, a body that is not
+ * JSON, or a server that never answers (15s) rejects, and an abort from
+ * a newer query rejects too, so no footer waits forever.
+ */
+function getJSON<T>(url: string, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const slow = setTimeout(() => reject(new Error("timed out")), 15_000);
+    fetch(url, { signal })
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json() as Promise<T>; })
+      .then(resolve, reject)
+      .finally(() => clearTimeout(slow));
+  });
 }
 
 /**
@@ -79,7 +93,7 @@ interface SearchHit { id: string; title: string; repo: string; branch: string; h
  * a command — so the palette asks the server to search the bodies too.
  * Local matching answers instantly and this fills in behind it.
  */
-type SearchState = "idle" | "loading" | "error";
+type SearchState = "idle" | "loading" | "done" | "error";
 
 function useFullText(q: string, open: boolean): { hits: SearchHit[]; state: SearchState } {
   const [hits, setHits] = useState<SearchHit[]>([]);
@@ -92,18 +106,19 @@ function useFullText(q: string, open: boolean): { hits: SearchHit[]; state: Sear
     if (!open || needle.length < 2) { setHits([]); setForQ(""); setState("idle"); return; }
     setState("loading");
     // Debounced: this reads every transcript, and the box is typed into
-    // one character at a time.
-    let live = true;
+    // one character at a time. A newer query aborts the older read.
+    const ctl = new AbortController();
     const t = setTimeout(() => {
-      fetch("/api/search?q=" + encodeURIComponent(needle))
-        .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
-        .then((d) => { if (live) { setHits(d.hits ?? []); setForQ(needle); setState("idle"); } })
+      getJSON<{ hits?: SearchHit[] }>("/api/search?q=" + encodeURIComponent(needle), ctl.signal)
+        .then((d) => { if (!ctl.signal.aborted) { setHits(Array.isArray(d.hits) ? d.hits : []); setForQ(needle); setState("done"); } })
         // A failed search is not "no matches": say so.
-        .catch(() => { if (live) { setHits([]); setForQ(needle); setState("error"); } });
+        .catch(() => { if (!ctl.signal.aborted) { setHits([]); setForQ(needle); setState("error"); } });
     }, 180);
-    return () => { live = false; clearTimeout(t); };
+    return () => { ctl.abort(); clearTimeout(t); };
   }, [q, open]);
-  return { hits: forQ === q.trim() ? hits : [], state };
+  const current = forQ === q.trim();
+  // An answer for an older query is still loading for this one.
+  return { hits: current ? hits : [], state: state === "loading" || current || state === "idle" ? state : "loading" };
 }
 
 export function Palette({ open, onClose, rows, commands, onOpenSession, onStart, onOpenWikiPage, initialQuery = "", current = null, startIn }: {
@@ -191,7 +206,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     // Titles that repeat carry the id's tail, the one thing always different.
     const twice = new Set<string>();
     const seenTitle = new Set<string>();
-    const same = (t: string) => t.toLowerCase();
+    const same = titleKey;
     for (const { title } of cands) (seenTitle.has(same(title)) ? twice : seenTitle).add(same(title));
     const detailFor = (r: Row, title: string) => {
       const h = foundBy.get(r.id);
@@ -205,7 +220,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
       ...recent.map((r) => ({ s: 20, c: {
         id: "s:" + r.id,
         label: sessionTitle(r),
-        hint: [r.repo?.split("/").pop(), r.lastAt ? agoShort(r.lastAt) : ""].filter(Boolean).join(" · "),
+        hint: meta(r, r.repo, !hasOwnTitle(r)),
         group: "Recent sessions",
         run: () => onOpenSession(r.id),
       } as Command })),
@@ -213,8 +228,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
       ...cands.map(({ r, title, s }) => ({ s, c: {
         id: "s:" + r.id,
         label: title,
-        hint: [r.id === current ? "Current" : "", (r.repo || foundBy.get(r.id)?.repo)?.split("/").pop(), r.testsFailed ? "tests failed" : shownStatus(r) === "error" ? "failed" : r.status,
-               twice.has(same(title)) ? r.id.slice(-6) : ""].filter(Boolean).join(" · "),
+        hint: (r.id === current ? "Current · " : "") + meta(r, r.repo || foundBy.get(r.id)?.repo, twice.has(same(title)) || !hasOwnTitle(r)),
         group: s <= 50 ? "Found in the conversation" : "Sessions",
         detail: detailFor(r, title),
         run: () => onOpenSession(r.id),
@@ -325,12 +339,19 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
         <div className="pal-foot" role="status">
           <span className="num">{hits.length} shown</span>
           {searching === "loading" && <span>Searching text…</span>}
+          {searching === "done" && found.length === 0 && <span>No text matches</span>}
           {searching === "error" && <span className="pal-foot-bad">Text search failed · titles only</span>}
           <span className="pal-foot-keys">↑↓ move · ↵ open · esc close</span>
         </div>
       </div>
     </div>
   , document.body);
+}
+
+/** A session's meta, one shape everywhere in the palette: repo · Status · age, and the id tail when the name alone does not tell it apart. */
+function meta(r: Row, repo: string | undefined, withId: boolean): string {
+  const status = r.testsFailed ? "Tests failed" : shownStatus(r) === "error" ? "Failed" : STATUS[r.status]?.label ?? r.status;
+  return [repo?.split("/").pop(), status, r.lastAt ? agoShort(r.lastAt) : "", withId ? r.id.slice(-6) : ""].filter(Boolean).join(" · ");
 }
 
 function agoShort(iso: string): string {

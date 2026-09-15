@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Back } from "./app";
+import { Pending as Waiting } from "./loading";
 import {
   OffToggle, RuleRow, hooksApi, offId, setOffApi, useOffs,
   type Load, type Rule, type Save, type SetOff,
@@ -253,7 +254,7 @@ export function Pending({ title, what, err, onBack, onRetry }: {
       <div className="scroll proj-body">
         {err
           ? <p className="err">{title} did not load: {err} <button className="link" onClick={onRetry}>Retry</button></p>
-          : <p className="proj-none">Loading {what}…</p>}
+          : <Waiting what={what.replace(/^./, (c) => c.toUpperCase())} />}
       </div>
     </div>
   );

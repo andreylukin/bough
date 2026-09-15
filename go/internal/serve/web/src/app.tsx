@@ -7,7 +7,7 @@ import { ProjectsView } from "./projects";
 import { ModeChip, ModePicker, type ModeValue } from "./mode";
 import { Select, type Option } from "./select";
 import { DialogHost, askChoice, askConfirm, askText } from "./dialog";
-import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, execNote, sessionTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
+import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, execNote, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
 import { agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
@@ -19,6 +19,7 @@ import { ContextPage } from "./context";
 import { ChangesBody, ChangesPage, countOf, useChanges } from "./changes";
 import { Palette, usePaletteKey, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
+import { Pending } from "./loading";
 
 export type View = "sessions" | "projects" | "hooks" | "wiki";
 
@@ -50,7 +51,7 @@ function shortPath(p: string, home: string): string {
 }
 
 /** "8m", "3h", "2d": how long ago, as a sidebar reads it. */
-function ago(iso: string): string {
+export function ago(iso: string): string {
   const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
   if (s < 60) return "<1m";
   if (s < 3600) return `${Math.floor(s / 60)}m`;
@@ -194,7 +195,25 @@ const ICONS = {
   hooks: <path d="M13 3L5 13.5h6L10 21l8-10.5h-6z" />,
   wiki: <><path d="M4.5 5.5A1.5 1.5 0 0 1 6 4h13.5v14H6a1.5 1.5 0 0 0-1.5 1.5z" /><path d="M4.5 19.5A1.5 1.5 0 0 0 6 21h13.5v-3" /><path d="M9 8.5h6" /></>,
   chevron: <path d="M9 6l6 6-6 6" />,
+  filter: <path d="M4 6.5h16M7 12h10M10 17.5h4" />,
 };
+
+/** Whether history can go back or forward from here, where the browser says (the Navigation API); else both stay on. */
+function useHistoryNav(): { back: boolean; forward: boolean } {
+  type Nav = EventTarget & { canGoBack: boolean; canGoForward: boolean };
+  const nav = (window as unknown as { navigation?: Nav }).navigation;
+  const read = () => ({ back: nav ? nav.canGoBack : true, forward: nav ? nav.canGoForward : true });
+  const [state, setState] = useState(read);
+  useEffect(() => {
+    if (!nav) return;
+    const on = () => setState(read());
+    nav.addEventListener("currententrychange", on);
+    window.addEventListener("popstate", on);
+    return () => { nav.removeEventListener("currententrychange", on); window.removeEventListener("popstate", on); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return state;
+}
 
 export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onFind, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
@@ -340,18 +359,34 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   const [card, setCard] = useState<{ id: string; top: number; left: number } | null>(null);
   const peekTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const quiet = useRef(false);
+  // Moving from row to row swaps the card at once, never showing the last row's content at the new spot.
+  const cardAt = useRef(0);
   const peek = (r: Row, el: HTMLElement) => {
     clearTimeout(peekTimer.current);
     if (quiet.current) { setCard(null); return; }
     const rect = el.getBoundingClientRect();
     // Beside the row, so it never covers the turn log under it.
-    peekTimer.current = setTimeout(() => setCard({
+    const next = {
       id: r.id,
       top: Math.max(8, Math.min(rect.top, window.innerHeight - 200)),
       left: Math.min(rect.right + 8, window.innerWidth - 372),
-    }), 300);
+    };
+    if (Date.now() - cardAt.current < 250) { cardAt.current = Date.now(); setCard(next); return; }
+    peekTimer.current = setTimeout(() => { cardAt.current = Date.now(); setCard(next); }, 300);
   };
-  const unpeek = () => { clearTimeout(peekTimer.current); peekTimer.current = setTimeout(() => setCard(null), 150); };
+  const unpeek = () => {
+    clearTimeout(peekTimer.current);
+    setCard((c) => { if (c) cardAt.current = Date.now(); return null; });
+  };
+  // Any click or scroll elsewhere closes it too: a card never lingers over the thread.
+  useEffect(() => {
+    if (!card) return;
+    const close = () => { clearTimeout(peekTimer.current); setCard(null); };
+    document.addEventListener("pointerdown", close, true);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("blur", close);
+    return () => { document.removeEventListener("pointerdown", close, true); window.removeEventListener("scroll", close, true); window.removeEventListener("blur", close); };
+  }, [card]);
   // A card for the session you just left is stale.
   useEffect(() => { clearTimeout(peekTimer.current); setCard(null); }, [selected]);
 
@@ -379,6 +414,9 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     return () => clearTimeout(t);
   }, [loadedAt]);
   const searchBtn = useRef<HTMLButtonElement>(null);
+  const hist = useHistoryNav();
+  // A hairline under the toolbar once the list has scrolled under it.
+  const [scrolled, setScrolled] = useState(false);
 
   // A long log shows its last turns; the rest wait behind one line.
   const [allTurns, setAllTurns] = useState<Set<string>>(() => new Set());
@@ -519,7 +557,10 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     // title, a hit elsewhere gets its own line centred on it.
     const hit = getSearchMatch(r, q);
     // A late hit starts its excerpt a few characters before it, so a narrow row still shows it.
-    const title = displayTitle(r) || (child && r.status === "queued" ? "Queued agent" : "");
+    const own = displayTitle(r) || (child && r.status === "queued" ? "Queued agent" : "");
+    // No title: the shared fallback name, with the id tail as a secondary chip.
+    const title = own || sessionTitle(r);
+    const chip = twin || !hasOwnTitle(r) && !own;
     const shown = hit?.field === "title" && hit.at > 24 ? excerpt(title, hit.at, 6).text : title;
     const reason = hit && hit.field !== "title" ? excerpt(hit.text, hit.at, 6) : undefined;
     // Done is what the check mark already says; the row keeps only the age then.
@@ -540,10 +581,10 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
                   onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
                   onBlur={unpeek}
                   aria-describedby={card?.id === r.id ? "row-card" : undefined}
-                  aria-label={`${title || sessionTitle(r)},${life ? LIFE_WORD[life] : why}, ${ago(r.lastAt)} ago${r.branch ? `, branch ${r.branch}` : ""}${bgText ? `, background: ${bgText}` : ""}`}
+                  aria-label={`${title},${life ? LIFE_WORD[life] : why}, ${ago(r.lastAt)} ago${r.branch ? `, branch ${r.branch}` : ""}${bgText ? `, background: ${bgText}` : ""}`}
                   className={"row" + (stacked ? " row-2" : "") + (on ? " row-on" : "") + (r.turns && !q ? " row-has-log" : "") + (r.trouble && onAck ? " row-has-ack" : "")}
                   aria-current={on ? "true" : undefined}
-                  title={`${why} · ${ago(r.lastAt)} ago${r.branch ? ` · ${r.branch}` : ""}`}>
+                  title={`${title}\n${why} · ${ago(r.lastAt)} ago${r.branch ? ` · ${r.branch}` : ""}`}>
             {/* A failure you have not seen is a red mark; the reason is its label. */}
             <span className="row-mark">
               {failed
@@ -553,17 +594,14 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
             {/* Status metadata goes under the title, so a chip never cuts the name. */}
             <span className={stacked ? "row-stack" : "row-line"}>
             <span className="row-name">
-            {title
-              ? <><span className="row-title" title={shown !== title ? title : undefined}>{marked(shown, q)}</span>{twin && <span className="mono row-id">{r.id.slice(-6)}</span>}</>
-              // No title: the id tail alone tells rows apart.
-              : <span className="row-title mono row-untitled">{r.id.slice(-6)}</span>}
+            <span className={"row-title" + (own ? "" : " row-untitled")}>{marked(shown, q)}</span>{chip && <span className="mono row-id">{r.id.slice(-6)}</span>}
             </span>
             {label && <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : "") + (failed || asking || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
-              <ModeChip row={r} />{label} · {ago(failed === "tests failed" && r.testsAt ? r.testsAt : r.lastAt)}
+              <ModeChip row={r} bare />{label} · {ago(failed === "tests failed" && r.testsAt ? r.testsAt : r.lastAt)}
             </span>}
             {/* State and time, never cut: the title is what gives way. */}
             {life && <span className={"num row-meta row-meta-live" + (life === "failed" ? " row-meta-bad" : "")} aria-hidden="true">
-              <ModeChip row={r} />{LIFE_WORD[life]} · {life === "queued" ? `waiting ${ago(r.lastAt)}` : ago(r.lastAt)}
+              <ModeChip row={r} bare />{LIFE_WORD[life]} · {life === "queued" ? `waiting ${ago(r.lastAt)}` : ago(r.lastAt)}
             </span>}
             {bgText && <span className="bg-summary" aria-hidden="true">Background: {bgText}</span>}
             </span>
@@ -574,7 +612,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
             )}
             {/* Touch has no hover card: a phone reads status and age off the row. */}
             {!label && !life && <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : "") + (failed || asking || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
-              <ModeChip row={r} />{ago(r.lastAt)}
+              <ModeChip row={r} bare />{ago(r.lastAt)}
             </span>}
           </button>
           {/* The disclosure and Seen are siblings of the row, not inside
@@ -624,11 +662,12 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     const open = !(searchOn ? searchFolds : wsFolded).has(key);
     const urgent = list.filter((r) => sessionSignal(r) === 0);
     const seen = new Map<string, number>();
-    for (const r of list) seen.set(displayTitle(r), (seen.get(displayTitle(r)) ?? 0) + 1);
+    const nameKey = (r: Row) => titleKey(displayTitle(r) || sessionTitle(r));
+    for (const r of list) seen.set(nameKey(r), (seen.get(nameKey(r)) ?? 0) + 1);
     return (
       <div key={key} className="ws">
         <button className="ws-head" role="treeitem" aria-expanded={open} onClick={() => toggleWs(key)} title={list[0].project ? `Project ${ws}` : list[0].repo || list[0].cwd}>
-          <Icon d={ICONS.chevron} size={12} /><Icon d={ICONS.folder} size={15} /><span className="ws-name">{ws}</span>
+          <Icon d={ICONS.chevron} size={12} /><Icon d={list[0].project ? ICONS.projects : ICONS.folder} size={15} /><span className={"ws-name" + (list[0].project ? " ws-project" : "")}>{ws}</span>
           {/* Folded, a group still says when something in it needs you. */}
           {!open && (urgent.length
             ? <span className={"num sec-count sec-count-" + (urgent.some(hasFailure) ? "trouble" : "needs-you")}>{urgent.length} need{urgent.length === 1 ? "s" : ""} you</span>
@@ -644,14 +683,14 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
           if (!fresh.length && older.length) fresh.push(older.shift()!);
           const olderKey = `older:${key}`;
           const olderOpen = foldOpen(olderKey, unfolded.has(olderKey));
-          const dup = (r: Row) => (seen.get(displayTitle(r)) ?? 0) > 1;
+          const dup = (r: Row) => (seen.get(nameKey(r)) ?? 0) > 1;
           return (
             <div role="group">
               {fresh.map((r) => session(r, dup(r)))}
               {older.length > 0 && (
                 <button type="button" className="ws-older" role="treeitem" aria-expanded={olderOpen}
                         onClick={foldToggle(olderKey, () => toggleFold(olderKey))}>
-                  {olderOpen ? "Hide older" : `${older.length} older`}
+                  <Icon d={ICONS.chevron} size={12} />{olderOpen ? `Hide ${older.length} older` : `${older.length} older`}
                 </button>
               )}
               {olderOpen && older.map((r) => session(r, dup(r)))}
@@ -679,29 +718,21 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   // and its toolbar stays whole whatever a desktop left saved.
   const folded = closed && !narrow;
   const toolbar = (
-    <div className="side-bar">
+    <div className={"side-bar" + (scrolled && !folded ? " side-bar-scrolled" : "")}>
       <button className="side-icon side-collapse" onClick={() => setSide(!closed)} aria-expanded={!closed}
               aria-label={closed ? "Show sidebar" : "Hide sidebar"} title={`${closed ? "Show sidebar" : "Hide sidebar"} (${modKey()}B)`}>
         <Icon d={ICONS.panel} />
       </button>
-      {folded ? <>
-        {/* The rail keeps what the toolbar does; search is the palette, which leaves the rail folded. */}
-        {onFind && <button className="side-icon" onClick={onFind} aria-label="Search sessions" title={`Search sessions (${modKey()}K)`}><Icon d={ICONS.search} /></button>}
-        {onNew && <button className="side-new" onClick={onNew} aria-label="New session" title="New session"><Icon d={ICONS.compose} /></button>}
-        <button className="side-icon" onClick={() => window.history.back()} aria-label="Back" title="Back"><Icon d={ICONS.back} /></button>
-        <button className="side-icon" onClick={() => window.history.forward()} aria-label="Forward" title="Forward"><Icon d={ICONS.forward} /></button>
-      </> : <>
-        <button className="side-icon" onClick={() => window.history.back()} aria-label="Back" title="Back"><Icon d={ICONS.back} /></button>
-        <button className="side-icon" onClick={() => window.history.forward()} aria-label="Forward" title="Forward"><Icon d={ICONS.forward} /></button>
-        <button ref={searchBtn} className={"side-icon" + (showSearch ? " side-icon-on" : "")} aria-expanded={showSearch} aria-controls="q"
+      {/* One order folded or not: back, forward, find, new. */}
+      <button className="side-icon" onClick={() => window.history.back()} disabled={!hist.back} aria-label="Back" title="Back"><Icon d={ICONS.back} /></button>
+      <button className="side-icon" onClick={() => window.history.forward()} disabled={!hist.forward} aria-label="Forward" title="Forward"><Icon d={ICONS.forward} /></button>
+      {folded
+        // The rail searches through the palette, which leaves the rail folded.
+        ? onFind && <button className="side-icon" onClick={onFind} aria-label="Search everything" title={`Search everything (${modKey()}K)`}><Icon d={ICONS.search} /></button>
+        : <button ref={searchBtn} className={"side-icon" + (showSearch ? " side-icon-on" : "")} aria-expanded={showSearch} aria-controls="q"
                 onClick={() => { if (showSearch) { onQuery(""); setSearching(false); } else setSearching(true); }}
-                aria-label="Search sessions" title="Search sessions (/)"><Icon d={ICONS.search} /></button>
-        {onNew && (
-          <button className="side-new" onClick={onNew} aria-label="New session" title="New session">
-            <Icon d={ICONS.compose} />
-          </button>
-        )}
-      </>}
+                aria-label="Filter the list" title={`Filter the list (/) · search everything with ${modKey()}K`}><Icon d={ICONS.filter} /></button>}
+      {onNew && <button className="side-new" onClick={onNew} aria-label="New session" title="New session"><Icon d={ICONS.compose} /></button>}
     </div>
   );
 
@@ -722,7 +753,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
       {cardRow && card && (
         // Status from the recorded fields; the agent's own note is labelled
         // as that, so prose that went stale never reads as the state.
-        <div id="row-card" className="row-card" role="tooltip" style={{ top: card.top, left: card.left }}>
+        <div id="row-card" key={cardRow.id} className="row-card" role="tooltip" style={{ top: card.top, left: card.left }}>
+          <p className="row-card-title">{sessionTitle(cardRow)}</p>
           <div className="row-card-state">
             {cardRow.trouble || cardRow.testsFailed
               ? <span className="status head-trouble"><StatusMark status="error" bare />{capital(cardRow.trouble || "tests failed")}</span>
@@ -755,7 +787,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
           {onRetry && <button className="link" onClick={onRetry}>Retry</button>}
         </p>
       ) : loadedAt === null && slow && <p className="side-fresh" role="status">Loading sessions…</p>}
-      <div className="scroll" role="tree" aria-label="Sessions" ref={treeRef} onScroll={() => { clearTimeout(peekTimer.current); setCard(null); }} onKeyDown={walk}
+      <div className="scroll" role="tree" aria-label="Sessions" ref={treeRef} onScroll={(e) => { clearTimeout(peekTimer.current); setCard(null); setScrolled(e.currentTarget.scrollTop > 0); }} onKeyDown={walk}
            onFocus={(e) => {
              const t = e.target as HTMLElement;
              if (!t.matches(TREE_ITEMS)) return;
@@ -776,7 +808,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
           // Once included, folding only hides the section; a search still covers it.
           () => (showArchived ? setArchFolded((v) => !v) : (setArchFolded(false), onToggleArchived())),
           showArchived && archivedState === "ready" ? archived.length : null,
-          archivedState === "loading" ? <p className="list-none">Loading archived…</p>
+          archivedState === "loading" ? <div className="list-none"><Pending what="Archived" inline onRetry={onRetryArchived} /></div>
           : archivedState === "failed" ? <p className="list-none">Couldn’t load archived · <button className="link" onClick={onRetryArchived}>Retry</button></p>
           : archived.length ? workspaces(byWorkspace(archived, projectNames), "archived") : <p className="list-none">{q ? "No archived matches." : "Nothing archived."}</p>)}
       </div>
@@ -1149,19 +1181,21 @@ export function SubAgentView({ agent, live, worker, all }: {
 
   const codes = agent.lines.filter((l) => l.kind === "sub:code").map((l) => l.text);
   const task = firstLine(plainTitle(agent.task));
-  const timing = [w.ms !== undefined ? duration(w.ms) : "", w.steps ? stepCount(w.steps) : ""].filter(Boolean).join(" · ");
+  // One step count for the header and the body: the loop's reported total, or what was recorded when that is more.
+  const recorded = w.recordedSteps ?? 0;
+  const totalSteps = Math.max(w.steps ?? 0, recorded || agent.lines.length);
+  const timing = [w.ms !== undefined ? duration(w.ms) : "", totalSteps ? stepCount(totalSteps) : ""].filter(Boolean).join(" · ");
   const line2 = [
     w.stepErrors ? `${w.stepErrors} step ${w.stepErrors === 1 ? "error" : "errors"}` : "",
     w.notRun ? `${w.notRun} later ${w.notRun === 1 ? "block" : "blocks"} skipped after a failure` : "",
   ].filter(Boolean).join(" · ");
-  const aria = `Subagent ${agent.worker}, ${stateText(w)}${w.ms !== undefined ? `, ${spokenDuration(w.ms)}` : ""}${w.steps ? `, ${stepCount(w.steps)}` : ""}${task ? `: ${task.slice(0, 80)}` : ""}`;
+  const aria = `Subagent ${agent.worker}, ${stateText(w)}${w.ms !== undefined ? `, ${spokenDuration(w.ms)}` : ""}${totalSteps ? `, ${stepCount(totalSteps)}` : ""}${task ? `: ${task.slice(0, 80)}` : ""}`;
 
   // Each step keeps its seq, so "View steps" can land on the first one that went wrong.
   const entry = (l: Line) => <div key={l.seq} data-step-seq={l.seq} style={{ display: "contents" }}><Entry line={l} codes={codes} nested /></div>;
-  const recorded = w.recordedSteps ?? 0;
   const stepsDisclosure = (label?: string, lines = agent.lines) => lines.length ? (
     <details className="block thin" ref={steps} data-open-key={w.key + ":steps"}>
-      <summary><span className="block-label">{label ?? (w.steps && w.steps > recorded ? `Steps · ${recorded} of ${w.steps} recorded` : `Steps · ${recorded || lines.length}`)}</span></summary>
+      <summary><span className="block-label">{label ?? (recorded && totalSteps > recorded ? `Steps · ${recorded} of ${totalSteps} recorded` : `Steps · ${totalSteps}`)}</span></summary>
       <div className="sub-body">{lines.map(entry)}</div>
     </details>
   ) : <p className="meta-line">No steps were recorded</p>;
@@ -1171,12 +1205,13 @@ export function SubAgentView({ agent, live, worker, all }: {
       <div className="sub-body"><Markdown text={agent.task} /></div>
     </details>
   ) : null;
-  const resultSection = (
+  // Said once: a missing result is one quiet line, not a labelled empty section.
+  const resultSection = w.result ? (
     <div className="sub-sec">
       <span className="block-label">Result</span>
-      {w.result ? <Markdown text={w.result} /> : <p className="meta-line">Result not recorded</p>}
+      <Markdown text={w.result} />
     </div>
-  );
+  ) : <p className="meta-line">Result not recorded</p>;
   const viewSteps = () => {
     const d = steps.current;
     if (!d) return;
@@ -1833,7 +1868,7 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, loading }:
         </Tip>
       )}
       {u?.cost !== undefined && (
-        <Tip tip={`Session cost: ${u.in.toLocaleString()} tokens in · ${u.out.toLocaleString()} out`}>
+        <Tip tip={`Session cost ${money(u.cost)} · ${u.in.toLocaleString()} tokens in · ${u.out.toLocaleString()} out`}>
           <span className="rt-label">Cost</span><span className="num rt-value">{money(u.cost)}</span>
         </Tip>
       )}
@@ -1985,13 +2020,24 @@ function Tip({ tip, label, className, children }: { tip: string; /** The accessi
   const id = useId();
   // Hover and focus show it; a click or tap pins it; Escape shuts it.
   const [held, setHeld] = useState<"pin" | "shut" | null>(null);
+  const body = useRef<HTMLSpanElement>(null);
+  // Kept inside the viewport: shifted left or right by what would overflow, 8px from each edge.
+  const clamp = () => requestAnimationFrame(() => {
+    const b = body.current;
+    if (!b) return;
+    b.style.translate = "";
+    const r = b.getBoundingClientRect();
+    if (!r.width) return;
+    const shift = r.right > innerWidth - 8 ? innerWidth - 8 - r.right : r.left < 8 ? 8 - r.left : 0;
+    if (shift) b.style.translate = `${Math.round(shift)}px 0`;
+  });
   return (
     <button type="button" className={"rt rt-tip" + (className ? " " + className : "")} aria-label={label} aria-describedby={id}
-            aria-expanded={held === "pin"} data-tip={held ?? undefined}
-            onClick={() => setHeld((h) => h === "pin" ? "shut" : "pin")} onBlur={() => setHeld(null)} onMouseLeave={() => setHeld((h) => h === "shut" ? null : h)}
+            aria-expanded={held === "pin"} data-tip={held ?? undefined} onMouseEnter={clamp} onFocus={clamp}
+            onClick={() => { setHeld((h) => h === "pin" ? "shut" : "pin"); clamp(); }} onBlur={() => setHeld(null)} onMouseLeave={() => setHeld((h) => h === "shut" ? null : h)}
             onKeyDown={(e) => { if (e.key === "Escape" && held !== "shut") { e.stopPropagation(); setHeld("shut"); } }}>
       {children}
-      <span className="rt-tip-body" role="tooltip" id={id}>{tip}</span>
+      <span className="rt-tip-body" role="tooltip" id={id} ref={body}>{tip}</span>
     </button>
   );
 }
@@ -2321,7 +2367,7 @@ function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onR
     <div className="ov">
       <header className="ov-head">
         <h1>Overview</h1>
-        <span className="ov-hint">{modKey()}K to start a session</span>
+        <span className="ov-hint">{modKey()}K to search or start a session</span>
       </header>
       <div className="scroll ov-body">
         {/* Lists are only as current as the last refresh, and say so. */}
@@ -2357,7 +2403,13 @@ function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onR
             )}
           </>
         ) : !loadErr && (
-          <p className="ov-none" role="status">{loadedAt === null ? "Loading sessions…" : `Nothing needs your attention.${running ? ` ${running} running.` : ""}`}</p>
+          loadedAt === null ? <p className="ov-none" role="status">Loading sessions…</p> : (
+            <div className="ov-empty" role="status">
+              <p className="ov-empty-title">Nothing needs your attention</p>
+              {running > 0 && <p className="ov-empty-sub">{running} running</p>}
+              <p className="ov-empty-keys"><kbd>{modKey()}K</kbd> search or start <kbd>/</kbd> filter the list <kbd>{modKey()}B</kbd> sidebar</p>
+            </div>
+          )
         )}
       </div>
     </div>
@@ -3115,7 +3167,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
           {row.trouble && row.trouble !== "tests failed" ? (
             // One status: the reason replaces "Done".
             <span className="status head-trouble"><StatusMark status="error" bare />{capital(row.trouble)}</span>
-          ) : row.status === "done" ? <span className="status head-idle">Run: Idle</span> : <StatusMark status={row.status} />}
+          ) : row.status === "done" ? <span className="status head-idle">Done</span> : <StatusMark status={row.status} />}
           <ModeChip row={row} />
           {row.orb?.status === "running" && onStopOrb && <button className="btn head-ack" onClick={onStopOrb}>Stop orb</button>}
           {/* A short link beside the chip: a full button pushed the title row
@@ -3534,17 +3586,31 @@ export default function App() {
     return () => clearInterval(t);
   }, []);
 
-  const refresh = useCallback(async () => {
+  // Only the newest read lands: an answer for the list before Archived was
+  // opened never overwrites the one that includes it.
+  const readSeq = useRef(0);
+  const projectsAt = useRef(0);
+  const refresh = useCallback(async (poll = false) => {
     // Each read lands on its own: a projects outage must not freeze the
     // fleet. Only the fleet's freshness is reported, in one place.
-    api.projects().then(setProjects, () => {});
+    // Projects change by hand, rarely: a poll reads them every 30s, an action at once.
+    if (!poll || Date.now() - projectsAt.current > 30_000) { projectsAt.current = Date.now(); api.projects().then(setProjects, () => {}); }
+    const seq = ++readSeq.current;
     try {
       const rs = await api.sessions(archived);
+      if (seq !== readSeq.current) return;
       setRows(rs); setLoadErr(null); setRowsAll(archived); setLoadedAt(Date.now());
-    } catch (e) { setLoadErr(e instanceof Error ? e.message : String(e)); }
+    } catch (e) { if (seq === readSeq.current) setLoadErr(e instanceof Error ? e.message : String(e)); }
   }, [archived]);
 
-  useEffect(() => { refresh(); const t = setInterval(refresh, POLL_MS); return () => clearInterval(t); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+    // A hidden tab does not poll; coming back reads at once.
+    const t = setInterval(() => { if (!document.hidden) void refresh(true); }, POLL_MS);
+    const back = () => { if (!document.hidden) void refresh(true); };
+    document.addEventListener("visibilitychange", back);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", back); };
+  }, [refresh]);
 
   useEffect(() => {
     if (!selected) return;
@@ -3750,9 +3816,12 @@ export default function App() {
   // else the most recent, once: an empty page beside the list said nothing.
   // Opening does not mark anything seen.
   const arrived = useRef(false);
+  const mountedAt = useRef(Date.now());
   useEffect(() => {
     if (arrived.current || loadedAt === null) return;
     arrived.current = true;
+    // A list that answers late finds the overview already on screen: leave it there, never swap it away.
+    if (loadedAt - mountedAt.current > 400) return;
     if (window.location.hash.replace(/^#\/?/, "") !== "" || window.matchMedia?.("(max-width:720px)").matches) return;
     const top = rows.filter((r) => !r.archived && !r.empty)
       .sort((a, b) => sessionSignal(a) - sessionSignal(b) || Number(Boolean(a.background)) - Number(Boolean(b.background)) || Date.parse(b.lastAt) - Date.parse(a.lastAt))[0];
@@ -3963,10 +4032,10 @@ export default function App() {
                view={view} wikiFlags={wikiFlags} onNew={newSession} onFind={() => setPalette(true)}
                onView={onView}
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)}
-               archivedState={!archived || rowsAll ? "ready" : loadErr ? "failed" : "loading"} onRetryArchived={refresh}
+               archivedState={!archived || rowsAll ? "ready" : loadErr ? "failed" : "loading"} onRetryArchived={() => void refresh()}
                onAck={(id) => act(() => api.ack(id), "mark it seen")}
                onShowList={() => setPane("list")} reveal={reveal}
-               loadedAt={loadedAt} loadErr={loadErr} onRetry={refresh} />
+               loadedAt={loadedAt} loadErr={loadErr} onRetry={() => void refresh()} />
       {view === "wiki" ? (
         <WikiPage route={wikiRoute} onRoute={goWiki} onBack={goList} onOpenSession={openSession}
                   onSearch={(text) => { setPalQuery(text.replace(/\s+/g, " ").slice(0, 60)); setPalette(true); }} />
@@ -3987,7 +4056,7 @@ export default function App() {
             return ids.filter((_, i) => out[i].status === "rejected");
           }}
           onDelete={(id) => act(() => api.deleteProject(id), "delete the project")}
-          orbOpen={orbOpen} onOrbOpen={setOrbOpen} onOrbChanged={refresh} />
+          orbOpen={orbOpen} onOrbOpen={setOrbOpen} onOrbChanged={() => refresh()} />
       ) : row && sub === "changes" ? (
         <ChangesPage row={row} tick={lines.length} onBack={() => setSub(null)} />
       ) : row && context ? (
@@ -4029,7 +4098,7 @@ export default function App() {
                 <button className="btn" onClick={() => { void start(home, "", newMode); }}>New session</button>
               </div>
             )}
-            <ControlOverview rows={rows} onOpenFailure={(id, seq) => { openSession(id); if (seq) setJump({ id, turn: 0, seq, at: Date.now() }); }} onReveal={(id) => { setPane("list"); setQuery(""); setReveal({ id, at: Date.now() }); }} loadedAt={loadedAt} loadErr={loadErr} onRetry={refresh} />
+            <ControlOverview rows={rows} onOpenFailure={(id, seq) => { openSession(id); if (seq) setJump({ id, turn: 0, seq, at: Date.now() }); }} onReveal={(id) => { setPane("list"); setQuery(""); setReveal({ id, at: Date.now() }); }} loadedAt={loadedAt} loadErr={loadErr} onRetry={() => void refresh()} />
           </>) : (
             // A link to a session the list does not hold: looked up on its
             // own, so an empty or slow list never leaves a blank pane.

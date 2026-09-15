@@ -3,13 +3,14 @@ import type { OrbDetail, OrbFile, Project, Row } from "./types";
 import { api } from "./api";
 import { ProjectOrb } from "./orb";
 import { StatusMark, shownStatus } from "./status";
-import { plainTitle, untitled } from "./render";
-import { Back } from "./app";
+import { plainTitle, sessionTitle } from "./render";
+import { Back, ago } from "./app";
 import { Select } from "./select";
 import { askConfirm, askText } from "./dialog";
 
 const clock = (iso: string) =>
   new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const byName = (a: Project, b: Project) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
 
 function Conversation({ row, repo, projects, onOpen, onAssign, picked, onPick, locked }: {
   row: Row; projects: Project[];
@@ -21,7 +22,7 @@ function Conversation({ row, repo, projects, onOpen, onAssign, picked, onPick, l
   locked: boolean;
 }) {
   // No title yet: what the session is about beats an opaque id.
-  const title = plainTitle(row.title) || row.summary?.split(/(?<=[.!?])\s/)[0] || untitled(row.id);
+  const title = sessionTitle(row);
   return (
     <div className={"proj-row" + (picked ? " proj-picked" : "")}>
       <label className="proj-check">
@@ -32,7 +33,8 @@ function Conversation({ row, repo, projects, onOpen, onAssign, picked, onPick, l
       <button className="proj-open" onClick={() => onOpen(row.id)}>
         <span className="proj-title">{title}</span>
         {repo && <span className="mono proj-repo">{repo}</span>}
-        <span className="num proj-when">{clock(row.modified)}</span>
+        {/* The sidebar's format: how long ago, with the date on hover. */}
+        <span className="num proj-when" title={clock(row.lastAt || row.modified)}>{ago(row.lastAt || row.modified)}</span>
       </button>
       <StatusMark status={shownStatus(row)} />
       {/* With no project to move to, a one-option menu is a dead end. */}
@@ -53,8 +55,9 @@ function Conversation({ row, repo, projects, onOpen, onAssign, picked, onPick, l
  * build log polled once a second while a build runs (the log endpoint
  * hands back an offset, so each poll reads only what is new).
  */
-function OrbSection({ project, onOpen, onChanged }: {
+function OrbSection({ project, onOpen, onChanged, titles }: {
   project: Project; onOpen: (id: string) => void; onChanged: () => Promise<void> | void;
+  titles: Record<string, string>;
 }) {
   const [detail, setDetail] = useState<OrbDetail>();
   const [err, setErr] = useState("");
@@ -93,7 +96,7 @@ function OrbSection({ project, onOpen, onChanged }: {
   };
 
   return (
-    <ProjectOrb project={project} detail={detail} log={log} error={err} onOpen={onOpen}
+    <ProjectOrb project={project} detail={detail} log={log} error={err} onOpen={onOpen} titles={titles}
       onAttach={() => { void run(() => api.attachOrb(project.id)); }}
       onDetach={async () => {
         const ok = await askConfirm(`Detach the orb from “${project.name}”?`,
@@ -127,7 +130,7 @@ function useInferredRepos() {
   return { groups, err, load };
 }
 
-const UNKNOWN = "Unknown repo";
+const UNKNOWN = "No repo detected";
 
 /**
  * A first guess at what a set of repos is called: what they share,
@@ -190,13 +193,25 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
     }
     return m;
   }, [shown]);
+  // Unfiltered counts, so a filtered head reads "2 of 9 match", not "2 sessions".
+  const totals = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of rows) m.set(r.project ?? "", (m.get(r.project ?? "") ?? 0) + 1);
+    return m;
+  }, [rows]);
+  const countLabel = (k: string, n: number) => needle
+    ? `${n} of ${totals.get(k) ?? 0} match`
+    : `${n} ${n === 1 ? "session" : "sessions"}`;
+  const titles = useMemo(() => Object.fromEntries(rows.map((r) => [r.id, r.title])), [rows]);
+  const sorted = useMemo(() => [...projects].sort(byName), [projects]);
 
   const unassigned = byProject.get("") ?? [];
   const inferred = useInferredRepos();
   const repoOf = useMemo(() => {
     const m = new Map<string, string>();
     for (const g of inferred.groups ?? []) for (const id of g.sessions) if (!m.has(id)) m.set(id, g.repo);
-    return (r: Row) => r.repo?.split("/").pop() || m.get(r.id) || UNKNOWN;
+    // A trailing slash left pop() an empty string; the last non-empty segment is the repo.
+    return (r: Row) => r.repo?.split("/").filter(Boolean).pop() || m.get(r.id) || UNKNOWN;
   }, [inferred.groups]);
   // Unassigned sessions grouped by repo by default, the unknown ones last.
   const byRepo = useMemo(() => {
@@ -294,29 +309,30 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
         <p className="proj-lede">A project groups sessions from any repo under one name. Select sessions to move them into
           a project; moving only files them here, and nothing inside a session changes.</p>
 
-        {projects.map((p) => {
+        {sorted.map((p) => {
           const rs = byProject.get(p.id) ?? [];
+          // A filter hides projects with nothing matching, unless its orb is open.
+          if (needle && rs.length === 0 && orbId !== p.id) return null;
+          const all = totals.get(p.id) ?? 0;
           return (
             <section key={p.id} className="proj">
               <div className="proj-head">
                 <h2>{p.name}</h2>
-                <span className="num proj-count">
-                  {rs.length} {rs.length === 1 ? "session" : "sessions"}
-                </span>
-                <button className="link" onClick={() => {
+                <span className="num proj-count">{countLabel(p.id, rs.length)}</span>
+                <button className="link proj-act" aria-expanded={orbId === p.id} onClick={() => toggleOrb(p.id)}>
+                  {p.slug ? "Orb" : "Add orb"}
+                </button>
+                <button className="link proj-act" onClick={() => {
                   void askText("Rename project", { initial: p.name, action: "Rename", onSubmit: (name) => onRename(p.id, name) });
                 }}>Rename</button>
-                <button className="link" onClick={async () => {
+                <button className="link proj-act proj-del" onClick={async () => {
                   const ok = await askConfirm(`Delete “${p.name}”?`,
-                    `Its ${rs.length} session${rs.length === 1 ? "" : "s"} stay, unassigned.`,
+                    `Its ${all} session${all === 1 ? "" : "s"} stay, unassigned.`,
                     { action: "Delete project", danger: true });
                   if (ok) onDelete(p.id);
                 }}>Delete</button>
-                <button className="link" aria-expanded={orbId === p.id} onClick={() => toggleOrb(p.id)}>
-                  {p.slug ? "Orb" : "Add orb"}
-                </button>
               </div>
-              {orbId === p.id && <OrbSection project={p} onOpen={onOpen} onChanged={onOrbChanged} />}
+              {orbId === p.id && <OrbSection project={p} onOpen={onOpen} onChanged={onOrbChanged} titles={titles} />}
               {rs.length === 0
                 ? <p className="proj-none">{needle ? "Nothing here matches the filter." : "Nothing here yet. Move a session in from below."}</p>
                 : list(rs)}
@@ -328,7 +344,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
           <div className="proj-head">
             <h2>Unassigned</h2>
             <span className="num proj-count">
-              {unassigned.length} {unassigned.length === 1 ? "session" : "sessions"}
+              {countLabel("", unassigned.length)}
               {(() => { const n = byRepo.filter(([k]) => k !== UNKNOWN).length; return n > 0 && ` · ${n} ${n === 1 ? "repo" : "repos"}`; })()}
             </span>
             {unassigned.length > 0 && (
@@ -349,10 +365,11 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
                   <div className="rp-repo-head">
                     <label className="rp-pick">
                       <input type="checkbox" checked={on} disabled={moving} onChange={() => pickMany(rs.map((r) => r.id), !on)} />
-                      <span className="mono hk2-name">{repo}</span>
+                      <span className={repo === UNKNOWN ? "rp-norepo" : "mono hk2-name"}>{repo}</span>
                       <span className="visually-hidden">: select all</span>
                     </label>
                     <span className="num proj-count">{rs.length} {rs.length === 1 ? "session" : "sessions"}</span>
+                    {/* rs is already filtered; the head above carries "N of M match". */}
                     {repo !== UNKNOWN && (
                       <button className="link" disabled={moving} onClick={() => { void fromRepo(repo, rs); }}>Create project from repo…</button>
                     )}

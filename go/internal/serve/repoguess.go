@@ -21,7 +21,12 @@ import (
 
 // repoPath matches the repos/<name> and repos/worktree/<name> prefixes
 // an agent working from home uses to reach a checkout.
-var repoPath = regexp.MustCompile(`repos/(?:worktree/)?([A-Za-z0-9._-]+)`)
+// The prefix must start a path segment, so "myrepos/x" is not a repo.
+var repoPath = regexp.MustCompile(`(?:^|[^A-Za-z0-9._-])repos/(?:worktree/)?([A-Za-z0-9._-]+)`)
+
+// placeholder names are what docs and prompts write for "some repo"
+// ("~/repos/repo", "repos/<name>"): grouping sessions under them is noise.
+var placeholder = map[string]bool{"repo": true, "repos": true, "worktree": true, "name": true, "x": true}
 
 // scanCap bounds the read: a transcript here reaches 10MB, and the
 // directory 111MB, which is far too much to read on a page load. The
@@ -90,7 +95,7 @@ func scanRepo(path string) string {
 			if i := strings.Index(name, "."); i > 0 {
 				name = name[:i]
 			}
-			if name == "" || name == "worktree" {
+			if name == "" || placeholder[name] {
 				continue
 			}
 			counts[name]++

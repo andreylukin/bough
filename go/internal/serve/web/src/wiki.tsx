@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Back } from "./app";
+import { CopyButton, Pending, useCopied } from "./loading";
 import { Markdown } from "./render";
 
 // The wiki wire types live here, like the hooks ones: this view is
@@ -36,7 +37,15 @@ export interface WikiPageRef {
   summary: string;
   updated: string;
   counts: WikiCounts;
+  /** Set by the server when the page does not parse as a wiki page; absent on older servers. */
+  malformed?: boolean | string;
+  /** What the server found wrong with the page (plugins/wiki store.go Problems). */
+  problems?: string[];
 }
+
+/** Why a page reads as malformed, or "" when it doesn't: the server's problems, else the older flag. */
+const malformedWhy = (p: WikiPageRef): string =>
+  p.problems?.length ? p.problems.join("; ") : p.malformed ? (typeof p.malformed === "string" ? p.malformed : " ") : "";
 
 export interface WikiPageData extends WikiPageRef {
   blocks: WikiBlock[];
@@ -136,8 +145,12 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 const q = encodeURIComponent;
 
+let indexRead: Promise<WikiIndexData> | null = null;
+
 export const wikiApi = {
-  index: () => req<WikiIndexData>("/api/wiki"),
+  // One index read at a time for every caller (the nav count and the page):
+  // a read still in flight is shared, not queued behind.
+  index: () => indexRead ??= req<WikiIndexData>("/api/wiki").finally(() => { indexRead = null; }),
   page: (path: string) => req<WikiPageData>(`/api/wiki/page?path=${q(path)}`),
   save: (path: string, body: string) =>
     req<{ ok: true }>("/api/wiki/page", { method: "PUT", body: JSON.stringify({ path, body }) }).then(() => {}),
@@ -190,18 +203,46 @@ const plural = (n: number, one: string, many = one + "s") => `${n} ${n === 1 ? o
 export function shortId(id: string): string {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(id) ? id.slice(0, 8) : id;
 }
-const citeName = (c: { session: string; seq: number }) => `${shortId(c.session)}#${c.seq}`;
+/** A citation as a chip reads it: the entry, with the session in the tooltip. */
+const citeName = (c: { session: string; seq: number }) => `#${c.seq}`;
+const citeWho = (c: { session: string; seq: number }) => `session ${shortId(c.session)}, entry ${c.seq}`;
+const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g;
+/** Full session UUIDs in free text (commit subjects, commands) as short, labeled ids. */
+const shortIds = (s: string) => s.replace(UUID, (id) => `session ${shortId(id)}`);
 
+// Dates: one relative style (the sidebar's "1h ago") and one absolute
+// style ("Sep 14, 16:41"; the time alone for today) on every wiki surface.
 function since(iso: string | null): string {
   if (!iso) return "never";
   const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
   if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
-  return `${Math.floor(s / 86400)} d ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
 }
 const hhmm = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const dayOf = (iso: string) => new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" });
+/** The absolute style. A bare date ("2026-09-11") has no time to show. */
+export function stamp(iso: string): string {
+  if (!iso || Number.isNaN(Date.parse(iso))) return iso;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return new Date(iso + "T12:00:00").toLocaleDateString([], { month: "short", day: "numeric" });
+  return dayOf(iso) === dayOf(new Date().toISOString()) ? hhmm(iso) : `${dayOf(iso)}, ${hhmm(iso)}`;
+}
+
+/** "retry-budget" → "Retry budget": a title that is only its slug, readable. */
+export function humanTitle(title: string, path = ""): string {
+  const stem = path.split("/").pop()?.replace(/\.md$/, "") ?? "";
+  const t = title.trim();
+  if (t && t !== stem && !/^[a-z0-9]+([-_][a-z0-9]+)*$/.test(t)) return t;
+  const words = (t || stem).replace(/[-_]+/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : "Untitled page";
+}
+
+/** Excerpt text as stored: literal "\n" escapes out, orphan fence lines gone. */
+export function cleanExcerpt(s: string): string {
+  return s.replace(/\\n/g, "\n").replace(/\\t/g, "  ")
+    .split("\n").filter((l) => !/^\s*(```|~~~)\S*\s*$/.test(l)).join("\n").trim();
+}
 const money = (n: number) => (n > 0 && n < 0.01 ? "<$0.01" : `$${n.toFixed(2)}`);
 function took(ms: number): string {
   const s = Math.round(ms / 1000);
@@ -244,8 +285,8 @@ function resolveLink(from: string, href: string): string {
 function Crumbs({ onIndex, trail, title }: { onIndex?: () => void; trail?: string[]; title: string }) {
   return (
     <div className="head-main wk-crumb">
-      {onIndex && <><button className="wk-crumb-link" onClick={onIndex}>Wiki</button><span className="wk-sep">/</span></>}
-      {(trail ?? []).map((t) => <span key={t} className="wk-crumb-link wk-crumb-static">{t}<span className="wk-sep"> /</span></span>)}
+      {onIndex && <><button className="wk-crumb-link" onClick={onIndex}>Wiki</button><span className="wk-sep" aria-hidden="true">/</span></>}
+      {(trail ?? []).map((t) => <span key={t} className="wk-crumb-link wk-crumb-static">{t}<span className="wk-sep" aria-hidden="true">/</span></span>)}
       <h1>{title}</h1>
     </div>
   );
@@ -258,13 +299,11 @@ const elide = (dir: string) => {
 };
 
 function CopyCommand({ text }: { text: string }) {
-  const [done, setDone] = useState(false);
+  const [done, copy] = useCopied();
   return (
     <p className="wk-cmd">
       <code className="mono">{text}</code>
-      <button className="btn" onClick={() => {
-        void navigator.clipboard?.writeText(text).then(() => { setDone(true); setTimeout(() => setDone(false), 1500); });
-      }}>{done ? "Copied" : "Copy command"}</button>
+      <button className="btn" onClick={() => copy(text)}>{done ? "Copied" : "Copy command"}</button>
     </p>
   );
 }
@@ -299,7 +338,7 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, check, onBac
         <div className="head-main">
           <h1>Wiki</h1>
           <span className="mono wk-dir" title={data.dir}>{elide(data.dir)}</span>
-          <button className="link" onClick={() => void navigator.clipboard?.writeText(data.dir)}>Copy full path</button>
+          <CopyButton text={data.dir} label="Copy full path" />
         </div>
         {data.exists && (
           <div className="hk-acts">
@@ -389,13 +428,14 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, check, onBac
                   <button key={p.path} className="wk-row" onClick={() => onOpen(p.path)}>
                     <span className="wk-row-main">
                       <span className="wk-title-line">
-                        <span className="wk-title">{p.title}</span>
+                        <span className="wk-title">{humanTitle(p.title, p.path)}</span>
                         <PageState c={p.counts} />
+                        {malformedWhy(p) && <span className="hk2-state hk2-warn">Malformed</span>}
                       </span>
                       {p.summary && <span className="wk-sum">{p.summary}</span>}
                     </span>
                     <span className="wk-counts">{countsLine(p.counts)}</span>
-                    <span className="wk-date">{p.updated}</span>
+                    <span className="wk-date">{stamp(p.updated)}</span>
                   </button>
                 ))}
               </section>
@@ -427,7 +467,8 @@ function Cites({ block, cite, onCite }: {
         return (
           <button key={`${c.session}#${c.seq}`}
                   className={"wk-cite" + (on ? " wk-cite-on" : "") + (c.problem ? " wk-cite-bad" : "")}
-                  title={c.problem || `${c.label}: ${c.excerpt}`}
+                  title={`${citeWho(c)} — ${c.problem || `${c.label}: ${plainText(c.excerpt)}`}`}
+                  aria-label={`Citation: ${citeWho(c)}`}
                   aria-pressed={on ? true : false}
                   onClick={() => onCite(c)}>
             {citeName(c)}
@@ -440,7 +481,7 @@ function Cites({ block, cite, onCite }: {
 }
 
 /** Markdown syntax out of an excerpt: the margin is too narrow to render it. */
-const plainText = (s: string) => s
+const plainText = (s: string) => cleanExcerpt(s)
   .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
   .replace(/\*\*|__|`/g, "")
   .replace(/^#{1,6}\s+/gm, "")
@@ -450,18 +491,21 @@ const plainText = (s: string) => s
 function Note({ block }: { block: WikiBlock }) {
   const c = block.cites.find((x) => x.problem) ?? block.cites[0];
   if (!c) return <div />;
-  const more = block.cites.length - 1;
-  if (c.problem) {
-    return (
-      <div className="wk-note wk-note-bad">
-        <span className="wk-note-src">{citeName(c)}</span>{c.problem}
-      </div>
-    );
-  }
+  return <NoteBody c={c} more={block.cites.length - 1} />;
+}
+
+/** Clamped to a few lines, so a long excerpt never pushes the paragraph below it down. */
+function NoteBody({ c, more }: { c: WikiCite; more: number }) {
+  const [open, setOpen] = useState(false);
+  const text = c.problem || plainText(c.excerpt);
+  const long = text.split("\n").length > 3 || text.length > 160;
   return (
-    <div className="wk-note">
-      <span className="wk-note-src">{citeName(c)}{more > 0 ? ` · +${more} more` : ""} · {c.label}</span>
-      {plainText(c.excerpt)}
+    <div className={"wk-note" + (c.problem ? " wk-note-bad" : "")}>
+      <span className="wk-note-src">
+        {c.problem ? `entry ${c.seq}` : `${c.label} · entry ${c.seq}`}{more > 0 ? ` · +${more} more` : ""}
+      </span>
+      <span className={"wk-note-text" + (long && !open ? " wk-note-clamp" : "")}>{text}</span>
+      {long && <button className="wk-link wk-note-more" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "Less" : "More"}</button>}
     </div>
   );
 }
@@ -495,10 +539,11 @@ function Claim({ block, cite, onCite }: {
   );
 }
 
-export function WikiSourcePane({ source, error, onClose, onOpenSession, onOpenPage }: {
+export function WikiSourcePane({ source, error, onClose, onOpenSession, onOpenPage, onRetry }: {
   source: WikiSourceData | null;
   error?: string;
   onClose: () => void;
+  onRetry?: () => void;
   onOpenSession?: (id: string) => void;
   onOpenPage: (path: string) => void;
 }) {
@@ -507,14 +552,26 @@ export function WikiSourcePane({ source, error, onClose, onOpenSession, onOpenPa
   useEffect(() => {
     document.querySelector(".wk-src .wk-ent-on")?.scrollIntoView({ block: "center" });
   }, [source?.session.id, source?.seq]);
+  // Escape closes the pane, unless a field or an open dialog owns the key.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.closest("[role=dialog]"))) return;
+      if (document.querySelector("[role=dialog][open], .pal")) return;
+      onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   return (
     <section className="wk-src" aria-label="Cited entry">
       <div className="wk-src-head">
         <div style={{ minWidth: 0 }}>
-          <div className="wk-src-title">{source ? source.session.title || source.session.id : error ? "Entry not found" : "Loading…"}</div>
+          <div className="wk-src-title">{source ? source.session.title || `Session ${shortId(source.session.id)}` : error ? "Entry not found" : "Cited entry"}</div>
           {source && (
             <div className="wk-src-meta">
-              {[source.session.repo?.split("/").pop() || shortId(source.session.id), source.at && `${dayOf(source.at)} ${hhmm(source.at)}`,
+              {[source.session.repo?.split("/").pop() || `session ${shortId(source.session.id)}`, source.at && stamp(source.at),
                 `entry ${source.seq} of ${source.total}`].filter(Boolean).join(" · ")}
             </div>
           )}
@@ -530,7 +587,7 @@ export function WikiSourcePane({ source, error, onClose, onOpenSession, onOpenPa
         </div>
       </div>
       <div className="scroll" style={{ flexGrow: 1 }}>
-        {error && <p className="hk2-alert" style={{ margin: 16 }}>{error}</p>}
+        {!source && <Pending what="The cited entry" err={error} lines={error ? 0 : 5} onRetry={onRetry} />}
         {source?.lines.map((l) => {
           const on = l.seq === source.seq;
           const code = l.label === "ran" || l.label === "output" || l.label === "error" || l.label === "cwd";
@@ -538,25 +595,36 @@ export function WikiSourcePane({ source, error, onClose, onOpenSession, onOpenPa
             <div key={l.seq} className={"wk-ent" + (on ? " wk-ent-on" : "")} aria-current={on ? "true" : undefined}>
               <span className="wk-ent-seq">{l.seq}</span>
               <span className="wk-ent-kind">{l.label}</span>
-              <span className={"wk-ent-text" + (code ? " mono" : "")}>{l.text}</span>
+              <span className={"wk-ent-text" + (code ? " mono" : "")}>{code ? cleanExcerpt(l.text) : plainText(l.text)}</span>
             </div>
           );
         })}
       </div>
       {source && source.citedBy.length > 0 && (
         <div className="wk-src-foot">
-          Cited by {plural(source.citedBy.length, "page")} ·{" "}
-          {source.citedBy.map((p, i) => (
-            <span key={p.path}>{i > 0 && ", "}<button className="wk-link" onClick={() => onOpenPage(p.path)}>{p.title}</button></span>
-          ))}
+          Cited by {plural(source.citedBy.length, "page")}
+          {/* A list, not commas: titles contain commas. */}
+          <ul className="wk-citedby">
+            {source.citedBy.map((p) => (
+              <li key={p.path}><button className="wk-link" onClick={() => onOpenPage(p.path)}>{humanTitle(p.title, p.path)}</button></li>
+            ))}
+          </ul>
         </div>
       )}
     </section>
   );
 }
 
-export function WikiPageView({ page, cite, source, sourceError, onCite, onCloseSource, onOpenPage, onIndex, onOpenSession, onSave, loadHistory, onBack }: {
-  page: WikiPageData;
+export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRetrySource, cite, source, sourceError, onCite, onCloseSource, onOpenPage, onIndex, onOpenSession, onSave, loadHistory, onBack }: {
+  /** Null while the page loads or when it failed: the header stays, only the body waits. */
+  page: WikiPageData | null;
+  /** The page being opened, for the header before its data arrives. */
+  path?: string;
+  /** A title already known from the link that opened it. */
+  knownTitle?: string;
+  pageError?: string;
+  onRetry?: () => void;
+  onRetrySource?: () => void;
   cite?: { session: string; seq: number } | null;
   source?: WikiSourceData | null;
   sourceError?: string;
@@ -574,8 +642,10 @@ export function WikiPageView({ page, cite, source, sourceError, onCite, onCloseS
   const [err, setErr] = useState("");
   const [history, setHistory] = useState<WikiCommit[] | null>(null);
   const [showHistory, setShowHistory] = useState(false);
-  const open = Boolean(cite);
-  useEffect(() => { setEditing(null); setHistory(null); setShowHistory(false); }, [page.path]);
+  const [histErr, setHistErr] = useState("");
+  const at = page?.path ?? path ?? "";
+  const open = Boolean(cite) && Boolean(page);
+  useEffect(() => { setEditing(null); setHistory(null); setShowHistory(false); setHistErr(""); }, [at]);
 
   // Page-to-page links are relative markdown links; followed by the
   // browser they would leave the app.
@@ -584,36 +654,60 @@ export function WikiPageView({ page, cite, source, sourceError, onCite, onCloseS
     const href = a?.getAttribute("href") ?? "";
     if (!a || /^[a-z]+:/i.test(href) || !href.split("#")[0].endsWith(".md")) return;
     e.preventDefault();
-    onOpenPage(resolveLink(page.path, href));
+    onOpenPage(resolveLink(at, href));
   };
 
+  const fetchHistory = () => {
+    if (!loadHistory) return;
+    setHistErr("");
+    loadHistory().then(setHistory).catch((e) => setHistErr(msg(e)));
+  };
   const toggleHistory = () => {
     const next = !showHistory;
     setShowHistory(next);
-    if (next && history === null && loadHistory) loadHistory().then(setHistory).catch((e) => setErr(msg(e)));
+    if (next && history === null) fetchHistory();
   };
 
-  const c = page.counts;
+  const topic = page?.topic ?? (at.startsWith("topics/") ? at.split("/")[1] : "");
+  const title = page ? humanTitle(page.title, page.path) : knownTitle ? humanTitle(knownTitle, at) : humanTitle("", at);
+  const notFound = !page && Boolean(pageError) && /not found|^404\b/i.test(pageError ?? "");
   return (
     <div className="thread">
       <header className="thread-head page-head">
         <Back onBack={onBack} />
-        <Crumbs onIndex={onIndex} trail={page.topic ? [page.topic] : []} title={page.title} />
-        <div className="hk-acts">
-          {onSave && editing === null && <button className="btn" onClick={() => setEditing(page.body)}>Edit</button>}
-          {loadHistory && editing === null && <button className="btn" aria-expanded={showHistory} onClick={toggleHistory}>History</button>}
-        </div>
+        <Crumbs onIndex={onIndex} trail={topic ? [topic] : []} title={notFound ? "Page not found" : title} />
+        {page && (
+          <div className="hk-acts">
+            {onSave && editing === null && <button className="btn" onClick={() => setEditing(page.body)}>Edit</button>}
+            {loadHistory && editing === null && <button className="btn" aria-expanded={showHistory} onClick={toggleHistory}>History</button>}
+          </div>
+        )}
       </header>
 
       <div className="wk-split" data-source={open ? "1" : "0"}>
         <div className="scroll wk-doc" onClick={follow}>
+          {!page ? (
+            notFound ? (
+              <div className="proj-empty">
+                <p className="proj-empty-title">This page isn’t in the wiki</p>
+                <p>Nothing lives at <code className="mono">{at}</code>. It may have been renamed or merged into another page by a later ingest.</p>
+                <p><button className="btn" onClick={onIndex}>Back to the wiki index</button></p>
+              </div>
+            ) : <Pending what="The page" err={pageError} onRetry={onRetry} lines={pageError ? 0 : 6} />
+          ) : (<>
           {err && <p className="hk2-alert">{err}</p>}
+          {malformedWhy(page) && (
+            <p className="hk2-alert wk-malformed" role="note">
+              This page looks malformed{malformedWhy(page).trim() ? `: ${malformedWhy(page)}` : ""}. Claims and citations may be
+              missing below; Edit shows the raw text.
+            </p>
+          )}
           {showHistory && (
             <div className="wk-history">
-              {history === null ? <p className="wk-facts">Loading…</p>
+              {history === null ? <Pending what="History" err={histErr} onRetry={fetchHistory} inline />
                 : history.length === 0 ? <p className="wk-facts">No recorded changes: the wiki is not a git repo.</p>
                 : history.map((h) => (
-                  <p key={h.hash} className="wk-facts"><span className="mono">{h.hash}</span> · {dayOf(h.at)} {hhmm(h.at)} · {h.subject}</p>
+                  <p key={h.hash} className="wk-facts"><span className="mono">{h.hash}</span> · {stamp(h.at)} · {shortIds(h.subject)}</p>
                 ))}
             </div>
           )}
@@ -649,14 +743,14 @@ export function WikiPageView({ page, cite, source, sourceError, onCite, onCloseS
                 }
               })}
               <div className="wk-pagefoot">
-                {page.updated && <>Updated {page.updated} · </>}
-                compiled from {plural(page.sessions.length, "session")} · {countsLine(c)}
+                {page.updated && <>Updated {stamp(page.updated)} · </>}
+                compiled from {plural(page.sessions.length, "session")} · {countsLine(page.counts)}
                 {page.linkedFrom.length > 0 && (
                   <details className="hk2-more">
                     <summary>Linked from {plural(page.linkedFrom.length, "page")}</summary>
                     <div className="hk2-more-body">
                       {page.linkedFrom.map((p) => (
-                        <p key={p.path} className="hk2-note"><button className="wk-link" onClick={() => onOpenPage(p.path)}>{p.title}</button></p>
+                        <p key={p.path} className="hk2-note"><button className="wk-link" onClick={() => onOpenPage(p.path)}>{humanTitle(p.title, p.path)}</button></p>
                       ))}
                     </div>
                   </details>
@@ -664,9 +758,10 @@ export function WikiPageView({ page, cite, source, sourceError, onCite, onCloseS
               </div>
             </>
           )}
+          </>)}
         </div>
         {open && (
-          <WikiSourcePane source={source ?? null} error={sourceError} onClose={onCloseSource}
+          <WikiSourcePane source={source ?? null} error={sourceError} onClose={onCloseSource} onRetry={onRetrySource}
                           onOpenSession={onOpenSession} onOpenPage={onOpenPage} />
         )}
       </div>
@@ -792,7 +887,7 @@ function PendingRow({ p, onIngest }: { p: WikiPending; onIngest?: (session: stri
   return (
     <div className="proj-row">
       <span className="wk-row-main wk-title" style={{ fontSize: 14, color: "var(--text-2)" }}>{p.title || shortId(p.id)}</span>
-      <span className="wk-counts">{shortId(p.id)} · {plural(p.entries, "entry", "entries")} · {dayOf(p.last)}</span>
+      <span className="wk-counts">session {shortId(p.id)} · {plural(p.entries, "entry", "entries")} · {stamp(p.last)}</span>
       {onIngest && (
         <button className="btn" disabled={state !== "" && state !== "failed"} onClick={() => {
           setState("starting");
@@ -813,8 +908,9 @@ function runWord(r: WikiRun): { word: string; cls: string } {
   if (ds.some((d) => d.includes("disputed"))) return { word: "Disputed", cls: "hk2-state hk2-warn" };
   if (ds.some((d) => d.startsWith("new"))) return { word: "New", cls: "hk2-state hk2-ok" };
   if (ds.some((d) => d.startsWith("update"))) return { word: "Update", cls: "hk2-state hk2-ok" };
-  if (ds.length && ds.every((d) => d === "no material")) return { word: "No material", cls: "wk-tag" };
-  return { word: r.command.startsWith("/llm-wiki ingest") ? "Unlogged" : "Run", cls: "wk-tag" };
+  // Neutral outcomes wear the same chip shape as the coloured ones.
+  if (ds.length && ds.every((d) => d === "no material")) return { word: "No material", cls: "hk2-state wk-state-quiet" };
+  return { word: r.command.startsWith("/llm-wiki ingest") ? "Unlogged" : "Run", cls: "hk2-state wk-state-quiet" };
 }
 
 export function WikiActivityView({ data, onIngest, onOpenPage, onOpenSession, onIndex, onBack, note }: {
@@ -873,13 +969,14 @@ export function WikiActivityView({ data, onIngest, onOpenPage, onOpenSession, on
                   <div className="wk-run">
                     <div className="wk-run-head">
                       <span className="wk-run-when" title={new Date(r.at).toLocaleString()}>
-                        {dayOf(r.at) === dayOf(new Date().toISOString()) ? hhmm(r.at) : `${dayOf(r.at)} ${hhmm(r.at)}`}
+                        {stamp(r.at)}
                       </span>
                       <span className={w.cls}>{w.word}</span>
                       <span className="wk-run-what">
                         {r.outcomes.length > 0
-                          ? r.outcomes.map((o) => o.title || shortId(o.id)).join(", ")
-                          : r.command || "an ingest"}
+                          ? r.outcomes.map((o) => o.title || `session ${shortId(o.id)}`).join(" · ")
+                          : r.command ? shortIds(r.command.replace(/^\/llm-wiki ingest\b/, "Ingest")).trim() || "Ingest of all waiting sessions"
+                          : "An ingest"}
                       </span>
                       <span className="wk-run-meta">
                         {r.running ? "running" : took(r.ms)} · {money(r.cost)}
@@ -918,49 +1015,48 @@ function useLoad<T>(load: (() => Promise<T>) | null, key: string, poll = 0) {
   const [err, setErr] = useState("");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const reload = useCallback(() => {
-    if (!load) return Promise.resolve();
-    return load().then((d) => { setData(d); setErr(""); }).catch((e) => setErr(msg(e)));
+    if (!load) return Promise.resolve(true);
+    return load().then((d) => { setData(d); setErr(""); return true; }).catch((e) => { setErr(msg(e)); return false; });
   }, [key]);
+  const retry = () => { setErr(""); void reload(); };
   useEffect(() => {
     setData(null); setErr("");
-    reload();
-    if (!poll) return;
-    const t = setInterval(reload, poll);
-    return () => clearInterval(t);
+    // The next poll is armed when this read settles, never on a clock:
+    // a slow read cannot stack ticks behind it, and failures back off.
+    let live = true;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    let wait = poll;
+    const tick = () => reload().then((ok) => {
+      if (!live || !poll) return;
+      wait = ok ? poll : Math.min(wait * 2, 5 * 60_000);
+      t = setTimeout(tick, wait);
+    });
+    tick();
+    return () => { live = false; clearTimeout(t); };
   }, [reload, poll]);
-  return { data, err, reload };
+  return { data, err, reload, retry };
 }
 
-function Loading({ what, err, onBack, onRetry }: { what: string; err: string; onBack?: () => void; onRetry?: () => void }) {
-  if (onRetry) {
-    // The index keeps its head: a read failure is a state of the wiki, not a blank page.
-    return (
-      <div className="thread">
-        <header className="thread-head page-head">
-          <Back onBack={onBack} />
-          <div className="head-main"><h1>Wiki</h1></div>
-        </header>
-        <div className="scroll proj-body">
-          {err ? (
-            <div className="proj-empty">
-              <p className="proj-empty-title">Read failed</p>
-              <p>The wiki directory could not be read: {err}</p>
-              <p><button className="btn" onClick={onRetry}>Retry</button></p>
-            </div>
-          ) : <p className="proj-none">Loading the wiki…</p>}
-        </div>
-      </div>
-    );
-  }
+/** Every wiki screen keeps its head while its body loads: a wait is a state of the screen, not a blank page. */
+function Loading({ what, title, err, onBack, onIndex, onRetry }: {
+  what: string; title: string; err: string; onBack?: () => void; onIndex?: () => void; onRetry: () => void;
+}) {
   return (
-    <div className="thread empty">
-      <div>
-        <h1>{err ? `${what} did not load` : `Loading ${what.toLowerCase()}…`}</h1>
-        {err && <p>{err}</p>}
+    <div className="thread">
+      <header className="thread-head page-head">
+        <Back onBack={onBack} />
+        {onIndex ? <Crumbs onIndex={onIndex} title={title} /> : <div className="head-main"><h1>{title}</h1></div>}
+      </header>
+      <div className="scroll proj-body">
+        <Pending what={what} err={err} onRetry={onRetry} lines={err ? 0 : 5} />
       </div>
     </div>
   );
 }
+
+// Titles seen on the way to a page, so its header can name it before it loads.
+const knownTitles = new Map<string, string>();
+const learn = (refs: WikiPageRef[]) => { for (const p of refs) knownTitles.set(p.path, p.title); };
 
 /** The wiki view: routes to one of the four screens and keeps each live. */
 export function WikiPage({ route, onRoute, onBack, onOpenSession, onSearch }: {
@@ -982,6 +1078,12 @@ export function WikiPage({ route, onRoute, onBack, onOpenSession, onSearch }: {
   const source = useLoad(cite ? () => wikiApi.source(cite.session, cite.seq) : null,
     cite ? `src:${cite.session}#${cite.seq}` : "src:");
   const [note, setNote] = useState("");
+  // Stable, so the source pane's Escape listener is not rebound every render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const closeSource = useCallback(() => onRoute({ at: "page", path }), [path]);
+  if (index.data) for (const t of index.data.topics) learn(t.pages);
+  if (page.data) { learn([page.data]); learn(page.data.linkedFrom); }
+  if (source.data) learn(source.data.citedBy);
 
   switch (route.at) {
     case "index":
@@ -989,14 +1091,14 @@ export function WikiPage({ route, onRoute, onBack, onOpenSession, onSearch }: {
         ? <WikiIndexView data={index.data} onBack={onBack} onOpen={(p) => toPage(p)}
                          onReview={() => onRoute({ at: "review" })} onActivity={() => onRoute({ at: "activity" })}
                          check={wikiApi.check} />
-        : <Loading what="The wiki" err={index.err} onBack={onBack} onRetry={() => { void index.reload(); }} />;
+        : <Loading what="The wiki" title="Wiki" err={index.err} onBack={onBack} onRetry={index.retry} />;
     case "review":
       return review.data
         ? <WikiReviewView data={review.data} onBack={onBack} onIndex={toIndex} onSearch={onSearch}
                           onOpenPage={(p, c) => toPage(p, c)}
                           onAct={(f, a) => wikiApi.claim(f, a).then(() => { review.reload(); })}
                           onIngest={(id) => wikiApi.ingest(id)} />
-        : <Loading what="Review" err={review.err} />;
+        : <Loading what="Review" title="Review" err={review.err} onBack={onBack} onIndex={toIndex} onRetry={review.retry} />;
     case "activity":
       return activity.data
         ? <WikiActivityView data={activity.data} onBack={onBack} onIndex={toIndex} onOpenPage={(p) => toPage(p)}
@@ -1008,16 +1110,19 @@ export function WikiPage({ route, onRoute, onBack, onOpenSession, onSearch }: {
                                 activity.reload();
                               }).catch((e) => setNote(msg(e)));
                             }} />
-        : <Loading what="Activity" err={activity.err} />;
+        : <Loading what="Activity" title="Activity" err={activity.err} onBack={onBack} onIndex={toIndex} onRetry={activity.retry} />;
     case "page":
-      return page.data
-        ? <WikiPageView page={page.data} cite={cite ?? null} source={source.data} sourceError={source.err}
-                        onBack={onBack} onIndex={toIndex} onOpenSession={onOpenSession}
-                        onCite={(c) => toPage(route.path, { session: c.session, seq: c.seq })}
-                        onCloseSource={() => toPage(route.path)}
-                        onOpenPage={(p) => toPage(p)}
-                        onSave={(body) => wikiApi.save(route.path, body).then(() => { page.reload(); })}
-                        loadHistory={() => wikiApi.history(route.path)} />
-        : <Loading what="The page" err={page.err} />;
+      return (
+        <WikiPageView page={page.data}
+                      path={route.path} knownTitle={knownTitles.get(route.path)}
+                      pageError={page.err} onRetry={page.retry} onRetrySource={source.retry}
+                      cite={cite ?? null} source={source.data} sourceError={source.err}
+                      onBack={onBack} onIndex={toIndex} onOpenSession={onOpenSession}
+                      onCite={(c) => toPage(route.path, { session: c.session, seq: c.seq })}
+                      onCloseSource={closeSource}
+                      onOpenPage={(p) => toPage(p)}
+                      onSave={(body) => wikiApi.save(route.path, body).then(() => { page.reload(); })}
+                      loadHistory={() => wikiApi.history(route.path)} />
+      );
   }
 }

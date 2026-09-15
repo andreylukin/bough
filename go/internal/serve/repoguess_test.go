@@ -35,6 +35,11 @@ func TestRepoGroupsFromTouchedPaths(t *testing.T) {
 		history.Entry{Seq: 1, At: now, Kind: "meta", Data: map[string]any{"cwd": f.home}},
 		codeEntry(2, `tools.bash("cd repos/other-thing && ls")`),
 	)
+	// A placeholder from docs ("~/repos/repo") and a lookalike prefix are not repos.
+	f.seed(t, "01a00000-0000-7000-8000-0000000000d1",
+		history.Entry{Seq: 1, At: now, Kind: "meta", Data: map[string]any{"cwd": f.home}},
+		codeEntry(2, `tools.bash("ls ~/repos/repo myrepos/lookalike")`),
+	)
 	// A session that touched no repo must not invent one.
 	f.seed(t, "01a00000-0000-7000-8000-0000000000c1",
 		history.Entry{Seq: 1, At: now, Kind: "meta", Data: map[string]any{"cwd": f.home}},

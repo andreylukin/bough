@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { rankSkills, useSkills } from "./mention";
+import { Spinner } from "./loading";
 
 // A skill runs by being the first thing in a message ("/grill-me the
 // design"), so this picker does not execute anything: it puts the
@@ -75,7 +76,7 @@ export function SkillPicker({ onPick }: { onPick: (name: string, known: string[]
               {hits.length === 0 && (
                 <p className="skills-empty" role="status">
                   {error ? <>Couldn’t load skills. <button className="link" onClick={retry}>Retry</button></>
-                    : !all ? (slow ? "Loading skills…" : "")
+                    : !all ? (slow ? <><Spinner /> Loading skills…</> : "")
                     : all.length === 0 ? "No skills installed. Create ~/.claude/skills/<name>/SKILL.md"
                     : `No skills match “${q.trim()}”.`}
                 </p>

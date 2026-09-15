@@ -429,6 +429,13 @@ func (a *API) pluginRows() []ccplugins.Plugin {
 func (a *API) hookFile(w http.ResponseWriter, r *http.Request) {
 	path, err := a.poolPath(r.URL.Query().Get("path"))
 	if err != nil {
+		// A rule the page lists opens read-only; nothing else outside
+		// the pools does, and PUT still takes only the pools.
+		if p, ok := a.listedRule(r.URL.Query().Get("path")); ok {
+			path, err = p, nil
+		}
+	}
+	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
@@ -438,6 +445,20 @@ func (a *API) hookFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"path": path, "body": string(body)})
+}
+
+// listedRule is raw when it names a rule file the hooks page lists.
+func (a *API) listedRule(raw string) (string, bool) {
+	if raw == "" {
+		return "", false
+	}
+	cwd, _ := os.Getwd()
+	for _, row := range a.ruleRows(cwd) {
+		if row.Path == raw {
+			return raw, true
+		}
+	}
+	return "", false
 }
 
 // putHookFile writes one file back. The parent directory is created so
@@ -527,7 +548,7 @@ func (a *API) poolPath(raw string) (string, error) {
 		return "", errors.New("serve: api: path is required")
 	}
 	if !strings.HasSuffix(raw, ".js") {
-		return "", fmt.Errorf("serve: api: %q is not a .js file", raw)
+		return "", fmt.Errorf("serve: api: %s is not a hook or watcher (.js) file, so it cannot be edited here", filepath.Base(raw))
 	}
 	abs, err := filepath.Abs(raw)
 	if err != nil {

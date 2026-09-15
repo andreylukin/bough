@@ -41,11 +41,15 @@ export function spokenDuration(ms: number): string {
 /* ---------------- execution notes ---------------- */
 
 const NOTE_RE = /\n*\[(?:\d+ further code block\(s\) dropped|the \d+ code block\(s\) after this one)[^\]]*\]/;
+const STOP_RE = /\n*\[stop block dropped[^\]]*\]/;
 
-/** Text without the loop's "blocks not run" note, and the note on its own. */
+/** Text without the loop's "blocks not run" or "stop dropped" note, and the note on its own. */
 export function splitExecNote(text: string): { text: string; note: { notRun: number; reason: string } | null } {
   const note = execNote(text);
-  return note ? { text: text.replace(NOTE_RE, "").trimEnd(), note } : { text, note: null };
+  if (note) return { text: text.replace(NOTE_RE, "").trimEnd(), note };
+  // notRun 0 marks the loop's stop-dropped note: a system annotation, not prose.
+  if (STOP_RE.test(text)) return { text: text.replace(STOP_RE, "").trimEnd(), note: { notRun: 0, reason: "stop" } };
+  return { text, note: null };
 }
 
 /**
@@ -56,6 +60,9 @@ export function splitExecNote(text: string): { text: string; note: { notRun: num
  */
 export function ExecNote({ note }: { note: { notRun: number; reason: string } }) {
   const n = note.notRun;
+  if (n === 0) {
+    return <p className="exec-note exec-note-quiet">Early stop ignored: the agent tried to finish before its code ran, so the turn kept going</p>;
+  }
   const why = /failed/.test(note.reason) ? "the block before them failed" : note.reason;
   return (
     <p className="exec-note">
@@ -219,7 +226,7 @@ export function JobRow({ w }: { w: Worker }) {
                  if (opening && w.life !== "running" && (w.output || w.error)) ctx?.review.markReviewed(w);
                }}>
         <span className="num sub-tag">Job {w.id}</span>
-        <span className="job-cmd" title={cmd || undefined}>{cmd ? jobTitle(cmd, w.id) : "Command not recorded"}</span>
+        <span className="job-cmd" title={cmd || undefined}>{cmd && jobTitle(cmd, w.id) !== `Job ${w.id}` ? jobTitle(cmd, w.id) : "Command not recorded"}</span>
         <WorkState w={w} />
         <span className="job-meta">{w.ms !== undefined ? duration(w.ms) : ""}</span>
         <span className="job-action" data-stop={w.canStop || ctx?.stops[w.key] ? "" : undefined} aria-hidden="true" />
@@ -482,7 +489,8 @@ function WorkRow({ w, parent, inReview, open, onToggle, onPin, onUnpin, onView, 
   const title = w.kind === "agent" ? plainTitle(w.label) : task && task !== w.label ? `${w.label} · ${task}` : w.label;
   const jc = jobCause(w);
   const cause = w.life === "failed" ? firstLine(w.error ?? "") || jc.text : w.exitNote ?? "";
-  const meta = [KIND_WORD[w.kind], w.ms !== undefined ? duration(w.ms) : "", cause, fresh ? "New result" : ""].filter(Boolean);
+  // A job's label already says "Job N"; the kind word only names the others.
+  const meta = [w.kind === "job" ? "" : KIND_WORD[w.kind], w.ms !== undefined ? duration(w.ms) : "", cause, fresh ? "New result" : ""].filter(Boolean);
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   return (
     <div className="work-row" data-life={w.life} onPointerEnter={onPin} onPointerLeave={(e) => onUnpin(e.currentTarget)}

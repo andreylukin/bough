@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { api, type Change, type Scope } from "./api";
 import { Back } from "./app";
 import { sessionTitle } from "./render";
+import { CopyCommand } from "./work-ui";
+import { Pending } from "./loading";
 import type { Row } from "./types";
 
 // Two scopes, always named: what this session's turns changed (the
@@ -32,17 +34,27 @@ export function useChanges(id: string, tick: number) {
   return { session, tree, retry: () => setNonce((n) => n + 1) };
 }
 
+// A count below zero is unknown (binary, or no patch): it adds nothing.
 const sum = (files: Change[] | null) => ({
   add: (files ?? []).reduce((n, f) => n + Math.max(0, f.add), 0),
   del: (files ?? []).reduce((n, f) => n + Math.max(0, f.del), 0),
 });
+
+/** "2 min ago", for when the list was read. */
+const ago = (ms: number) => {
+  const m = Math.round((Date.now() - ms) / 60_000);
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : clock(ms);
+};
 
 /** "3 files · +12 −4", or the state instead of a count. */
 export function countOf(r: Read): { text: string; add?: number; del?: number; quiet: boolean } {
   if (r.files === null) return { text: r.failed ? "Unavailable" : "Reading…", quiet: true };
   if (!r.repo) return { text: "—", quiet: true };
   if (!r.files.length) return { text: "None", quiet: true };
-  return { text: `${r.files.length} ${r.files.length === 1 ? "file" : "files"}`, ...sum(r.files), quiet: false };
+  const s = sum(r.files);
+  const text = `${r.files.length} ${r.files.length === 1 ? "file" : "files"}`;
+  // No line counts known (every patch unrecorded or binary): no "+0 −0".
+  return s.add || s.del ? { text, ...s, quiet: false } : { text, quiet: false };
 }
 
 export const scopeName = (s: Scope) => (s === "session" ? "Session edits" : "Working tree");
@@ -87,9 +99,9 @@ export function ChangesBody({ row, data, scope, onScope }: {
       </div>
       <p className="rt-label chg-where">
         <span className="mono" title={row.cwd}>{row.cwd}</span>
-        {" · "}{row.branch ? <>Current checkout: <span className="mono">{row.branch}</span></> : "Branch unknown"}
-        {" · "}{scope === "session" ? "files this session’s turns changed, from its first checkpoint" : "everything uncommitted, including edits made before or outside this session"}
-        {r.at ? ` · read ${clock(r.at)}` : ""}
+        {r.repo && row.branch && <>{" · "}<span className="mono">{row.branch}</span></>}
+        {scope === "tree" && " · everything uncommitted, including edits made outside this session"}
+        {r.at ? ` · updated ${ago(r.at)}` : ""}
       </p>
       {r.failed && (
         <p className="rt-label">{r.files === null ? "Couldn’t read the changes" : "Stale: the last refresh failed"}{" "}
@@ -103,12 +115,17 @@ export function ChangesBody({ row, data, scope, onScope }: {
         <ul className="chg-files">
           {files.map((f) => (
             <li key={f.path}>
-              <button className={"rt-link rt-file" + (f.path === path ? " chg-on" : "")} title={f.path} aria-current={f.path === path || undefined}
-                      onClick={() => setPick(f.path === pick ? null : f.path)}>
+              <button className={"rt-link rt-file" + (f.path === path ? " chg-on" : "")} title={f.patch === false ? `${f.path} · no patch was recorded, so there is no diff to open` : f.path}
+                      aria-current={f.path === path || undefined} disabled={f.patch === false}
+                      onClick={() => {
+                        setPick(f.path === pick ? null : f.path);
+                        // The diff sits under the list: bring it into view.
+                        requestAnimationFrame(() => document.querySelector(".chg-diff")?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
+                      }}>
                 <span className="mono rt-job-cmd">{f.path}</span>
                 <span className="num">
                   {f.patch === false ? <span className="rt-label">Patch not recorded</span>
-                    : f.new ? <span className="rt-add">new</span>
+                    : f.new ? <span className="rt-add">new{f.add > 0 ? ` · +${f.add}` : ""}</span>
                     : f.add < 0 ? <span className="rt-label">binary</span>
                     : <><span className="rt-add">+{f.add}</span> <span className="rt-del">−{f.del}</span></>}
                 </span>
@@ -121,7 +138,7 @@ export function ChangesBody({ row, data, scope, onScope }: {
         <div className="chg-diff">
           <div className="chg-diff-head">
             <span className="mono rt-job-cmd" title={path}>{path}</span>
-            <button className="btn rt-stop" onClick={() => void navigator.clipboard?.writeText(path)}>Copy path</button>
+            <CopyCommand text={path} label="Copy path" />
           </div>
           {file.patch === false ? <p className="rt-label">Patch not recorded: no checkpoint was taken for this session</p>
             : diff?.text != null ? (
@@ -130,7 +147,7 @@ export function ChangesBody({ row, data, scope, onScope }: {
               ))}</pre>
             )
             : diff?.failed ? <button className="btn rt-stop" onClick={data.retry}>Couldn’t read the diff · Retry</button>
-            : <p className="rt-label">Reading diff…</p>}
+            : <Pending what="Diff" inline onRetry={data.retry} />}
         </div>
       )}
     </div>
@@ -141,6 +158,8 @@ export function ChangesBody({ row, data, scope, onScope }: {
 export function ChangesPage({ row, tick, onBack }: { row: Row; tick: number; onBack: () => void }) {
   const data = useChanges(row.id, tick);
   const [scope, setScope] = useState<Scope>("session");
+  // Another session opens on its own edits, not the last one's tab.
+  useEffect(() => { setScope("session"); }, [row.id]);
   return (
     <div className="thread">
       <header className="thread-head page-head">

@@ -328,6 +328,19 @@ func firstInput(entries []Entry) string {
 // name descending). A nonexistent dir is an empty list, not an error.
 // Corrupt lines within a file are tolerated (skipped with a stderr
 // note by way of readEntries' counting pass here being lenient).
+// listed is one file's SessionInfo as of its size and mtime: an
+// append-only log that has not grown says the same thing it did.
+type listed struct {
+	size int64
+	mod  time.Time
+	info SessionInfo
+}
+
+var (
+	listMu    sync.Mutex
+	listCache = map[string]listed{}
+)
+
 func List(dir string) ([]SessionInfo, error) {
 	paths, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
 	if err != nil {
@@ -339,6 +352,15 @@ func List(dir string) ([]SessionInfo, error) {
 		st, err := os.Stat(p)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "bough: history: skipping %s: %v\n", p, err)
+			continue
+		}
+		// Every serve request lists; re-reading a finished transcript
+		// each time made one long session slow every endpoint.
+		listMu.Lock()
+		c, hit := listCache[p]
+		listMu.Unlock()
+		if hit && c.size == st.Size() && c.mod.Equal(st.ModTime()) {
+			infos = append(infos, c.info)
 			continue
 		}
 		entries, err := readEntries(p)
@@ -403,6 +425,9 @@ func List(dir string) ([]SessionInfo, error) {
 			Project:    project,
 			SpawnedBy:  spawnedBy,
 		})
+		listMu.Lock()
+		listCache[p] = listed{size: st.Size(), mod: st.ModTime(), info: infos[len(infos)-1]}
+		listMu.Unlock()
 	}
 	slices.SortFunc(infos, func(a, b SessionInfo) int {
 		return cmp.Or(b.ModTime.Compare(a.ModTime), cmp.Compare(b.ID, a.ID))

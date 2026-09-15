@@ -38,7 +38,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 /* sidebar: workspace › session › turns, like a file tree with the status at the left */
 .sidebar{width:304px;flex-shrink:0;border-right:1px solid var(--line);background:var(--surface);
          display:flex;flex-direction:column}
-.sidebar .scroll{flex:1 1 0%;min-height:0;padding:2px 8px 16px;position:relative;display:flex;flex-direction:column;gap:4px}
+.sidebar .scroll{flex:1 1 0%;min-height:0;padding:2px 8px 32px;position:relative;display:flex;flex-direction:column;gap:4px}
 .list-none{padding:0 12px;color:var(--text-3);font-size:13px}
 .row-untitled{color:var(--text-3);font-size:13px}
 .session{position:relative}
@@ -72,7 +72,9 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .turn-sending-state{font-size:12px;line-height:16px;color:#A8B3AA}
 .transcript-state{margin:auto 0;text-align:center}
 /* The toolbar: sidebar, back, forward, search, and New set apart on the right. */
-.side-bar{flex-shrink:0;display:flex;align-items:center;justify-content:space-between;height:48px;padding:0 10px}
+.side-bar{flex-shrink:0;display:flex;align-items:center;justify-content:space-between;height:48px;padding:0 10px;position:relative;z-index:1;transition:box-shadow .12s}
+.side-bar-scrolled{box-shadow:0 1px 0 var(--line),0 4px 8px rgba(0,0,0,.18)}
+.side-icon:disabled{opacity:.4;cursor:default;background:none}
 .side-icon{display:grid;place-items:center;width:32px;height:32px;padding:0;background:none;border:0;border-radius:8px;
   color:var(--text-3);cursor:pointer}
 .side-icon:hover,.side-icon-on{color:var(--text-1);background:var(--raised)}
@@ -80,7 +82,8 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
   background:var(--raised);color:var(--text-1);cursor:pointer}
 .side-new:hover{border-color:var(--accent)}
 .side-new:focus-visible,.ws-head:focus-visible,.sec-fold:focus-visible,.turn-line:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-.sidebar-closed{width:56px}
+/* Folded at every width: the middling-window 256px must not widen the rail. */
+.sidebar.sidebar-closed{width:56px}
 /* The folded rail: toolbar stacked at the top, the views at the bottom, all 32px and centred. */
 .sidebar-closed .side-bar{flex-direction:column;justify-content:flex-start;gap:4px;height:auto;padding:8px 0}
 .sidebar-closed .side-collapse{margin:0}
@@ -98,7 +101,10 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 /* groups inside Background and Archived sit under their section, not beside the main list */
 .sec-body>.ws{padding-inline-start:12px;border-inline-start:1px solid var(--line);margin-inline-start:14px}
 .archived-note{display:flex;align-items:center;gap:12px;margin:0 0 8px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;color:var(--text-2)}
-.ws-older{align-self:flex-start;height:24px;margin:2px 0 4px 34px;padding:0 6px;background:none;border:0;border-radius:6px;color:var(--text-3);font:12px var(--sans);cursor:pointer}
+/* Its label sits on the title column: 10px row padding, 16px mark, 10px gap, less the chevron. */
+.ws-older{align-self:flex-start;display:flex;align-items:center;gap:4px;height:24px;margin:2px 0 4px;padding:0 6px 0 20px;background:none;border:0;border-radius:6px;color:var(--text-3);font:12px var(--sans);cursor:pointer}
+.ws-older svg{flex-shrink:0;transition:transform .12s}
+.ws-older[aria-expanded="true"] svg{transform:rotate(90deg)}
 .ws-older:hover{color:var(--text-1)}
 .ws-older:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .ws-head,.sec-fold{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;color:var(--text-3);font:13px var(--sans)}
@@ -463,6 +469,12 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .ov-why{flex-shrink:0;font-size:12px;color:var(--text-2)}
 @media (max-width:720px){.ov-row{height:auto;min-height:44px;flex-wrap:wrap;row-gap:0;padding-block:6px}.ov-title{flex-basis:100%}.ov-open{margin-inline-start:auto}}
 .ov-none{margin:0;color:var(--text-2)}
+.ov-empty{margin:auto;display:flex;flex-direction:column;align-items:center;gap:8px;padding:48px 16px;text-align:center}
+.ov-body:has(>.ov-empty){flex-grow:1}
+.ov-empty-title{margin:0;font-size:15px;font-weight:500;color:var(--text-1)}
+.ov-empty-sub{margin:0;font-size:13px;color:var(--text-2)}
+.ov-empty-keys{margin:8px 0 0;display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px 8px;font-size:12px;color:var(--text-3)}
+.ov-empty-keys kbd{font:500 11px/16px var(--mono);padding:1px 6px;border:1px solid var(--line-strong);border-radius:4px;color:var(--text-2)}
 
 .say{display:flex;flex-direction:column;gap:8px;max-width:78ch}
 .say-who{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text-2)}
@@ -897,6 +909,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
   background:var(--raised);border:1px solid var(--line-strong);color:var(--text-2);font-size:13px;line-height:1.45;
   box-shadow:0 8px 24px rgba(0,0,0,.35);pointer-events:none}
 .row-card-state{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;font-size:12px;color:var(--text-3)}
+.row-card-title{margin:0 0 6px;color:var(--text-1);font-weight:500;overflow-wrap:anywhere}
 .row-card-note{margin:8px 0 0}
 .row-card-note span{display:block;font-size:12px;color:var(--text-3)}
 @media (hover:none){.row-card{display:none}}
@@ -1146,6 +1159,9 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .toast{left:16px;right:16px;bottom:auto;top:calc(env(safe-area-inset-top) + 12px);max-width:none}
   /* The views live in the shell's bottom bar, on every page but a conversation. */
   .sidebar .side-nav{display:none}
+  .row-line{flex-direction:column;align-items:stretch;justify-content:center;gap:0}
+  .row-line>.row-meta{margin-inline-start:0}
+  .row:has(.row-line>.row-meta){height:auto;min-height:44px;padding-block:4px}
   .phone-nav{display:flex;position:fixed;inset-inline:0;bottom:0;z-index:40;background:var(--surface)}
   .app:has(.phone-nav){padding-bottom:calc(56px + env(safe-area-inset-bottom));box-sizing:border-box}
   .proj-body{padding:16px}
@@ -1356,7 +1372,8 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 
 /* Job rows: identity, command, outcome, time, action. The action column
    is reserved even when empty so rows do not shift when a job ends. */
-.job-group-head{display:flex;align-items:center;min-height:32px;font:600 12px/16px var(--sans);color:var(--text-2);font-variant-numeric:tabular-nums}
+.job-group-head{display:flex;align-items:center;min-height:24px;font:600 12px/16px var(--sans);color:var(--text-2);font-variant-numeric:tabular-nums}
+.turn-body>.job-group-head+*{margin-top:-6px}
 .job-summary{display:grid;grid-template-columns:16px 56px minmax(0,1fr) 140px 56px 112px;align-items:center;column-gap:8px;
              min-height:40px;padding:4px 12px;list-style:none;cursor:pointer}
 .job-summary::-webkit-details-marker{display:none}
@@ -1437,6 +1454,13 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .work-sheet .work-row{grid-template-columns:minmax(0,1fr)}
   .work-sheet .work-row-actions{justify-content:flex-start;margin-top:8px}
 }
+/* The same squeeze in the popover of a narrow pane. */
+@container (max-width:520px){
+  .work-popover .work-row{grid-template-columns:minmax(0,1fr)}
+  .work-popover .work-row-actions{justify-content:flex-start;margin-top:8px}
+}
+/* A narrow pane beside the sidebar: the repo name gives way so the title keeps its room. */
+@container (max-width:759px){.thread-head .head-repo{display:none}}
 @media (pointer:coarse){.work-row-actions>*,.work-filters button{min-height:44px}}
 
 /* Child sessions: the way back to the parent and the tree rows. */
@@ -1462,6 +1486,11 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .sub-fail-head{color:var(--red)}
 .sub-trace{max-height:240px;overflow:auto;margin:0;padding:0;border:0;font:12px/18px var(--mono);white-space:pre-wrap;color:var(--text-1)}
 .work-title{margin:0;font:600 14px/20px var(--sans);color:var(--text-1)}
+.work-title:focus{outline:none}
+.exec-note-quiet{color:var(--text-3);font-style:italic}
+.md-pre{position:relative}
+.md-pre>.md-copy{position:absolute;top:6px;right:6px;width:auto;padding:0 8px;font:12px var(--sans);color:var(--text-2);opacity:0}
+.md-pre:hover>.md-copy,.md-pre>.md-copy:focus-visible{opacity:1}
 .work-note{margin:0;padding:8px 12px}
 .head-main:has(>.child-parent-link){flex-wrap:wrap;row-gap:0}
 .head-main>.child-parent-link{flex-basis:100%}
@@ -1576,6 +1605,34 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .wk-mod{color:var(--amber)}
 .wk-quiet{display:flex;align-items:center;gap:10px;padding:2px 14px;font-size:12px;color:var(--text-3)}
 .wk-quiet::before{content:"\203a";font-family:var(--mono)}
+/* Wiki polish: clamped margin notes never push the paragraph below; an opaque
+   page head masks the chip rows scrolling under it; code wraps inside the column. */
+.wk-note-text{display:block}
+.wk-note-clamp{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+/* A tall note may hang into the gap below its claim instead of pushing the next claim down. */
+.wk-claim>.wk-note{margin-bottom:-16px}
+.wk-note-more{margin-top:2px;font-size:11.5px}
+.wk-text code,.wk-item-claim code{overflow-wrap:anywhere;word-break:break-word;white-space:pre-wrap}
+.wk-doc .md a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+.wk-doc .md a:hover{color:var(--text-1)}
+.wk-sep{margin-inline:6px}
+.wk-crumb{column-gap:0}
+.wk-citedby{display:inline-flex;flex-wrap:wrap;gap:2px 0;margin:0;padding:0;list-style:none}
+.wk-citedby li::before{content:"\00b7";margin-inline:8px;color:var(--text-3)}
+.wk-state-quiet{color:var(--text-3);background:color-mix(in oklab,var(--text-3) 14%,transparent)}
+.wk-history{min-height:44px}
+.wk-malformed{margin:0;max-width:65ch}
+.thread-head.page-head{background:var(--bg);position:relative;z-index:2}
+.btn.btn-sm{min-height:24px;padding:1px 8px;font-size:12px}
+/* Shared loading vocabulary (src/loading.tsx). */
+.pending{display:flex;flex-direction:column;gap:10px;padding:8px 0;color:var(--text-3);font-size:13px}
+.pending-inline{padding:0;min-height:20px}
+.pending-msg{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pending-hint{font-variant-numeric:tabular-nums;color:var(--text-3)}
+.pending-err{flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px 12px;color:var(--text-2)}
+.pending-line{display:block;height:12px;max-width:65ch;border-radius:4px;background:var(--raised);animation:pending-pulse 1.4s ease-in-out infinite}
+@keyframes pending-pulse{50%{opacity:.5}}
+@media (prefers-reduced-motion:reduce){.pending-line,.pending .spin-mark{animation:none}}
 .pal-ev{display:block;margin:0 10px 4px 22px;padding:7px 10px;background:var(--surface);border-radius:6px;
         font:12px/1.6 var(--mono);color:var(--text-3);white-space:pre-wrap;overflow-wrap:anywhere}
 @media (max-width:1200px){
@@ -1637,8 +1694,13 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .ov-fail-exit{color:#EF9A9A;font-weight:500}
 .ov-fail .btn{height:32px;flex-shrink:0}
 @media (max-width:720px){
-  .thread-head.page-head{grid-template-columns:44px minmax(0,1fr) auto;grid-template-rows:56px;grid-template-areas:none;gap:0 8px;padding-block:0;min-height:56px}
+  .thread-head.page-head{grid-template-columns:44px minmax(0,1fr) auto;grid-template-rows:minmax(56px,auto);grid-template-areas:none;gap:0 8px;padding-block:0;min-height:56px}
   .thread-head.page-head>*{grid-area:auto;grid-row:1}
+  /* Back renders nothing without a way back: the title must not fall into its 44px track. */
+  .thread-head.page-head>.head-main{grid-column:2}
+  .thread-head.page-head .head-main .btn{white-space:nowrap}
+  /* Page actions (wiki) take their own row under the title, as on a session. */
+  .thread-head.page-head>.hk-acts{grid-row:2;grid-column:1/-1;margin:0 0 8px}
   .page-head>.head-side,.proj-page-head>.head-side{display:flex}
   .proj-page-head>.head-side>.btn-primary{grid-row:auto;grid-column:auto}
   .pal{inset-block-start:calc(var(--vvt,0px) + 16px)}
@@ -1655,6 +1717,48 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .ov-fail-what{flex-basis:100%}
   .ov-fail .btn{height:44px;margin-inline-start:auto}
 }
+.hk-loaderr{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.hk-loaderr .btn{height:24px;padding-inline:8px;font-size:12px;width:auto}
+/* Hooks: one link style for Open definition / Open file. */
+.hk-toggle{color:var(--text-1);font-weight:500;text-decoration:underline;text-underline-offset:3px}
+.hk-toggle:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+/* Decision rows: hover and keyboard focus. */
+.hk-fold>summary.hk-main{border-radius:6px;padding-inline:4px;margin-inline:-4px}
+.hk-fold>summary.hk-main:hover{background:var(--surface)}
+.hk-fold>summary.hk-main:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+/* The column header and each day heading stay put while the decisions scroll. */
+.hk-decisions>.hk-cols{position:sticky;top:0;z-index:2;background:var(--bg)}
+.hk-dayrun>.hk-day{position:sticky;top:24px;z-index:1;background:var(--bg)}
+.hk-took{text-align:end;font-variant-numeric:tabular-nums}
+.hk2-muted{color:var(--text-3);background:color-mix(in oklab,var(--text-3) 14%,transparent)}
+.hk-setup .proj-head{align-items:center}
+.hk-setup-item>p{margin:6px 0 0}
+/* Projects: sticky section heads, real hit targets, a separated destructive action. */
+.proj-body>.proj>.proj-head{position:sticky;top:0;z-index:3;background:var(--bg);padding-top:6px}
+.hk-decisions>.proj-head{position:static}
+.proj-act{min-height:24px;min-width:24px;padding:2px 6px;border-radius:6px}
+.proj-act:hover{background:var(--surface)}
+.proj-act:focus-visible{outline:2px solid var(--accent);outline-offset:0}
+.proj-del{color:var(--red);margin-inline-start:8px;position:relative}
+.proj-del::before{content:"";position:absolute;inset-inline-start:-6px;top:4px;bottom:4px;border-inline-start:1px solid var(--line-strong)}
+.proj-del:hover{color:var(--red)}
+.proj-row{padding-inline:8px;margin-inline:-8px;border-radius:6px}
+.proj-row:hover{background:var(--surface)}
+.proj-row:has(.proj-open:focus-visible){outline:2px solid var(--accent);outline-offset:-2px}
+.proj-open:focus-visible{outline:none}
+.proj-move{opacity:0;transition:opacity .12s}
+.proj-row:hover .proj-move,.proj-row:focus-within .proj-move{opacity:1}
+@media (pointer:coarse){.proj-move{opacity:1}.proj-act{min-height:44px}}
+.rp-norepo{font-size:13px;font-style:italic;color:var(--text-3)}
+/* Orb panel. */
+.orb-label{display:inline-block;min-width:64px;margin-inline-end:8px;font-size:12px;font-weight:600;color:var(--text-3)}
+.orb-about{margin:0}
+.btn-danger-quiet{color:var(--red);border-color:color-mix(in oklab,var(--red) 50%,transparent)}
+.btn-danger-quiet:hover{color:var(--red);background:color-mix(in oklab,var(--red) 12%,transparent)}
+.orb-cols{padding:0 8px}
+.rp-state{display:flex;align-items:center}
+/* Sidebar: a configured project reads apart from a plain repo group. */
+.ws-project{color:var(--text-2)}
 </style>
 </head>
 <body>
