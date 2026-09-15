@@ -233,7 +233,10 @@ func runServe(args []string) {
 	for range 100 {
 		if c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond); err == nil {
 			c.Close()
+			// The line a first run reads: where to go and how to stop it,
+			// since the daemon outlives the shell that started it.
 			fmt.Printf("bough serve: http://%s (pid %d, log %s)\n", addr, pid, logPath)
+			fmt.Printf("  open it in a browser; stop it with: bough serve stop\n")
 			return
 		}
 		if !alive(pid) {
