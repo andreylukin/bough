@@ -67,7 +67,7 @@ go build ./cmd/bough
 ./bough --web 127.0.0.1:7681 # browser UI (sip)
 ./bough --headless           # stdin/stdout
 ./bough --project <slug>     # project session: shell in the project's container
-./bough --local              # local session (default): read-only on local files
+./bough --local              # local session (default): writes only inside the git checkout it starts in
 ./bough --set llm.model=claude-haiku-4-5   # override any row config
 ./bough --set llm.plugin=llm-echo          # swap a row's plugin
 ./bough rows                 # print the row state table and exit

@@ -22,8 +22,9 @@ To change code, tell the user this session cannot, and give the exact command: q
 // WriteRootsEnv lists the only directories a local session may write,
 // for a job bough itself starts to maintain its own files: the wiki
 // ingest runs headless in local mode and, read-only, refused every run
-// and re-ingested the same sessions every five minutes. Unset for every
-// session a person starts, which stays read-only.
+// and re-ingested the same sessions every five minutes. The launcher
+// also sets it to the git checkout a session starts in
+// (applyDefaultWriteRoot); outside a checkout a session stays read-only.
 const WriteRootsEnv = "BOUGH_WRITE_ROOTS"
 
 // LocalWriteRoots reads WriteRootsEnv: absolute paths, cleaned; relative

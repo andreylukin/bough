@@ -16,6 +16,14 @@ func TestHeadlessLocalSessionIsReadOnly(t *testing.T) {
 	mustNotContain(t, out, "tools.write(path")
 }
 
+// Started inside a git checkout, a local session can write there: the
+// prompt names the checkout and the catalogue has tools.write.
+func TestHeadlessLocalSessionInCheckoutWrites(t *testing.T) {
+	t.Parallel()
+	out := runHeadless(t, launchOpts{cwd: map[string]string{".git/HEAD": "ref: refs/heads/main\n"}}, "SYSTEM!")
+	mustContain(t, out, "Session mode: local, with write access to", "tools.write(path")
+}
+
 // --project with the fake runtime mounts the orb row and routes
 // tools.bash through its exec seam.
 func TestHeadlessProjectSessionExecsThroughOrb(t *testing.T) {

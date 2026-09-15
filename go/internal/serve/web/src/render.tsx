@@ -83,6 +83,10 @@ export function scriptHead(script: string): string {
  * patch, view and spawn). A bare "Code" header tells you nothing when
  * every turn has one.
  */
+/** The live row says what is happening now: "Running go test", not "Ran". */
+const PRESENT: Record<string, string> = { Ran: "Running", Wrote: "Writing", Patched: "Patching", Read: "Reading", "Spawned subagents": "Spawning subagents", "Spawned a subagent": "Spawning a subagent", "Asked you": "Asking you" };
+const presentTense = (label: string) => PRESENT[label] ?? label;
+
 export function codeLabel(code: string): { label: string; detail: string } {
   const first = (re: RegExp) => code.match(re)?.[1]?.trim() ?? "";
   // A quoted script spells its newlines "\n".
@@ -479,4 +483,129 @@ export function execNote(text: string): { notRun: number; reason: string } | nul
 /** A result line's label: never payload characters, a SubRun's results counted. */
 export function resultLabel(subRunCount?: number | null): string {
   return subRunCount ? `Subagent results · ${subRunCount}` : "Result";
+}
+
+/* ---------------- work segments ---------------- */
+
+/**
+ * A turn as it reads: the agent's replies, and the stretches of work
+ * between them folded to one row each ("Worked for 2m 13s · 14 actions").
+ * Twenty rows of calls, thoughts and notes buried the two sentences you
+ * came to read.
+ *
+ * - reply: assistant prose that renders visible text. A reply that was
+ *   only the program it ran (or the loop's skipped-blocks note) is not.
+ * - pinned: a subagent run still working on a live turn. It is live
+ *   status, so it never hides inside a fold (and it splits the work).
+ * - work: everything else between replies, in order.
+ *
+ * The collapse rule the renderer applies: a finished segment of a single
+ * row (one call, one thought, one plan row, one card) renders bare —
+ * wrapping one row in another row is a click for nothing. The running
+ * segment is always a row: it is the turn's working indicator.
+ */
+export type Segment =
+  | { kind: "reply"; item: Item }
+  | { kind: "pinned"; item: Item }
+  | { kind: "work"; seq: number; items: Item[]; seqs: number[];
+      /** Rows as rendered: consecutive todo or job records share one. */
+      rows: number;
+      /** Tool calls + jobs + subagents + todo changes. */
+      actions: number; failed: number; thinkingOnly: boolean;
+      /** First and last recorded entry; a lone thought ends when the next entry landed. */
+      from: string; to: string;
+      /** The latest thing it did, for a running row. */
+      step: string;
+      /** No reply follows it in the turn. */
+      last: boolean };
+
+type WorkSegment = Extract<Segment, { kind: "work" }>;
+
+const NOTE_RE = /\[(?:\d+ further code block\(s\) dropped|the \d+ code block\(s\) after this one)[^\]]*\]/g;
+
+/** Whether an assistant line renders words, not just a program or a skipped-blocks note. */
+export function isReply(l: Line, codes: string[]): boolean {
+  if (l.kind !== "assistant") return false;
+  return !blank(splitBareProgram(stripRunFences(l.text.replace(NOTE_RE, ""), codes))[0]);
+}
+
+const jobFailed = (l: Line) => {
+  const d = l.data ?? {};
+  if (typeof d.exit === "number") return d.exit !== 0;
+  if (d.status === "failed") return true;
+  return /^job \d+ \[(?:failed|exited -?[1-9]\d*)\]/.test(String(d.text ?? l.text ?? ""));
+};
+
+export function splitWork(items: Item[], codes: string[], live: boolean): Segment[] {
+  const out: Segment[] = [];
+  let cur: Item[] = [];
+  const flush = () => {
+    if (!cur.length) return;
+    const lines: Line[] = [];
+    let actions = 0, failed = 0, rows = 0;
+    let step = "";
+    const jobs = new Set<string>();
+    cur.forEach((it, i) => {
+      const prev = cur[i - 1];
+      const run = (k: (l: Line) => boolean) => it.kind === "line" && k(it.line) && prev?.kind === "line" && k(prev.line);
+      // A run of one call is not wrapped: its thought, call and notes are rows of their own.
+      if (it.kind === "tools" && it.lines.filter((l) => l.kind === "code").length < 2) rows += it.lines.filter((l) => l.kind !== "result").length;
+      else if (!run((l) => l.kind.startsWith("todo/")) && !run((l) => l.kind === "job")) rows++;
+      if (it.kind === "sub") {
+        actions += it.agents.length;
+        failed += it.agents.filter((a) => a.status === "error").length;
+        for (const a of it.agents) lines.push(...a.lines, { seq: a.seq, at: a.from, kind: "sub:start", text: "" }, { seq: a.seq, at: a.to, kind: "sub:done", text: "" });
+        step = it.agents.length === 1 ? "Subagent" : `${it.agents.length} subagents`;
+        return;
+      }
+      const ls = it.kind === "tools" ? it.lines : [it.line];
+      for (const l of ls) {
+        lines.push(l);
+        if (l.kind === "code") { actions++; const c = codeLabel(l.text); step = [presentTense(c.label), c.detail].filter(Boolean).join(" "); }
+        else if (l.kind === "result") { if ((typeof l.data?.exit === "number" && l.data.exit !== 0)) failed++; }
+        else if (l.kind === "job") {
+          const id = typeof l.data?.id === "number" ? String(l.data.id) : /^job (\d+) /.exec(l.text)?.[1];
+          if (!id || !jobs.has(id)) actions++;
+          if (id) jobs.add(id);
+          if (jobFailed(l)) failed++;
+          step = "Job" + (id ? ` ${id}` : "");
+        } else if (l.kind.startsWith("todo/")) actions++;
+        else if (l.kind === "thinking") step = "Thinking";
+        else if (l.kind === "error") failed++;
+      }
+    });
+    const ats = lines.map((l) => Date.parse(l.at)).filter(Number.isFinite);
+    const iso = (n: number) => new Date(n).toISOString();
+    const thinkingOnly = lines.length > 0 && lines.every((l) => l.kind === "thinking");
+    out.push({
+      kind: "work", seq: cur[0].seq, items: cur, seqs: lines.map((l) => l.seq), rows, actions, failed, thinkingOnly,
+      from: ats.length ? iso(Math.min(...ats)) : "", to: ats.length ? iso(Math.max(...ats)) : "",
+      step: step.length > 80 ? step.slice(0, 79) + "…" : step, last: false,
+    });
+    cur = [];
+  };
+  for (const it of items) {
+    if (it.kind === "line" && isReply(it.line, codes)) {
+      flush();
+      // A lone thought's span is until the reply it led to.
+      const prev = out[out.length - 1];
+      if (prev?.kind === "work" && prev.thinkingOnly && Date.parse(it.line.at) > Date.parse(prev.to)) prev.to = it.line.at;
+      out.push({ kind: "reply", item: it });
+      continue;
+    }
+    if (live && it.kind === "sub" && it.agents.some((a) => !a.status)) { flush(); out.push({ kind: "pinned", item: it }); continue; }
+    cur.push(it);
+  }
+  flush();
+  for (let i = out.length - 1; i >= 0 && out[i].kind !== "reply"; i--) if (out[i].kind === "work") (out[i] as WorkSegment).last = true;
+  return out;
+}
+
+/** "Worked for 12s · 6 actions", "Thought for 9s": a finished segment's row. */
+export function workHeadline(s: { actions: number; thinkingOnly: boolean; from: string; to: string }): string {
+  const ms = s.from && s.to ? Date.parse(s.to) - Date.parse(s.from) : 0;
+  // Under a second is not a fact worth a slot ("Worked for 0s").
+  const took = ms >= 1000 ? ` for ${duration(ms)}` : "";
+  if (s.thinkingOnly) return "Thought" + took;
+  return "Worked" + took + (s.actions ? ` · ${s.actions} ${s.actions === 1 ? "action" : "actions"}` : "");
 }

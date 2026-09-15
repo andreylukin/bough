@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Controls, Thread } from "../app";
-import { projects, rows, turn } from "./fixtures";
+import { projects, rows, segmentRunning, segmentSubagentsAsk, segmentTurn, turn } from "./fixtures";
 
 const noop = () => {};
 const handlers = {
@@ -22,6 +22,12 @@ export const Running: S = { args: { row: rows[0], lines: turn.filter((l) => l.ki
 /** A live ask renders as its own card above the composer, and the composer answers it. */
 export const WaitingForYou: S = { args: { row: rows[1] } };
 export const Done: S = { args: { row: rows[2] } };
+/** A long finished turn: the work between replies folds to rows, Expand all in the footer. */
+export const WorkSegments: S = { args: { row: rows[2], lines: segmentTurn } };
+/** A running turn: one working row with the live timer and current step, no second Working line. */
+export const WorkSegmentRunning: S = { args: { row: rows[0], lines: segmentRunning(), activity: "Running bun run typecheck" } };
+/** Running subagents and the pending question stay outside the folded work. */
+export const WorkSegmentSubagentsAsk: S = { args: { row: rows[1], lines: segmentSubagentsAsk() } };
 export const Archived: S = { args: { row: { ...rows[2], archived: true } } };
 /** A project session whose setup failed: "Why?" beside the orb chip opens the error and the end of resume.log, with Refresh and Rebuild image. */
 export const OrbSetupFailed: S = {

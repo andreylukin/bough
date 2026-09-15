@@ -410,6 +410,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "bough:", err)
 		os.Exit(2)
 	}
+	applyDefaultWriteRoot(sessMode)
 
 	// Catch interrupts BEFORE the mount: the headless ui row interrupts
 	// the process on stdin EOF, which on a fast run can fire before main

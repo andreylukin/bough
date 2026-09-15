@@ -7,7 +7,7 @@ import { ProjectsView } from "./projects";
 import { ModeChip, ModePicker, type ModeValue } from "./mode";
 import { Select, type Option } from "./select";
 import { DialogHost, askChoice, askConfirm, askText } from "./dialog";
-import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount, changedPath } from "./render";
+import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount, changedPath } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
 import { agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
@@ -1645,7 +1645,7 @@ export function ToolRun({ lines, codes, live, stopped, failSeq }: { lines: Line[
   const more = targets.length - 1;
   return (
     <details className="block thin toolrun" ref={box} open={holdsFail || undefined} data-open-key={"tools:" + lines[0].seq}>
-      <summary {...handlers}>
+      <summary role="button" {...handlers}>
         <span className="block-label">{label}</span>{" "}
         {target && <span className="mono block-detail" title={targets[0]}>{target}</span>}{" "}
         {more > 0 && <span className="num tool-more">{more} more {fileish ? (more === 1 ? "file" : "files") : ""}</span>}{" "}
@@ -1703,7 +1703,7 @@ export function ToolCall({ code, result, live, stopped, current }: { code: Line;
   return (
     <>
     <details className={"block thin toolcall" + (failed ? " block-failed" : "")} data-seq={result?.seq} open={current || undefined}>
-      <summary {...handlers}>
+      <summary role="button" {...handlers}>
         <span className="block-label">{timedOut ? "Question timed out" : label ?? call.verb}</span>
         {!label && <span className="mono block-detail" title={call.gist}>{timedOut ? timedOut[1] : phone ? tailPath(gistOf(call.gist)) : gistOf(call.gist)}</span>}
         {meta.some(Boolean) && (
@@ -1833,10 +1833,11 @@ export function TurnHooks({ lines, load, save }: { lines: Line[]; load?: Load; s
  * changed. A bare "Finished" told a programmer none of that. Nothing is
  * estimated — a provider that recorded no usage shows only the outcome.
  */
-function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0 }: {
+function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, extra }: {
   turn: Turn; /** The result the turn's failure came from, when recorded. */ fail?: Line;
   /** The longest recorded run of the turn's jobs and subagents, so wall time never reads shorter than its work. */ longest?: number;
   failedWork?: number; unknownSubs?: number;
+  /** The turn's own controls (Expand all), before the usage on the right. */ extra?: React.ReactNode;
 }) {
   const done = turn.done!;
   const cwd = str(done.data?.cwd);
@@ -1901,6 +1902,7 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0 }
       )}
       {facts.map((f) => <span key={f} className="num">{f}</span>)}
       {files.length > 0 && <TurnFiles files={files} cwd={cwd} />}
+      {extra}
       <span className="turn-foot-right">
         {u?.cost !== undefined ? <span className="num" title={tokens}>{money(u.cost)}</span> : tokens && <span className="num">{tokens}</span>}
         {model && <span className="mono" title={model}>{(u?.cost !== undefined || tokens) ? " · " : ""}{model.split("/").pop()}</span>}
@@ -2221,7 +2223,53 @@ function askSaysTitle(ask: string, title: string): boolean {
   return want.length > 0 && want.filter((w) => have.has(w)).length / want.length >= 2 / 3;
 }
 
-export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode; /** 1-based position, so the turn log can land on it. */ n?: number }) {
+/**
+ * Which work segments are open, per session and segment first seq, for
+ * as long as the page is. A "show work expanded" preference would be the
+ * default this falls back to: WorkSegmentRow's `defaultOpen` ORed with it.
+ */
+const segOpen = new Map<string, boolean>();
+
+/**
+ * One stretch of work between replies as one row. Opened, it holds exactly
+ * the rows it folded. It is a native details element, so a jump that opens
+ * every details around its target opens this one too.
+ */
+function WorkSegmentRow({ seg, session, defaultOpen, running, since, step, all, children }: {
+  seg: Extract<Segment, { kind: "work" }>; session: string; defaultOpen: boolean;
+  /** The last segment of a live turn: a spinner, the turn's timer and the current step. */
+  running?: boolean; since?: string; step?: string;
+  all?: { open: boolean; at: number } | null; children: React.ReactNode;
+}) {
+  const key = session + ":" + seg.seq;
+  const [open, setOpen] = useState(() => segOpen.get(key) ?? defaultOpen);
+  const box = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (!all) return;
+    segOpen.set(key, all.open); setOpen(all.open);
+    // Expand all reaches the grouped calls inside too, so a failing sub-command shows without another click.
+    box.current?.querySelectorAll<HTMLDetailsElement>(".work-seg-body details.toolrun").forEach((d) => { d.open = all.open; });
+  }, [all]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <details ref={box} className={"block thin work-seg" + (running ? " work-seg-live" : "")} open={open} data-open-key={"seg:" + seg.seq}
+             onToggle={(e) => { if (e.target !== e.currentTarget) return; const o = e.currentTarget.open; segOpen.set(key, o); setOpen(o); }}>
+      <summary role="button" aria-expanded={open}>
+        {running && (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+               strokeLinecap="round" className="spin-mark" aria-hidden="true"><circle cx="12" cy="12" r="8.5" strokeDasharray="40 14" /></svg>
+        )}
+        <span className="block-label">{running ? "Working" : workHeadline(seg)}</span>
+        {running && since && <span className="num work-seg-time"><Elapsed since={since} /></span>}
+        {running && step && <span className="mono block-detail work-seg-step" title={step}>{step}</span>}
+        {seg.failed > 0 && <span className="num toolrun-failed">{seg.failed} failed</span>}
+      </summary>
+      <div className="work-seg-body">{children}</div>
+    </details>
+  );
+}
+
+export function TurnView({ turn, tail, n, working }: { turn: Turn; tail?: React.ReactNode; /** 1-based position, so the turn log can land on it. */ n?: number;
+  /** The live turn's activity ("Thinking", "Running go test"): its working row says it, once. */ working?: string }) {
   const ctx = useWork();
   const codes = turn.body.filter((l) => l.kind === "code" || l.kind === "sub:code").map((l) => l.text);
   const hooks = useMemo(() => turn.body.filter(isHookLine), [turn.body]);
@@ -2288,6 +2336,39 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
   }
   said2.push(said.slice(pos));
   const loose = atts.map((_, i) => i).filter((i) => atts[i].at < 0);
+  const live = !turn.done && !turn.stopped;
+  const segs = useMemo(() => splitWork(items, codes, live && (ctx?.live ?? true)),
+    // codes is derived from items' turn.body.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, live, ctx?.live]);
+  const works = segs.filter((sg): sg is Extract<Segment, { kind: "work" }> => sg.kind === "work");
+  // The turn's working indicator is its last stretch of work, when nothing was said after it.
+  const lastWork = works[works.length - 1];
+  const runningSeg = live && lastWork?.last ? lastWork : undefined;
+  const [allSegs, setAllSegs] = useState<{ open: boolean; at: number } | null>(null);
+  const folds = works.filter((sg) => sg.rows >= 2).length;
+  const renderItem = (it: Item, i: number, list: Item[]): React.ReactNode => {
+    if (it.kind === "sub") return <SubRun key={"sub" + it.seq} agents={it.agents} seq={it.seq} turn={turn} live={(ctx?.live ?? true) && live} />;
+    if (it.kind === "tools") return <ToolRun key={"tools" + it.seq} lines={it.lines} codes={codes} live={live} stopped={turn.stopped || turn.done?.kind === "cancelled"} failSeq={fail?.seq} />;
+    if (it.line.kind.startsWith("todo/")) {
+      // Consecutive todo records fold into one row, rendered at the first.
+      const prev = list[i - 1];
+      if (prev?.kind === "line" && prev.line.kind.startsWith("todo/")) return null;
+      const run: Line[] = [];
+      for (let j = i; j < list.length; j++) { const x = list[j]; if (x.kind !== "line" || !x.line.kind.startsWith("todo/")) break; run.push(x.line); }
+      return <TodoRun key={"todo" + it.seq} lines={run} live={(ctx?.live ?? true) && live} />;
+    }
+    if (it.line.kind === "job") {
+      // Consecutive job rows share one head, rendered at the first of them.
+      const prev = list[i - 1];
+      if (prev?.kind === "line" && prev.line.kind === "job") return null;
+      const run: Line[] = [];
+      for (let j = i; j < list.length; j++) { const x = list[j]; if (x.kind !== "line" || x.line.kind !== "job") break; run.push(x.line); }
+      return <JobLines key={"jobs" + it.seq} lines={run} render={(x) => <Entry line={x} codes={codes} />} />;
+    }
+    return <Entry key={it.seq} line={it.line} codes={codes}
+                  until={it.line.kind === "thinking" ? turn.body[turn.body.findIndex((l) => l.seq === it.line.seq) + 1]?.at ?? turn.done?.at : undefined} />;
+  };
   return (
     <section className="turn" data-turn={n}>
       {turn.prompt && wakeJobs && (
@@ -2328,29 +2409,24 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
         </div>
       )}
       <div className="turn-body">
-        {items.map((it, i) => {
-          if (it.kind === "sub") return <SubRun key={"sub" + it.seq} agents={it.agents} seq={it.seq} turn={turn} live={(ctx?.live ?? true) && !turn.done && !turn.stopped} />;
-          if (it.kind === "tools") return <ToolRun key={"tools" + it.seq} lines={it.lines} codes={codes} live={!turn.done && !turn.stopped} stopped={turn.stopped || turn.done?.kind === "cancelled"} failSeq={fail?.seq} />;
-          if (it.line.kind.startsWith("todo/")) {
-            // Consecutive todo records fold into one row, rendered at the first.
-            const prev = items[i - 1];
-            if (prev?.kind === "line" && prev.line.kind.startsWith("todo/")) return null;
-            const run: Line[] = [];
-            for (let j = i; j < items.length; j++) { const x = items[j]; if (x.kind !== "line" || !x.line.kind.startsWith("todo/")) break; run.push(x.line); }
-            return <TodoRun key={"todo" + it.seq} lines={run} live={(ctx?.live ?? true) && !turn.done && !turn.stopped} />;
-          }
-          if (it.line.kind === "job") {
-            // Consecutive job rows share one head, rendered at the first of them.
-            const prev = items[i - 1];
-            if (prev?.kind === "line" && prev.line.kind === "job") return null;
-            const run: Line[] = [];
-            for (let j = i; j < items.length; j++) { const x = items[j]; if (x.kind !== "line" || x.line.kind !== "job") break; run.push(x.line); }
-            return <JobLines key={"jobs" + it.seq} lines={run} render={(x) => <Entry line={x} codes={codes} />} />;
-          }
-          return <Entry key={it.seq} line={it.line} codes={codes}
-                        until={it.line.kind === "thinking" ? turn.body[turn.body.findIndex((l) => l.seq === it.line.seq) + 1]?.at ?? turn.done?.at : undefined} />;
+        {segs.map((sg) => {
+          if (sg.kind !== "work") return <Fragment key={"i" + sg.item.seq}>{renderItem(sg.item, 0, [sg.item])}</Fragment>;
+          const rows = sg.items.map((it, i) => <Fragment key={"i" + it.seq}>{renderItem(it, i, sg.items)}</Fragment>);
+          // Only while the thread says the turn is working: a turn waiting on your answer is not.
+          const running = live && working !== undefined && sg === runningSeg;
+          if (!running && sg.rows < 2) return rows;
+          const step = working && working !== "Working" ? working : sg.step;
+          return (
+            <WorkSegmentRow key={"seg" + sg.seq} seg={sg} session={ctx?.session ?? ""} all={allSegs}
+                            defaultOpen={Boolean(fail && sg.last && (sg.seqs.includes(fail.seq) || sg.failed > 0))}
+                            running={running} since={turn.prompt?.at ?? sg.from} step={step}>
+              {rows}
+            </WorkSegmentRow>
+          );
         })}
         {tail}
+        {/* No stretch of work to carry it (the turn opened on a reply, or has said nothing yet). */}
+        {working !== undefined && !runningSeg && live && <Working label={working}>{turn.prompt?.at && <Elapsed since={turn.prompt.at} />}</Working>}
         <TurnHooks lines={hooks} />
       </div>
       {turn.done && (() => {
@@ -2360,7 +2436,12 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
         const mine = (ctx?.workers ?? []).filter((w) => (w.subrunSeq ?? w.seq) >= lo && (w.subrunSeq ?? w.seq) <= hi);
         return <TurnFooter turn={turn} fail={fail} longest={Math.max(0, ...mine.map((w) => w.ms ?? 0))}
                            failedWork={mine.filter((w) => w.life === "failed").length}
-                           unknownSubs={mine.filter((w) => w.kind !== "job" && w.life === "unknown").length} />;
+                           unknownSubs={mine.filter((w) => w.kind !== "job" && w.life === "unknown").length}
+                           extra={folds >= 2 && (
+                             <button type="button" className="link turn-seg-all" onClick={() => setAllSegs({ open: !allSegs?.open, at: Date.now() })}>
+                               {allSegs?.open ? "Collapse all" : "Expand all"}
+                             </button>
+                           )} />;
       })()}
       {/* No done and nothing live to write one: the turn was cut off, and says so where it ends, like Stopped. */}
       {!turn.done && ctx && !ctx.live && (
@@ -2908,7 +2989,12 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   };
   // The block summaries are one tab stop: the current one is tabbable, and
   // so are its own controls; every other summary and its Copy wait for ↑/↓.
-  const summaries = () => [...(scroller.current?.querySelectorAll<HTMLElement>("details.block > summary") ?? [])].filter((s) => s.offsetParent);
+  // A closed <details> hides its content without clearing offsetParent: skip rows inside one.
+  const summaries = () => [...(scroller.current?.querySelectorAll<HTMLElement>("details.block > summary") ?? [])].filter((s) => {
+    if (!s.offsetParent) return false;
+    for (let d = s.parentElement?.parentElement?.closest("details"); d; d = d.parentElement?.closest("details")) if (!d.open) return false;
+    return true;
+  });
   const rovingAt = useRef<HTMLElement | null>(null);
   const rove = (all: HTMLElement[], on: HTMLElement) => {
     rovingAt.current = on;
@@ -3424,16 +3510,10 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             // The preview belongs to the turn that is still open, so it
             // sits where the recorded entry will appear and is replaced
             // in place rather than jumping up the page.
-            tail={i === turns.length - 1 && !t.done ? (
-              <>
-                <StreamView runs={stream} />
-                {running && !row.ask && (
-                  <Working label={stream.length && stream[stream.length - 1].kind === "thinking" ? "Thinking" : activity || "Working"}>
-                    {t.prompt?.at && <Elapsed since={t.prompt.at} />}
-                  </Working>
-                )}
-              </>
-            ) : undefined} />
+            tail={i === turns.length - 1 && !t.done ? <StreamView runs={stream} /> : undefined}
+            // The turn says it is working once: on its running row of work, or under the tail when there is none.
+            working={i === turns.length - 1 && !t.done && running && !row.ask
+              ? (stream.length && stream[stream.length - 1].kind === "thinking" ? "Thinking" : activity || "Working") : undefined} />
         ))}
         {unlanded.map((p) => (
           <section key={p.id} className="turn turn-sending">

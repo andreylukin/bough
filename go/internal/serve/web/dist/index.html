@@ -876,6 +876,17 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .todo-plan-list li[data-current]>.todo-mark{color:var(--accent);align-self:center}
 .todo-history{margin:0 0 var(--s-1) 22px}
 .block.thin.toolrun>.toolrun-body{gap:2px;padding:2px 0 4px 10px;margin-inline-start:7px;border-top:0;border-left:1px solid var(--line);background:none}
+/* A stretch of work between replies, folded to one row; opened, the same rail as a tool run. */
+.block.thin.work-seg>.work-seg-body{display:flex;flex-direction:column;gap:6px;padding:4px 0 6px 10px;margin-inline-start:7px;border-left:1px solid var(--line)}
+.block.thin.work-seg>summary .block-label{color:var(--text-2)}
+.block.thin.work-seg>summary .toolrun-failed{margin-left:0}
+.work-seg-live>summary .spin-mark{color:var(--text-2);flex-shrink:0}
+.work-seg-time{font-size:12px;color:var(--text-3);flex-shrink:0}
+.work-seg-time::before{content:"· "}
+.block.thin.work-seg>summary .work-seg-step::before{content:"· ";color:var(--text-3)}
+.turn-seg-all{font-size:12px}
+@media (max-width:720px),(pointer:coarse){.block.thin.work-seg>summary{min-height:44px}}
+@media (prefers-reduced-motion:reduce){.work-seg-live .spin-mark{animation:none}}
 .turn-body>.block.thin+.block.thin{margin-top:-10px}
 /* thinking and tool rows sit tight against the reply around them */
 .turn-body>.block.thin{margin-block:-6px}

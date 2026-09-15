@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { CodeBlock, Entry, JobBlock, ResultBlock, TodoRun, TurnView } from "../app";
 import { Markdown, groupTurns } from "../render";
-import { jobLegacyFailed, jobTyped0, jobTyped2, jobTypedNoExit, markdown, turn } from "./fixtures";
+import { jobLegacyFailed, jobTyped0, jobTyped2, jobTypedNoExit, markdown, segmentFailed, segmentRunning, segmentTurn, turn } from "./fixtures";
 import { ExecNote } from "../work-ui";
 import type { Line } from "../types";
 
@@ -15,6 +15,12 @@ export default meta;
 /** One prompt and everything the agent did before it stopped. */
 export const Turn: StoryObj = { render: () => <TurnView turn={groupTurns(turn)[0]} /> };
 /** A turn from an earlier day shows its date beside the time. */
+/** A long turn: each stretch of work between replies is one row ("Worked for 31s · 6 actions"); the replies and the footer stay in view. */
+export const WorkSegments: StoryObj = { render: () => <TurnView turn={groupTurns(segmentTurn)[0]} /> };
+/** A live turn: its last stretch is the working row, with the turn's timer and the step it is on. */
+export const WorkSegmentRunning: StoryObj = { render: () => <TurnView turn={groupTurns(segmentRunning())[0]} working="Working" /> };
+/** A turn that ended on a failed command: that stretch opens by itself, with the failure inside. */
+export const WorkSegmentFailed: StoryObj = { render: () => <TurnView turn={groupTurns(segmentFailed)[0]} /> };
 export const OlderTurn: StoryObj = {
   render: () => <TurnView turn={groupTurns(turn.map((l) => ({ ...l, at: new Date(Date.now() - 3 * 86400e3).toISOString() })))[0]} />,
 };

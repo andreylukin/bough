@@ -1,6 +1,41 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// A local session started in a checkout writes there; anywhere else,
+// and in a checkout that holds home, it stays read-only.
+func TestDefaultWriteRoot(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	home := filepath.Join(base, "home")
+	repo := filepath.Join(home, "src", "app")
+	wt := filepath.Join(home, "src", "wt")
+	dots := filepath.Join(base, "dots")
+	for _, d := range []string{filepath.Join(repo, ".git"), filepath.Join(repo, "pkg", "x"), wt, filepath.Join(home, "plain"), filepath.Join(dots, ".git"), filepath.Join(dots, "proj")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A worktree's .git is a file, not a directory.
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: elsewhere\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, cwd, home, want string }{
+		{"subdir of a checkout", filepath.Join(repo, "pkg", "x"), home, repo},
+		{"checkout root", repo, home, repo},
+		{"worktree", wt, home, wt},
+		{"not a checkout", filepath.Join(home, "plain"), home, ""},
+		{"dotfiles repo at home", filepath.Join(dots, "proj"), dots, ""},
+	} {
+		if got := defaultWriteRoot(tc.cwd, tc.home); got != tc.want {
+			t.Errorf("%s: defaultWriteRoot = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
 
 func TestResolveMode(t *testing.T) {
 	t.Parallel()

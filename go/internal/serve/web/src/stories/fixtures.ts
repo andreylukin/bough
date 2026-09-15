@@ -343,3 +343,71 @@ export const backgroundRows: Row[] = [
   { id: "b2", title: "Bench sweep · haiku", cwd: "/w/bench", status: "error", background: true, live: false, archived: false, entries: 6, modified: minsAgo(50), lastAt: minsAgo(50) },
   { id: "b3", title: "Replay scan", cwd: "/w/bough", status: "done", background: true, live: false, archived: false, entries: 4, modified: minsAgo(200), lastAt: minsAgo(200) },
 ];
+
+/* Work segments: the stretches between replies, folded to one row each. */
+const segAt = (base: number, s: number) => new Date(base + s * 1000).toISOString();
+const sb = (c: string) => `tools.bash("${c}")`;
+const segBase = Date.parse(hoursAgo(1));
+
+/** A long finished turn: three stretches of work, two replies between them. */
+export const segmentTurn: Line[] = [
+  { seq: 1, at: segAt(segBase, 0), kind: "input", text: "The session list flickers on every refresh. Find out why and fix it." },
+  { seq: 2, at: segAt(segBase, 2), kind: "thinking", text: "Probably a re-sort on every poll; check the list's key and the poll handler." },
+  { seq: 3, at: segAt(segBase, 6), kind: "code", text: sb("rg -n \\\"sortRows\\\" src") },
+  { seq: 4, at: segAt(segBase, 7), kind: "result", text: "src/app.tsx:141: sortRows(rows)", data: { code: sb("rg -n \\\"sortRows\\\" src"), exit: 0, ms: 90 } },
+  { seq: 5, at: segAt(segBase, 12), kind: "code", text: 'tools.view("src/app.tsx")' },
+  { seq: 6, at: segAt(segBase, 13), kind: "result", text: "…", data: { code: 'tools.view("src/app.tsx")', exit: 0 } },
+  { seq: 7, at: segAt(segBase, 20), kind: "todo/add", text: "Keep the sort stable across polls", data: { id: 1 } },
+  { seq: 8, at: segAt(segBase, 20), kind: "todo/add", text: "Add a test for the order", data: { id: 2 } },
+  { seq: 9, at: segAt(segBase, 24), kind: "assistant", text: "The list re-sorts by `lastAt` on every poll, and rows with equal times swap places. I'll break ties by id." },
+  { seq: 10, at: segAt(segBase, 30), kind: "code", text: 'tools.patch("src/app.tsx", "…")' },
+  { seq: 11, at: segAt(segBase, 31), kind: "result", text: "patched", data: { code: 'tools.patch("src/app.tsx", "…")', exit: 0 } },
+  { seq: 12, at: segAt(segBase, 40), kind: "code", text: sb("bun test test/sort.test.ts") },
+  { seq: 13, at: segAt(segBase, 52), kind: "result", text: "1 fail\nexpected s2 before s1", data: { code: sb("bun test test/sort.test.ts"), exit: 1, ms: 11800 } },
+  { seq: 14, at: segAt(segBase, 60), kind: "thinking", text: "Ties compare ids as numbers; they are strings." },
+  { seq: 15, at: segAt(segBase, 70), kind: "code", text: sb("bun test test/sort.test.ts") },
+  { seq: 16, at: segAt(segBase, 81), kind: "result", text: "4 pass", data: { code: sb("bun test test/sort.test.ts"), exit: 0, ms: 10900 } },
+  { seq: 17, at: segAt(segBase, 82), kind: "todo/done", text: "", data: { id: 1 } },
+  { seq: 18, at: segAt(segBase, 82), kind: "todo/done", text: "", data: { id: 2 } },
+  { seq: 19, at: segAt(segBase, 90), kind: "assistant", text: "Fixed: ties now break by id, so a poll never reorders equal rows. The first test run caught a numeric compare on string ids." },
+  { seq: 20, at: segAt(segBase, 95), kind: "thinking", text: "Worth checking the sidebar uses the same sort." },
+  { seq: 21, at: segAt(segBase, 99), kind: "code", text: sb("rg -n \\\"lastAt\\\" src/projects.tsx") },
+  { seq: 22, at: segAt(segBase, 100), kind: "result", text: "(no matches)", data: { code: sb("rg -n \\\"lastAt\\\" src/projects.tsx"), exit: 1 } },
+  { seq: 23, at: segAt(segBase, 104), kind: "assistant", text: "The projects view doesn't sort by time, so nothing else needs the change." },
+  { seq: 24, at: segAt(segBase, 105), kind: "done", text: "", data: { exit: 0, files: ["src/app.tsx", "test/sort.test.ts"], usage: { in: 48200, out: 2900, cost: 0.19, last_in: 30100 } } },
+];
+
+/** The same turn caught mid-work: its last stretch is running, and says what it is doing. */
+export const segmentRunning = (): Line[] => {
+  const base = Date.now() - 95_000;
+  return segmentTurn.slice(0, 18).map((l) => ({ ...l, at: segAt(base, (Date.parse(l.at) - segBase) / 1000) }))
+    .concat([{ seq: 30, at: segAt(base, 90), kind: "code", text: sb("bun run typecheck") }]);
+};
+
+/** A turn that ended on a failed command: its last stretch opens by itself. */
+export const segmentFailed: Line[] = [
+  ...segmentTurn.slice(0, 9),
+  { seq: 30, at: segAt(segBase, 30), kind: "code", text: 'tools.patch("src/app.tsx", "…")' },
+  { seq: 31, at: segAt(segBase, 31), kind: "result", text: "patched", data: { code: 'tools.patch("src/app.tsx", "…")', exit: 0 } },
+  { seq: 32, at: segAt(segBase, 40), kind: "code", text: sb("bun test") },
+  { seq: 33, at: segAt(segBase, 58), kind: "result", text: "test/sort.test.ts:\n✗ keeps equal rows in place\n  expected s2 before s1\n\n51 pass\n1 fail", data: { code: sb("bun test"), exit: 1, ms: 17600 } },
+  { seq: 34, at: segAt(segBase, 60), kind: "done", text: "", data: { exit: 1, files: ["src/app.tsx"] } },
+];
+
+/** A live turn farmed out to subagents, then waiting on a question: both stay outside the folds. */
+export const segmentSubagentsAsk = (): Line[] => {
+  const base = Date.now() - 70_000;
+  return [
+    { seq: 1, at: segAt(base, 0), kind: "input", text: "Migrate the sessions table and check nothing else reads the old column." },
+    { seq: 2, at: segAt(base, 3), kind: "thinking", text: "Two independent checks, then the migration itself." },
+    { seq: 3, at: segAt(base, 5), kind: "code", text: sb("rg -n \\\"last_at\\\" --type go") },
+    { seq: 4, at: segAt(base, 6), kind: "result", text: "store/sessions.go:88", data: { code: sb("rg -n \\\"last_at\\\" --type go"), exit: 0 } },
+    { seq: 5, at: segAt(base, 8), kind: "assistant", text: "One reader in the store. I'll have two subagents check the web client and the CLI while I prepare the migration." },
+    { seq: 6, at: segAt(base, 10), kind: "sub:start", text: "Find every read of last_at in the web client.", data: { worker: 1 } },
+    { seq: 7, at: segAt(base, 10), kind: "sub:start", text: "Find every read of last_at in the CLI.", data: { worker: 2 } },
+    { seq: 8, at: segAt(base, 20), kind: "sub:code", text: sb("rg -n lastAt src"), data: { worker: 1 } },
+    { seq: 9, at: segAt(base, 30), kind: "sub:done", text: "", data: { worker: 2, status: "ok", steps: 1 } },
+    { seq: 10, at: segAt(base, 50), kind: "code", text: 'tools.ask("The migration touches two tables. Run it against staging first?")' },
+    { seq: 11, at: segAt(base, 50), kind: "ask", text: "The migration touches two tables. Run it against staging first?" },
+  ];
+};

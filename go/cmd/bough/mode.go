@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	iorb "github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/internal/projectdef"
 	"github.com/andreylukin/bough/plugins/history"
 )
@@ -98,6 +100,45 @@ func sessionFile(sets setFlags) string {
 		}
 	}
 	return file
+}
+
+// defaultWriteRoot is the git checkout a session started in, or "".
+// Read-only as the only default made the first thing anyone tries ("fix
+// the failing tests") impossible: the model had no tools.patch. A
+// checkout that holds home (a dotfiles repo at ~) is not a project, so
+// it stays read-only.
+func defaultWriteRoot(cwd, home string) string {
+	for dir := filepath.Clean(cwd); ; dir = filepath.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			if home != "" {
+				if rel, err := filepath.Rel(dir, home); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					return ""
+				}
+			}
+			return dir
+		}
+		if filepath.Dir(dir) == dir {
+			return ""
+		}
+	}
+}
+
+// applyDefaultWriteRoot makes a local session's git checkout writable
+// when nothing set BOUGH_WRITE_ROOTS. It goes through the environment
+// because tools reads the roots there, and a `bough -p` the agent runs
+// from tools.bash should inherit the same boundary.
+func applyDefaultWriteRoot(mode string) {
+	if mode != "local" || os.Getenv(iorb.WriteRootsEnv) != "" {
+		return
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	home, _ := os.UserHomeDir()
+	if root := defaultWriteRoot(cwd, home); root != "" {
+		os.Setenv(iorb.WriteRootsEnv, root)
+	}
 }
 
 // chooseMode resolves the session's mode for main and validates a
