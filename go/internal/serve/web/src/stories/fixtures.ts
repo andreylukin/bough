@@ -44,7 +44,8 @@ export const turn: Line[] = [
   { seq: 1, at: hoursAgo(1), kind: "input", text: "Make the todo plugin's test run under a second." },
   { seq: 2, at: hoursAgo(1), kind: "thinking",
     text: "The suite sleeps for the file watcher; a fake clock removes that.\n\n- check whether the watcher is injectable\n- `kernel/testclock` already exists" },
-  { seq: 3, at: hoursAgo(1), kind: "assistant",
+  // 14s after the thinking block: it reads "Thought for 14s".
+  { seq: 3, at: new Date(Date.parse(hoursAgo(1)) + 14_000).toISOString(), kind: "assistant",
     text: "The watcher already takes a `clock`. I'll pass the fake one from `kernel/testclock` and drop the sleep.\n\n```js\n" + code + "\n```" },
   { seq: 4, at: hoursAgo(1), kind: "code", text: code },
   { seq: 5, at: hoursAgo(1), kind: "result", text: code + "\nok  \tbough/plugins/todo\t0.41s", data: { code } },
@@ -56,7 +57,7 @@ export const turn: Line[] = [
   { seq: 9, at: hoursAgo(1), kind: "sub:assistant", text: "Checked the other three watchers; none sleep." },
   { seq: 10, at: hoursAgo(1), kind: "usage", text: "usage · 12.4k in, 1.1k out" },
   { seq: 11, at: hoursAgo(1), kind: "done", text: "",
-    data: { files: ["plugins/todo/todo_test.go"], usage: { in: 12400, out: 1100, cost: 0.05, last_in: 12400 } } },
+    data: { files: ["plugins/todo/todo_test.go", "plugins/todo/todo.go", "kernel/testclock/clock.go"], usage: { in: 12400, out: 1100, cost: 0.05, last_in: 12400 } } },
 ];
 
 /**
@@ -159,6 +160,12 @@ export function installFakeApi(): void {
   // The Work stories' endpoints: children found, still loading, or down;
   // stops accepted, refused, or slow enough for the job to end first.
   const patterns: [RegExp, () => Response | Promise<Response>][] = [
+    // Session edits, so a turn's files chip can show per-file counts.
+    [/^\/api\/sessions\/s1\/edits$/, () => json({ repo: true, files: [
+      { path: "plugins/todo/todo_test.go", add: 18, del: 9, patch: true },
+      { path: "plugins/todo/todo.go", add: 4, del: 1, patch: true },
+      { path: "kernel/testclock/clock.go", add: 12, del: 0, patch: true, new: true },
+    ] })],
     [/^\/api\/sessions\/w-loading\/children$/, () => new Promise<Response>(() => {})],
     [/^\/api\/sessions\/w-down\/children$/, () => json({ error: "supervisor unavailable" }, 503)],
     [/^\/api\/sessions\/w-none\/children$/, () => json({ children: [] })],

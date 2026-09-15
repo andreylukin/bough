@@ -17,7 +17,8 @@ const meta: Meta<typeof Thread> = {
 export default meta;
 type S = StoryObj<typeof Thread>;
 
-export const Running: S = { args: { row: rows[0] } };
+/** A live turn has no done entry: it ends on "Working · 12s", never on a Done footer. */
+export const Running: S = { args: { row: rows[0], lines: turn.filter((l) => l.kind !== "done" && l.kind !== "usage") } };
 /** A live ask renders as its own card above the composer, and the composer answers it. */
 export const WaitingForYou: S = { args: { row: rows[1] } };
 export const Done: S = { args: { row: rows[2] } };

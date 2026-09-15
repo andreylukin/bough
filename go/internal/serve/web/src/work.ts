@@ -298,10 +298,8 @@ export function workSummaryText(c: WorkCounts, opts: { loading?: boolean; unavai
   const aria = ["Work", ...parts, ...(qual ? [qual] : []), ...(opts.paused ? ["Updates paused"] : [])].join(", ");
   if (!parts.length) return { primary: `Work · ${qual || "0 workers"}`, aria };
   if (!opts.narrow) return { primary: ["Work", ...parts].join(" · "), aria };
-  const order = [...failed, ...unknown, ...fresh, ...n(c.running, "running"), ...n(c.queued, "queued"), ...n(c.stopped, "stopped"), ...n(c.finished, "finished")];
-  const all = c.running || c.queued || c.finished !== c.total ? order : parts;
-  const [first, ...rest] = all;
-  return { primary: `Work · ${first}`, ...(rest.length ? { secondary: rest.join(" · ") } : {}), aria };
+  // A phone says the count and only the failures; the rest (unknown included) is in the popover.
+  return { primary: `Work ${c.total}`, ...(c.failed ? { secondary: failed[0] } : {}), aria };
 }
 
 /** What a review is pinned to: a worker that ends again (a replayed lane, a new exit) is unreviewed. */

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { OrbStatus, Row, Status } from "./types";
 
 /**
@@ -183,7 +184,7 @@ export function StatusMark({ status, size = 13, bare }: { status: Status; size?:
  * `label` says what it is doing when that is known — the composer is
  * the only other place that has to admit a turn is already under way.
  */
-export function Working({ label = "Working" }: { label?: string }) {
+export function Working({ label = "Working", children }: { label?: string; /** Trailing detail, e.g. the live elapsed time. */ children?: ReactNode }) {
   return (
     <p className="working" role="status">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"
@@ -191,10 +192,8 @@ export function Working({ label = "Working" }: { label?: string }) {
         <circle cx="12" cy="12" r="8.5" strokeDasharray="40 14" />
       </svg>
       <span>{label}</span>
-      {/* Three dots that breathe, so the line is alive even at a glance
-          from across a desk. Frozen under reduced motion, where the
-          word alone carries it. */}
-      <span className="working-dots" aria-hidden="true"><i /><i /><i /></span>
+      {/* The spinner carries liveness; the elapsed time follows the house separator. */}
+      {children && <><span className="working-after" aria-hidden="true">·</span><span className="working-after">{children}</span></>}
     </p>
   );
 }

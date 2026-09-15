@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { CodeBlock, Entry, JobBlock, ResultBlock, TurnView } from "../app";
+import { CodeBlock, Entry, JobBlock, ResultBlock, TodoRun, TurnView } from "../app";
 import { Markdown, groupTurns } from "../render";
 import { jobLegacyFailed, jobTyped0, jobTyped2, jobTypedNoExit, markdown, turn } from "./fixtures";
 import { ExecNote } from "../work-ui";
@@ -45,7 +45,31 @@ export const JobTypedExitAbsent: StoryObj = { render: () => <JobBlock line={jobT
 /** The loop's [failed] notice carries no exit code, so none is shown. */
 export const JobLegacyFailed: StoryObj = { render: () => <JobBlock line={jobLegacyFailed} /> };
 export const Error: StoryObj = { render: () => <Entry line={turn[7]} codes={[]} /> };
-export const Subagent: StoryObj = { render: () => <Entry line={turn[8]} codes={[]} /> };
+const todoAt = new Date(Date.now() - 6 * 60_000).toISOString();
+const todo = (seq: number, kind: string, id?: number, text?: string): Line => ({ seq, at: todoAt, kind, text: text ?? "", data: id === undefined ? {} : { id, ...(text ? { text } : {}) } });
+const planAdds: Line[] = [
+  todo(1, "todo/add", 1, "Read the watcher and find where it sleeps"),
+  todo(2, "todo/add", 2, "Inject the fake clock from kernel/testclock"),
+  todo(3, "todo/add", 3, "Drop the 800ms sleep from todo_test.go"),
+  todo(4, "todo/add", 4, "Run go test -race ./plugins/todo/"),
+  todo(5, "todo/add", 5, "Fix the go vet unusedresult warning"),
+];
+/** The plan as it stands: 2 of 5 done, the first open item spinning while the turn runs. */
+export const TodoPlanInProgress: StoryObj = {
+  render: () => <TodoRun live lines={[...planAdds, todo(6, "todo/done", 1), todo(7, "todo/done", 2)]} />,
+  play: async ({ canvasElement }) => { canvasElement.querySelector<HTMLDetailsElement>(".todo-plan")!.open = true; },
+};
+/** Every item done: struck through, the bar full, no spinner. */
+export const TodoPlanAllDone: StoryObj = {
+  render: () => <TodoRun lines={[...planAdds, ...[1, 2, 3, 4, 5].map((id) => todo(5 + id, "todo/done", id))]} />,
+  play: async ({ canvasElement }) => { canvasElement.querySelector<HTMLDetailsElement>(".todo-plan")!.open = true; },
+};
+/** A cleared list says so; the events stay under History. */
+export const TodoCleared: StoryObj = {
+  render: () => <TodoRun lines={[...planAdds.slice(0, 2), todo(3, "todo/done", 1), todo(4, "todo/clear")]} />,
+  play: async ({ canvasElement }) => { canvasElement.querySelector<HTMLDetailsElement>(".todo-plan")!.open = true; },
+};
+export const Subagent: StoryObj ={ render: () => <Entry line={turn[8]} codes={[]} /> };
 
 /** Assistant replies are markdown, sanitized. Every element the app styles. */
 export const MarkdownReply: StoryObj = {

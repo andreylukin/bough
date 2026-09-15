@@ -41,7 +41,7 @@ export const BackgroundAgentCounts: S = {
     ],
   },
 };
-/** Waiting and failed sessions pin to Needs you on top, and still list in their groups. */
+/** Waiting and failed sessions pin to Needs you on top and leave their group, whose head says "N need you ↑". Every session id renders in exactly one row. */
 export const NeedsYou: S = {
   args: {
     rows: [

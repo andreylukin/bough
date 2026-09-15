@@ -124,10 +124,10 @@ test("summary wording while active and after everything ended", () => {
   expect(workSummaryText(counts(["running"]), { paused: true }).aria).toBe("Work, 1 running, Updates paused");
 });
 
-test("narrow summary puts the top priority first and the rest on line two", () => {
-  expect(workSummaryText(counts(["running", "running", "queued", "failed"]), { narrow: true })).toMatchObject({ primary: "Work · 1 failed", secondary: "2 running · 1 queued" });
-  expect(workSummaryText(counts(["finished", "unknown", "stopped"], 1), { narrow: true })).toMatchObject({ primary: "Work · 1 unknown", secondary: "1 new result · 1 stopped · 1 finished" });
-  expect(workSummaryText(counts(["finished", "finished"]), { narrow: true })).toEqual({ primary: "Work · 2 finished", aria: "Work, 2 finished" });
+test("narrow summary is the count with only failures as a badge", () => {
+  expect(workSummaryText(counts(["running", "running", "queued", "failed"]), { narrow: true })).toMatchObject({ primary: "Work 4", secondary: "1 failed" });
+  expect(workSummaryText(counts(["finished", "unknown", "stopped"], 1), { narrow: true })).toEqual({ primary: "Work 3", aria: "Work, 3 workers, 1 unknown, 1 stopped, 1 new result" });
+  expect(workSummaryText(counts(["finished", "finished"]), { narrow: true })).toEqual({ primary: "Work 2", aria: "Work, 2 finished" });
 });
 
 test("counts use the isNew predicate", () => {

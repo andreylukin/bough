@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Change, type Scope } from "./api";
 import { Back } from "./app";
-import { sessionTitle } from "./render";
+import { changedPath, sessionTitle } from "./render";
 import { CopyCommand } from "./work-ui";
 import { Pending } from "./loading";
 import type { Row } from "./types";
@@ -59,31 +59,141 @@ export function countOf(r: Read): { text: string; add?: number; del?: number; qu
 
 export const scopeName = (s: Scope) => (s === "session" ? "Session edits" : "Working tree");
 
+/** The ?file=<path> of a #/s/<id>/changes?file=… link, if any. */
+export function hashFile(): string | null {
+  const m = /[?&]file=([^&]*)/.exec(typeof window === "undefined" ? "" : window.location.hash);
+  if (!m) return null;
+  try { return decodeURIComponent(m[1]); } catch { return m[1]; }
+}
+
+export interface DiffLine { kind: "add" | "del" | "ctx" | "hunk" | "meta"; text: string; old?: number; new?: number }
+
+/** A unified patch, line by line, numbered from its @@ headers. */
+export function parseDiff(text: string): DiffLine[] {
+  let o = 0, n = 0, inHunk = false;
+  const lines = text.endsWith("\n") ? text.slice(0, -1).split("\n") : text.split("\n");
+  return lines.map((l): DiffLine => {
+    const h = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(l);
+    if (h) { o = +h[1]; n = +h[2]; inHunk = true; return { kind: "hunk", text: l }; }
+    if (!inHunk) return { kind: "meta", text: "" };
+    if (l.startsWith("+")) return { kind: "add", text: l, new: n++ };
+    if (l.startsWith("-")) return { kind: "del", text: l, old: o++ };
+    if (l.startsWith("\\")) return { kind: "meta", text: l };
+    return { kind: "ctx", text: l, old: o++, new: n++ };
+  }).filter((l) => l.kind !== "meta" || l.text !== "");
+}
+
+const lineClass = { add: " dl-add rt-add", del: " dl-del rt-del", ctx: " dl-ctx", hunk: " dl-hunk rt-label", meta: " dl-meta rt-label" };
+
+/** One patch: old/new gutters, tinted added and removed lines, hunk bars. */
+export function DiffBody({ text }: { text: string }) {
+  return (
+    <pre className="mono rt-diff-body dl-body">{parseDiff(text).map((l, i) => (
+      <span key={i} className={"dl" + lineClass[l.kind]}>
+        <span className="num dl-n" aria-hidden>{l.old ?? ""}</span>
+        <span className="num dl-n" aria-hidden>{l.new ?? ""}</span>
+        <span className="dl-t">{l.text + "\n"}</span>
+      </span>
+    ))}</pre>
+  );
+}
+
+const countBadge = (f: Change & { patch?: boolean }) =>
+  f.patch === false ? <span className="rt-label">Patch not recorded</span>
+    : f.new ? <><span className="chg-badge">new</span>{f.add > 0 && <span className="rt-add">+{f.add}</span>}</>
+    : f.add < 0 ? <span className="chg-badge">binary</span>
+    : <><span className="rt-add">+{f.add}</span> <span className="rt-del">−{f.del}</span></>;
+
+/** Every file as a card; a card fetches its patch the first time it opens. */
+function FileCards({ row, files, scope, at, open }: {
+  row: Row; files: (Change & { patch?: boolean })[]; scope: Scope; at?: number; open: string | null;
+}) {
+  const [q, setQ] = useState("");
+  const s = sum(files);
+  const shown = q ? files.filter((f) => f.path.toLowerCase().includes(q.toLowerCase())) : files;
+  return (
+    <>
+      <div className="chg-summary">
+        <p className="rt-label">Showing <span className="num">{files.length}</span> changed {files.length === 1 ? "file" : "files"} with{" "}
+          <span className="rt-add num">+{s.add}</span> additions and <span className="rt-del num">−{s.del}</span> deletions</p>
+        {files.length > 8 && (
+          <input className="chg-filter" type="search" placeholder="Filter paths" aria-label="Filter changed files"
+                 value={q} onChange={(e) => setQ(e.target.value)} />
+        )}
+      </div>
+      {q && !shown.length && <p className="rt-label">No changed file matches “{q}”</p>}
+      <div className="chg-cards">
+        {shown.map((f) => <FileCard key={scope + f.path} row={row} file={f} scope={scope} at={at}
+                                    first={open === f.path || (files.length === 1 && !open)} />)}
+      </div>
+    </>
+  );
+}
+
+function FileCard({ row, file, scope, at, first }: { row: Row; file: Change & { patch?: boolean }; scope: Scope; at?: number; first: boolean }) {
+  const [open, setOpen] = useState(first);
+  const [diff, setDiff] = useState<{ text: string | null; failed?: boolean }>({ text: null });
+  const [nonce, setNonce] = useState(0);
+  const ref = useRef<HTMLDetailsElement>(null);
+  const shown = changedPath(file.path, row.cwd);
+  const cut = shown.lastIndexOf("/");
+  const canDiff = file.patch !== false && file.add >= 0;
+  useEffect(() => { if (first) requestAnimationFrame(() => ref.current?.scrollIntoView({ block: "start" })); }, []);
+  useEffect(() => {
+    if (!open || !canDiff) return;
+    let live = true;
+    setDiff((d) => (d.text === null ? { text: null } : d));
+    api.diff(row.id, file.path, scope).then((text) => { if (live) setDiff({ text }); },
+      () => { if (live) setDiff({ text: null, failed: true }); });
+    return () => { live = false; };
+  }, [open, row.id, file.path, scope, at, nonce, canDiff]);
+  return (
+    <details ref={ref} className="chg-card" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary className="chg-card-head" title={file.path}>
+        <span className="chg-card-path mono">
+          {cut >= 0 && <span className="chg-card-dir">{shown.slice(0, cut + 1)}</span>}
+          <b>{shown.slice(cut + 1)}</b>
+        </span>
+        <span className="num chg-card-count">{countBadge(file)}</span>
+        <span onClick={(e) => e.stopPropagation()}><CopyCommand text={file.path} label="Copy path" /></span>
+      </summary>
+      {open && (file.patch === false ? <p className="rt-label chg-card-note">Patch not recorded: no checkpoint was taken for this session</p>
+        : !canDiff ? <p className="rt-label chg-card-note">Binary file: no text diff to show</p>
+        : diff.text != null ? <DiffBody text={diff.text} />
+        : diff.failed ? <p className="chg-card-note"><button className="btn rt-stop" onClick={() => setNonce((n) => n + 1)}>Couldn’t read the diff · Retry</button></p>
+        : <div className="chg-card-note"><Pending what="Diff" inline onRetry={() => setNonce((n) => n + 1)} /></div>)}
+    </details>
+  );
+}
+
 /**
  * The scope switch, the file list and one file's patch: in the header's
  * popover on a desktop and as a full page (#/s/<id>/changes) anywhere.
  * With a single file the patch is shown at once.
  */
-export function ChangesBody({ row, data, scope, onScope }: {
+export function ChangesBody({ row, data, scope, onScope, cards }: {
   row: Row; data: ReturnType<typeof useChanges>; scope: Scope; onScope: (s: Scope) => void;
+  /** The full page: every file as a card with its own lazy diff. */
+  cards?: boolean;
 }) {
   const r = scope === "session" ? data.session : data.tree;
-  const [pick, setPick] = useState<string | null>(null);
+  const [pick, setPick] = useState<string | null>(hashFile);
   const [diff, setDiff] = useState<{ path: string; text: string | null; failed?: boolean } | null>(null);
   const files = r.files ?? [];
   const only = files.length === 1 && files[0].patch !== false ? files[0].path : null;
   const path = pick ?? only;
   const file = files.find((f) => f.path === path);
-  useEffect(() => { setPick(null); }, [scope]);
+  const first = useRef(true);
+  useEffect(() => { if (first.current) { first.current = false; return; } setPick(null); }, [scope]);
   useEffect(() => {
-    if (!path || file?.patch === false) { setDiff(null); return; }
+    if (cards || !path || file?.patch === false) { setDiff(null); return; }
     let live = true;
     setDiff({ path, text: null });
     api.diff(row.id, path, scope).then((text) => { if (live) setDiff({ path, text }); },
       () => { if (live) setDiff({ path, text: null, failed: true }); });
     return () => { live = false; };
     // A re-read of the same file set re-fetches its patch too.
-  }, [row.id, path, scope, r.at]);
+  }, [row.id, path, scope, r.at, cards]);
 
   return (
     <div className="chg">
@@ -111,7 +221,8 @@ export function ChangesBody({ row, data, scope, onScope }: {
       {r.files !== null && r.repo && !files.length && (
         <p className="rt-label">{scope === "session" ? "This session has not changed any files" : "No uncommitted changes"}</p>
       )}
-      {files.length > (only ? 1 : 0) && (
+      {cards && files.length > 0 && <FileCards row={row} files={files} scope={scope} at={r.at} open={pick} />}
+      {!cards && files.length > (only ? 1 : 0) && (
         <ul className="chg-files">
           {files.map((f) => (
             <li key={f.path}>
@@ -134,7 +245,7 @@ export function ChangesBody({ row, data, scope, onScope }: {
           ))}
         </ul>
       )}
-      {path && file && (
+      {!cards && path && file && (
         <div className="chg-diff">
           <div className="chg-diff-head">
             <span className="mono rt-job-cmd" title={path}>{path}</span>
@@ -142,9 +253,7 @@ export function ChangesBody({ row, data, scope, onScope }: {
           </div>
           {file.patch === false ? <p className="rt-label">Patch not recorded: no checkpoint was taken for this session</p>
             : diff?.text != null ? (
-              <pre className="mono rt-diff-body">{diff.text.split("\n").map((l, i) => (
-                <span key={i} className={l.startsWith("+") && !l.startsWith("+++") ? "rt-add" : l.startsWith("-") && !l.startsWith("---") ? "rt-del" : l.startsWith("@@") ? "rt-label" : undefined}>{l + "\n"}</span>
-              ))}</pre>
+              <DiffBody text={diff.text} />
             )
             : diff?.failed ? <button className="btn rt-stop" onClick={data.retry}>Couldn’t read the diff · Retry</button>
             : <Pending what="Diff" inline onRetry={data.retry} />}
@@ -167,7 +276,7 @@ export function ChangesPage({ row, tick, onBack }: { row: Row; tick: number; onB
         <div className="head-main chg-head"><h1>Changes</h1><span className="chg-session">{sessionTitle(row)}</span></div>
       </header>
       <div className="scroll proj-body chg-page">
-        <ChangesBody row={row} data={data} scope={scope} onScope={setScope} />
+        <ChangesBody row={row} data={data} scope={scope} onScope={setScope} cards />
       </div>
     </div>
   );

@@ -27,6 +27,26 @@ export function duration(d: string | number): string {
   return [h && `${h}h`, m && `${m}m`, !h && r && `${r}s`].filter(Boolean).join(" ");
 }
 
+/** A live, ticking elapsed time since `since` (ISO or ms), in the `.num` face. */
+export function Elapsed({ since, title }: { since: string | number; title?: string }) {
+  const start = typeof since === "number" ? since : Date.parse(since);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  if (!Number.isFinite(start)) return null;
+  return <span className="num elapsed" title={title}>{elapsed(Math.max(0, now - start))}</span>;
+}
+
+/** A ticking duration keeps its smaller unit: "1m 12s", "1h 0m". Shared by the Working tail and the header clock. */
+export function elapsed(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
 /** One centered empty/loading/error state: a title, one sentence, one primary action. */
 export function EmptyState({ title, children, action, role }: {
   title: string;

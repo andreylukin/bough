@@ -171,7 +171,7 @@ export function StopWorkButton({ w, fromWork }: { w: Worker; fromWork?: boolean 
       </button>
     );
   }
-  return <button type="button" className="stop-work" onClick={stop}>{w.kind === "job" ? `Stop ${name}` : "Stop agent"}</button>;
+  return <button type="button" className="stop-work" aria-label={w.kind === "job" ? `Stop ${name}` : "Stop agent"} onClick={stop}>Stop</button>;
 }
 
 /** A labelled copy, for the command a job ran. */
@@ -435,9 +435,12 @@ export function WorkDialog({ workers, sheet, top, childState, onRetryChildren, p
   return (
     <div ref={ref} className={sheet ? "work-sheet" : "work-popover"} role="dialog" aria-modal="true" aria-labelledby={titleId}
          style={!sheet && top !== undefined ? { top } : undefined} onKeyDown={trap}>
+      {sheet && <div className="work-grabber" aria-hidden="true" />}
       <header>
         <h2 id={titleId} ref={head} tabIndex={-1} className="work-title">Work</h2>
-        <button type="button" className="btn" style={{ marginInlineStart: "auto" }} onClick={() => onClose(true)}>Close</button>
+        {sheet
+          ? <button type="button" className="btn work-close" aria-label="Close" style={{ marginInlineStart: "auto" }} onClick={() => onClose(true)}>✕</button>
+          : <button type="button" className="btn" style={{ marginInlineStart: "auto" }} onClick={() => onClose(true)}>Close</button>}
       </header>
       {kinds.length > 1 && (
         <div className="work-filters" role="group" aria-label="Show">
@@ -486,7 +489,8 @@ function WorkRow({ w, parent, inReview, open, onToggle, onPin, onUnpin, onView, 
   const previewId = useId();
   const fresh = ctx?.review.isNew(w);
   const task = w.kind === "job" ? (w.task ? jobTitle(w.task, w.id) : "") : firstLine(plainTitle(w.task));
-  const title = w.kind === "agent" ? plainTitle(w.label) : task && task !== w.label ? `${w.label} · ${task}` : w.label;
+  const title = w.kind === "agent" ? plainTitle(w.label) : task && task !== w.label ? `${w.label} · ${task}`
+    : w.kind === "subagent" ? `${w.label} · task not recorded` : w.label;
   const jc = jobCause(w);
   const cause = w.life === "failed" ? firstLine(w.error ?? "") || jc.text : w.exitNote ?? "";
   // A job's label already says "Job N"; the kind word only names the others.
