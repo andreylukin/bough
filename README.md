@@ -56,6 +56,10 @@ macOS and Linux, x86-64 and arm64. Also `brew tap andreylukin/bough https://gith
 
 <p align="center"><img src="assets/web-thread.png" width="820" alt="bough serve: a session that fixed two failing tests and ran them green"></p>
 
+Skills load by name. Here a session names the `parallel` skill, searches the web with `parallel-cli` from inside its program, and answers with sources:
+
+<p align="center"><img src="assets/web-research.png" width="820" alt="bough serve: a session using the parallel skill to research how coding agents sandbox commands"></p>
+
 More in [SCREENSHOTS.md](SCREENSHOTS.md).
 
 ## Concepts
