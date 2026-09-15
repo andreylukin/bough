@@ -49,7 +49,7 @@ macOS and Linux, x86-64 and arm64. Also `brew tap andreylukin/bough https://gith
 | | |
 |---|---|
 | `bough` | the terminal UI: `/` palette, `@file`, `!shell`, `esc esc` to rewind, `-c` to resume |
-| `bough serve` | a web control room for every session: live transcripts, questions waiting on you, pasted images |
+| `bough serve` | a web control room for every session. The first visit walks you through adding a key and picking a repo; after that it shows live transcripts, questions waiting on you, and pasted images |
 | `bough --headless` | stdin in, events out (`--json`), for scripts and benchmarks |
 
 <p align="center"><img src="assets/web-thread.png" width="820" alt="bough serve: a session that fixed two failing tests and ran them green"></p>

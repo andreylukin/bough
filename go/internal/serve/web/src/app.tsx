@@ -3748,7 +3748,8 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
           </div>
         </div>
         <div className="composer-foot">
-          {row.mode !== "project" && (
+          {/* A session that can already edit its checkout has no reason to move; the offer is for read-only ones. */}
+          {row.mode !== "project" && !row.writable && (
             <span className="composer-local">
               {onStartProject && projects.some((p) => p.slug) ? (
                 <Select label="Start project session" value="" placeholder="Start project session…" align="start"
