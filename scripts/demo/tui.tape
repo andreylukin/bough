@@ -17,7 +17,7 @@ Set TypingSpeed 35ms
 Set Theme "Catppuccin Mocha"
 
 Hide
-Type `d=$(mktemp -d) && scripts/demo/setup.sh $d >/dev/null && export HOME=$d/home && cd $d/wordfreq && PS1='$ ' && clear`
+Type `export PATH="${DEMO_BIN:+$DEMO_BIN:}$PATH" && d=$(mktemp -d) && scripts/demo/setup.sh $d >/dev/null && export HOME=$d/home && cd $d/wordfreq && PS1='$ ' && clear`
 Enter
 Wait /^\$/
 Show
@@ -49,7 +49,8 @@ Hide
 Type "clear"
 Enter
 Show
-Type "go test ./..."
+# -count=1: an "(cached)" pass reads as if nothing ran again.
+Type "go test -count=1 ./..."
 Enter
 Wait+Screen@30s /ok\s+example/
 Sleep 3s

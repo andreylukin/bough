@@ -21,3 +21,7 @@ A session that stops to ask you something waits in the sidebar until you answer.
 A screenshot pasted into the composer goes to the model as an image.
 
 <p align="center"><img src="assets/web-image.png" width="820" alt="a session started from a pasted image"></p>
+
+Skills load by name. This session names the `parallel` skill, so the model searches the web with `parallel-cli` from inside its program and answers with sources.
+
+<p align="center"><img src="assets/web-research.png" width="820" alt="a session using the parallel skill to research how coding agents sandbox commands"></p>

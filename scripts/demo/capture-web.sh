@@ -3,7 +3,8 @@
 # README: real sessions on the demo repo, run by a real model, then
 # screenshots with agent-browser. Costs a little in tokens.
 #
-# Needs: bough on PATH, agent-browser, a provider key in ~/.bough/env.
+# Needs: bough on PATH, agent-browser, a provider key in the environment
+# or ~/.bough/env.
 # Writes assets/web-*.png in this checkout. Re-running on the same DIR
 # reuses its sessions and only takes the screenshots again.
 set -eu
@@ -21,8 +22,22 @@ bough() { HOME="$dir/home" command bough "$@"; }
 fresh=1
 [ -n "$(ls "$dir/home/.bough/history" 2>/dev/null)" ] && fresh=0
 [ $fresh = 1 ] && "$here/setup.sh" "$dir" >/dev/null
-# Local sessions are read-only; the demo lets them write to its own repo.
-(cd "$repo" && BOUGH_WRITE_ROOTS="$repo" bough serve "$addr" >/dev/null)
+# The research example runs the parallel skill, which needs its SKILL.md
+# and your parallel-cli login inside the sandbox HOME. Skipped when either
+# is missing, so the other shots never depend on it.
+research=0
+if [ -f "$HOME/.claude/skills/parallel/SKILL.md" ] && [ -f "$HOME/.config/parallel-web-tools/auth.json" ]; then
+	research=1
+	if [ $fresh = 1 ]; then
+		mkdir -p "$dir/home/.claude/skills/parallel" "$dir/home/.config/parallel-web-tools"
+		cp "$HOME/.claude/skills/parallel/SKILL.md" "$dir/home/.claude/skills/parallel/"
+		cp "$HOME/.config/parallel-web-tools/auth.json" "$dir/home/.config/parallel-web-tools/"
+		chmod 600 "$dir/home/.config/parallel-web-tools/auth.json"
+		[ -d "$HOME/.parallel-cli" ] && cp -R "$HOME/.parallel-cli" "$dir/home/"
+	fi
+fi
+# Started in the checkout, so sessions there can edit it and New offers it.
+(cd "$repo" && bough serve "$addr" >/dev/null)
 # serve wants its per-install token on every /api call; the browser gets it
 # as a cookie when it loads the page.
 token=$(cat "$dir/home/.bough/serve.token")
@@ -60,6 +75,14 @@ if [ $fresh = 1 ]; then
 	ask=$(create "Before changing any code, use tools.ask to ask me whether Counts should treat 'Go' and 'go' as the same word (options: same, different). Then wait for my answer.")
 	settle "$ask"
 	rename "$ask" "Case-folding in Counts"
+
+	# 4. Research on the web through the parallel skill: naming the skill in
+	# the prompt is what loads it.
+	if [ $research = 1 ]; then
+		res=$(create "Use the parallel skill to research how terminal coding agents (Claude Code, opencode, Aider) sandbox the commands they run. Run your parallel-cli searches (search, not a deep research run) in one program, then reply with only five short bullets, each with its source link.")
+		settle "$res"
+		rename "$res" "Research: how coding agents sandbox commands"
+	fi
 fi
 
 agent-browser set viewport 1440 900 2 >/dev/null 2>&1 || true
@@ -72,7 +95,8 @@ shoot() { # sidebar title prefix -> file [block label to expand]
 	agent-browser click "@$ref" >/dev/null
 	agent-browser wait 2500 >/dev/null
 	if [ -n "${3:-}" ]; then # open the program the model wrote
-		ref=$(agent-browser snapshot 2>&1 | grep -m1 -E "\"($3)" | grep -o 'ref=e[0-9]*' | cut -d= -f2)
+		# Block buttons lead with their disclosure glyph: button "› Tool group …".
+		ref=$(agent-browser snapshot 2>&1 | grep -m1 -E "button \"(› )?($3)" | grep -o 'ref=e[0-9]*' | cut -d= -f2)
 		[ -n "$ref" ] && agent-browser click "@$ref" >/dev/null && agent-browser wait 800 >/dev/null
 	fi
 	agent-browser mouse move 1400 880 >/dev/null 2>&1 || true # no hover cards
@@ -80,9 +104,13 @@ shoot() { # sidebar title prefix -> file [block label to expand]
 	agent-browser screenshot "$root/assets/$2" >/dev/null
 	echo "assets/$2"
 }
-# The block's label depends on what the program did ("Program …", "Ran + program …").
-shoot "Fix TopN" web-thread.png "Program|Ran"
+# The block's label depends on what the program did ("Program …", "Ran + program …",
+# "Tool group …" when one step made several calls).
+shoot "Fix TopN" web-thread.png "Tool group|Program|Ran"
 shoot "Review the palette" web-image.png
 # A restarted serve has no child left to answer, so the question only
 # reads "waiting for you" on the run that asked it.
 [ $fresh = 1 ] && shoot "Case-folding" web-ask.png
+# Left folded: a research turn makes a dozen searches, and the answer with
+# its sources is the part worth seeing.
+[ $research = 1 ] && shoot "Research:" web-research.png
