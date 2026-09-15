@@ -81,6 +81,8 @@ func TestResizeDuringNewSessionDialogFzf(t *testing.T) {
 				t.Errorf("%dx%d: no selected row:\n%s", sz[0], sz[1], s)
 			}
 		}
+		// The 200-column redraw can land after settled(); the 40-column rows are truncated.
+		tm.waitFor("beta prompt")
 		s := tm.settled()
 		if sel := resizeDuringNewSessionDialogFzfSelected(s); !strings.Contains(sel, "beta prompt") {
 			t.Fatalf("selection lost across resizes, selected %q:\n%s", sel, s)
