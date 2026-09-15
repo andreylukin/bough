@@ -25,6 +25,10 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 const post = (path: string, body?: unknown) =>
   req<{ ok: true }>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
 
+export interface SetupProvider { name: string; env: string; set: boolean }
+/** checkout is the git checkout a session started in path may write; absent means read-only. */
+export interface SetupFolder { path: string; exists: boolean; checkout?: string }
+export interface Setup { providers: SetupProvider[]; envFile: string; home: string; folder: SetupFolder }
 export interface Change { path: string; add: number; del: number; new?: boolean }
 export interface Edit extends Change { patch: boolean }
 /** Session edits (what its turns changed) or the working tree (everything uncommitted). */
@@ -48,6 +52,12 @@ export const api = {
 
   /** Where a new session starts, from the server that knows. */
   home: () => req<{ home: string }>("/api/health").then((r) => r.home ?? ""),
+
+  /** First-run state: which providers have a key, and whether a folder (default: where serve started) is a writable checkout. */
+  setup: (cwd?: string) => req<Setup>(`/api/setup${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`),
+  /** Record a provider key in ~/.bough/env; sessions started afterwards use it. */
+  setKey: (provider: string, key: string) =>
+    req<{ providers: SetupProvider[] }>("/api/setup/key", { method: "POST", body: JSON.stringify({ provider, key }) }).then((r) => r.providers),
 
   sessions: (all = false) =>
     req<{ sessions: Row[] }>(`/api/sessions${all ? "?all=1" : ""}`).then((r) => r.sessions),

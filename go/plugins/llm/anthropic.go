@@ -117,6 +117,9 @@ func (a *anthropicLLM) params(system string, messages []Message) anthropic.Messa
 }
 
 func (a *anthropicLLM) wrapErr(err error) error {
+	if apiErr, ok := errors.AsType[*anthropic.Error](err); ok && apiErr.StatusCode == 401 {
+		return keyRejected("llm-anthropic", "ANTHROPIC_API_KEY", "anthropic", apiErr.StatusCode, "API key is invalid")
+	}
 	if apiErr, ok := errors.AsType[*anthropic.Error](err); ok && apiErr.StatusCode == 404 {
 		return fmt.Errorf("llm-anthropic: model %q not found on anthropic — switch with /model", a.model)
 	}

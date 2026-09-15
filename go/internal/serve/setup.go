@@ -49,6 +49,16 @@ func (a *API) setup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// writableRoot is what the launcher grants a local session started in
+// cwd (applyDefaultWriteRoot), so the composer badge can say "edits
+// <repo>" instead of calling every local session read-only.
+func (a *API) writableRoot(mode, cwd string) string {
+	if mode == "project" || cwd == "" {
+		return ""
+	}
+	return iorb.CheckoutRoot(cwd, a.home)
+}
+
 func (a *API) setupFolder(dir string) setupFolder {
 	if rest, ok := strings.CutPrefix(dir, "~"); ok && (rest == "" || rest[0] == '/') {
 		dir = a.home + rest

@@ -67,6 +67,28 @@ func TestSetupReportsKeysAndCheckout(t *testing.T) {
 	}
 }
 
+// The badge reads Row.Writable: a local session in a checkout edits it,
+// one outside is read-only, and a project session never gets a root.
+func TestWritableRoot(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	home := setupHome(t, f)
+	repo := filepath.Join(home, "app")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ mode, cwd, want string }{
+		{"local", filepath.Join(repo), repo},
+		{"", repo, repo},
+		{"local", home, ""},
+		{"project", repo, ""},
+	} {
+		if got := f.api.writableRoot(tc.mode, tc.cwd); got != tc.want {
+			t.Errorf("writableRoot(%q, %q) = %q, want %q", tc.mode, tc.cwd, got, tc.want)
+		}
+	}
+}
+
 func TestSetupSavesKey(t *testing.T) {
 	t.Parallel()
 	f := newAPI(t)

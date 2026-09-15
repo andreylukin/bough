@@ -92,6 +92,9 @@ type Row struct {
 	// Mode is "local" or "project", from the session's meta entry; a
 	// meta written before modes existed reads as local.
 	Mode string `json:"mode"`
+	// Writable is the git checkout a local session may edit; "" when it
+	// started outside one (read-only) or is a project session.
+	Writable string `json:"writable,omitempty"`
 	// Orb is a project session's container state, nil for local.
 	Orb *RowOrb `json:"orb,omitempty"`
 	// SpawnedBy is the parent of a background agent; Queued marks one
@@ -580,8 +583,9 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 		Background: in.Background,
 		Empty:      !hasInput(entries),
 
-		Mode: mode,
-		Orb:  rowOrb,
+		Mode:     mode,
+		Writable: a.writableRoot(mode, in.Cwd),
+		Orb:      rowOrb,
 
 		SpawnedBy: firstDir(in.SpawnedBy, meta.SpawnedBy),
 		Agents:    a.agentCount(in.ID),

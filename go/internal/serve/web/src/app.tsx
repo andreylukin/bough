@@ -7,6 +7,7 @@ import { ProjectsView } from "./projects";
 import { ModeChip, ModePicker, type ModeValue } from "./mode";
 import { Select, type Option } from "./select";
 import { DialogHost, askChoice, askConfirm, askText } from "./dialog";
+import { Welcome, welcomeDismissed } from "./welcome";
 import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount, changedPath } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
@@ -3704,7 +3705,10 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
                 document.getElementById("composer")?.focus();
               }} />
               <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" />
-              {row.mode !== "project" && (
+              {row.mode !== "project" && row.writable && (
+                <span className="mode-local mode-badge" title={`File edits are allowed only inside ${row.writable}. The shell runs as you.`}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z" /></svg>Local · edits {row.writable.split("/").pop()}</span>
+              )}
+              {row.mode !== "project" && !row.writable && (
                 <span className="mode-local mode-badge" title="A local session can read your files and run commands on this machine, but cannot edit files. Start a project session to make changes."><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>Local · read-only</span>
               )}
             </div>
@@ -4226,6 +4230,13 @@ export default function App() {
   // alone used to leave an empty session behind every time.
   const [palCwd, setPalCwd] = useState("");
   const newSession = () => { setPalCwd(row?.cwd ?? ""); setPalette(true); };
+  // "auto" shows the welcome while the server has no sessions; "on" is the
+  // palette asking for it again; "off" is skipped or already used.
+  const [welcome, setWelcome] = useState<"auto" | "on" | "off">(() => (welcomeDismissed() ? "off" : "auto"));
+  const showWelcome = welcome === "on" || (welcome === "auto" && loadedAt !== null && !rows.some((r) => !r.archived));
+  // A phone opens on the list pane, which on an empty server is one line
+  // of "No sessions yet."; the welcome lives in the thread pane.
+  useEffect(() => { if (showWelcome) setPane("thread"); }, [showWelcome]);
   const folderName = (p: string) => p.replace(/\/+$/, "").split("/").pop() || p;
 
   // The newest call whose recorded exit was not zero, in the open session.
@@ -4250,6 +4261,15 @@ export default function App() {
       id: `new:orb:${p.id}`, group: "Start", label: `New session in ${p.name}`,
       hint: "orb", run: () => start(home, "", { mode: "project" as const, project: p.id }),
     })) : []),
+    ...(home ? [{
+      id: "new:folder", group: "Start", label: "New session in a folder…", hint: "a git checkout can be edited",
+      run: async () => {
+        const p = await askText("Start in folder", { initial: shortPath(row?.cwd ?? home, home), placeholder: "~/code/your-repo", action: "Start" });
+        if (p?.trim()) start(p.trim().replace(/^~(?=\/|$)/, home), "");
+      },
+    }] : []),
+    { id: "help:welcome", group: "Navigation", label: "Show the welcome", hint: "connect a model, pick a folder",
+      run: () => { setWelcome("on"); goList(); } },
     { id: "new:project", group: "Start", label: "New project…",
       run: async () => {
         const n = await askText("New project", { placeholder: "What is this work?", action: "Create" });
@@ -4390,7 +4410,7 @@ export default function App() {
           }, "start a project session") : undefined} />
       ) : (
         <div className={"thread" + (selected ? " empty" : "")}>
-          {!selected ? (<>
+          {!selected ? (showWelcome ? <Welcome onStart={(cwd, p) => start(cwd, p)} onSkip={() => setWelcome("off")} /> : <>
             {home && (
               <div className="controls mode-start">
                 <ModePicker projects={projects} value={newMode} onChange={setNewMode} />

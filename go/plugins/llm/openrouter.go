@@ -517,6 +517,9 @@ func openrouterErr(status int, model string, data []byte) error {
 	if json.Unmarshal(data, &parsed) == nil && parsed.Error != nil {
 		msg = parsed.Error.Message
 	}
+	if status == http.StatusUnauthorized {
+		return keyRejected("llm-openrouter", "OPENROUTER_API_KEY", "openrouter", status, msg)
+	}
 	if status == http.StatusBadRequest || status == http.StatusNotFound {
 		if msg != "" {
 			return fmt.Errorf("llm-openrouter: model %q not found on openrouter (%s) — switch with /model", model, msg)

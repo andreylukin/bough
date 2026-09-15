@@ -287,6 +287,9 @@ func cerebrasErr(status int, model string, data []byte) error {
 			msg = parsed.Message
 		}
 	}
+	if status == http.StatusUnauthorized {
+		return keyRejected("llm-cerebras", "CEREBRAS_API_KEY", "cerebras", status, msg)
+	}
 	if status == http.StatusNotFound {
 		if msg != "" {
 			return fmt.Errorf("llm-cerebras: model %q not found on cerebras (%s) — switch with /model", model, msg)

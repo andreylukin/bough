@@ -80,6 +80,8 @@ export interface Row {
   turns?: number;
   /** Absent from a server older than orbs: read as local. */
   mode?: SessionMode;
+  /** The git checkout a local session may edit; absent means read-only (or a project session). */
+  writable?: string;
   orb?: { project: string; status: OrbStatus };
   /** The session that started this one as a background agent. */
   spawnedBy?: string;

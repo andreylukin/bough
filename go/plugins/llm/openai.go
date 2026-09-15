@@ -431,6 +431,9 @@ func openaiErr(status int, model string, data []byte) error {
 	if json.Unmarshal(data, &parsed) == nil && parsed.Error != nil {
 		msg = parsed.Error.Message
 	}
+	if status == http.StatusUnauthorized {
+		return keyRejected("llm-openai", "OPENAI_API_KEY", "openai", status, msg)
+	}
 	if status == http.StatusNotFound {
 		return fmt.Errorf("llm-openai: model %q not found on openai — switch with /model", model)
 	}

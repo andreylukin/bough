@@ -572,6 +572,37 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .ov-empty-sub{margin:0;font-size:13px;color:var(--text-2)}
 .ov-empty-keys{margin:8px 0 0;display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px 8px;font-size:12px;color:var(--text-3)}
 .ov-empty-keys kbd{font:500 11px/16px var(--mono);padding:1px 6px;border:1px solid var(--line-strong);border-radius:4px;color:var(--text-2)}
+/* First run: an empty server teaches the three steps to a working session. */
+.welcome{flex:1;min-height:0;overflow:auto}
+.welcome-inner{max-width:640px;margin:0 auto;padding:var(--s-6) var(--s-4)}
+.welcome-head h1{margin:0 0 var(--s-2);font-size:var(--fs-h1);font-weight:600;line-height:var(--lh-tight);color:var(--text-1);text-wrap:balance}
+.welcome-head p{margin:0;font-size:var(--fs-base);line-height:var(--lh-prose);color:var(--text-2);text-wrap:pretty}
+.welcome-steps{list-style:none;margin:var(--s-5) 0 0;padding:0;display:flex;flex-direction:column;gap:var(--s-3)}
+.welcome-step{display:flex;flex-direction:column;gap:var(--s-3);padding:var(--s-4);background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg)}
+.welcome-step h2{display:flex;align-items:center;gap:10px;margin:0;font-size:var(--fs-base);font-weight:600;color:var(--text-1)}
+.welcome-num{display:inline-grid;place-items:center;flex-shrink:0;width:22px;height:22px;border-radius:50%;border:1px solid var(--line-strong);font:600 12px/1 var(--mono);color:var(--text-2)}
+.welcome-step.done .welcome-num{background:var(--accent);border-color:var(--accent);color:var(--bg)}
+.welcome-note,.welcome-status{margin:0;font-size:var(--fs-md);line-height:var(--lh-prose);color:var(--text-2);text-wrap:pretty}
+.welcome-status.ok{color:var(--accent)}
+.welcome-status.warn{color:var(--amber)}
+.welcome-note code,.welcome-how code{font:12px var(--mono);color:var(--text-1)}
+.welcome-row{display:flex;flex-wrap:wrap;gap:var(--s-2)}
+.welcome-field{height:var(--row);padding:0 11px;font:13px var(--sans);color:var(--text-1);background:var(--raised);border:1px solid var(--line-strong);border-radius:7px}
+.welcome-field.grow{flex:1 1 16ch;min-width:0}
+.welcome-field.wide{width:100%}
+.welcome-field::placeholder{color:var(--text-3)}
+.welcome-field:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.welcome-chips{display:flex;flex-wrap:wrap;gap:var(--s-2)}
+.welcome-chip{padding:6px 12px;font:13px var(--sans);text-align:start;color:var(--text-1);background:var(--raised);border:1px solid var(--line);border-radius:999px;cursor:pointer}
+.welcome-chip:hover:not(:disabled){background:var(--sel);border-color:var(--line-strong)}
+.welcome-chip:disabled{opacity:.45;cursor:not-allowed}
+.welcome-err{margin:var(--s-3) 0 0;font-size:var(--fs-md);color:var(--red)}
+.welcome-how{margin-top:var(--s-5);padding:0 var(--s-1)}
+.welcome-how h2{margin:0 0 var(--s-2);font-size:var(--fs-xs);font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3)}
+.welcome-how ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:var(--s-2);font-size:var(--fs-md);line-height:var(--lh-prose);color:var(--text-2)}
+.welcome-how b{font-weight:600;color:var(--text-1)}
+.welcome-foot{margin:var(--s-5) 0 0;text-align:center}
+@media (max-width:720px){.welcome-inner{padding:var(--s-5) var(--s-4)}.welcome-field,.welcome .btn-primary,.welcome-chip{min-height:var(--row-touch)}}
 
 .say{display:flex;flex-direction:column;gap:8px;max-width:78ch}
 .say-who{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--text-2)}
