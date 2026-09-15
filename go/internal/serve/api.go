@@ -34,6 +34,12 @@ type API struct {
 	// ingest starts a wiki ingest (spawnIngest). A field so a test can
 	// see the call without running a model.
 	ingest func(only string) error
+	// start is the directory serve was started in, the folder first-run
+	// setup offers. getenv and setenv are fields so a test neither reads
+	// the developer's keys nor writes the process environment.
+	start  string
+	getenv func(string) string
+	setenv func(string, string) error
 }
 
 // Row is one session as the wire sees it: what history knows, what the
@@ -120,9 +126,12 @@ const heartbeat = 15 * time.Second
 // on a real path is the mux's own 405, not a 404.
 func NewAPI(sup *Supervisor) *API {
 	home, _ := os.UserHomeDir()
-	a := &API{sup: sup, mux: http.NewServeMux(), home: home}
+	start, _ := os.Getwd()
+	a := &API{sup: sup, mux: http.NewServeMux(), home: home, start: start, getenv: os.Getenv, setenv: os.Setenv}
 	a.ingest = a.spawnIngest
 	a.mux.HandleFunc("GET /api/health", a.health)
+	a.mux.HandleFunc("GET /api/setup", a.setup)
+	a.mux.HandleFunc("POST /api/setup/key", a.setKey)
 	a.mux.HandleFunc("GET /api/sessions", a.listSessions)
 	a.mux.HandleFunc("POST /api/sessions", a.createSession)
 	a.mux.HandleFunc("GET /api/sessions/{id}", a.getSession)

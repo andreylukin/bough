@@ -168,6 +168,25 @@ func names() []string {
 	return out
 }
 
+// Provider is one provider /connect knows, for callers outside this
+// package: serve's first-run setup lists and records keys the same way,
+// so the web and the TUI cannot disagree about which env var a provider
+// reads.
+type Provider struct{ Name, Env, Plugin, Model string }
+
+// Providers lists every provider, sorted by name.
+func Providers() []Provider {
+	out := make([]Provider, 0, len(providers))
+	for _, n := range names() {
+		p := providers[n]
+		out = append(out, Provider{Name: n, Env: p.env, Plugin: p.plugin, Model: p.model})
+	}
+	return out
+}
+
+// WriteKey is writeKey for other packages.
+func WriteKey(path, env, key string) error { return writeKey(path, env, key) }
+
 // writeKey appends KEY=value to the env file, replacing any line that
 // already sets that variable. The file is 0600: it holds credentials.
 func writeKey(path, env, key string) error {

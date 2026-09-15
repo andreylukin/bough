@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	iorb "github.com/andreylukin/bough/internal/orb"
@@ -107,21 +106,7 @@ func sessionFile(sets setFlags) string {
 // the failing tests") impossible: the model had no tools.patch. A
 // checkout that holds home (a dotfiles repo at ~) is not a project, so
 // it stays read-only.
-func defaultWriteRoot(cwd, home string) string {
-	for dir := filepath.Clean(cwd); ; dir = filepath.Dir(dir) {
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			if home != "" {
-				if rel, err := filepath.Rel(dir, home); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-					return ""
-				}
-			}
-			return dir
-		}
-		if filepath.Dir(dir) == dir {
-			return ""
-		}
-	}
-}
+func defaultWriteRoot(cwd, home string) string { return iorb.CheckoutRoot(cwd, home) }
 
 // applyDefaultWriteRoot makes a local session's git checkout writable
 // when nothing set BOUGH_WRITE_ROOTS. It goes through the environment
