@@ -1772,7 +1772,12 @@ function hookEventLabel(fires: Line[]): string {
 }
 
 export function TurnHooks({ lines, load, save }: { lines: Line[]; load?: Load; save?: Save }) {
-  const fires = lines.filter((l) => l.kind === "hook");
+  // A fire that decided nothing, changed nothing and said nothing is not
+  // news: the built-in rules hook runs after every result, so every turn
+  // carried "1 fired" about a hook that did nothing. Those stay in the
+  // Hooks view's ledger, which keeps every invocation.
+  const fires = lines.filter((l) => l.kind === "hook" &&
+    (str(l.data?.decision) || str(l.data?.error) || str(l.data?.notice) || (l.data?.output !== null && l.data?.output !== undefined)));
   // A "hook <event>: notice" line a fire already carries is that fire,
   // said twice; one no fire carries is shown once, here.
   const carried = new Set(fires.map((l) => str(l.data?.notice)).filter(Boolean));
