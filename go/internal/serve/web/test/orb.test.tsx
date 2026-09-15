@@ -11,12 +11,15 @@ const noop = () => {};
 const row = (over: Partial<Row>) => ({ id: "s1", ...over }) as Row;
 
 test("a project row shows its project and real orb state", () => {
-  const failed = renderToStaticMarkup(<ModeChip row={row({ mode: "project", orb: { project: "web", status: "failed" } as Row["orb"] })} />);
-  expect(failed).toContain("web · failed");
-  expect(failed).toContain("mode-failed");
+  // A failed setup is its own labelled indicator under the project's display name, not a session status.
+  const failed = renderToStaticMarkup(<ModeChip name="Web app" row={row({ mode: "project", orb: { project: "p1", status: "failed" } as Row["orb"] })} />);
+  expect(failed).toContain("Setup failed");
+  expect(failed).toContain("Web app: setup failed");
+  expect(failed).not.toContain("p1");
   expect(failed).not.toContain("mode-running");
   const running = renderToStaticMarkup(<ModeChip row={row({ mode: "project", orb: { project: "web", status: "running" } as Row["orb"] })} />);
   expect(running).toContain("mode-running");
+  expect(running).toContain("web · Running");
 });
 
 test("a local row shows no chip", () => {

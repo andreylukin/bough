@@ -24,14 +24,16 @@
   color-scheme:dark;
 }
 *{box-sizing:border-box}
-html,body,#root{height:100%}
+html,body,#root{height:100%;overflow:hidden}
 body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans);
      -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
 .num{font-variant-numeric:tabular-nums}
 .mono{font-family:var(--mono)}
 ::selection{background:color-mix(in srgb,var(--accent) 30%,var(--surface));color:var(--text-1)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
-.app{display:flex;height:100%;overflow:hidden}
+/* Clip, not hidden: scrollIntoView, find-in-page and focus cannot scroll a clipped shell away; pages scroll inside. */
+.app{display:flex;height:100%;overflow:hidden;overflow:clip}
+.app-main{display:contents}
 .app>*{min-height:0}
 .scroll{overflow-y:auto;min-height:0}
 
@@ -44,10 +46,10 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .session{position:relative}
 /* The log's disclosure sits at the row's end: a sibling of the row, shown on hover, focus, or once open. */
 .row-twist{position:absolute;right:6px;top:4px;z-index:2;width:24px;height:24px;padding:0;display:grid;place-items:center;
-  background:none;border:0;border-radius:6px;color:var(--text-3);cursor:pointer;opacity:0}
+  background:none;border:0;border-radius:6px;color:var(--text-3);cursor:pointer;opacity:.45}
 .row-twist svg{transition:transform .12s}
 .row-twist[aria-expanded="true"] svg{transform:rotate(90deg)}
-.row-wrap:hover>.row-twist,.row-wrap:focus-within>.row-twist,.row-twist[aria-expanded="true"]{opacity:1}
+.row-wrap:hover>.row-twist,.row-wrap:focus-within>.row-twist,.row-twist:focus-visible,.row-twist[aria-expanded="true"]{opacity:1}
 .row-twist:hover{background:var(--line);color:var(--text-1)}
 @media (hover:none){.row-twist{opacity:1}}
 /* The log hangs off the status column on a rule, so turns never line up with titles. */
@@ -105,11 +107,13 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .ws-older{align-self:flex-start;display:flex;align-items:center;gap:4px;height:24px;margin:2px 0 4px;padding:0 6px 0 20px;background:none;border:0;border-radius:6px;color:var(--text-3);font:12px var(--sans);cursor:pointer}
 .ws-older svg{flex-shrink:0;transition:transform .12s}
 .ws-older[aria-expanded="true"] svg{transform:rotate(90deg)}
-.ws-older:hover{color:var(--text-1)}
+.ws-older:hover{color:var(--text-1);background:rgba(255,255,255,.035)}
 .ws-older:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .ws-head,.sec-fold{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;color:var(--text-3);font:13px var(--sans)}
 .ws-head{width:100%;height:26px;gap:6px;background:none;border:0;border-radius:8px;cursor:pointer;text-align:start;font:600 12px/16px var(--sans)}
-.ws-head:hover{color:var(--text-1)}
+.ws-head:hover{color:var(--text-1);background:rgba(255,255,255,.035)}
+.sec-include{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+.sec-fold:hover .sec-include{color:var(--text-1)}
 .ws-head svg{flex-shrink:0}
 .ws-head svg:first-child{transition:transform .12s}
 .ws-head[aria-expanded="true"] svg:first-child{transform:rotate(90deg)}
@@ -139,7 +143,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 @media (hover:none),(max-width:720px){.row-meta{display:inline}.row-jobs+.row-meta{margin-inline-start:0}}
 /* A desktop row says why only when it is failing, waiting or running; done rows stay bare. */
 .row-meta-live{display:inline}.row-jobs+.row-meta-live{margin-inline-start:0}
-.row-id{flex-shrink:0;font-size:12px;color:var(--text-3)}
+.row-id{flex-shrink:0;font-size:11px;color:var(--text-3);opacity:.7}
 .turn-note{color:var(--text-3)}
 .side-fresh{display:flex;align-items:center;gap:8px;height:28px;margin:0;padding:0 12px;font-size:12px;color:var(--text-3)}
 /* Hover, selected and focus each look different: a tint, a tint with a marker, a ring. */
@@ -1513,7 +1517,7 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .wk-link.mono{font-family:var(--mono);font-size:13px}
 .wk-check pre{margin:0}
 .wk-row{display:flex;align-items:center;gap:14px;width:100%;padding:9px 0;border:0;border-bottom:1px solid var(--line);
-        background:none;color:inherit;font:inherit;text-align:start;cursor:pointer}
+        background:none;color:inherit;font:inherit;text-align:start;cursor:pointer;text-decoration:none}
 .wk-row:last-child{border-bottom:0}
 .wk-row:hover .wk-title{color:var(--accent)}
 .wk-row-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}
@@ -1556,13 +1560,21 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
           border-inline-start:2px solid var(--amber)}
 .wk-super-word{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--amber);flex-shrink:0}
 .wk-note{font-size:12px;line-height:1.5;color:var(--text-3);border-inline-start:2px solid var(--line-strong);
-         padding-inline-start:10px;white-space:pre-wrap;overflow-wrap:break-word}
+         padding-inline-start:10px;white-space:pre-wrap;overflow-wrap:anywhere;min-width:0}
+.wk-note-about{display:block;font-family:var(--sans);color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wk-note-bad{border-inline-start-color:var(--red);color:var(--red)}
 .wk-note-src{display:block;margin-bottom:3px;font-family:var(--mono);color:var(--text-2)}
-.wk-links .md ul{margin:0;padding-inline-start:18px}
-.wk-pagefoot{margin-top:10px;padding-top:14px;border-top:1px solid var(--line);font-size:12px;color:var(--text-3);max-width:65ch}
+.wk-links .md ul{margin:0;padding-inline-start:18px;display:flex;flex-direction:column;gap:2px}
+.wk-links .md li,.wk-links .md li>p{margin:0}
+.wk-pagefoot{margin-top:10px;padding-top:14px;border-top:1px solid var(--line);font-size:12px;color:var(--text-3)}
 .wk-history{display:flex;flex-direction:column;gap:2px;padding-bottom:12px;border-bottom:1px solid var(--line)}
 .wk-history p{margin:0}
+.wk-history-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.wk-history-head .wk-h{margin:0}
+.wk-history-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column}
+.wk-history-list li{display:grid;grid-template-columns:minmax(10ch,auto) minmax(0,1fr) auto;gap:4px 14px;align-items:baseline;padding:6px 0;border-top:1px solid var(--line);font-size:13px;color:var(--text-2);cursor:default}
+.wk-history-when{font:12px var(--mono);color:var(--text-3);white-space:nowrap}
+.wk-history-what{min-width:0;overflow-wrap:anywhere}
 .wk-src{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;background:var(--surface)}
 .wk-src-head{flex-shrink:0;display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line)}
 .wk-src-title{font-size:14px;font-weight:500;color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1595,7 +1607,8 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .wk-tag{flex-shrink:0;font-size:11px;color:var(--text-3);border:1px solid var(--line-strong);border-radius:999px;padding:1px 7px}
 .wk-list{display:flex;flex-direction:column;gap:10px}
 .wk-run{background:var(--surface);border-radius:8px;overflow:hidden}
-.wk-run-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:9px 14px}
+.wk-run-head{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;align-items:center;gap:6px 10px;padding:9px 14px}
+@media (max-width:720px){.wk-run-head{grid-template-columns:auto auto minmax(0,1fr)}.wk-run-head .wk-run-meta{grid-column:1/-1}}
 .wk-run-when{flex-shrink:0;min-width:6ch;font:12px var(--mono);color:var(--text-3)}
 .wk-run-what{flex:1 1 20ch;min-width:0;font-size:13px;color:var(--text-2);overflow-wrap:anywhere}
 .wk-run-meta{margin-inline-start:auto;flex-shrink:0;font:12px var(--mono);color:var(--text-3)}
@@ -1612,7 +1625,7 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 /* A tall note may hang into the gap below its claim instead of pushing the next claim down. */
 .wk-claim>.wk-note{margin-bottom:-16px}
 .wk-note-more{margin-top:2px;font-size:11.5px}
-.wk-text code,.wk-item-claim code{overflow-wrap:anywhere;word-break:break-word;white-space:pre-wrap}
+.wk-text code,.wk-item-claim code{overflow-wrap:anywhere;word-break:break-word;white-space:pre-wrap;padding-inline:3px}
 .wk-doc .md a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
 .wk-doc .md a:hover{color:var(--text-1)}
 .wk-sep{margin-inline:6px}
@@ -1621,7 +1634,10 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .wk-citedby li::before{content:"\00b7";margin-inline:8px;color:var(--text-3)}
 .wk-state-quiet{color:var(--text-3);background:color-mix(in oklab,var(--text-3) 14%,transparent)}
 .wk-history{min-height:44px}
-.wk-malformed{margin:0;max-width:65ch}
+.wk-malformed{margin:0;max-width:65ch;padding:12px 14px;border:1px solid var(--amber);border-inline-start-width:3px;border-radius:8px}
+.wk-malformed strong{display:block;color:var(--text-1);font-weight:600}
+.wk-malformed p{margin:4px 0 0}
+.wk-denumbered .md{display:block}
 .thread-head.page-head{background:var(--bg);position:relative;z-index:2}
 .btn.btn-sm{min-height:24px;padding:1px 8px;font-size:12px}
 /* Shared loading vocabulary (src/loading.tsx). */
@@ -1680,7 +1696,10 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .hk-definition .hk-toggle:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 @media (pointer:coarse){.hk-definition .hk-toggle{min-height:44px}}
 .hk-runs>li+li{border-top:1px solid var(--line);padding-top:8px}
-.hook-invocation>summary{cursor:pointer;min-height:28px;padding-block:4px}
+.hook-invocation>summary{cursor:pointer;min-height:28px;padding-block:4px;list-style:none}
+.hook-invocation>summary::-webkit-details-marker{display:none}
+.hook-invocation>summary::before{content:"›";display:inline-block;width:1em;color:var(--text-3);transition:transform .12s}
+.hook-invocation[open]>summary::before{transform:rotate(90deg)}
 .hook-invocation>summary:hover{color:var(--text-1)}
 .turn-hooks-body{max-height:none}
 @media (max-width:720px){
@@ -1727,15 +1746,54 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .hk-fold>summary.hk-main:hover{background:var(--surface)}
 .hk-fold>summary.hk-main:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 /* The column header and each day heading stay put while the decisions scroll. */
-.hk-decisions>.hk-cols{position:sticky;top:0;z-index:2;background:var(--bg)}
-.hk-dayrun>.hk-day{position:sticky;top:24px;z-index:1;background:var(--bg)}
+/* Sticky heads stack from the scroll pane's top edge: section head, then
+   column head, then day. Each offset is the exact height of what sits above. */
+.hk-decisions>.hk-cols{position:sticky;top:var(--stick-head);z-index:3;background:var(--bg);box-sizing:border-box;height:var(--stick-cols)}
+.hk-dayrun>.hk-day{position:sticky;top:calc(var(--stick-head) + var(--stick-cols));z-index:2;background:var(--bg)}
+@media (max-width:720px){.hk-dayrun>.hk-day{top:var(--stick-head)}}
 .hk-took{text-align:end;font-variant-numeric:tabular-nums}
 .hk2-muted{color:var(--text-3);background:color-mix(in oklab,var(--text-3) 14%,transparent)}
 .hk-setup .proj-head{align-items:center}
 .hk-setup-item>p{margin:6px 0 0}
 /* Projects: sticky section heads, real hit targets, a separated destructive action. */
-.proj-body>.proj>.proj-head{position:sticky;top:0;z-index:3;background:var(--bg);padding-top:6px}
-.hk-decisions>.proj-head{position:static}
+/* The pane's top padding moves onto its first child: sticky offsets are
+   measured inside the padding, so a padded pane left a strip above the head
+   that rows scrolled through. The head is a fixed height so the heads under
+   it can stack exactly. */
+.proj-body{--stick-head:42px;--stick-cols:25px;padding-top:0}
+/* Its scroller holds its .visually-hidden spans too: anchored to .thread they sat
+   at their place deep in the list and stretched .app past its height. */
+.proj-body{position:relative}
+.proj-body>:first-child{margin-top:24px}
+@media (max-width:720px){.proj-body>:first-child{margin-top:16px}}
+.proj-body>.proj>.proj-head{position:sticky;top:0;z-index:4;background:var(--bg);box-sizing:border-box;height:var(--stick-head);
+  padding-top:6px;align-items:center}
+.proj-body .rp-repo-head{position:sticky;top:var(--stick-head);z-index:2;background:var(--bg)}
+/* A project's environment that failed to set up: its own mark, red in every row state. */
+.setup-failed{display:inline-flex;align-items:center;gap:4px;color:var(--red);font-weight:500}
+.row-on .setup-failed{color:#ed756e}
+/* In the header nothing follows the chip that needs a separator, and "Why?" must read as a link. */
+.head-main .setup-sep{display:none}
+.head-main>.link{color:var(--text-2);text-decoration:underline;text-underline-offset:2px}
+.head-main>.link:hover{color:var(--text-1)}
+/* A phone's chip link is one link, not a label and a value underlined apart. */
+a.rt-link{text-decoration:none}
+/* The Work button sits in the strip's 24px line: one centred line, the detail cut short. */
+.thread-head>.runtime-strip .work-summary{flex-direction:row;align-items:center;justify-content:flex-start;min-height:24px;
+  white-space:nowrap;overflow:hidden;max-inline-size:100%}
+.thread-head>.runtime-strip .work-summary-2{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.thread-head>.runtime-strip .work-summary-2::before{content:"· "}
+@media (max-width:720px){.thread-head>.runtime-strip{grid-column:2/-1;padding-inline:0}}
+/* Waiting sessions on Overview: cards with the question. */
+.ov-wait-list{display:flex;flex-direction:column;gap:8px;width:min(560px,100%);text-align:start}
+.ov-waits{display:flex;flex-direction:column;gap:8px;max-width:720px}
+.ov-wait{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface);
+  color:var(--text-1);font:inherit;text-align:start;cursor:pointer}
+.ov-wait:hover{background:var(--raised)}
+.ov-wait:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ov-wait-title{display:flex;align-items:center;gap:8px;font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ov-wait-q{font-size:13px;line-height:18px;color:var(--text-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ov-wait-meta{font-size:12px;color:var(--text-3)}
 .proj-act{min-height:24px;min-width:24px;padding:2px 6px;border-radius:6px}
 .proj-act:hover{background:var(--surface)}
 .proj-act:focus-visible{outline:2px solid var(--accent);outline-offset:0}
@@ -1756,6 +1814,32 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .btn-danger-quiet{color:var(--red);border-color:color-mix(in oklab,var(--red) 50%,transparent)}
 .btn-danger-quiet:hover{color:var(--red);background:color-mix(in oklab,var(--red) 12%,transparent)}
 .orb-cols{padding:0 8px}
+/* Projects: aligned time and status columns, an open orb toggle that looks open, sticky repo heads. */
+.proj-row>.proj-open .proj-when{flex:none;width:7ch;text-align:end;font-variant-numeric:tabular-nums}
+.proj-row>.status{flex:none;width:128px}
+.proj-act[aria-expanded="true"]{background:var(--surface);color:var(--accent)}
+.proj-nomatch{margin:0;font-size:13px;color:var(--text-2)}
+.orb-cols{justify-content:flex-start;gap:14px}
+.orb-cols>span:first-child{flex:1 1 auto}
+.orb-sessions .orb-ctr{flex:none;width:13ch;overflow:hidden;white-space:nowrap}
+.orb-sessions .orb-st{flex:none;width:128px}
+/* Hooks: summary groups wrap whole; the definition grows with its file up to a clean scroll edge. */
+.hk2-sum-set{display:inline-flex;flex-wrap:wrap;gap:8px 18px;align-items:baseline}
+.hk-edit{field-sizing:content;min-height:calc(6lh + 22px);max-height:calc(24lh + 22px);overflow-y:auto}
+@media (min-width:721px) and (max-width:1023px){
+  .hk-main{grid-template-columns:72px minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr) 24px}
+  .hk-main>.hk-ev,.hk-main>.hk-took{display:none}
+}
+@media (max-width:720px){
+  .hk-main{min-height:72px}
+  .hk-main>.hk-time,.hk-main>.hk-chev{grid-row:1/4}
+  .hk-main>.hk-name{display:block;grid-column:2;grid-row:1}
+  .hk-main>.hk-ev{display:block;grid-column:2;grid-row:2}
+  .hk-main>.hk-sess{display:none}
+  .hk-main>.hk-dec{grid-column:2;grid-row:3}
+  .hk2-actions{margin-inline-start:auto;width:auto}
+  .proj-row>.status{width:auto}
+}
 .rp-state{display:flex;align-items:center}
 /* Sidebar: a configured project reads apart from a plain repo group. */
 .ws-project{color:var(--text-2)}

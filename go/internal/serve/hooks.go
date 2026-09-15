@@ -149,7 +149,7 @@ func sameDir(a, b string) bool {
 func (a *API) hooks(w http.ResponseWriter, r *http.Request) {
 	fires := a.fires()
 	cwd, _ := os.Getwd()
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSONTagged(w, r, map[string]any{
 		"hooks":    withLast(a.installed(), fires),
 		"watchers": a.watchers(),
 		"fires":    fires,

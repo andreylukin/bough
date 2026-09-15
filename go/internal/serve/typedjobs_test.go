@@ -66,4 +66,8 @@ func TestTranscriptSkipsTypedJobs(t *testing.T) {
 	if len(got) != 1 || got[0].Seq != 2 {
 		t.Fatalf("Transcript = %+v, want only the text job note", got)
 	}
+	// The note keeps the typed entry's whole command.
+	if got[0].Data["cmd"] != "cmd" {
+		t.Fatalf("note data = %+v, want cmd from the typed entry", got[0].Data)
+	}
 }

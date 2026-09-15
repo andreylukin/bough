@@ -226,7 +226,7 @@ func (a *API) listSessions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Modified.After(rows[j].Modified) })
-	writeJSON(w, http.StatusOK, map[string]any{"sessions": rows})
+	writeJSONTagged(w, r, map[string]any{"sessions": rows})
 }
 
 // getSession is the row plus a transcript slice. since/limit exist so a

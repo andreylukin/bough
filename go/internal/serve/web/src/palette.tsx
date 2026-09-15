@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { useModal } from "./dialog";
 import type { Row } from "./types";
 import { hasOwnTitle, plainTitle, sessionTitle, titleKey } from "./render";
-import { STATUS, shownStatus } from "./status";
+import { shownStatus, statusWord } from "./status";
 
 /**
  * ⌘K. With 150 conversations the sidebar is a scroll, not an index —
@@ -301,6 +301,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
   };
 
   let lastGroup = "";
+  let groupId = "";
   return createPortal(
     <div ref={box} style={{ display: "contents" }}>
       <div className="pal-scrim" onClick={close} />
@@ -313,10 +314,11 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
         <div id="pal-list" ref={list} className="pal-list" role="listbox" aria-label="Results">
           {hits.map((c, i) => {
             const head = c.group !== lastGroup ? (lastGroup = c.group) : "";
+            if (head) groupId = "palg-" + c.id;
             return (
-              <div key={c.id}>
-                {head && <p className="pal-group">{head}</p>}
-                <button id={"pal-" + c.id} role="option" aria-selected={i === at} tabIndex={-1}
+              <div key={c.id} role="presentation">
+                {head && <p className="pal-group" role="presentation" id={groupId}>{head}</p>}
+                <button id={"pal-" + c.id} role="option" aria-selected={i === at} tabIndex={-1} aria-describedby={groupId}
                         data-at={i === at ? 1 : 0}
                         className={"pal-item" + (i === at ? " pal-on" : "")}
                         onMouseEnter={() => setAtId(c.id)} onClick={() => pick(c)}>
@@ -350,7 +352,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
 
 /** A session's meta, one shape everywhere in the palette: repo · Status · age, and the id tail when the name alone does not tell it apart. */
 function meta(r: Row, repo: string | undefined, withId: boolean): string {
-  const status = r.testsFailed ? "Tests failed" : shownStatus(r) === "error" ? "Failed" : STATUS[r.status]?.label ?? r.status;
+  const status = r.testsFailed ? "Tests failed" : statusWord(shownStatus(r));
   return [repo?.split("/").pop(), status, r.lastAt ? agoShort(r.lastAt) : "", withId ? r.id.slice(-6) : ""].filter(Boolean).join(" · ");
 }
 

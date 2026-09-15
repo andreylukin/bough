@@ -9,10 +9,15 @@
 package serve
 
 import (
+	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/andreylukin/bough/plugins/history"
 )
+
+// jobNoteID reads the id off the loop's job note: "job 7 [exited 1] …".
+var jobNoteID = regexp.MustCompile(`^job (\d+) \[`)
 
 // Status is a session's derived state.
 type Status string
@@ -168,6 +173,7 @@ func str(v any) string {
 // decides what a given view shows.
 func Transcript(entries []history.Entry, sinceSeq int64, limit int) []Line {
 	var out []Line
+	var cmds map[string]string // typed job id -> whole command
 	for _, e := range entries {
 		if e.Seq <= sinceSeq {
 			continue
@@ -178,9 +184,21 @@ func Transcript(entries []history.Entry, sinceSeq int64, limit int) []Line {
 		// Typed job entries are serve bookkeeping; the transcript shows
 		// the loop's text job note for the same event.
 		if typedJob(e) {
+			if c, ok := e.Data["cmd"].(string); ok && c != "" {
+				if cmds == nil {
+					cmds = map[string]string{}
+				}
+				cmds[fmt.Sprint(e.Data["id"])] = c
+			}
 			continue
 		}
 		l := Line{Seq: e.Seq, At: e.At, Kind: e.Kind, Text: history.EntryText(e)}
+		// The note keeps only "first line …": carry the typed entry's whole command.
+		if e.Kind == "job" {
+			if m := jobNoteID.FindStringSubmatch(l.Text); m != nil && cmds[m[1]] != "" {
+				l.Data = map[string]any{"cmd": cmds[m[1]]}
+			}
+		}
 		// Text is already lifted out; leaving it in Data would double
 		// every assistant message on the wire.
 		for k, v := range e.Data {

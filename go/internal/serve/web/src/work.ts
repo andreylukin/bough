@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { execNote, groupSubs, type SubAgent, type Turn } from "./render";
+import { execNote, groupSubs, scriptHead, type SubAgent, type Turn } from "./render";
 import type { Job, Line, Row } from "./types";
 
 /*
@@ -81,11 +81,8 @@ export function parseLegacyJob(text: string): { id?: number; life: WorkLife; exi
  * comment read as "# …"; a comment or a bare ellipsis falls through to "Job N".
  */
 export function jobTitle(cmd: string, id: string | number): string {
-  for (const raw of cmd.split("\n")) {
-    const l = raw.trim().replace(/\s*(?:…|\.\.\.)$/, "").trim();
-    if (l && !l.startsWith("#")) return l;
-  }
-  return `Job ${id}`;
+  const l = scriptHead(cmd.split("\n").map((x) => x.trim().replace(/\s*(?:…|\.\.\.)$/, "").trim()).filter((x) => !x.startsWith("#")).join("\n"));
+  return l || `Job ${id}`;
 }
 
 const TREE = /[─-▟]+/g;
@@ -150,6 +147,8 @@ export function jobsFromLines(lines: Line[], session: string, live: boolean, run
     if (!p || p.id === undefined || p.life === "running") continue;
     const w = get(p.id, l.seq);
     w.seq = Math.max(w.seq, l.seq);
+    // serve folds the typed entry's whole command onto the note; the note's own is "first line …".
+    if (typeof d.cmd === "string" && d.cmd) w.cmd = d.cmd;
     w.cmd ||= p.cmd;
     if (!w.endAt) w.endAt = l.at;
     if (p.ms !== undefined) w.ms = p.ms;

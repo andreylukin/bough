@@ -2,12 +2,12 @@ import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo
 import { createPortal } from "react-dom";
 import { api, subscribe, type Scope, type TurnLine } from "./api";
 import type { Line, Project, Row } from "./types";
-import { STATUS, StatusMark, Working, hasFailure, hasQuestion, sessionSignal } from "./status";
+import { STATUS, StatusMark, Working, hasFailure, hasQuestion, sessionSignal, statusWord } from "./status";
 import { ProjectsView } from "./projects";
 import { ModeChip, ModePicker, type ModeValue } from "./mode";
 import { Select, type Option } from "./select";
 import { DialogHost, askChoice, askConfirm, askText } from "./dialog";
-import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, execNote, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
+import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, execNote, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount, changedPath } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
 import { agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
@@ -215,7 +215,7 @@ function useHistoryNav(): { back: boolean; forward: boolean } {
   return state;
 }
 
-export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onFind, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry }: {
+export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
   /** Project labels, so a project group is headed by its name. */
   projects?: Project[];
@@ -387,8 +387,13 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     window.addEventListener("blur", close);
     return () => { document.removeEventListener("pointerdown", close, true); window.removeEventListener("scroll", close, true); window.removeEventListener("blur", close); };
   }, [card]);
-  // A card for the session you just left is stale.
-  useEffect(() => { clearTimeout(peekTimer.current); setCard(null); }, [selected]);
+  // A card for the session you just left is stale, and so is one over a view you left.
+  useEffect(() => { clearTimeout(peekTimer.current); setCard(null); }, [selected, view]);
+  useEffect(() => {
+    const close = () => { clearTimeout(peekTimer.current); setCard(null); };
+    window.addEventListener("hashchange", close);
+    return () => window.removeEventListener("hashchange", close);
+  }, []);
 
   // Workspaces fold too, kept across reloads; a search folds on its own
   // and forgets it when cleared, so 54 Background hits can be put away.
@@ -405,6 +410,14 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   const [archFolded, setArchFolded] = useState(false);
   // Showing archived from anywhere (the palette too) shows the section open.
   useEffect(() => { if (showArchived) setArchFolded(false); }, [showArchived]);
+  // Archived included from a filter ("Include") lasts as long as that filter.
+  const archFromFilter = useRef(false);
+  useEffect(() => {
+    if (searchOn || !archFromFilter.current) return;
+    archFromFilter.current = false;
+    if (showArchived) onToggleArchived();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchOn]);
 
   // A first load says so only once it is slow enough to notice.
   const [slow, setSlow] = useState(false);
@@ -425,9 +438,12 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   // else the first. The arrows, Home and End move within it.
   const treeRef = useRef<HTMLDivElement>(null);
   const stop = useRef<HTMLElement | null>(null);
+  const focusedStop = useRef(false);
   useLayoutEffect(() => {
     const items = [...(treeRef.current?.querySelectorAll<HTMLElement>(TREE_ITEMS) ?? [])];
-    const pick = (stop.current && items.includes(stop.current) ? stop.current : null)
+    // Only a stop someone focused is kept: one picked while the list was
+    // still loading (Archived alone) must not outlive the rows arriving.
+    const pick = (stop.current && focusedStop.current && items.includes(stop.current) ? stop.current : null)
       ?? items.find((el) => el.classList.contains("row-on")) ?? items[0];
     for (const el of items) el.tabIndex = el === pick ? 0 : -1;
     stop.current = pick ?? null;
@@ -496,6 +512,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   // a section or a log (or steps into it), left shuts it (or steps out);
   // Enter opens a session or jumps to a turn.
   const walk = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    // Escape in the tree drops a filter in force; focus stays where it is.
+    if (e.key === "Escape" && query) { e.preventDefault(); onQuery(""); setSearching(false); return; }
     if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
     const items = [...e.currentTarget.querySelectorAll<HTMLElement>(TREE_ITEMS)];
     if (!items.length) return;
@@ -572,7 +590,9 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     const bg = children ? workCounts(agentsFromRows(r, children)) : null;
     // Only what is live or needs a look: the count of running agents, and failures.
     const bgText = bg ? [bg.running && `${bg.running} running`, bg.failed && `${bg.failed} failed`].filter(Boolean).join(" · ") : "";
-    const stacked = Boolean(label || life || bgText);
+    // The project's environment failed to set up: its own indicator, always shown, never the session's status.
+    const setup = r.mode === "project" && r.orb?.status === "failed" ? projectNames.get(r.orb.project) ?? r.orb.project : "";
+    const stacked = Boolean(label || life || bgText || setup);
     return (
       <Fragment key={r.id}>
       <div className={"session" + (child ? " session-child" : "")}>
@@ -581,10 +601,10 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
                   onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
                   onBlur={unpeek}
                   aria-describedby={card?.id === r.id ? "row-card" : undefined}
-                  aria-label={`${title},${life ? LIFE_WORD[life] : why}, ${ago(r.lastAt)} ago${r.branch ? `, branch ${r.branch}` : ""}${bgText ? `, background: ${bgText}` : ""}`}
+                  aria-label={`${title}, ${life ? LIFE_WORD[life] : why},${ago(r.lastAt)} ago${r.branch ? `, branch ${r.branch}` : ""}${bgText ? `, background: ${bgText}` : ""}${setup ? `, ${setup}: setup failed` : ""}`}
                   className={"row" + (stacked ? " row-2" : "") + (on ? " row-on" : "") + (r.turns && !q ? " row-has-log" : "") + (r.trouble && onAck ? " row-has-ack" : "")}
                   aria-current={on ? "true" : undefined}
-                  title={`${title}\n${why} · ${ago(r.lastAt)} ago${r.branch ? ` · ${r.branch}` : ""}`}>
+                  title={`${title}\n${why} · ${ago(r.lastAt)} ago${r.branch ? ` · ${r.branch}` : ""}${setup ? `\n${setup}: setup failed` : ""}`}>
             {/* A failure you have not seen is a red mark; the reason is its label. */}
             <span className="row-mark">
               {failed
@@ -594,14 +614,14 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
             {/* Status metadata goes under the title, so a chip never cuts the name. */}
             <span className={stacked ? "row-stack" : "row-line"}>
             <span className="row-name">
-            <span className={"row-title" + (own ? "" : " row-untitled")}>{marked(shown, q)}</span>{chip && <span className="mono row-id">{r.id.slice(-6)}</span>}
+            <span className={"row-title" + (own ? "" : " row-untitled")}>{marked(shown, q)}</span>{chip && <span className="mono row-id" title={`Session id ending ${r.id.slice(-6)}`}><span className="visually-hidden">session id </span>{r.id.slice(-6)}</span>}
             </span>
-            {label && <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : "") + (failed || asking || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
-              <ModeChip row={r} bare />{label} · {ago(failed === "tests failed" && r.testsAt ? r.testsAt : r.lastAt)}
+            {(label || setup) && !life && <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : "") + (failed || asking || setup || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
+              <ModeChip row={r} bare name={setup} />{label && `${label} · `}{ago(failed === "tests failed" && r.testsAt ? r.testsAt : r.lastAt)}
             </span>}
             {/* State and time, never cut: the title is what gives way. */}
             {life && <span className={"num row-meta row-meta-live" + (life === "failed" ? " row-meta-bad" : "")} aria-hidden="true">
-              <ModeChip row={r} bare />{LIFE_WORD[life]} · {life === "queued" ? `waiting ${ago(r.lastAt)}` : ago(r.lastAt)}
+              <ModeChip row={r} bare name={setup} />{LIFE_WORD[life]} · {life === "queued" ? `waiting ${ago(r.lastAt)}` : ago(r.lastAt)}
             </span>}
             {bgText && <span className="bg-summary" aria-hidden="true">Background: {bgText}</span>}
             </span>
@@ -611,7 +631,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
               </span>
             )}
             {/* Touch has no hover card: a phone reads status and age off the row. */}
-            {!label && !life && <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : "") + (failed || asking || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
+            {!label && !life && !setup && <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : "") + (failed || asking || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
               <ModeChip row={r} bare />{ago(r.lastAt)}
             </span>}
           </button>
@@ -621,25 +641,25 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
             <button className="btn row-ack" onClick={() => onAck(r.id)} aria-label={`Mark ${name || "session"} seen`}>Seen</button>
           )}
           {r.turns && !q ? (
-            <button className="row-twist" tabIndex={-1} aria-expanded={open} aria-controls={`turns-${r.id}`}
+            <button className="row-twist" tabIndex={-1} aria-hidden="true" aria-expanded={open} aria-controls={`turns-${r.id}`}
                     aria-label={`${open ? "Hide" : "Show"} turn log of ${name || "session"}`}
                     onClick={() => setOpen(r.id, !open)}><Icon d={ICONS.chevron} size={14} /></button>
           ) : null}
         </div>
         {reason && <div className="row-why">{hit!.field}: {marked(reason.text, q)}</div>}
         {open && (
-          <ol id={`turns-${r.id}`} className="turns" aria-label={`Turns of ${name || "session"}`}>
+          <ol id={`turns-${r.id}`} className="turns" role="group" aria-label={`Turns of ${name || "session"}`}>
             {log?.lines && log.lines.length > 3 && (
-              <li>
-                <button className="turn-line turn-more" tabIndex={-1} aria-expanded={lines === log.lines}
+              <li role="none">
+                <button className="turn-line turn-more" role="treeitem" tabIndex={-1} aria-expanded={lines === log.lines}
                         onClick={() => setAllTurns((cur) => flip(cur, r.id))}>
                   <Icon d={ICONS.chevron} size={12} /><span className="turn-text">{lines === log.lines ? "Hide earlier turns" : `Earlier turns · ${log.lines.length - 3}`}</span>
                 </button>
               </li>
             )}
             {lines ? lines.map((l) => (
-              <li key={l.turn}>
-                <button className="turn-line" tabIndex={-1} title={l.test ? `${l.test.cmd} exited ${l.test.exit}\n${l.text}` : l.text} onClick={() => onTurn?.(r.id, l.turn)}>
+              <li key={l.turn} role="none">
+                <button className="turn-line" role="treeitem" tabIndex={-1} title={l.test ? `${l.test.cmd} exited ${l.test.exit}\n${l.text}` : l.text} onClick={() => onTurn?.(r.id, l.turn)}>
                   <span className="num turn-n">{l.turn}</span>
                   {/* A recorded test run says what happened first; narration only where nothing was recorded. */}
                   {l.test && <span className={"turn-result" + (l.test.exit ? " turn-result-bad" : "")}>{l.test.exit ? `Tests failed · exit ${l.test.exit}` : "Tests passed"}</span>}
@@ -666,7 +686,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     for (const r of list) seen.set(nameKey(r), (seen.get(nameKey(r)) ?? 0) + 1);
     return (
       <div key={key} className="ws">
-        <button className="ws-head" role="treeitem" aria-expanded={open} onClick={() => toggleWs(key)} title={list[0].project ? `Project ${ws}` : list[0].repo || list[0].cwd}>
+        <button className="ws-head" role="treeitem" aria-expanded={open} onClick={() => toggleWs(key)}
+                aria-label={`${ws}${open ? "" : urgent.length ? `, ${urgent.length} need${urgent.length === 1 ? "s" : ""} you` : `, ${list.length}`}`} title={list[0].project ? `Project ${ws}` : `${list[0].repo || list[0].cwd}\nNot a project: sessions grouped by where they ran`}>
           <Icon d={ICONS.chevron} size={12} /><Icon d={list[0].project ? ICONS.projects : ICONS.folder} size={15} /><span className={"ws-name" + (list[0].project ? " ws-project" : "")}>{ws}</span>
           {/* Folded, a group still says when something in it needs you. */}
           {!open && (urgent.length
@@ -703,12 +724,12 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
 
   // A section folds, during a search too, which starts with every match open.
   // `sub` is a second line under the heading ("1 running · 2 failed").
-  const section = (key: string, label: string, open: boolean, toggle: () => void, count: React.ReactNode, body: React.ReactNode, alert?: "trouble" | "needs-you", sub?: string) => (
+  const section = (key: string, label: React.ReactNode, open: boolean, toggle: () => void, count: React.ReactNode, body: React.ReactNode, alert?: "trouble" | "needs-you", sub?: string) => (
     <div className="sec">
       <button type="button" className={"sec-fold" + (sub ? " sec-fold-2" : "")} role="treeitem" aria-expanded={open} onClick={toggle} aria-controls={`sec-${key}`}>
         <Icon d={ICONS.chevron} size={12} />
-        {sub ? <span className="sec-stack"><span>{label}</span><span className="bg-summary">{sub}</span></span> : <span>{label}</span>}
-        <span className="ws-rule" />{count !== null && <span className={"num sec-count" + (alert ? " sec-count-" + alert : "")}>{count}</span>}
+        {sub ? <span className="sec-stack"><span>{label}</span>{" "}<span className="bg-summary"><span className="visually-hidden">, </span>{sub}</span></span> : <span>{label}</span>}
+        <span className="ws-rule" />{count !== null && <span className={"num sec-count" + (alert ? " sec-count-" + alert : "")}><span className="visually-hidden">, </span>{count}</span>}
       </button>
       {open && <div className="sec-body" role="group" id={`sec-${key}`}>{body}</div>}
     </div>
@@ -727,8 +748,9 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
       <button className="side-icon" onClick={() => window.history.back()} disabled={!hist.back} aria-label="Back" title="Back"><Icon d={ICONS.back} /></button>
       <button className="side-icon" onClick={() => window.history.forward()} disabled={!hist.forward} aria-label="Forward" title="Forward"><Icon d={ICONS.forward} /></button>
       {folded
-        // The rail searches through the palette, which leaves the rail folded.
-        ? onFind && <button className="side-icon" onClick={onFind} aria-label="Search everything" title={`Search everything (${modKey()}K)`}><Icon d={ICONS.search} /></button>
+        // The same slot does the same thing folded: it unfolds the list with its filter open.
+        ? <button className="side-icon" onClick={() => { setSide(false); setSearching(true); }}
+                  aria-label="Filter the list" title={`Filter the list (/) · search everything with ${modKey()}K`}><Icon d={ICONS.filter} /></button>
         : <button ref={searchBtn} className={"side-icon" + (showSearch ? " side-icon-on" : "")} aria-expanded={showSearch} aria-controls="q"
                 onClick={() => { if (showSearch) { onQuery(""); setSearching(false); } else setSearching(true); }}
                 aria-label="Filter the list" title={`Filter the list (/) · search everything with ${modKey()}K`}><Icon d={ICONS.filter} /></button>}
@@ -795,6 +817,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
              if (stop.current && stop.current !== t) stop.current.tabIndex = -1;
              t.tabIndex = 0;
              stop.current = t;
+             focusedStop.current = true;
            }}>
         {/* Empty only once a load has answered: before that it is loading or unavailable, said above. */}
         {total === 0 && loadedAt !== null && !loadErr && !(showArchived && archivedState !== "ready") && (
@@ -804,9 +827,9 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
         {background.length > 0 && section("background", "Background", foldOpen("background", unfolded.has("background")), foldToggle("background", () => toggleFold("background")),
           bgUrgent.length ? <span title={`${background.length} in all`}>{bgUrgent.length} need you</span> : background.length, workspaces(byWorkspace(background, projectNames), "background"), bgAlert, bgSub || undefined)}
         {/* Archived is not loaded until opened, so a search cannot have looked there. */}
-        {section("archived", q && !showArchived ? "Archived not searched · Include" : "Archived", showArchived && !archFolded,
+        {section("archived", q && !showArchived ? <>Archived not searched · <span className="sec-include">Include</span></> : "Archived", showArchived && !archFolded,
           // Once included, folding only hides the section; a search still covers it.
-          () => (showArchived ? setArchFolded((v) => !v) : (setArchFolded(false), onToggleArchived())),
+          () => (showArchived ? setArchFolded((v) => !v) : (setArchFolded(false), archFromFilter.current = Boolean(q), onToggleArchived())),
           showArchived && archivedState === "ready" ? archived.length : null,
           archivedState === "loading" ? <div className="list-none"><Pending what="Archived" inline onRetry={onRetryArchived} /></div>
           : archivedState === "failed" ? <p className="list-none">Couldn’t load archived · <button className="link" onClick={onRetryArchived}>Retry</button></p>
@@ -954,6 +977,8 @@ function firstLine(text: string): string {
   return text.split("\n").find((x) => x.trim()) ?? "";
 }
 
+const GUTTER = /^\s*\d+\s*[|│]\s?/;
+
 export function ResultBlock({ line, nested }: { line: Line; nested?: boolean }) {
   // history.EntryText prepends a result's own code to its text (the
   // command is as memorable as its output). Here the code already has
@@ -964,7 +989,8 @@ export function ResultBlock({ line, nested }: { line: Line; nested?: boolean }) 
   const lines = body.split("\n");
   // The first line with a word in it: JSON output opens with a bare "[" or
   // "{", which made the row read "Result [".
-  const head = lines.find((l) => /[\p{L}\p{N}]/u.test(l)) ?? lines.find((l) => l.trim()) ?? "";
+  // A file view's line-number gutter ("12|", "12│") is not the content.
+  const head = (lines.find((l) => /[\p{L}\p{N}]/u.test(l.replace(GUTTER, ""))) ?? lines.find((l) => l.trim()) ?? "").replace(GUTTER, "");
   const notice = note && <ExecNote note={note} />;
   // Recorded, and empty: a line that says so, not an empty box to open.
   if (!body.trim()) return <><div className="tool-state"><span className="block-label">Result</span><span className="num">No output</span></div>{notice}</>;
@@ -1077,7 +1103,7 @@ export function Entry({ line, codes, nested }: { line: Line; codes: string[]; ne
     return (
       <details className="block thin">
         <summary>
-          <span className="block-label">Model changed</span>
+          <span className="block-label">Model changed</span>{" "}
           <span className="block-detail">{line.text}</span>
         </summary>
         <pre className="mono">{recs.join("\n")}</pre>
@@ -1109,6 +1135,8 @@ export function Entry({ line, codes, nested }: { line: Line; codes: string[]; ne
   if (k === "error" || k === "sub:error") return <div className="err">{line.text}</div>;
   if (k === "ask") return null; // the live ask renders as its own card below
   if (k === "ask/answer" && line.data?.secret) return <div className="meta-line">secret stored</div>;
+  // The answer also comes back as the ask's Result row: labelled, not a second bare copy.
+  if (k === "ask/answer") return <div className="meta-line">You answered: {line.text}</div>;
   if (k === "job") return <JobBlock line={line} />;
   if (k === "hook") {
     // Hooks fire on every tool call. One that passed through is not
@@ -1550,11 +1578,11 @@ export function ToolRun({ lines, codes, live, stopped, failSeq }: { lines: Line[
   return (
     <details className="block thin toolrun" ref={box} open={holdsFail || undefined} data-open-key={"tools:" + lines[0].seq}>
       <summary {...handlers}>
-        <span className="block-label">{label}</span>
-        {target && <span className="mono block-detail" title={targets[0]}>{target}</span>}
-        {more > 0 && <span className="num tool-more">{more} more {fileish ? (more === 1 ? "file" : "files") : ""}</span>}
-        <span className="num tool-meta">{calls} calls{timed ? ` · ${duration(totalMs)}` : ""}</span>
-        {failed > 0 && <button type="button" className="link num toolrun-failed" onClick={openFailed}>{failed} failed</button>}
+        <span className="block-label">{label}</span>{" "}
+        {target && <span className="mono block-detail" title={targets[0]}>{target}</span>}{" "}
+        {more > 0 && <span className="num tool-more">{more} more {fileish ? (more === 1 ? "file" : "files") : ""}</span>}{" "}
+        <span className="num tool-meta">{calls} calls{timed ? ` · ${duration(totalMs)}` : ""}</span>{" "}
+        {failed > 0 && <button type="button" className="link num toolrun-failed" aria-label={`${failed} failed`} onClick={openFailed}>{failed} failed</button>}
       </summary>
       {pop}
       <div className="toolrun-body">{rows}</div>
@@ -1667,6 +1695,13 @@ export function ToolCall({ code, result, live, stopped, current }: { code: Line;
  */
 const DECIDED: Record<string, string> = { block: "blocked", deny: "denied", allow: "allowed", ask: "asked", rewrite: "rewritten", approve: "approved" };
 
+/** "Stop hooks" when every fire is one event, else "Hooks": the row says which part of the turn it belongs to. */
+function hookEventLabel(fires: Line[]): string {
+  const events = new Set(fires.map((l) => str(l.data?.event)).filter(Boolean));
+  const [only] = events;
+  return events.size === 1 && only ? `${only[0].toUpperCase()}${only.slice(1)} hooks` : "Hooks";
+}
+
 export function TurnHooks({ lines, load, save }: { lines: Line[]; load?: Load; save?: Save }) {
   const fires = lines.filter((l) => l.kind === "hook");
   // A "hook <event>: notice" line a fire already carries is that fire,
@@ -1693,8 +1728,8 @@ export function TurnHooks({ lines, load, save }: { lines: Line[]; load?: Load; s
   return (
     <details className="block thin turn-hooks">
       <summary>
-        <span className="block-label">Hooks</span>
-        <span className="block-detail">{parts.join(" · ")}</span>
+        <span className="block-label">{hookEventLabel(fires)}</span>{" "}
+        <span className="block-detail">{parts.join(" · ")}</span>{" "}
         {bad.length > 0 && <span className="num toolrun-failed">{bad.join(" · ")}</span>}
         {errored > 0 && <span className="num toolrun-failed">{errored} errored</span>}
       </summary>
@@ -1732,6 +1767,7 @@ export function TurnHooks({ lines, load, save }: { lines: Line[]; load?: Load; s
  */
 function TurnFooter({ turn, fail }: { turn: Turn; /** The result the turn's failure came from, when recorded. */ fail?: Line }) {
   const done = turn.done!;
+  const cwd = str(done.data?.cwd);
   const u = usageOf(done);
   const files = Array.isArray(done.data?.files) ? (done.data!.files as string[]) : [];
   const exit = typeof done.data?.exit === "number" ? done.data.exit : fail?.data?.exit;
@@ -1761,8 +1797,13 @@ function TurnFooter({ turn, fail }: { turn: Turn; /** The result the turn's fail
     const el = document.querySelector<HTMLElement>(`details.block[data-seq="${fail?.seq}"]`);
     if (!el) return;
     for (let d: HTMLElement | null = el; d; d = d.parentElement?.closest("details") ?? null) if (d instanceof HTMLDetailsElement) d.open = true;
-    el.scrollIntoView({ block: "center" });
-    el.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
+    const head = el.querySelector<HTMLElement>("summary") ?? el;
+    head.scrollIntoView({ block: "start" });
+    head.focus({ preventScroll: true });
+    head.classList.remove("turn-flash");
+    void head.offsetWidth;
+    head.classList.add("turn-flash");
+    setTimeout(() => head.classList.remove("turn-flash"), 1700);
   };
   // The strip above owns session totals; a turn says what it took, with
   // its tokens on the price rather than as a third figure.
@@ -1778,7 +1819,7 @@ function TurnFooter({ turn, fail }: { turn: Turn; /** The result the turn's fail
         </span>
       ) : (
         <span className={"turn-outcome" + (failed ? " turn-failed" : "")}>
-          {turn.stopped || done.kind === "cancelled" ? "Stopped" : failed ? `Finished with a failed command · exit ${exit}` : "Finished"}
+          {turn.stopped || done.kind === "cancelled" ? statusWord("stopped") : failed ? `${statusWord("done")} with a failed command · exit ${exit}` : statusWord("done")}
         </span>
       )}
       {model && <span className="mono">{model.split("/").pop()}</span>}
@@ -1792,7 +1833,7 @@ function TurnFooter({ turn, fail }: { turn: Turn; /** The result the turn's fail
       {files.length > 0 && (
         <details className="turn-files">
           <summary>This turn: {files.length} {files.length === 1 ? "file" : "files"}</summary>
-          <ul>{files.map((f) => <li key={f} className="mono">{f}</li>)}</ul>
+          <ul>{files.map((f) => <li key={f} className="mono" title={f}>{changedPath(f, cwd)}</li>)}</ul>
         </details>
       )}
     </div>
@@ -2156,7 +2197,9 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
           <div className="prompt-text">
             {/* A long brief (pasted logs, a spec) is evidence, not the
                 thing to navigate by: four lines, and one click for the rest. */}
-            <p className={long && !full ? "prompt-clamp" : undefined}>{said2}</p>
+            {said.trim() || images.length || atts.length
+              ? <p className={long && !full ? "prompt-clamp" : undefined}>{said2}</p>
+              : <p className="meta-line">(empty message)</p>}
             {long && (
               <button className="link prompt-more" onClick={() => setFull((v) => !v)}>
                 {full ? "Show less" : "Show full prompt"}
@@ -2195,6 +2238,16 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
         <TurnHooks lines={hooks} />
       </div>
       {turn.done && <TurnFooter turn={turn} fail={fail} />}
+      {/* No done and nothing live to write one: the turn was cut off, and says so where it ends, like Stopped. */}
+      {!turn.done && ctx && !ctx.live && (
+        <div className="turn-foot">
+          <span className="turn-outcome">{statusWord("interrupted")}</span>
+          {turn.prompt?.at && (() => {
+            const end = turn.body[turn.body.length - 1]?.at ?? turn.prompt.at;
+            return <span className="num">Turn: {duration(Date.parse(end) - Date.parse(turn.prompt.at))}</span>;
+          })()}
+        </div>
+      )}
     </section>
   );
 }
@@ -2347,7 +2400,9 @@ function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onR
   const needs = live.filter((r) => sessionSignal(r) === 0).sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt));
   const failed = needs.filter(hasFailure).slice(0, 5);
   const questions = needs.filter(hasQuestion);
-  const running = live.filter((r) => !r.background && sessionSignal(r) === 1).length;
+  const runningRows = live.filter((r) => !r.background && sessionSignal(r) === 1);
+  const running = runningRows.length;
+  const runningRow = runningRows[0];
   // The evidence behind each failure: the failing test call and its exit,
   // read from the transcript. A failure with no test call says its trouble.
   const [evid, setEvid] = useState<Record<string, { cmd: string; exit?: number; seq: number; at: string }>>({});
@@ -2397,16 +2452,31 @@ function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onR
               </div>
             )}
             {questions.length > 0 && (
-              <p className="ov-none" role="status">
-                <button className="link ov-point" onClick={() => onReveal(questions[0].id)}>{questions.length} waiting for you</button>
-              </p>
+              // Waiting sessions are cards in the empty-state column: the question is what you came for.
+              <div className={failed.length ? "ov-waits" : "ov-empty"} role="status">
+                {failed.length === 0 && <p className="ov-empty-title">{statusWord("needs-you")}</p>}
+                <div className="ov-wait-list" role="group" aria-label="Waiting for you">
+                  {questions.map((r) => (
+                    <button key={r.id} className="ov-wait" onClick={() => onReveal(r.id)}>
+                      <span className="ov-wait-title"><StatusMark status="needs-you" bare />{sessionTitle(r)}</span>
+                      {r.ask?.text && <span className="ov-wait-q">{r.ask.text}</span>}
+                      <span className="num ov-wait-meta">{[r.repo?.split("/").pop(), `${ago(r.lastAt)} ago`].filter(Boolean).join(" · ")}</span>
+                    </button>
+                  ))}
+                </div>
+                {failed.length === 0 && runningRow && (
+                  <p className="ov-empty-sub"><button className="link ov-point" onClick={() => onReveal(runningRow.id)}>{running} running</button></p>
+                )}
+              </div>
             )}
           </>
         ) : !loadErr && (
           loadedAt === null ? <p className="ov-none" role="status">Loading sessions…</p> : (
             <div className="ov-empty" role="status">
-              <p className="ov-empty-title">Nothing needs your attention</p>
-              {running > 0 && <p className="ov-empty-sub">{running} running</p>}
+              {/* Something running is not "nothing": say what is going on, and link to it. */}
+              {runningRow
+                ? <p className="ov-empty-title"><button className="link ov-point" onClick={() => onReveal(runningRow.id)}>{running} running</button></p>
+                : <p className="ov-empty-title">Nothing needs your attention</p>}
               <p className="ov-empty-keys"><kbd>{modKey()}K</kbd> search or start <kbd>/</kbd> filter the list <kbd>{modKey()}B</kbd> sidebar</p>
             </div>
           )
@@ -2418,10 +2488,10 @@ function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onR
 
 /* ---------------- thread ---------------- */
 
-export function Back({ onBack }: { onBack?: () => void }) {
+export function Back({ onBack, label = "Back to sessions" }: { onBack?: () => void; label?: string }) {
   if (!onBack) return null;
   return (
-    <button className="back" onClick={onBack} aria-label="Back to sessions">
+    <button className="back" onClick={onBack} aria-label={label}>
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
     </button>
@@ -3167,8 +3237,9 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
           {row.trouble && row.trouble !== "tests failed" ? (
             // One status: the reason replaces "Done".
             <span className="status head-trouble"><StatusMark status="error" bare />{capital(row.trouble)}</span>
-          ) : row.status === "done" ? <span className="status head-idle">Done</span> : <StatusMark status={row.status} />}
-          <ModeChip row={row} />
+          ) : row.mode === "project" && row.orb?.status === "failed" ? null /* Setup failed says it; "Done" beside it contradicted it. */
+            : <StatusMark status={row.status} />}
+          <ModeChip row={row} name={projects.find((p) => p.id === row.orb?.project)?.name} />
           {row.orb?.status === "running" && onStopOrb && <button className="btn head-ack" onClick={onStopOrb}>Stop orb</button>}
           {/* A short link beside the chip: a full button pushed the title row
               past its 32px and covered the strip below. */}
@@ -3403,7 +3474,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             onClose={() => { if (trigger) dismissed.current = `${trigger.from}:${trigger.kind}${trigger.token}`; setTrigger(null); }}
             onOpen={setPickerOpen} onActive={setActiveOpt} />
           <textarea id="composer" ref={composer} value={draft} rows={1}
-            aria-label={draftAsk || (blank && row.ask) ? "Answer to agent question" : "Message"}
+            aria-label={(row.archived ? "Unarchive to continue this session" : row.ask?.secret ? "Answer in the secret field" :row.ask && !askChanged ? "Answer…" : running ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Next turn…").replace(/…$/, "")}
             aria-controls={pickerOpen ? "mention-list" : undefined}
             aria-activedescendant={pickerOpen ? activeOpt : undefined}
             disabled={Boolean(row.ask?.secret) || row.archived}
@@ -3449,9 +3520,9 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             <div className="composer-actions">
               {/* Beside Send, so it never covers what you are reading. */}
               {down && (
-                <button className="btn jump-latest" onClick={toStart} title="Home" aria-label="Jump to start">
-                  <span aria-hidden="true">↑</span>
-                  <span className="jump-word">Start</span>
+                <button className="btn jump-latest" onClick={toStart} title="Home" aria-label="Top">
+                  <span aria-hidden="true">↑ </span>
+                  <span className="jump-word">Top</span>
                 </button>
               )}
               {away && (
@@ -3573,6 +3644,8 @@ export default function App() {
   const [sub, setSub] = useState<"context" | "changes" | null>(null);
   const context = sub === "context";
   const [wikiRoute, setWikiRoute] = useState<WikiRoute>({ at: "index" });
+  // A hash route nothing here knows; null on every known one.
+  const [lost, setLost] = useState<string | null>(null);
   // The review count on the nav item. Polled slowly: it changes when an
   // ingest lands, which is minutes apart at the fastest.
   const [wikiFlags, setWikiFlags] = useState(0);
@@ -3582,7 +3655,7 @@ export default function App() {
       // A failed read is not "nothing to review": keep the last count.
       .catch(() => {});
     load();
-    const t = setInterval(load, 60_000);
+    const t = setInterval(() => { if (!document.hidden) load(); }, 60_000);
     return () => clearInterval(t);
   }, []);
 
@@ -3590,27 +3663,38 @@ export default function App() {
   // opened never overwrites the one that includes it.
   const readSeq = useRef(0);
   const projectsAt = useRef(0);
+  // A poll never stacks on a read still out: one list request at a time.
+  const inFlight = useRef(false);
   const refresh = useCallback(async (poll = false) => {
+    if (poll && inFlight.current) return;
     // Each read lands on its own: a projects outage must not freeze the
     // fleet. Only the fleet's freshness is reported, in one place.
     // Projects change by hand, rarely: a poll reads them every 30s, an action at once.
     if (!poll || Date.now() - projectsAt.current > 30_000) { projectsAt.current = Date.now(); api.projects().then(setProjects, () => {}); }
     const seq = ++readSeq.current;
+    inFlight.current = true;
     try {
       const rs = await api.sessions(archived);
       if (seq !== readSeq.current) return;
       setRows(rs); setLoadErr(null); setRowsAll(archived); setLoadedAt(Date.now());
     } catch (e) { if (seq === readSeq.current) setLoadErr(e instanceof Error ? e.message : String(e)); }
+    finally { if (seq === readSeq.current) inFlight.current = false; }
   }, [archived]);
 
+  // While a session's event stream is open it carries that session's
+  // changes, so the list poll slows down.
+  const streaming = selected !== null;
+  const mountedRefresh = useRef(false);
   useEffect(() => {
-    void refresh();
+    // The first read is the mount's; a later change (Archived) reads at once too.
+    if (!mountedRefresh.current || !streaming) void refresh();
+    mountedRefresh.current = true;
     // A hidden tab does not poll; coming back reads at once.
-    const t = setInterval(() => { if (!document.hidden) void refresh(true); }, POLL_MS);
+    const t = setInterval(() => { if (!document.hidden) void refresh(true); }, streaming ? POLL_MS * 3 : POLL_MS);
     const back = () => { if (!document.hidden) void refresh(true); };
     document.addEventListener("visibilitychange", back);
     return () => { clearInterval(t); document.removeEventListener("visibilitychange", back); };
-  }, [refresh]);
+  }, [refresh, streaming]);
 
   useEffect(() => {
     if (!selected) return;
@@ -3722,6 +3806,18 @@ export default function App() {
   // still the session: its own lookup fills in.
   const row = rows.find((r) => r.id === selected) ?? (looked?.id === selected ? looked : null);
 
+  // The tab says where you are.
+  const rowName = row ? sessionTitle(row) : "";
+  useEffect(() => {
+    const page = lost !== null && view === "sessions" && !selected ? "Page not found"
+      : view === "projects" ? "Projects"
+      : view === "hooks" ? "Hooks"
+      : view === "wiki" ? (wikiRoute.at === "page" ? `${wikiRoute.path.split("/").pop()!.replace(/\.md$/, "")} · Wiki`
+        : wikiRoute.at === "review" ? "Review · Wiki" : wikiRoute.at === "activity" ? "Activity · Wiki" : "Wiki")
+      : rowName;
+    document.title = page ? `${page} · bough` : "bough";
+  }, [lost, view, selected, wikiRoute, rowName]);
+
   // A preview outlives its turn only if the entry it was previewing
   // never arrived. Once the session is no longer running there is
   // nothing left to be a preview of.
@@ -3749,11 +3845,11 @@ export default function App() {
     const read = () => {
       const h = window.location.hash.replace(/^#\/?/, "");
       // A direct link to a page shows that page, on a phone too.
-      if (h === "hooks" || h === "projects") { setView(h); setSub(null); setPane("thread"); if (h === "projects") setOrbOpen(undefined); return; }
+      if (h === "hooks" || h === "projects") { setLost(null); setView(h); setSub(null); setPane("thread"); if (h === "projects") setOrbOpen(undefined); return; }
       const po = /^projects\/([^/]+)\/orb$/.exec(h);
-      if (po) { setView("projects"); setOrbOpen(po[1]); setSub(null); setPane("thread"); return; }
+      if (po) { setLost(null); setView("projects"); setOrbOpen(po[1]); setSub(null); setPane("thread"); return; }
       const wr = parseWikiHash(h);
-      if (wr) { setView("wiki"); setWikiRoute(wr); setSub(null); setPane("thread"); return; }
+      if (wr) { setLost(null); setView("wiki"); setWikiRoute(wr); setSub(null); setPane("thread"); return; }
       const m = /^s\/([^/]+)\/?(context|changes)?$/.exec(h);
       if (m) {
         setView("sessions"); setSelected(m[1]); setSub((m[2] as "context" | "changes" | undefined) ?? null); setPane("thread");
@@ -3761,7 +3857,12 @@ export default function App() {
         // No session named: on a phone that is the list. The thread pane
         // held only "Choose a session", with no list and no way back to it.
         setView("sessions"); setSelected(null); setSub(null); setPane("list");
+      } else {
+        // A route nothing here knows is a page not found, never a session lookup.
+        setView("sessions"); setSelected(null); setSub(null); setPane("thread"); setLost(h);
+        return;
       }
+      setLost(null);
     };
     read();
     // Any navigation of yours beats opening a session on arrival: going to
@@ -3779,6 +3880,7 @@ export default function App() {
   // sidebar filter would otherwise become a history entry to walk back
   // through. Opening a conversation pushes (see openSession).
   useEffect(() => {
+    if (lost !== null) return; // the unknown route stays in the URL it came from
     const want = view === "hooks" ? "#/hooks"
       : view === "projects" ? (orbOpen ? `#/projects/${orbOpen}/orb` : "#/projects")
       : view === "wiki" ? `#/${wikiHash(wikiRoute)}`
@@ -3787,12 +3889,12 @@ export default function App() {
     if (window.location.hash !== want) {
       window.history.replaceState(null, "", want);
     }
-  }, [view, selected, sub, wikiRoute]);
+  }, [view, selected, sub, wikiRoute, lost]);
 
   // Moving around the wiki pushes, like opening a conversation: Back
   // from a cited entry returns to the page, and from a page to the index.
   const goWiki = useCallback((r: WikiRoute) => {
-    setWikiRoute(r); setView("wiki"); setSub(null); setPane("thread");
+    setLost(null); setWikiRoute(r); setView("wiki"); setSub(null); setPane("thread");
     const want = `#/${wikiHash(r)}`;
     if (window.location.hash !== want) window.history.pushState(null, "", want);
   }, []);
@@ -3800,6 +3902,7 @@ export default function App() {
   usePaletteKey(useCallback(() => setPalette(true), []));
   const narrow = useMedia("(max-width:720px)");
   const onView = (v: View) => {
+    setLost(null);
     if (v === "wiki") goWiki({ at: "index" });
     else if (v === "sessions") { if (narrow) goList(); else { setView(v); setSub(null); } }
     else { setView(v); setSub(null); setPane("thread"); if (window.location.hash !== NAV_HREF[v]) window.history.pushState(null, "", NAV_HREF[v]); }
@@ -3808,7 +3911,7 @@ export default function App() {
   // Back on a phone goes to the list and says so in the URL: it only
   // swapped panes, so a reload landed back in the thread it had left.
   const goList = useCallback(() => {
-    setSelected(null); setSub(null); setView("sessions"); setPane("list");
+    setLost(null); setSelected(null); setSub(null); setView("sessions"); setPane("list");
     if (window.location.hash !== "#/") window.history.pushState(null, "", "#/");
   }, []);
 
@@ -3866,7 +3969,7 @@ export default function App() {
   }, []);
 
   const openSession = useCallback((id: string) => {
-    setSelected(id); setSub(null); setView("sessions"); setPane("thread");
+    setLost(null); setSelected(id); setSub(null); setView("sessions"); setPane("thread");
     // A push, so Back returns to where you were rather than leaving.
     if (window.location.hash !== `#/s/${id}`) {
       window.history.pushState(null, "", `#/s/${id}`);
@@ -4036,7 +4139,18 @@ export default function App() {
                onAck={(id) => act(() => api.ack(id), "mark it seen")}
                onShowList={() => setPane("list")} reveal={reveal}
                loadedAt={loadedAt} loadErr={loadErr} onRetry={() => void refresh()} />
-      {view === "wiki" ? (
+      <main className="app-main">
+      {lost !== null && view === "sessions" && !selected ? (
+        <div className="thread empty">
+          <div className="lookup">
+            <h1 className="lookup-title">Page not found</h1>
+            <p className="lookup-body">Nothing here answers to this address.</p>
+            <div className="lookup-actions">
+              <button className="btn" onClick={goList}>Show all sessions</button>
+            </div>
+          </div>
+        </div>
+      ) : view === "wiki" ? (
         <WikiPage route={wikiRoute} onRoute={goWiki} onBack={goList} onOpenSession={openSession}
                   onSearch={(text) => { setPalQuery(text.replace(/\s+/g, " ").slice(0, 60)); setPalette(true); }} />
       ) : view === "hooks" ? (
@@ -4122,6 +4236,7 @@ export default function App() {
           )}
         </div>
       )}
+      </main>
       <DialogHost />
       {narrow && (pane === "list" || view !== "sessions") && (
         <ViewNav phone view={pane === "list" ? "sessions" : view} onView={onView} wikiFlags={wikiFlags} />

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { groupTurns } from "../src/render";
 import type { Line, Row } from "../src/types";
 import {
-  agentsFromRows, isNewWork, jobsFromLines, loadReviewed, parseLegacyJob, saveReviewed, subagentsFromTurn,
+  agentsFromRows, isNewWork, jobTitle, jobsFromLines, loadReviewed, parseLegacyJob, saveReviewed, subagentsFromTurn,
   workCounts, workFingerprint, workIndex, workSummaryText, type Worker,
 } from "../src/work";
 
@@ -49,6 +49,15 @@ test("legacy output merges onto typed metadata by id; matched notices are no out
   ], "s", true);
   expect(ws).toHaveLength(1);
   expect(ws[0]).toMatchObject({ life: "failed", exit: 1, output: "boom", outputState: "recorded", ms: 3000, label: "Job 7" });
+});
+
+test("a note carrying the whole command titles the job past its comment and set -e", () => {
+  const script = "# rebuild the web bundle\nset -euo pipefail\ncd web\nbun run typecheck";
+  const [w] = jobsFromLines([line("job", "job 3 [exited 0] # rebuild the web bundle … (2s)\nok", { cmd: script })], "s", true);
+  expect(w.cmd).toBe(script);
+  expect(jobTitle(w.cmd!, w.id)).toBe("bun run typecheck");
+  expect(jobTitle("# only a comment …", 4)).toBe("Job 4");
+  expect(jobTitle("set -e …", 5)).toBe("set -e");
 });
 
 test("row jobs list a running job; an ended record wins over it", () => {

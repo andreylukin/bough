@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Back } from "./app";
 import { EmptySection, Pending } from "./context";
-import { Pending as Waiting } from "./loading";
+import { CopyButton, Pending as Waiting } from "./loading";
 import { plainTitle, sessionTitle } from "./render";
 
 // Shared wire types for the Hooks page and per-turn inspection.
@@ -305,7 +305,7 @@ function Payload({ fire, side }: { fire: Partial<Fire>; side: "input" | "output"
   return (
     <section className="hk-payload" aria-label={label}>
       <h4>{label}{bytes !== undefined && value !== null && <span className="num hk-when"> · {bytes.toLocaleString()} bytes</span>}
-        {capped && <span className="num hk-when" title={`Truncated: ${fire.truncated!.join(", ")}`}> · truncated to 10,000 chars</span>}</h4>
+        {capped && <span className="num hk-when" title={`Truncated: ${fire.truncated!.join(", ")}`}> · truncated to 10,000 bytes</span>}</h4>
       {error ? <p className="hk-bad">Capture error — {error}</p>
         : cut ? <p className="hk-when">Oversize — omitted in full at the 64 KiB capture cap. No partial payload was stored.</p>
         : value === undefined ? <p className="hk-when">Unavailable — this record has no captured {side} (legacy records did not capture payloads).</p>
@@ -325,7 +325,7 @@ export function FireInspection({ fire, load = hooksApi.read, save = hooksApi.wri
       <div className="hk-io"><Payload fire={fire} side="input" /><Payload fire={fire} side="output" /></div>
       {showDefinition && (fire.path
         ? <Source key={fire.path} path={fire.path} load={load} save={save} definition inRun />
-        : <p className="hk2-note">Definition unavailable — no file path was recorded. Legacy and Go hooks are not matched to files by name.</p>)}
+        : <p className="hk2-note">Definition unavailable — no file path was recorded. Built-in handler.</p>)}
     </div>
   );
 }
@@ -350,7 +350,8 @@ function Row({ name, state, tags, facts, detail, actions, off, alert }: {
   return (
     <div className={"hk2-row" + (off ? " hk2-off" : "")}>
       <div className="hk2-line">
-        {state && <span className={"hk2-state hk2-" + state.tone}>{state.word}</span>}
+        {state ? <span className={"hk2-state hk2-" + state.tone}>{state.word}</span>
+          : off && <span className="hk2-state hk2-muted">Disabled</span>}
         <span className="mono hk2-name">{name}</span>
         {(tags ?? []).map((t) => <span key={t} className="hk2-tag">{t}</span>)}
         <span className="hk2-facts">{facts}</span>
@@ -458,7 +459,7 @@ function PluginRow({ p, off, setOff, onOff }: {
       off={off}
       // Absent is one badge; its explanation is the badge's tooltip, and the toggle has nothing to act on.
       state={p.present ? undefined : { word: "Not installed", tone: "bad" }}
-      tags={[p.scope === "user" ? "User" : "Project"]}
+      tags={[p.scope === "user" ? "Home" : "Project"]}
       facts={<>
         <span className="num" title={p.version}>{versionLabel(p.version)}</span> · {p.marketplace}
         {gives.length === 0 ? " · no skills or commands"
@@ -519,7 +520,7 @@ function SetupItem({ title, path, children }: { title: string; path: string; chi
       </div>
       <div className="ctx-empty hk-setup-item" id={id} hidden={!open}>
         <p><code className="mono hk-path">{path}</code>{" "}
-          <button className="link" onClick={() => void navigator.clipboard?.writeText(path)}>Copy path</button></p>
+          <CopyButton text={path} label="Copy path" /></p>
         <p>{children}</p>
       </div>
     </section>
@@ -575,8 +576,10 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
     ...watchers.map((w) => [offId("watcher", w.id), w.off] as const),
     ...hooks.map((h) => [offId("hook", h.id), h.off] as const),
     ...rules.map((r) => [offId("rule", r.id), r.off] as const),
-    ...plugins.map((p) => [offId("plugin", p.id), p.off] as const),
+    // A plugin that is not installed says so; it is not counted as disabled.
+    ...plugins.filter((p) => p.present).map((p) => [offId("plugin", p.id), p.off] as const),
   ].filter(([id, wire]) => isOff(id, wire)).length;
+  const missing = plugins.filter((p) => !p.present).length;
   const recent = useMemo(
     () => [...fires].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)),
     [fires],
@@ -617,6 +620,8 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
         {/* Configured now and recorded history are different questions: a
             built-in handler records events with nothing configured at all. */}
         <div className="hk2-sum">
+          {/* Each group wraps as a unit, so a value never lands on a line apart from its label. */}
+          <span className="hk2-sum-set">
           <span className="hk2-sum-group">Configured now</span>
           <span><span className="hk2-sum-n">{active}</span>{" "}
             <span className="hk2-sum-lab">active</span></span>
@@ -624,11 +629,16 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
             <span className="hk2-sum-lab">failing</span></span>
           <span><span className="hk2-sum-n">{offCount}</span>{" "}
             <span className="hk2-sum-lab">disabled</span></span>
+          {missing > 0 && <span><span className="hk2-sum-n">{missing}</span>{" "}
+            <span className="hk2-sum-lab">not installed</span></span>}
+          </span>
+          <span className="hk2-sum-set">
           <span className="hk2-sum-group">Recorded history</span>
           <span><span className="hk2-sum-n">{recent.length}</span>{" "}
-            <span className="hk2-sum-lab">events</span></span>
+            <span className="hk2-sum-lab">{recent.length === 1 ? "recorded run" : "recorded runs"}</span></span>
           <span><span className="hk2-sum-n">{builtin}</span>{" "}
             <span className="hk2-sum-lab">from built-in handlers</span></span>
+          </span>
         </div>
         {recent.length === 0
           ? <EmptySection title="Recent decisions">Nothing recorded yet. Every time a hook runs — passing a call through, blocking, rewriting, throwing or leaving a note — it lands here.</EmptySection>
@@ -636,10 +646,10 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
         <section className="proj hk-decisions">
           <div className="proj-head">
             <h2>Recent decisions</h2>
-            <span className="num proj-count">newest first</span>
+            <span className="num proj-count">last {recent.length} recorded {recent.length === 1 ? "run" : "runs"} · newest first</span>
           </div>
           <div className="hk-main hk-cols" aria-hidden="true">
-            <span>Time</span><span>Hook</span><span>Session</span><span>Event</span><span className="hk-took">Took</span><span>Outcome</span><span />
+            <span>Time</span><span>Hook</span><span>Session</span><span className="hk-ev">Event</span><span className="hk-took">Took</span><span>Outcome</span><span />
           </div>
           {/* One wrapper per day, so the day heading stays stuck while its rows scroll. */}
           {runs.reduce<(typeof runs)[]>((days, r, i) => {
@@ -661,9 +671,9 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
                   {f.session
                     ? <span className="hk-when hk-sess" title={titles[f.session] || f.session}>{titles[f.session] || f.session.slice(0, 8)}</span>
                     : <span />}
-                  <span className="mono hk-when" title={f.event}>{f.event}</span>
+                  <span className="mono hk-when hk-ev" title={f.event}>{f.event}</span>
                   <span className="num hk-when hk-took">{f.ms}ms</span>
-                  <span className="hk-dec"><Decision fire={f} />{n > 1 && <span className="num hk-when"> ×{n}</span>}</span>
+                  <span className="hk-dec" title={f.error ? `Errored — ${f.error}` : f.decision || "Passed through · no decision"}><Decision fire={f} />{n > 1 && <span className="num hk-when"> ×{n}</span>}</span>
                   <span className="hk-chev" aria-hidden="true">›</span>
                 </summary>
                 <div className="hk-fold-body">
@@ -713,8 +723,8 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
           <div className="proj-head">
             <h2>Hooks</h2>
             <span className="num proj-count">
-              {hooks.length} {hooks.length === 1 ? "hook" : "hooks"} across {byEvent.length}{" "}
-              {byEvent.length === 1 ? "event" : "events"}
+              {hooks.length} {hooks.length === 1 ? "hook" : "hooks"} on {byEvent.length}{" "}
+              {byEvent.length === 1 ? "event type" : "event types"}
             </span>
           </div>
           {hooks.some((h) => !h.description) && (
@@ -804,12 +814,17 @@ export function HooksPage({ onBack, rows = [] }: { onBack?: () => void; rows?: {
   const [at, setAt] = useState(0);
   const titles = useMemo(() => Object.fromEntries(rows.map((r) => [r.id, plainTitle(r.title ?? "")])), [rows]);
 
+  // One read at a time; a hidden tab does not poll (the server answers an unchanged ledger with a 304).
+  const inFlight = useRef(false);
   const refresh = useCallback(() => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     hooksApi.all().then((d) => { setData(d); setErr(""); setAt(Date.now()); })
-      .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
+      .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)))
+      .finally(() => { inFlight.current = false; });
   }, []);
 
-  useEffect(() => { refresh(); const t = setInterval(refresh, POLL_MS); return () => clearInterval(t); }, [refresh]);
+  useEffect(() => { refresh(); const t = setInterval(() => { if (!document.hidden) refresh(); }, POLL_MS); return () => clearInterval(t); }, [refresh]);
 
   if (!data) return <Pending title="Hooks" what="hooks" err={err} onBack={onBack} onRetry={refresh} />;
   return <HooksView data={data} onBack={onBack} titles={titles} stale={err ? { at, err } : undefined} onRetry={refresh} />;

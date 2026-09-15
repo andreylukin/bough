@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import type { OrbDetail, OrbFile, OrbStatus, Project } from "./types";
+import type { OrbDetail, OrbFile, OrbStatus, Project, Status } from "./types";
 import { sessionTitle } from "./render";
-import { Pending } from "./loading";
+import { CopyButton, Pending } from "./loading";
+import { StatusMark } from "./status";
 
 const FILES: OrbFile[] = ["project.yml", "Dockerfile", "setup.sh", "resume.sh"];
 
-const TONE: Record<OrbStatus, string> = {
-  "": "mode-stopped", running: "mode-running", building: "mode-busy", starting: "mode-busy",
-  failed: "mode-failed", stopped: "mode-stopped",
+/** An orb's state in the session vocabulary, so its rows read like every other list. */
+const STATE: Record<OrbStatus, Status> = {
+  "": "queued", running: "running", building: "running", starting: "running",
+  failed: "error", stopped: "stopped",
 };
 
 /**
@@ -116,7 +118,7 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
       {detail.orbs.length === 0
         ? <p className="proj-none">No session has run in this orb yet.</p>
         : <div className="orb-sessions">
-          <div className="sel-cols orb-cols" aria-hidden="true"><span>Session</span><span>Status</span></div>
+          <div className="sel-cols orb-cols" aria-hidden="true"><span>Session</span><span className="orb-ctr">Container</span><span className="orb-st">Status</span></div>
           {detail.orbs.map((o) => (
           <div key={o.session} className="proj-row">
             <button className="proj-open" onClick={() => onOpen?.(o.session)}>
@@ -125,9 +127,10 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
               {!titles[o.session] && <span className="mono row-id">{o.session.slice(-6)}</span>}
             </button>
             {/* The container name is for pasting into a terminal, not for reading. */}
-            {o.container && <button className="link proj-act" title={o.container}
-                                    onClick={() => void navigator.clipboard?.writeText(o.container!)}>Copy container</button>}
-            <span className={"status mono mode-chip " + TONE[o.status]} title={o.error}>{o.status || "pending"}</span>
+            <span className="orb-ctr" title={o.container}>
+              {o.container && <CopyButton text={o.container} label={o.container.slice(0, 12)} className="link proj-act mono" />}
+            </span>
+            <span className="orb-st" title={o.error}><StatusMark status={STATE[o.status]} /></span>
             {o.status === "running" && <button className="btn" onClick={() => onStopOrb(o.session)}>Stop orb</button>}
           </div>
           ))}

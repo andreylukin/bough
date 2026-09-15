@@ -1,4 +1,4 @@
-import type { Row, Status } from "./types";
+import type { OrbStatus, Row, Status } from "./types";
 
 /**
  * One attention model for every surface: 0 wants a person (a recorded
@@ -102,6 +102,39 @@ export const STATUS: Record<Status, { label: string; tone: string; glyph: React.
     glyph: <circle cx="12" cy="12" r="3.5" />,
   },
 };
+
+/**
+ * The one vocabulary. Every surface that names a state — sidebar, header,
+ * turn footers, palette, projects, the orb table — reads its word here,
+ * so a finished turn and a finished session both say "Done".
+ */
+export function statusWord(s: Status): string {
+  return (STATUS[s] ?? STATUS.idle).label;
+}
+
+const ORB_WORD: Record<OrbStatus, string> = {
+  "": "Pending", building: "Building", starting: "Starting", running: "Running", stopped: "Stopped", failed: "Setup failed",
+};
+
+/** An orb's state in the same sentence case as a session's. */
+export function orbWord(s: OrbStatus): string {
+  return ORB_WORD[s] ?? s;
+}
+
+/**
+ * A project's environment that could not be set up. It is the orb that
+ * failed, not the session, so it says whose setup it was and wears its
+ * own mark, apart from the run status beside it.
+ */
+export function SetupFailed({ name }: { name: string }) {
+  return (
+    <span className="status setup-failed" title={`${name}: setup failed`}>
+      <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"
+           strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{STATUS.error.glyph}</svg>
+      <span>Setup failed</span>
+    </span>
+  );
+}
 
 /** `bare` drops the word where a neighbour already says it ("Waiting 8d"); it stays for screen readers. */
 export function StatusMark({ status, size = 13, bare }: { status: Status; size?: number; bare?: boolean }) {

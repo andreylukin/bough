@@ -13,7 +13,8 @@ import type { Line } from "./types";
  */
 export function Markdown({ text }: { text: string }) {
   // A wide table scrolls in its own box; a fade on the right says there is more.
-  const html = DOMPurify.sanitize(marked.parse(text, { async: false }) as string)
+  // Trimmed: a trailing newline is a break point that parts inline chips after it from the last word.
+  const html = DOMPurify.sanitize(marked.parse(text, { async: false }) as string).trim()
     .replace(/<table>/g, '<div class="md-table"><div class="md-table-scroll" tabindex="0" role="region" aria-label="Table, scrolls sideways"><table>')
     .replace(/<\/table>/g, "</table></div></div>")
     // An empty fence is a recorded fact, not a grey box that looks like loading.
@@ -54,6 +55,29 @@ export function Markdown({ text }: { text: string }) {
 }
 
 /**
+ * A changed file's path as a row shows it: relative to the session's cwd,
+ * a scratch dir's uuid folded ("scratch/…/notes.md"), the home dir as "~".
+ */
+export function changedPath(p: string, cwd = ""): string {
+  if (cwd && p.startsWith(cwd.replace(/\/$/, "") + "/")) return p.slice(cwd.replace(/\/$/, "").length + 1);
+  const scratch = /(?:^|\/)scratch\/[^/]+\/(.+)$/.exec(p);
+  if (scratch) return `scratch/…/${scratch[1]}`;
+  return p.replace(/^\/(?:Users|home)\/[^/]+\//, "~/");
+}
+
+/**
+ * A script's first line that says what it does: shebangs, comments, blank
+ * lines, `set -e`-style options and a bare `cd` are skipped, so forty rows
+ * no longer all read "Ran set -e". Falls back to the first non-blank line.
+ */
+export function scriptHead(script: string): string {
+  const lines = script.split("\n").map((l) => l.trim()).filter(Boolean);
+  const boiler = (l: string) => l.startsWith("#") || /^set\s+[-+][a-zA-Z]+(\s+\S+)*$/.test(l) || /^cd\s+("[^"]*"|'[^']*'|\S+)\s*(&&|;)?$/.test(l);
+  const pick = lines.find((l) => !boiler(l)) ?? lines[0] ?? "";
+  return pick.replace(/^cd\s+("[^"]*"|'[^']*'|\S+)\s*&&\s*/, "").slice(0, 120);
+}
+
+/**
  * What a code block is doing, read off the program itself — the same
  * vocabulary the TUI uses (plugins/ui/blocks.go labels bash, write,
  * patch, view and spawn). A bare "Code" header tells you nothing when
@@ -61,7 +85,8 @@ export function Markdown({ text }: { text: string }) {
  */
 export function codeLabel(code: string): { label: string; detail: string } {
   const first = (re: RegExp) => code.match(re)?.[1]?.trim() ?? "";
-  const bash = first(/tools\.bash\(\s*["'`]([^"'`]{0,120})/);
+  // A quoted script spells its newlines "\n".
+  const bash = scriptHead((code.match(/tools\.bash\(\s*["'`]([^"'`]{0,4000})/)?.[1] ?? "").replace(/\\n/g, "\n"));
   if (bash) return { label: "Ran", detail: bash };
   const write = first(/tools\.write\(\s*["'`]([^"'`]{0,120})/);
   if (write) return { label: "Wrote", detail: write };

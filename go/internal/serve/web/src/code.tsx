@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { scriptHead } from "./render";
 import hljs from "highlight.js/lib/core";
 import bash from "highlight.js/lib/languages/bash";
 import javascript from "highlight.js/lib/languages/javascript";
@@ -127,7 +128,7 @@ export function describeBash(cmd: string): { verb: string; gist: string } {
     // No literal target (a URL built at run time): the operation alone.
     if (m) return { verb, gist: target(cmd, m) };
   }
-  return { verb: "Ran", gist: gistOf(cmd) };
+  return { verb: "Ran", gist: gistOf(scriptHead(cmd) || cmd) };
 }
 
 export function parseCall(code: string): Call {

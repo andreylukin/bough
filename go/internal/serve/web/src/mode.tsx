@@ -1,5 +1,6 @@
 import type { OrbStatus, Project, Row, SessionMode } from "./types";
 import { Select } from "./select";
+import { SetupFailed, orbWord } from "./status";
 
 export interface ModeValue { mode: SessionMode; project?: string }
 
@@ -11,7 +12,7 @@ export interface ModeValue { mode: SessionMode; project?: string }
 export function ModePicker({ projects, value, onChange }: {
   projects: Project[]; value: ModeValue; onChange: (v: ModeValue) => void;
 }) {
-  const withOrb = projects.filter((p) => p.slug);
+  const withOrb = projects.filter((p) => p.slug).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   const local = value.mode === "local";
   return (
     <div className="ctl mode-picker" role="group" aria-label="Session mode">
@@ -34,13 +35,16 @@ const TONE: Record<OrbStatus, string> = {
 };
 
 /** A project session's slug and orb state; a local session shows nothing, local being the norm. */
-/** `bare` drops the project name where a group heading already says it. */
-export function ModeChip({ row, bare = false }: { row: Row; bare?: boolean }) {
+/** `bare` drops the project name where a group heading already says it. `name` is the project's display name. */
+export function ModeChip({ row, bare = false, name }: { row: Row; bare?: boolean; name?: string }) {
   if (row.mode !== "project" || !row.orb) return null;
   const { project, status } = row.orb;
+  const shown = name || project;
+  // A failed setup is its own indicator, set apart from the run status that follows it.
+  if (status === "failed") return <><SetupFailed name={shown} /><span className="setup-sep" aria-hidden="true"> · </span></>;
   return (
-    <span className={"status mono mode-chip " + TONE[status]} title={`Runs in the ${project} orb`}>
-      {bare ? status || "pending" : `${project} · ${status || "pending"}`}
+    <span className={"status mode-chip " + TONE[status]} title={`Runs in the ${shown} orb`}>
+      {bare ? orbWord(status) : `${shown} · ${orbWord(status)}`}
     </span>
   );
 }
