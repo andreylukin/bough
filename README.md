@@ -42,6 +42,8 @@ echo 'OPENROUTER_API_KEY=sk-or-...' >> ~/.bough/env   # or ANTHROPIC_ / OPENAI_ 
 bough
 ```
 
+Started inside a git checkout, bough can edit files there; anywhere else it only reads. Prefer a browser? Run `bough serve` from your repo and open the link: the first visit asks for a key and a folder, then starts a session.
+
 macOS and Linux, x86-64 and arm64. Also `brew tap andreylukin/bough https://github.com/andreylukin/bough && brew install bough`, or `cd go && go build ./cmd/bough` (Go 1.27+).
 
 ## Three ways to drive it
