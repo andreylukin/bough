@@ -218,7 +218,7 @@
 - id: web
   plugin: web
   # config:
-  #   addr: localhost:7683
+  #   addr: 127.0.0.1:7683
 
 # Artifacts: pages the agent publishes for you to read and act on in
 # the browser (a comparison, a report, a dashboard, a form) —

@@ -44,15 +44,15 @@ func webArgs(args []string) (verb, addr string, err error) {
 	return "start", a, nil
 }
 
-// webURL is what to open for a listen address: a wildcard host becomes
-// localhost.
+// webURL is what to open for a listen address: a wildcard host or
+// "localhost" becomes 127.0.0.1, the address the listener actually has.
 func webURL(addr string) string {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return "http://" + addr
 	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "localhost"
+	if host == "" || host == "0.0.0.0" || host == "::" || strings.EqualFold(host, "localhost") {
+		host = "127.0.0.1"
 	}
 	return "http://" + net.JoinHostPort(host, port)
 }

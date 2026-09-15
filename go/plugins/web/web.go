@@ -5,7 +5,7 @@
 // stay quiet — the pages are the same for all of them, because every
 // row that mounts here reads its state from disk, not from the process.
 //
-// Row config: addr (default localhost:7683, or $BOUGH_WEB_ADDR when
+// Row config: addr (default 127.0.0.1:7683, or $BOUGH_WEB_ADDR when
 // set: the test suites set 127.0.0.1:0 so the hundreds of processes
 // they boot never take the user's port and serve their stale pages).
 package web
@@ -28,7 +28,9 @@ import (
 	"github.com/andreylukin/bough/kernel"
 )
 
-const defaultAddr = "localhost:7683"
+// 127.0.0.1, not localhost: the listener is IPv4-only, and a browser that
+// resolves localhost to ::1 first gets a refused connection.
+const defaultAddr = "127.0.0.1:7683"
 
 // Service is the server: a mux and the address it is (or would be)
 // served on.
@@ -128,8 +130,10 @@ func (s *Service) URL() string {
 	if err != nil {
 		return "http://" + s.addr
 	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "localhost"
+	// Links name the address actually bound: "localhost" can resolve to ::1,
+	// where nothing listens, so the page never loads.
+	if host == "" || host == "0.0.0.0" || host == "::" || strings.EqualFold(host, "localhost") {
+		host = "127.0.0.1"
 	}
 	return "http://" + net.JoinHostPort(host, port)
 }

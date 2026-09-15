@@ -24,8 +24,12 @@ func TestWebArgs(t *testing.T) {
 			t.Errorf("webArgs(%v) = %q %q %v, want %q %q bad=%v", c.in, verb, addr, err, c.verb, c.addr, c.bad)
 		}
 	}
-	if got := webURL("0.0.0.0:7681"); got != "http://localhost:7681" {
+	if got := webURL("0.0.0.0:7681"); got != "http://127.0.0.1:7681" {
 		t.Errorf("webURL wildcard: %s", got)
+	}
+	// localhost can resolve to ::1, where the IPv4 listener isn't.
+	if got := webURL("localhost:7681"); got != "http://127.0.0.1:7681" {
+		t.Errorf("webURL localhost: %s", got)
 	}
 	if got := webURL("[::1]:7681"); got != "http://[::1]:7681" {
 		t.Errorf("webURL v6: %s", got)
