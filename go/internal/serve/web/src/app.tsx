@@ -155,7 +155,7 @@ function byWorkspace(rows: Row[], projectNames: Map<string, string> = new Map())
   const names = new Map<string, number>();
   for (const list of out.values()) if (!list[0].project) names.set(workspaceOf(list[0]), (names.get(workspaceOf(list[0])) ?? 0) + 1);
   const label = (r: Row) => {
-    if (r.project) return projectNames.get(r.project) ?? "Project";
+    if (r.project) return projectNames.get(r.project) ?? workspaceOf(r);
     const name = workspaceOf(r);
     if ((names.get(name) ?? 0) < 2) return name;
     return (r.repo || r.cwd).split("/").filter(Boolean).slice(-2).join("/");
@@ -558,9 +558,10 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   const q = query.trim().toLowerCase();
   // `twin`: a sibling row reads the same, so this one adds its id tail.
   // `child`: a background agent under the session that started it.
-  const session = (r: Row, twin = false, child = false): React.ReactNode => {
+  // `pin`: the copy in Needs you, a link to the same session with no log of its own.
+  const session = (r: Row, twin = false, child = false, pin = false): React.ReactNode => {
     // A search hides the logs: they are not what matched.
-    const open = Boolean(r.turns) && expanded.has(r.id) && !q;
+    const open = Boolean(r.turns) && expanded.has(r.id) && !q && !pin;
     const log = logs[r.id];
     const name = plainTitle(r.title);
     const on = r.id === selected;
@@ -592,17 +593,17 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     const bgText = bg ? [bg.running && `${bg.running} running`, bg.failed && `${bg.failed} failed`].filter(Boolean).join(" · ") : "";
     // The project's environment failed to set up: its own indicator, always shown, never the session's status.
     const setup = r.mode === "project" && r.orb?.status === "failed" ? projectNames.get(r.orb.project) ?? r.orb.project : "";
-    const stacked = Boolean(label || life || bgText || setup);
+    const stacked = Boolean(label || life || setup);
     return (
       <Fragment key={r.id}>
       <div className={"session" + (child ? " session-child" : "")}>
         <div className={"row-wrap" + (open ? " row-open" : "")}>
-          <button role="treeitem" onClick={() => onSelect(r.id)} data-id={r.id}
+          <button role="treeitem" onClick={() => onSelect(r.id)} data-id={pin ? undefined : r.id}
                   onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
                   onBlur={unpeek}
                   aria-describedby={card?.id === r.id ? "row-card" : undefined}
                   aria-label={`${title}, ${life ? LIFE_WORD[life] : why},${ago(r.lastAt)} ago${r.branch ? `, branch ${r.branch}` : ""}${bgText ? `, background: ${bgText}` : ""}${setup ? `, ${setup}: setup failed` : ""}`}
-                  className={"row" + (stacked ? " row-2" : "") + (on ? " row-on" : "") + (r.turns && !q ? " row-has-log" : "") + (r.trouble && onAck ? " row-has-ack" : "")}
+                  className={"row" + (stacked ? " row-2" : "") + (on ? " row-on" : "") + (r.turns && !q && !pin ? " row-has-log" : "") + (r.trouble && onAck ? " row-has-ack" : "")}
                   aria-current={on ? "true" : undefined}
                   title={`${title}\n${why} · ${ago(r.lastAt)} ago${r.branch ? ` · ${r.branch}` : ""}${setup ? `\n${setup}: setup failed` : ""}`}>
             {/* A failure you have not seen is a red mark; the reason is its label. */}
@@ -615,32 +616,28 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
             <span className={stacked ? "row-stack" : "row-line"}>
             <span className="row-name">
             <span className={"row-title" + (own ? "" : " row-untitled")}>{marked(shown, q)}</span>{chip && <span className="mono row-id" title={`Session id ending ${r.id.slice(-6)}`}><span className="visually-hidden">session id </span>{r.id.slice(-6)}</span>}
+            {/* The age, on every row at the same right edge; the title is what gives way. */}
+            <span className="row-when" aria-hidden="true">{!stacked && <ModeChip row={r} bare />}{ago(failed === "tests failed" && r.testsAt ? r.testsAt : r.lastAt)}</span>
             </span>
-            {(label || setup) && !life && <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : "") + (failed || asking || setup || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
-              <ModeChip row={r} bare name={setup} />{label && `${label} · `}{ago(failed === "tests failed" && r.testsAt ? r.testsAt : r.lastAt)}
+            {(label || setup) && !life && <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : r.status === "running" ? " row-meta-run" : "") + (failed || asking || setup || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
+              <ModeChip row={r} bare name={setup} />{label}
             </span>}
-            {/* State and time, never cut: the title is what gives way. */}
-            {life && <span className={"num row-meta row-meta-live" + (life === "failed" ? " row-meta-bad" : "")} aria-hidden="true">
-              <ModeChip row={r} bare name={setup} />{LIFE_WORD[life]} · {life === "queued" ? `waiting ${ago(r.lastAt)}` : ago(r.lastAt)}
+            {life && <span className={"num row-meta row-meta-live" + (life === "failed" ? " row-meta-bad" : life === "running" ? " row-meta-run" : "")} aria-hidden="true">
+              <ModeChip row={r} bare name={setup} />{life === "queued" ? `${LIFE_WORD[life]} · waiting` : LIFE_WORD[life]}
             </span>}
-            {bgText && <span className="bg-summary" aria-hidden="true">Background: {bgText}</span>}
             </span>
             {r.jobs && r.jobs.length > 0 && (
               <span className="num row-jobs" title={r.jobs.map((j) => j.cmd).join("\n")}>
                 {r.jobs.length}<span className="visually-hidden"> {r.jobs.length === 1 ? "job" : "jobs"}</span>
               </span>
             )}
-            {/* Touch has no hover card: a phone reads status and age off the row. */}
-            {!label && !life && !setup && <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : "") + (failed || asking || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
-              <ModeChip row={r} bare />{ago(r.lastAt)}
-            </span>}
           </button>
           {/* The disclosure and Seen are siblings of the row, not inside
               it: a button in a button is invalid and would open it too. */}
-          {r.trouble && onAck && (
+          {r.trouble && onAck && !pin && (
             <button className="btn row-ack" onClick={() => onAck(r.id)} aria-label={`Mark ${name || "session"} seen`}>Seen</button>
           )}
-          {r.turns && !q ? (
+          {r.turns && !q && !pin ? (
             <button className="row-twist" tabIndex={-1} aria-hidden="true" aria-expanded={open} aria-controls={`turns-${r.id}`}
                     aria-label={`${open ? "Hide" : "Show"} turn log of ${name || "session"}`}
                     onClick={() => setOpen(r.id, !open)}><Icon d={ICONS.chevron} size={14} /></button>
@@ -689,11 +686,12 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
         <button className="ws-head" role="treeitem" aria-expanded={open} onClick={() => toggleWs(key)}
                 aria-label={`${ws}${open ? "" : urgent.length ? `, ${urgent.length} need${urgent.length === 1 ? "s" : ""} you` : `, ${list.length}`}`} title={list[0].project ? `Project ${ws}` : `${list[0].repo || list[0].cwd}\nNot a project: sessions grouped by where they ran`}>
           <Icon d={ICONS.chevron} size={12} /><Icon d={list[0].project ? ICONS.projects : ICONS.folder} size={15} /><span className={"ws-name" + (list[0].project ? " ws-project" : "")}>{ws}</span>
-          {/* Folded, a group still says when something in it needs you. */}
-          {!open && (urgent.length
-            ? <span className={"num sec-count sec-count-" + (urgent.some(hasFailure) ? "trouble" : "needs-you")}>{urgent.length} need{urgent.length === 1 ? "s" : ""} you</span>
-            : <span className="num sec-count">{list.length}</span>)}
+          {list[0].project && <span className="ws-mark" aria-hidden="true" />}
+          {/* Folded, a group still says when something in it needs you, in that state's colour. */}
+          {!open && urgent.length > 0 && <span className={"count " + (urgent.some(hasFailure) ? "is-failed" : "is-waiting")} aria-hidden="true">{urgent.length}</span>}
         </button>
+        {/* Folded, what needs you stays in view. */}
+        {!open && urgent.length > 0 && <div role="group">{urgent.map((r) => session(r, (seen.get(nameKey(r)) ?? 0) > 1))}</div>}
         {open && (() => {
           // Sessions quiet for 72h fold under one line at the group's foot;
           // a search shows them all.
@@ -723,13 +721,11 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   });
 
   // A section folds, during a search too, which starts with every match open.
-  // `sub` is a second line under the heading ("1 running · 2 failed").
-  const section = (key: string, label: React.ReactNode, open: boolean, toggle: () => void, count: React.ReactNode, body: React.ReactNode, alert?: "trouble" | "needs-you", sub?: string) => (
+  const section = (key: string, label: React.ReactNode, open: boolean, toggle: () => void, count: React.ReactNode, body: React.ReactNode, alert?: "trouble" | "needs-you") => (
     <div className="sec">
-      <button type="button" className={"sec-fold" + (sub ? " sec-fold-2" : "")} role="treeitem" aria-expanded={open} onClick={toggle} aria-controls={`sec-${key}`}>
-        <Icon d={ICONS.chevron} size={12} />
-        {sub ? <span className="sec-stack"><span>{label}</span>{" "}<span className="bg-summary"><span className="visually-hidden">, </span>{sub}</span></span> : <span>{label}</span>}
-        <span className="ws-rule" />{count !== null && <span className={"num sec-count" + (alert ? " sec-count-" + alert : "")}><span className="visually-hidden">, </span>{count}</span>}
+      <button type="button" className="sec-fold" role="treeitem" aria-expanded={open} onClick={toggle} aria-controls={`sec-${key}`}>
+        <Icon d={ICONS.chevron} size={12} /><span>{label}</span>
+        {count !== null && <span className={alert ? "count " + (alert === "trouble" ? "is-failed" : "is-waiting") : "num sec-count"}><span className="visually-hidden">, </span>{count}</span>}
       </button>
       {open && <div className="sec-body" role="group" id={`sec-${key}`}>{body}</div>}
     </div>
@@ -744,9 +740,13 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
               aria-label={closed ? "Show sidebar" : "Hide sidebar"} title={`${closed ? "Show sidebar" : "Hide sidebar"} (${modKey()}B)`}>
         <Icon d={ICONS.panel} />
       </button>
-      {/* One order folded or not: back, forward, find, new. */}
-      <button className="side-icon" onClick={() => window.history.back()} disabled={!hist.back} aria-label="Back" title="Back"><Icon d={ICONS.back} /></button>
-      <button className="side-icon" onClick={() => window.history.forward()} disabled={!hist.forward} aria-label="Forward" title="Forward"><Icon d={ICONS.forward} /></button>
+      {/* A phone's list is the root: a title, no history arrows. */}
+      {narrow && <h2 className="side-title">Sessions</h2>}
+      {/* One order folded or not: back, forward, find, new; the arrows only once there is history. */}
+      {!narrow && (hist.back || hist.forward) && <>
+        <button className="side-icon" onClick={() => window.history.back()} disabled={!hist.back} aria-label="Back" title="Back"><Icon d={ICONS.back} /></button>
+        <button className="side-icon" onClick={() => window.history.forward()} disabled={!hist.forward} aria-label="Forward" title="Forward"><Icon d={ICONS.forward} /></button>
+      </>}
       {folded
         // The same slot does the same thing folded: it unfolds the list with its filter open.
         ? <button className="side-icon" onClick={() => { setSide(false); setSearching(true); }}
@@ -766,7 +766,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   // A failure already shows as "N failed" in the subline, so it isn't counted again here.
   const bgUrgent = background.filter((r) => sessionSignal(r) === 0 && !hasFailure(r));
   const bgAlert = background.some(hasFailure) ? "trouble" : bgUrgent.length ? "needs-you" : undefined;
-  const bgSub = [bgRunning && `${bgRunning} running`, bgFailed && `${bgFailed} failed`].filter(Boolean).join(" · ");
+  // Pinned on top while non-empty: links to the same sessions, which stay in their groups.
+  const needsYou = q ? [] : [...recent.flatMap(([, list]) => list), ...background].filter((r) => sessionSignal(r) === 0);
   const foldOpen = (key: string, open: boolean) => (searchOn ? !searchFolds.has(key) : open);
   const foldToggle = (key: string, toggle: () => void) => () => (searchOn ? setSearchFolds((cur) => flip(cur, key)) : toggle());
   const cardRow = card ? rows.find((r) => r.id === card.id) : undefined;
@@ -823,9 +824,16 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
         {total === 0 && loadedAt !== null && !loadErr && !(showArchived && archivedState !== "ready") && (
           <p className="list-none">{query ? `No sessions match “${query}”.` : "No sessions yet."}</p>
         )}
+        {needsYou.length > 0 && (
+          <div className="needs">
+            <p className="eyebrow" id="needs-you" role="presentation">Needs you<span className="num needs-count">{needsYou.length}</span><span className="needs-note">across projects</span></p>
+            <div role="group" aria-labelledby="needs-you">{needsYou.map((r) => session(r, false, false, true))}</div>
+          </div>
+        )}
         {workspaces(recent, "recent")}
         {background.length > 0 && section("background", "Background", foldOpen("background", unfolded.has("background")), foldToggle("background", () => toggleFold("background")),
-          bgUrgent.length ? <span title={`${background.length} in all`}>{bgUrgent.length} need you</span> : background.length, workspaces(byWorkspace(background, projectNames), "background"), bgAlert, bgSub || undefined)}
+          bgFailed ? <span title={`${bgFailed} failed of ${background.length}`}>{bgFailed}</span> : bgUrgent.length ? <span title={`${bgUrgent.length} need you of ${background.length}`}>{bgUrgent.length}</span> : background.length,
+          workspaces(byWorkspace(background, projectNames), "background"), bgAlert)}
         {/* Archived is not loaded until opened, so a search cannot have looked there. */}
         {section("archived", q && !showArchived ? <>Archived not searched · <span className="sec-include">Include</span></> : "Archived", showArchived && !archFolded,
           // Once included, folding only hides the section; a search still covers it.
@@ -1054,6 +1062,36 @@ export function JobBlock({ line }: { line: Line }) {
 export /** Entry data is JSON: read a field as a string without trusting it. */
 function str(v: unknown): string {
   return typeof v === "string" ? v : "";
+}
+
+/**
+ * A run of todo/* records as one collapsed row. Each add, done and clear
+ * used to be its own line ("todo/done" three times, bare item texts),
+ * which buried the reply around it; opened, it lists what changed.
+ */
+function TodoRun({ lines }: { lines: Line[] }) {
+  const text = new Map<number, string>();
+  for (const l of lines) if (l.kind === "todo/add") text.set(Number(l.data?.id), String(l.data?.text ?? l.text ?? ""));
+  const added = lines.filter((l) => l.kind === "todo/add").length;
+  const done = lines.filter((l) => l.kind === "todo/done").length;
+  const cleared = lines.some((l) => l.kind === "todo/clear");
+  const head = [added && `${added} added`, done && `${done} done`, cleared && "cleared"].filter(Boolean).join(" · ");
+  return (
+    <details className="block thin todo-run">
+      <summary>
+        <span className="block-label">Todo</span>
+        <span className="block-detail">{head}</span>
+      </summary>
+      <ul className="todo-run-list">
+        {lines.map((l) => {
+          const id = Number(l.data?.id);
+          if (l.kind === "todo/clear") return <li key={l.seq} className="meta-line">Cleared the list</li>;
+          const t = text.get(id) || (l.kind === "todo/add" ? l.text : "") || `#${id}`;
+          return <li key={l.seq}><span aria-hidden="true">{l.kind === "todo/done" ? "✓ " : "+ "}</span>{l.kind === "todo/done" ? <s>{t}</s> : t}</li>;
+        })}
+      </ul>
+    </details>
+  );
 }
 
 export function Entry({ line, codes, nested }: { line: Line; codes: string[]; nested?: boolean }) {
@@ -1765,7 +1803,11 @@ export function TurnHooks({ lines, load, save }: { lines: Line[]; load?: Load; s
  * changed. A bare "Finished" told a programmer none of that. Nothing is
  * estimated — a provider that recorded no usage shows only the outcome.
  */
-function TurnFooter({ turn, fail }: { turn: Turn; /** The result the turn's failure came from, when recorded. */ fail?: Line }) {
+function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0 }: {
+  turn: Turn; /** The result the turn's failure came from, when recorded. */ fail?: Line;
+  /** The longest recorded run of the turn's jobs and subagents, so wall time never reads shorter than its work. */ longest?: number;
+  failedWork?: number; unknownSubs?: number;
+}) {
   const done = turn.done!;
   const cwd = str(done.data?.cwd);
   const u = usageOf(done);
@@ -1773,7 +1815,7 @@ function TurnFooter({ turn, fail }: { turn: Turn; /** The result the turn's fail
   const exit = typeof done.data?.exit === "number" ? done.data.exit : fail?.data?.exit;
   const failed = typeof exit === "number" && exit !== 0;
   const facts: string[] = [];
-  if (turn.prompt?.at) facts.push(`Turn: ${duration(Date.parse(done.at) - Date.parse(turn.prompt.at))}`);
+  if (turn.prompt?.at) facts.push(duration(Math.max(Date.parse(done.at) - Date.parse(turn.prompt.at), longest)));
   // What failed, said where the turn ends: a phone has no hover to read it from.
   const failCmd = fail ? gistOf(parseCall(str(fail.data?.code)).gist) : "";
   const failOut = fail ? resultBody(fail).split("\n").filter((l) => l.trim()).slice(-3) : [];
@@ -1807,8 +1849,12 @@ function TurnFooter({ turn, fail }: { turn: Turn; /** The result the turn's fail
   };
   // The strip above owns session totals; a turn says what it took, with
   // its tokens on the price rather than as a third figure.
-  if (u) facts.push(`${tokenCount(u.in)} in · ${tokenCount(u.out)} out`);
+  // An older transcript recorded usage as its own line; the footer says it instead.
+  const legacy = u ? "" : turn.body.find((l) => l.kind === "usage")?.text.replace(/^usage · /, "").replace(", ", " / ") ?? "";
+  if (u) facts.push(`${tokenCount(u.in)} in / ${tokenCount(u.out)} out`);
+  else if (legacy) facts.push(legacy);
   if (u?.cost !== undefined) facts.push(money(u.cost));
+  if (unknownSubs) facts.push(`${unknownSubs} ${unknownSubs === 1 ? "subagent" : "subagents"} unknown`);
   return (
     <div className="turn-foot">
       {failed && fail && shownOpen && !(turn.stopped || done.kind === "cancelled") ? (
@@ -1818,12 +1864,12 @@ function TurnFooter({ turn, fail }: { turn: Turn; /** The result the turn's fail
           <button type="button" className="link turn-fail-jump" onClick={show}>Jump to command</button>
         </span>
       ) : (
-        <span className={"turn-outcome" + (failed ? " turn-failed" : "")}>
-          {turn.stopped || done.kind === "cancelled" ? statusWord("stopped") : failed ? `${statusWord("done")} with a failed command · exit ${exit}` : statusWord("done")}
+        <span className={"turn-outcome" + (failed || failedWork ? " turn-failed" : "")}>
+          {turn.stopped || done.kind === "cancelled" ? statusWord("stopped") : failed ? `${statusWord("done")} with a failed command · exit ${exit}` : statusWord("done") + (failedWork ? ` · ${failedWork} failed` : "")}
         </span>
       )}
-      {model && <span className="mono">{model.split("/").pop()}</span>}
       {facts.map((f) => <span key={f} className="num">{f}</span>)}
+      {model && <span className="mono">{model.split("/").pop()}</span>}
       {failed && fail && !shownOpen && (
         <div className="turn-fail" role="note">
           <button type="button" className="link mono turn-fail-cmd" onClick={show}>{failCmd || "Show the failed command"}</button>
@@ -1832,7 +1878,7 @@ function TurnFooter({ turn, fail }: { turn: Turn; /** The result the turn's fail
       )}
       {files.length > 0 && (
         <details className="turn-files">
-          <summary>This turn: {files.length} {files.length === 1 ? "file" : "files"}</summary>
+          <summary>{files.length} {files.length === 1 ? "file" : "files"}</summary>
           <ul>{files.map((f) => <li key={f} className="mono" title={f}>{changedPath(f, cwd)}</li>)}</ul>
         </details>
       )}
@@ -1890,6 +1936,8 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, loading }:
         // Until the transcript arrives there is nothing to report yet; after,
         // a session that never reports shows one quiet dash, not a label.
         if (loading && !u) return <span className="rt rt-loading" aria-label="Loading usage"><span className="rt-label">Context</span><span className="rt-skel" /></span>;
+        // No value, no chip: the Context view (palette, settings sheet) still names why.
+        if (!u) return null;
         const body = <>
           <span className="rt-label">Context</span>
           <span className={"num rt-value" + (u ? "" : " rt-stale")}>{!u ? "—" :`${tokenCount(u.lastIn)}${limit ? ` · ${tokenCount(Math.max(0, limit - u.lastIn))} left` : " · window unknown"}`}</span>
@@ -1903,11 +1951,6 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, loading }:
           ? <button type="button" className="rt rt-link" title={`${tip} · open Context`} aria-label={`Context: ${tip}`} onClick={onContext}>{body}</button>
           : <Tip tip={tip}>{body}</Tip>;
       })()}
-      {u && u.cost === undefined && (
-        <Tip tip="The provider has not reported a cost for this session">
-          <span className="rt-label">Cost</span><span className="num rt-value rt-stale">—</span>
-        </Tip>
-      )}
       {u?.cost !== undefined && (
         <Tip tip={`Session cost ${money(u.cost)} · ${u.in.toLocaleString()} tokens in · ${u.out.toLocaleString()} out`}>
           <span className="rt-label">Cost</span><span className="num rt-value">{money(u.cost)}</span>
@@ -1969,6 +2012,8 @@ function ChangesChip({ row, tick }: { row: Row; tick: number }) {
     <span className="rt-label">Session edits</span>
     <span className={"num rt-value" + (c.quiet ? " rt-stale" : "")}>{c.text}{c.add !== undefined && <> <span className="rt-add">+{c.add}</span> <span className="rt-del">−{c.del}</span></>}</span>
   </>;
+  // A failed read is no value: no chip, rather than "Unavailable".
+  if (data.session.files === null && data.session.failed) return null;
   if (phone && c.text === "None") return <span className="rt" aria-label={aria}>{body}</span>;
   if (phone) return <a className="rt rt-link" href={href} aria-label={aria}>{body}</a>;
   return (
@@ -1990,13 +2035,13 @@ function ChangesChip({ row, tick }: { row: Row; tick: number }) {
  */
 function TestsChip({ lines, running }: { lines: Line[]; running: boolean }) {
   const last = useMemo(() => lastTestRun(lines, running), [lines, running]);
-  if (!last) return null;
+  if (!last || last.state === "unrecorded") return null;
   const failed = last.state === "failed";
   const word = { passed: "passed", failed: "failed", running: "running…", unrecorded: "not recorded" }[last.state];
   return (
     // The chip is a way to the evidence, not a second copy of it: it opens
     // the call in the transcript (and the run folding it) and lands there.
-    <button className="rt rt-link" title={`${last.cmd}${last.exit !== undefined ? ` · exit ${last.exit}` : last.state === "unrecorded" ? " · no exit code was recorded" : ""} · ${new Date(last.at).toLocaleString()} · show in transcript`}
+    <button className="rt rt-link" title={`${last.cmd}${last.exit !== undefined ? ` · exit ${last.exit}` : ""} · ${new Date(last.at).toLocaleString()} · show in transcript`}
             onClick={() => {
               const el = document.querySelector<HTMLElement>(`details.block[data-seq="${last.seq}"]`);
               if (!el) return;
@@ -2120,7 +2165,8 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
   const codes = turn.body.filter((l) => l.kind === "code" || l.kind === "sub:code").map((l) => l.text);
   const hooks = useMemo(() => turn.body.filter(isHookLine), [turn.body]);
   const items = useMemo<Item[]>(
-    () => groupTools(groupSubs(foldModelSwitch(foldRetries(turn.body.filter((l) => !isHookLine(l))))), codes),
+    // A finished turn's usage line is the footer's to say, on its one line.
+    () => groupTools(groupSubs(foldModelSwitch(foldRetries(turn.body.filter((l) => !isHookLine(l) && !(turn.done && l.kind === "usage"))))), codes),
     // codes is derived from turn.body on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [turn.body]);
@@ -2224,6 +2270,14 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
         {items.map((it, i) => {
           if (it.kind === "sub") return <SubRun key={"sub" + it.seq} agents={it.agents} seq={it.seq} turn={turn} live={(ctx?.live ?? true) && !turn.done && !turn.stopped} />;
           if (it.kind === "tools") return <ToolRun key={"tools" + it.seq} lines={it.lines} codes={codes} live={!turn.done && !turn.stopped} stopped={turn.stopped || turn.done?.kind === "cancelled"} failSeq={fail?.seq} />;
+          if (it.line.kind.startsWith("todo/")) {
+            // Consecutive todo records fold into one row, rendered at the first.
+            const prev = items[i - 1];
+            if (prev?.kind === "line" && prev.line.kind.startsWith("todo/")) return null;
+            const run: Line[] = [];
+            for (let j = i; j < items.length; j++) { const x = items[j]; if (x.kind !== "line" || !x.line.kind.startsWith("todo/")) break; run.push(x.line); }
+            return <TodoRun key={"todo" + it.seq} lines={run} />;
+          }
           if (it.line.kind === "job") {
             // Consecutive job rows share one head, rendered at the first of them.
             const prev = items[i - 1];
@@ -2237,7 +2291,15 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
         {tail}
         <TurnHooks lines={hooks} />
       </div>
-      {turn.done && <TurnFooter turn={turn} fail={fail} />}
+      {turn.done && (() => {
+        // The turn's own workers: what ran inside its span of entries.
+        const seqs = turn.body.map((l) => l.seq);
+        const lo = Math.min(...seqs), hi = Math.max(...seqs);
+        const mine = (ctx?.workers ?? []).filter((w) => (w.subrunSeq ?? w.seq) >= lo && (w.subrunSeq ?? w.seq) <= hi);
+        return <TurnFooter turn={turn} fail={fail} longest={Math.max(0, ...mine.map((w) => w.ms ?? 0))}
+                           failedWork={mine.filter((w) => w.life === "failed").length}
+                           unknownSubs={mine.filter((w) => w.kind !== "job" && w.life === "unknown").length} />;
+      })()}
       {/* No done and nothing live to write one: the turn was cut off, and says so where it ends, like Stopped. */}
       {!turn.done && ctx && !ctx.live && (
         <div className="turn-foot">
@@ -2368,7 +2430,7 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
                   }}
                   onChange={(v) => (v ? onModel(v) : undefined)} />
           {/* Always present, so Settings keeps one shape: disabled with the reason until levels are known. */}
-          <span className="ctl-label ctl-field">Effort</span>
+          <span className="ctl-label ctl-field ctl-effort">Effort</span>
           <Select label="Next turn effort" value={row.effort ?? ""} align="end" note="Applies to the next turn" onChange={(v) => (v ? onEffort(v) : undefined)}
                   disabled={efforts.length === 0} placeholder={catFailed ? "Unavailable" : cat ? "Not offered" : "Loading"}
                   options={efforts.length ? [...(row.effort ? [] : [{ value: "", label: "Provider default" }]), ...efforts.map((e) => ({ value: e, label: effortLabel(e) }))] : []} />
@@ -2983,10 +3045,6 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     setOrbView("build");
   };
 
-  const [multi, setMulti] = useState(false);
-  const [narrow, setNarrow] = useState(false);
-  // The textarea's width in the one-row layout, remembered for collapsing back.
-  const composerRow = useRef(0);
   // A long paste should be visible, not a two-row porthole you have to
   // drag open. Grow to the text and stop at a third of the window.
   useEffect(() => {
@@ -2994,45 +3052,11 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     if (!el) return;
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, Math.round((window.visualViewport?.height ?? window.innerHeight) / 3)) + "px";
-    // Two rows only once the text really wraps (measured, not counted);
-    // staying multi until it fits again keeps the layout from flapping.
-    const line = parseFloat(getComputedStyle(el).lineHeight) || 20;
-    const pad = parseFloat(getComputedStyle(el).paddingTop) + parseFloat(getComputedStyle(el).paddingBottom);
-    const wraps = draft.includes("\n") || el.scrollHeight - pad > line * 1.5;
-    if (wraps !== multi) {
-      if (wraps) setMulti(true);
-      else if (!draft) setMulti(false);
-      else {
-        // Measure at single-row width before collapsing back.
-        const probe = el.cloneNode() as HTMLTextAreaElement;
-        probe.style.cssText = `position:absolute;visibility:hidden;height:auto;width:${composerRow.current}px`;
-        probe.value = draft; el.parentElement?.appendChild(probe);
-        if (probe.scrollHeight - pad <= line * 1.5) setMulti(false);
-        probe.remove();
-      }
-    }
-  }, [draft, multi]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [draft]);
 
   // Escape shuts a picker until the token it was over changes; the keyup
   // that follows the Escape would otherwise open it straight back.
   const dismissed = useRef("");
-  useEffect(() => {
-    const el = composer.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const box = el.parentElement!;
-    // Width left for typing beside the buttons, measured: under 160px the buttons take their own row.
-    const fit = () => {
-      if (!box.classList.contains("composer-multi")) composerRow.current = el.clientWidth;
-      const actions = box.querySelector<HTMLElement>(".composer-actions");
-      setNarrow(box.clientWidth - (actions?.offsetWidth ?? 0) - 30 < 160);
-    };
-    const ro = new ResizeObserver(fit);
-    ro.observe(el); ro.observe(box);
-    const actions = box.querySelector(".composer-actions");
-    if (actions) ro.observe(actions);
-    window.visualViewport?.addEventListener("resize", fit);
-    return () => { ro.disconnect(); window.visualViewport?.removeEventListener("resize", fit); };
-  }, []);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [activeOpt, setActiveOpt] = useState<string | undefined>();
   const caretTrigger = (el: HTMLTextAreaElement) => {
@@ -3064,7 +3088,13 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   // by the first one landing, nor replace its preview.
   const newest = lines.length ? lines[lines.length - 1].seq : 0;
   // While the transcript loads, the lines on hand may be another session's.
-  const unlanded = loading ? sending : sending.filter((p, i) => lines.filter((l) => l.kind === "input" && l.seq > p.after).length <= i);
+  // An input with the same text also lands it: `after` is the newest seq
+  // on hand at send time, and when those lines were stale (a session just
+  // created or switched to) the recorded prompt showed at the top while
+  // its "Sending…" copy stayed stuck at the bottom.
+  const inputs = lines.filter((l) => l.kind === "input");
+  const sameText = (p: Pending) => { const want = p.text.trim().slice(0, 200); return inputs.slice(-(sending.length + 3)).some((l) => (l.text ?? "").trim().startsWith(want)); };
+  const unlanded = loading ? sending : sending.filter((p, i) => inputs.filter((l) => l.seq > p.after).length <= i && !sameText(p));
   const landedIds = sending.length - unlanded.length;
   useEffect(() => { if (landedIds) setSending((q) => q.slice(landedIds)); }, [landedIds]); // eslint-disable-line react-hooks/exhaustive-deps
   const [fullPending, setFullPending] = useState("");
@@ -3238,7 +3268,10 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             // One status: the reason replaces "Done".
             <span className="status head-trouble"><StatusMark status="error" bare />{capital(row.trouble)}</span>
           ) : row.mode === "project" && row.orb?.status === "failed" ? null /* Setup failed says it; "Done" beside it contradicted it. */
-            : <StatusMark status={row.status} />}
+            // Worst outcome first: a finished session whose work failed does not read as a bare Done.
+            : row.status === "done" && counts.failed > 0
+              ? <span className="status head-trouble"><StatusMark status="error" bare />{statusWord("done")} · {counts.failed} failed</span>
+              : <StatusMark status={row.status} />}
           <ModeChip row={row} name={projects.find((p) => p.id === row.orb?.project)?.name} />
           {row.orb?.status === "running" && onStopOrb && <button className="btn head-ack" onClick={onStopOrb}>Stop orb</button>}
           {/* A short link beside the chip: a full button pushed the title row
@@ -3258,11 +3291,9 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
           {/* A test failure is the Tests chip's to say, once. */}
           {running && turns[turns.length - 1]?.prompt?.at && !turns[turns.length - 1]?.done && <RunClock since={turns[turns.length - 1].prompt!.at} />}
           {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
-          {/* A phone keeps the run setting as words; its pickers are under Settings. */}
-          <span className="head-run">{row.model?.split("/").pop() ?? "Default model"} · Effort: {row.effort ? effortLabel(row.effort) : "Default"}</span>
         </div>
+        {/* The model and effort pickers live in the composer toolbar; a phone's are under Settings. */}
         <div className="head-side">
-          <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" />
           <div className="head-more" ref={moreRef}>
             <button className="more" aria-label="Session settings" aria-expanded={more} aria-controls={"more-" + row.id}
                     onClick={(e) => { moreByKey.current = e.detail === 0; setMore((v) => !v); }}>
@@ -3454,7 +3485,8 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             ))}
           </ol>
         )}
-        <div className={"composer" + (multi || narrow ? " composer-multi" : "")}
+        {/* The input on its own row, then one toolbar under it. */}
+        <div className="composer composer-multi"
              onDragOver={(e) => e.preventDefault()}
              onDrop={(e) => { composer.current?.focus(); take(e, true); }}>
           <Mentions trigger={trigger} session={row.id}
@@ -3515,6 +3547,21 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
               }
             }} />
           <div className="composer-bar">
+            <div className="composer-tools">
+              <SkillPicker onPick={(name, known) => {
+                // A skill runs only as the lead word, so a pick replaces a
+                // skill already there, never a leading path like /tmp/x.
+                setDraft((d) => {
+                  const rest = d.trimStart(), lead = /^\/(\S+)\s*/.exec(rest);
+                  return `/${name} ${lead && known.includes(lead[1]) ? rest.slice(lead[0].length) : rest}`;
+                });
+                document.getElementById("composer")?.focus();
+              }} />
+              <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" />
+              {row.mode !== "project" && (
+                <span className="mode-local mode-badge" title="A local session can read your files and run commands on this machine, but cannot edit files. Start a project session to make changes.">Local · read-only</span>
+              )}
+            </div>
             {uploading > 0 && <span className="attach-note">Attaching image…</span>}
             {attachErr && <span className="attach-note attach-err" role="alert">{attachErr}</span>}
             <div className="composer-actions">
@@ -3532,15 +3579,6 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
                   <span className="jump-word">{newest > awayAt.current ? "New activity" : "Latest"}</span>
                 </button>
               )}
-              <SkillPicker onPick={(name, known) => {
-                // A skill runs only as the lead word, so a pick replaces a
-                // skill already there, never a leading path like /tmp/x.
-                setDraft((d) => {
-                  const rest = d.trimStart(), lead = /^\/(\S+)\s*/.exec(rest);
-                  return `/${name} ${lead && known.includes(lead[1]) ? rest.slice(lead[0].length) : rest}`;
-                });
-                document.getElementById("composer")?.focus();
-              }} />
               {running && (
                 <button className="btn" disabled={stopping === "stopping"} onClick={stop}>
                   {stopping === "stopping" ? "Stopping…" : stopping === "failed" ? "Couldn’t stop · Retry" : "Stop"}
@@ -3560,7 +3598,6 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
         <div className="composer-foot">
           {row.mode !== "project" && (
             <span className="composer-local">
-              <span className="mode-local" title="A local session can read your files and run commands on this machine, but cannot edit files. Start a project session to make changes.">Local · read-only</span>
               {onStartProject && projects.some((p) => p.slug) ? (
                 <Select label="Start project session" value="" placeholder="Start project session…" align="start"
                         note="Your draft moves to the new session, unsent"

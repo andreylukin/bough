@@ -7,11 +7,40 @@ import { useEffect, useRef, useState } from "react";
 /** A server or network error as a sentence: no "wiki: not found", no bare "TypeError". */
 export function humanError(err: unknown): string {
   const m = (err instanceof Error ? err.message : String(err ?? "")).trim();
-  if (!m) return "Something went wrong.";
+  if (!m) return "Unable to load this. Try again.";
   if (/not found|^404\b/i.test(m)) return "It could not be found — it may have been moved or deleted.";
+  if (/forbidden|^403\b/i.test(m)) return "You do not have access to this.";
   if (/failed to fetch|networkerror|load failed/i.test(m)) return "The server did not answer. Check that bough serve is running.";
   if (/^5\d\d\b/.test(m)) return `The server hit an error (${m}).`;
   return m.replace(/^[a-z]+: /, "").replace(/^./, (c) => c.toUpperCase());
+}
+
+/** A Go duration ("5m0s", "1h2m0s", "60s") or milliseconds, without zero units: "5m", "1m", "1h 2m". */
+export function duration(d: string | number): string {
+  let s = typeof d === "number" ? Math.round(d / 1000) : 0;
+  if (typeof d === "string") {
+    for (const [, n, u] of d.matchAll(/([\d.]+)(h|ms|m|s)/g)) s += Number(n) * ({ h: 3600, m: 60, s: 1, ms: 0.001 }[u as "h"]);
+    s = Math.round(s);
+  }
+  if (s < 60) return `${s}s`;
+  const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, r = s % 60;
+  return [h && `${h}h`, m && `${m}m`, !h && r && `${r}s`].filter(Boolean).join(" ");
+}
+
+/** One centered empty/loading/error state: a title, one sentence, one primary action. */
+export function EmptyState({ title, children, action, role }: {
+  title: string;
+  children?: React.ReactNode;
+  action?: { label: string; onClick: () => void };
+  role?: "alert" | "status";
+}) {
+  return (
+    <div className="empty-state" role={role}>
+      <h2>{title}</h2>
+      {children && <p>{children}</p>}
+      {action && <button className="btn btn-primary" onClick={action.onClick}>{action.label}</button>}
+    </div>
+  );
 }
 
 export function Spinner({ size = 12 }: { size?: number }) {
@@ -29,8 +58,10 @@ export function Spinner({ size = 12 }: { size?: number }) {
  * gives up with a Retry. `err` set shows the error with the same Retry.
  * `lines` > 0 draws that many skeleton lines instead of the spinner row.
  */
-export function Pending({ what, err, onRetry, timeout = 20_000, hintAfter = 3_000, lines = 0, inline = false }: {
+export function Pending({ what, err, onRetry, action, timeout = 20_000, hintAfter = 3_000, lines = 0, inline = false }: {
   what: string;
+  /** Replaces Retry as the one action, e.g. "Back to wiki" for a page that is gone. */
+  action?: { label: string; onClick: () => void };
   err?: string | null;
   onRetry?: () => void;
   timeout?: number;
@@ -52,6 +83,14 @@ export function Pending({ what, err, onRetry, timeout = 20_000, hintAfter = 3_00
   const retry = onRetry && (() => { setStart(Date.now()); setNow(Date.now()); onRetry(); });
   const cls = "pending" + (inline ? " pending-inline" : "");
 
+  if ((err || timedOut) && !inline) {
+    return (
+      <EmptyState role="alert" title={timedOut ? `${what} is taking too long` : `${what} did not load`}
+        action={action ?? (retry && { label: "Retry", onClick: retry })}>
+        {timedOut ? "The server has not answered yet. Try again." : humanError(err)}
+      </EmptyState>
+    );
+  }
   if (err || timedOut) {
     return (
       <div className={cls + " pending-err"} role="alert">
@@ -63,11 +102,12 @@ export function Pending({ what, err, onRetry, timeout = 20_000, hintAfter = 3_00
     );
   }
   return (
-    <div className={cls} role="status" aria-live="polite" aria-busy="true">
+    <div className={lines > 0 ? "skeleton" : cls} role="status" aria-live="polite" aria-busy="true">
       {lines > 0 ? (
         <>
           <span className="visually-hidden">Loading {what.toLowerCase()}…</span>
-          {Array.from({ length: lines }, (_, i) => <span key={i} className="pending-line" style={{ width: `${92 - (i * 17) % 40}%` }} />)}
+          <i className="skeleton-h1" />
+          {Array.from({ length: lines - 1 }, (_, i) => <i key={i} style={{ width: `${92 - (i * 17) % 40}%` }} />)}
         </>
       ) : (
         <span className="pending-msg">

@@ -2,9 +2,25 @@ import { useEffect, useRef, useState } from "react";
 import type { OrbDetail, OrbFile, OrbStatus, Project, Status } from "./types";
 import { sessionTitle } from "./render";
 import { CopyButton, Pending } from "./loading";
-import { StatusMark } from "./status";
+import { STATUS, StatusMark } from "./status";
 
 const FILES: OrbFile[] = ["project.yml", "Dockerfile", "setup.sh", "resume.sh"];
+
+/** Server text with `backticked` commands, the commands set as code. */
+function Prose({ text }: { text: string }) {
+  return <>{text.split(/`([^`]+)`/).map((part, i) => (i % 2 ? <code key={i} className="mono">{part}</code> : part))}</>;
+}
+
+/** A state mark with its word, and the reason after it when there is one. */
+function Mark({ status, word, detail }: { status: Status; word: string; detail?: string }) {
+  return (
+    <span className="orb-mark" style={{ color: STATUS[status].tone }}>
+      <svg className="state-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
+           strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{STATUS[status].glyph}</svg>
+      {word}{detail && <span className="orb-why"> · <Prose text={detail} /></span>}
+    </span>
+  );
+}
 
 /** An orb's state in the session vocabulary, so its rows read like every other list. */
 const STATE: Record<OrbStatus, Status> = {
@@ -68,23 +84,25 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
   return (
     <div className="proj-orb">
       {about}
-      <p className="orb-line">
-        <span className="orb-label">Runtime</span>
-        <span className="mono">{detail.runtime.name || "unknown"}</span>{" "}
-        {detail.runtime.available
-          ? <span className="mode-running">available</span>
-          : <span className="mode-failed">unavailable{detail.runtime.error ? ` · ${detail.runtime.error}` : ""}</span>}
-      </p>
-      <p className="orb-line">
-        <span className="orb-label">Image</span>
-        <span className="mono">{detail.orb.image || "none"}</span>{" "}
-        {detail.orb.error
-          ? <span className="mode-failed">{detail.orb.error}</span>
-          : building ? <span className="mode-busy">building</span>
-          : detail.orb.built ? <span className="mode-running">built</span>
-          : detail.build.state === "failed" ? <span className="mode-failed">build failed{detail.build.error ? ` · ${detail.build.error}` : ""}</span>
-          : <span className="mode-stopped">not built</span>}
-      </p>
+      <dl className="orb-kv">
+        <dt>Runtime</dt>
+        <dd>
+          <span className="mono">{detail.runtime.name || "unknown"}</span>
+          {detail.runtime.available
+            ? <Mark status="done" word="Available" />
+            : <Mark status="error" word="Unavailable" detail={detail.runtime.error} />}
+        </dd>
+        <dt>Image</dt>
+        <dd>
+          <span className="mono">{detail.orb.image || "none"}</span>
+          {detail.orb.error
+            ? <Mark status="error" word="Failed" detail={detail.orb.error} />
+            : building ? <Mark status="running" word="Building" />
+            : detail.orb.built ? <Mark status="done" word="Built" />
+            : detail.build.state === "failed" ? <Mark status="error" word="Build failed" detail={detail.build.error} />
+            : <Mark status="idle" word="Not built" />}
+        </dd>
+      </dl>
 
       <div className="orb-tabs" role="tablist" aria-label="Definition files">
         {FILES.map((f) => (
@@ -99,9 +117,11 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
                 onChange={(e) => setDrafts((d) => ({ ...d, [tab]: e.target.value }))} />
       {saveErr && <p className="err" role="alert">{saveErr}</p>}
       <div className="orb-tabs">
-        <button className="btn btn-primary" disabled={!dirty || saving} onClick={() => { void save(); }}>{saving ? "Saving…" : "Save"}</button>
-        <button className="btn" disabled={building} onClick={onBuild}>{building ? "Building…" : "Build image"}</button>
-        <button className="btn btn-danger-quiet orb-detach" onClick={onDetach}>Detach orb</button>
+        <button className="btn btn-primary" disabled={building || !detail.runtime.available} onClick={onBuild}
+                title={detail.runtime.available ? undefined : "Start the container runtime first"}>{building ? "Building…" : "Build image"}</button>
+        <button className="btn" disabled={!dirty || saving} onClick={() => { void save(); }}>{saving ? "Saving…" : "Save"}</button>
+        {!detail.runtime.available && <span className="orb-hint">Start the container runtime first</span>}
+        <button className="btn btn-danger-quiet orb-detach" onClick={onDetach}>Detach orb…</button>
       </div>
 
       {(log || detail.build.state) && (
@@ -118,9 +138,9 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
       {detail.orbs.length === 0
         ? <p className="proj-none">No session has run in this orb yet.</p>
         : <div className="orb-sessions">
-          <div className="sel-cols orb-cols" aria-hidden="true"><span>Session</span><span className="orb-ctr">Container</span><span className="orb-st">Status</span></div>
+          <div className="sel-cols orb-cols" aria-hidden="true"><span>Session</span><span className="orb-ctr">Container</span><span className="orb-st">Status</span><span className="orb-act" /></div>
           {detail.orbs.map((o) => (
-          <div key={o.session} className="proj-row">
+          <div key={o.session} className="proj-row orb-row">
             <button className="proj-open" onClick={() => onOpen?.(o.session)}>
               <span className="proj-title">{sessionTitle({ id: o.session, title: titles[o.session] })}</span>
               {/* A fallback name is the same for every untitled session: the id tail tells them apart. */}
@@ -131,7 +151,8 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
               {o.container && <CopyButton text={o.container} label={o.container.slice(0, 12)} className="link proj-act mono" />}
             </span>
             <span className="orb-st" title={o.error}><StatusMark status={STATE[o.status]} /></span>
-            {o.status === "running" && <button className="btn" onClick={() => onStopOrb(o.session)}>Stop orb</button>}
+            {/* Every row keeps the action slot, so the columns line up whether or not it can stop. */}
+            <span className="orb-act">{o.status === "running" && <button className="btn btn-sm" onClick={() => onStopOrb(o.session)}>Stop orb</button>}</span>
           </div>
           ))}
         </div>}

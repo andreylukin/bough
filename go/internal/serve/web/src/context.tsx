@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Back } from "./app";
 import { Pending as Waiting } from "./loading";
 import {
-  OffToggle, RuleRow, hooksApi, offId, setOffApi, useOffs,
+  OffToggle, Row, RuleRow, hooksApi, offId, setOffApi, useOffs,
   type Load, type Rule, type Save, type SetOff,
 } from "./hooks";
 
@@ -34,6 +34,11 @@ export interface ContextData {
 }
 
 const base = (path: string) => path.split("/").pop() || path;
+/** "/w/bough/go/AGENTS.md" → "…/go/AGENTS.md": the end of a path is the part that tells files apart. */
+const shortPath = (path: string) => {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length > 2 ? `…/${parts.slice(-2).join("/")}` : path;
+};
 
 export const contextApi = {
   get: (session: string) =>
@@ -62,7 +67,7 @@ function FileRow({ f }: { f: ContextFile }) {
   return (
     <details className="proj-row hk-row ctx-file">
       <summary className="ctx-file-main">
-        <span className="mono hk-name">{base(f.path)}</span>
+        <span className="mono hk-name" title={f.path}>{shortPath(f.path)}</span>
         {f.dropped > 0
           ? (
             <span className="hk-when">
@@ -96,16 +101,14 @@ function SkillRow({ s, off, setOff, onOff }: {
   s: ContextSkill; off: boolean; setOff: SetOff; onOff: (off: boolean) => void;
 }) {
   return (
-    <div className={"proj-row hk-row" + (off ? " hk-is-off" : "")}>
-      <div className="hk-main">
-        <span className="mono hk-name">/{s.name}</span>
-        {off && <span className="hk-state hk-offword">Off</span>}
-        <span className="hk-tag">{s.source === "plugin" ? "Plugin" : "Pool"}</span>
-        <OffToggle id={offId("skill", s.id)} off={off} what={`the skill ${s.name}`}
-                   setOff={setOff} onChange={onOff} />
-      </div>
-      {s.summary && <p className="hk-when hk-summary">{s.summary}</p>}
-    </div>
+    <Row
+      name={`/${s.name}`}
+      off={off}
+      tags={[s.source === "plugin" ? "Plugin" : "Pool"]}
+      facts={s.summary}
+      actions={<OffToggle id={offId("skill", s.id)} off={off} what={`the skill ${s.name}`}
+                          setOff={setOff} onChange={onOff} />}
+    />
   );
 }
 

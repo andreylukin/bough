@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Back } from "./app";
-import { EmptySection, Pending } from "./context";
-import { CopyButton, Pending as Waiting } from "./loading";
+import { CopyButton, EmptyState, Pending as Waiting, duration, humanError } from "./loading";
 import { plainTitle, sessionTitle } from "./render";
+import { STATUS } from "./status";
 
 // Shared wire types for the Hooks page and per-turn inspection.
 export interface Hook {
@@ -188,15 +188,6 @@ function OffWord({ off }: { off: boolean }) {
   return off ? <span className="hk-state hk-offword">Off</span> : null;
 }
 
-/** An error a person can act on: a dropped connection is not "Failed to fetch". */
-function humanError(e: unknown): string {
-  const m = e instanceof Error ? e.message : String(e);
-  if (/failed to fetch|networkerror|load failed/i.test(m)) return "bough serve did not answer. Is it still running?";
-  if (/^404\b/.test(m)) return "The file no longer exists.";
-  if (/^403\b/.test(m)) return "bough serve refused to read this file.";
-  return m;
-}
-
 /** "1 command", "2 skills"; zero is left out by the caller. */
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -252,14 +243,13 @@ function Source({ path, event, load, save, dryrun, definition = false, inRun = f
   return (
     <div className={definition ? "hk-src hk-definition" : "hk-src"}>
       <div className="hk-source-head">
-        {definition && <span className="mono hk-path">{path}</span>}
+        <span className="mono hk-path" title={path}>{path}</span>
         <button className="hk-toggle" aria-expanded={open} aria-controls={id} onClick={expand}>
           {definition ? (open ? "Hide definition" : "Open definition") : (open ? "Hide file" : "Open file")}
         </button>
       </div>
       {definition && inRun && <p className="hk2-note">Current file; may differ from this run. Saving affects future runs.</p>}
       <div className="hk-panel" id={id} hidden={!open}>
-        {!definition && <p className="mono hk-path">{path}</p>}
         {err && body !== null && <p className="err" role="alert">{err}</p>}
         {body === null
           ? err
@@ -337,7 +327,7 @@ export function FireInspection({ fire, load = hooksApi.read, save = hooksApi.wri
  * secondary (the file, its globs, what a plugin contributes) lives
  * behind the row's own disclosure rather than on the page at all times.
  */
-function Row({ name, state, tags, facts, detail, actions, off, alert }: {
+export function Row({ name, state, tags, facts, detail, actions, off, alert }: {
   name: string;
   state?: { word: string; tone: "ok" | "bad" | "warn" };
   tags?: string[];
@@ -347,11 +337,12 @@ function Row({ name, state, tags, facts, detail, actions, off, alert }: {
   off: boolean;
   alert?: string;
 }) {
+  // Only a failure is red; healthy, shadowed and off are resting states.
+  const shown = state ?? (off ? { word: "Disabled", tone: "warn" as const } : undefined);
   return (
     <div className={"hk2-row" + (off ? " hk2-off" : "")}>
       <div className="hk2-line">
-        {state ? <span className={"hk2-state hk2-" + state.tone}>{state.word}</span>
-          : off && <span className="hk2-state hk2-muted">Disabled</span>}
+        {shown && <StateWord word={shown.word} failed={shown.tone === "bad"} />}
         <span className="mono hk2-name">{name}</span>
         {(tags ?? []).map((t) => <span key={t} className="hk2-tag">{t}</span>)}
         <span className="hk2-facts">{facts}</span>
@@ -371,7 +362,7 @@ function WatcherRow({ w, off, setOff, onOff, load, save }: {
       name={w.name}
       off={off}
       state={w.failing ? { word: "Failing", tone: "bad" } : { word: "Healthy", tone: "ok" }}
-      facts={<>every {w.every} · ran {when(w.lastRun, "never")} · woke a session {when(w.lastWoke, "never")}</>}
+      facts={<>every {duration(w.every)} · ran {when(w.lastRun, "never")} · {w.lastWoke ? `last woke a session ${clock(w.lastWoke)}` : "never woke a session"}</>}
       alert={w.failing ? w.error : ""}
       actions={<>
         <OffToggle id={offId("watcher", w.id)} off={off} what={`the watcher ${w.name}`}
@@ -492,17 +483,76 @@ function PluginRow({ p, off, setOff, onOff }: {
   );
 }
 
-function Decision({ fire }: { fire: Fire }) {
-  if (fire.error) return <span className="hk-state hk-bad">Errored — {fire.error}</span>;
-  // No decision is the hook letting the call through unchanged, not a skipped hook.
-  if (!fire.decision) return <span className="hk-when">Passed through · no decision</span>;
-  const loud = fire.decision === "denied" || fire.decision === "blocked";
+/** A glyph and a sentence-case word; red only when something failed. */
+function StateWord({ word, failed = false }: { word: string; failed?: boolean }) {
   return (
-    <span className={"hk-state " + (loud ? "hk-bad" : "hk-shadow")}>
-      {fire.decision[0].toUpperCase() + fire.decision.slice(1)}
+    <span className={"hk2-mark " + (failed ? "is-failed" : "is-done")}>
+      <svg className="state-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
+           strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{(failed ? STATUS.error : STATUS.idle).glyph}</svg>
+      {word}
     </span>
   );
 }
+
+/** One short word per outcome. "denied" and "blocked" are the same act, so both read Blocked. */
+export function outcomeWord(fire: Pick<Fire, "error" | "decision">): string {
+  if (fire.error) return "Errored";
+  // No decision is the hook letting the call through unchanged, not a skipped hook.
+  if (!fire.decision) return "Passed";
+  if (fire.decision === "denied" || fire.decision === "blocked") return "Blocked";
+  return fire.decision[0].toUpperCase() + fire.decision.slice(1);
+}
+
+function Decision({ fire }: { fire: Fire }) {
+  return <StateWord word={outcomeWord(fire)} failed={!!fire.error} />;
+}
+
+/**
+ * One recorded run (or a folded run of identical quiet ones). The chevron
+ * is the row's button; the session link sits above it, so it stays a link.
+ */
+function FireRow({ f, n, all, titles, load, save }: {
+  f: Fire; n: number; all: Fire[]; titles: Record<string, string>; load: Load; save: Save;
+}) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const title = f.session ? sessionTitle({ id: f.session, title: titles[f.session] }) : "";
+  return (
+    <div className={"hk-fire" + (open ? " hk-open" : "")}>
+      <div className="hk-main" title={new Date(f.at).toString()}>
+        <span className="num hk-when hk-time">{hms(f.at)}</span>
+        <span className="mono hk-name" title={f.name}>{f.name}</span>
+        {f.session
+          ? <a className="hk-sess link" href={`#/s/${f.session}`} title={f.session}>{title}</a>
+          : <span className="hk-sess" />}
+        <span className="mono hk-when hk-ev" title={f.event}>{f.event}</span>
+        <span className="num hk-when hk-took">{f.ms}ms</span>
+        <span className="hk-dec"><Decision fire={f} />{n > 1 && <span className="num hk-when"> ×{n}</span>}</span>
+        <button className="hk-chev" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
+          <span aria-hidden="true">›</span>
+          <span className="visually-hidden">{open ? "Hide" : "Show"} input and output of {f.name}, {outcomeWord(f)}</span>
+        </button>
+      </div>
+      {open && (
+        <div className="hk-fold-body" id={id}>
+          {f.error && <p className="hk2-alert">{f.error}</p>}
+          {/* A notice never reached the model; this is the only place it survives after the turn scrolls away. */}
+          {f.notice && <p className="hk-notice">{f.notice}</p>}
+          <ul className="hk-runs">
+            {all.map((x, j) => (
+              <li key={j}>
+                <p className="num hk-when">{stamp(x.at)} · {x.ms}ms</p>
+                <FireInspection fire={x} load={load} save={save} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type Filter = "all" | "failing" | "off" | "missing";
 
 /** One kind with nothing configured: where it goes, copyable, and how, behind a click. */
 function SetupItem({ title, path, children }: { title: string; path: string; children: React.ReactNode }) {
@@ -548,8 +598,16 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
   stale?: { at: number; err: string };
   onRetry?: () => void;
 }) {
-  const { hooks, watchers, fires, rules, plugins } = data;
+  const { hooks: allHooks, watchers: allWatchers, fires, rules: allRules, plugins: allPlugins } = data;
   const { isOff, mark } = useOffs();
+  const [filter, setFilter] = useState<Filter>("all");
+  // What each chip keeps: failing counts only what is on, off counts what is off, missing is an absent plugin.
+  const keep = (failing: boolean, off: boolean, missing = false) =>
+    filter === "all" || (filter === "failing" && failing && !off) || (filter === "off" && off && !missing) || (filter === "missing" && missing);
+  const watchers = allWatchers.filter((w) => keep(w.failing, isOff(offId("watcher", w.id), w.off)));
+  const hooks = allHooks.filter((h) => keep(h.failing && !h.shadowed, isOff(offId("hook", h.id), h.off)));
+  const rules = allRules.filter((r) => keep(false, isOff(offId("rule", r.id), r.off)));
+  const plugins = allPlugins.filter((p) => keep(false, isOff(offId("plugin", p.id), p.off), !p.present));
   const homeRules = rules.filter((r) => r.scope === "home");
   const repoRules = rules.filter((r) => r.scope === "repo");
   const byEvent = useMemo(() => {
@@ -561,25 +619,22 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
     return [...m.entries()];
   }, [hooks]);
 
-  const active = [
-    ...watchers.map((w) => !isOff(offId("watcher", w.id), w.off)),
-    ...hooks.map((h) => !h.shadowed && !isOff(offId("hook", h.id), h.off)),
-    ...rules.map((r) => !isOff(offId("rule", r.id), r.off)),
-    ...plugins.map((p) => p.present && !isOff(offId("plugin", p.id), p.off)),
-  ].filter(Boolean).length;
+  // Counts come from everything configured, never from the filtered lists.
+  const total = allWatchers.length + allHooks.length + allRules.length + allPlugins.length;
   // Only what is on: a failing hook that is off or shadowed runs nothing.
-  const broken = watchers.filter((w) => w.failing && !isOff(offId("watcher", w.id), w.off)).length
-    + hooks.filter((h) => h.failing && !h.shadowed && !isOff(offId("hook", h.id), h.off)).length;
+  const broken = allWatchers.filter((w) => w.failing && !isOff(offId("watcher", w.id), w.off)).length
+    + allHooks.filter((h) => h.failing && !h.shadowed && !isOff(offId("hook", h.id), h.off)).length;
   // The server's own `off` is the fallback, not `false`: a toggle made
   // in this tab wins, but anything already off stays counted.
   const offCount = [
-    ...watchers.map((w) => [offId("watcher", w.id), w.off] as const),
-    ...hooks.map((h) => [offId("hook", h.id), h.off] as const),
-    ...rules.map((r) => [offId("rule", r.id), r.off] as const),
+    ...allWatchers.map((w) => [offId("watcher", w.id), w.off] as const),
+    ...allHooks.map((h) => [offId("hook", h.id), h.off] as const),
+    ...allRules.map((r) => [offId("rule", r.id), r.off] as const),
     // A plugin that is not installed says so; it is not counted as disabled.
-    ...plugins.filter((p) => p.present).map((p) => [offId("plugin", p.id), p.off] as const),
+    ...allPlugins.filter((p) => p.present).map((p) => [offId("plugin", p.id), p.off] as const),
   ].filter(([id, wire]) => isOff(id, wire)).length;
-  const missing = plugins.filter((p) => !p.present).length;
+  const missing = allPlugins.filter((p) => !p.present).length;
+  const chips: [Filter, string, number][] = [["all", "All", total], ["failing", "Failing", broken], ["off", "Disabled", offCount], ["missing", "Not installed", missing]];
   const recent = useMemo(
     () => [...fires].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)),
     [fires],
@@ -619,37 +674,35 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
             sections the counts are the only thing most visits need. */}
         {/* Configured now and recorded history are different questions: a
             built-in handler records events with nothing configured at all. */}
-        <div className="hk2-sum">
-          {/* Each group wraps as a unit, so a value never lands on a line apart from its label. */}
-          <span className="hk2-sum-set">
-          <span className="hk2-sum-group">Configured now</span>
-          <span><span className="hk2-sum-n">{active}</span>{" "}
-            <span className="hk2-sum-lab">active</span></span>
-          <span><span className={"hk2-sum-n" + (broken ? " hk2-bad" : "")}>{broken}</span>{" "}
-            <span className="hk2-sum-lab">failing</span></span>
-          <span><span className="hk2-sum-n">{offCount}</span>{" "}
-            <span className="hk2-sum-lab">disabled</span></span>
-          {missing > 0 && <span><span className="hk2-sum-n">{missing}</span>{" "}
-            <span className="hk2-sum-lab">not installed</span></span>}
-          </span>
-          <span className="hk2-sum-set">
-          <span className="hk2-sum-group">Recorded history</span>
-          <span><span className="hk2-sum-n">{recent.length}</span>{" "}
-            <span className="hk2-sum-lab">{recent.length === 1 ? "recorded run" : "recorded runs"}</span></span>
-          <span><span className="hk2-sum-n">{builtin}</span>{" "}
-            <span className="hk2-sum-lab">from built-in handlers</span></span>
-          </span>
-        </div>
-        {recent.length === 0
-          ? <EmptySection title="Recent decisions">Nothing recorded yet. Every time a hook runs — passing a call through, blocking, rewriting, throwing or leaving a note — it lands here.</EmptySection>
+        {/* Filters, not a sentence: each chip wraps whole and narrows the lists below. */}
+        {total > 0 && (
+          <div className="hk-chips" role="group" aria-label="Show">
+            {chips.map(([key, label, n]) => (
+              <button key={key} className="hk-chip" aria-pressed={filter === key} onClick={() => setFilter(key)}>
+                {label} <span className={"count" + (key === "failing" && n > 0 ? " is-failed" : "")}>{n}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {filter !== "all" && watchers.length + hooks.length + rules.length + plugins.length === 0 && (
+          <EmptyState title="Nothing matches" action={{ label: "Show all", onClick: () => setFilter("all") }}>
+            No watcher, hook, rule or plugin is {chips.find(([k]) => k === filter)![1].toLowerCase()} right now.
+          </EmptyState>
+        )}
+        {filter === "all" && (recent.length === 0
+          ? (
+            <section className="proj hk-decisions">
+              <EmptyState title="No recorded runs yet">Every time a hook runs — passing a call through, blocking, rewriting, throwing or leaving a note — it lands here.</EmptyState>
+            </section>
+          )
           : (
         <section className="proj hk-decisions">
           <div className="proj-head">
             <h2>Recent decisions</h2>
-            <span className="num proj-count">last {recent.length} recorded {recent.length === 1 ? "run" : "runs"} · newest first</span>
+            <span className="num proj-count">last {recent.length} {recent.length === 1 ? "run" : "runs"}{builtin > 0 && ` · ${builtin} from built-in handlers`} · newest first</span>
           </div>
           <div className="hk-main hk-cols" aria-hidden="true">
-            <span>Time</span><span>Hook</span><span>Session</span><span className="hk-ev">Event</span><span className="hk-took">Took</span><span>Outcome</span><span />
+            <span>Time</span><span>Hook</span><span>Session</span><span className="hk-ev">Event</span><span className="hk-took">Took</span><span className="hk-dec">Outcome</span><span />
           </div>
           {/* One wrapper per day, so the day heading stays stuck while its rows scroll. */}
           {runs.reduce<(typeof runs)[]>((days, r, i) => {
@@ -660,49 +713,12 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
             <div key={group[0].key} className="hk-dayrun">
             <h3 className="hk-day">{day(group[0].f.at)}</h3>
           {group.map(({ f, n, key, all }) => (
-              <div key={key} className="hk-fire">
-                {/* The row opens: a folded run lists every fire in it, and on a
-                    phone the event and timing live here instead of the row. */}
-                <details className={"hk-fold" + (n > 1 ? " hk-group" : "")}>
-                <summary className="hk-main" title={new Date(f.at).toString()}>
-                  <span className="num hk-when hk-time">{hms(f.at)}</span>
-                  <span className="mono hk-name" title={f.name}>{f.name}</span>
-                  {/* Plain text: a link here would navigate instead of opening the row. */}
-                  {f.session
-                    ? <span className="hk-when hk-sess" title={titles[f.session] || f.session}>{titles[f.session] || f.session.slice(0, 8)}</span>
-                    : <span />}
-                  <span className="mono hk-when hk-ev" title={f.event}>{f.event}</span>
-                  <span className="num hk-when hk-took">{f.ms}ms</span>
-                  <span className="hk-dec" title={f.error ? `Errored — ${f.error}` : f.decision || "Passed through · no decision"}><Decision fire={f} />{n > 1 && <span className="num hk-when"> ×{n}</span>}</span>
-                  <span className="hk-chev" aria-hidden="true">›</span>
-                </summary>
-                <div className="hk-fold-body">
-                  {/* On a phone the row keeps time, session and decision; the rest is here. */}
-                  <p className="hk-when hk-tech">
-                    <span className="mono">{f.name}</span> · <span className="mono">{f.event}</span>
-                  </p>
-                  {f.session && <p className="hk-when"><a className="link" href={`#/s/${f.session}`}>Open {sessionTitle({ id: f.session, title: titles[f.session] })}</a></p>}
-                  <ul className="hk-runs">
-                    {all.map((x, j) => (
-                      <li key={j}>
-                        <p className="num hk-when">{stamp(x.at)} · {x.ms}ms</p>
-                        <FireInspection fire={x} load={load} save={save} />
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                </details>
-                {f.notice && (
-                  /* A notice never reached the model; this is the only
-                     place it survives after the turn scrolls away. */
-                  <p className="hk-notice">{f.notice}</p>
-                )}
-              </div>
+              <FireRow key={key} f={f} n={n} all={all} titles={titles} load={load} save={save} />
             ))}
             </div>
           ))}
         </section>
-          )}
+          ))}
         {watchers.length > 0 && (
         <section className="proj">
           <div className="proj-head">
@@ -790,16 +806,16 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
         )}
 
         {/* What is not configured comes after what is, one section per kind. */}
-        {watchers.length === 0 && <SetupItem title="Watchers" path="~/.bough/watchers">A <code className="mono">.js</code> file
+        {filter === "all" && allWatchers.length === 0 && <SetupItem title="Watchers" path="~/.bough/watchers">A <code className="mono">.js</code> file
                bough runs on an interval that can wake a session. Drop one in — say
                <code className="mono"> ci.js</code> — and it shows up here on the next tick.</SetupItem>}
-        {byEvent.length === 0 && <SetupItem title="Hooks" path="~/.bough/hooks">A <code className="mono">.js</code> file here
+        {filter === "all" && allHooks.length === 0 && <SetupItem title="Hooks" path="~/.bough/hooks">A <code className="mono">.js</code> file here
                (yours everywhere) or in <code className="mono">.bough/hooks</code> in a repo (that repo only). The file name is the
                hook name; the event it listens for comes from the file itself.</SetupItem>}
-        {rules.length === 0 && <SetupItem title="Rules" path="~/.claude/rules">A <code className="mono">.md</code> file here
+        {filter === "all" && allRules.length === 0 && <SetupItem title="Rules" path="~/.claude/rules">A <code className="mono">.md</code> file here
                (every repo) or in <code className="mono">.claude/rules</code> in a repo (that repo only). It appears here, and in the
                Context panel of every session it applies to.</SetupItem>}
-        {plugins.length === 0 && <SetupItem title="Plugins" path="~/.claude/settings.json">Add a marketplace to this file and install
+        {filter === "all" && allPlugins.length === 0 && <SetupItem title="Plugins" path="~/.claude/settings.json">Add a marketplace to this file and install
                a plugin; the skills and slash commands it brings are listed here.</SetupItem>}
 
       </div>
@@ -826,6 +842,16 @@ export function HooksPage({ onBack, rows = [] }: { onBack?: () => void; rows?: {
 
   useEffect(() => { refresh(); const t = setInterval(() => { if (!document.hidden) refresh(); }, POLL_MS); return () => clearInterval(t); }, [refresh]);
 
-  if (!data) return <Pending title="Hooks" what="hooks" err={err} onBack={onBack} onRetry={refresh} />;
+  if (!data) {
+    return (
+      <div className="thread">
+        <header className="thread-head page-head">
+          <Back onBack={onBack} />
+          <div className="head-main"><h1>Hooks</h1></div>
+        </header>
+        <div className="scroll proj-body"><Waiting what="Hooks" err={err} onRetry={refresh} lines={6} /></div>
+      </div>
+    );
+  }
   return <HooksView data={data} onBack={onBack} titles={titles} stale={err ? { at, err } : undefined} onRetry={refresh} />;
 }

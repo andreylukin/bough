@@ -62,7 +62,8 @@ test("the project page shows the editor, the build failure and the log", () => {
   );
   expect(html).toContain('aria-label="project.yml"');
   expect(html).toContain("repos: []");
-  expect(html).toContain("build failed · clone failed");
+  expect(html).toContain("Build failed");
+  expect(html).toContain(" · clone failed");
   expect(html).toContain("step 1");
   expect(html).toContain("abcdef");
   expect(html).not.toContain("Stop orb");

@@ -95,8 +95,9 @@ interface SearchHit { id: string; title: string; repo: string; branch: string; h
  */
 type SearchState = "idle" | "loading" | "done" | "error";
 
-function useFullText(q: string, open: boolean): { hits: SearchHit[]; state: SearchState } {
+function useFullText(q: string, open: boolean): { hits: SearchHit[]; state: SearchState; retry: () => void } {
   const [hits, setHits] = useState<SearchHit[]>([]);
+  const [tries, setTries] = useState(0);
   const [state, setState] = useState<SearchState>("idle");
   // Hits belong to the query that asked for them; an older query's
   // answer never sits under a newer one while it is still loading.
@@ -115,10 +116,10 @@ function useFullText(q: string, open: boolean): { hits: SearchHit[]; state: Sear
         .catch(() => { if (!ctl.signal.aborted) { setHits([]); setForQ(needle); setState("error"); } });
     }, 180);
     return () => { ctl.abort(); clearTimeout(t); };
-  }, [q, open]);
+  }, [q, open, tries]);
   const current = forQ === q.trim();
   // An answer for an older query is still loading for this one.
-  return { hits: current ? hits : [], state: state === "loading" || current || state === "idle" ? state : "loading" };
+  return { hits: current ? hits : [], state: state === "loading" || current || state === "idle" ? state : "loading", retry: () => setTries((n) => n + 1) };
 }
 
 export function Palette({ open, onClose, rows, commands, onOpenSession, onStart, onOpenWikiPage, initialQuery = "", current = null, startIn }: {
@@ -165,7 +166,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     field.current?.focus();
   }, [open, initialQuery]);
 
-  const { hits: found, state: searching } = useFullText(q, open);
+  const { hits: found, state: searching, retry } = useFullText(q, open);
   const pages = useWikiHits(q, open, Boolean(onOpenWikiPage));
 
   const hits = useMemo(() => {
@@ -317,7 +318,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
             if (head) groupId = "palg-" + c.id;
             return (
               <div key={c.id} role="presentation">
-                {head && <p className="pal-group" role="presentation" id={groupId}>{head}</p>}
+                {head && <p className="pal-group eyebrow" role="presentation" id={groupId}>{head}</p>}
                 <button id={"pal-" + c.id} role="option" aria-selected={i === at} tabIndex={-1} aria-describedby={groupId}
                         data-at={i === at ? 1 : 0}
                         className={"pal-item" + (i === at ? " pal-on" : "")}
@@ -343,7 +344,8 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
           {searching === "loading" && <span>Searching text…</span>}
           {searching === "done" && found.length === 0 && <span>No text matches</span>}
           {searching === "error" && <span className="pal-foot-bad">Text search failed · titles only</span>}
-          <span className="pal-foot-keys">↑↓ move · ↵ open · esc close</span>
+          {searching === "error" && <button className="link" onClick={retry}>Retry</button>}
+          <span className="pal-foot-keys"><span><kbd>↑↓</kbd> move</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></span>
         </div>
       </div>
     </div>

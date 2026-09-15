@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { STATUS, StatusMark } from "../status";
+import { STATUS, StatusMark, TESTS_FAILED_GLYPH } from "../status";
 import type { Status } from "../types";
 
 const meta: Meta<typeof StatusMark> = {
@@ -12,7 +12,21 @@ type S = StoryObj<typeof StatusMark>;
 
 export const One: S = { args: { status: "needs-you", size: 13 } };
 
-/** Every state at once. Only amber and red carry a hue; resting states are neutral. */
+/** Failed (x-circle) beside tests failed (triangle): the glyph alone separates them. */
+export const FailedVsTestsFailed: S = {
+  render: () => (
+    <div style={{ display: "flex", gap: 24 }}>
+      <StatusMark status="error" />
+      <span className="status is-failed" style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+        <svg className="state-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
+             strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{TESTS_FAILED_GLYPH}</svg>
+        <span style={{ fontSize: 12 }}>Tests failed</span>
+      </span>
+    </div>
+  ),
+};
+
+/** Every state at once. Amber waits, red failed, accent runs; resting states are neutral. */
 export const All: S = {
   render: () => (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "14px 32px", maxWidth: 520 }}>

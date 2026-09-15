@@ -70,14 +70,14 @@ const rules: Rule[] = [
 ];
 
 const plugins: Plugin[] = [
-  { id: "uni-common@uni-claude-marketplace", name: "uni-common", marketplace: "uni-claude-marketplace",
-    version: "0.6.0", scope: "user", projectPath: "", installPath: "/Users/a/.claude/plugins/uni-common",
+  { id: "team-common@demo-marketplace", name: "team-common", marketplace: "demo-marketplace",
+    version: "0.6.0", scope: "user", projectPath: "", installPath: "/Users/a/.claude/plugins/team-common",
     present: true, skills: ["circleci", "grill-me"], commands: ["new-component"], off: false },
-  { id: "worktrunk@andrey-tools", name: "worktrunk", marketplace: "andrey-tools", version: "1.2.1",
+  { id: "worktrunk@local-tools", name: "worktrunk", marketplace: "local-tools", version: "1.2.1",
     scope: "project", projectPath: "/w/bough", installPath: "/w/bough/.claude/plugins/worktrunk",
     present: true, skills: ["worktrunk"], commands: [], off: false },
-  { id: "user-testing-agent@uni-claude-marketplace", name: "user-testing-agent",
-    marketplace: "uni-claude-marketplace", version: "0.3.0", scope: "user", projectPath: "",
+  { id: "user-testing-agent@demo-marketplace", name: "user-testing-agent",
+    marketplace: "demo-marketplace", version: "0.3.0", scope: "user", projectPath: "",
     installPath: "/Users/a/.claude/plugins/user-testing-agent", present: false,
     skills: ["user-test"], commands: [], off: false },
 ];

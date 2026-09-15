@@ -55,7 +55,8 @@ export const turn: Line[] = [
   { seq: 8, at: hoursAgo(1), kind: "error", text: "todo: clock must not be nil" },
   { seq: 9, at: hoursAgo(1), kind: "sub:assistant", text: "Checked the other three watchers; none sleep." },
   { seq: 10, at: hoursAgo(1), kind: "usage", text: "usage · 12.4k in, 1.1k out" },
-  { seq: 11, at: hoursAgo(1), kind: "done", text: "", data: { files: ["plugins/todo/todo_test.go"] } },
+  { seq: 11, at: hoursAgo(1), kind: "done", text: "",
+    data: { files: ["plugins/todo/todo_test.go"], usage: { in: 12400, out: 1100, cost: 0.05, last_in: 12400 } } },
 ];
 
 /**

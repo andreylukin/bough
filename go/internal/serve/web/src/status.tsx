@@ -38,11 +38,18 @@ export function hasQuestion(r: Row): boolean {
  * pairs a distinct glyph with a word, so it survives a colourblind
  * reader, a greyscale screenshot and a print.
  *
- * Only two states get a hue. Amber means exactly "waiting for you" and
- * red means exactly "failed" — the accent green is reserved for
- * interactive things, so a green "done" would have made the accent
- * ambiguous. Resting states are neutral and need no colour at all.
+ * Amber means exactly "waiting for you", red means exactly "failed", and
+ * the accent marks the one live state, running. Done and every resting
+ * state are neutral. Glyphs draw in currentColor at a 1.5 stroke.
  */
+export const TESTS_FAILED_GLYPH = (
+  <>
+    <path d="M12 4.5L21 19H3z" />
+    <path d="M12 10v4" />
+    <path d="M12 16.5h.01" />
+  </>
+);
+
 export const STATUS: Record<Status, { label: string; tone: string; glyph: React.ReactNode }> = {
   "needs-you": {
     label: "Waiting for you",
@@ -56,7 +63,7 @@ export const STATUS: Record<Status, { label: string; tone: string; glyph: React.
   },
   running: {
     label: "Running",
-    tone: "var(--text-2)",
+    tone: "var(--accent)",
     glyph: <circle cx="12" cy="12" r="8.5" strokeDasharray="40 14" />,
   },
   done: {
@@ -72,11 +79,11 @@ export const STATUS: Record<Status, { label: string; tone: string; glyph: React.
   error: {
     label: "Failed",
     tone: "var(--red)",
+    // x-circle; tests failed wears the triangle (TESTS_FAILED_GLYPH) so the icon column alone tells them apart.
     glyph: (
       <>
-        <path d="M12 4.5L21 19H3z" />
-        <path d="M12 10v4" />
-        <path d="M12 16.5h.01" />
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="M9 9l6 6M15 9l-6 6" />
       </>
     ),
   },
@@ -155,7 +162,7 @@ export function StatusMark({ status, size = 13, bare }: { status: Status; size?:
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.7"
+        strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
         aria-hidden="true"

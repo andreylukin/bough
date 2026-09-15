@@ -30,7 +30,12 @@ export const Healthy: S = {
   },
 };
 
+/** Scheduler on, no pages yet: waiting count, next tick, and Ingest now. */
+export const Indexing: S = {
+  args: { data: { ...wikiIndex, exists: false, topics: [] }, onIngest: () => {} },
+};
+
 /** Before `bough wiki install`: what the view is and how to start it. */
 export const NoWiki: S = {
-  args: { data: { ...wikiIndex, exists: false, topics: [] } },
+  args: { data: { ...wikiIndex, exists: false, topics: [], health: { ...wikiIndex.health, installed: false, ingesting: false } } },
 };

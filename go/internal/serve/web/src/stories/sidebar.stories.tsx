@@ -41,5 +41,15 @@ export const BackgroundAgentCounts: S = {
     ],
   },
 };
+/** Waiting and failed sessions pin to Needs you on top, and still list in their groups. */
+export const NeedsYou: S = {
+  args: {
+    rows: [
+      { ...rows[0], id: "n1", title: "Pick a migration order", status: "needs-you" },
+      { ...rows[0], id: "n2", title: "Fix the flaky login test", status: "error", live: false },
+      ...rows,
+    ],
+  },
+};
 export const NothingYet: S = { args: { rows: [], selected: null } };
 export const WithArchived: S = { args: { rows, showArchived: true } };

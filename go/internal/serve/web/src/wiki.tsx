@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Back } from "./app";
-import { CopyButton, Pending, useCopied } from "./loading";
+import { duration, EmptyState, Pending, useCopied } from "./loading";
 import { Markdown } from "./render";
 
 // The wiki wire types live here, like the hooks ones: this view is
@@ -298,12 +298,14 @@ function resolveLink(from: string, href: string): string {
   return parts.join("/");
 }
 
-function Crumbs({ onIndex, trail, title }: { onIndex?: () => void; trail?: string[]; title: string }) {
+function Crumbs({ onIndex, trail, title, slug }: { onIndex?: () => void; trail?: string[]; title: string; slug?: string }) {
   return (
-    <div className="head-main wk-crumb">
+    <div className={"head-main wk-crumb" + (slug ? " wk-crumb-slugged" : "")}>
       {onIndex && <><button className="wk-crumb-link" onClick={onIndex}>Wiki</button><span className="wk-sep" aria-hidden="true">/</span></>}
-      {(trail ?? []).map((t) => <span key={t} className="wk-crumb-link wk-crumb-static">{t}<span className="wk-sep" aria-hidden="true">/</span></span>)}
+      {(trail ?? []).map((t) => <span key={t} className="wk-crumb-link wk-crumb-static wk-crumb-trail">{t}<span className="wk-sep" aria-hidden="true">/</span></span>)}
       <h1>{title}</h1>
+      {/* Phones read "Wiki / <slug>": the title is the in-body H1. */}
+      {slug && <span className="wk-crumb-slug mono" aria-hidden="true">{slug}</span>}
     </div>
   );
 }
@@ -326,11 +328,25 @@ function CopyCommand({ text }: { text: string }) {
 
 // ——— Index ———————————————————————————————————————————————————————
 
-export function WikiIndexView({ data, onOpen, onReview, onActivity, check, onBack }: {
+/** Copies the full wiki path; an icon that shows on hover or focus of the path. */
+function CopyPath({ text }: { text: string }) {
+  const [done, copy] = useCopied();
+  return (
+    <button className="wk-x wk-copy" onClick={() => copy(text)} aria-label={done ? "Copied" : "Copy full path"} title={done ? "Copied" : "Copy full path"}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        {done ? <path d="M5 12l5 5 9-10" /> : <><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a1 1 0 0 1 1-1h9" /></>}
+      </svg>
+    </button>
+  );
+}
+
+export function WikiIndexView({ data, onOpen, onReview, onActivity, onIngest, check, onBack }: {
   data: WikiIndexData;
   onOpen: (path: string) => void;
   onReview: () => void;
   onActivity: () => void;
+  /** Starts an ingest from the "Indexing" state. */
+  onIngest?: () => void;
   check?: () => Promise<WikiProblem[]>;
   onBack?: () => void;
 }) {
@@ -354,7 +370,7 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, check, onBac
         <div className="head-main">
           <h1>Wiki</h1>
           <span className="mono wk-dir" title={data.dir}>{elide(data.dir)}</span>
-          <CopyButton text={data.dir} label="Copy full path" />
+          <CopyPath text={data.dir} />
         </div>
         {data.exists && (
           <div className="hk-acts">
@@ -365,7 +381,7 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, check, onBac
                 {checking ? " Checking…" : "Check citations"}
               </button>
             )}
-            <button className="btn" onClick={onActivity}>Activity</button>
+            <button className="btn btn-ghost" onClick={onActivity}>Activity</button>
           </div>
         )}
       </header>
@@ -373,14 +389,13 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, check, onBac
       <div className="scroll proj-body">
         {!data.exists ? (
           h.installed || h.ingesting ? (
-            <div className="proj-empty">
-              <p className="proj-empty-title">Indexing</p>
-              <p>The scheduler is on{h.every ? ` (every ${h.every})` : ""} and {plural(h.pending, "session")} {h.pending === 1 ? "is" : "are"} waiting.
-                 Pages appear here as the first ingest writes them.</p>
-            </div>
+            <EmptyState title="Indexing" role="status" action={onIngest && { label: "Ingest now", onClick: onIngest }}>
+              {plural(h.pending, "session")} {h.pending === 1 ? "is" : "are"} waiting
+              {h.every ? `; the next tick is within ${duration(h.every)}` : ""}. Pages appear here as the first ingest writes them.
+            </EmptyState>
           ) : (
-            <div className="proj-empty">
-              <p className="proj-empty-title">Not enabled</p>
+            <div className="empty-state">
+              <h2>Not enabled</h2>
               <p>The wiki is markdown compiled from your session history, one cited claim at a time. Enabling it
                  installs a background scheduler that ingests finished sessions every five minutes. Run this in a terminal:</p>
               <CopyCommand text="bough wiki install" />
@@ -388,32 +403,19 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, check, onBac
           )
         ) : (
           <>
-            {/* Health: three components, each one word and its facts. */}
-            <div className="wk-health">
-              <span className="wk-hpart">
-                <span className={"hk2-state " + (h.installed ? "hk2-ok" : "hk2-warn")}>
-                  {h.installed ? "Scheduler" : "Not scheduled"}
-                </span>
-                <span className="wk-facts">
-                  {h.installed ? `every ${h.every || "tick"}` : <>ingests run only by hand · <code className="mono">bough wiki install</code></>}
-                </span>
-              </span>
-              <span className="wk-hpart">
-                <span className="hk2-state hk2-ok">{h.ingesting ? "Ingesting" : "Ingest"}</span>
-                <span className="wk-facts">
-                  {plural(h.pending, "session")} waiting · last ingest {since(h.lastIngest)}
-                </span>
-              </span>
-              <span className="wk-hpart">
-                <span className={"hk2-state " + (h.unsupported ? "hk2-bad" : flagged ? "hk2-warn" : "hk2-ok")}>Citations</span>
-                <span className="wk-facts">
-                  {flagged === 0 ? "every claim cited"
-                    : [h.unsupported && `${h.unsupported} unsupported`, h.superseded && `${h.superseded} superseded`,
-                       h.uncited && `${h.uncited} uncited`].filter(Boolean).join(" · ")}
-                </span>
-                {flagged > 0 && <button className="wk-link" onClick={onReview}>Review {plural(flagged, "claim")}</button>}
-              </span>
-            </div>
+            {/* Health as one sentence; only flagged claims are red. */}
+            <p className="wk-health">
+              <span className={"wk-dot" + (h.installed ? "" : " is-waiting")} aria-hidden="true">●</span>
+              {h.installed ? `Scheduler every ${h.every ? duration(h.every) : "tick"}`
+                : <>Not scheduled · <code className="mono">bough wiki install</code></>}
+              {" · "}{h.ingesting ? "ingesting now" : `last ingest ${since(h.lastIngest)}`}
+              {h.pending > 0 && <> · {plural(h.pending, "session")} waiting</>}
+              {data.thin > 0 && <> · {check ? <button className="wk-link" onClick={runCheck}>{plural(data.thin, "page")} {data.thin === 1 ? "rests" : "rest"} on one citation</button>
+                : <>{plural(data.thin, "page")} {data.thin === 1 ? "rests" : "rest"} on one citation</>}</>}
+              {data.orphans > 0 && <> · {check ? <button className="wk-link" onClick={runCheck}>{plural(data.orphans, "page")} with no inbound links</button>
+                : <>{plural(data.orphans, "page")} with no inbound links</>}</>}
+              {flagged > 0 && <> · <button className="wk-link wk-link-bad" onClick={onReview}>Review {plural(flagged, "flagged claim")}</button></>}
+            </p>
 
             {(problems || err) && (
               <div role="status" className="wk-check">
@@ -429,11 +431,9 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, check, onBac
             )}
 
             {pages === 0 ? (
-              <div className="proj-empty">
-                <p className="proj-empty-title">{h.ingesting ? "Indexing" : "No pages yet"}</p>
-                <p>An ingest reads each finished session and writes a page only when there is something a
-                   later session would want. Most sessions are not that. Activity shows every run.</p>
-              </div>
+              <EmptyState title={h.ingesting ? "Indexing" : "No pages yet"} action={{ label: "Open activity", onClick: onActivity }}>
+                An ingest writes a page only when a session holds something a later session would want; most do not.
+              </EmptyState>
             ) : data.topics.map((t) => (
               <section key={t.name || "untitled"} className="proj">
                 <div className="proj-head">
@@ -451,20 +451,12 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, check, onBac
                       </span>
                       {p.summary && <span className="wk-sum">{p.summary}</span>}
                     </span>
-                    <span className="wk-counts">{countsLine(p.counts)}</span>
-                    <span className="wk-date">{stamp(p.updated)}</span>
+                    <span className="wk-counts num">{countsLine(p.counts)}</span>
+                    <span className="wk-date num">{stamp(p.updated)}</span>
                   </a>
                 ))}
               </section>
             ))}
-
-            {/* What a graph view would have been drawn for, as a sentence. */}
-            {pages > 0 && (
-              <p className="wk-foot">
-                {plural(data.thin, "page")} {data.thin === 1 ? "rests" : "rest"} on a single citation ·{" "}
-                {plural(data.orphans, "page")} with no inbound links · {plural(h.pending, "session")} not yet ingested.
-              </p>
-            )}
           </>
         )}
       </div>
@@ -474,8 +466,10 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, check, onBac
 
 // ——— Page ————————————————————————————————————————————————————————
 
-function Cites({ block, cite, onCite }: {
+function Cites({ block, cite, onCite, onHot }: {
   block: WikiBlock; cite?: { session: string; seq: number } | null; onCite: (c: WikiCite) => void;
+  /** Hovering or focusing a chip highlights its margin note. */
+  onHot?: (on: boolean) => void;
 }) {
   return (
     <>
@@ -487,12 +481,14 @@ function Cites({ block, cite, onCite }: {
                   title={`${citeWho(c)} — ${c.problem || `${c.label}: ${plainText(c.excerpt)}`}`}
                   aria-label={`Citation: ${citeWho(c)}`}
                   aria-pressed={on ? true : false}
-                  onClick={() => onCite(c)}>
+                  onMouseEnter={() => onHot?.(true)} onMouseLeave={() => onHot?.(false)}
+                  onFocus={() => onHot?.(true)} onBlur={() => onHot?.(false)}
+                  onClick={() => { onHot?.(true); onCite(c); }}>
             {citeName(c)}
           </button>
         );
       })}
-      {block.state === "uncited" && <span className="wk-need">citation needed</span>}
+      {block.state === "uncited" && <span className="wk-need">[citation needed]</span>}
     </>
   );
 }
@@ -505,10 +501,10 @@ const plainText = (s: string) => cleanExcerpt(s)
   .replace(/^(\s*)[-*]\s+/gm, "$1• ");
 
 /** The margin note: the first citation's entry, or why it is broken. */
-function Note({ block }: { block: WikiBlock }) {
+function Note({ block, hot = false }: { block: WikiBlock; hot?: boolean }) {
   const c = block.cites.find((x) => x.problem) ?? block.cites[0];
   if (!c) return <div />;
-  return <NoteBody c={c} more={block.cites.length - 1} claim={block.text} />;
+  return <NoteBody c={c} more={block.cites.length - 1} claim={block.text} hot={hot} />;
 }
 
 /** A claim's first few words, to say which claim a margin note backs. */
@@ -518,11 +514,15 @@ const firstWords = (s: string) => {
 };
 
 /** Clamped to a few lines, so a long excerpt never pushes the paragraph below it down. */
-function NoteBody({ c, more, claim }: { c: WikiCite; more: number; claim: string }) {
+function NoteBody({ c, more, claim, hot }: { c: WikiCite; more: number; claim: string; hot: boolean }) {
   const [open, setOpen] = useState(false);
   // An excerpt stored as a one-element list ("[…]") shows without its brackets.
   const text = c.problem || plainText(c.excerpt).replace(/^\[\s*"?([\s\S]*?)"?\s*\]$/, "$1");
-  const long = text.split("\n").length > 3 || text.length > 160;
+  const long = text.split("\n").length > 2 || text.length > 100;
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (hot) box.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }, [hot]);
   const about = firstWords(claim);
   const btn = useRef<HTMLButtonElement>(null);
   const top = useRef<number | null>(null);
@@ -535,12 +535,13 @@ function NoteBody({ c, more, claim }: { c: WikiCite; more: number; claim: string
     if (scroller) scroller.scrollTop += el.getBoundingClientRect().top - was;
   }, [open]);
   return (
-    <div className={"wk-note" + (c.problem ? " wk-note-bad" : "")}>
+    <div ref={box} className={"wk-note" + (c.problem ? " wk-note-bad" : "") + (hot ? " wk-note-on" : "")}>
       <span className="wk-note-src">
         {about && <span className="wk-note-about">supports: {about}</span>}
         {c.problem ? `entry ${c.seq}` : `${c.label} · entry ${c.seq}`}{more > 0 ? ` · +${more} more` : ""}
       </span>
-      <span className={"wk-note-text" + (long && !open ? " wk-note-clamp" : "")}>{text}</span>
+      <span className={"wk-note-text" + (long && !open ? " wk-note-clamp" : "")}
+            onClick={long ? () => { top.current = btn.current?.getBoundingClientRect().top ?? null; setOpen(!open); } : undefined}>{text}</span>
       {long && <button ref={btn} className="wk-link wk-note-more" aria-expanded={open}
                        aria-label={`${open ? "Show less" : "Show more"} of the evidence for “${about}”`}
                        onClick={() => { top.current = btn.current?.getBoundingClientRect().top ?? null; setOpen(!open); }}>{open ? "Less" : "More"}</button>}
@@ -548,31 +549,43 @@ function NoteBody({ c, more, claim }: { c: WikiCite; more: number; claim: string
   );
 }
 
+/** One callout for inferred and superseded claims: the same indent, an eyebrow label. */
+function Callout({ label, tone, children }: { label: string; tone?: "amber"; children: React.ReactNode }) {
+  return (
+    <div className={"wk-callout" + (tone ? ` wk-callout-${tone}` : "")}>
+      <span className="eyebrow">{label}</span>
+      {children}
+    </div>
+  );
+}
+
 function Claim({ block, cite, onCite }: {
   block: WikiBlock; cite?: { session: string; seq: number } | null; onCite: (c: WikiCite) => void;
 }) {
-  const cls = "wk-text" + (block.bullet ? " wk-bullet" : "") + (block.state === "inferred" ? " wk-inferred" : "")
-    + (block.state === "superseded" ? " wk-struck" : "");
+  const [hot, setHot] = useState(false);
+  const cls = "wk-text" + (block.bullet ? " wk-bullet" : "") + (block.state === "superseded" ? " wk-struck" : "");
+  const text = (
+    <div className={cls}>
+      <Markdown text={literalUnderscores(block.text)} />
+      <Cites block={block} cite={cite} onCite={onCite} onHot={setHot} />
+    </div>
+  );
   return (
     <div className="wk-claim" data-state={block.state}>
       <div>
-        <div className={cls}>
-          {block.state === "inferred" && <span className="wk-infer-label">inferred</span>}
-          <Markdown text={literalUnderscores(block.text)} />
-          <Cites block={block} cite={cite} onCite={onCite} />
-        </div>
-        {block.state === "superseded" && (
-          <div className="wk-super">
-            <span className="wk-super-word">Superseded</span>
-            <span className="wk-facts">
-              a later session replaced it
-              {block.supersededBy && <>{" — "}<button className="wk-cite" title={block.supersededBy.excerpt}
-                onClick={() => onCite(block.supersededBy!)}>{citeName(block.supersededBy)}</button></>}
-            </span>
-          </div>
-        )}
+        {block.state === "inferred" ? <Callout label="Inferred">{text}</Callout>
+          : block.state === "superseded" ? (
+            <Callout label="Superseded" tone="amber">
+              {text}
+              <span className="wk-facts">
+                a later session replaced it
+                {block.supersededBy && <>{" — "}<button className="wk-cite" title={block.supersededBy.excerpt}
+                  onClick={() => onCite(block.supersededBy!)}>{citeName(block.supersededBy)}</button></>}
+              </span>
+            </Callout>
+          ) : text}
       </div>
-      <Note block={block} />
+      <Note block={block} hot={hot} />
     </div>
   );
 }
@@ -681,6 +694,7 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
   const [history, setHistory] = useState<WikiCommit[] | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [histErr, setHistErr] = useState("");
+  const [menu, setMenu] = useState(false);
   const at = page?.path ?? path ?? "";
   const open = Boolean(cite) && Boolean(page);
   useEffect(() => { setEditing(null); setHistory(null); setShowHistory(false); setHistErr(""); }, [at]);
@@ -725,11 +739,25 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
     <div className="thread">
       <header className="thread-head page-head">
         <Back onBack={onBack} label="Back to wiki index" />
-        <Crumbs onIndex={onIndex} trail={topic ? [topic] : []} title={notFound ? "Page not found" : title} />
-        {page && (
-          <div className="hk-acts">
-            {onSave && editing === null && <button className="btn" onClick={() => setEditing(page.body)}>Edit</button>}
-            {loadHistory && editing === null && <button className="btn" aria-expanded={showHistory} onClick={toggleHistory}>History</button>}
+        <Crumbs onIndex={onIndex} trail={topic ? [topic] : []} title={notFound ? "Page not found" : title}
+                slug={at.split("/").pop()?.replace(/\.md$/, "")} />
+        {page && editing === null && (onSave || loadHistory) && (
+          <div className="hk-acts wk-page-acts">
+            {onSave && <button className="btn wk-wide" onClick={() => setEditing(page.body)}>Edit</button>}
+            {loadHistory && <button className="btn wk-wide" aria-expanded={showHistory} onClick={toggleHistory}>History</button>}
+            <div className="wk-narrow wk-more">
+              <button className="wk-x" aria-label="Page actions" aria-haspopup="menu" aria-expanded={menu}
+                      onClick={() => setMenu(!menu)}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
+              </button>
+              {menu && (
+                <div className="overflow-menu" role="menu">
+                  {onSave && <button role="menuitem" onClick={() => { setMenu(false); setEditing(page.body); }}>Edit</button>}
+                  {loadHistory && <button role="menuitem" onClick={() => { setMenu(false); toggleHistory(); }}>{showHistory ? "Hide history" : "History"}</button>}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </header>
@@ -738,11 +766,9 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
         <div className="scroll wk-doc" ref={doc}>
           {!page ? (
             notFound ? (
-              <div className="proj-empty">
-                <p className="proj-empty-title">This page isn’t in the wiki</p>
-                <p>Nothing lives at <code className="mono">{at}</code>. It may have been renamed or merged into another page by a later ingest.</p>
-                <p><button className="btn" onClick={onIndex}>Back to the wiki index</button></p>
-              </div>
+              <EmptyState title="This page isn’t in the wiki" action={{ label: "Back to wiki", onClick: onIndex }}>
+                Nothing lives at <code className="mono">{at}</code>; a later ingest may have renamed or merged it.
+              </EmptyState>
             ) : <Pending what="The page" err={pageError} onRetry={onRetry} lines={pageError ? 0 : 6} />
           ) : (<>
           {err && <p className="hk2-alert">{err}</p>}
@@ -793,6 +819,13 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
             <div className="wk-text wk-denumbered"><Markdown text={literalUnderscores(denumber(page.body))} /></div>
           ) : (
             <>
+              <div className="wk-titleblock">
+                <h1 className="wk-h1">{title}</h1>
+                <p className="wk-meta">
+                  {page.updated && <>Updated {stamp(page.updated)} · </>}
+                  compiled from {plural(page.sessions.length, "session")} · {countsLine(page.counts)}
+                </p>
+              </div>
               {page.blocks.map((b) => {
                 switch (b.kind) {
                   case "heading": return <h2 key={b.line} className="wk-h">{b.text}</h2>;
@@ -808,10 +841,8 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
                   default: return <div key={b.line} className="wk-code"><Markdown text={b.text} /></div>;
                 }
               })}
-              <div className="wk-pagefoot">
-                {page.updated && <>Updated {stamp(page.updated)} · </>}
-                compiled from {plural(page.sessions.length, "session")} · {countsLine(page.counts)}
-                {page.linkedFrom.length > 0 && (
+              {page.linkedFrom.length > 0 && (
+                <div className="wk-pagefoot">
                   <details className="hk2-more">
                     <summary>Linked from {plural(page.linkedFrom.length, "page")}</summary>
                     <div className="hk2-more-body">
@@ -820,8 +851,8 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
                       ))}
                     </div>
                   </details>
-                )}
-              </div>
+                </div>
+              )}
             </>
           )}
           </>)}
@@ -1004,22 +1035,26 @@ export function WikiActivityView({ data, onIngest, onOpenPage, onOpenSession, on
       <div className="scroll proj-body">
         {/* The day in one line. Ticks that found nothing leave no record,
             so they are not counted — only runs that reached a model are. */}
-        <div className="hk2-sum">
-          <span><span className="hk2-sum-n">{t.runs}</span> <span className="hk2-sum-lab">{t.runs === 1 ? "run" : "runs"} today</span></span>
-          <span><span className="hk2-sum-n" style={{ color: "var(--accent)" }}>{t.ingested}</span> <span className="hk2-sum-lab">compiled</span></span>
-          <span><span className="hk2-sum-n" style={{ color: "var(--text-3)" }}>{t.noMaterial}</span> <span className="hk2-sum-lab">no material</span></span>
-          <span><span className="hk2-sum-n">{money(t.spent)}</span> <span className="hk2-sum-lab">spent today</span></span>
-          <span><span className="hk2-sum-n" style={{ color: data.pending ? "var(--amber)" : undefined }}>{data.pending}</span> <span className="hk2-sum-lab">waiting</span></span>
-          <span><span className="hk2-sum-n" style={{ color: "var(--text-3)" }}>{money(data.spent)}</span> <span className="hk2-sum-lab">spent all time</span></span>
-          <span><span className="hk2-sum-lab">{data.every ? `scheduler every ${data.every}` : "not scheduled"}</span></span>
+        <div className="hk2-sum wk-stats">
+          <span className="wk-stat-group">
+            <span className="eyebrow">Today</span>
+            <span><span className="hk2-sum-n">{t.runs}</span> <span className="hk2-sum-lab">{t.runs === 1 ? "run" : "runs"}</span></span>
+            <span><span className="hk2-sum-n">{t.ingested}</span> <span className="hk2-sum-lab">compiled</span></span>
+            <span><span className="hk2-sum-n">{t.noMaterial}</span> <span className="hk2-sum-lab">no material</span></span>
+            <span><span className="hk2-sum-n">{money(t.spent)}</span> <span className="hk2-sum-lab">spent</span></span>
+          </span>
+          <span className="wk-stat-group">
+            <span className="eyebrow">Queue</span>
+            <span><span className={"hk2-sum-n" + (data.pending ? " is-waiting" : "")}>{data.pending}</span> <span className="hk2-sum-lab">waiting</span></span>
+            <span><span className="hk2-sum-lab">{data.every ? `scheduler every ${duration(data.every)}` : "not scheduled"}</span></span>
+            <span><span className="hk2-sum-n">{money(data.spent)}</span> <span className="hk2-sum-lab">spent all time</span></span>
+          </span>
         </div>
 
         {data.runs.length === 0 ? (
-          <div className="proj-empty">
-            <p className="proj-empty-title">No ingest has run yet</p>
-            <p>A run starts when a finished session has been quiet for half an hour. Ingest now starts one
-               immediately if anything is waiting.</p>
-          </div>
+          <EmptyState title="No ingest has run yet" action={onIngest && { label: "Ingest now", onClick: onIngest }}>
+            A run starts when a finished session has been quiet for half an hour; Ingest now starts one immediately.
+          </EmptyState>
         ) : (
           <div className="wk-list">
             {data.runs.map((r, i) => {
@@ -1050,8 +1085,11 @@ export function WikiActivityView({ data, onIngest, onOpenPage, onOpenSession, on
                       </span>
                       <span className="wk-run-meta">
                         {r.running ? "running" : took(r.ms)} · {money(r.cost)}
-                        {r.commit ? <> · {r.commit}</> : !r.running && <> · not committed</>}
-                        {onOpenSession && <> · <button className="wk-link" onClick={() => onOpenSession(r.session)}>transcript</button></>}
+                        {!r.commit && !r.running && <> · not committed</>}
+                        {onOpenSession ? <> · <button className="wk-link mono" title="Open the run’s transcript"
+                            aria-label={`Open the transcript${r.commit ? ` of commit ${r.commit}` : ""}`}
+                            onClick={() => onOpenSession(r.session)}>{r.commit || "transcript"}</button></>
+                          : r.commit && <> · {r.commit}</>}
                       </span>
                     </div>
                     {(pages.length > 0 || other.length > 0) && (
@@ -1158,6 +1196,7 @@ export function WikiPage({ route, onRoute, onBack, onOpenSession, onSearch }: {
     case "index":
       return index.data
         ? <WikiIndexView data={index.data} onBack={onBack} onOpen={(p) => toPage(p)}
+                         onIngest={() => { wikiApi.ingest().then(() => index.reload()).catch(() => {}); }}
                          onReview={() => onRoute({ at: "review" })} onActivity={() => onRoute({ at: "activity" })}
                          check={wikiApi.check} />
         : <Loading what="The wiki" title="Wiki" err={index.err} onBack={onBack} onRetry={index.retry} />;

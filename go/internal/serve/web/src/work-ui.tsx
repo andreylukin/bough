@@ -499,15 +499,15 @@ function WorkRow({ w, parent, inReview, open, onToggle, onPin, onUnpin, onView, 
         <div className="work-row-task" title={w.task || undefined}>{title}</div>
         <div className="work-row-meta"><WorkState w={w} />{meta.map((m) => <span key={m}> · {m}</span>)}</div>
       </div>
-      <div className="work-row-actions" onClick={stop}>
-        <button type="button" className="link" aria-expanded={open} aria-controls={previewId} onClick={() => onToggle(!open)}>
+      <div className="work-row-actions">
+        <button type="button" className="link" aria-expanded={open} aria-controls={previewId} onClick={(e) => { stop(e); onToggle(!open); }}>
           {open ? "Hide preview" : "Preview"}
         </button>
         {w.live && <StopWorkButton w={w} fromWork />}
-        {inReview && <button type="button" className="link" onClick={() => ctx?.review.markReviewed(w)}>Mark reviewed</button>}
+        {inReview && <button type="button" className="link" onClick={(e) => { stop(e); ctx?.review.markReviewed(w); }}>Mark reviewed</button>}
         {w.kind === "agent"
-          ? <button type="button" className="link" onClick={onOpenAgent}>Open agent session</button>
-          : <button type="button" className="link" onClick={onView}>View in transcript</button>}
+          ? <button type="button" className="link" onClick={(e) => { stop(e); onOpenAgent(); }}>Open agent session</button>
+          : <button type="button" className="link" onClick={(e) => { stop(e); onView(); }}>View in transcript</button>}
       </div>
       {open && <div className="work-row-preview" id={previewId}><Preview w={w} parent={parent} /></div>}
     </div>
