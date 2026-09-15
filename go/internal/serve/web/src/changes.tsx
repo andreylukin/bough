@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { api, type Change, type Scope } from "./api";
 import { Back } from "./app";
 import { changedPath, sessionTitle } from "./render";
@@ -160,7 +161,7 @@ function FileCard({ row, file, scope, at, first }: { row: Row; file: Change & { 
       {open && (file.patch === false ? <p className="rt-label chg-card-note">Patch not recorded: no checkpoint was taken for this session</p>
         : !canDiff ? <p className="rt-label chg-card-note">Binary file: no text diff to show</p>
         : diff.text != null ? <DiffBody text={diff.text} />
-        : diff.failed ? <p className="chg-card-note"><button className="btn rt-stop" onClick={() => setNonce((n) => n + 1)}>Couldn’t read the diff · Retry</button></p>
+        : diff.failed ? <p className="chg-card-note"><Button variant="neutral" className="rt-stop" onClick={() => setNonce((n) => n + 1)}>Couldn’t read the diff · Retry</Button></p>
         : <div className="chg-card-note"><Pending what="Diff" inline onRetry={() => setNonce((n) => n + 1)} /></div>)}
     </details>
   );
@@ -215,7 +216,7 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
       </p>
       {r.failed && (
         <p className="rt-label">{r.files === null ? "Couldn’t read the changes" : "Stale: the last refresh failed"}{" "}
-          <button className="btn rt-stop" onClick={data.retry}>Retry</button></p>
+          <Button variant="neutral" className="rt-stop" onClick={data.retry}>Retry</Button></p>
       )}
       {r.files !== null && !r.repo && <p className="rt-label">This folder is not a Git repository, so there are no changes to show.</p>}
       {r.files !== null && r.repo && !files.length && (
@@ -255,7 +256,7 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
             : diff?.text != null ? (
               <DiffBody text={diff.text} />
             )
-            : diff?.failed ? <button className="btn rt-stop" onClick={data.retry}>Couldn’t read the diff · Retry</button>
+            : diff?.failed ? <Button variant="neutral" className="rt-stop" onClick={data.retry}>Couldn’t read the diff · Retry</Button>
             : <Pending what="Diff" inline onRetry={data.retry} />}
         </div>
       )}

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 /**
  * Asking for a name, or whether to go ahead.
@@ -181,28 +183,31 @@ export function DialogHost() {
   };
 
   return createPortal(
-    <div className="dlg-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) dismiss(); }}>
-      <div ref={box} className="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-title" aria-busy={saving || undefined}
+    <div className="fixed inset-x-0 top-(--vvt,0px) z-[60] grid h-(--vvh,100dvh) place-items-center bg-overlay p-4"
+         onMouseDown={(e) => { if (e.target === e.currentTarget) dismiss(); }}>
+      <div ref={box} role="dialog" aria-modal="true" aria-labelledby="dlg-title" aria-busy={saving || undefined}
+           className="flex max-h-[calc(var(--vvh,100dvh)-32px)] w-[min(420px,calc(100vw-32px))] flex-col gap-4 overflow-y-auto rounded-base border-2 border-border bg-background p-6 text-foreground shadow-shadow"
            onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); dismiss(); } }}>
-        <h2 id="dlg-title" className="dlg-title">{req.title}</h2>
-        {req.kind !== "text" && <p className="dlg-body">{req.body}</p>}
+        <h2 id="dlg-title" className="m-0 text-lg font-heading leading-none tracking-tight text-balance">{req.title}</h2>
+        {req.kind !== "text" && <p className="m-0 text-sm font-base text-pretty">{req.body}</p>}
         {req.kind === "text" && (
-          <input ref={input} className="field dlg-input" value={text} placeholder={req.placeholder}
+          <Input ref={input} value={text} placeholder={req.placeholder}
                  aria-labelledby="dlg-title" readOnly={saving} aria-invalid={failed ? true : undefined}
                  aria-describedby={failed ? "dlg-err" : undefined}
                  onChange={(e) => setText(e.target.value)}
                  onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } }} />
         )}
-        {failed && <p id="dlg-err" className="dlg-err" role="alert">Not saved: {failed}</p>}
-        <div className="dlg-actions">
-          <button ref={cancel} className="btn" onClick={dismiss} disabled={saving}>Cancel</button>
+        {failed && <p id="dlg-err" className="m-0 text-sm font-heading text-danger" role="alert">Not saved: {failed}</p>}
+        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          <Button ref={cancel} variant="neutral" onClick={dismiss} disabled={saving}>Cancel</Button>
           {req.kind === "choice" ? [...req.actions].reverse().map((a, i, all) => (
-            <button key={a} ref={i === all.length - 1 ? ok : undefined} className={"btn" + (i === all.length - 1 ? " btn-primary" : "")}
-                    onClick={() => finish(a)}>{a}</button>
-          )) : <button ref={ok} className={"btn " + (req.kind === "confirm" && req.danger ? "btn-danger" : "btn-primary")}
+            <Button key={a} ref={i === all.length - 1 ? ok : undefined} variant={i === all.length - 1 ? "default" : "neutral"}
+                    onClick={() => finish(a)}>{a}</Button>
+          )) : <Button ref={ok} variant="default"
+                  className={req.kind === "confirm" && req.danger ? "bg-danger border-danger" : undefined}
                   disabled={blocked || saving} onClick={submit}>
             {saving ? req.action.replace(/e?$/, "ing…") : req.action}
-          </button>}
+          </Button>}
         </div>
       </div>
     </div>,

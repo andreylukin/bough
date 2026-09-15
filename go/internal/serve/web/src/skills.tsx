@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { rankSkills, useSkills } from "./mention";
 import { Spinner } from "./loading";
 
@@ -51,8 +52,8 @@ export function SkillPicker({ onPick }: { onPick: (name: string, known: string[]
 
   return (
     <div className="skills-anchor">
-      <button ref={trigger} className="btn skills-btn" aria-expanded={open} aria-haspopup="dialog"
-        onClick={() => setOpen((v) => !v)}>Skills</button>
+      <Button ref={trigger} variant="neutral" className="skills-btn" aria-expanded={open} aria-haspopup="dialog"
+        onClick={() => setOpen((v) => !v)}>Skills</Button>
 
       {open && (
         <>

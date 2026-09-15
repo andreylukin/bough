@@ -196,6 +196,7 @@ func NewAPI(sup *Supervisor) *API {
 	if ui, err := staticHandler(); err == nil {
 		a.mux.Handle("GET /{$}", ui)
 		a.mux.Handle("GET /app.js", ui)
+		a.mux.Handle("GET /tw.css", ui)
 	}
 	return a
 }

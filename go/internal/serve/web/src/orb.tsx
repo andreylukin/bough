@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import type { OrbDetail, OrbFile, OrbStatus, Project, Status } from "./types";
 import { sessionTitle } from "./render";
 import { CopyButton, Pending } from "./loading";
@@ -58,7 +59,7 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
       <div className="proj-orb">
         {about}
         <p className="proj-none">No orb yet for “{project.name}”.</p>
-        <div className="orb-tabs"><button className="btn btn-primary" onClick={onAttach}>Add orb</button></div>
+        <div className="orb-tabs"><Button  variant="default" onClick={onAttach}>Add orb</Button></div>
       </div>
     );
   }
@@ -106,10 +107,10 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
 
       <div className="orb-tabs" role="tablist" aria-label="Definition files">
         {FILES.map((f) => (
-          <button key={f} role="tab" aria-selected={tab === f} className={"btn mono" + (tab === f ? " btn-primary" : "")}
+          <Button key={f} role="tab" aria-selected={tab === f} variant={tab === f ? "default" : "neutral"} className="mono"
                   onClick={() => { setTab(f); setSaveErr(""); }}>
             {f}{drafts[f] !== undefined && drafts[f] !== (detail.files[f] ?? "") ? " •" : ""}
-          </button>
+          </Button>
         ))}
       </div>
       <textarea className="field mono orb-editor" aria-label={tab} spellCheck={false} value={text}
@@ -117,11 +118,11 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
                 onChange={(e) => setDrafts((d) => ({ ...d, [tab]: e.target.value }))} />
       {saveErr && <p className="err" role="alert">{saveErr}</p>}
       <div className="orb-tabs">
-        <button className="btn btn-primary" disabled={building || !detail.runtime.available} onClick={onBuild}
-                title={detail.runtime.available ? undefined : "Start the container runtime first"}>{building ? "Building…" : "Build image"}</button>
-        <button className="btn" disabled={!dirty || saving} onClick={() => { void save(); }}>{saving ? "Saving…" : "Save"}</button>
+        <Button  variant="default" disabled={building || !detail.runtime.available} onClick={onBuild}
+                title={detail.runtime.available ? undefined : "Start the container runtime first"}>{building ? "Building…" : "Build image"}</Button>
+        <Button  variant="neutral" disabled={!dirty || saving} onClick={() => { void save(); }}>{saving ? "Saving…" : "Save"}</Button>
         {!detail.runtime.available && <span className="orb-hint">Start the container runtime first</span>}
-        <button className="btn btn-danger-quiet orb-detach" onClick={onDetach}>Detach orb…</button>
+        <Button  variant="neutral" className="text-danger orb-detach" onClick={onDetach}>Detach orb…</Button>
       </div>
 
       {(log || detail.build.state) && (
@@ -152,7 +153,7 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
             </span>
             <span className="orb-st" title={o.error}><StatusMark status={STATE[o.status]} /></span>
             {/* Every row keeps the action slot, so the columns line up whether or not it can stop. */}
-            <span className="orb-act">{o.status === "running" && <button className="btn btn-sm" onClick={() => onStopOrb(o.session)}>Stop orb</button>}</span>
+            <span className="orb-act">{o.status === "running" && <Button  variant="neutral" size="sm" onClick={() => onStopOrb(o.session)}>Stop orb</Button>}</span>
           </div>
           ))}
         </div>}

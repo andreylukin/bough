@@ -1,4 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { createPortal } from "react-dom";
 import { api, subscribe, type Scope, type TurnLine } from "./api";
 import type { Line, Project, Row } from "./types";
@@ -649,7 +650,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
           {/* The disclosure and Seen are siblings of the row, not inside
               it: a button in a button is invalid and would open it too. */}
           {r.trouble && onAck && !pin && (
-            <button className="btn row-ack" onClick={() => onAck(r.id)} aria-label={`Mark ${name || "session"} seen`}>Seen</button>
+            <Button variant="neutral" className="row-ack" onClick={() => onAck(r.id)} aria-label={`Mark ${name || "session"} seen`}>Seen</Button>
           )}
           {r.turns && !q && !pin ? (
             <button className="row-twist" tabIndex={-1} aria-hidden="true" aria-expanded={open} aria-controls={`turns-${r.id}`}
@@ -1569,9 +1570,9 @@ function CopyText({ text, label }: { text: string; label: string }) {
     return () => clearTimeout(t);
   }, [done]);
   return (
-    <button type="button" className="btn" onClick={() => navigator.clipboard?.writeText(text).then(() => setDone(true), () => {})}>
+    <Button type="button" variant="neutral" onClick={() => navigator.clipboard?.writeText(text).then(() => setDone(true), () => {})}>
       {done ? "Copied" : label}
-    </button>
+    </Button>
   );
 }
 
@@ -1731,7 +1732,7 @@ export function ToolCall({ code, result, live, stopped, current }: { code: Line;
             <div className="fail-actions">
               <CopyText text={cmdText} label="Copy command" />
               {diag.length < out.split("\n").length && (
-                <button type="button" className="btn" aria-expanded={full} onClick={() => setFull((v) => !v)}>{full ? "Hide full output" : "Full output"}</button>
+                <Button type="button" variant="neutral" aria-expanded={full} onClick={() => setFull((v) => !v)}>{full ? "Hide full output" : "Full output"}</Button>
               )}
             </div>
           </div>
@@ -2215,7 +2216,7 @@ function SecretAnswer({ askId, onAnswer }: { askId: string; onAnswer: (t: string
     <form className="ask-options" onSubmit={submit}>
       <input type="password" autoComplete="off" aria-label="Secret value" value={value}
              onChange={(e) => setValue(e.target.value)} disabled={state === "sending"} />
-      <button className="btn" type="submit" disabled={!value || state === "sending"}>{state === "sending" ? "Submitting…" : "Submit"}</button>
+      <Button variant="neutral" type="submit" disabled={!value || state === "sending"}>{state === "sending" ? "Submitting…" : "Submit"}</Button>
       {state === "failed" && <span className="send-failed-text" role="alert">not sent, try again</span>}
     </form>
   );
@@ -2583,7 +2584,7 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
           <Select label="Next turn effort" value={row.effort ?? ""} align="end" note="Applies to the next turn" onChange={(v) => (v ? onEffort(v) : undefined)}
                   disabled={efforts.length === 0} placeholder={catFailed ? "Unavailable" : cat ? "Not offered" : "Loading"}
                   options={efforts.length ? [...(row.effort ? [] : [{ value: "", label: "Provider default" }]), ...efforts.map((e) => ({ value: e, label: effortLabel(e) }))] : []} />
-          {catFailed && <button className="btn" onClick={() => setNonce((n) => n + 1)}>Models unavailable · Retry</button>}
+          {catFailed && <Button variant="neutral" onClick={() => setNonce((n) => n + 1)}>Models unavailable · Retry</Button>}
         </div>
       )}
       {only !== "model" && (
@@ -2656,7 +2657,7 @@ function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onR
                       {e?.exit !== undefined && <span className="num ov-fail-exit">exit {e.exit}</span>}
                       <span className="num">{r.repo?.split("/").pop()}</span>
                       <span className="num">{ago(e?.at ?? r.lastAt)} ago</span>
-                      <button className="btn" onClick={() => onOpenFailure(r.id, e?.seq)}>Open failure</button>
+                      <Button variant="neutral" onClick={() => onOpenFailure(r.id, e?.seq)}>Open failure</Button>
                     </div>
                   );
                 })}
@@ -3427,7 +3428,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
               ? <span className="status head-trouble"><StatusMark status="error" bare />{statusWord("done")} · {counts.failed} failed</span>
               : <StatusMark status={row.status} />}
           <ModeChip row={row} name={projects.find((p) => p.id === row.orb?.project)?.name} />
-          {row.orb?.status === "running" && onStopOrb && <button className="btn head-ack" onClick={onStopOrb}>Stop orb</button>}
+          {row.orb?.status === "running" && onStopOrb && <Button variant="neutral" className="head-ack" onClick={onStopOrb}>Stop orb</Button>}
           {/* A short link beside the chip: a full button pushed the title row
               past its 32px and covered the strip below. */}
           {row.orb?.status === "failed" && (
@@ -3444,7 +3445,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
           )}
           {/* A test failure is the Tests chip's to say, once. */}
           {running && turns[turns.length - 1]?.prompt?.at && !turns[turns.length - 1]?.done && <RunClock since={turns[turns.length - 1].prompt!.at} />}
-          {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
+          {row.trouble && onAck && <Button variant="neutral" className="head-ack" onClick={onAck}>Mark seen</Button>}
         </div>
         {/* The model and effort pickers live in the composer toolbar; a phone's are under Settings. */}
         <div className="head-side">
@@ -3552,10 +3553,10 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
               <div className="ask-options">
                 {/* Equal alternatives, so none of them is dressed as the primary action. */}
                 {row.ask.options.map((o) => (
-                  <button key={o} className="btn ask-option" disabled={busy || answering !== null}
+                  <Button key={o} variant="neutral" className="ask-option" disabled={busy || answering !== null}
                           onClick={() => deliver(o, true)}>
                     {answering?.ask === row.ask?.id && answering?.text === o ? "Submitting…" : o}
-                  </button>
+                  </Button>
                 ))}
               </div>
             )}
@@ -3569,20 +3570,20 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
         {row.archived && (
           <p className="archived-note" role="status">
             This session is archived.
-            <button className="btn" onClick={onArchive}>Unarchive</button>
+            <Button variant="neutral" onClick={onArchive}>Unarchive</Button>
           </p>
         )}
         {row.ask && !askSeen && (
           <div className="ask-bar">
             <p><strong>Needs your answer</strong></p>
-            <button className="btn" onClick={() => {
+            <Button variant="neutral" onClick={() => {
               // Land on the answer, not just near it: the first option if
               // there are any, otherwise the composer the answer is typed in.
               ask.current?.scrollIntoView({ block: "center" });
               (ask.current?.querySelector("button") ?? composer.current)?.focus({ preventScroll: true });
             }}>
               Review question
-            </button>
+            </Button>
           </div>
         )}
         {askChanged && (
@@ -3616,10 +3617,10 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
               </div>
             </details>
             <span className="send-failed-actions">
-              <button className="btn" disabled={busy} onClick={() => deliver(failed.text, failed.answer, failed.ask, failed)}>Retry</button>
+              <Button variant="neutral" disabled={busy} onClick={() => deliver(failed.text, failed.answer, failed.ask, failed)}>Retry</Button>
               {/* Edit never lands on a newer draft: two prompts glued together is a third nobody wrote. */}
-              <button className="btn" disabled={Boolean(draft.trim())} title={draft.trim() ? "Send or clear the current draft first" : undefined}
-                onClick={() => { setDraft(failed.text); setDraftAsk(failed.answer ? failed.ask ?? "" : ""); drop(failed); composer.current?.focus(); }}>Edit</button>
+              <Button variant="neutral" disabled={Boolean(draft.trim())} title={draft.trim() ? "Send or clear the current draft first" : undefined}
+                onClick={() => { setDraft(failed.text); setDraftAsk(failed.answer ? failed.ask ?? "" : ""); drop(failed); composer.current?.focus(); }}>Edit</Button>
             </span>
           </div>
         ))}
@@ -3722,33 +3723,33 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             <div className="composer-actions">
               {/* Beside Send, so it never covers what you are reading. */}
               {down && (
-                <button className="btn jump-latest" onClick={toStart} title="Home" aria-label="Top">
+                <Button variant="neutral" className="jump-latest" onClick={toStart} title="Home" aria-label="Top">
                   <span aria-hidden="true">↑ </span>
                   <span className="jump-word">Top</span>
-                </button>
+                </Button>
               )}
               {away && (
-                <button className="btn jump-latest" onClick={toLatest} title={modKey() + "End"}
+                <Button variant="neutral" className="jump-latest" onClick={toLatest} title={modKey() + "End"}
                         aria-label={newest > awayAt.current ? "New activity, jump to latest" : "Jump to latest"}>
                   <span aria-hidden="true">↓</span>
                   <span className="jump-word">{newest > awayAt.current ? "New activity" : "Latest"}</span>
-                </button>
+                </Button>
               )}
               {/* One filled control: Stop is a square icon, Queue shows once there is a draft to queue. */}
               {running && (stopping === "failed"
-                ? <button className="btn" onClick={stop}>Couldn’t stop · Retry</button>
-                : <button className="btn btn-ghost composer-stop" disabled={stopping === "stopping"} onClick={stop}
+                ? <Button variant="neutral" onClick={stop}>Couldn’t stop · Retry</Button>
+                : <Button variant="noShadow" className="bg-transparent border-transparent composer-stop" disabled={stopping === "stopping"} onClick={stop}
                           aria-label={stopping === "stopping" ? "Stopping" : "Stop"} title="Esc">
                     <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="1" y="1" width="10" height="10" rx="2" fill="currentColor" /></svg>
-                  </button>)}
+                  </Button>)}
               {running && !draftAsk && !blank && (
-                <button className="btn btn-ghost" onClick={enqueue} disabled={uploading > 0 || askChanged}
-                        title={modKey() + "Enter"}>Queue</button>
+                <Button variant="noShadow" className="bg-transparent border-transparent" onClick={enqueue} disabled={uploading > 0 || askChanged}
+                        title={modKey() + "Enter"}>Queue</Button>
               )}
-              <button className="btn btn-primary" onClick={send} disabled={busy || uploading > 0 || blank || askChanged || row.archived}
+              <Button variant="default" onClick={send} disabled={busy || uploading > 0 || blank || askChanged || row.archived}
                       title={running && !draftAsk ? "Enter" : undefined}>
                 {(blank ? row.ask : draftAsk) ? "Answer" : running ? "Steer" : "Send"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -3763,7 +3764,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
                         onChange={(id) => onStartProject(id, expand(draft))} />
               ) : onNewProject && (
                 // No project to run in yet: the palette's project flow; the draft stays here.
-                <button type="button" className="btn composer-start" onClick={onNewProject}>Start project session…</button>
+                <Button type="button" variant="neutral" className="composer-start" onClick={onNewProject}>Start project session…</Button>
               )}
             </span>
           )}
@@ -4367,7 +4368,7 @@ export default function App() {
             <h1 className="lookup-title">Page not found</h1>
             <p className="lookup-body">Nothing here answers to this address.</p>
             <div className="lookup-actions">
-              <button className="btn" onClick={goList}>Show all sessions</button>
+              <Button variant="neutral" onClick={goList}>Show all sessions</Button>
             </div>
           </div>
         </div>
@@ -4430,7 +4431,7 @@ export default function App() {
             {home && (
               <div className="controls mode-start">
                 <ModePicker projects={projects} value={newMode} onChange={setNewMode} />
-                <button className="btn" onClick={() => { void start(newMode.mode === "local" && startDir?.checkout ? startDir.path : home, "", newMode); }}>New session</button>
+                <Button variant="neutral" onClick={() => { void start(newMode.mode === "local" && startDir?.checkout ? startDir.path : home, "", newMode); }}>New session</Button>
               </div>
             )}
             <ControlOverview rows={rows} onOpenFailure={(id, seq) => { openSession(id); if (seq) setJump({ id, turn: 0, seq, at: Date.now() }); }} onReveal={(id) => { setPane("list"); setQuery(""); setReveal({ id, at: Date.now() }); }} loadedAt={loadedAt} loadErr={loadErr} onRetry={() => void refresh()} />
@@ -4442,15 +4443,15 @@ export default function App() {
                 <h1 className="lookup-title">Session not found</h1>
                 <p className="lookup-body">This session isn’t on this server. It may be archived or deleted.</p>
                 <div className="lookup-actions">
-                  <button className="btn" onClick={goList}>Show all sessions</button>
-                  <button className="btn" onClick={() => { setArchived(true); setPane("list"); setPalQuery(""); setPalette(true); }}>Search archived</button>
+                  <Button variant="neutral" onClick={goList}>Show all sessions</Button>
+                  <Button variant="neutral" onClick={() => { setArchived(true); setPane("list"); setPalQuery(""); setPalette(true); }}>Search archived</Button>
                 </div>
               </>) : loadFail ? (<>
                 <h1 className="lookup-title">Couldn’t load this session</h1>
                 <p className="lookup-body">{loadFail}</p>
                 <div className="lookup-actions">
-                  <button className="btn" onClick={() => setLoadTry((n) => n + 1)}>Retry</button>
-                  <button className="btn" onClick={goList}>Show all sessions</button>
+                  <Button variant="neutral" onClick={() => setLoadTry((n) => n + 1)}>Retry</Button>
+                  <Button variant="neutral" onClick={goList}>Show all sessions</Button>
                 </div>
               </>) : <p className="lookup-body">Loading session…</p>}
             </div>
@@ -4467,8 +4468,8 @@ export default function App() {
         <div className="toast" role="alert">
           <p className="toast-msg">Couldn’t {err.label} — {err.msg}</p>
           <div className="toast-actions">
-            <button className="btn" disabled={busy} onClick={err.retry}>Retry</button>
-            <button className="btn" onClick={() => setErr(null)}>Dismiss</button>
+            <Button variant="neutral" disabled={busy} onClick={err.retry}>Retry</Button>
+            <Button variant="neutral" onClick={() => setErr(null)}>Dismiss</Button>
           </div>
         </div>
       ) : null}

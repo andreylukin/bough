@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { Back } from "./app";
 import { duration, EmptyState, Pending, useCopied } from "./loading";
 import { Markdown } from "./render";
@@ -321,7 +322,7 @@ function CopyCommand({ text }: { text: string }) {
   return (
     <p className="wk-cmd">
       <code className="mono">{text}</code>
-      <button className="btn" onClick={() => copy(text)}>{done ? "Copied" : "Copy command"}</button>
+      <Button variant="neutral" onClick={() => copy(text)}>{done ? "Copied" : "Copy command"}</Button>
     </p>
   );
 }
@@ -375,13 +376,13 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, onIngest, ch
         {data.exists && (
           <div className="hk-acts">
             {check && (
-              <button className="btn" onClick={runCheck} disabled={checking} aria-busy={checking}>
+              <Button variant="neutral" onClick={runCheck} disabled={checking} aria-busy={checking}>
                 {checking && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                   strokeLinecap="round" className="spin-mark" aria-hidden="true"><circle cx="12" cy="12" r="8.5" strokeDasharray="40 14" /></svg>}
                 {checking ? " Checking…" : "Check citations"}
-              </button>
+              </Button>
             )}
-            <button className="btn btn-ghost" onClick={onActivity}>Activity</button>
+            <Button variant="noShadow" className="bg-transparent border-transparent" onClick={onActivity}>Activity</Button>
           </div>
         )}
       </header>
@@ -743,8 +744,8 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
                 slug={at.split("/").pop()?.replace(/\.md$/, "")} />
         {page && editing === null && (onSave || loadHistory) && (
           <div className="hk-acts wk-page-acts">
-            {onSave && <button className="btn wk-wide" onClick={() => setEditing(page.body)}>Edit</button>}
-            {loadHistory && <button className="btn wk-wide" aria-expanded={showHistory} onClick={toggleHistory}>History</button>}
+            {onSave && <Button variant="neutral" className="wk-wide" onClick={() => setEditing(page.body)}>Edit</Button>}
+            {loadHistory && <Button variant="neutral" className="wk-wide" aria-expanded={showHistory} onClick={toggleHistory}>History</Button>}
             <div className="wk-narrow wk-more">
               <button className="wk-x" aria-label="Page actions" aria-haspopup="menu" aria-expanded={menu}
                       onClick={() => setMenu(!menu)}>
@@ -807,11 +808,11 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
               <textarea id="wk-body" className="hk-edit mono" rows={24} spellCheck={false}
                         value={editing} onChange={(e) => setEditing(e.target.value)} />
               <div className="hk-acts">
-                <button className="btn btn-primary" disabled={saving} onClick={() => {
+                <Button variant="default" disabled={saving} onClick={() => {
                   setSaving(true); setErr("");
                   onSave(editing).then(() => setEditing(null)).catch((e) => setErr(msg(e))).finally(() => setSaving(false));
-                }}>Save</button>
-                <button className="btn" onClick={() => setEditing(null)}>Cancel</button>
+                }}>Save</Button>
+                <Button variant="neutral" onClick={() => setEditing(null)}>Cancel</Button>
                 <span className="hk-note">Saving commits the change to the wiki’s history.</span>
               </div>
             </div>
@@ -943,20 +944,20 @@ export function WikiReviewView({ data, onOpenPage, onAct, onSearch, onIngest, on
                 {f.evidence && <pre className={"wk-ev" + (f.kind === "unsupported" ? " wk-ev-bad" : "")}>{f.evidence}</pre>}
                 <div className="wk-acts">
                   {f.kind === "superseded" && f.cite && (
-                    <button className="btn" onClick={() => onOpenPage(f.page, f.cite)}>Open the newer entry</button>
+                    <Button variant="neutral" onClick={() => onOpenPage(f.page, f.cite)}>Open the newer entry</Button>
                   )}
                   {(f.kind === "unsupported" || f.kind === "uncited") && onSearch && (
-                    <button className="btn" onClick={() => onSearch(f.claim)}>Search history</button>
+                    <Button variant="neutral" onClick={() => onSearch(f.claim)}>Search history</Button>
                   )}
                   {(f.kind === "unsupported" || f.kind === "uncited") && (
-                    <button className="btn" disabled={Boolean(state)} onClick={() => act(f, "inference")}>Mark as inference</button>
+                    <Button variant="neutral" disabled={Boolean(state)} onClick={() => act(f, "inference")}>Mark as inference</Button>
                   )}
                   {f.kind !== "problem" && (
-                    <button className="btn" disabled={Boolean(state)} onClick={() => act(f, "drop")}>
+                    <Button variant="neutral" disabled={Boolean(state)} onClick={() => act(f, "drop")}>
                       {f.kind === "superseded" ? "Drop the old claim" : "Drop the claim"}
-                    </button>
+                    </Button>
                   )}
-                  {f.kind === "problem" && <button className="btn" onClick={() => onOpenPage(f.page)}>Open the page</button>}
+                  {f.kind === "problem" && <Button variant="neutral" onClick={() => onOpenPage(f.page)}>Open the page</Button>}
                   {state && state !== "…" && <span className="hk-state hk-bad">Did not save — {state}</span>}
                 </div>
               </div>
@@ -986,10 +987,10 @@ function PendingRow({ p, onIngest }: { p: WikiPending; onIngest?: (session: stri
       <span className="wk-row-main wk-title" style={{ fontSize: 14, color: "var(--text-2)" }}>{p.title || shortId(p.id)}</span>
       <span className="wk-counts">session {shortId(p.id)} · {plural(p.entries, "entry", "entries")} · {stamp(p.last)}</span>
       {onIngest && (
-        <button className="btn" disabled={state !== "" && state !== "failed"} onClick={() => {
+        <Button variant="neutral" disabled={state !== "" && state !== "failed"} onClick={() => {
           setState("starting");
           onIngest(p.id).then(() => setState("started")).catch(() => setState("failed"));
-        }}>{state === "started" ? "Started" : state === "failed" ? "Retry" : "Ingest"}</button>
+        }}>{state === "started" ? "Started" : state === "failed" ? "Retry" : "Ingest"}</Button>
       )}
     </div>
   );
@@ -1028,7 +1029,7 @@ export function WikiActivityView({ data, onIngest, onOpenPage, onOpenSession, on
         {onIngest && (
           <div className="hk-acts">
             {note && <span className="hk-note" role="status">{note}</span>}
-            <button className="btn" onClick={onIngest}>Ingest now</button>
+            <Button variant="neutral" onClick={onIngest}>Ingest now</Button>
           </div>
         )}
       </header>

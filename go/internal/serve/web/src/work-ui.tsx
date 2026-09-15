@@ -1,4 +1,5 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { api } from "./api";
 import { Markdown, duration, execNote, lineCount, plainTitle } from "./render";
 import type { Line, Row } from "./types";
@@ -183,9 +184,9 @@ export function CopyCommand({ text, label = "Copy command" }: { text: string; la
     return () => clearTimeout(t);
   }, [done]);
   return (
-    <button type="button" className="btn" onClick={() => navigator.clipboard?.writeText(text).then(() => setDone(true), () => {})}>
+    <Button type="button" variant="neutral" onClick={() => navigator.clipboard?.writeText(text).then(() => setDone(true), () => {})}>
       {done ? "Copied" : label}
-    </button>
+    </Button>
   );
 }
 
@@ -439,8 +440,8 @@ export function WorkDialog({ workers, sheet, top, childState, onRetryChildren, p
       <header>
         <h2 id={titleId} ref={head} tabIndex={-1} className="work-title">Work</h2>
         {sheet
-          ? <button type="button" className="btn work-close" aria-label="Close" style={{ marginInlineStart: "auto" }} onClick={() => onClose(true)}>✕</button>
-          : <button type="button" className="btn" style={{ marginInlineStart: "auto" }} onClick={() => onClose(true)}>Close</button>}
+          ? <Button type="button" variant="neutral" className="work-close" aria-label="Close" style={{ marginInlineStart: "auto" }} onClick={() => onClose(true)}>✕</Button>
+          : <Button type="button" variant="neutral" style={{ marginInlineStart: "auto" }} onClick={() => onClose(true)}>Close</Button>}
       </header>
       {kinds.length > 1 && (
         <div className="work-filters" role="group" aria-label="Show">

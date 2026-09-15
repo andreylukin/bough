@@ -3,6 +3,7 @@ import type { Preview } from "@storybook/react-vite";
 // `bun run design:sync`. Stories and the Claude Design cards share it,
 // so both drift together and design:check catches both.
 import "../design/bough.css";
+import "../dist/tw.css";
 import { installFakeApi } from "../src/stories/fixtures";
 
 // Controls and SkillPicker fetch /api/models and /api/skills on mount.

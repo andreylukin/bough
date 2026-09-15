@@ -5,6 +5,7 @@
 // an empty "Nothing needs your attention" and a New button that started a
 // read-only session in home.
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { api, type Setup, type SetupFolder, type SetupProvider } from "./api";
 
 const DONE = "bough:welcome-done";
@@ -137,7 +138,7 @@ export function Welcome({ onStart, onSkip }: { onStart: (cwd: string, prompt: st
             {setup === null ? (
               loadErr ? (<>
                 <p className="welcome-status err" role="alert">Couldn’t load setup: {loadErr}</p>
-                <button className="btn welcome-retry" onClick={loadSetup}>Retry</button>
+                <Button variant="neutral" className="welcome-retry" onClick={loadSetup}>Retry</Button>
               </>) : <p className="welcome-note">Checking for keys…</p>
             ) : keyed.length ? (
               <p className="welcome-status ok">Key found for {keyed.map((p) => label(p.name)).join(", ")}. Pick a model inside the session.</p>
@@ -151,7 +152,7 @@ export function Welcome({ onStart, onSkip }: { onStart: (cwd: string, prompt: st
                 </select>
                 <input className="welcome-field" type="password" aria-label={`${label(prov)} API key`} placeholder="API key"
                   autoComplete="off" spellCheck={false} value={key} onChange={(e) => setKey(e.target.value)} />
-                <button className="btn btn-primary" disabled={!key.trim() || saving}>{saving ? "Saving…" : "Save key"}</button>
+                <Button variant="default" type="submit" disabled={!key.trim() || saving}>{saving ? "Saving…" : "Save key"}</Button>
               </form>
               {keyErr && <p className="welcome-status err" role="alert">{keyErr}</p>}
             </>)}
@@ -162,7 +163,7 @@ export function Welcome({ onStart, onSkip }: { onStart: (cwd: string, prompt: st
             <input className="welcome-field wide" aria-label="Folder" placeholder="~/code/your-repo" spellCheck={false} autoComplete="off"
               value={path} onChange={(e) => setPath(e.target.value)} />
             <p className={"welcome-status " + status.tone} role="status">{status.text}</p>
-            {check.state === "failed" && <button className="btn welcome-retry" onClick={() => setCheckRev((n) => n + 1)}>Retry</button>}
+            {check.state === "failed" && <Button variant="neutral" className="welcome-retry" onClick={() => setCheckRev((n) => n + 1)}>Retry</Button>}
           </li>
 
           <li className="welcome-step">
@@ -175,7 +176,7 @@ export function Welcome({ onStart, onSkip }: { onStart: (cwd: string, prompt: st
             <form className="welcome-row" onSubmit={(e) => { e.preventDefault(); void go(prompt); }}>
               <input className="welcome-field grow" aria-label="Your first prompt" placeholder="Or describe a task…"
                 value={prompt} onChange={(e) => setPrompt(e.target.value)} />
-              <button className="btn btn-primary" disabled={!ready || !prompt.trim()}>{starting ? "Starting…" : "Start"}</button>
+              <Button variant="default" type="submit" disabled={!ready || !prompt.trim()}>{starting ? "Starting…" : "Start"}</Button>
             </form>
             {hint && <p className="welcome-note">{hint}</p>}
             {startErr && <p className="welcome-status err" role="alert">{startErr}</p>}
