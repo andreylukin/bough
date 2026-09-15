@@ -50,13 +50,14 @@ test('an empty server walks from no key to a session that can edit the checkout'
   await page.goto(serve.url);
   await expect(page.getByRole('heading', { name: 'Welcome to bough' })).toBeVisible();
   const folderLine = page.getByRole('status').filter({ hasText: /checkout|folder/ });
-  await expect(folderLine).toContainText('can edit files here');
-  const chip = page.getByRole('button', { name: 'Explain how this repo is organized' });
+  await expect(folderLine).toContainText('Git checkout found');
+  const chip = page.getByRole('button', { name: 'Explain this repo' });
   await expect(chip).toBeDisabled();
+  await expect(page.getByText('Add a provider key to enable these.')).toBeVisible();
 
   await page.getByLabel('Anthropic API key').fill('sk-ant-test');
   await page.getByRole('button', { name: 'Save key' }).click();
-  await expect(page.getByText('Using ANTHROPIC_API_KEY')).toBeVisible();
+  await expect(page.getByText('Key found for Anthropic')).toBeVisible();
   expect(fs.readFileSync(path.join(serve.home, '.bough', 'env'), 'utf8')).toContain('ANTHROPIC_API_KEY=sk-ant-test');
 
   const folder = page.getByLabel('Folder');
@@ -64,12 +65,14 @@ test('an empty server walks from no key to a session that can edit the checkout'
   await expect(folderLine).toContainText('Not a git checkout');
   await folder.fill(path.join(serve.home, 'nope'));
   await expect(folderLine).toContainText('no folder at this path');
+  await folder.fill(path.join(serve.repo, 'sub-that-is-missing'));
+  await expect(folderLine).toContainText('no folder at this path');
   await folder.fill(serve.repo);
-  await expect(folderLine).toContainText('can edit files here');
+  await expect(folderLine).toContainText('Git checkout found');
 
   await expect(chip).toBeEnabled();
   await chip.click();
-  await expect(page.getByText('echo: Explain how this repo is organized')).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText('echo: Explain this repo')).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText('Local · edits repo')).toBeVisible();
 
   await page.reload();
