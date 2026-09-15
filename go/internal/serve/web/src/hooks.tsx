@@ -603,11 +603,12 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
                 <details className={"hk-fold" + (n > 1 ? " hk-group" : "")}>
                 <summary className="hk-main" title={new Date(f.at).toString()}>
                   <span className="num hk-when hk-time">{hms(f.at)}</span>
-                  <span className="mono hk-name">{f.name}</span>
+                  <span className="mono hk-name" title={f.name}>{f.name}</span>
+                  {/* Plain text: a link here would navigate instead of opening the row. */}
                   {f.session
-                    ? <a className="link hk-when hk-sess" href={`#/s/${f.session}`} title={f.session}>{titles[f.session] || f.session.slice(0, 8)}</a>
+                    ? <span className="hk-when hk-sess" title={titles[f.session] || f.session}>{titles[f.session] || f.session.slice(0, 8)}</span>
                     : <span />}
-                  <span className="mono hk-when">{f.event}</span>
+                  <span className="mono hk-when" title={f.event}>{f.event}</span>
                   <span className="num hk-when">{f.ms}ms</span>
                   <span className="hk-dec"><Decision fire={f} />{n > 1 && <span className="num hk-when"> ×{n}</span>}</span>
                   <span className="hk-chev" aria-hidden="true">›</span>
@@ -618,6 +619,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
                     <span className="mono">{f.name}</span> · <span className="mono">{f.event}</span>
                     {f.session && <> · <span className="mono">{f.session}</span></>}
                   </p>
+                  {f.session && <p className="hk-when"><a className="link" href={`#/s/${f.session}`}>Open in session</a></p>}
                   <ul className="hk-runs">
                     {all.map((x, j) => (
                       <li key={j}>

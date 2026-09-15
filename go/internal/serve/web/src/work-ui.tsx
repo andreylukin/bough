@@ -2,7 +2,7 @@ import { Fragment, createContext, useCallback, useContext, useEffect, useId, use
 import { api } from "./api";
 import { Markdown, duration, execNote, lineCount, plainTitle } from "./render";
 import type { Line, Row } from "./types";
-import { jobsFromLines, parseLegacyJob, useReviewed, workCounts, workSummaryText, type WorkCounts, type WorkKind, type WorkLife, type Worker } from "./work";
+import { jobSummaryLine, jobTitle, jobsFromLines, parseLegacyJob, useReviewed, workCounts, workSummaryText, type WorkCounts, type WorkKind, type WorkLife, type Worker } from "./work";
 
 /*
  * The Work surfaces: one state word for every worker, the Stop button,
@@ -192,11 +192,11 @@ function outputWords(w: Worker): string | null {
   return "Output not recorded.";
 }
 
-/** The line under a job that did not simply finish: its exit note, else the last line it printed. */
-function jobCause(w: Worker): string {
-  if (w.exitNote) return w.exitNote;
-  if (w.life !== "failed") return "";
-  return (w.output ?? "").split("\n").filter((l) => l.trim()).pop() ?? "";
+/** The line under a job that did not simply finish: its exit note, else the last real line it printed, with the untouched line to hover. */
+function jobCause(w: Worker): { text: string; full?: string } {
+  if (w.exitNote) return { text: w.exitNote };
+  if (w.life !== "failed") return { text: "" };
+  return jobSummaryLine(w.output ?? "") ?? { text: "" };
 }
 
 /** Identity, command, outcome: one status-first row per job, opening onto the command and its output. */
@@ -219,16 +219,16 @@ export function JobRow({ w }: { w: Worker }) {
                  if (opening && w.life !== "running" && (w.output || w.error)) ctx?.review.markReviewed(w);
                }}>
         <span className="num sub-tag">Job {w.id}</span>
-        <span className="job-cmd" title={cmd || undefined}>{cmd || "Command not recorded"}</span>
+        <span className="job-cmd" title={cmd || undefined}>{cmd ? jobTitle(cmd, w.id) : "Command not recorded"}</span>
         <WorkState w={w} />
         <span className="job-meta">{w.ms !== undefined ? duration(w.ms) : ""}</span>
         <span className="job-action" data-stop={w.canStop || ctx?.stops[w.key] ? "" : undefined} aria-hidden="true" />
-        {cause && <span className="sub-line2 job-cause">{cause}</span>}
+        {cause.text && <span className="sub-line2 job-cause" title={cause.full}>{cause.text}</span>}
       </summary>
       <div className="block-body job-body">
         <div className="job-sec">
           <span className="block-label">Command</span>
-          {cmd ? <pre className="mono">{cmd}</pre> : <p className="meta-line">Command not recorded.</p>}
+          {cmd ? <pre className="mono job-cmd-full">{cmd}</pre> : <p className="meta-line">Command not recorded.</p>}
           {cmd && <div className="fail-actions"><CopyCommand text={cmd} /></div>}
         </div>
         <div className="job-sec">
@@ -449,7 +449,10 @@ export function WorkDialog({ workers, sheet, top, childState, onRetryChildren, p
         {!shown.length && childState !== "loading" && <p className="meta-line work-note">No work recorded in this session.</p>}
         {[...groups].filter(([, list]) => list.length).map(([g, list]) => (
           <section key={g} aria-labelledby={`${titleId}-${g}`}>
-            <h3 className="work-group-head" id={`${titleId}-${g}`}>{GROUP_WORD[g]} · {list.length}</h3>
+            {/* The header chip counts "failed": the review head says how many of its rows those are, in the same word. */}
+            <h3 className="work-group-head" id={`${titleId}-${g}`}>
+              {GROUP_WORD[g]} · {list.length}{g === "review" && list.some((w) => w.life === "failed") && list.some((w) => w.life !== "failed") ? ` · ${list.filter((w) => w.life === "failed").length} failed` : ""}
+            </h3>
             {list.map((w) => (
               <WorkRow key={w.key} w={w} parent={parent} inReview={g === "review"} open={openKey === w.key}
                        onToggle={(open) => {
@@ -475,9 +478,10 @@ function WorkRow({ w, parent, inReview, open, onToggle, onPin, onUnpin, onView, 
   const ctx = useWork();
   const previewId = useId();
   const fresh = ctx?.review.isNew(w);
-  const task = firstLine(plainTitle(w.task));
-  const title = w.kind === "agent" ? plainTitle(w.label) : task ? `${w.label} · ${task}` : w.label;
-  const cause = w.life === "failed" ? firstLine(w.error ?? "") || jobCause(w) : w.exitNote ?? "";
+  const task = w.kind === "job" ? (w.task ? jobTitle(w.task, w.id) : "") : firstLine(plainTitle(w.task));
+  const title = w.kind === "agent" ? plainTitle(w.label) : task && task !== w.label ? `${w.label} · ${task}` : w.label;
+  const jc = jobCause(w);
+  const cause = w.life === "failed" ? firstLine(w.error ?? "") || jc.text : w.exitNote ?? "";
   const meta = [KIND_WORD[w.kind], w.ms !== undefined ? duration(w.ms) : "", cause, fresh ? "New result" : ""].filter(Boolean);
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   return (

@@ -14,6 +14,10 @@ export default meta;
 
 /** One prompt and everything the agent did before it stopped. */
 export const Turn: StoryObj = { render: () => <TurnView turn={groupTurns(turn)[0]} /> };
+/** A turn from an earlier day shows its date beside the time. */
+export const OlderTurn: StoryObj = {
+  render: () => <TurnView turn={groupTurns(turn.map((l) => ({ ...l, at: new Date(Date.now() - 3 * 86400e3).toISOString() })))[0]} />,
+};
 
 const at = new Date(Date.now() - 4 * 60_000).toISOString();
 const wakeLines: Line[] = [

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type Change, type Scope } from "./api";
 import { Back } from "./app";
-import { plainTitle, untitled } from "./render";
+import { sessionTitle } from "./render";
 import type { Row } from "./types";
 
 // Two scopes, always named: what this session's turns changed (the
@@ -40,7 +40,7 @@ const sum = (files: Change[] | null) => ({
 /** "3 files · +12 −4", or the state instead of a count. */
 export function countOf(r: Read): { text: string; add?: number; del?: number; quiet: boolean } {
   if (r.files === null) return { text: r.failed ? "Unavailable" : "Reading…", quiet: true };
-  if (!r.repo) return { text: "No Git repository", quiet: true };
+  if (!r.repo) return { text: "—", quiet: true };
   if (!r.files.length) return { text: "None", quiet: true };
   return { text: `${r.files.length} ${r.files.length === 1 ? "file" : "files"}`, ...sum(r.files), quiet: false };
 }
@@ -87,7 +87,7 @@ export function ChangesBody({ row, data, scope, onScope }: {
       </div>
       <p className="rt-label chg-where">
         <span className="mono" title={row.cwd}>{row.cwd}</span>
-        {" · "}{row.branch ? <>Current checkout: <span className="mono">{row.branch}</span></> : "Branch not reported"}
+        {" · "}{row.branch ? <>Current checkout: <span className="mono">{row.branch}</span></> : "Branch unknown"}
         {" · "}{scope === "session" ? "files this session’s turns changed, from its first checkpoint" : "everything uncommitted, including edits made before or outside this session"}
         {r.at ? ` · read ${clock(r.at)}` : ""}
       </p>
@@ -95,7 +95,7 @@ export function ChangesBody({ row, data, scope, onScope }: {
         <p className="rt-label">{r.files === null ? "Couldn’t read the changes" : "Stale: the last refresh failed"}{" "}
           <button className="btn rt-stop" onClick={data.retry}>Retry</button></p>
       )}
-      {r.files !== null && !r.repo && <p className="rt-label">No Git repository</p>}
+      {r.files !== null && !r.repo && <p className="rt-label">This folder is not a Git repository, so there are no changes to show.</p>}
       {r.files !== null && r.repo && !files.length && (
         <p className="rt-label">{scope === "session" ? "This session has not changed any files" : "No uncommitted changes"}</p>
       )}
@@ -145,7 +145,7 @@ export function ChangesPage({ row, tick, onBack }: { row: Row; tick: number; onB
     <div className="thread">
       <header className="thread-head page-head">
         <Back onBack={onBack} />
-        <div className="head-main chg-head"><h1>Changes</h1><span className="chg-session">{plainTitle(row.title) || untitled(row.id)}</span></div>
+        <div className="head-main chg-head"><h1>Changes</h1><span className="chg-session">{sessionTitle(row)}</span></div>
       </header>
       <div className="scroll proj-body chg-page">
         <ChangesBody row={row} data={data} scope={scope} onScope={setScope} />

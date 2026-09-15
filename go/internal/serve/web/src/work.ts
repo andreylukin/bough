@@ -75,6 +75,37 @@ export function parseLegacyJob(text: string): { id?: number; life: WorkLife; exi
   return { id: +m[1], life, ...(ex ? { exit: +ex[1] } : {}), cmd: m[3], ...(ms != null && ms > 0 ? { ms } : {}), output };
 }
 
+/**
+ * A job's one-line title: its first command line that says something. The
+ * loop's notice keeps only a first line plus "…", so a script opening with a
+ * comment read as "# …"; a comment or a bare ellipsis falls through to "Job N".
+ */
+export function jobTitle(cmd: string, id: string | number): string {
+  for (const raw of cmd.split("\n")) {
+    const l = raw.trim().replace(/\s*(?:…|\.\.\.)$/, "").trim();
+    if (l && !l.startsWith("#")) return l;
+  }
+  return `Job ${id}`;
+}
+
+const TREE = /[─-▟]+/g;
+const ABS_PATH = /(?:~|\$HOME|\/)[^\s:'"()]*\/([^\s/:'"()]+)/g;
+
+/**
+ * The line a failed job's row shows: the last printed line with real text,
+ * without tree glyphs ("└──") and with absolute paths cut to their basename.
+ * `full` keeps the untouched line for a tooltip.
+ */
+export function jobSummaryLine(output: string): { text: string; full: string } | null {
+  const lines = output.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const bare = lines[i].replace(TREE, " ").replace(/\s+/g, " ").trim();
+    if (!/[\p{L}\p{N}]/u.test(bare)) continue;
+    return { text: bare.replace(ABS_PATH, "…/$1"), full: lines[i].trim() };
+  }
+  return null;
+}
+
 function blankWorker(kind: WorkKind, session: string, id: string, label: string, live: boolean, seq: number): Worker {
   return { key: `${session}:${kind}:${id}`, kind, session, id, label, task: "", life: "unknown", stepErrors: 0, notRun: 0, outputState: "none", seq, live, canStop: false };
 }

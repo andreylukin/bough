@@ -135,6 +135,32 @@ func TestIndexListsUnindexedPagesAndHealth(t *testing.T) {
 	}
 }
 
+func TestIndexLineColonSeparator(t *testing.T) {
+	m := indexLineRE.FindStringSubmatch("- [Sentinels](db/sentinels.md): PostgreSQL sentinels, retries")
+	if m == nil || m[3] != "PostgreSQL sentinels, retries" {
+		t.Fatalf("match = %q", m)
+	}
+}
+
+func TestShortDuration(t *testing.T) {
+	for d, want := range map[time.Duration]string{5 * time.Minute: "5m", time.Hour: "1h", 90 * time.Second: "1m30s"} {
+		if got := shortDuration(d); got != want {
+			t.Fatalf("shortDuration(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+func TestFocusStartsAtTheClaimedSpan(t *testing.T) {
+	text := "Looked at the build first.\nNothing there.\nThe scheduler retries each ingest twice before giving up."
+	got := focus(text, "Ingest retries twice `abc#3`.")
+	if got != "… The scheduler retries each ingest twice before giving up." {
+		t.Fatalf("focus = %q", got)
+	}
+	if focus(text, "unrelated words entirely") != text {
+		t.Fatal("no overlap should keep the text whole")
+	}
+}
+
 func TestIndexWithoutWiki(t *testing.T) {
 	ix := Open(t.TempDir()).Index(time.Now())
 	if ix.Exists || ix.Topics == nil {

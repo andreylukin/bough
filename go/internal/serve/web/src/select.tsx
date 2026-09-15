@@ -17,8 +17,10 @@ export interface Option { value: string; label: string; detail?: string; group?:
  * Keyboard: ↓/↑/Enter/Space open it; inside, ↓↑ move, Enter picks,
  * Esc closes and gives focus back to the button.
  */
-export function Select({ value, options, onChange, label, placeholder = "Choose", searchable = false, align = "start", note, detailHeading, footer }: {
+export function Select({ value, options, onChange, label, placeholder = "Choose", searchable = false, align = "start", note, detailHeading, footer, disabled = false }: {
   value: string;
+  /** Shown but not choosable, when the setting does not apply yet. */
+  disabled?: boolean;
   options: Option[];
   /** A promise that resolves false (or rejects) is a save that failed: the button says so and offers the retry. */
   onChange: (value: string) => void | Promise<unknown>;
@@ -146,7 +148,7 @@ export function Select({ value, options, onChange, label, placeholder = "Choose"
 
   return (
     <div className={"sel" + (open ? " sel-open" : "")} ref={root} onKeyDown={onKey}>
-      <button ref={btn} type="button" className="sel-btn" role="combobox" aria-haspopup="listbox" aria-expanded={open}
+      <button ref={btn} type="button" className="sel-btn" role="combobox" aria-haspopup="listbox" aria-expanded={open} disabled={disabled}
               aria-controls={listId} aria-activedescendant={open && !searchable && shown[at] ? optId(at) : undefined}
               aria-label={`${label}: ${current?.label ?? (value || placeholder)}`}
               onClick={() => (open ? hide(false) : show())}>

@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/andreylukin/bough/plugins/history"
 )
@@ -112,7 +113,7 @@ type Page struct {
 
 var (
 	indexTopicRE = regexp.MustCompile(`^## (.+?)\s*$`)
-	indexLineRE  = regexp.MustCompile(`^- \[(.+?)\]\(([^)\s]+\.md)\)\s*(?:—|–|-)?\s*(.*)$`)
+	indexLineRE  = regexp.MustCompile(`^- \[(.+?)\]\(([^)\s]+\.md)\)\s*(?:—|–|-|:)?\s*(.*)$`)
 	bulletRE     = regexp.MustCompile(`^([-*]\s+)`)
 	inferRE      = regexp.MustCompile(`(?i)^\*{0,2}inference:?\*{0,2}:?\s*`)
 	outdatedRE   = regexp.MustCompile("(?i)^\\*{0,2}outdated\\*{0,2}\\s*(?:\\(superseded by\\s+`([A-Za-z0-9][A-Za-z0-9:._-]*)#(\\d+)`\\s*\\))?\\s*:?\\s*")
@@ -299,7 +300,21 @@ func (r *resolver) session(id string) []history.Entry {
 	return es
 }
 
-func (r *resolver) fill(c *Cite) {
+// shortDuration drops the zero tails time.Duration prints: 5m0s → 5m, 1h0m0s → 1h.
+func shortDuration(d time.Duration) string {
+	s := d.String()
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
+	}
+	return s
+}
+
+// fill resolves c; claim is the text citing it, so the excerpt can start
+// at the part of the entry that claim is about rather than its first line.
+func (r *resolver) fill(c *Cite, claim string) {
 	es := r.session(c.Session)
 	if es == nil {
 		c.Problem = "cites a session that does not exist: " + c.Session
@@ -314,7 +329,7 @@ func (r *resolver) fill(c *Cite) {
 		if !ok {
 			label, text = e.Kind, ""
 		}
-		c.Label, c.Excerpt = label, excerpt(text, 6)
+		c.Label, c.Excerpt = label, excerpt(focus(text, claim), 6)
 		return
 	}
 	c.Problem = fmt.Sprintf("cites entry #%d, which session %s does not have", c.Seq, c.Session)
@@ -327,13 +342,13 @@ func (r *resolver) resolve(pg *Page) {
 		b := &pg.Blocks[i]
 		broken := false
 		for j := range b.Cites {
-			r.fill(&b.Cites[j])
+			r.fill(&b.Cites[j], b.Text)
 			if b.Cites[j].Problem != "" {
 				broken = true
 			}
 		}
 		if b.SupersededBy != nil {
-			r.fill(b.SupersededBy)
+			r.fill(b.SupersededBy, b.Text)
 		}
 		if b.Kind != "claim" {
 			continue
@@ -359,6 +374,62 @@ func (r *resolver) resolve(pg *Page) {
 			}
 		}
 	}
+}
+
+// focus cuts text to start at the line sharing the most words with claim
+// (and, in a long line, just before the first shared word), marking the
+// cut with "…". Citations carry only an entry seq, no offset, so word
+// overlap is the only pointer to the span a claim rests on.
+func focus(text, claim string) string {
+	words := map[string]bool{}
+	for _, w := range strings.FieldsFunc(strings.ToLower(stripCites(claim)), notWordRune) {
+		if len([]rune(w)) >= 4 {
+			words[w] = true
+		}
+	}
+	lines := strings.Split(strings.Trim(text, "\n"), "\n")
+	best, bestScore, at := 0, 0, -1
+	for i, l := range lines {
+		score, first := 0, -1
+		lower := strings.ToLower(l)
+		for w := range words {
+			if k := strings.Index(lower, w); k >= 0 {
+				score++
+				if first < 0 || k < first {
+					first = k
+				}
+			}
+		}
+		if score > bestScore {
+			best, bestScore, at = i, score, first
+		}
+	}
+	if bestScore == 0 {
+		return text
+	}
+	line := lines[best]
+	cut := best > 0
+	// at indexes the lowered line; it is only valid when lowering kept byte lengths.
+	if len(line) != len(strings.ToLower(line)) {
+		at = 0
+	}
+	if r := []rune(line[:at]); len(r) > 60 {
+		// Back up to a word boundary a little before the match.
+		start := len(string(r[:len(r)-40]))
+		if sp := strings.IndexByte(line[start:], ' '); sp >= 0 && start+sp < at {
+			start += sp + 1
+		}
+		line, cut = line[start:], true
+	}
+	out := strings.Join(append([]string{line}, lines[best+1:]...), "\n")
+	if cut {
+		out = "… " + out
+	}
+	return out
+}
+
+func notWordRune(r rune) bool {
+	return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '-'
 }
 
 func excerpt(text string, maxLines int) string {
@@ -558,7 +629,7 @@ func (s *Store) schedule() (bool, string) {
 	}
 	if m := intervalRE.FindSubmatch(b); m != nil {
 		if n, err := strconv.Atoi(string(m[1])); err == nil {
-			return true, (time.Duration(n) * time.Second).String()
+			return true, shortDuration(time.Duration(n) * time.Second)
 		}
 	}
 	return true, ""

@@ -154,3 +154,20 @@ test("history present on first load is never new; later successful output is", (
   const [failed] = jobsFromLines([line("job", "job 5 [failed] x (1s)\nerr", undefined, 60)], "s", true);
   expect(isNewWork(failed, t0, {})).toBe(false);
 });
+
+test("job titles skip comments and the notice's ellipsis", async () => {
+  const { jobTitle } = await import("../src/work");
+  expect(jobTitle("# …", 4)).toBe("Job 4");
+  expect(jobTitle("…", 4)).toBe("Job 4");
+  expect(jobTitle("# build it\n\nmake check\nmake lint", 4)).toBe("make check");
+  expect(jobTitle("bun test …", 4)).toBe("bun test");
+});
+
+test("job summary lines drop tree glyphs and shorten paths", async () => {
+  const { jobSummaryLine } = await import("../src/work");
+  expect(jobSummaryLine("error: boom\n└──")?.text).toBe("error: boom");
+  expect(jobSummaryLine("├── src\n│   └── missing.ts")?.text).toBe("missing.ts");
+  const s = jobSummaryLine("open /home/dev/.bough/scratch/0a1b2c/run/out.log: no such file");
+  expect(s).toEqual({ text: "open …/out.log: no such file", full: "open /home/dev/.bough/scratch/0a1b2c/run/out.log: no such file" });
+  expect(jobSummaryLine("\n──\n")).toBeNull();
+});

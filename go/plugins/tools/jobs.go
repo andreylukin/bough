@@ -449,7 +449,9 @@ func (j *Jobs) recordJob(b *job, event string, exit int) {
 	if j.record == nil {
 		return
 	}
-	data := map[string]any{"id": b.id, "event": event, "cmd": firstLine(b.cmd)}
+	// The whole command: the web row derives its title and shows it all when
+	// opened. Only the loop's text notice keeps the one-line "first …" form.
+	data := map[string]any{"id": b.id, "event": event, "cmd": b.cmd}
 	if b.until != nil {
 		data["until"] = b.until.String()
 	}

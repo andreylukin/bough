@@ -7,7 +7,7 @@ import { ProjectsView } from "./projects";
 import { ModeChip, ModePicker, type ModeValue } from "./mode";
 import { Select, type Option } from "./select";
 import { DialogHost, askChoice, askConfirm, askText } from "./dialog";
-import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, execNote, type Item, type SubAgent, type Turn, lineCount } from "./render";
+import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, execNote, sessionTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
 import { agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
@@ -25,6 +25,13 @@ export type View = "sessions" | "projects" | "hooks" | "wiki";
 const POLL_MS = 4000; // sessions we are not streaming still change status
 
 const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+/** Local time of day for today; an older moment carries its date, so it never reads as later today. */
+export const when = (iso: string, now = new Date()) => {
+  const d = new Date(iso);
+  if (d.toDateString() === now.toDateString()) return clock(iso);
+  const day = d.toLocaleDateString([], { month: "short", day: "numeric", ...(d.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}) });
+  return `${day}, ${clock(iso)}`;
+};
 
 
 export function Sprout({ size = 18 }: { size?: number }) {
@@ -240,7 +247,9 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
       // with New), or when a search asks for it.
       // A project session whose orb failed to start is empty and dead too,
       // but hiding it would swallow the failure and the prompt it lost.
-      if (r.empty && !r.live && r.orb?.status !== "failed" && r.id !== selected && !query) continue;
+      // An archived one always lists: it was archived on purpose, and hiding it
+      // left it reachable only by URL.
+      if (r.empty && !r.live && !r.archived && r.orb?.status !== "failed" && r.id !== selected && !query) continue;
       if (r.archived) archived.push(r);
       else if (r.background) background.push(r);
       // Old sessions stay in their project's group, folded under "older".
@@ -427,6 +436,11 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reveal]);
   useEffect(() => () => clearTimeout(peekTimer.current), []);
+  // A deep link or palette jump lands on a row that may be scrolled away.
+  useEffect(() => {
+    if (!selected) return;
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`.sidebar button.row[data-id="${selected}"]`)?.scrollIntoView({ block: "nearest" }));
+  }, [selected]);
 
   // Back on the list, the row you left is where you are: in view, and
   // focused so the arrows carry on from it. Not on every live update.
@@ -526,7 +540,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
                   onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
                   onBlur={unpeek}
                   aria-describedby={card?.id === r.id ? "row-card" : undefined}
-                  aria-label={`${title || "Untitled session"}, ${life ? LIFE_WORD[life] : why}, ${ago(r.lastAt)} ago${r.branch ? `, branch ${r.branch}` : ""}${bgText ? `, background: ${bgText}` : ""}`}
+                  aria-label={`${title || sessionTitle(r)},${life ? LIFE_WORD[life] : why}, ${ago(r.lastAt)} ago${r.branch ? `, branch ${r.branch}` : ""}${bgText ? `, background: ${bgText}` : ""}`}
                   className={"row" + (stacked ? " row-2" : "") + (on ? " row-on" : "") + (r.turns && !q ? " row-has-log" : "") + (r.trouble && onAck ? " row-has-ack" : "")}
                   aria-current={on ? "true" : undefined}
                   title={`${why} · ${ago(r.lastAt)} ago${r.branch ? ` · ${r.branch}` : ""}`}>
@@ -625,6 +639,9 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
           // a search shows them all.
           const now = Date.now();
           const fresh = list.filter((r) => !isOld(r, now)), older = list.filter((r) => isOld(r, now));
+          // A group of only old sessions still leads with its latest, so it
+          // never reads as an empty group holding just a link.
+          if (!fresh.length && older.length) fresh.push(older.shift()!);
           const olderKey = `older:${key}`;
           const olderOpen = foldOpen(olderKey, unfolded.has(olderKey));
           const dup = (r: Row) => (seen.get(displayTitle(r)) ?? 0) > 1;
@@ -693,7 +710,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
 
   const total = recent.length + background.length + archived.length;
   // While something in Background needs you, its count says how many, not the total.
-  const bgUrgent = background.filter((r) => sessionSignal(r) === 0);
+  // A failure already shows as "N failed" in the subline, so it isn't counted again here.
+  const bgUrgent = background.filter((r) => sessionSignal(r) === 0 && !hasFailure(r));
   const bgAlert = background.some(hasFailure) ? "trouble" : bgUrgent.length ? "needs-you" : undefined;
   const bgSub = [bgRunning && `${bgRunning} running`, bgFailed && `${bgFailed} failed`].filter(Boolean).join(" · ");
   const foldOpen = (key: string, open: boolean) => (searchOn ? !searchFolds.has(key) : open);
@@ -746,7 +764,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
              t.tabIndex = 0;
              stop.current = t;
            }}>
-        {total === 0 && !(showArchived && archivedState !== "ready") && (
+        {/* Empty only once a load has answered: before that it is loading or unavailable, said above. */}
+        {total === 0 && loadedAt !== null && !loadErr && !(showArchived && archivedState !== "ready") && (
           <p className="list-none">{query ? `No sessions match “${query}”.` : "No sessions yet."}</p>
         )}
         {workspaces(recent, "recent")}
@@ -1751,7 +1770,7 @@ function TurnFooter({ turn, fail }: { turn: Turn; /** The result the turn's fail
  * actually answering. The window is only named when the session records
  * its model; a default model is not guessed at.
  */
-function RuntimeStrip({ row, lines, paused, onRetry, onContext, work }: { row: Row; lines: Line[]; paused?: number; onRetry?: () => void; onContext?: () => void; /** The Work button, after the metrics. */ work?: React.ReactNode }) {
+function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, loading }: { row: Row; lines: Line[]; paused?: number; onRetry?: () => void; onContext?: () => void; /** The Work button, after the metrics. */ work?: React.ReactNode; loading?: boolean }) {
   const [limits, setLimits] = useState<Record<string, number>>({});
   useEffect(() => {
     fetch("/api/models").then((r) => r.json()).then((c: { providers?: ProviderInfo[] }) => {
@@ -1792,9 +1811,12 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work }: { row: R
           : !row.model ? "No model is recorded for this session, so headroom is not known"
           : switched ? "The model changed after this input was read; headroom shows once the new model answers"
           : `${row.model} has no context window in the catalogue`;
+        // Until the transcript arrives there is nothing to report yet; after,
+        // a session that never reports shows one quiet dash, not a label.
+        if (loading && !u) return <span className="rt rt-loading" aria-label="Loading usage"><span className="rt-label">Context</span><span className="rt-skel" /></span>;
         const body = <>
           <span className="rt-label">Context</span>
-          <span className={"num rt-value" + (u ? "" : " rt-stale")}>{!u ? "Not reported" : `${tokenCount(u.lastIn)}${limit ? ` · ${tokenCount(Math.max(0, limit - u.lastIn))} left` : " · window unknown"}`}</span>
+          <span className={"num rt-value" + (u ? "" : " rt-stale")}>{!u ? "—" :`${tokenCount(u.lastIn)}${limit ? ` · ${tokenCount(Math.max(0, limit - u.lastIn))} left` : " · window unknown"}`}</span>
           {pct !== undefined && (
             <span className="rt-bar" role="meter" aria-label="Context used" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
               <span className={pct >= 80 ? "rt-hot" : undefined} style={{ width: `${pct}%` }} />
@@ -1805,9 +1827,9 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work }: { row: R
           ? <button type="button" className="rt rt-link" title={`${tip} · open Context`} aria-label={`Context: ${tip}`} onClick={onContext}>{body}</button>
           : <Tip tip={tip}>{body}</Tip>;
       })()}
-      {u?.cost === undefined && (
+      {u && u.cost === undefined && (
         <Tip tip="The provider has not reported a cost for this session">
-          <span className="rt-label">Cost</span><span className="num rt-value rt-stale">Not reported</span>
+          <span className="rt-label">Cost</span><span className="num rt-value rt-stale">—</span>
         </Tip>
       )}
       {u?.cost !== undefined && (
@@ -1861,8 +1883,10 @@ function ChangesChip({ row, tick }: { row: Row; tick: number }) {
   const data = useChanges(row.id, tick);
   const phone = useMedia("(max-width:720px)");
   const [scope, setScope] = useState<Scope>("session");
-  const c = countOf(data.session);
-  const t = countOf(data.tree);
+  // The chip is the one place that names a missing repository; the body's tabs show a dash.
+  const noRepo = (r: typeof data.session) => (r.files !== null && !r.repo ? { text: "No Git repository", quiet: true } : null);
+  const c: ReturnType<typeof countOf> = noRepo(data.session) ?? countOf(data.session);
+  const t: ReturnType<typeof countOf> = noRepo(data.tree) ?? countOf(data.tree);
   const href = `#/s/${row.id}/changes`;
   const aria = `Session edits: ${c.text}${c.add !== undefined ? `, ${c.add} added, ${c.del} removed` : ""}. Working tree: ${t.text}${data.session.failed || data.tree.failed ? ", stale" : ""}`;
   const body = <>
@@ -2075,7 +2099,7 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
       {turn.prompt && wakeJobs && (
         <div className="job-wake" role="note">
           <p className="meta-line">
-            {wakeJobs.length === 1 ? "A background job finished" : `${wakeJobs.length} background jobs finished`} while the agent was idle · {clock(turn.prompt.at)}
+            {wakeJobs.length === 1 ? "A background job finished" : `${wakeJobs.length} background jobs finished`} while the agent was idle · {when(turn.prompt.at)}
           </p>
           {wakeJobs.map((w) => <JobRow key={w.key} w={w} />)}
         </div>
@@ -2104,7 +2128,7 @@ export function TurnView({ turn, tail, n }: { turn: Turn; tail?: React.ReactNode
               <pre className={"prompt-att" + (atts[opened].isFile ? " prompt-att-file" : "")}>{atts[opened].body}</pre>
             )}
           </div>
-          <span className="num prompt-time">{clock(turn.prompt.at)}</span>
+          <span className="num prompt-time" title={new Date(turn.prompt.at).toLocaleString()}>{when(turn.prompt.at)}</span>
         </div>
       )}
       <div className="turn-body">
@@ -2212,7 +2236,7 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
   for (const p of cat?.providers ?? []) {
     for (const m of p.models ?? []) {
       // The group already names the provider; the trigger drops it too.
-      models.push({ value: m.id, label: m.id, short: m.id.split("/").pop(), group: p.plugin.replace(/^llm-/, ""),
+      models.push({ value: m.id, label: m.id, short: m.id.split("/").pop(), group: capital(p.plugin.replace(/^llm-/, "")),
                     detail: m.context ? contextSize(m.context) : undefined });
     }
   }
@@ -2232,18 +2256,23 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
         // it thinks, side by side, on every screen.
         <div className="ctl ctl-run" title="Model and effort for the next turn">
           <span className="ctl-label ctl-next">Next turn</span>
+          <span className="ctl-label ctl-field">Model</span>
           <Select label="Next turn model" value={row.model ?? ""} options={models} searchable align="end" note="Applies to the next turn"
                   detailHeading="Context tokens"
                   footer={(o) => {
                     const m = o && cat?.providers.flatMap((p) => p.models ?? []).find((x) => x.id === o.value);
                     const price = (n?: number) => (n ? `$${+n.toFixed(2)}` : "Unavailable");
-                    return m ? <>Input {price(m.input)} · Output {price(m.output)} <span className="sel-foot-unit">per 1M tokens</span></> : "Price unavailable";
+                    // The footer stays put while the list scrolls, so it names the model it prices.
+                    const name = <span className="mono sel-foot-name">{o?.short ?? o?.label}</span>;
+                    return m ? <>{name} · Input {price(m.input)} · Output {price(m.output)} <span className="sel-foot-unit">per 1M tokens</span></>
+                      : o?.value ? <>{name} · Price unavailable</> : "Price unavailable";
                   }}
                   onChange={(v) => (v ? onModel(v) : undefined)} />
-          {efforts.length > 0 && (
-            <Select label="Next turn effort" value={row.effort ?? ""} align="end" note="Applies to the next turn" onChange={(v) => (v ? onEffort(v) : undefined)}
-                    options={[...(row.effort ? [] : [{ value: "", label: "Provider default" }]), ...efforts.map((e) => ({ value: e, label: effortLabel(e) }))]} />
-          )}
+          {/* Always present, so Settings keeps one shape: disabled with the reason until levels are known. */}
+          <span className="ctl-label ctl-field">Effort</span>
+          <Select label="Next turn effort" value={row.effort ?? ""} align="end" note="Applies to the next turn" onChange={(v) => (v ? onEffort(v) : undefined)}
+                  disabled={efforts.length === 0} placeholder={catFailed ? "Unavailable" : cat ? "Not offered" : "Loading"}
+                  options={efforts.length ? [...(row.effort ? [] : [{ value: "", label: "Provider default" }]), ...efforts.map((e) => ({ value: e, label: effortLabel(e) }))] : []} />
           {catFailed && <button className="btn" onClick={() => setNonce((n) => n + 1)}>Models unavailable · Retry</button>}
         </div>
       )}
@@ -2311,7 +2340,7 @@ function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onR
                   return (
                     <div key={r.id} className="ov-fail" role="listitem">
                       {/* The failing call when the transcript names one; else the only identity there is. */}
-                      <span className="ov-fail-what" title={plainTitle(r.title) || r.id}>{e?.cmd ?? `${plainTitle(r.title) || untitled(r.id)} · ${r.trouble || (r.testsFailed ? "tests failed" : "failed")}`}</span>
+                      <span className="ov-fail-what" title={plainTitle(r.title) || r.id}>{e?.cmd ?? `${sessionTitle(r)} · ${r.trouble || (r.testsFailed ? "tests failed" : "failed")}`}</span>
                       {e?.exit !== undefined && <span className="num ov-fail-exit">exit {e.exit}</span>}
                       <span className="num">{r.repo?.split("/").pop()}</span>
                       <span className="num">{ago(e?.at ?? r.lastAt)} ago</span>
@@ -2615,6 +2644,14 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     // What was recorded when you left, so the button can say something new arrived.
     if (!atBottom.current && !away) awayAt.current = newest;
     setAway(!atBottom.current);
+    // A screen or more down: a long read gets a way back to the start too.
+    setDown(el.scrollTop > el.clientHeight);
+  };
+  const [down, setDown] = useState(false);
+  const toStart = () => {
+    atBottom.current = false;
+    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    scroller.current?.scrollTo({ top: 0, behavior: still ? "auto" : "smooth" });
   };
   const awayAt = useRef(0);
   const toLatest = () => {
@@ -2650,9 +2687,22 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
       if (i >= 0 && i < all.length) { e.preventDefault(); rove(all, all[i]); all[i].focus(); }
       return;
     }
-    if (e.key !== "End" || !(e.metaKey || e.ctrlKey)) return;
+    if (e.key === "End" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); toLatest(); return; }
+    // The page keys scroll the transcript itself, from anywhere in it but a
+    // field, output that scrolls on its own, or a control that owns the key.
+    const el = scroller.current;
+    if (!el || e.altKey || e.metaKey || e.ctrlKey || e.defaultPrevented) return;
+    if (t.closest("input, textarea, select, [contenteditable], pre, .md-table-scroll")) return;
+    const arrow = e.key === "ArrowDown" || e.key === "ArrowUp";
+    if (arrow && t !== el) return;
+    const page = el.clientHeight * 0.9, line = 40;
+    const by: Record<string, number> = { ArrowDown: line, ArrowUp: -line, PageDown: page, PageUp: -page, " ": e.shiftKey ? -page : page };
+    if (e.key === " " && t !== el) return;
+    if (e.key === "Home") { e.preventDefault(); toStart(); return; }
+    if (e.key === "End") { e.preventDefault(); toLatest(); return; }
+    if (by[e.key] === undefined) return;
     e.preventDefault();
-    toLatest();
+    el.scrollBy({ top: by[e.key] });
   };
   // Coming back to a session lands where you were reading. One that was
   // following its output (or is new) opens at the bottom, new events and all.
@@ -3007,7 +3057,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   const send = async () => {
     const t = draft.trim();
     // Enter reaches here even while the Send button is disabled.
-    if (!t || busy || uploading || askChanged) return;
+    if (!t || busy || uploading || askChanged || row.archived) return;
     // A tag whose content is gone is never sent as its placeholder.
     const lost = [...t.matchAll(/\[(?:Image|File) #(\d+)\]|\[Pasted text #(\d+) \+\d+ lines\]/g)]
       .filter((m) => m[1] ? !images.current[+m[1] - 1] : pastes.current[+m[2] - 1] === undefined);
@@ -3055,7 +3105,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
         <Back onBack={onBack} />
         <div className="head-main">
           {row.spawnedBy && <ParentLink id={row.spawnedBy} rows={rows} onOpen={onOpenSession} />}
-          <h1 title={row.title} ref={headRef} tabIndex={-1}>{plainTitle(row.title) || untitled(row.id)}</h1>
+          <h1 title={row.title} ref={headRef} tabIndex={-1}>{sessionTitle(row)}</h1>
           {(row.repo || row.branch) && (
             <span className="mono head-repo">
               {row.repo?.split("/").pop()}
@@ -3113,13 +3163,23 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
                   closeMore(false);
                   // Empty is allowed: it hands the title back to the session.
                   await askText("Rename session", { initial: plainTitle(row.title), action: "Rename", allowEmpty: true, onSubmit: onRename });
-                }}>Rename</button>
-                <button className="head-pop-item" onClick={() => { closeMore(true); onArchive(); }}>{row.archived ? "Unarchive" : "Archive"}</button>
+                }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M4 20h4L19 9l-4-4L4 16z" />
+                  </svg>
+                  Rename…
+                </button>
+                <button className={"head-pop-item" + (row.archived ? "" : " head-pop-danger")} onClick={() => { closeMore(true); onArchive(); }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M4 5h16v4H4zM6 9v10h12V9M10 13h4" />
+                  </svg>
+                  {row.archived ? "Unarchive" : "Archive…"}
+                </button>
               </div>
             )}
           </div>
         </div>
-        <RuntimeStrip row={row} lines={lines} paused={paused} onRetry={onRetry} onContext={onContext}
+        <RuntimeStrip row={row} lines={lines} paused={paused} onRetry={onRetry} onContext={onContext} loading={loading}
           work={showWork && (
             <WorkButton btnRef={workBtn} counts={counts} loading={kids.state === "loading"} unavailable={kids.state === "error"}
                         paused={paused !== undefined} narrow={paneNarrow || sheet} expanded={workOpen}
@@ -3139,7 +3199,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
         )}
         {loading && !loadError && slow && <p className="meta-line transcript-state" role="status">Loading transcript…</p>}
         {!loading && turns.length === 0 && !running && !row.ask && (
-          <p className="meta-line transcript-state">No recorded turns.</p>
+          <p className="meta-line transcript-state">No recorded turns yet. Type a prompt below to start.</p>
         )}
         {turns.map((t, i) => (
           // Numbered by prompt, as the turn log counts: a leading /model
@@ -3199,6 +3259,13 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
       </div>
 
       <div className="composer-wrap">
+        {/* Archived stays readable, but says so before anything is typed into it. */}
+        {row.archived && (
+          <p className="archived-note" role="status">
+            This session is archived.
+            <button className="btn" onClick={onArchive}>Unarchive</button>
+          </p>
+        )}
         {row.ask && !askSeen && (
           <div className="ask-bar">
             <p><strong>Needs your answer</strong></p>
@@ -3287,8 +3354,8 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             aria-label={draftAsk || (blank && row.ask) ? "Answer to agent question" : "Message"}
             aria-controls={pickerOpen ? "mention-list" : undefined}
             aria-activedescendant={pickerOpen ? activeOpt : undefined}
-            disabled={Boolean(row.ask?.secret)}
-            placeholder={row.ask?.secret ? "Answer in the secret field" : row.ask && !askChanged ? "Answer…" : running ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Next turn…"}
+            disabled={Boolean(row.ask?.secret) || row.archived}
+            placeholder={row.archived ? "Unarchive to continue this session" : row.ask?.secret ? "Answer in the secret field" :row.ask && !askChanged ? "Answer…" : running ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Next turn…"}
             onPaste={(e) => take({ dataTransfer: e.clipboardData, preventDefault: () => e.preventDefault() }, false)}
             onChange={(e) => {
               setDraft(e.target.value);
@@ -3329,6 +3396,12 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             {attachErr && <span className="attach-note attach-err" role="alert">{attachErr}</span>}
             <div className="composer-actions">
               {/* Beside Send, so it never covers what you are reading. */}
+              {down && (
+                <button className="btn jump-latest" onClick={toStart} title="Home" aria-label="Jump to start">
+                  <span aria-hidden="true">↑</span>
+                  <span className="jump-word">Start</span>
+                </button>
+              )}
               {away && (
                 <button className="btn jump-latest" onClick={toLatest} title={modKey() + "End"}
                         aria-label={newest > awayAt.current ? "New activity, jump to latest" : "Jump to latest"}>
@@ -3354,7 +3427,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
                 <button className="btn" onClick={enqueue} disabled={uploading > 0 || blank || askChanged}
                         title={modKey() + "Enter: send when this turn ends"}>Queue</button>
               )}
-              <button className="btn btn-primary" onClick={send} disabled={busy || uploading > 0 || blank || askChanged}
+              <button className="btn btn-primary" onClick={send} disabled={busy || uploading > 0 || blank || askChanged || row.archived}
                       title={running && !draftAsk ? "Enter: steer the running turn" : undefined}>
                 {(blank ? row.ask : draftAsk) ? "Answer" : running ? "Steer" : "Send"}
               </button>
@@ -3364,7 +3437,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
         <div className="composer-foot">
           {row.mode !== "project" && (
             <span className="composer-local">
-              <span className="mode-local" title="A local session reads your files but cannot change them">Local · read-only</span>
+              <span className="mode-local" title="A local session can read your files and run commands on this machine, but cannot edit files. Start a project session to make changes.">Local · read-only</span>
               {onStartProject && projects.some((p) => p.slug) ? (
                 <Select label="Start project session" value="" placeholder="Start project session…" align="start"
                         note="Your draft moves to the new session, unsent"
@@ -3625,11 +3698,14 @@ export default function App() {
       }
     };
     read();
-    window.addEventListener("popstate", read);
-    window.addEventListener("hashchange", read);
+    // Any navigation of yours beats opening a session on arrival: going to
+    // #/ while the first load was still out bounced into the latest session.
+    const nav = () => { arrived.current = true; read(); };
+    window.addEventListener("popstate", nav);
+    window.addEventListener("hashchange", nav);
     return () => {
-      window.removeEventListener("popstate", read);
-      window.removeEventListener("hashchange", read);
+      window.removeEventListener("popstate", nav);
+      window.removeEventListener("hashchange", nav);
     };
   }, []);
 
@@ -3762,17 +3838,20 @@ export default function App() {
   // Archiving a session leaves its background agents running unless you
   // say otherwise: they may be doing work you still want, so ask.
   const archiveRow = async (r: Row) => {
-    if (r.archived) return act(() => api.unarchive(r.id), "unarchive");
+    // The list shows the change as soon as the server takes it: a poll
+    // already in flight could otherwise land stale after act's refresh.
+    const mark = (archived: boolean) => setRows((rs) => rs.map((x) => x.id === r.id ? { ...x, archived } : x));
+    if (r.archived) return act(async () => { await api.unarchive(r.id); mark(false); }, "unarchive");
     const n = (r.agents?.running ?? 0) + (r.agents?.queued ?? 0);
     if (n === 0) {
-      const ok = await askConfirm("Archive this session?", `“${plainTitle(r.title) || "Untitled session"}” leaves the list. It stays under Archived and can be restored.`,
+      const ok = await askConfirm("Archive this session?", `“${sessionTitle(r)}” leaves the list. It stays under Archived and can be restored.`,
         { action: "Archive", safe: true });
-      return ok ? act(() => api.archive(r.id), "archive") : false;
+      return ok ? act(async () => { await api.archive(r.id); mark(true); }, "archive") : false;
     }
-    const pick = await askChoice(`Archive ${plainTitle(r.title) || untitled(r.id)}?`,
+    const pick = await askChoice(`Archive ${sessionTitle(r)}?`,
       `Stop its ${agentWords(r.agents?.running ?? 0, r.agents?.queued ?? 0)} too?`, ["Stop and archive", "Archive only"]);
     if (!pick) return false;
-    return act(() => api.archive(r.id, { stopChildren: pick === "Stop and archive" }), "archive");
+    return act(async () => { await api.archive(r.id, { stopChildren: pick === "Stop and archive" }); mark(true); }, "archive");
   };
 
   // What the chrome can do, the keyboard can do. Session-scoped
@@ -3785,7 +3864,11 @@ export default function App() {
   // New starts where the open session works, and the new session's header
   // shows that folder before anything is sent. With none open, the palette
   // asks where: never a silent Home.
-  const newSession = () => { if (row?.cwd) void start(row.cwd, ""); else setPalette(true); };
+  // Nothing is created until the first prompt: New opens the palette aimed
+  // at that folder, and typing a prompt there starts the session. A click
+  // alone used to leave an empty session behind every time.
+  const [palCwd, setPalCwd] = useState("");
+  const newSession = () => { setPalCwd(row?.cwd ?? ""); setPalette(true); };
   const folderName = (p: string) => p.replace(/\/+$/, "").split("/").pop() || p;
 
   // The newest call whose recorded exit was not zero, in the open session.
@@ -3838,7 +3921,9 @@ export default function App() {
     { id: "go:archived", group: "Navigation",
       label: archived ? "Hide archived sessions" : "Show archived sessions",
       run: () => setArchived((v) => !v) },
-    ...(row ? [
+    // Only while a session is on screen: on the wiki or hooks pages "this
+    // session" was the last one visited, which nothing on screen showed.
+    ...(row && view === "sessions" ? [
       { id: "s:changes", group: "This session", label: "Review changes", suggest: true,
         hint: "Session edits", run: () => { setSub("changes"); setPane("thread"); } },
       { id: "s:context", group: "This session", label: "Inspect context", suggest: true,
@@ -3846,6 +3931,7 @@ export default function App() {
       // Searchable only, and it asks first: never one Enter away from an empty box.
       { id: "s:archive", group: "This session",
         label: row.archived ? "Unarchive this session" : "Archive this session",
+        destructive: !row.archived,
         run: () => { void archiveRow(row); } },
       ...(latestFail !== undefined ? [{
         id: "s:fail", group: "This session", label: "Jump to latest failed call", suggest: true,
@@ -3866,10 +3952,11 @@ export default function App() {
           <button className="skip-link" onClick={() => document.getElementById("composer")?.focus()}>Skip to composer</button>
         </div>
       )}
-      <Palette open={palette} onClose={() => { setPalette(false); setPalQuery(""); }} rows={rows}
+      <Palette open={palette} onClose={() => { setPalette(false); setPalQuery(""); setPalCwd(""); }} rows={rows}
                commands={commands} onOpenSession={openSession} initialQuery={palQuery} current={selected}
                onOpenWikiPage={(path) => goWiki({ at: "page", path })}
-               onStart={home ? (text) => start(home, text) : undefined} />
+               onStart={palCwd || home ? (text) => start(palCwd || home, text) : undefined}
+               startIn={palCwd ? palCwd.split("/").filter(Boolean).pop() || palCwd : undefined} />
       <Sidebar rows={visible} projects={projects} selected={selected ?? lastId} active={pane === "list"}
                onSelect={openSession} query={query} onQuery={setQuery}
                onTurn={(id, turn) => { if (id !== selected || view !== "sessions" || sub) openSession(id); else setPane("thread"); setJump({ id, turn, at: Date.now() }); }}

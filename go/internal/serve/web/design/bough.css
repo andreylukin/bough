@@ -85,6 +85,9 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .field::placeholder{color:var(--text-3)}
 /* A workspace, and the sections below: a muted name and a thin rule filling the row. */
 .ws{display:flex;flex-direction:column}
+/* groups inside Background and Archived sit under their section, not beside the main list */
+.sec-body>.ws{padding-inline-start:12px;border-inline-start:1px solid var(--line);margin-inline-start:14px}
+.archived-note{display:flex;align-items:center;gap:12px;margin:0 0 8px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px;color:var(--text-2)}
 .ws-older{align-self:flex-start;height:24px;margin:2px 0 4px 34px;padding:0 6px;background:none;border:0;border-radius:6px;color:var(--text-3);font:12px var(--sans);cursor:pointer}
 .ws-older:hover{color:var(--text-1)}
 .ws-older:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
@@ -124,7 +127,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:15px/1.5 var(--sans)
 .turn-note{color:var(--text-3)}
 .side-fresh{display:flex;align-items:center;gap:8px;height:28px;margin:0;padding:0 12px;font-size:12px;color:var(--text-3)}
 /* Hover, selected and focus each look different: a tint, a tint with a marker, a ring. */
-.row:hover{background:#232a25}
+.row:hover{background:rgba(255,255,255,.035)}
 .row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .row-on,.row-on:hover{background:#2d3a31;box-shadow:inset 2px 0 0 var(--accent)}
 .turn-more{color:var(--text-3)}
@@ -165,6 +168,9 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .thread-head>.back{grid-area:back}
 .thread-head>.head-main{grid-area:main}
 .thread-head>.head-side{grid-area:side}
+/* Wiki headers put their buttons in a bare .hk-acts: without an area it
+   auto-placed into the empty back column, left of the title. */
+.thread-head>.hk-acts{grid-area:side;margin-inline-start:12px}
 /* Row 2 grows when the strip wraps (a busy session's Work button drops to a
    second line); in a fixed 24px row, centred, it spilled up over the title. */
 .thread-head>.runtime-strip{grid-area:strip;align-self:start;display:flex;flex-wrap:wrap;gap:8px 16px;min-width:0}
@@ -208,6 +214,13 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .head-pop .ctl-label{padding-inline-start:4px}
 .head-pop{overflow-y:auto}
 .head-pop-item:hover{background:var(--sel);color:var(--text-1)}
+.head-pop>.head-pop-item{gap:8px}
+.head-pop-danger,.head-pop-danger:hover{color:var(--red)}
+/* Model and Effort name their pickers inside Settings; the header's tooltip names them elsewhere. */
+.ctl-field{display:none}
+.head-pop .ctl-field{display:block}
+.sel-btn:disabled{cursor:not-allowed;color:var(--text-3);background:none}
+.sel-foot-name{color:var(--text-1)}
 /* Model, effort, cache and Context move into settings only on a phone. */
 .head-clock{font-size:12px;color:var(--text-2)}
 .sel-save{font-size:12px;color:var(--text-3);white-space:nowrap;margin-inline-start:6px}
@@ -277,7 +290,8 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 /* turns */
 /* Commands and output want the width; replies keep an 80ch measure. */
 .transcript{flex-grow:1;padding:24px 24px 8px;display:flex;flex-direction:column;gap:24px}
-.transcript:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.transcript:focus{outline:none}
+.transcript:focus-visible{outline:none;box-shadow:inset 2px 0 0 color-mix(in srgb,var(--accent) 60%,transparent)}
 /* Left-aligned under the header, as wide as a wide window allows:
    commands, output and tables use the width; prose keeps a measure. */
 .transcript>*{width:100%;max-width:960px;margin-inline:auto}
@@ -353,6 +367,9 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .rt-del{color:var(--red)}
 .rt-pop li{align-items:center}
 .rt-stale{color:var(--text-3)}
+.rt-skel{display:inline-block;width:64px;height:10px;border-radius:4px;background:var(--text-3);opacity:.25;animation:rt-skel 1.2s ease-in-out infinite alternate}
+@keyframes rt-skel{to{opacity:.1}}
+@media (prefers-reduced-motion:reduce){.rt-skel{animation:none}}
 .rt-mark{display:inline-flex;margin-inline-end:4px;vertical-align:-2px}
 .rt-diff{width:min(760px,calc(100vw - 24px));max-width:none;padding:4px}
 .rt-pop li.rt-pop-head{flex-direction:column;align-items:stretch;gap:2px;padding-block:4px;border-bottom:1px solid var(--line);margin-bottom:2px}
@@ -1074,6 +1091,8 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .thread-head>.head-side{display:contents}
   .head-side>.controls{display:none}
   .head-side>.head-more{grid-area:more;align-self:center}
+  /* No side column here: wiki actions take the strip row under the title. */
+  .thread-head>.hk-acts{grid-area:strip;margin:4px 0 6px}
   .head-run{display:block;flex:1 1 100%;min-width:0;font-size:12px;line-height:16px;color:var(--text-2);white-space:normal;overflow-wrap:anywhere}
   .head-pop-run{display:block}
   .head-main{flex-wrap:wrap;align-content:center;gap:0 10px}
@@ -1183,7 +1202,7 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .hk-fire{border-bottom:1px solid var(--line)}
 .hk-fire:last-child{border-bottom:0}
 .hk-day{margin:0;height:24px;display:flex;align-items:end;font:600 12px var(--sans);color:var(--text-3)}
-.hk-main{display:grid;grid-template-columns:72px 112px minmax(0,1fr) 104px 56px 208px 24px;align-items:center;
+.hk-main{display:grid;grid-template-columns:72px minmax(0,1.4fr) minmax(0,1fr) minmax(0,.9fr) 56px minmax(0,.8fr) 24px;align-items:center;
          gap:8px;min-height:36px;font-size:13px;line-height:18px;min-width:0}
 .hk-main>*{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hk-sess{font-size:12px}
@@ -1387,7 +1406,14 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .work-row-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px}
 .work-row-preview{grid-column:1/-1;margin-top:8px;font-size:13px;line-height:20px;color:var(--text-2);overflow-wrap:anywhere}
 .work-row-preview pre{max-height:240px;overflow:auto;margin:4px 0 0;font:12px/18px var(--mono);white-space:pre-wrap}
-.work-popover>.work-body,.work-sheet>.work-body{overflow:auto}
+/* The body shrinks inside the flex column and scrolls; the last row fades out while more sits below. */
+.work-popover>.work-body,.work-sheet>.work-body{overflow:auto;flex:1 1 auto;min-height:0;padding-bottom:12px;
+  mask-image:linear-gradient(to bottom,#000 calc(100% - 64px),transparent);
+  animation:work-more linear both;animation-timeline:scroll(self)}
+@keyframes work-more{to{mask-image:none}}
+/* Without scroll timelines the mask never lifts, so the last row would stay
+   faded: drop it and end on room below the last row instead. */
+@supports not (animation-timeline:scroll()){.work-popover>.work-body,.work-sheet>.work-body{mask-image:none;padding-bottom:24px}}
 .work-sheet{position:fixed;z-index:60;inset:auto 0 0 0;height:80dvh;display:flex;flex-direction:column;overflow:hidden;
             background:var(--raised);border-top:1px solid var(--line-strong);border-radius:12px 12px 0 0;
             padding-inline:env(safe-area-inset-left) env(safe-area-inset-right);padding-bottom:env(safe-area-inset-bottom)}
@@ -1419,6 +1445,8 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .job-action[data-stop]{min-width:112px}
 .job-body{display:flex;flex-direction:column;gap:8px;padding:8px 12px}
 .job-sec{display:flex;flex-direction:column;gap:4px}
+/* Open, the whole command wraps and selects; only the closed summary is one line. */
+.job-body pre.job-cmd-full{white-space:pre-wrap;overflow-wrap:anywhere;text-indent:0;padding-inline-start:14px;user-select:text;color:var(--text-1)}
 .block .job-out{max-height:240px;overflow:auto}
 .sub-sec{display:flex;flex-direction:column;gap:4px}
 .sub-fail-head{color:var(--red)}
@@ -1489,7 +1517,7 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
           border-inline-start:2px solid var(--amber)}
 .wk-super-word{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--amber);flex-shrink:0}
 .wk-note{font-size:12px;line-height:1.5;color:var(--text-3);border-inline-start:2px solid var(--line-strong);
-         padding-inline-start:10px;white-space:pre-wrap;overflow-wrap:anywhere}
+         padding-inline-start:10px;white-space:pre-wrap;overflow-wrap:break-word}
 .wk-note-bad{border-inline-start-color:var(--red);color:var(--red)}
 .wk-note-src{display:block;margin-bottom:3px;font-family:var(--mono);color:var(--text-2)}
 .wk-links .md ul{margin:0;padding-inline-start:18px}
@@ -1612,7 +1640,7 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .proj-open .proj-when{line-height:16px}
   .proj-move .sel-btn{max-width:12ch}
   .hk-main>.hk-name{display:none}
-  .hk-main>a.hk-sess{display:block;grid-column:2;grid-row:1;min-width:0;font:500 13px/18px var(--sans);color:#DDE3DE}
+  .hk-main>.hk-sess{display:block;grid-column:2;grid-row:1;min-width:0;font:500 13px/18px var(--sans);color:#DDE3DE}
   .ov-fail{min-height:64px;flex-wrap:wrap;gap:4px 12px;padding-block:8px}
   .ov-fail-what{flex-basis:100%}
   .ov-fail .btn{height:44px;margin-inline-start:auto}

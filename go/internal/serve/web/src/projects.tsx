@@ -267,7 +267,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
   };
 
   const list = (rs: Row[], grouped = false) => rs.map((r) => (
-    <Conversation key={r.id} row={r} repo={grouped ? undefined : repoOf(r)} projects={projects} onOpen={onOpen} onAssign={onAssign}
+    <Conversation key={r.id} row={r} repo={grouped || repoOf(r) === UNKNOWN ? undefined : repoOf(r)} projects={projects} onOpen={onOpen} onAssign={onAssign}
                   picked={selected.has(r.id)} onPick={pick} locked={moving} />
   ));
 

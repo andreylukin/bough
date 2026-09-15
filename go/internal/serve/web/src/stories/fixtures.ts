@@ -240,6 +240,10 @@ export const jobGroupLines: Line[] = [
   typedJob(8, "started", { cmd: "go test -race ./internal/serve/..." }, minsAgo(2)),
   legacyJob("job 6 [exited 1] bun test ./test/work.test.ts (1s)\nerror: Cannot find module './fixtures/config'"),
   legacyJob("job 5 [failed] make lint (3s): exit status 2\nlint: 4 issues"),
+  // A script that opens with a comment, failing with tree output and a scratch path.
+  typedJob(9, "started", { cmd: "# regenerate the fixtures\ncd web && bun run gen --out \"$BOUGH_SCRATCH/gen\"\nbun test ./test/gen.test.ts" }, minsAgo(1)),
+  typedJob(9, "finished", { cmd: "# regenerate the fixtures\ncd web && bun run gen --out \"$BOUGH_SCRATCH/gen\"\nbun test ./test/gen.test.ts", exit: 1 }, minsAgo(1)),
+  legacyJob("job 9 [exited 1] # regenerate the fixtures … (2s)\nwrote /home/dev/.bough/scratch/3f9c2a7e-51d4/gen/out.json\n└──"),
 ];
 export const jobGroupRunning = [{ id: 7, cmd: "npm test -- --watch=false", started: minsAgo(2) }, { id: 8, cmd: "go test -race ./internal/serve/...", started: minsAgo(2) }];
 

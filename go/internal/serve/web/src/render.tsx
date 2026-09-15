@@ -177,6 +177,11 @@ export function plainTitle(t: string): string {
   return t.replace(/^#{1,6}\s+/, "").replace(/[*_`]/g, "").trim();
 }
 
+/** One name for a session on every surface: its title, else "Session <id tail>". */
+export function sessionTitle(r: { id: string; title?: string }): string {
+  return plainTitle(r.title ?? "") || untitled(r.id);
+}
+
 const QUIET = new Set(["job", "hook", "usage", "system", "nudge", "command", "meta", "title", "turn-summary", "undo"]);
 
 /** Kinds that are bookkeeping, not conversation. */

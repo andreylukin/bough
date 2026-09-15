@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useModal } from "./dialog";
 import type { Row } from "./types";
-import { plainTitle } from "./render";
+import { plainTitle, sessionTitle } from "./render";
 import { shownStatus } from "./status";
 
 /**
@@ -21,6 +21,8 @@ export interface Command {
   detail?: string;
   /** Offered before anything is typed; the rest wait to be searched for. */
   suggest?: boolean;
+  /** Never the default selection: it has to be chosen on purpose. */
+  destructive?: boolean;
 }
 
 interface WikiHit { path: string; title: string; topic: string; excerpt: string; counts: { cited: number } }
@@ -104,8 +106,10 @@ function useFullText(q: string, open: boolean): { hits: SearchHit[]; state: Sear
   return { hits: forQ === q.trim() ? hits : [], state };
 }
 
-export function Palette({ open, onClose, rows, commands, onOpenSession, onStart, onOpenWikiPage, initialQuery = "", current = null }: {
+export function Palette({ open, onClose, rows, commands, onOpenSession, onStart, onOpenWikiPage, initialQuery = "", current = null, startIn }: {
   open: boolean;
+  /** Folder name the Start entry starts in, when New aimed the palette at one. */
+  startIn?: string;
   onClose: () => void;
   rows: Row[];
   commands: Command[];
@@ -158,7 +162,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
       .filter((x) => x.s >= 0);
     const sessions = rows
       .map((r) => {
-        const title = plainTitle(r.title) || "Untitled session";
+        const title = sessionTitle(r);
         const s = needle ? Math.max(score(title, needle, false), score(r.repo ?? "", needle, false)) : 0;
         // The one you are in is rarely where you want to go.
         return { r, title, s: s >= 0 && r.id === current ? Math.min(s, 51) : s };
@@ -181,7 +185,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     for (const h of found) {
       const r = rows.find((x) => x.id === h.id);
       if (!r || byId.has(h.id)) continue;
-      byId.set(h.id, { r, title: plainTitle(r.title) || plainTitle(h.title) || "Untitled session", s: h.id === current ? 49 : 50 });
+      byId.set(h.id, { r, title: plainTitle(r.title) || sessionTitle({ id: h.id, title: h.title }), s: h.id === current ? 49 : 50 });
     }
     const cands = [...byId.values()].sort((a, b) => b.s - a.s);
     // Titles that repeat carry the id's tail, the one thing always different.
@@ -200,7 +204,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     const ranked = [
       ...recent.map((r) => ({ s: 20, c: {
         id: "s:" + r.id,
-        label: plainTitle(r.title) || "Untitled session",
+        label: sessionTitle(r),
         hint: [r.repo?.split("/").pop(), r.lastAt ? agoShort(r.lastAt) : ""].filter(Boolean).join(" · "),
         group: "Recent sessions",
         run: () => onOpenSession(r.id),
@@ -237,7 +241,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     const seen = new Set(all.map((c) => c.id));
     for (const h of found) {
       if (seen.has("s:" + h.id)) continue;
-      const label = plainTitle(h.title) || "Untitled session";
+      const label = sessionTitle({ id: h.id, title: h.title });
       all.push({
         id: "s:" + h.id,
         label,
@@ -254,16 +258,17 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     if (onStart && typed.length >= 2 && !typed.includes(":")) {
       capped.push({
         id: "start:" + typed,
-        label: `Start a session: “${typed}”`,
-        hint: "sends it as the first message",
+        label: startIn ? `Start a session in ${startIn}: “${typed}”` : `Start a session: “${typed}”`,
+        hint: startIn ? `in ${startIn} · sends it as the first message` : "sends it as the first message",
         group: "Start",
         run: () => onStart(typed),
       });
     }
     return capped;
-  }, [q, rows, commands, onOpenSession, found, onStart, pages, onOpenWikiPage, current]);
+  }, [q, rows, commands, onOpenSession, found, onStart, pages, onOpenWikiPage, current, startIn]);
 
-  const at = Math.max(0, hits.findIndex((c) => c.id === atId));
+  // Nothing picked yet: the first result that is not destructive, so Enter never archives by default.
+  const at = atId === null ? Math.max(0, hits.findIndex((c) => !c.destructive)) : Math.max(0, hits.findIndex((c) => c.id === atId));
   const setAt = (f: (i: number) => number) => { const c = hits[f(at)]; if (c) setAtId(c.id); };
   useEffect(() => {
     list.current?.querySelector('[data-at="1"]')?.scrollIntoView({ block: "nearest" });

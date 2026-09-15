@@ -303,7 +303,13 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, check, onBac
         </div>
         {data.exists && (
           <div className="hk-acts">
-            {check && <button className="btn" onClick={runCheck} disabled={checking}>{checking ? "Checking…" : "Check citations"}</button>}
+            {check && (
+              <button className="btn" onClick={runCheck} disabled={checking} aria-busy={checking}>
+                {checking && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                  strokeLinecap="round" className="spin-mark" aria-hidden="true"><circle cx="12" cy="12" r="8.5" strokeDasharray="40 14" /></svg>}
+                {checking ? " Checking…" : "Check citations"}
+              </button>
+            )}
             <button className="btn" onClick={onActivity}>Activity</button>
           </div>
         )}
@@ -356,13 +362,14 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, check, onBac
 
             {(problems || err) && (
               <div role="status" className="wk-check">
-                {err ? <p className="hk2-alert">{err}</p>
-                  : problems!.length === 0 ? <p className="wk-facts">wiki check: every citation and link resolves.</p>
-                  : (
+                {err ? <p className="hk2-alert">Check failed: {err}</p>
+                  : problems!.length === 0 ? <p className="wk-facts">Checked: every citation and link resolves.</p>
+                  : (<>
+                    <p className="wk-facts">Checked: {plural(problems!.length, "problem")} found.</p>
                     <pre className="wk-ev wk-ev-bad">
                       {problems!.map((p) => `${p.page}:${p.line}: ${p.msg}`).join("\n")}
                     </pre>
-                  )}
+                  </>)}
               </div>
             )}
 
@@ -398,7 +405,7 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, check, onBac
             {pages > 0 && (
               <p className="wk-foot">
                 {plural(data.thin, "page")} {data.thin === 1 ? "rests" : "rest"} on a single citation ·{" "}
-                {plural(data.orphans, "page")} nothing links to · {plural(h.pending, "session")} not yet ingested.
+                {plural(data.orphans, "page")} with no inbound links · {plural(h.pending, "session")} not yet ingested.
               </p>
             )}
           </>
@@ -432,6 +439,13 @@ function Cites({ block, cite, onCite }: {
   );
 }
 
+/** Markdown syntax out of an excerpt: the margin is too narrow to render it. */
+const plainText = (s: string) => s
+  .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+  .replace(/\*\*|__|`/g, "")
+  .replace(/^#{1,6}\s+/gm, "")
+  .replace(/^(\s*)[-*]\s+/gm, "$1• ");
+
 /** The margin note: the first citation's entry, or why it is broken. */
 function Note({ block }: { block: WikiBlock }) {
   const c = block.cites.find((x) => x.problem) ?? block.cites[0];
@@ -447,7 +461,7 @@ function Note({ block }: { block: WikiBlock }) {
   return (
     <div className="wk-note">
       <span className="wk-note-src">{citeName(c)}{more > 0 ? ` · +${more} more` : ""} · {c.label}</span>
-      {c.excerpt}
+      {plainText(c.excerpt)}
     </div>
   );
 }
@@ -587,7 +601,7 @@ export function WikiPageView({ page, cite, source, sourceError, onCite, onCloseS
         <Crumbs onIndex={onIndex} trail={page.topic ? [page.topic] : []} title={page.title} />
         <div className="hk-acts">
           {onSave && editing === null && <button className="btn" onClick={() => setEditing(page.body)}>Edit</button>}
-          {loadHistory && <button className="btn" aria-expanded={showHistory} onClick={toggleHistory}>History</button>}
+          {loadHistory && editing === null && <button className="btn" aria-expanded={showHistory} onClick={toggleHistory}>History</button>}
         </div>
       </header>
 
