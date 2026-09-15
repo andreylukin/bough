@@ -6,12 +6,14 @@
 <title>artifact</title>
 <link rel="stylesheet" href="/artifacts/_lib/openui-styles.css">
 <style>
-:root { --paper: #faf9f5; --ink: #1c1b18; --muted: #5f5b52; --rule: #e6e2d8; --border: #b9b3a4; --card: #ffffff; --good: #2f7a3e; --bad: #b3352b; --accent: #3b6d3a; --focus: #255eb6;
-  --warn-ink: #8a5a12; --warn-bg: #fff4df;
+/* Neobrutalism (neobrutalism.dev "blue" style): flat fills, 2px black borders, 5px radius, hard 4px offset shadows. */
+:root { --paper: hsl(214 95% 93%); --ink: #000; --muted: #2b2f38; --rule: #000; --border: #000; --card: #fff; --good: #1f7a3a; --bad: #c0271c; --accent: hsl(217 100% 66%); --focus: #000;
+  --warn-ink: #7a4b00; --warn-bg: #ffe8a3;
+  --nb-border: 2px solid #000; --nb-radius: 5px; --nb-shadow: 4px 4px 0 0 #000; --main-ink: #000;
   --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   color-scheme: light dark; }
-@media (prefers-color-scheme: dark) { :root { --paper: #15161a; --ink: #e8e6df; --muted: #a6acb7; --rule: #30343c; --border: #667080; --card: #1c1e24; --good: #7fcf8b; --bad: #ef7b6f; --accent: #8fc98a; --focus: #9fc0ff;
-  --warn-ink: #e3b65f; --warn-bg: #282319; } }
+@media (prefers-color-scheme: dark) { :root { --paper: #272933; --ink: #e6e6e6; --muted: #b4b8c2; --card: #212121; --good: #05e17a; --bad: #ff6b6b; --accent: hsl(217 100% 66%); --focus: hsl(217 100% 66%);
+  --warn-ink: #facc00; --warn-bg: #3a3212; } }
 *, *::before, *::after { box-sizing: border-box; }
 html { background: var(--paper); color: var(--ink); }
 body { margin: 0; font: 15px/24px var(--sans); -webkit-font-smoothing: antialiased; }
@@ -93,6 +95,32 @@ footer a { color: inherit; }
   button, summary, #root .openui-tabs-trigger { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) { .reload { transition: none; } }
+
+/* Neobrutalism over OpenUI's components. */
+#root { --openui-interactive-accent-default: var(--accent); --openui-interactive-accent-hover: var(--accent); --openui-interactive-accent-pressed: var(--accent);
+  --openui-border-interactive: #000; --openui-border-interactive-emphasis: #000; --openui-border-interactive-selected: #000;
+  --openui-radius-s: var(--nb-radius); --openui-radius-m: var(--nb-radius); --openui-radius-l: var(--nb-radius); --openui-radius-xl: var(--nb-radius); --openui-radius-2xl: var(--nb-radius);
+  --openui-shadow-s: var(--nb-shadow); --openui-shadow-m: var(--nb-shadow); }
+#root .openui-card-standard, #root .openui-card-card, #root .openui-accordion-card, #root .openui-checkbox-group-card,
+#root .openui-scrollable-table-wrapper, #root .openui-code-block-wrapper, #root .openui-callout, #root .openui-text-callout {
+  border: var(--nb-border); border-radius: var(--nb-radius); box-shadow: var(--nb-shadow); background: var(--card); }
+#root .openui-text-callout { border-left: var(--nb-border); }
+#root .openui-text-callout-warning, #root .openui-callout-warning { background: var(--warn-bg); }
+#root .openui-table-head { background: var(--accent); color: var(--main-ink); font-weight: 700; border-bottom: var(--nb-border); }
+#root .openui-table-cell { border-top: 2px solid #000; }
+#root .openui-button-base, .ask .send {
+  border: var(--nb-border); border-radius: var(--nb-radius); box-shadow: var(--nb-shadow); font-weight: 600;
+  transition: transform .1s, box-shadow .1s; }
+#root .openui-button-base-primary, .ask .send { background: var(--accent); color: var(--main-ink); }
+#root .openui-button-base-secondary, #root .openui-button-base-tertiary { background: var(--card); color: var(--ink); }
+#root .openui-button-base:not(:disabled):hover, .ask .send:not(:disabled):hover { transform: translate(4px, 4px); box-shadow: none; }
+#root .openui-tabs-list { gap: 8px; padding: 4px 6px 8px 0; }
+#root .openui-tabs-trigger { border: var(--nb-border); border-radius: var(--nb-radius); background: var(--card); color: var(--ink); }
+#root .openui-tabs-trigger[aria-selected="true"], #root .openui-tabs-trigger[data-state="active"] { background: var(--accent); color: var(--main-ink); box-shadow: var(--nb-shadow); }
+#root input:not([type="checkbox"]):not([type="radio"]), #root textarea, #root [role="combobox"], .ask textarea {
+  border: var(--nb-border); border-radius: var(--nb-radius); background: var(--card); color: var(--ink); }
+.errors, .reload { border: var(--nb-border); border-radius: var(--nb-radius); box-shadow: var(--nb-shadow); }
+@media (prefers-reduced-motion: reduce) { #root .openui-button-base, .ask .send { transition: none; } }
 </style>
 </head>
 <body>
