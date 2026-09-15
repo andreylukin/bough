@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
 import { Back } from "./app";
 import { CopyButton, EmptyState, Pending as Waiting, duration, humanError } from "./loading";
 import { plainTitle, sessionTitle } from "./render";
@@ -254,7 +253,7 @@ function Source({ path, event, load, save, dryrun, definition = false, inRun = f
         {err && body !== null && <p className="err" role="alert">{err}</p>}
         {body === null
           ? err
-            ? <p className="err hk-loaderr" role="alert">Could not open the file — {err} <Button variant="neutral" size="sm" onClick={read}>Retry</Button></p>
+            ? <p className="err hk-loaderr" role="alert">Could not open the file — {err} <button className="btn btn-sm" onClick={read}>Retry</button></p>
             : <Waiting what="File" inline timeout={15_000} onRetry={read} />
           : (
             <>
@@ -262,19 +261,19 @@ function Source({ path, event, load, save, dryrun, definition = false, inRun = f
               <textarea id={`${id}-body`} className="hk-edit mono" rows={10} spellCheck={false}
                         value={body} disabled={saving} onChange={(e) => { setBody(e.target.value); setNote(""); }} />
               <div className="hk-acts">
-                <Button variant="default" disabled={saving} onClick={() => {
+                <button className="btn btn-primary" disabled={saving} onClick={() => {
                   setNote(""); setErr(""); setSaving(true);
                   save(path, body).then(() => setNote("Saved.")).catch((e: unknown) =>
                     setErr(e instanceof Error ? e.message : String(e))).finally(() => setSaving(false));
-                }}>{saving ? "Saving…" : "Save"}</Button>
+                }}>{saving ? "Saving…" : "Save"}</button>
                 {dryrun && event && (
-                  <Button variant="neutral" onClick={() => {
+                  <button className="btn" onClick={() => {
                     setNote(""); setErr("");
                     dryrun(path, event).then((r) => {
                       if (r.error) { setErr(r.error); return; }
                       setNote(`Dry run finished in ${r.ms}ms: ${JSON.stringify(r.result)}`);
                     }).catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
-                  }}>Dry run</Button>
+                  }}>Dry run</button>
                 )}
                 {note && <span className="hk-note" role="status">{note}</span>}
               </div>

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
 
 // One vocabulary for "not here yet" across the web UI: a spinner and a
 // label, an elapsed hint once the wait is noticeable, and a client-side
@@ -59,7 +58,7 @@ export function EmptyState({ title, children, action, role }: {
     <div className="empty-state" role={role}>
       <h2>{title}</h2>
       {children && <p>{children}</p>}
-      {action && <Button  variant="default" onClick={action.onClick}>{action.label}</Button>}
+      {action && <button className="btn btn-primary" onClick={action.onClick}>{action.label}</button>}
     </div>
   );
 }
@@ -118,7 +117,7 @@ export function Pending({ what, err, onRetry, action, timeout = 20_000, hintAfte
         <span className="pending-msg">
           {timedOut ? `${what} is taking too long to load.` : `${what} did not load. ${humanError(err)}`}
         </span>
-        {retry && <Button  variant="neutral" onClick={retry}>Retry</Button>}
+        {retry && <button className="btn" onClick={retry}>Retry</button>}
       </div>
     );
   }
@@ -156,9 +155,9 @@ export function useCopied(ms = 1500): [boolean, (text: string) => void] {
 }
 
 /** A small button that copies `text` and reads "Copied" for a moment. */
-export function CopyButton({ text, label = "Copy", className }: { text: string; label?: string; className?: string }) {
+export function CopyButton({ text, label = "Copy", className = "btn btn-sm" }: { text: string; label?: string; className?: string }) {
   const [copied, copy] = useCopied();
   return (
-    <Button variant="neutral" size="sm" className={className} onClick={() => copy(text)} aria-live="polite">{copied ? "Copied" : label}</Button>
+    <button className={className} onClick={() => copy(text)} aria-live="polite">{copied ? "Copied" : label}</button>
   );
 }

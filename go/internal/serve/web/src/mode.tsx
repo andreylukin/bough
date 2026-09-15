@@ -1,5 +1,4 @@
 import type { OrbStatus, Project, Row, SessionMode } from "./types";
-import { Button } from "@/components/ui/button";
 import { Select } from "./select";
 import { SetupFailed, orbWord } from "./status";
 
@@ -18,9 +17,9 @@ export function ModePicker({ projects, value, onChange }: {
   return (
     <div className="ctl mode-picker" role="group" aria-label="Session mode">
       <span className="ctl-label">Run</span>
-      <Button variant={local ? "default" : "neutral"} aria-pressed={local}
+      <button className={"btn" + (local ? " btn-primary" : "")} aria-pressed={local}
               title="Run on this machine: reads your home folder, writes nothing outside it"
-              onClick={() => onChange({ mode: "local" })}>Local</Button>
+              onClick={() => onChange({ mode: "local" })}>Local</button>
       {withOrb.length > 0
         ? <Select label="Project" value={local ? "" : value.project ?? ""} align="start" placeholder="In a project…"
                   options={withOrb.map((p) => ({ value: p.id, label: p.name }))}
