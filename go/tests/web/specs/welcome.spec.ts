@@ -87,7 +87,10 @@ test('skipping the welcome sticks across reloads, and the palette brings it back
   await expect(page.getByText('Nothing needs your attention')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Welcome to bough' })).toHaveCount(0);
 
+  // Past the welcome, New still starts in the repo serve was run from, not
+  // a read-only home.
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k');
+  await expect(page.getByRole('option', { name: /New session in repo.*can edit/ })).toBeVisible();
   await page.getByRole('combobox').fill('welcome');
   await page.getByRole('option', { name: /Show the welcome/ }).click();
   await expect(page.getByRole('heading', { name: 'Welcome to bough' })).toBeVisible();

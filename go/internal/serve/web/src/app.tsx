@@ -4025,6 +4025,11 @@ export default function App() {
   const [palQuery, setPalQuery] = useState("");
   const [home, setHome] = useState("");
   useEffect(() => { api.home().then(setHome).catch(() => setHome("")); }, []);
+  // Where serve was started: usually the repo someone ran `bough serve` in.
+  // New sessions offer it first when it is a checkout they could edit;
+  // home is a read-only start, which is not what a first New should be.
+  const [startDir, setStartDir] = useState<{ path: string; checkout?: string } | null>(null);
+  useEffect(() => { api.setup().then((s) => setStartDir(s.folder.exists ? s.folder : null)).catch(() => {}); }, []);
 
   /**
    * Where you are lives in the URL.
@@ -4257,8 +4262,13 @@ export default function App() {
       hint: "Folder: " + shortPath(row.cwd, home),
       run: () => start(row.cwd, ""),
     }] : []),
+    ...(home && startDir?.checkout && startDir.path !== home && startDir.path !== row?.cwd ? [{
+      id: "new:start", group: "Start", label: `New session in ${folderName(startDir.path)}`, suggest: !row?.cwd || row.cwd === home,
+      hint: "Folder: " + shortPath(startDir.path, home) + " · can edit",
+      run: () => start(startDir.path, ""),
+    }] : []),
     ...(home ? [{
-      id: "new:here", group: "Start", label: "New session in home", suggest: !row?.cwd || row.cwd === home,
+      id: "new:here", group: "Start", label: "New session in home", suggest: (!row?.cwd || row.cwd === home) && !startDir?.checkout,
       hint: "Folder: " + shortPath(home, home),
       run: () => start(home, ""),
     }] : []),
@@ -4420,7 +4430,7 @@ export default function App() {
             {home && (
               <div className="controls mode-start">
                 <ModePicker projects={projects} value={newMode} onChange={setNewMode} />
-                <button className="btn" onClick={() => { void start(home, "", newMode); }}>New session</button>
+                <button className="btn" onClick={() => { void start(newMode.mode === "local" && startDir?.checkout ? startDir.path : home, "", newMode); }}>New session</button>
               </div>
             )}
             <ControlOverview rows={rows} onOpenFailure={(id, seq) => { openSession(id); if (seq) setJump({ id, turn: 0, seq, at: Date.now() }); }} onReveal={(id) => { setPane("list"); setQuery(""); setReveal({ id, at: Date.now() }); }} loadedAt={loadedAt} loadErr={loadErr} onRetry={() => void refresh()} />
