@@ -45,13 +45,17 @@ export function Welcome({ onStart, onSkip }: { onStart: (cwd: string, prompt: st
   const [starting, setStarting] = useState(false);
   const [startErr, setStartErr] = useState("");
 
-  useEffect(() => {
+  const loadSetup = () => {
+    setLoadErr("");
     api.setup().then((s) => {
       setSetup(s);
       setProviders(s.providers);
       setPath(tilde(s.folder.path, s.home));
     }).catch((e: Error) => setLoadErr(e.message));
-  }, []);
+  };
+  useEffect(loadSetup, []);
+  // Bumped by Retry, so an unchanged path can be checked again.
+  const [checkRev, setCheckRev] = useState(0);
 
   // Each edit re-asks the server, so the line under the field is what a
   // session started there would actually get. The previous answer is
@@ -69,7 +73,7 @@ export function Welcome({ onStart, onSkip }: { onStart: (cwd: string, prompt: st
         .catch(() => { if (on) setCheck({ state: "failed" }); });
     }, 250);
     return () => { on = false; clearTimeout(t); };
-  }, [path, setup]);
+  }, [path, setup, checkRev]);
 
   const home = setup?.home ?? "";
   const keyed = providers.filter((p) => p.set);
@@ -94,8 +98,10 @@ export function Welcome({ onStart, onSkip }: { onStart: (cwd: string, prompt: st
     setStarting(true);
     setStartErr("");
     try {
-      dismiss();
       await onStart(folder.path, text.trim());
+      // Only once a session exists: a failed start must leave the welcome
+      // there on the next visit.
+      dismiss();
     } catch (e) {
       setStartErr((e as Error).message);
       setStarting(false);
@@ -110,7 +116,7 @@ export function Welcome({ onStart, onSkip }: { onStart: (cwd: string, prompt: st
   else if (folder.checkout) {
     const at = folder.checkout === folder.path ? "" : ` at ${tilde(folder.checkout, home)}`;
     status = { text: `Git checkout found${at}. File tools can edit it; shell commands run with your user permissions.`, tone: "ok" };
-  } else status = { text: "Not a git checkout: the agent can read files here but not edit them. Pick a repo to let it make changes.", tone: "warn" };
+  } else status = { text: "Not a git checkout: file tools can’t edit here, but shell commands still run with your user permissions and can change files. Pick a repo to let the agent make edits.", tone: "warn" };
 
   let hint = "";
   if (setup !== null && !keyed.length) hint = "Add a provider key to enable these.";
@@ -129,7 +135,10 @@ export function Welcome({ onStart, onSkip }: { onStart: (cwd: string, prompt: st
           <li className={"welcome-step" + (keyed.length ? " done" : "")}>
             <h2><span className="welcome-num" aria-hidden="true">1</span>Add a provider key</h2>
             {setup === null ? (
-              <p className="welcome-note">{loadErr ? `Couldn’t check for keys: ${loadErr}` : "Checking for keys…"}</p>
+              loadErr ? (<>
+                <p className="welcome-status err" role="alert">Couldn’t load setup: {loadErr}</p>
+                <button className="btn welcome-retry" onClick={loadSetup}>Retry</button>
+              </>) : <p className="welcome-note">Checking for keys…</p>
             ) : keyed.length ? (
               <p className="welcome-status ok">Key found for {keyed.map((p) => label(p.name)).join(", ")}. Pick a model inside the session.</p>
             ) : (<>
@@ -153,6 +162,7 @@ export function Welcome({ onStart, onSkip }: { onStart: (cwd: string, prompt: st
             <input className="welcome-field wide" aria-label="Folder" placeholder="~/code/your-repo" spellCheck={false} autoComplete="off"
               value={path} onChange={(e) => setPath(e.target.value)} />
             <p className={"welcome-status " + status.tone} role="status">{status.text}</p>
+            {check.state === "failed" && <button className="btn welcome-retry" onClick={() => setCheckRev((n) => n + 1)}>Retry</button>}
           </li>
 
           <li className="welcome-step">

@@ -3658,11 +3658,11 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             onClose={() => { if (trigger) dismissed.current = `${trigger.from}:${trigger.kind}${trigger.token}`; setTrigger(null); }}
             onOpen={setPickerOpen} onActive={setActiveOpt} />
           <textarea id="composer" ref={composer} value={draft} rows={1}
-            aria-label={(row.archived ? "Unarchive to continue this session" : row.ask?.secret ? "Answer in the secret field" :row.ask && !askChanged ? "Answer…" : running ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Next turn…").replace(/…$/, "")}
+            aria-label={(row.archived ? "Unarchive to continue this session" : row.ask?.secret ? "Answer in the secret field" :row.ask && !askChanged ? "Answer…" : running ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…").replace(/…$/, "")}
             aria-controls={pickerOpen ? "mention-list" : undefined}
             aria-activedescendant={pickerOpen ? activeOpt : undefined}
             disabled={Boolean(row.ask?.secret) || row.archived}
-            placeholder={row.archived ? "Unarchive to continue this session" : row.ask?.secret ? "Answer in the secret field" :row.ask && !askChanged ? "Answer…" : running ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Next turn…"}
+            placeholder={row.archived ? "Unarchive to continue this session" : row.ask?.secret ? "Answer in the secret field" :row.ask && !askChanged ? "Answer…" : running ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…"}
             onPaste={(e) => take({ dataTransfer: e.clipboardData, preventDefault: () => e.preventDefault() }, false)}
             onChange={(e) => {
               setDraft(e.target.value);
