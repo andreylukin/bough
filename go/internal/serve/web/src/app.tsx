@@ -1692,7 +1692,7 @@ export function ToolCall({ code, result, live, stopped, current }: { code: Line;
   }]);
   // The recorded exit and time, success or not: "exit 0" is evidence too.
   const empty = Boolean(result) && !out.trim();
-  const meta = [continues ? `Continues as Job ${continues}` : "", failed ? "Failed" : "", exit !== undefined ? `exit ${exit}` : "", empty ? "No output" : "", ms !== undefined ? `Command: ${duration(ms)}` : ""];
+  const meta = [continues ? `Continues as Job ${continues}` : "", failed ? "Failed" : "", exit !== undefined ? `exit ${exit}` : "", empty ? "No output" : "", ms !== undefined ? (ms < 1000 ? "<1s" : duration(ms)) : ""];
   const what = call.lang === "bash" ? "Command" : call.lang === "javascript" ? "Program" : "Content";
   // No result: still running, cut off by a stop, or never recorded. Each says which.
   const missing = result ? null : live ? "running" : stopped ? "Interrupted · result not recorded" : "Result not recorded";
