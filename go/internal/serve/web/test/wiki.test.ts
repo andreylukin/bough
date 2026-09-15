@@ -17,7 +17,7 @@ test("countsLine counts claims, not chips", () => {
 });
 
 test("humanTitle humanizes slug-only titles and keeps real ones", () => {
-  expect(humanTitle("nased-demand", "topics/x/nased-demand.md")).toBe("Nased demand");
+  expect(humanTitle("retry-budget", "topics/x/retry-budget.md")).toBe("Retry budget");
   expect(humanTitle("", "topics/x/sample-topic.md")).toBe("Sample topic");
   expect(humanTitle("Read the gate, don't tail it", "topics/x/read-the-gate.md")).toBe("Read the gate, don't tail it");
 });
