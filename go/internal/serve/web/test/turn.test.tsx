@@ -33,3 +33,10 @@ test("a finished turn ends on outcome, worked-for and a files chip", () => {
 test("recorded thinking reads Thought for Ns", () => {
   expect(renderToStaticMarkup(<Entry line={live[1]} codes={[]} until={at(15)} />)).toContain("Thought for 14s");
 });
+
+test("a turn cut off by a later one stops its open rows and says Interrupted", () => {
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns(live)[0]} superseded />);
+  expect(html).toContain("Interrupted · result not recorded");
+  expect(html).toContain("turn-foot");
+  expect(renderToStaticMarkup(<TurnView turn={groupTurns(live)[0]} />)).not.toContain("result not recorded");
+});

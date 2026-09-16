@@ -2274,7 +2274,8 @@ function WorkSegmentRow({ seg, session, defaultOpen, running, since, step, all, 
   );
 }
 
-export function TurnView({ turn, tail, n, working }: { turn: Turn; tail?: React.ReactNode; /** 1-based position, so the turn log can land on it. */ n?: number;
+export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; tail?: React.ReactNode; /** 1-based position, so the turn log can land on it. */ n?: number;
+  /** A later turn exists, so this one can no longer be running. */ superseded?: boolean;
   /** The live turn's activity ("Thinking", "Running go test"): its working row says it, once. */ working?: string }) {
   const ctx = useWork();
   const codes = turn.body.filter((l) => l.kind === "code" || l.kind === "sub:code").map((l) => l.text);
@@ -2342,7 +2343,10 @@ export function TurnView({ turn, tail, n, working }: { turn: Turn; tail?: React.
   }
   said2.push(said.slice(pos));
   const loose = atts.map((_, i) => i).filter((i) => atts[i].at < 0);
-  const live = !turn.done && !turn.stopped;
+  // No done and nothing live to write one (the session stopped, or a later
+  // turn began): the turn was cut off, and its open rows stop ticking.
+  const cut = !turn.done && Boolean(superseded || (ctx && !ctx.live));
+  const live = !turn.done && !turn.stopped && !cut;
   const segs = useMemo(() => splitWork(items, codes, live && (ctx?.live ?? true)),
     // codes is derived from items' turn.body.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2355,7 +2359,7 @@ export function TurnView({ turn, tail, n, working }: { turn: Turn; tail?: React.
   const folds = works.filter((sg) => sg.rows >= 2).length;
   const renderItem = (it: Item, i: number, list: Item[]): React.ReactNode => {
     if (it.kind === "sub") return <SubRun key={"sub" + it.seq} agents={it.agents} seq={it.seq} turn={turn} live={(ctx?.live ?? true) && live} />;
-    if (it.kind === "tools") return <ToolRun key={"tools" + it.seq} lines={it.lines} codes={codes} live={live} stopped={turn.stopped || turn.done?.kind === "cancelled"} failSeq={fail?.seq} />;
+    if (it.kind === "tools") return <ToolRun key={"tools" + it.seq} lines={it.lines} codes={codes} live={live} stopped={turn.stopped || turn.done?.kind === "cancelled" || cut} failSeq={fail?.seq} />;
     if (it.line.kind.startsWith("todo/")) {
       // Consecutive todo records fold into one row, rendered at the first.
       const prev = list[i - 1];
@@ -2450,7 +2454,7 @@ export function TurnView({ turn, tail, n, working }: { turn: Turn; tail?: React.
                            )} />;
       })()}
       {/* No done and nothing live to write one: the turn was cut off, and says so where it ends, like Stopped. */}
-      {!turn.done && ctx && !ctx.live && (
+      {cut && (
         <div className="turn-foot">
           <span className="turn-outcome">{statusWord("interrupted")}</span>
           {turn.prompt?.at && (() => {
@@ -3513,7 +3517,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
         {turns.map((t, i) => (
           // Numbered by prompt, as the turn log counts: a leading /model
           // section has no prompt and no number.
-          <TurnViewMemo key={t.seq} turn={t} n={turnNums[i]}
+          <TurnViewMemo key={t.seq} turn={t} n={turnNums[i]} superseded={i < turns.length - 1}
             // The preview belongs to the turn that is still open, so it
             // sits where the recorded entry will appear and is replaced
             // in place rather than jumping up the page.
