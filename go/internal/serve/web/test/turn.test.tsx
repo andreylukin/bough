@@ -2,7 +2,7 @@ import { expect, mock, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 // No DOM under bun: markdown sanitising is not what these assert.
 mock.module("dompurify", () => ({ default: { sanitize: (s: string) => s } }));
-const { Entry, TurnView } = await import("../src/app");
+const { Entry, TurnView, swallowedByStop } = await import("../src/app");
 const { groupTurns } = await import("../src/render");
 import type { Line } from "../src/types";
 
@@ -39,4 +39,20 @@ test("a turn cut off by a later one stops its open rows and says Interrupted", (
   expect(html).toContain("Interrupted · result not recorded");
   expect(html).toContain("turn-foot");
   expect(renderToStaticMarkup(<TurnView turn={groupTurns(live)[0]} />)).not.toContain("result not recorded");
+});
+
+test("a steer input after a still-open turn does not cut it off", () => {
+  const steer: Line = { seq: 99, kind: "input", text: "also check vet", at: at(20) } as Line;
+  const turns = groupTurns([...live, steer]);
+  const html = renderToStaticMarkup(<TurnView turn={turns[0]} superseded={turns[0].prompt !== null && turns.slice(1).some((u) => u.done)} />);
+  expect(html).not.toContain("result not recorded");
+});
+
+test("Stop rescues only rows unsent at Stop, once the turn ended after them", () => {
+  const p = { id: "a", text: "hi", after: 5 };
+  const done: Line = { seq: 6, kind: "cancelled", at: at(1) } as Line;
+  expect(swallowedByStop([p], new Set(), [done])).toEqual([]);
+  expect(swallowedByStop([p], new Set(["a"]), [])).toEqual([]);
+  expect(swallowedByStop([p], new Set(["a"]), [done])).toEqual([p]);
+  expect(swallowedByStop([p], new Set(["a"]), [done, { seq: 7, kind: "input", text: "hi", at: at(2) } as Line])).toEqual([]);
 });

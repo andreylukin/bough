@@ -2275,7 +2275,7 @@ function WorkSegmentRow({ seg, session, defaultOpen, running, since, step, all, 
 }
 
 export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; tail?: React.ReactNode; /** 1-based position, so the turn log can land on it. */ n?: number;
-  /** A later turn exists, so this one can no longer be running. */ superseded?: boolean;
+  /** A later turn has ended, so this one can no longer be running. */ superseded?: boolean;
   /** The live turn's activity ("Thinking", "Running go test"): its working row says it, once. */ working?: string }) {
   const ctx = useWork();
   const codes = turn.body.filter((l) => l.kind === "code" || l.kind === "sub:code").map((l) => l.text);
@@ -2749,6 +2749,14 @@ function ParentLink({ id, rows, onOpen }: { id: string; rows: Row[]; onOpen?: (i
  *  status instead, the message itself flipped the session to running before
  *  the transcript showed it, so every new turn read "Steer pending…". */
 type Pending = { id: string; text: string; after: number; steer?: boolean };
+
+/** Rows a Stop swallowed: unsent when Stop was pressed, and a done or
+ * cancel was recorded after them with no input of theirs. */
+export function swallowedByStop(unlanded: Pending[], stopped: Set<string>, lines: Line[]): Pending[] {
+  return unlanded.filter((p) => stopped.has(p.id)
+    && lines.some((l) => (l.kind === "done" || l.kind === "cancelled") && l.seq > p.after)
+    && !lines.some((l) => l.kind === "input" && l.seq > p.after));
+}
 
 /** "503 Service Unavailable" or a bare "503" reads as what happened, code last. */
 function sendError(e?: string) {
@@ -3412,15 +3420,17 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   // ever recorded for it, and its row said "Sending…" until a reload lost
   // it. Once the stop has settled with rows still unlanded, a message goes
   // back to the front of the queue and a steer says it was dropped.
-  const stoppedAt = useRef(false);
-  useEffect(() => { if (stopping === "stopping") stoppedAt.current = true; }, [stopping]);
-  useEffect(() => { if (running && !stopping) stoppedAt.current = false; }, [running, stopping]);
+  // Only rows unsent when Stop was pressed qualify, and only once the
+  // transcript shows the stopped turn ended after them.
+  const stoppedIds = useRef<Set<string>>(new Set());
+  useEffect(() => { if (stopping === "stopping") stoppedIds.current = new Set(unlanded.map((p) => p.id)); }, [stopping]); // eslint-disable-line react-hooks/exhaustive-deps
   const unlandedIds = unlanded.map((p) => p.id).join(" ");
   useEffect(() => {
-    if (!stoppedAt.current || running || loading || busy || !unlanded.length) return;
-    const lost = unlanded;
+    if (!stoppedIds.current.size || running || loading || busy) return;
+    const lost = swallowedByStop(unlanded, stoppedIds.current, lines);
+    if (!lost.length) { if (!unlanded.some((p) => stoppedIds.current.has(p.id))) stoppedIds.current = new Set(); return; }
     const timer = setTimeout(() => {
-      stoppedAt.current = false;
+      stoppedIds.current = new Set();
       const ids = new Set(lost.map((p) => p.id));
       setSending((q) => q.filter((p) => !ids.has(p.id)));
       const steers = lost.filter((p) => p.steer);
@@ -3429,7 +3439,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
       if (msgs.length) { flushing.current = false; setQueued((q) => [...msgs.map((p) => ({ id: p.id, text: p.text })), ...q]); }
     }, 4000);
     return () => clearTimeout(timer);
-  }, [unlandedIds, running, loading, busy]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [unlandedIds, running, loading, busy, newest]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <WorkContext.Provider value={workCtx}>
@@ -3539,7 +3549,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
         {turns.map((t, i) => (
           // Numbered by prompt, as the turn log counts: a leading /model
           // section has no prompt and no number.
-          <TurnViewMemo key={t.seq} turn={t} n={turnNums[i]} superseded={i < turns.length - 1}
+          <TurnViewMemo key={t.seq} turn={t} n={turnNums[i]} superseded={t.prompt !== null && turns.slice(i + 1).some((u) => u.done)}
             // The preview belongs to the turn that is still open, so it
             // sits where the recorded entry will appear and is replaced
             // in place rather than jumping up the page.
