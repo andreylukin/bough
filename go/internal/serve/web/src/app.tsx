@@ -1614,7 +1614,7 @@ function CopyText({ text, label }: { text: string; label: string }) {
  * A run of tool calls as one row: how many, the last thing it did, and
  * whether any failed. Opened, each call is its own block again.
  */
-export function ToolRun({ lines, codes, live, stopped, failSeq }: { lines: Line[]; codes: string[]; live?: boolean; stopped?: boolean; /** The result seq of the failure the turn ended on: it opens itself. */ failSeq?: number }) {
+export function ToolRun({ lines, codes, live, stopped, failSeq, spawned }: { lines: Line[]; codes: string[]; live?: boolean; stopped?: boolean; /** The subagent card that follows the run, when it has a result. */ spawned?: Worker; /** The result seq of the failure the turn ended on: it opens itself. */ failSeq?: number }) {
   // Pair each call with the result recorded for it: one row per thing
   // done, not a "Ran" row and a "Result" row saying half each. A result
   // names its call in data.code, so notes in between never split the
@@ -1634,7 +1634,7 @@ export function ToolRun({ lines, codes, live, stopped, failSeq }: { lines: Line[
         if (code ? code.trim() === l.text.trim() : j === i + 1) { result = r; used.add(j); break; }
       }
       facts.push(callFacts(l, result));
-      rows.push(<ToolCall key={l.seq} code={l} result={result} live={live} stopped={stopped} current={failSeq !== undefined && result?.seq === failSeq} />);
+      rows.push(<ToolCall key={l.seq} code={l} result={result} live={live} stopped={stopped} current={failSeq !== undefined && result?.seq === failSeq} spawned={spawned} />);
     } else if (l.kind === "job") {
       // Consecutive job rows share one head.
       let j = i;
@@ -1699,7 +1699,7 @@ export function ToolRun({ lines, codes, live, stopped, failSeq }: { lines: Line[
  * was done and how much it printed; opened, the program and its output
  * sit together, with the raw call one level further in.
  */
-export function ToolCall({ code, result, live, stopped, current }: { code: Line; result?: Line; /** Its turn is still running. */ live?: boolean; stopped?: boolean; /** The failure its turn ended on: open, with the diagnosis. */ current?: boolean }) {
+export function ToolCall({ code, result, live, stopped, current, spawned }: { code: Line; result?: Line; /** Its turn is still running. */ live?: boolean; stopped?: boolean; /** The failure its turn ended on: open, with the diagnosis. */ current?: boolean; /** The subagent card it started, when that has a result. */ spawned?: Worker }) {
   const call = useMemo(() => parseCall(code.text), [code.text]);
   // The loop's "blocks not run" marker rides on the output; it is a notice, shown under the row.
   const { text: out, note } = splitExecNote(result ? resultBody(result) : "");
@@ -1730,7 +1730,8 @@ export function ToolCall({ code, result, live, stopped, current }: { code: Line;
   const meta = [continues ? `Continues as Job ${continues}` : "", failed ? "Failed" : "", exit !== undefined ? `exit ${exit}` : "", empty ? "No output" : "", ms !== undefined ? (ms < 1000 ? "<1s" : duration(ms)) : ""];
   const what = call.lang === "bash" ? "Command" : call.lang === "javascript" ? "Program" : "Content";
   // No result: still running, cut off by a stop, or never recorded. Each says which.
-  const missing = result ? null : live ? "running" : stopped ? "Interrupted · result not recorded" : "Result not recorded";
+  const card = !result && spawned && /tools\.spawn(All)?\(/.test(code.text) ? spawned : undefined;
+  const missing = result || card ? null : live ? "running" : stopped ? "Interrupted · result not recorded" : "Result not recorded";
   const [full, setFull] = useState(false);
   const phone = useMedia("(max-width:720px)");
   // The last lines of a failure are where the diagnosis is.
@@ -1752,6 +1753,7 @@ export function ToolCall({ code, result, live, stopped, current }: { code: Line;
             <Elapsed since={code.at} title="Running" />
           </span>
         )}
+        {card && <WorkState w={card} />}
         {missing && missing !== "running" && <span className="tool-unrecorded"><WarnMark />{missing}</span>}
         {!empty && <CopyButton text={out || call.body || call.raw} what={result ? "output" : call.verb.toLowerCase() + " block"} />}
       </summary>
@@ -2422,7 +2424,12 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
   const folds = works.filter((sg) => sg.rows >= 2).length;
   const renderItem = (it: Item, i: number, list: Item[]): React.ReactNode => {
     if (it.kind === "sub") return <SubRun key={"sub" + it.seq} agents={it.agents} seq={it.seq} turn={turn} live={(ctx?.live ?? true) && live} />;
-    if (it.kind === "tools") return <ToolRun key={"tools" + it.seq} lines={it.lines} codes={codes} live={live} stopped={turn.stopped || turn.done?.kind === "cancelled" || cut} failSeq={fail?.seq} />;
+    if (it.kind === "tools") {
+      // A spawn's result is its card below: the program reads as that card's state.
+      const next = list[i + 1];
+      const spawned = next?.kind === "sub" ? subagentsFromTurn(turn, "", live).find((w) => w.subrunSeq === next.seq && w.result) : undefined;
+      return <ToolRun key={"tools" + it.seq} lines={it.lines} codes={codes} live={live} spawned={spawned} stopped={turn.stopped || turn.done?.kind === "cancelled" || cut} failSeq={fail?.seq} />;
+    }
     if (it.line.kind.startsWith("todo/")) {
       // Consecutive todo records fold into one row, rendered at the first.
       const prev = list[i - 1];
@@ -3818,7 +3825,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
                 <span className="mode-local mode-badge" title={`File edits are allowed only inside ${row.writable}. The shell runs as you.`}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z" /></svg>Local · edits {row.writable.split("/").pop()}</span>
               )}
               {row.mode !== "project" && !row.writable && (
-                <span className="mode-local mode-badge" title="A local session can read your files and run commands on this machine, but cannot edit files. Start a project session to make changes."><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>Local · read-only</span>
+                <span className="mode-local mode-badge" title="Runs on this machine. Can edit files only inside a git checkout; read-only elsewhere."><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>Local · read-only</span>
               )}
             </div>
             {uploading > 0 && <span className="attach-note">Attaching image…</span>}

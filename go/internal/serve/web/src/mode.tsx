@@ -18,7 +18,7 @@ export function ModePicker({ projects, value, onChange }: {
     <div className="ctl mode-picker" role="group" aria-label="Session mode">
       <span className="ctl-label">Run</span>
       <button className={"btn" + (local ? " btn-primary" : "")} aria-pressed={local}
-              title="Run on this machine: reads your home folder, writes nothing outside it"
+              title="Runs on this machine. Can edit files only inside a git checkout; read-only elsewhere."
               onClick={() => onChange({ mode: "local" })}>Local</button>
       {withOrb.length > 0
         ? <Select label="Project" value={local ? "" : value.project ?? ""} align="start" placeholder="In a project…"
