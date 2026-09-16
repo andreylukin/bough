@@ -5,7 +5,7 @@ package ui
 // the right, so the model never shows twice; on the right the flash
 // message, or the state — "waiting for you" while an
 // ask is pending, the inspector hint — else, when idle, the truth
-// about this session: "↑in ↓out · $cost · N% ctx · ⚡ cache hot · model"
+// about this session: "repo (branch) · ↑in ↓out · $cost · N% ctx · ⚡ cache hot · model"
 // (each part only when known: cost when priced, the context percentage
 // when the model's window is known, the cache chip once the provider
 // reports cache tokens (cache.go), the model when the llm names one) — and
@@ -19,6 +19,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"fmt"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -77,6 +79,8 @@ func (m *model) statusBar(cfg *uiCfg) string {
 			mic = "🎤 space"
 		}
 		cands = slices.Compact([]string{
+			join(m.where, tokens, cost, ctx, cache, think, mdl, mic),
+			join(m.where, cost, ctx, cache, think, mdl, mic),
 			join(tokens, cost, ctx, cache, think, mdl, mic),
 			join(cost, ctx, cache, think, mdl, mic),
 			join(cost, ctx, cache, mdl),
@@ -181,6 +185,26 @@ func ctxAbbrev(n int) string {
 		return trim(float64(n)/1e3) + "k"
 	}
 	return fmt.Sprint(n)
+}
+
+// repoLabel names where the session works as "repo (branch)" — the
+// checkout's directory name and its branch, "repo" on a detached head
+// — or "" when dir is "" or not in a git checkout.
+func repoLabel(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	top, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return ""
+	}
+	label := filepath.Base(strings.TrimSpace(string(top)))
+	if b, err := exec.Command("git", "-C", dir, "symbolic-ref", "--short", "-q", "HEAD").Output(); err == nil {
+		if br := strings.TrimSpace(string(b)); br != "" {
+			label += " (" + br + ")"
+		}
+	}
+	return label
 }
 
 // elapsed is the in-flight turn's age, whole seconds ("12s", "2m05s"),

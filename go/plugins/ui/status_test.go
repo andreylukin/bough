@@ -5,6 +5,8 @@ package ui
 import (
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/charmbracelet/x/ansi"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +16,27 @@ import (
 
 	"github.com/andreylukin/bough/plugins/llm"
 )
+
+// The idle bar names the checkout and branch the session works in.
+func TestStatusBarShowsRepoAndBranch(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init", "-q", "-b", "feat-x").CombinedOutput(); err != nil {
+		t.Skipf("git: %v %s", err, out)
+	}
+	want := filepath.Base(dir) + " (feat-x)"
+	if got := repoLabel(dir); got != want {
+		t.Fatalf("repoLabel = %q, want %q", got, want)
+	}
+	if got := repoLabel(t.TempDir()); got != "" {
+		t.Errorf("outside a repo = %q, want empty", got)
+	}
+	d := defaultDrv(t)
+	d.m.where = "bough (main)"
+	if p := d.plain(); !strings.Contains(p, "bough (main) · ? keys") {
+		t.Errorf("status bar missing repo (branch):\n%s", p)
+	}
+}
 
 func TestStatusBarShowsIdentity(t *testing.T) {
 	t.Parallel()

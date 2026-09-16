@@ -77,6 +77,7 @@ type uiCfg struct {
 	action  map[string]string // key -> action (derived)
 	chords  map[string]string // key after the leader -> action (derived)
 	status  string            // status-bar left text
+	cwd     string            // the session's directory, for "repo (branch)"; "" in tests
 	hist    historyView       // nil when no history service
 	usage   llm.UsageReporter // the "usage" (cost row) or llm service; nil when neither reports
 	modeler llm.Modeler       // the llm service when it names its model; nil otherwise
@@ -263,6 +264,7 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	}
 	cfg.cmds = cmds
 	cfg.hlog = hlog
+	cfg.cwd, _ = os.Getwd()
 	if c, err := kernel.Get[contextFiles](ctx, "context-md"); err == nil {
 		cfg.ctxmd = c
 	}

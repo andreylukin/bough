@@ -122,6 +122,7 @@ type model struct {
 	height      int
 	running     bool           // a turn is in flight (input sent, no done/error yet)
 	turnStart   time.Time      // when the in-flight turn started (status bar elapsed)
+	where       string         // "repo (branch)" for the status bar; "" outside a repo
 	lastRequest time.Time      // when the model last answered (cache chip, cache.go)
 	lastEnd     string         // how the last turn ended: "done", "cancelled", "" (tabtitle.go)
 	inspecting  bool           // history overlay open
@@ -241,6 +242,7 @@ func newModel(width, height int, send func(string), events <-chan Event, cfg *at
 	m := model{vp: vp, overlay: ov, input: ti, spin: sp, send: send, events: events, cfg: cfg,
 		focusID: -1, ovExpanded: map[int64]bool{}, mdCache: map[string]string{}, parts: map[int]partEntry{}, comp: composerState{recall: -1}}
 	m.resize(width, height)
+	m.where = repoLabel(cfg.Load().cwd)
 	if d := cfg.Load().draft; d != "" {
 		// The composer opens with the text; the person finishes it.
 		m.input.SetValue(d)
@@ -1129,6 +1131,7 @@ func (m *model) addEvent(ev Event) {
 	case "done":
 		m.running = false
 		m.lastRequest = time.Now()
+		m.where = repoLabel(m.cfg.Load().cwd) // the turn may have switched branch
 		if m.lastEnd != "cancelled" {
 			m.lastEnd = "done" // the cancelled marker came first when it did
 		}
