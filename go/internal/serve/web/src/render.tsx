@@ -601,7 +601,7 @@ export function splitWork(items: Item[], codes: string[], live: boolean): Segmen
       out.push({ kind: "reply", item: it });
       continue;
     }
-    if (live && it.kind === "sub" && it.agents.some((a) => !a.status)) { flush(); release(); out.push({ kind: "pinned", item: it }); continue; }
+    if (live && it.kind === "sub" && it.agents.some((a) => !a.status)) { flush(); out.push({ kind: "pinned", item: it }); continue; }
     cur.push(it);
   }
   flush();

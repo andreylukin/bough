@@ -79,6 +79,14 @@ test("prose sent with its own program follows that program's work, which stays t
   expect(segsOf(lines).map((s) => s.kind)).toEqual(["work", "reply", "work", "reply"]);
 });
 
+test("prose held for its program also follows a subagent that program started and is still running", () => {
+  const prog = bash("sleep 40");
+  const live: Line[] = [lines[0], { seq: 2, at: at(1), kind: "assistant", text: "Spawning a helper.\n\n```js\n" + prog + "\n```" },
+    { seq: 3, at: at(1), kind: "code", text: prog },
+    { seq: 4, at: at(2), kind: "sub:start", text: "Check the other watchers", data: { worker: 1 } }];
+  expect(segsOf(live, true).map((s) => s.kind)).toEqual(["work", "pinned", "reply"]);
+});
+
 test("a finished long turn shows collapsed work rows and the replies", () => {
   const html = renderToStaticMarkup(<TurnView turn={groupTurns(lines)[0]} />);
   expect(html).toContain("Worked for 9s · 2 actions");
