@@ -18,7 +18,7 @@ import { Mentions, triggerAt, type Trigger } from "./mention";
 import { FireInspection, HooksPage, type Fire, type Load, type Save } from "./hooks";
 import { ContextPage } from "./context";
 import { ChangesBody, ChangesPage, countOf, useChanges } from "./changes";
-import { Palette, usePaletteKey, type Command } from "./palette";
+import { Palette, useFullText, usePaletteKey, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
 import { Elapsed, Pending, elapsed } from "./loading";
 
@@ -216,7 +216,7 @@ function useHistoryNav(): { back: boolean; forward: boolean } {
   return state;
 }
 
-export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry }: {
+export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
   /** Project labels, so a project group is headed by its name. */
   projects?: Project[];
@@ -228,6 +228,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   onTurn?: (id: string, turn: number) => void;
   /** showArchived is the Archived section being open: the rows then include archived ones. */
   query: string; onQuery: (q: string) => void; showArchived: boolean; onToggleArchived: () => void;
+  /** The first transcript line the query matched, per session, from the full-text search. */
+  said?: Map<string, { seq: number; text: string }>;
   view?: View; onView?: (v: View) => void;
   /** Claims the wiki's review is waiting on; shown beside the nav item. */
   wikiFlags?: number;
@@ -592,6 +594,9 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     const chip = twin || !hasOwnTitle(r) && !own;
     const shown = hit?.field === "title" && hit.at > 24 ? excerpt(title, hit.at, 6).text : title;
     const reason = hit && hit.field !== "title" ? excerpt(hit.text, hit.at, 6) : undefined;
+    // Only the transcript held it: the line that did, so the row says why it is here.
+    const saidLine = !hit && q ? said?.get(r.id)?.text.replace(/\s+/g, " ").trim() : undefined;
+    const saidShown = saidLine ? excerpt(saidLine, Math.max(0, saidLine.toLowerCase().indexOf(q)), 6) : undefined;
     // Done is what the check mark already says; the row keeps only the age then.
     // A background agent says its own lifecycle once, in its words; a parent says what its agents are doing.
     const life = child ? agentsFromRows({ ...r, id: r.spawnedBy ?? "" }, [r])[0]?.life ?? "unknown" : undefined;
@@ -658,6 +663,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
           ) : null}
         </div>
         {reason && <div className="row-why">{hit!.field}: {marked(reason.text, q)}</div>}
+        {saidShown && <div className="row-why">said: {marked(saidShown.text, q)}</div>}
         {open && (
           <ol id={`turns-${r.id}`} className="turns" role="group" aria-label={`Turns of ${name || "session"}`}>
             {log?.lines && log.lines.length > 3 && (
@@ -4027,12 +4033,16 @@ export default function App() {
     return () => { live = false; clearTimeout(timer); stop(); };
   }, [selected, loadTry]);
 
+  // The filter reads transcripts too, as ⌘K does: what you remember is
+  // often something said ("bg-done"), which no title or branch holds.
+  const { hits: textHits } = useFullText(query, true);
+  const said = useMemo(() => new Map(textHits.filter((h) => h.lines.length).map((h) => [h.id, h.lines[0]])), [textHits]);
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return rows;
     // The id is searchable too: an untitled session shows only its id tail.
-    return rows.filter((r) => getSearchMatch(r, q));
-  }, [rows, query]);
+    return rows.filter((r) => getSearchMatch(r, q) || said.has(r.id));
+  }, [rows, query, said]);
 
   // A linked session the list does not hold (archived, not yet listed) is
   // still the session: its own lookup fills in.
@@ -4389,7 +4399,13 @@ export default function App() {
                onStartIn={(path) => start(path, "")}
                startIn={palCwd ? palCwd.split("/").filter(Boolean).pop() || palCwd : undefined} />
       <Sidebar rows={visible} projects={projects} selected={selected ?? lastId} active={pane === "list"}
-               onSelect={openSession} query={query} onQuery={setQuery}
+               onSelect={(id) => {
+                 openSession(id);
+                 // A row there only for what was said lands on the line that said it.
+                 const line = said.get(id), r = rows.find((x) => x.id === id);
+                 if (line && r && !getSearchMatch(r, query.trim().toLowerCase())) setJump({ id, turn: 0, seq: line.seq, at: Date.now() });
+               }}
+               query={query} onQuery={setQuery} said={said}
                onTurn={(id, turn) => { if (id !== selected || view !== "sessions" || sub) openSession(id); else setPane("thread"); setJump({ id, turn, at: Date.now() }); }}
                view={view} wikiFlags={wikiFlags} onNew={newSession} onFind={() => setPalette(true)}
                onView={onView}
