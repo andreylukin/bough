@@ -734,14 +734,18 @@ func TestStreamingHidesTheFenceBeingWritten(t *testing.T) {
 
 func TestDoneSummaryMarksFailureAndHidesKilled(t *testing.T) {
 	t.Parallel()
-	if got := doneSummary(nil, 1, true); got != "✗ exit 1" {
+	if got := doneSummary(nil, 1, true, 0, nil); got != "✗ exit 1" {
 		t.Errorf("nonzero exit = %q", got)
 	}
-	if got := doneSummary(nil, -1, true); got != "" {
+	if got := doneSummary(nil, -1, true, 0, nil); got != "" {
 		t.Errorf("killed (-1) should render nothing, got %q", got)
 	}
-	if got := doneSummary([]string{"a"}, -1, true); got != "✔ wrote a" {
+	if got := doneSummary([]string{"a"}, -1, true, 0, nil); got != "✔ wrote a" {
 		t.Errorf("killed with files = %q", got)
+	}
+	cost := 0.09
+	if got := doneSummary([]string{"a"}, 0, false, 20400, &cost); got != "✔ wrote a · 20s · $0.090" {
+		t.Errorf("elapsed and cost = %q", got)
 	}
 	if got := collapseNote(true, 0); !strings.Contains(got, "already folded") {
 		t.Errorf("zero collapse note = %q", got)

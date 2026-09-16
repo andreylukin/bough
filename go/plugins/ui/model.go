@@ -57,6 +57,8 @@ type block struct {
 	pending   bool     // steer the loop has not landed yet (its next block boundary)
 	files     []string // done blocks: files the turn wrote (from the entry's data)
 	exit      *int     // done blocks: exit status, nil when absent
+	ms        int64    // done blocks: the turn's wall time, 0 when unknown
+	cost      *float64 // done blocks: the turn's cost, nil when unpriced
 
 	// ask blocks only (see ask.go): the pending question's options and
 	// id, and how it resolved.
@@ -201,6 +203,7 @@ func sameBlock(a, b block) bool {
 		a.collapsed == b.collapsed && a.queued == b.queued && a.steer == b.steer &&
 		a.pending == b.pending && slices.Equal(a.files, b.files) &&
 		(a.exit == nil) == (b.exit == nil) && (a.exit == nil || *a.exit == *b.exit) &&
+		a.ms == b.ms && (a.cost == nil) == (b.cost == nil) && (a.cost == nil || *a.cost == *b.cost) &&
 		a.askID == b.askID && slices.Equal(a.options, b.options) && a.answer == b.answer &&
 		a.answered == b.answered && a.expired == b.expired && a.secret == b.secret && a.sub == b.sub && a.live == b.live
 }

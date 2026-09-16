@@ -99,7 +99,7 @@ type contextParter interface {
 // TurnStats is the optional "turn-stats" service seam (tools-basic):
 // files written and the last bash exit code since the previous Take.
 // Stamped onto the "done" entry as data {"files": [...], "exit": n,
-// "usage": {...}}
+// "ms": n, "usage": {...}}
 // ("exit" only when a bash call ran this turn).
 type TurnStats interface {
 	Take() (files []string, exit int, ran bool)
@@ -737,8 +737,11 @@ type runner struct {
 	// turnTree is this turn's checkpoint, kept so the done entry can
 	// diff against it; "" outside a repo or without the seam.
 	turnTree string
-	secs     *Sections
-	hasAsk   bool // an "ask-answers" service is mounted: document tools.ask
+	// turnStart is when this turn's input landed, for the done
+	// entry's "ms"; zero before the first turn.
+	turnStart time.Time
+	secs      *Sections
+	hasAsk    bool // an "ask-answers" service is mounted: document tools.ask
 	// steer hands over the steering messages sent since the last
 	// call (turns.takeSteers); final shuts the gate, see there. nil =
 	// no steering.
@@ -837,6 +840,7 @@ func (r *runner) admit(ctx context.Context, input string, steer bool, emit func(
 	}
 	if !steer {
 		r.turnTree = tree
+		r.turnStart = time.Now()
 	}
 	in := r.hist.Append("input", data)
 	if tree != "" {
@@ -1090,6 +1094,11 @@ func (r *runner) doneData() map[string]any {
 		files = []string{}
 	}
 	data["files"] = files
+	// The turn's wall time, saved so a resumed or replayed transcript
+	// shows what it took rather than the time since it was loaded.
+	if !r.turnStart.IsZero() {
+		data["ms"] = time.Since(r.turnStart).Milliseconds()
+	}
 	// Each file as the turn ended: /undo leaves one alone if
 	// something (a background job) has written it since.
 	if len(files) > 0 {

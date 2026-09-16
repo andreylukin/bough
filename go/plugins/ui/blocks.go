@@ -194,9 +194,11 @@ func turnHasReply(blocks []block) bool {
 	return false
 }
 
-// doneSummary renders the done entry's files/exit ("✔ wrote a, b ·
-// exit 0"); "" when the entry carries neither.
-func doneSummary(files []string, exit int, hasExit bool) string {
+// doneSummary renders the done entry's files/exit, then how long the
+// turn took and what it cost ("✔ wrote a, b · exit 0 · 20s · $0.090");
+// "" when the entry carries none of them. ms 0 and a nil cost are
+// unknown (an entry from before they were recorded, an unpriced model).
+func doneSummary(files []string, exit int, hasExit bool, ms int64, cost *float64) string {
 	var parts []string
 	if len(files) > 0 {
 		parts = append(parts, "wrote "+strings.Join(files, ", "))
@@ -205,6 +207,13 @@ func doneSummary(files []string, exit int, hasExit bool) string {
 	// its own error row; "✔ exit -1" only read as a contradiction.
 	if hasExit && exit >= 0 {
 		parts = append(parts, fmt.Sprintf("exit %d", exit))
+	}
+	if ms >= 1000 { // a sub-second turn: "0s" says nothing
+
+		parts = append(parts, durText(time.Duration(ms)*time.Millisecond))
+	}
+	if cost != nil {
+		parts = append(parts, costText(*cost))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -502,6 +511,19 @@ func (m *model) finishTurn(id int, ev Event) {
 		m.nextID++
 	}
 	b := block{id: id, kind: "done", files: strList(ev.Data["files"])}
+	switch v := ev.Data["ms"].(type) {
+	case int64:
+		b.ms = v
+	case int:
+		b.ms = int64(v)
+	case float64:
+		b.ms = int64(v)
+	}
+	if u, ok := ev.Data["usage"].(map[string]any); ok {
+		if c, ok := u["cost"].(float64); ok {
+			b.cost = &c
+		}
+	}
 	switch v := ev.Data["exit"].(type) {
 	case int:
 		b.exit = &v
@@ -560,7 +582,7 @@ func (m *model) renderDone(b *block, th theme) string {
 	if b.exit != nil {
 		exit, hasExit = *b.exit, true
 	}
-	if s := doneSummary(b.files, exit, hasExit); s != "" {
+	if s := doneSummary(b.files, exit, hasExit, b.ms, b.cost); s != "" {
 		out = th["dim"].Render(s) + "\n" + out
 	}
 	return out

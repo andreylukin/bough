@@ -189,7 +189,12 @@ func (m *model) elapsed() string {
 	if m.turnStart.IsZero() {
 		return "0s"
 	}
-	d := time.Since(m.turnStart).Round(time.Second)
+	return durText(time.Since(m.turnStart))
+}
+
+// durText is a duration in whole seconds: "12s", "2m05s".
+func durText(d time.Duration) string {
+	d = d.Round(time.Second)
 	if d < time.Minute {
 		return fmt.Sprintf("%ds", int(d.Seconds()))
 	}

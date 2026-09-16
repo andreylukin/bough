@@ -5,7 +5,21 @@ package loop
 
 import (
 	"testing"
+	"time"
 )
+
+// The done entry carries the turn's wall time, so a resumed transcript
+// can still say how long it took.
+func TestDoneDataRecordsTurnDuration(t *testing.T) {
+	t.Parallel()
+	r := &runner{turnStart: time.Now().Add(-1500 * time.Millisecond)}
+	if ms, ok := r.doneData()["ms"].(int64); !ok || ms < 1500 {
+		t.Fatalf("ms = %v, want >= 1500", ms)
+	}
+	if _, ok := (&runner{}).doneData()["ms"]; ok {
+		t.Errorf("no turn start: want no ms")
+	}
+}
 
 // fakeCP is the checkpoints seam: Changed reports what a shell command
 // did, which the turn-stats tally never sees.
