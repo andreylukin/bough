@@ -82,7 +82,12 @@ func TestNewSessionPicker(t *testing.T) {
 		newSessionSeed(t, a, "seed-alpha", "/elsewhere/alpha", "alpha prompt")
 		newSessionSeed(t, a, "seed-beta", "/elsewhere/beta", "beta prompt")
 		newSessionOpenPicker(a)
-		// Walk down until the selected row is beta, wherever it sorts.
+		// The cursor starts on the current session, which may sort
+		// last: go to the top, then walk down until beta is selected.
+		for range 5 {
+			a.key(uv.KeyUp, 0)
+		}
+		a.settled()
 		selected := func() bool {
 			for _, l := range a.lines() {
 				if strings.Contains(l, "▸ ") && strings.Contains(l, "beta prompt") {

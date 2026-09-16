@@ -146,3 +146,15 @@ func TestPickerFitCountsSnippetLines(t *testing.T) {
 		t.Errorf("snippet rows take two lines: fit %d, want 2", n)
 	}
 }
+
+func TestPickerFitFromCountsForward(t *testing.T) {
+	t.Parallel()
+	rows := []sessRow{{}, {}, {}, {}, {}}
+	if n := pickerFitFrom(rows, 0, 3); n != 3 {
+		t.Errorf("pgdown from the top row should move a page: fit %d, want 3", n)
+	}
+	rows[1].snippet = "x"
+	if n := pickerFitFrom(rows, 0, 3); n != 2 {
+		t.Errorf("a snippet row takes two lines: fit %d, want 2", n)
+	}
+}

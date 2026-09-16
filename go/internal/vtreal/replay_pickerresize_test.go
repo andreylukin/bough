@@ -181,6 +181,10 @@ func TestPickerResize(t *testing.T) {
 		pickerResizeRun(t, tm, "▸ ", func() {
 			resizeTmuxSend(tm, "/sessions")
 			tm.waitFor("resume a session")
+			for range 4 { // the cursor starts on the current session: go to the top
+				tm.keys("Up")
+			}
+			tm.settled()
 		}, func(sel string) {
 			id := ""
 			for _, f := range strings.Fields(sel) {

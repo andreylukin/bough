@@ -66,6 +66,9 @@ func TestResizeDuringNewSessionDialogFzf(t *testing.T) {
 		tm.waitFor("> /sessions")
 		tm.keys("Enter")
 		tm.waitFor("resume a session")
+		for range 5 { // the cursor starts on the current session: go to the top
+			tm.keys("Up")
+		}
 		for i := 0; i < 5 && !strings.Contains(resizeDuringNewSessionDialogFzfSelected(tm.settled()), "beta prompt"); i++ {
 			tm.keys("Down")
 		}

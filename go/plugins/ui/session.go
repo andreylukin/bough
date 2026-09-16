@@ -501,7 +501,7 @@ func (m model) handlePickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "pgup":
 		m.pick = max(m.pick-pickerFit(rows, m.pick, m.pickerPage(cfg)), 0)
 	case "pgdown":
-		m.pick = max(min(m.pick+pickerFit(rows, m.pick, m.pickerPage(cfg)), len(rows)-1), 0)
+		m.pick = max(min(m.pick+pickerFitFrom(rows, m.pick, m.pickerPage(cfg)), len(rows)-1), 0)
 	case "enter":
 		if cfg.choose == nil || len(rows) == 0 {
 			return m, nil
@@ -603,6 +603,23 @@ func (m *model) pickerPage(cfg *uiCfg) int {
 func pickerFit(rows []sessRow, end, budget int) int {
 	n := 0
 	for i := min(end, len(rows)-1); i >= 0; i-- {
+		budget--
+		if rows[i].snippet != "" {
+			budget--
+		}
+		if budget < 0 {
+			break
+		}
+		n++
+	}
+	return max(n, 1)
+}
+
+// pickerFitFrom is how many rows starting at start fit in budget
+// lines, counted like pickerFit.
+func pickerFitFrom(rows []sessRow, start, budget int) int {
+	n := 0
+	for i := max(start, 0); i < len(rows); i++ {
 		budget--
 		if rows[i].snippet != "" {
 			budget--
