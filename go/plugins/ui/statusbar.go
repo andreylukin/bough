@@ -43,7 +43,15 @@ func (m *model) statusBar(cfg *uiCfg) string {
 		// several bough windows are told apart by what they are doing.
 		left = " " + m.title
 	}
-	if mdl != "" {
+	// A transient notice (the flash, the scroll cue) takes the left
+	// side, so the usage chips on the right stay in view.
+	notice := m.flash
+	if notice == "" {
+		notice = m.scrollCue()
+	}
+	if notice != "" {
+		left = " " + notice
+	} else if mdl != "" {
 		// The right side names the model; a duplicate on the left
 		// would crowd the tokens out at 80-100 columns.
 		left, _, _ = strings.Cut(left, " · ")
@@ -52,8 +60,6 @@ func (m *model) statusBar(cfg *uiCfg) string {
 	// and the bare "? keys" is the floor.
 	var cands []string
 	switch {
-	case m.flash != "":
-		cands = []string{m.flash}
 	case m.inspecting && m.diving != 0:
 		cands = []string{"subagent transcript · esc to close"}
 	case m.inspecting:
@@ -67,8 +73,6 @@ func (m *model) statusBar(cfg *uiCfg) string {
 		// tab takes it. Shown here rather than as ghost text in the
 		// composer, where it would hide the draft's real end.
 		cands = []string{"↹ …" + strings.TrimSpace(m.suggestion())}
-	case m.scrollCue() != "":
-		cands = []string{m.scrollCue()}
 	default:
 		join := func(parts ...string) string {
 			return strings.Join(slices.DeleteFunc(parts, func(s string) bool { return s == "" }), " · ")
@@ -89,9 +93,16 @@ func (m *model) statusBar(cfg *uiCfg) string {
 			join(cost, ctx),
 			join(cost),
 		})
+		if notice != "" && cost+ctx != "" {
+			// Beside a notice the notice is shortened, never cost or ctx.
+			cands = slices.DeleteFunc(cands, func(c string) bool {
+				return !strings.Contains(c, cost) || !strings.Contains(c, ctx)
+			})
+		}
 	}
-	if m.flash == "" {
-		// Narrow pane: the usage/scroll cue goes before "? keys" does.
+	if notice == "" {
+		// Narrow pane: the usage goes before "? keys" does; beside a
+		// notice the notice is shortened instead.
 		cands = append(cands, "")
 	}
 	var right string
@@ -144,6 +155,9 @@ func usageParts(cfg *uiCfg) (tokens, cost, ctx, mdl string) {
 		if cfg.limit != nil && u.LastInputTokens > 0 {
 			if limit := cfg.limit.ContextLimit(); limit > 0 {
 				ctx = fmt.Sprintf("%d%% ctx", u.LastInputTokens*100/limit)
+				if u.LastInputTokens*100 < limit {
+					ctx = "<1% ctx"
+				}
 			}
 		}
 	}

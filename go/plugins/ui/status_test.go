@@ -551,3 +551,35 @@ func TestStatusBarKeysFloorNarrow(t *testing.T) {
 		}
 	}
 }
+
+// A transient notice sits on the left and the usage chips stay: cost
+// and ctx survive a scroll cue and the quit hint at 140 and 80.
+func TestStatusBarNoticeKeepsChips(t *testing.T) {
+	t.Parallel()
+	for _, w := range []int{140, 80} {
+		d := newDrv(t, w, 24, footerCfg(t))
+		d.m.vp.SetContent(strings.Repeat("line\n", 200))
+		d.m.vp.GotoTop()
+		got := bar(t, d, w)
+		if !strings.Contains(got, "scrolled ↑") || !strings.Contains(got, "$") || !strings.Contains(got, "ctx") {
+			t.Errorf("width %d: scroll notice hid the chips: %q", w, got)
+		}
+		d.m.vp.GotoBottom()
+		d.press(keyCtrl('c'))
+		got = bar(t, d, w)
+		if i := strings.Index(got, "again to quit"); i < 0 || lipgloss.Width(got[:i]) >= w/2 {
+			t.Errorf("width %d: quit hint not in the left half: %q", w, got)
+		}
+		if !strings.Contains(got, "$") || !strings.Contains(got, "ctx") {
+			t.Errorf("width %d: quit hint hid the chips: %q", w, got)
+		}
+	}
+	cfg := footerCfg(t)
+	u := cfg.usage.(fakeLimit)
+	u.u.LastInputTokens = 5_000
+	cfg.usage, cfg.limit = u, u
+	d := newDrv(t, 140, 24, cfg)
+	if got := bar(t, d, 140); !strings.Contains(got, "<1% ctx") {
+		t.Errorf("5k of 1.05M: want <1%% ctx: %q", got)
+	}
+}
