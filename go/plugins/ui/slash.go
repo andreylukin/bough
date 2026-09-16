@@ -338,7 +338,11 @@ func (m *model) dispatchAs(line, echo string) tea.Cmd {
 	if args != "" && secretCommand(cfg, name) {
 		echo = "/" + name + " ••••"
 	}
-	m.log(cfg, "command", echo)
+	// Navigation leaves the session: "/new" or "/sessions" recorded
+	// into the one being left is noise in its transcript.
+	if name != "new" && name != "sessions" {
+		m.log(cfg, "command", echo)
+	}
 	m.blocks = append(m.blocks, block{id: m.nextID, kind: "command", text: echo})
 	m.nextID++
 	out, err := cfg.cmds.Run(name, args)

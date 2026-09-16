@@ -3,6 +3,7 @@ package ui
 // Slash-command dispatch: what reaches the transcript and history.
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -49,6 +50,36 @@ func TestSecretCommandArgsAreRedacted(t *testing.T) {
 	d2.press(keyEnter())
 	if !strings.Contains(d2.plain(), "/connect") {
 		t.Errorf("an argument-less secret command echoes normally:\n%s", d2.plain())
+	}
+}
+
+// /new and /sessions leave the session: their echo is not recorded
+// into the one being left. Other commands still are.
+func TestNavigationCommandsNotLogged(t *testing.T) {
+	t.Parallel()
+	r := commands.NewRegistry()
+	for _, n := range []string{"new", "sessions", "cost"} {
+		if err := r.Register(commands.CommandInfo{Name: n},
+			func(string) (string, error) { return "ok", nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := &recordingHist{}
+	cfg := cfgWith(t, nil, nil, nil)
+	cfg.cmds = r
+	cfg.hlog = h
+	d := newDrv(t, 100, 24, cfg)
+	for _, line := range []string{"/new", "/sessions", "/cost"} {
+		d.typeStr(line)
+		d.press(keyEnter())
+	}
+	for _, e := range h.appended {
+		if e == "command: /new" || e == "command: /sessions" {
+			t.Errorf("navigation must not be recorded in the session left: %q", e)
+		}
+	}
+	if !slices.Contains(h.appended, "command: /cost") {
+		t.Errorf("other commands are still recorded, got %q", h.appended)
 	}
 }
 
