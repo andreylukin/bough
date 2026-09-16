@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"fmt"
+	"github.com/andreylukin/bough/internal/models"
 	"github.com/andreylukin/bough/plugins/commands"
 )
 
@@ -201,5 +202,49 @@ func TestModelPickerPasteSearches(t *testing.T) {
 	}
 	if v := d.m.input.Value(); v != "" {
 		t.Errorf("paste leaked into the composer draft: %q", v)
+	}
+}
+
+// The picker hides what cannot chat and :free entries unless asked,
+// and prices each row it knows.
+func TestModelPickerHidesNonChatAndFree(t *testing.T) {
+	old := modelLookup
+	t.Cleanup(func() { modelLookup = old })
+	modelLookup = func(plugin, id string) (models.Model, bool) {
+		switch id {
+		case "chat-a":
+			return models.Model{Input: 3, Output: 15}, true
+		case "embed-e":
+			return models.Model{Input: 0.13}, true
+		case "x:free":
+			return models.Model{Context: 1000}, true
+		}
+		return models.Model{}, false
+	}
+	r := commands.NewRegistry()
+	if err := r.Register(commands.CommandInfo{Name: "model", Usage: "", Summary: "pick"},
+		func(args string) (string, error) {
+			return "", commands.ModelPickerAction("", "llm-openai chat-a",
+				[]string{"llm-openrouter x:free", "llm-openai embed-e", "llm-openai chat-a"})
+		}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := cfgWith(t, nil, nil, nil)
+	cfg.cmds = r
+	d := newDrv(t, 80, 24, cfg)
+	d.dispatchLine("/model")
+	p := d.plain()
+	if !strings.Contains(p, "chat-a") || strings.Contains(p, "embed-e") || strings.Contains(p, "x:free") {
+		t.Fatalf("want chat-a only:\n%s", p)
+	}
+	if !strings.Contains(p, "$3.00 / $15.00") {
+		t.Errorf("row should show a price:\n%s", p)
+	}
+	if strings.Count(p, "type to search") > 1 {
+		t.Errorf("header repeats the hint:\n%s", p)
+	}
+	d.typeStr("free")
+	if p := d.plain(); !strings.Contains(p, "x:free") {
+		t.Errorf("typing free should show x:free:\n%s", p)
 	}
 }

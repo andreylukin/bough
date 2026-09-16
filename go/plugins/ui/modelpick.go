@@ -8,12 +8,36 @@ package ui
 // choice marked and the cursor on it.
 
 import (
+	"sort"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"fmt"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/andreylukin/bough/internal/models"
 )
+
+// modelLookup prices a "plugin model" row; a var so tests can hand the
+// picker a fake catalogue.
+var modelLookup = models.Lookup
+
+// splitRow is a row's plugin and model id ("llm-echo" has no id).
+func splitRow(r string) (plugin, id string) {
+	plugin, id, _ = strings.Cut(r, " ")
+	return plugin, id
+}
+
+// chatRow is false for what the catalogue knows cannot chat: an
+// embedding model, or one priced for input with no text output.
+func chatRow(r string) bool {
+	plugin, id := splitRow(r)
+	if strings.Contains(strings.ToLower(id), "embedding") {
+		return false
+	}
+	m, ok := modelLookup(plugin, id)
+	return !ok || m.Input == 0 || m.Output > 0
+}
 
 type modelPicker struct {
 	open    bool
@@ -33,10 +57,12 @@ type modelPicker struct {
 // survives, else at the top.
 func (p *modelPicker) filter() {
 	words := strings.Fields(strings.ToLower(p.query))
+	free := strings.Contains(strings.ToLower(p.query), "free")
 	p.rows = p.rows[:0]
 	for _, r := range p.all {
 		low := strings.ToLower(r)
-		ok := true
+		// :free stealth entries crowd the list; ask for them by name.
+		ok := free || !strings.Contains(low, ":free")
 		for _, w := range words {
 			if !strings.Contains(low, w) {
 				ok = false
@@ -57,7 +83,20 @@ func (p *modelPicker) filter() {
 
 // openModelPicker shows the picker, cursor on the current choice.
 func (m *model) openModelPicker(target, current string, rows []string) {
-	m.mp = modelPicker{open: true, target: target, current: current, all: rows}
+	// Chat models only, the current provider's group first.
+	all := []string{}
+	for _, r := range rows {
+		if chatRow(r) {
+			all = append(all, r)
+		}
+	}
+	cur, _ := splitRow(current)
+	sort.SliceStable(all, func(a, b int) bool {
+		pa, _ := splitRow(all[a])
+		pb, _ := splitRow(all[b])
+		return pa == cur && pb != cur
+	})
+	m.mp = modelPicker{open: true, target: target, current: current, all: all}
 	m.mp.filter() // puts the cursor on the current row
 	m.syncPalette()
 }
@@ -138,9 +177,6 @@ func (m *model) modelPickerView(cfg *uiCfg) string {
 	// so the count says how much the query left.
 	count := fmt.Sprintf("%d of %d", len(m.mp.rows), len(m.mp.all))
 	query := m.mp.query
-	if query == "" {
-		query = th["dim"].Render("type to search")
-	}
 	lines := []string{
 		th["accent"].Render("bough") + " " + th["dim"].Render(what),
 		"",
@@ -160,8 +196,22 @@ func (m *model) modelPickerView(cfg *uiCfg) string {
 	if first > 0 {
 		lines = append(lines, th["dim"].Render(fmt.Sprintf("  ↑ %d more above", first)))
 	}
-	for i := first; i < len(m.mp.rows) && i-first < room; i++ {
+	// A dim header starts each provider's group; it takes a line of
+	// the window, so the window ends where the lines run out.
+	used, last := 0, ""
+	i := first
+	for ; i < len(m.mp.rows) && used < room; i++ {
 		r := m.mp.rows[i]
+		plugin, id := splitRow(r)
+		if plugin != last {
+			if used+1 >= room {
+				break
+			}
+			lines = append(lines, th["dim"].Render(plugin))
+			used++
+			last = plugin
+		}
+		used++
 		marker, st := "  ", th["result"]
 		if i == m.mp.pick {
 			marker, st = "▸ ", th["focus"]
@@ -170,9 +220,15 @@ func (m *model) modelPickerView(cfg *uiCfg) string {
 		if r == m.mp.current {
 			row += " (current)"
 		}
+		if mm, ok := modelLookup(plugin, id); ok && (mm.Input > 0 || mm.Output > 0) {
+			price := fmt.Sprintf("$%.2f / $%.2f", mm.Input, mm.Output)
+			if gap := m.width - ansi.StringWidth(row) - ansi.StringWidth(price) - 1; gap > 1 {
+				row += strings.Repeat(" ", gap) + price
+			}
+		}
 		lines = append(lines, st.Render(row))
 	}
-	if rest := len(m.mp.rows) - first - room; rest > 0 {
+	if rest := len(m.mp.rows) - i; rest > 0 {
 		lines = append(lines, th["dim"].Render(fmt.Sprintf("  ↓ %d more below", rest)))
 	}
 	hints := th["dim"].Render("type to search · ↑/↓ select · enter switch · esc back")
