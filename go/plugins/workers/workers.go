@@ -59,8 +59,8 @@ const schemaNote = loop.SchemaNote
 // promptSection documents tools.spawn to the parent model (registered
 // into the loop's "prompt-sections" service when present).
 const promptSection = `Subagents — when to delegate:
-- Exploring a LARGE codebase to answer a broad question ("how does X work across the repo") is the case delegation exists for: split it into independent areas and send them to tools.spawnAll in ONE call. The children read the files; only their reports reach you, so a wide survey costs you a few hundred lines instead of tens of thousands.
-- A read-only question you can answer from a few files (a small repo, a README, one package) you answer directly: read those 1-3 files yourself and reply in prose. Do not spawn subagents for it.
+- Exploring a codebase with too many files to read yourself to answer a broad question ("how does X work across the repo") is the case delegation exists for: split it into independent areas and send them to tools.spawnAll in ONE call. The children read the files; only their reports reach you, so a wide survey costs you a few hundred lines instead of tens of thousands.
+- A question a few files answer (a README, one package, a small repo) is faster done yourself: read them and reply in prose, no subagents.
 - A needle lookup you can do in one command — a known path, a single grep — is faster done yourself. Do not delegate a shell command.
 - Prefer spawnAll over several spawn calls: the children wait on the model in parallel, so N tasks take about as long as the slowest one.
 - Give each child one self-contained brief: what to find out, where to look, and what to report. It cannot see this conversation and cannot spawn.
