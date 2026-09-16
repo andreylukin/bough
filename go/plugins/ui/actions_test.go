@@ -280,8 +280,8 @@ func TestChordRunsAction(t *testing.T) {
 	}
 	d.press(keyCtrl('x'))
 	d.press(keyRune('k'))
-	if last := d.m.blocks[len(d.m.blocks)-1]; last.kind != "system" || !strings.HasPrefix(last.text, "keys\n") {
-		t.Errorf("ctrl+x k should print the keys block, got %+v", last)
+	if !d.m.keysOpen {
+		t.Errorf("ctrl+x k should open the keys panel")
 	}
 }
 
@@ -447,7 +447,10 @@ func TestKeysListsChords(t *testing.T) {
 	d := drvCmds(t, r)
 	d.typeStr("/keys")
 	d.press(keyEnter())
-	text := d.m.blocks[len(d.m.blocks)-1].text
+	if !d.m.keysOpen {
+		t.Fatal("/keys should open the keys panel")
+	}
+	text := keysText(d.m.cfg.Load())
 	for _, want := range []string{"chords (ctrl+x, then a key)", "ctrl+x l", "pick a session to resume", "ctrl+x q", "ctrl+x p"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("/keys should list the chords with %q:\n%s", want, text)

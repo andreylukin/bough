@@ -310,26 +310,44 @@ func TestKeysCommandAndQuestionMark(t *testing.T) {
 	if d.m.input.Value() != "" {
 		t.Fatalf("? on an empty composer must not type, got %q", d.m.input.Value())
 	}
-	// The list outgrows a 24-row screen (chords included): read the
-	// block, and check the screen holds its tail.
-	p := d.m.blocks[len(d.m.blocks)-1].text
-	if !strings.Contains(d.plain(), "chords (ctrl+x, then a key)") {
-		t.Errorf("? should show the keymap:\n%s", d.plain())
+	// A panel over the transcript, not a block: nothing to save.
+	if len(d.m.blocks) != 0 {
+		t.Errorf("? must not add transcript blocks, got %+v", d.m.blocks)
 	}
-	for _, want := range []string{"ctrl+c", "quit", "ctrl+o", "inspect history", "esc", "tab"} {
-		if !strings.Contains(p, want) {
-			t.Errorf("? should show the keymap with %q:\n%s", want, p)
+	scr := d.plain()
+	for _, want := range []string{"keys  (? or esc closes)", "ctrl+c", "quit", "ctrl+o", "inspect history"} {
+		if !strings.Contains(scr, want) {
+			t.Errorf("? should show the keymap with %q:\n%s", want, scr)
 		}
 	}
+	d.typeStr("?")
+	if strings.Contains(d.plain(), "or esc closes") || d.m.input.Value() != "" {
+		t.Errorf("? again closes the panel without typing:\n%s", d.plain())
+	}
+	d.typeStr("?")
+	d.press(keyEsc())
+	if strings.Contains(d.plain(), "or esc closes") {
+		t.Errorf("esc closes the panel:\n%s", d.plain())
+	}
+	// Any other key closes the panel and still lands.
+	d.typeStr("?")
 	d.typeStr("what?")
 	if got := d.m.input.Value(); got != "what?" {
-		t.Errorf("? mid-text is a character, got %q", got)
+		t.Errorf("typing over the panel must not be swallowed, got %q", got)
+	}
+	if strings.Contains(d.plain(), "or esc closes") {
+		t.Errorf("typing closes the panel:\n%s", d.plain())
 	}
 	d.press(keyCtrl('l'))
 	d.typeStr("/keys")
 	d.press(keyEnter())
-	if last := d.m.blocks[len(d.m.blocks)-1]; last.kind != "system" || !strings.HasPrefix(last.text, "keys\n") {
-		t.Errorf("/keys should print the keymap block, got %+v", last)
+	if !d.m.keysOpen || !strings.Contains(d.plain(), "or esc closes") {
+		t.Errorf("/keys should open the keys panel:\n%s", d.plain())
+	}
+	for _, b := range d.m.blocks {
+		if b.kind == "system" {
+			t.Errorf("/keys must not print a keymap block, got %+v", b)
+		}
 	}
 }
 

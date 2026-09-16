@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/andreylukin/bough/plugins/commands"
 )
@@ -89,6 +90,9 @@ func (m *model) leaveActions() {
 
 // overlayRows is whichever composer picker is open: "/" or "@".
 func (m *model) overlayRows() []string {
+	if lines := m.keysRows(); len(lines) > 0 {
+		return lines
+	}
 	if lines := m.paletteRows(); len(lines) > 0 {
 		return lines
 	}
@@ -461,17 +465,28 @@ func keysText(cfg *uiCfg) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// showKeys appends the keymap as a system block (the /keys answer,
-// and "?" on an empty composer).
+// showKeys opens the keymap panel (the /keys answer, and "?" on an
+// empty composer): an overlay above the composer, never a transcript
+// block and never history.
 func (m *model) showKeys() {
-	cfg := m.cfg.Load()
-	text := keysText(cfg)
-	m.log(cfg, "system", text)
-	m.blocks = append(m.blocks, block{id: m.nextID, kind: "system", text: text})
-	m.keysBlock = m.nextID
-	m.nextID++
-	m.refresh()
-	m.vp.GotoBottom()
+	m.keysOpen = true
+}
+
+// keysRows is the open keys panel, cut to the transcript's height.
+func (m *model) keysRows() []string {
+	if !m.keysOpen || m.inspecting {
+		return nil
+	}
+	lines := strings.Split(keysText(m.cfg.Load()), "\n")
+	lines[0] += "  (? or esc closes)"
+	if h := m.vp.Height(); h > 1 && len(lines) > h {
+		more := len(lines) - (h - 1)
+		lines = append(lines[:h-1], fmt.Sprintf("  … %d more", more))
+	}
+	for i, l := range lines {
+		lines[i] = xansi.Truncate(l, m.width, "…")
+	}
+	return lines
 }
 
 // log records one dispatch half to history when a writable history

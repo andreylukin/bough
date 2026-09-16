@@ -143,7 +143,7 @@ type model struct {
 	unfolded    map[int]int    // fold lead id -> id of its run's last block, shown as rows (see fold.go)
 	keepRow     map[int]bool   // block ids closed by hand: they stay rows, never fold (see fold.go)
 	pendingAsk  string         // ask id the composer routes answers to; "" = none
-	keysBlock   int            // id of the last "?"/keys block; esc drops it first while an ask is pending
+	keysOpen    bool           // the "?"/keys panel is over the transcript; ? or esc closes it, other keys close it and go through
 	askStash    string         // composer draft displaced by the pending ask
 	pal         palette        // "/" command palette (see palette.go)
 	at          palette        // "@" file picker (see atfiles.go)
@@ -1564,6 +1564,14 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	cfg := m.cfg.Load()
 	m.flash = ""
 	key := msg.String()
+	// The keys panel is transient: ? or esc only closes it; any other
+	// key closes it and then does what it always does.
+	if m.keysOpen {
+		m.keysOpen = false
+		if key == "?" || key == "esc" {
+			return m, nil
+		}
+	}
 	if m.leader {
 		m.leader = false
 		return m, m.chordKey(key, cfg)
@@ -1611,17 +1619,6 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key == "esc" && m.inspecting && m.diving != 0 {
 		m.inspecting, m.diving = false, 0
 		m.syncPalette()
-		return m, nil
-	}
-
-	// Help shown over a pending ask closes first: esc drops the keymap
-	// block so the ask's options are back in view, still pending.
-	if key == "esc" && m.pendingAsk != "" && !m.inspecting && m.keysBlock != 0 &&
-		len(m.blocks) > 0 && m.blocks[len(m.blocks)-1].id == m.keysBlock {
-		m.blocks = m.blocks[:len(m.blocks)-1]
-		m.keysBlock = 0
-		m.refresh()
-		m.vp.GotoBottom()
 		return m, nil
 	}
 
