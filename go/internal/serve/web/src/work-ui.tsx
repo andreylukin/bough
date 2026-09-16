@@ -362,8 +362,8 @@ const when = (w: Worker) => Date.parse(w.endedAt ?? w.startedAt ?? "") || w.seq;
  * bottom sheet on a phone. Rows keep their group while pointed at,
  * focused or open, and regroup once they are let go.
  */
-export function WorkDialog({ workers, sheet, top, childState, onRetryChildren, paused, parent, onClose, onView, onOpenAgent }: {
-  workers: Worker[]; sheet: boolean; top?: number; childState: ChildState; onRetryChildren: () => void; paused?: boolean;
+export function WorkDialog({ workers, sheet, top, right, childState, onRetryChildren, paused, parent, onClose, onView, onOpenAgent }: {
+  workers: Worker[]; sheet: boolean; top?: number; /** From the pane's right edge to the Work button's. */ right?: number; childState: ChildState; onRetryChildren: () => void; paused?: boolean;
   /** The session whose Work this is: an agent's details are read on its behalf. */
   parent: string;
   /** refocus: give focus back to the Work button. */
@@ -434,7 +434,7 @@ export function WorkDialog({ workers, sheet, top, childState, onRetryChildren, p
 
   return (
     <div ref={ref} className={sheet ? "work-sheet" : "work-popover"} role="dialog" aria-modal="true" aria-labelledby={titleId}
-         style={!sheet && top !== undefined ? { top } : undefined} onKeyDown={trap}>
+         style={!sheet ? { top, insetInlineEnd: right } : undefined} onKeyDown={trap}>
       {sheet && <div className="work-grabber" aria-hidden="true" />}
       <header>
         <h2 id={titleId} ref={head} tabIndex={-1} className="work-title">Work</h2>

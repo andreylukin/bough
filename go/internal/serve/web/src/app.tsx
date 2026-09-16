@@ -2022,10 +2022,33 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, loading }:
   const pct = u && limit ? Math.min(100, Math.round((u.lastIn / limit) * 100)) : undefined;
   const strip = useRef<HTMLDivElement>(null);
   usePopovers(strip);
-  // Work, cache and changes stand on their own: a session with no usage
-  // recorded can still have a server running.
+  // On a one-row header the lowest chips fold into "…", cache first, until
+  // the title keeps its room. A new pane width starts over from none.
+  const [fold, setFold] = useState(0);
+  useEffect(() => {
+    const el = strip.current, head = el?.parentElement, main = head?.querySelector<HTMLElement>(".head-main");
+    if (!el || !head || !main || typeof ResizeObserver === "undefined") return;
+    const check = () => {
+      if (getComputedStyle(el).flexWrap !== "nowrap") return setFold(0);
+      if (main.clientWidth < Math.min(main.scrollWidth, 240)) setFold((f) => Math.min(f + 1, 3));
+    };
+    let w = head.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (head.clientWidth !== w) { w = head.clientWidth; setFold(0); }
+      requestAnimationFrame(check);
+    });
+    ro.observe(head); ro.observe(main); ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const cache = row.cache && <CacheChip key="cache" cache={row.cache} model={row.model} />;
+  const tests = <TestsChip key="tests" lines={lines} running={row.status === "running"} />;
+  const edits = <ChangesChip key="edits" row={row} tick={lines.length} />;
+  const folded = [fold >= 3 && edits, fold >= 2 && tests, fold >= 1 && cache].filter(Boolean);
+  // Work first: it is never folded. Cache, changes and tests stand on their
+  // own: a session with no usage recorded can still have a server running.
   return (
     <div className="runtime-strip" ref={strip}>
+      {work}
       {paused !== undefined && (
         <span className="rt-paused" role="status">
           Updates paused · last synced {clock(new Date(paused).toISOString())} · <button className="link" onClick={onRetry}>Retry</button>
@@ -2062,10 +2085,15 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, loading }:
           <span className="rt-label">Cost</span><span className="num rt-value">{money(u.cost)}</span>
         </Tip>
       )}
-      <ChangesChip row={row} tick={lines.length} />
-      <TestsChip lines={lines} running={row.status === "running"} />
-      {row.cache && <CacheChip cache={row.cache} model={row.model} />}
-      {work}
+      {fold < 3 && edits}
+      {fold < 2 && tests}
+      {fold < 1 && cache}
+      {folded.length > 0 && (
+        <details className="rt rt-jobs rt-more">
+          <summary aria-label="More session details">…</summary>
+          <div className="rt-pop">{folded}</div>
+        </details>
+      )}
     </div>
   );
 }
@@ -2081,7 +2109,7 @@ function usePopovers(root: React.RefObject<HTMLElement | null>) {
     const open = () => [...el.querySelectorAll<HTMLDetailsElement>("details[open]")];
     const toggle = (e: Event) => {
       const d = e.target as HTMLDetailsElement;
-      if (d.open) for (const o of open()) if (o !== d) o.open = false;
+      if (d.open) for (const o of open()) if (o !== d && !o.contains(d)) o.open = false;
     };
     const key = (e: KeyboardEvent) => {
       const d = open()[0];
@@ -3144,6 +3172,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   const showWork = counts.total > 0 || kids.state === "loading" || kids.state === "error";
   const [workOpen, setWorkOpen] = useState(false);
   const [workTop, setWorkTop] = useState<number>();
+  const [workRight, setWorkRight] = useState<number>();
   const workBtn = useRef<HTMLButtonElement>(null);
   const headRef = useRef<HTMLHeadingElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -3159,7 +3188,8 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   const sheet = useMedia("(max-width:480px)");
   const openWork = () => {
     const b = workBtn.current?.getBoundingClientRect(), t = threadRef.current?.getBoundingClientRect();
-    if (b && t) setWorkTop(b.bottom - t.top + 4);
+    if (b && t) { setWorkTop(b.bottom - t.top + 4); // Under the button's right edge, but never past the pane's left (the popover is min(760px, pane - 32px) wide).
+      setWorkRight(Math.max(16, Math.min(t.right - b.right, t.width - 16 - Math.min(760, t.width - 32)))); }
     setWorkOpen(true);
   };
   const closeWork = useCallback((refocus: boolean) => {
@@ -3850,7 +3880,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
         </div>
       </div>
       {workOpen && (
-        <WorkDialog workers={workers} sheet={sheet} top={workTop} childState={kids.state} onRetryChildren={kids.retry}
+        <WorkDialog workers={workers} sheet={sheet} top={workTop} right={workRight} childState={kids.state} onRetryChildren={kids.retry}
                     paused={paused !== undefined} parent={row.id} onClose={closeWork} onView={viewInTranscript} onOpenAgent={openAgent} />
       )}
       {/* Transitions after the first load, batched: never a clock ticking. */}
