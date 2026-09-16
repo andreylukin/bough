@@ -89,6 +89,50 @@ func TestWritableRoot(t *testing.T) {
 	}
 }
 
+// A typed path completes to the folders under it, hidden ones only when
+// the prefix asks, and each says whether a session there could edit.
+func TestDirsCompletesFolders(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	home := setupHome(t, f)
+	for _, d := range []string{filepath.Join(home, "repos", "app", ".git"), filepath.Join(home, "repos", "api"), filepath.Join(home, "repos", ".cache"), filepath.Join(home, "other")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(home, "repos", "apple.txt"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	paths := func(body map[string]any) map[string]any {
+		got := map[string]any{}
+		list, _ := body["dirs"].([]any)
+		for _, x := range list {
+			m, _ := x.(map[string]any)
+			got[m["path"].(string)] = m["checkout"]
+		}
+		return got
+	}
+	code, body := f.do(t, "GET", "/api/dirs?path="+url.QueryEscape("~/repos/ap"), "")
+	if code != 200 {
+		t.Fatalf("GET /api/dirs = %d %v", code, body)
+	}
+	app, api := filepath.Join(home, "repos", "app"), filepath.Join(home, "repos", "api")
+	if got := paths(body); len(got) != 2 || got[app] != app || got[api] != nil {
+		t.Errorf("~/repos/ap = %v, want app (a checkout) and api", got)
+	}
+	_, body = f.do(t, "GET", "/api/dirs?path="+url.QueryEscape("~/repos/"), "")
+	if got := paths(body); len(got) != 2 {
+		t.Errorf("~/repos/ = %v, want app and api without .cache", got)
+	}
+	if folder, _ := body["folder"].(map[string]any); folder["exists"] != true {
+		t.Errorf("folder = %v, want the typed folder to exist", folder)
+	}
+	_, body = f.do(t, "GET", "/api/dirs?path="+url.QueryEscape("~/repos/.c"), "")
+	if got := paths(body); len(got) != 1 {
+		t.Errorf("~/repos/.c = %v, want .cache", got)
+	}
+}
+
 func TestSetupSavesKey(t *testing.T) {
 	t.Parallel()
 	f := newAPI(t)

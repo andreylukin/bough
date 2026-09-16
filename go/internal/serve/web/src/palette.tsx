@@ -44,6 +44,35 @@ function useWikiHits(q: string, open: boolean, on: boolean): WikiHit[] {
   return hits;
 }
 
+interface DirHit { path: string; exists: boolean; checkout?: string }
+
+/** A query that names a folder, not a message: `/x`, `~` or `~/x`. */
+export function isPathQuery(q: string): boolean {
+  return /^(\/|~(\/|$))/.test(q.trim());
+}
+
+/** The typed folder and the folders its path completes to, from the server. */
+function useDirs(q: string, open: boolean, on: boolean): { folder: DirHit | null; dirs: DirHit[]; home: string } {
+  const [res, setRes] = useState<{ folder: DirHit | null; dirs: DirHit[]; home: string }>({ folder: null, dirs: [], home: "" });
+  useEffect(() => {
+    const typed = q.trim();
+    if (!on || !open || !isPathQuery(typed)) { setRes({ folder: null, dirs: [], home: "" }); return; }
+    const ctl = new AbortController();
+    const t = setTimeout(() => {
+      getJSON<{ folder?: DirHit; dirs?: DirHit[] }>("/api/dirs?path=" + encodeURIComponent(typed), ctl.signal)
+        .then((d) => {
+          const folder = d.folder ?? null;
+          // The server expands ~ by prefixing home, so home is what the typed rest does not account for.
+          const home = folder && typed.startsWith("~") ? folder.path.slice(0, folder.path.length - (typed.length - 1)) : "";
+          setRes({ folder, dirs: Array.isArray(d.dirs) ? d.dirs : [], home });
+        })
+        .catch(() => { if (!ctl.signal.aborted) setRes({ folder: null, dirs: [], home: "" }); });
+    }, 120);
+    return () => { ctl.abort(); clearTimeout(t); };
+  }, [q, open, on]);
+  return res;
+}
+
 /**
  * A search read that always settles: a bad status, a body that is not
  * JSON, or a server that never answers (15s) rejects, and an abort from
@@ -95,7 +124,7 @@ interface SearchHit { id: string; title: string; repo: string; branch: string; h
  */
 type SearchState = "idle" | "loading" | "done" | "error";
 
-function useFullText(q: string, open: boolean): { hits: SearchHit[]; state: SearchState; retry: () => void } {
+export function useFullText(q: string, open: boolean): { hits: SearchHit[]; state: SearchState; retry: () => void } {
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [tries, setTries] = useState(0);
   const [state, setState] = useState<SearchState>("idle");
@@ -122,7 +151,7 @@ function useFullText(q: string, open: boolean): { hits: SearchHit[]; state: Sear
   return { hits: current ? hits : [], state: state === "loading" || current || state === "idle" ? state : "loading", retry: () => setTries((n) => n + 1) };
 }
 
-export function Palette({ open, onClose, rows, commands, onOpenSession, onStart, onOpenWikiPage, initialQuery = "", current = null, startIn }: {
+export function Palette({ open, onClose, rows, commands, onOpenSession, onStart, onStartIn, onOpenWikiPage, initialQuery = "", current = null, startIn }: {
   open: boolean;
   /** Folder name the Start entry starts in, when New aimed the palette at one. */
   startIn?: string;
@@ -132,6 +161,8 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
   onOpenSession: (id: string) => void;
   /** Start a conversation with what was typed as its first message. */
   onStart?: (text: string) => void;
+  /** Start an empty session in a folder; when set, a typed path offers its folders. */
+  onStartIn?: (path: string) => void;
   /** Open a wiki page; when set, the wiki's pages are searched too. */
   onOpenWikiPage?: (path: string) => void;
   /** Seeds the box. Only a story uses it: nothing can type for us there. */
@@ -168,6 +199,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
 
   const { hits: found, state: searching, retry } = useFullText(q, open);
   const pages = useWikiHits(q, open, Boolean(onOpenWikiPage));
+  const places = useDirs(q, open, Boolean(onStartIn));
 
   const hits = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -268,9 +300,23 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     }
     // Capped first; Start is added after, so a long result list never hides it.
     const capped = all.slice(0, 40);
-    // Last, always explicit: typing never starts anything by itself.
+    // A typed path is a place to start, ahead of everything else: it is
+    // never a first message, which is what a pasted ~/repos/x used to become.
     const typed = q.trim();
-    if (onStart && typed.length >= 2 && !typed.includes(":")) {
+    if (onStartIn && isPathQuery(typed)) {
+      const short = (p: string) => places.home && p.startsWith(places.home) ? "~" + p.slice(places.home.length) : p;
+      const can = (d: DirHit) => d.checkout ? `can edit ${short(d.checkout)}` : "read-only";
+      const folders = [...(places.folder?.exists ? [places.folder] : []), ...places.dirs];
+      capped.unshift(...folders.map((d, i): Command => ({
+        id: "dir:" + d.path,
+        label: `New session in ${short(d.path).replace(/(.)\/+$/, "$1")}`,
+        hint: i === 0 && places.folder?.exists ? can(d) : `${can(d)} · tab to complete`,
+        group: "Start",
+        run: () => onStartIn(d.path),
+      })));
+    }
+    // Last, always explicit: typing never starts anything by itself.
+    if (onStart && typed.length >= 2 && !typed.includes(":") && !isPathQuery(typed)) {
       capped.push({
         id: "start:" + typed,
         label: startIn ? `Start a session in ${startIn}: “${typed}”` : `Start a session: “${typed}”`,
@@ -280,7 +326,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
       });
     }
     return capped;
-  }, [q, rows, commands, onOpenSession, found, onStart, pages, onOpenWikiPage, current, startIn]);
+  }, [q, rows, commands, onOpenSession, found, onStart, onStartIn, places, pages, onOpenWikiPage, current, startIn]);
 
   // Nothing picked yet: the first result that is not destructive, so Enter never archives by default.
   const at = atId === null ? Math.max(0, hits.findIndex((c) => !c.destructive)) : Math.max(0, hits.findIndex((c) => c.id === atId));
@@ -298,6 +344,15 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     if (e.key === "Escape") { e.preventDefault(); close(); return; }
     if (e.key === "ArrowDown") { e.preventDefault(); setAt((i) => Math.min(i + 1, hits.length - 1)); return; }
     if (e.key === "ArrowUp") { e.preventDefault(); setAt((i) => Math.max(i - 1, 0)); return; }
+    // Tab walks into the selected folder, so a path is typed a segment at a time.
+    const sel = hits[at];
+    if (e.key === "Tab" && sel?.id.startsWith("dir:")) {
+      e.preventDefault();
+      const p = sel.id.slice(4).replace(/\/+$/, "") + "/";
+      setQ(places.home && p.startsWith(places.home) ? "~" + p.slice(places.home.length) : p);
+      setAtId(null);
+      return;
+    }
     if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); if (hits[at]) pick(hits[at]); }
   };
 

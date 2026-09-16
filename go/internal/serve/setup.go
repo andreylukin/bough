@@ -74,6 +74,36 @@ func (a *API) setupFolder(dir string) setupFolder {
 	return f
 }
 
+// dirs completes a folder path typed into the palette: the folders
+// whose path starts with ?path=, each with the checkout it would edit.
+// A pasted path used to become a first message in home, because
+// nothing on the page could tell a folder from a prompt.
+func (a *API) dirs(w http.ResponseWriter, r *http.Request) {
+	typed := strings.TrimSpace(r.URL.Query().Get("path"))
+	full := a.setupFolder(typed).Path
+	parent, prefix := full, ""
+	if !strings.HasSuffix(typed, "/") {
+		parent, prefix = filepath.Dir(full), filepath.Base(full)
+	}
+	out := []setupFolder{}
+	entries, _ := os.ReadDir(parent)
+	for _, e := range entries {
+		name := e.Name()
+		// Dot folders only when asked for: ~/ is otherwise all caches.
+		if !strings.HasPrefix(name, prefix) || name == prefix || strings.HasPrefix(name, ".") && !strings.HasPrefix(prefix, ".") {
+			continue
+		}
+		if st, err := os.Stat(filepath.Join(parent, name)); err != nil || !st.IsDir() {
+			continue
+		}
+		out = append(out, a.setupFolder(filepath.Join(parent, name)))
+		if len(out) == 20 {
+			break
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"folder": a.setupFolder(typed), "dirs": out})
+}
+
 // setupProviders reports a key as set when this process has it or the
 // env file does: a session started from here reads both.
 func (a *API) setupProviders() []setupProvider {

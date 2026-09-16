@@ -134,6 +134,7 @@ func NewAPI(sup *Supervisor) *API {
 	a.ingest = a.spawnIngest
 	a.mux.HandleFunc("GET /api/health", a.health)
 	a.mux.HandleFunc("GET /api/setup", a.setup)
+	a.mux.HandleFunc("GET /api/dirs", a.dirs)
 	a.mux.HandleFunc("POST /api/setup/key", a.setKey)
 	a.mux.HandleFunc("GET /api/sessions", a.listSessions)
 	a.mux.HandleFunc("POST /api/sessions", a.createSession)

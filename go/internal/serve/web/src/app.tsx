@@ -4386,6 +4386,7 @@ export default function App() {
                commands={commands} onOpenSession={openSession} initialQuery={palQuery} current={selected}
                onOpenWikiPage={(path) => goWiki({ at: "page", path })}
                onStart={palCwd || home ? (text) => start(palCwd || home, text) : undefined}
+               onStartIn={(path) => start(path, "")}
                startIn={palCwd ? palCwd.split("/").filter(Boolean).pop() || palCwd : undefined} />
       <Sidebar rows={visible} projects={projects} selected={selected ?? lastId} active={pane === "list"}
                onSelect={openSession} query={query} onQuery={setQuery}
