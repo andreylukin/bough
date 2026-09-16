@@ -428,10 +428,18 @@ func TestFoldPtyHistoryTapes(t *testing.T) {
 				a.key(uv.KeyTab, 0)
 				before := a.settled()
 				a.key(uv.KeyEnter, 0)
-				a.settled()
+				toggled := a.settled()
 				foldPtyFrame(a, fmt.Sprintf("stop %d toggled", i))
 				a.key(uv.KeyEnter, 0)
-				if after := a.settled(); after != before {
+				after := a.settled()
+				// A tail-windowed result takes a third enter: one of the
+				// three shows it all (open → all → closed, or all →
+				// closed → open).
+				if after != before && strings.Contains(before+toggled, "enter to view all") {
+					a.key(uv.KeyEnter, 0)
+					after = a.settled()
+				}
+				if after != before {
 					t.Errorf("stop %d: enter twice did not restore the screen:\nbefore:\n%s\nafter:\n%s", i, before, after)
 					return
 				}

@@ -204,7 +204,7 @@ type partEntry struct {
 // sameBlock reports whether two block values render the same.
 func sameBlock(a, b block) bool {
 	return a.id == b.id && a.kind == b.kind && a.text == b.text && a.label == b.label &&
-		a.collapsed == b.collapsed && a.queued == b.queued && a.steer == b.steer &&
+		a.collapsed == b.collapsed && a.full == b.full && a.queued == b.queued && a.steer == b.steer &&
 		a.pending == b.pending && slices.Equal(a.files, b.files) &&
 		(a.exit == nil) == (b.exit == nil) && (a.exit == nil || *a.exit == *b.exit) &&
 		a.ms == b.ms && (a.cost == nil) == (b.cost == nil) && (a.cost == nil || *a.cost == *b.cost) &&

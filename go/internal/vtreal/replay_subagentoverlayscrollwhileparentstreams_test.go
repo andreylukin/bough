@@ -68,17 +68,25 @@ func subagentOverlayScrollWhileParentStreamsTapes(t *testing.T, dir string) (his
 		e("assistant", map[string]any{"text": "Spawning three subagents with tools.spawnAll."}, 0),
 	}
 	for w := 1; w <= 3; w++ {
-		var out strings.Builder
-		for i := range subagentOverlayScrollWhileParentStreamsLines {
-			fmt.Fprintf(&out, "%s output of worker %d\n", subagentOverlayScrollWhileParentStreamsLine(w, i), w)
-		}
 		st := len(h) + 1
+		h = append(h, e("sub:start", map[string]any{"worker": w, "text": fmt.Sprintf("read part %d", w)}, 3))
+		// Chunks under the result tail window (tailCap), so every line
+		// renders and the transcript is taller than the pane.
+		prev := st
+		for c := 0; c < subagentOverlayScrollWhileParentStreamsLines; c += 10 {
+			var out strings.Builder
+			for i := c; i < c+10; i++ {
+				fmt.Fprintf(&out, "%s output of worker %d\n", subagentOverlayScrollWhileParentStreamsLine(w, i), w)
+			}
+			h = append(h,
+				e("sub:code", map[string]any{"worker": w, "text": fmt.Sprintf("tools.bash(\"cat part%d.%d\")", w, c/10)}, prev),
+				e("sub:result", map[string]any{"worker": w, "text": out.String()}, len(h)+1),
+			)
+			prev = len(h)
+		}
 		h = append(h,
-			e("sub:start", map[string]any{"worker": w, "text": fmt.Sprintf("read part %d", w)}, 3),
-			e("sub:code", map[string]any{"worker": w, "text": fmt.Sprintf("tools.bash(\"cat part%d\")", w)}, st),
-			e("sub:result", map[string]any{"worker": w, "text": out.String()}, st+1),
-			e("sub:assistant", map[string]any{"worker": w, "text": fmt.Sprintf("Status: ok\nFindings: part %d read.", w)}, st+2),
-			e("sub:done", map[string]any{"worker": w, "status": "ok", "steps": 2}, st+3),
+			e("sub:assistant", map[string]any{"worker": w, "text": fmt.Sprintf("Status: ok\nFindings: part %d read.", w)}, prev),
+			e("sub:done", map[string]any{"worker": w, "status": "ok", "steps": 2}, len(h)+1),
 		)
 	}
 	h = append(h,

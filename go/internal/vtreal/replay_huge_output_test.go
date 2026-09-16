@@ -123,6 +123,14 @@ func TestHugeOutput(t *testing.T) {
 			a.hugeOutputTimed("expand", func() {
 				a.click(2, row)
 				a.waitFor("▾ result")
+				// A long result opens as its tail; enter shows all in
+				// place (the viewport stays), home goes back to its header.
+				if strings.Contains(a.settled(), "enter to view all") {
+					a.key(uv.KeyEnter, 0)
+					a.waitUntil(func(s string) bool { return !strings.Contains(s, "enter to view all") }, "the whole result")
+					a.key(uv.KeyHome, 0)
+					a.waitFor("▾ result")
+				}
 			})
 			a.check("expanded")
 			s := a.text()

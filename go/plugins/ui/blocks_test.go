@@ -211,6 +211,9 @@ func TestFocusEnterTogglesBack(t *testing.T) {
 	d.press(keyTab())
 	d.press(keyEnter())
 	d.press(keyEnter()) // tail window → every line
+	if p := d.plain(); strings.Contains(p, "enter to view all") {
+		t.Errorf("enter should render every line, not the cached tail window:\n%s", p)
+	}
 	d.press(keyEnter())
 	if !d.m.blocks[0].collapsed {
 		t.Error("enter on a fully shown result should re-collapse")
