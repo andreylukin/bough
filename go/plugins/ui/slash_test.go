@@ -3,6 +3,7 @@ package ui
 // Slash-command dispatch: what reaches the transcript and history.
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -58,9 +59,9 @@ func TestSecretCommandArgsAreRedacted(t *testing.T) {
 func TestNavigationCommandsNotLogged(t *testing.T) {
 	t.Parallel()
 	r := commands.NewRegistry()
-	for _, n := range []string{"new", "sessions", "cost"} {
+	for n, err := range map[string]error{"new": commands.ActionClear, "sessions": commands.ActionOpenPicker, "cost": nil} {
 		if err := r.Register(commands.CommandInfo{Name: n},
-			func(string) (string, error) { return "ok", nil }); err != nil {
+			func(string) (string, error) { return "ok", err }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -69,7 +70,7 @@ func TestNavigationCommandsNotLogged(t *testing.T) {
 	cfg.cmds = r
 	cfg.hlog = h
 	d := newDrv(t, 100, 24, cfg)
-	for _, line := range []string{"/new", "/sessions", "/cost"} {
+	for _, line := range []string{"/cost", "/new", "/sessions"} {
 		d.typeStr(line)
 		d.press(keyEnter())
 	}
@@ -80,6 +81,41 @@ func TestNavigationCommandsNotLogged(t *testing.T) {
 	}
 	if !slices.Contains(h.appended, "command: /cost") {
 		t.Errorf("other commands are still recorded, got %q", h.appended)
+	}
+}
+
+// A /new that fails stays in the session: its error is recorded with
+// the command before it.
+func TestFailedNavigationIsLogged(t *testing.T) {
+	t.Parallel()
+	r := commands.NewRegistry()
+	if err := r.Register(commands.CommandInfo{Name: "new"},
+		func(string) (string, error) { return "", errors.New("new: chdir /nope") }); err != nil {
+		t.Fatal(err)
+	}
+	h := &recordingHist{}
+	cfg := cfgWith(t, nil, nil, nil)
+	cfg.cmds = r
+	cfg.hlog = h
+	d := newDrv(t, 100, 24, cfg)
+	d.typeStr("/new /nope")
+	d.press(keyEnter())
+	want := []string{"command: /new /nope", "system: new: chdir /nope"}
+	if !slices.Equal(h.appended, want) {
+		t.Errorf("got %q, want %q", h.appended, want)
+	}
+}
+
+// keysRows never overflows a viewport of 0 or 1 rows.
+func TestKeysRowsTinyViewport(t *testing.T) {
+	t.Parallel()
+	d := newDrv(t, 100, 24, cfgWith(t, nil, nil, nil))
+	d.m.keysOpen = true
+	for h, want := range []int{0, 1} {
+		d.m.vp.SetHeight(h)
+		if got := len(d.m.keysRows()); got != want {
+			t.Errorf("height %d: %d rows, want %d", h, got, want)
+		}
 	}
 }
 

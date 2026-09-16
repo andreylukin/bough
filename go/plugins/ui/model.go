@@ -1567,8 +1567,11 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// The keys panel is transient: ? or esc only closes it; any other
 	// key closes it and then does what it always does.
 	if m.keysOpen {
+		// A panel View could not draw (no rows, or a box over it)
+		// must not swallow the key meant for what is on screen.
+		shown := len(m.keysRows()) > 0 && len(m.newDirBox()) == 0
 		m.keysOpen = false
-		if key == "?" || key == "esc" {
+		if shown && (key == "?" || key == "esc") {
 			return m, nil
 		}
 	}

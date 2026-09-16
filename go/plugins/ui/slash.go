@@ -340,7 +340,8 @@ func (m *model) dispatchAs(line, echo string) tea.Cmd {
 	}
 	// Navigation leaves the session: "/new" or "/sessions" recorded
 	// into the one being left is noise in its transcript.
-	if name != "new" && name != "sessions" {
+	leaves := name == "new" || name == "sessions"
+	if !leaves {
 		m.log(cfg, "command", echo)
 	}
 	m.blocks = append(m.blocks, block{id: m.nextID, kind: "command", text: echo})
@@ -362,6 +363,11 @@ func (m *model) dispatchAs(line, echo string) tea.Cmd {
 	}
 	if out == "" {
 		out = "/" + name
+	}
+	if leaves {
+		// It did not leave after all (an error): the answer needs its
+		// command before it.
+		m.log(cfg, "command", echo)
 	}
 	m.log(cfg, "system", out)
 	b := block{id: m.nextID, kind: "system", text: out}
@@ -483,7 +489,10 @@ func (m *model) keysRows() []string {
 	}
 	lines := strings.Split(keysText(m.cfg.Load()), "\n")
 	lines[0] += "  (? or esc closes)"
-	if h := m.vp.Height(); h > 1 && len(lines) > h {
+	if h := m.vp.Height(); len(lines) > h && h <= 1 {
+		// No room for a "more" row: the header alone, or nothing.
+		lines = lines[:max(h, 0)]
+	} else if len(lines) > h {
 		more := len(lines) - (h - 1)
 		lines = append(lines[:h-1], fmt.Sprintf("  … %d more", more))
 	}
