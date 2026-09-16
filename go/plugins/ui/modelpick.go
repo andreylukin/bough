@@ -81,6 +81,20 @@ func (p *modelPicker) filter() {
 	}
 }
 
+// windowLines is how many lines rows from..to take with their
+// provider headers, the first row always under one.
+func (p *modelPicker) windowLines(from, to int) int {
+	n, last := 0, ""
+	for i := from; i <= to && i < len(p.rows); i++ {
+		if plugin, _ := splitRow(p.rows[i]); plugin != last {
+			n++
+			last = plugin
+		}
+		n++
+	}
+	return n
+}
+
 // openModelPicker shows the picker, cursor on the current choice.
 func (m *model) openModelPicker(target, current string, rows []string) {
 	// Chat models only, the current provider's group first.
@@ -192,6 +206,10 @@ func (m *model) modelPickerView(cfg *uiCfg) string {
 	first := 0
 	if len(m.mp.rows) > room && m.mp.pick >= room {
 		first = min(m.mp.pick-room+1, len(m.mp.rows)-room)
+	}
+	// Headers take lines too: slide down until the cursor row fits.
+	for first < m.mp.pick && m.mp.windowLines(first, m.mp.pick) > room {
+		first++
 	}
 	if first > 0 {
 		lines = append(lines, th["dim"].Render(fmt.Sprintf("  ↑ %d more above", first)))

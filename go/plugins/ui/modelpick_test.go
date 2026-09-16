@@ -248,3 +248,32 @@ func TestModelPickerHidesNonChatAndFree(t *testing.T) {
 		t.Errorf("typing free should show x:free:\n%s", p)
 	}
 }
+
+// Provider headers take lines of the window; scrolling to the bottom
+// must still show the cursor row.
+func TestModelPickerCursorVisibleWithHeaders(t *testing.T) {
+	rows := []string{}
+	for _, p := range []string{"llm-a", "llm-b", "llm-c", "llm-d"} {
+		for i := range 5 {
+			rows = append(rows, fmt.Sprintf("%s m%d", p, i))
+		}
+	}
+	r := commands.NewRegistry()
+	if err := r.Register(commands.CommandInfo{Name: "model", Usage: "", Summary: "pick"},
+		func(args string) (string, error) {
+			return "", commands.ModelPickerAction("", "llm-a m0", rows)
+		}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := cfgWith(t, nil, nil, nil)
+	cfg.cmds = r
+	d := newDrv(t, 80, 14, cfg)
+	d.dispatchLine("/model")
+	for i := 0; i < len(rows); i++ {
+		d.press(tea.KeyPressMsg{Code: tea.KeyDown})
+		want := rows[min(i+1, len(rows)-1)]
+		if p := d.plain(); !strings.Contains(p, "▸ "+want) {
+			t.Fatalf("cursor on %q not shown:\n%s", want, p)
+		}
+	}
+}
