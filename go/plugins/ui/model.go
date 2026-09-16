@@ -133,6 +133,7 @@ type model struct {
 	picking     bool           // session picker shown instead of the chat view
 	pick        int            // picker cursor index into cfg.sessions
 	pickQuery   string         // session picker filter: typed text narrows rows by title
+	pickAll     bool           // session picker scope: every session, not just this project's (tab)
 	mp          modelPicker    // "/model" picker (see modelpick.go)
 	rw          rewindPicker   // double-esc rewind menu (see rewind.go)
 	srch        searchBar      // ctrl+s transcript search (see search.go)

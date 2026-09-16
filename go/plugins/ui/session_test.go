@@ -6,6 +6,7 @@ package ui
 // picker).
 
 import (
+	"os"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -366,5 +367,58 @@ func TestPickerShowsForkTree(t *testing.T) {
 	d.press(keyEnter())
 	if chosen != "b" {
 		t.Errorf("enter on the nested row resumes it, chose %q", chosen)
+	}
+}
+
+// The picker lists the most recently active session first whatever
+// order it was handed, and starts its cursor on the current session.
+func TestPickerSortsByRecencyAndStartsOnCurrent(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	cfg := cfgWith(t, nil, nil, seededHist()) // current id "resumed"
+	cfg.choose = func(string) {}
+	d := newDrv(t, 100, 30, cfg)
+	d.m.sessRows = sessList{
+		{ID: "old", ModTime: now.Add(-48 * time.Hour), Title: "old work"},
+		{ID: "resumed", ModTime: now.Add(-24 * time.Hour), Title: "the current one"},
+		{ID: "new", ModTime: now, Title: "new work"},
+	}
+	d.m.picking = true
+	d.m.pick = d.m.currentRow(cfg)
+	p := d.plain()
+	if !(strings.Index(p, "new work") < strings.Index(p, "the current one") && strings.Index(p, "the current one") < strings.Index(p, "old work")) {
+		t.Fatalf("rows should be newest first:\n%s", p)
+	}
+	if !markerOn(p, "the current one") {
+		t.Fatalf("cursor should start on the current session:\n%s", p)
+	}
+}
+
+// Background runs and other projects' sessions are hidden until tab;
+// a spawned agent nests under its parent with a subagent tag.
+func TestPickerScopeAndSubagents(t *testing.T) {
+	t.Parallel()
+	here, _ := os.Getwd()
+	now := time.Now()
+	cfg := cfgWith(t, nil, nil, nil)
+	cfg.picker = true
+	cfg.choose = func(string) {}
+	cfg.sessions = []history.SessionInfo{
+		{ID: "kid", Cwd: here, ModTime: now, Title: "child task", SpawnedBy: "p", Background: true},
+		{ID: "wiki", Cwd: here, ModTime: now, Title: "wiki ingest run", Background: true},
+		{ID: "else", Cwd: "/somewhere/else", ModTime: now, Title: "elsewhere work"},
+		{ID: "p", Cwd: here, ModTime: now.Add(-time.Hour), Title: "parent work"},
+	}
+	d := newDrv(t, 120, 30, cfg)
+	p := d.plain()
+	if strings.Contains(p, "wiki ingest run") || strings.Contains(p, "elsewhere work") {
+		t.Fatalf("background and other-project sessions should be hidden:\n%s", p)
+	}
+	if !strings.Contains(p, "└─ ") || !strings.Contains(p, "[subagent]") || strings.Index(p, "parent work") > strings.Index(p, "child task") {
+		t.Fatalf("the spawned agent should nest under its parent, tagged:\n%s", p)
+	}
+	d.press(tea.KeyPressMsg{Code: tea.KeyTab})
+	if p := d.plain(); !strings.Contains(p, "wiki ingest run") || !strings.Contains(p, "elsewhere work") || !strings.Contains(p, "all projects") {
+		t.Fatalf("tab should show every session:\n%s", p)
 	}
 }

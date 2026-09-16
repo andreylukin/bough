@@ -132,12 +132,17 @@ func TestSlashSessionsOpensPickerCwdFirstCurrentMarked(t *testing.T) {
 		t.Fatal("/sessions should open the picker")
 	}
 	p := d.plain()
+	if strings.Contains(p, "other prompt") {
+		t.Errorf("another project's session should wait for tab:\n%s", p)
+	}
+	d.press(tea.KeyPressMsg{Code: tea.KeyTab})
+	p = d.plain()
 	iCur, iHere, iOther := strings.Index(p, "current prompt"), strings.Index(p, "here prompt"), strings.Index(p, "other prompt")
 	if iCur < 0 || iHere < 0 || iOther < 0 {
 		t.Fatalf("picker rows missing:\n%s", p)
 	}
-	if !(iCur < iHere && iHere < iOther) {
-		t.Errorf("this directory's sessions should come first (cur, here, then other):\n%s", p)
+	if !(iOther < iCur && iCur < iHere) {
+		t.Errorf("all sessions should be newest first (other, cur, here):\n%s", p)
 	}
 	for l := range strings.SplitSeq(p, "\n") {
 		switch {
@@ -178,8 +183,8 @@ func TestPickerEnterMidSessionSwapsAndReplays(t *testing.T) {
 	d, chosen := midSession(t)
 	d.m.title = "the current session's title" // a title event landed earlier
 	d.dispatchLine("/sessions")
-	d.press(keyDown())
-	d.press(keyDown()) // "other"
+	d.press(tea.KeyPressMsg{Code: tea.KeyTab}) // all: other, cur (cursor), here
+	d.press(keyUp())                           // "other"
 	d.press(keyEnter())
 	select {
 	case id := <-chosen:
@@ -292,8 +297,8 @@ func TestPickerSwapDropsTheLeftSessionsTodoList(t *testing.T) {
 		c.todo = todo.NewTodos(appendHist{c.hist.(fakeHist)}, nil) // "other" has no todo entries
 	}
 	d.dispatchLine("/sessions")
-	d.press(keyDown())
-	d.press(keyDown()) // "other"
+	d.press(tea.KeyPressMsg{Code: tea.KeyTab}) // all: other, cur (cursor), here
+	d.press(keyUp())                           // "other"
 	d.press(keyEnter())
 	if d.m.todoText != "" {
 		t.Errorf("the left session's todo list survived the swap: %q", d.m.todoText)

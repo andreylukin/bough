@@ -189,14 +189,26 @@ func resumedLine(h historyView) string {
 }
 
 // openPicker shows the picker mid-session: the list is re-read from
-// the history directory (this directory's sessions first), the cursor
-// on the newest.
+// the history directory, the cursor on the current session.
 func (m *model) openPicker() {
 	m.picking = true
-	m.pick = 0
 	m.pickQuery = ""
+	m.pickAll = false
 	m.sessRows = m.listSessions()
+	m.pick = m.currentRow(m.cfg.Load())
 	m.syncPalette()
+}
+
+// currentRow is the mounted session's index in the picker rows, 0 when
+// it is not listed.
+func (m *model) currentRow(cfg *uiCfg) int {
+	cur := m.currentID(cfg)
+	for i, r := range m.pickerRows(cfg) {
+		if r.ID == cur {
+			return i
+		}
+	}
+	return 0
 }
 
 // listSessions reads the session directory next to the current
@@ -216,20 +228,29 @@ func (m *model) listSessions() sessList {
 	return append(rows, history.PreferCwd(infos, cwd)...)
 }
 
-// sessRow is one picker row: a session, and the tree connectors that
-// place it under the session it was forked from.
+// sessRow is one picker row: a session, the tree connectors that
+// place it under the session it was forked from or spawned by, and
+// the transcript line a query matched (content hits only).
 type sessRow struct {
 	history.SessionInfo
-	prefix string
+	prefix  string
+	snippet string
 }
 
 // pickerRows is the list the picker shows — its own mid-session list,
-// else the launcher-provided one — laid out as a tree (sessionTree),
-// narrowed to titles containing the typed query (case-insensitive).
+// else the launcher-provided one — most recently active first, scoped
+// to this project unless tab widened it (pickerScope), laid out as a
+// tree (sessionTree), narrowed to titles or transcripts containing the
+// typed query (case-insensitive); a transcript hit carries its line.
 func (m *model) pickerRows(cfg *uiCfg) []sessRow {
 	infos := cfg.sessions
 	if m.sessRows != nil {
 		infos = m.sessRows
+	}
+	infos = slices.Clone(infos)
+	slices.SortStableFunc(infos, func(a, b history.SessionInfo) int { return b.ModTime.Compare(a.ModTime) })
+	if !m.pickAll {
+		infos = pickerScope(infos, m.currentID(cfg))
 	}
 	rows := sessionTree(infos)
 	if m.pickQuery == "" {
@@ -237,12 +258,84 @@ func (m *model) pickerRows(cfg *uiCfg) []sessRow {
 	}
 	q := strings.ToLower(m.pickQuery)
 	corpus := m.pickerCorpus(infos)
-	return slices.DeleteFunc(rows, func(r sessRow) bool {
+	rows = slices.DeleteFunc(rows, func(r sessRow) bool {
 		if strings.Contains(strings.ToLower(r.Title), q) {
 			return false
 		}
 		return !strings.Contains(corpus[r.ID], q)
 	})
+	for i := range rows {
+		if !strings.Contains(strings.ToLower(rows[i].Title), q) {
+			rows[i].snippet = matchLine(corpus[rows[i].ID], q)
+		}
+	}
+	return rows
+}
+
+// pickerScope keeps the sessions of this project (the git repository
+// holding the working directory, else the directory itself) and drops
+// background runs nobody sat in front of (wiki ingests and the like;
+// a spawned agent stays, nested under its parent). The current session
+// and rows with no recorded directory always stay. A scope that would
+// leave nothing shows everything instead.
+func pickerScope(infos []history.SessionInfo, cur string) []history.SessionInfo {
+	cwd, _ := os.Getwd()
+	repo := repoRoot(cwd)
+	kept := slices.DeleteFunc(slices.Clone(infos), func(s history.SessionInfo) bool {
+		if s.ID == cur {
+			return false
+		}
+		if s.Background && s.SpawnedBy == "" {
+			return true
+		}
+		switch {
+		case s.Cwd == "" && s.Repo == "":
+			return false
+		case s.Cwd == cwd:
+			return false
+		case repo != "" && (s.Repo == repo || s.Cwd == repo || strings.HasPrefix(s.Cwd, repo+"/")):
+			return false
+		}
+		return true
+	})
+	if len(kept) == 0 {
+		return infos
+	}
+	return kept
+}
+
+// repoRoot is the nearest directory at or above dir holding .git, ""
+// outside a repository.
+func repoRoot(dir string) string {
+	for d := dir; d != ""; {
+		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
+			return d
+		}
+		up := filepath.Dir(d)
+		if up == d {
+			break
+		}
+		d = up
+	}
+	return ""
+}
+
+// matchLine is the corpus line holding q, cut to start near the match.
+func matchLine(corpus, q string) string {
+	i := strings.Index(corpus, q)
+	if i < 0 {
+		return ""
+	}
+	start := strings.LastIndexByte(corpus[:i], '\n') + 1
+	end := strings.IndexByte(corpus[i:], '\n')
+	if end < 0 {
+		end = len(corpus) - i
+	}
+	line := corpus[start : i+end]
+	if lead := i - start; lead > 30 {
+		line = "…" + strings.TrimLeft(line[lead-20:], " ")
+	}
+	return strings.TrimSpace(line)
 }
 
 // pickerCorpus is every listed session's transcript, lowercased and
@@ -294,7 +387,8 @@ func corpusKey(infos []history.SessionInfo) string {
 }
 
 // sessionTree nests each fork under the session it was forked from
-// (SessionInfo.ForkedFrom), pi's /tree over bough's one-file-per-
+// (SessionInfo.ForkedFrom), and each background agent under the
+// session that spawned it (SpawnedBy), pi's /tree over bough's one-file-per-
 // branch sessions: a session's forks hang under it with ├─ └─ │
 // connectors, in the order they were taken (ids are UUIDv7s, so id
 // order), to any depth. A family lands where its first member did in
@@ -308,8 +402,8 @@ func sessionTree(infos []history.SessionInfo) []sessRow {
 		byID[s.ID] = true
 	}
 	for _, s := range infos {
-		if s.ForkedFrom != "" && byID[s.ForkedFrom] && s.ForkedFrom != s.ID {
-			kids[s.ForkedFrom] = append(kids[s.ForkedFrom], s)
+		if p := parentOf(s); p != "" && byID[p] && p != s.ID {
+			kids[p] = append(kids[p], s)
 		}
 	}
 	for id := range kids {
@@ -317,10 +411,10 @@ func sessionTree(infos []history.SessionInfo) []sessRow {
 	}
 	rootOf := func(s history.SessionInfo) string {
 		seen := map[string]bool{}
-		for s.ForkedFrom != "" && byID[s.ForkedFrom] && !seen[s.ID] {
+		for p := parentOf(s); p != "" && byID[p] && !seen[s.ID]; p = parentOf(s) {
 			seen[s.ID] = true
 			for _, t := range infos {
-				if t.ID == s.ForkedFrom {
+				if t.ID == p {
 					s = t
 					break
 				}
@@ -331,7 +425,7 @@ func sessionTree(infos []history.SessionInfo) []sessRow {
 	var rows []sessRow
 	var walk func(s history.SessionInfo, prefix, gutter string)
 	walk = func(s history.SessionInfo, prefix, gutter string) {
-		rows = append(rows, sessRow{s, prefix})
+		rows = append(rows, sessRow{SessionInfo: s, prefix: prefix})
 		for i, k := range kids[s.ID] {
 			conn, down := "├─ ", "│  "
 			if i == len(kids[s.ID])-1 {
@@ -355,6 +449,12 @@ func sessionTree(infos []history.SessionInfo) []sessRow {
 		}
 	}
 	return rows
+}
+
+// parentOf is the session a row hangs under: its fork origin, else the
+// session that spawned it.
+func parentOf(s history.SessionInfo) string {
+	return cmp.Or(s.ForkedFrom, s.SpawnedBy)
 }
 
 // currentID is the mounted session's id ("" without history).
@@ -406,6 +506,9 @@ func (m model) handlePickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return next, next.cacheTick() // the resumed session's cache window
 	case "esc":
 		return m.leavePicker(""), nil
+	case "tab":
+		m.pickAll = !m.pickAll
+		m.pick = m.currentRow(cfg)
 	case "backspace":
 		if r := []rune(m.pickQuery); len(r) > 0 {
 			m.pickQuery = string(r[:len(r)-1])
@@ -485,6 +588,9 @@ func (m *model) pickerPage(cfg *uiCfg) int {
 	if cfg.choose == nil {
 		header += 2
 	}
+	if m.pickQuery != "" {
+		return max((m.height-1-header)/2, 1) // a content hit takes a snippet line too
+	}
 	return max(m.height-1-header, 1)
 }
 
@@ -514,7 +620,11 @@ func (m *model) pickerView(cfg *uiCfg) string {
 		lines = append(lines, th["dim"].Render("  (no sessions)"))
 	}
 	if len(rows) > 0 {
-		lines = append(lines, th["dim"].Render("  "+plural(len(rows), "session")), "")
+		scope := "this project"
+		if m.pickAll {
+			scope = "all projects"
+		}
+		lines = append(lines, th["dim"].Render("  "+plural(len(rows), "session")+" · "+scope), "")
 	}
 	cur := m.currentID(cfg)
 	cwd, _ := os.Getwd()
@@ -533,6 +643,9 @@ func (m *model) pickerView(cfg *uiCfg) string {
 		}
 		row := fmt.Sprintf("%s%s%s  %3d %-7s  %s",
 			marker, s.prefix, s.ModTime.Local().Format("2006-01-02 15:04"), s.Entries, pluralWord(s.Entries, "entry", "entries"), truncateCols(title, pickerTitleWidth))
+		if s.SpawnedBy != "" && s.ForkedFrom == "" {
+			row += " [subagent]"
+		}
 		if s.ID == cur {
 			row += " (current)"
 		}
@@ -541,10 +654,13 @@ func (m *model) pickerView(cfg *uiCfg) string {
 			row = ansi.Truncate(row, m.width-1, "…")
 		}
 		lines = append(lines, st.Render(row))
+		if s.snippet != "" {
+			lines = append(lines, th["dim"].Render(ansi.Truncate("      "+s.prefix+"“"+s.snippet+"”", max(m.width-1, 1), "…")))
+		}
 	}
-	hint := "type to search · ↑/↓ select · enter resume · esc new session"
+	hint := "type to search · ↑/↓ select · tab all/project · enter resume · esc new session"
 	if m.sessRows != nil {
-		hint = "type to search · ↑/↓ select · enter resume · esc back"
+		hint = "type to search · ↑/↓ select · tab all/project · enter resume · esc back"
 	}
 	hints := th["dim"].Render(hint)
 	for len(lines) < m.height-1 {

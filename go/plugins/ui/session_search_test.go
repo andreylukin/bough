@@ -110,3 +110,15 @@ func TestPickerCorpusRebuildsWhenRowsChange(t *testing.T) {
 		t.Errorf("the new row set's own text should match, got %+v", rows)
 	}
 }
+
+func TestPickerQueryShowsTheMatchingLine(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	b := storedSession(t, dir, "bbb", "check the queue", "the rate limiter drops the third retry")
+	d := pickerWith(t, b)
+
+	d.typeStr("rate limiter")
+	if p := d.plain(); !strings.Contains(p, "“the rate limiter drops the third retry”") {
+		t.Errorf("a transcript hit should show the line it matched:\n%s", p)
+	}
+}
