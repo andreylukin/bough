@@ -656,3 +656,14 @@ func TestSpawnWithSchemaGivesUpCleanly(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// TestPromptSectionAnswersSmallQuestionsDirectly pins the guidance that
+// read-only questions over a few files are answered without subagents.
+func TestPromptSectionAnswersSmallQuestionsDirectly(t *testing.T) {
+	if !strings.Contains(promptSection, "Do not spawn subagents for it.") {
+		t.Fatal("promptSection lost the answer-small-questions-directly rule")
+	}
+	if strings.Contains(promptSection, `"what is this project"`) {
+		t.Fatal("promptSection still sends \"what is this project\" to spawnAll")
+	}
+}
