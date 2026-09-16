@@ -158,10 +158,11 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
   onClose: () => void;
   rows: Row[];
   commands: Command[];
-  onOpenSession: (id: string) => void;
+  /** seq and q, when given, land on the transcript line that matched and mark it. */
+  onOpenSession: (id: string, seq?: number, q?: string) => void;
   /** Start a conversation with what was typed as its first message. */
   onStart?: (text: string) => void;
-  /** Start an empty session in a folder; when set, a typed path offers its folders. */
+  /** Aim Start at a folder; when set, a typed path offers its folders. */
   onStartIn?: (path: string) => void;
   /** Open a wiki page; when set, the wiki's pages are searched too. */
   onOpenWikiPage?: (path: string) => void;
@@ -295,7 +296,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
         hint: [h.repo?.split("/").pop(), h.id.slice(-6)].filter(Boolean).join(" · "),
         group: "Found in the conversation",
         detail: [h.branch, evidence(h, label, needle)].filter(Boolean).join("\n") || undefined,
-        run: () => onOpenSession(h.id),
+        run: () => onOpenSession(h.id, h.lines[0]?.seq, q.trim()),
       });
     }
     // Capped first; Start is added after, so a long result list never hides it.
@@ -312,7 +313,8 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
         label: `New session in ${short(d.path).replace(/(.)\/+$/, "$1")}`,
         hint: i === 0 && places.folder?.exists ? can(d) : `${can(d)} · tab to complete`,
         group: "Start",
-        run: () => onStartIn(d.path),
+        // Nothing is created here: the palette stays, aimed at the folder, for the first prompt.
+        run: () => { onStartIn(d.path); setQ(""); setAtId(null); },
       })));
     }
     // Last, always explicit: typing never starts anything by itself.

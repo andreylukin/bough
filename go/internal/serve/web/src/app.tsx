@@ -178,6 +178,31 @@ function marked(text: string, q: string): React.ReactNode {
   return <>{text.slice(0, i)}<mark className="hit">{text.slice(i, i + q.length)}</mark>{text.slice(i + q.length)}</>;
 }
 
+/** Highlights the first match of q inside el (CSS Custom Highlight API); returns the undo. */
+function markMatch(el: HTMLElement, q: string): (() => void) | undefined {
+  const reg = (globalThis as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights;
+  const H = (globalThis as { Highlight?: new (...r: Range[]) => unknown }).Highlight;
+  if (!reg || !H) return undefined;
+  const needle = q.toLowerCase();
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const i = (n.textContent ?? "").toLowerCase().indexOf(needle);
+    if (i < 0) continue;
+    const range = document.createRange();
+    range.setStart(n, i);
+    range.setEnd(n, i + needle.length);
+    if (!document.getElementById("jump-hit-style")) {
+      const style = document.createElement("style");
+      style.id = "jump-hit-style";
+      style.textContent = "::highlight(jump-hit){background:#354b3b;color:#d7e9dc}";
+      document.head.appendChild(style);
+    }
+    reg.set("jump-hit", new H(range));
+    return () => { reg.delete("jump-hit"); };
+  }
+  return undefined;
+}
+
 /** A 24-box stroked icon in currentColor, the status glyphs' idiom. */
 function Icon({ d, size = 18 }: { d: React.ReactNode; size?: number }) {
   return (
@@ -216,7 +241,7 @@ function useHistoryNav(): { back: boolean; forward: boolean } {
   return state;
 }
 
-export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry }: {
+export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, saidElsewhere, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
   /** Project labels, so a project group is headed by its name. */
   projects?: Project[];
@@ -230,6 +255,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   query: string; onQuery: (q: string) => void; showArchived: boolean; onToggleArchived: () => void;
   /** The first transcript line the query matched, per session, from the full-text search. */
   said?: Map<string, { seq: number; text: string }>;
+  /** Transcript matches in sessions the list does not hold (archived); opens them in ⌘K. */
+  saidElsewhere?: { count: number; open: () => void };
   view?: View; onView?: (v: View) => void;
   /** Claims the wiki's review is waiting on; shown beside the nav item. */
   wikiFlags?: number;
@@ -845,6 +872,9 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
         {/* Empty only once a load has answered: before that it is loading or unavailable, said above. */}
         {total === 0 && loadedAt !== null && !loadErr && !(showArchived && archivedState !== "ready") && (
           <p className="list-none">{query ? `No sessions match “${query}”.` : "No sessions yet."}</p>
+        )}
+        {q && saidElsewhere && saidElsewhere.count > 0 && (
+          <p className="list-none"><button className="link" onClick={saidElsewhere.open}>{saidElsewhere.count} more found in the conversation · {modKey()}K</button></p>
         )}
         {needsYou.length > 0 && (
           <div className="needs">
@@ -2887,7 +2917,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   /** The small model's live label for the running turn; never recorded. */
   activity?: string; projects: Project[]; busy: boolean; onBack?: () => void;
   /** Scroll to this turn (1-based) once it is on screen; `at` makes a repeat click count. */
-  jump?: { turn: number; at: number; seq?: number } | null;
+  jump?: { turn: number; at: number; seq?: number; q?: string } | null;
   onSend: (t: string) => Promise<string | null> | void; onAnswer: (t: string, ask?: string) => Promise<string | null> | void; onInterrupt: () => Promise<boolean> | void;
   onArchive: () => void; onRename: (t: string) => Promise<void>; onContext?: () => void; onAck?: () => void;
   /** Stop a project session's container; the child restarts it on its next command. */
@@ -3191,8 +3221,10 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     el.classList.remove("turn-flash");
     void el.offsetWidth;
     el.classList.add("turn-flash");
+    // A search landing marks what matched, without touching the DOM React owns.
+    const hl = jump.q ? markMatch(el, jump.q) : undefined;
     const t = setTimeout(() => el.classList.remove("turn-flash"), 1600);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); hl?.(); };
   }, [jump, loading, turns.length]);
   // A fast read shows nothing at all; only a slow one earns a word.
   const [slow, setSlow] = useState(false);
@@ -4181,7 +4213,7 @@ export default function App() {
   // The session last opened, so the list comes back with your place in it.
   const [lastId, setLastId] = useState<string | null>(null);
   // A turn picked from a session's log, for its thread to scroll to.
-  const [jump, setJump] = useState<{ id: string; turn: number; at: number; seq?: number } | null>(null);
+  const [jump, setJump] = useState<{ id: string; turn: number; at: number; seq?: number; q?: string } | null>(null);
   useEffect(() => { if (selected) setLastId(selected); }, [selected]);
 
   // Esc leaves a session for the list, unless something nearer owns it:
@@ -4393,19 +4425,20 @@ export default function App() {
         </div>
       )}
       <Palette open={palette} onClose={() => { setPalette(false); setPalQuery(""); setPalCwd(""); }} rows={rows}
-               commands={commands} onOpenSession={openSession} initialQuery={palQuery} current={selected}
+               commands={commands} onOpenSession={(id, seq, q) => { openSession(id); if (seq) setJump({ id, turn: 0, seq, q, at: Date.now() }); }} initialQuery={palQuery} current={selected}
                onOpenWikiPage={(path) => goWiki({ at: "page", path })}
                onStart={palCwd || home ? (text) => start(palCwd || home, text) : undefined}
-               onStartIn={(path) => start(path, "")}
+               onStartIn={(path) => { setPalCwd(path); setPalette(true); }}
                startIn={palCwd ? palCwd.split("/").filter(Boolean).pop() || palCwd : undefined} />
       <Sidebar rows={visible} projects={projects} selected={selected ?? lastId} active={pane === "list"}
                onSelect={(id) => {
                  openSession(id);
                  // A row there only for what was said lands on the line that said it.
                  const line = said.get(id), r = rows.find((x) => x.id === id);
-                 if (line && r && !getSearchMatch(r, query.trim().toLowerCase())) setJump({ id, turn: 0, seq: line.seq, at: Date.now() });
+                 if (line && r && !getSearchMatch(r, query.trim().toLowerCase())) setJump({ id, turn: 0, seq: line.seq, q: query.trim(), at: Date.now() });
                }}
                query={query} onQuery={setQuery} said={said}
+               saidElsewhere={{ count: [...said.keys()].filter((id) => !rows.some((r) => r.id === id)).length, open: () => { setPalQuery(query.trim()); setPalette(true); } }}
                onTurn={(id, turn) => { if (id !== selected || view !== "sessions" || sub) openSession(id); else setPane("thread"); setJump({ id, turn, at: Date.now() }); }}
                view={view} wikiFlags={wikiFlags} onNew={newSession} onFind={() => setPalette(true)}
                onView={onView}
