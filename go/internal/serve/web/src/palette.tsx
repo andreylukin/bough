@@ -51,6 +51,36 @@ export function isPathQuery(q: string): boolean {
   return /^(\/|~(\/|$))/.test(q.trim());
 }
 
+/** True when a key event lands where someone is typing: single-key shortcuts leave it alone. */
+export function isTypingTarget(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  return Boolean(el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName ?? "")));
+}
+
+/**
+ * A typed path is a place to start, ahead of everything else: it is never
+ * silently a first message, which is what a pasted ~/repos/x used to become.
+ */
+export function pathRows(typed: string, places: { folder: DirHit | null; dirs: DirHit[]; home: string }, startIn?: (path: string) => void): Command[] {
+  if (!startIn || !isPathQuery(typed)) return [];
+  const short = (p: string) => places.home && p.startsWith(places.home) ? "~" + p.slice(places.home.length) : p;
+  const can = (d: DirHit) => d.checkout ? `can edit ${short(d.checkout)}` : "read-only";
+  const folders = [...(places.folder?.exists ? [places.folder] : []), ...places.dirs];
+  const rows = folders.map((d, i): Command => ({
+    id: "dir:" + d.path,
+    label: `New session in ${short(d.path).replace(/(.)\/+$/, "$1")}`,
+    hint: i === 0 && places.folder?.exists ? can(d) : `${can(d)} · tab to complete`,
+    group: "Start",
+    // Nothing is created here: the palette stays, aimed at the folder, for the first prompt.
+    run: () => startIn(d.path),
+  }));
+  // Nothing matched and the server says the folder is missing: say so rather than show nothing.
+  if (!rows.length && places.folder && !places.folder.exists) {
+    rows.push({ id: "dir:" + places.folder.path, label: `New session in ${typed}`, hint: "Folder not found", group: "Start", run: () => {} });
+  }
+  return rows;
+}
+
 /** The typed folder and the folders its path completes to, from the server. */
 function useDirs(q: string, open: boolean, on: boolean): { folder: DirHit | null; dirs: DirHit[]; home: string } {
   const [res, setRes] = useState<{ folder: DirHit | null; dirs: DirHit[]; home: string }>({ folder: null, dirs: [], home: "" });
@@ -304,21 +334,11 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     // A typed path is a place to start, ahead of everything else: it is
     // never a first message, which is what a pasted ~/repos/x used to become.
     const typed = q.trim();
-    if (onStartIn && isPathQuery(typed)) {
-      const short = (p: string) => places.home && p.startsWith(places.home) ? "~" + p.slice(places.home.length) : p;
-      const can = (d: DirHit) => d.checkout ? `can edit ${short(d.checkout)}` : "read-only";
-      const folders = [...(places.folder?.exists ? [places.folder] : []), ...places.dirs];
-      capped.unshift(...folders.map((d, i): Command => ({
-        id: "dir:" + d.path,
-        label: `New session in ${short(d.path).replace(/(.)\/+$/, "$1")}`,
-        hint: i === 0 && places.folder?.exists ? can(d) : `${can(d)} · tab to complete`,
-        group: "Start",
-        // Nothing is created here: the palette stays, aimed at the folder, for the first prompt.
-        run: () => { onStartIn(d.path); setQ(""); setAtId(null); },
-      })));
-    }
-    // Last, always explicit: typing never starts anything by itself.
-    if (onStart && typed.length >= 2 && !typed.includes(":") && !isPathQuery(typed)) {
+    const placeRows = pathRows(typed, places, onStartIn && ((path) => { onStartIn(path); setQ(""); setAtId(null); }));
+    capped.unshift(...placeRows);
+    // Last, always explicit: typing never starts anything by itself. A path
+    // offers it only below its folder rows, so Enter never sends the path.
+    if (onStart && typed.length >= 2 && !typed.includes(":") && (!isPathQuery(typed) || placeRows.length)) {
       capped.push({
         id: "start:" + typed,
         label: startIn ? `Start a session in ${startIn}: “${typed}”` : `Start a session: “${typed}”`,

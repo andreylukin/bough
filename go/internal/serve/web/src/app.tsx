@@ -18,7 +18,7 @@ import { Mentions, triggerAt, type Trigger } from "./mention";
 import { FireInspection, HooksPage, type Fire, type Load, type Save } from "./hooks";
 import { ContextPage } from "./context";
 import { ChangesBody, ChangesPage, countOf, useChanges } from "./changes";
-import { Palette, useFullText, usePaletteKey, type Command } from "./palette";
+import { Palette, isTypingTarget, useFullText, usePaletteKey, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
 import { Elapsed, Pending, elapsed } from "./loading";
 
@@ -492,8 +492,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
-      const t = e.target as HTMLElement | null;
-      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      if (isTypingTarget(e.target)) return;
       e.preventDefault();
       // A folded rail or a phone showing the thread has no search to focus: show the list first.
       setClosed(false);
