@@ -67,12 +67,13 @@ func (a *API) models(w http.ResponseWriter, r *http.Request) {
 func (a *API) setModel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var body struct {
-		Model string `json:"model"`
+		Model  string `json:"model"`
+		Plugin string `json:"plugin"` // the provider that owns the model
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	a.metaVerb(w, id, func() error { return a.sup.SetModel(id, body.Model) })
+	a.metaVerb(w, id, func() error { return a.sup.SetModel(id, body.Plugin, body.Model) })
 }
 
 func (a *API) setEffort(w http.ResponseWriter, r *http.Request) {

@@ -1195,13 +1195,19 @@ func (s *Supervisor) AssignProject(sessionID, projectID string) error {
 // SetModel asks a session to switch model by writing the same /model
 // command a person would type. The child owns the change — its llm row
 // reconfigures live — so nothing restarts and there is no second code
-// path to keep in step with the TUI.
-func (s *Supervisor) SetModel(id, model string) error {
-	model = strings.TrimSpace(model)
+// path to keep in step with the TUI. plugin names the provider that
+// owns the model: a bare id keeps whichever provider the row runs, so
+// another provider's model would still go to the old one.
+func (s *Supervisor) SetModel(id, plugin, model string) error {
+	model, plugin = strings.TrimSpace(model), strings.TrimSpace(plugin)
 	if model == "" {
 		return fmt.Errorf("serve: supervisor: model is required")
 	}
-	if err := s.Send(id, "/model "+model); err != nil {
+	cmd := "/model " + model
+	if plugin != "" {
+		cmd = "/model " + plugin + " " + model
+	}
+	if err := s.Send(id, cmd); err != nil {
 		return err
 	}
 	s.mu.Lock()

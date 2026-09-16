@@ -108,7 +108,7 @@ export const api = {
     req<{ status: string; title: string; reply: string; project: string; spawnedBy: string }>(`/api/sessions/${id}/agent?parent=${encodeURIComponent(parent)}`),
   /** Interrupt a running background agent, or drop a queued one. */
   stopAgent: (id: string) => req<{ ok: true; was: "running" | "queued" | "idle" }>(`/api/sessions/${id}/stop`, { method: "POST", body: "{}" }),
-  model: (id: string, model: string) => post(`/api/sessions/${id}/model`, { model }),
+  model: (id: string, model: string, plugin?: string) => post(`/api/sessions/${id}/model`, { model, plugin }),
   effort: (id: string, effort: string) => post(`/api/sessions/${id}/effort`, { effort }),
   assign: (id: string, project: string) => post(`/api/sessions/${id}/project`, { project }),
 

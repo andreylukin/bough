@@ -631,6 +631,29 @@ func TestSupervisorSubscribeAndDrop(t *testing.T) {
 	})
 }
 
+// A model picked from another provider's list carries that provider, so
+// the child's llm row moves with it instead of calling the old provider.
+func TestSupervisorSetModelNamesTheProvider(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed(t, "sess-model")
+
+	if err := f.sup.SetModel("sess-model", "llm-google", "google/gemini-3.8-flash"); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	waitFor(t, "the /model command to reach the child", func() bool {
+		for _, e := range f.sup.Recent("sess-model") {
+			if e.Kind == "input" && e.Text == "/model llm-google google/gemini-3.8-flash" {
+				return true
+			}
+		}
+		return false
+	})
+	if got := f.sup.Meta("sess-model").Model; got != "google/gemini-3.8-flash" {
+		t.Errorf("meta model = %q, want the bare id the picker matches", got)
+	}
+}
+
 // A subscriber that stops reading is dropped, never waited for: one
 // stalled SSE client must not stall every other reader of the session.
 func TestSupervisorSlowSubscriberIsDropped(t *testing.T) {

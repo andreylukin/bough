@@ -2526,7 +2526,7 @@ if (typeof window !== "undefined" && window.visualViewport) {
 
 export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
   row: Row; projects: Project[];
-  onModel: (m: string) => Promise<boolean> | void; onEffort: (e: string) => Promise<boolean> | void; onAssign: (p: string) => void;
+  onModel: (m: string, plugin?: string) => Promise<boolean> | void; onEffort: (e: string) => Promise<boolean> | void; onAssign: (p: string) => void;
   /** Render just the model picker, or everything but it. */
   only?: "model" | "rest";
 }) {
@@ -2577,7 +2577,8 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
                     return m ? <>{name} · Input {price(m.input)} · Output {price(m.output)} <span className="sel-foot-unit">per 1M tokens</span></>
                       : o?.value ? <>{name} · Price unavailable</> : "Price unavailable";
                   }}
-                  onChange={(v) => (v ? onModel(v) : undefined)} />
+                  // The provider that lists the model runs it; a bare id would stay on the current one.
+                  onChange={(v) => (v ? onModel(v, cat?.providers.find((p) => p.models?.some((m) => m.id === v))?.plugin) : undefined)} />
           {/* Always present, so Settings keeps one shape: disabled with the reason until levels are known. */}
           <span className="ctl-label ctl-field ctl-effort">Effort</span>
           <Select label="Next turn effort" value={row.effort ?? ""} align="end" note="Applies to the next turn" onChange={(v) => (v ? onEffort(v) : undefined)}
@@ -2876,7 +2877,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   /** Start a project session in this project's orb, carrying the draft over unsent. */
   onStartProject?: (project: string, draft: string) => void;
   onNewProject?: () => void;
-  onModel: (m: string) => Promise<boolean> | void; onEffort: (e: string) => Promise<boolean> | void; onAssign: (p: string) => void;
+  onModel: (m: string, plugin?: string) => Promise<boolean> | void; onEffort: (e: string) => Promise<boolean> | void; onAssign: (p: string) => void;
   /** This session's unrecorded sends, kept by the app across session switches. */
   sending?: Pending[]; setSending?: (f: (q: Pending[]) => Pending[]) => void;
 }) {
@@ -4407,7 +4408,7 @@ export default function App() {
           onArchive={() => archiveRow(row)}
           rows={rows} onOpenSession={openSession}
           onRename={async (t) => { await api.rename(row.id, t); await refresh(); }}
-          onModel={(m) => act(() => api.model(row.id, m), "change model")}
+          onModel={(m, plugin) => act(() => api.model(row.id, m, plugin), "change model")}
           onEffort={(e) => act(() => api.effort(row.id, e), "change effort")}
           onAssign={(p) => act(() => api.assign(row.id, p), "move the session")}
           onContext={() => setSub("context")}
