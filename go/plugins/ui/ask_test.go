@@ -77,7 +77,7 @@ func TestAskDoesNotSwallowSlashOrBang(t *testing.T) {
 	if d.m.pendingAsk != "ask-1" {
 		t.Fatal("the ask should still be pending after a / command")
 	}
-	if p := d.plain(); !strings.Contains(p, "help ran") {
+	if p := d.plain(); !d.m.helpOpen || !strings.Contains(p, "/help commands") {
 		t.Errorf("/help should have dispatched:\n%s", p)
 	}
 	d.typeStr("!true")

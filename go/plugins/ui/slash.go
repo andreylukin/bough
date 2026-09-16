@@ -332,6 +332,11 @@ func (m *model) dispatchAs(line, echo string) tea.Cmd {
 	m.syncPalette()
 	name, args, _ := strings.Cut(strings.TrimPrefix(line, "/"), " ")
 	args = strings.TrimSpace(args)
+	if name == "help" && args == "" && cfg.cmds != nil {
+		// A panel over the transcript, not 100+ lines of scrollback.
+		m.helpOpen, m.keysOpen, m.panelTop = true, false, 0
+		return nil
+	}
 	// A command whose arguments are a credential is echoed and recorded
 	// without them. The transcript is on screen and the history file is
 	// on disk; a key belongs in neither.
@@ -444,6 +449,11 @@ func keysText(cfg *uiCfg) string {
 	}
 	for _, a := range uiActions {
 		if k := cfg.keys[a.name]; k != "" {
+			if a.name == "quit" {
+				// The first press only arms the quit.
+				rows = append(rows, [2]string{k + " ×2", "quit (esc cancels a turn)"})
+				continue
+			}
 			rows = append(rows, [2]string{k, a.desc})
 		}
 	}
@@ -479,22 +489,58 @@ func keysText(cfg *uiCfg) string {
 // empty composer): an overlay above the composer, never a transcript
 // block and never history.
 func (m *model) showKeys() {
-	m.keysOpen = true
+	m.keysOpen, m.helpOpen, m.panelTop = true, false, 0
 }
 
-// keysRows is the open keys panel, cut to the transcript's height.
+// panelLines is the open panel's text: the keymap, or /help's command
+// list (built-ins first, then templates and skills) under a header.
+func (m *model) panelLines() []string {
+	cfg := m.cfg.Load()
+	if m.helpOpen {
+		return append([]string{"/help commands  (esc closes · up/down scroll)"},
+			strings.Split(commands.HelpText(cfg.cmds), "\n")...)
+	}
+	lines := strings.Split(keysText(cfg), "\n")
+	lines[0] += "  (? or esc closes)"
+	return lines
+}
+
+// scrollPanel moves the panel body by a row or a page; keysRows clamps
+// what it shows, this keeps panelTop from running past the end.
+func (m *model) scrollPanel(key string) {
+	page := max(m.vp.Height()-2, 1)
+	switch key {
+	case "up":
+		m.panelTop--
+	case "down":
+		m.panelTop++
+	case "pgup":
+		m.panelTop -= page
+	case "pgdown":
+		m.panelTop += page
+	}
+	m.panelTop = min(max(m.panelTop, 0), max(len(m.panelLines())-1-(m.vp.Height()-2), 0))
+}
+
+// keysRows is the open keys or help panel, cut to the transcript's
+// height: the header, the body from panelTop, then "… N more".
 func (m *model) keysRows() []string {
-	if !m.keysOpen || m.inspecting {
+	if !m.keysOpen && !m.helpOpen || m.inspecting {
 		return nil
 	}
-	lines := strings.Split(keysText(m.cfg.Load()), "\n")
-	lines[0] += "  (? or esc closes)"
+	lines := m.panelLines()
 	if h := m.vp.Height(); len(lines) > h && h <= 1 {
 		// No room for a "more" row: the header alone, or nothing.
 		lines = lines[:max(h, 0)]
 	} else if len(lines) > h {
-		more := len(lines) - (h - 1)
-		lines = append(lines[:h-1], fmt.Sprintf("  … %d more", more))
+		body := lines[1:]
+		top := min(max(m.panelTop, 0), max(len(body)-(h-2), 0))
+		end := min(top+h-2, len(body))
+		out := append([]string{lines[0]}, body[top:end]...)
+		if more := len(body) - end; more > 0 {
+			out = append(out, fmt.Sprintf("  … %d more", more))
+		}
+		lines = out
 	}
 	for i, l := range lines {
 		lines[i] = xansi.Truncate(l, m.width, "…")

@@ -228,7 +228,7 @@ func registerBuiltins(r *Registry, ctx *kernel.Context) error {
 		run  func(args string) (string, error)
 	}{
 		{CommandInfo{Name: "help", Usage: "", Summary: "list commands"}, func(string) (string, error) {
-			return helpText(r), nil
+			return HelpText(r), nil
 		}},
 		{CommandInfo{Name: "keys", Usage: "", Summary: "show the keybindings"}, uiAction(ActionKeys)},
 		{CommandInfo{Name: "voice", Usage: "[hold|tap|off]", Summary: "voice dictation: hold space to speak (needs a provider with a transcription endpoint)"}, func(args string) (string, error) {
@@ -296,11 +296,11 @@ func uiAction(a UIAction) func(string) (string, error) {
 // terminal, but a paragraph-long skill description is still noise).
 const helpSummaryMax = 72
 
-// helpText renders every command as "/name usage  summary" with the
+// HelpText renders every command as "/name usage  summary" with the
 // left column padded to one shared width; built-ins first, then a
 // "templates" heading over the template rows and "skills" over the
 // skill rows.
-func helpText(r *Registry) string {
+func HelpText(r interface{ List() []CommandInfo }) string {
 	infos := r.List()
 	lefts := make([]string, len(infos))
 	width := 0

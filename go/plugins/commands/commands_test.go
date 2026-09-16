@@ -160,7 +160,7 @@ func TestListBuiltinsBeforeSkills(t *testing.T) {
 	if got := strings.Join(names, " "); got != "help quit alpha zeta" {
 		t.Fatalf("List order = %q, want builtins first then skills", got)
 	}
-	help := helpText(r)
+	help := HelpText(r)
 	lines := strings.Split(help, "\n")
 	if len(lines) != 5 || lines[2] != "skills" {
 		t.Fatalf("/help should carry a skills heading before the skill rows:\n%s", help)
@@ -191,9 +191,9 @@ func TestListAndHelpGroupTemplates(t *testing.T) {
 	if got := strings.Join(names, " "); got != "quit greet review zskill" {
 		t.Fatalf("List order = %q, want builtins, templates, skills", got)
 	}
-	lines := strings.Split(helpText(r), "\n")
+	lines := strings.Split(HelpText(r), "\n")
 	if len(lines) != 6 || lines[1] != "templates" || lines[4] != "skills" {
-		t.Fatalf("/help should head the template and skill groups:\n%s", helpText(r))
+		t.Fatalf("/help should head the template and skill groups:\n%s", HelpText(r))
 	}
 }
 

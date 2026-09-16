@@ -150,6 +150,8 @@ type model struct {
 	keepRow     map[int]bool   // block ids closed by hand: they stay rows, never fold (see fold.go)
 	pendingAsk  string         // ask id the composer routes answers to; "" = none
 	keysOpen    bool           // the "?"/keys panel is over the transcript; ? or esc closes it, other keys close it and go through
+	helpOpen    bool           // the /help panel, like keysOpen
+	panelTop    int            // first body row of the keys/help panel shown (up/down/pgup/pgdown scroll it)
 	askStash    string         // composer draft displaced by the pending ask
 	pal         palette        // "/" command palette (see palette.go)
 	at          palette        // "@" file picker (see atfiles.go)
@@ -1610,11 +1612,18 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	// The keys panel is transient: ? or esc only closes it; any other
 	// key closes it and then does what it always does.
-	if m.keysOpen {
+	if m.keysOpen || m.helpOpen {
 		// A panel View could not draw (no rows, or a box over it)
 		// must not swallow the key meant for what is on screen.
 		shown := len(m.keysRows()) > 0 && len(m.newDirBox()) == 0
-		m.keysOpen = false
+		if shown {
+			switch key {
+			case "up", "down", "pgup", "pgdown":
+				m.scrollPanel(key)
+				return m, nil
+			}
+		}
+		m.keysOpen, m.helpOpen = false, false
 		if shown && (key == "?" || key == "esc") {
 			return m, nil
 		}

@@ -218,10 +218,33 @@ func description(path string) string {
 	if err != nil {
 		return ""
 	}
-	for line := range strings.SplitSeq(string(data), "\n") {
-		if v, ok := strings.CutPrefix(line, "description:"); ok {
-			return strings.Trim(strings.TrimSpace(v), `"'`)
+	return descriptionOf(string(data))
+}
+
+// descriptionOf reads the description out of SKILL.md text. A YAML
+// block scalar ("|", ">", "|-", ...) gives its first non-empty
+// indented line.
+func descriptionOf(data string) string {
+	lines := strings.Split(data, "\n")
+	for i, line := range lines {
+		v, ok := strings.CutPrefix(line, "description:")
+		if !ok {
+			continue
 		}
+		v = strings.TrimSpace(v)
+		if v == "" || strings.ContainsAny(v[:1], "|>") && strings.Trim(v, "|>+-0123456789") == "" {
+			for _, l := range lines[i+1:] {
+				if strings.TrimSpace(l) == "" {
+					continue
+				}
+				if l[0] != ' ' && l[0] != '\t' {
+					return ""
+				}
+				return strings.TrimSpace(l)
+			}
+			return ""
+		}
+		return strings.Trim(v, `"'`)
 	}
 	return ""
 }
@@ -266,8 +289,10 @@ func (s *Skills) registerCommands(ctx *kernel.Context) {
 		if s.off(name) {
 			continue
 		}
-		info := commands.CommandInfo{Name: name, Usage: "[args]", Kind: "skill",
-			Summary: "skill: " + summarize(description(sk.path))}
+		info := commands.CommandInfo{Name: name, Usage: "[args]", Kind: "skill"}
+		if sum := summarize(description(sk.path)); sum != "" {
+			info.Summary = "skill: " + sum
+		}
 		err := reg.Register(info, func(args string) (string, error) {
 			return "", commands.SubmitAction(strings.TrimSpace("/" + name + " " + args))
 		})

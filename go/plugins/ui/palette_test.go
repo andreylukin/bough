@@ -191,7 +191,7 @@ func TestEnterOnBareSlashRunsHelpNotASkill(t *testing.T) {
 	if len(d.sent) != 0 {
 		t.Fatalf("enter on a bare / must not submit a skill, sent=%v", d.sent)
 	}
-	if p := d.plain(); !strings.Contains(p, "❯ /help") {
+	if p := d.plain(); !d.m.helpOpen || !strings.Contains(p, "/help commands") {
 		t.Errorf("enter on a bare / should run /help:\n%s", p)
 	}
 }

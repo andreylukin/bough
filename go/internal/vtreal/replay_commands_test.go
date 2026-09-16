@@ -101,7 +101,6 @@ func TestCommandsDuringReplay(t *testing.T) {
 	// what it should, esc leaves the composer where it was, and the
 	// screen holds the usual invariants.
 	for _, tc := range []struct{ name, line, want string }{
-		{"help", "/help", "list commands"},
 		{"context", "/context", "Everything the model is told before your message"},
 		{"cost", "/cost", "cost:"},
 		{"theme", "/theme", "usage: /theme <name>"},
@@ -124,6 +123,7 @@ func TestCommandsDuringReplay(t *testing.T) {
 		{"model", "/model", "pick a model"},
 		{"sessions", "/sessions", "resume a session"},
 		{"keys", "/keys", "mid-turn: queue the line"},
+		{"help", "/help", "/help commands"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a.typeText(tc.line)

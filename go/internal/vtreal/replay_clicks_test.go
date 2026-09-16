@@ -157,13 +157,13 @@ func TestClicksToggleEveryKind(t *testing.T) {
 	t.Run("system", func(t *testing.T) {
 		t.Parallel()
 		a := clicksApp(t)
-		a.typeText("/help")
+		a.typeText("/theme")
 		a.key(uv.KeyEnter, 0)
-		a.waitFor("/cost")
+		a.waitFor("usage: /theme")
 		a.settled()
-		row := clicksRow(a, "/cost", "tokens and cost")
+		row := clicksRow(a, "usage: /theme", "this session")
 		if row < 0 {
-			t.Fatalf("no /help body row on screen:\n%s", a.text())
+			t.Fatalf("no /theme body row on screen:\n%s", a.text())
 		}
 		a.click(2, row)
 		a.waitUntil(func(s string) bool { return clicksHasClosed(s, "system (") }, "the system block folded by a click (▸)")
@@ -174,7 +174,7 @@ func TestClicksToggleEveryKind(t *testing.T) {
 			t.Fatalf("no folded system header on screen:\n%s", a.text())
 		}
 		a.click(2, row)
-		a.waitFor("tokens and cost")
+		a.waitFor("usage: /theme")
 		a.check("system expanded")
 	})
 }
