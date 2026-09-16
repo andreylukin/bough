@@ -3408,6 +3408,28 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     setQueued(rest);
     void deliver(next.text, false);
   }); // eslint-disable-line react-hooks/exhaustive-deps
+  // A Stop can swallow a line already written to the child: no input is
+  // ever recorded for it, and its row said "Sending…" until a reload lost
+  // it. Once the stop has settled with rows still unlanded, a message goes
+  // back to the front of the queue and a steer says it was dropped.
+  const stoppedAt = useRef(false);
+  useEffect(() => { if (stopping === "stopping") stoppedAt.current = true; }, [stopping]);
+  useEffect(() => { if (running && !stopping) stoppedAt.current = false; }, [running, stopping]);
+  const unlandedIds = unlanded.map((p) => p.id).join(" ");
+  useEffect(() => {
+    if (!stoppedAt.current || running || loading || busy || !unlanded.length) return;
+    const lost = unlanded;
+    const timer = setTimeout(() => {
+      stoppedAt.current = false;
+      const ids = new Set(lost.map((p) => p.id));
+      setSending((q) => q.filter((p) => !ids.has(p.id)));
+      const steers = lost.filter((p) => p.steer);
+      if (steers.length) setFailures((q) => [...q, ...steers.map((p) => ({ id: p.id, at: Date.now(), text: p.text, answer: false, error: "Steer dropped by Stop" }))]);
+      const msgs = lost.filter((p) => !p.steer);
+      if (msgs.length) { flushing.current = false; setQueued((q) => [...msgs.map((p) => ({ id: p.id, text: p.text })), ...q]); }
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [unlandedIds, running, loading, busy]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <WorkContext.Provider value={workCtx}>
