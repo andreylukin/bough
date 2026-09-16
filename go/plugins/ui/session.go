@@ -18,6 +18,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -249,15 +251,16 @@ func (m *model) pickerRows(cfg *uiCfg) []sessRow {
 	}
 	infos = slices.Clone(infos)
 	slices.SortStableFunc(infos, func(a, b history.SessionInfo) int { return b.ModTime.Compare(a.ModTime) })
+	m.pickWide = m.pickAll
 	if !m.pickAll {
-		infos = pickerScope(infos, m.currentID(cfg))
+		infos, m.pickWide = pickerScope(infos, m.currentID(cfg))
 	}
 	rows := sessionTree(infos)
 	if m.pickQuery == "" {
 		return rows
 	}
 	q := strings.ToLower(m.pickQuery)
-	corpus := m.pickerCorpus(infos)
+	corpus, raw := m.pickerCorpus(infos)
 	rows = slices.DeleteFunc(rows, func(r sessRow) bool {
 		if strings.Contains(strings.ToLower(r.Title), q) {
 			return false
@@ -266,7 +269,7 @@ func (m *model) pickerRows(cfg *uiCfg) []sessRow {
 	})
 	for i := range rows {
 		if !strings.Contains(strings.ToLower(rows[i].Title), q) {
-			rows[i].snippet = matchLine(corpus[rows[i].ID], q)
+			rows[i].snippet = matchLine(raw[rows[i].ID], q)
 		}
 	}
 	return rows
@@ -277,8 +280,8 @@ func (m *model) pickerRows(cfg *uiCfg) []sessRow {
 // background runs nobody sat in front of (wiki ingests and the like;
 // a spawned agent stays, nested under its parent). The current session
 // and rows with no recorded directory always stay. A scope that would
-// leave nothing shows everything instead.
-func pickerScope(infos []history.SessionInfo, cur string) []history.SessionInfo {
+// leave nothing shows everything instead, and reports it widened.
+func pickerScope(infos []history.SessionInfo, cur string) ([]history.SessionInfo, bool) {
 	cwd, _ := os.Getwd()
 	repo := repoRoot(cwd)
 	kept := slices.DeleteFunc(slices.Clone(infos), func(s history.SessionInfo) bool {
@@ -293,15 +296,15 @@ func pickerScope(infos []history.SessionInfo, cur string) []history.SessionInfo 
 			return false
 		case s.Cwd == cwd:
 			return false
-		case repo != "" && (s.Repo == repo || s.Cwd == repo || strings.HasPrefix(s.Cwd, repo+"/")):
+		case repo != "" && (s.Repo == repo || s.Cwd == repo || strings.HasPrefix(s.Cwd, repo+string(filepath.Separator))):
 			return false
 		}
 		return true
 	})
 	if len(kept) == 0 {
-		return infos
+		return infos, true
 	}
-	return kept
+	return kept, false
 }
 
 // repoRoot is the nearest directory at or above dir holding .git, ""
@@ -320,26 +323,27 @@ func repoRoot(dir string) string {
 	return ""
 }
 
-// matchLine is the corpus line holding q, cut to start near the match.
+// matchLine is the first line of the original-case transcript holding
+// the lowercase q, cut to start near the match. The cut counts runes
+// (a rune-for-rune lowercasing keeps counts aligned), so it never
+// splits a multi-byte character.
 func matchLine(corpus, q string) string {
-	i := strings.Index(corpus, q)
-	if i < 0 {
-		return ""
+	for line := range strings.Lines(corpus) {
+		low := strings.Map(unicode.ToLower, line)
+		i := strings.Index(low, q)
+		if i < 0 {
+			continue
+		}
+		if lead := utf8.RuneCountInString(low[:i]); lead > 30 {
+			line = "…" + strings.TrimLeft(string([]rune(line)[lead-20:]), " ")
+		}
+		return strings.TrimSpace(line)
 	}
-	start := strings.LastIndexByte(corpus[:i], '\n') + 1
-	end := strings.IndexByte(corpus[i:], '\n')
-	if end < 0 {
-		end = len(corpus) - i
-	}
-	line := corpus[start : i+end]
-	if lead := i - start; lead > 30 {
-		line = "…" + strings.TrimLeft(line[lead-20:], " ")
-	}
-	return strings.TrimSpace(line)
+	return ""
 }
 
-// pickerCorpus is every listed session's transcript, lowercased and
-// keyed by id, read once per row set and reused for the whole typing
+// pickerCorpus is every listed session's transcript, lowercased (and
+// as written, for snippets) and keyed by id, read once per row set and reused for the whole typing
 // run.
 //
 // A title is the session's first prompt, so filtering on titles alone
@@ -348,12 +352,13 @@ func matchLine(corpus, q string) string {
 // affordable (a year of sessions is tens of megabytes of JSONL) and
 // happens on the first keystroke rather than when the picker opens, so
 // opening it stays instant.
-func (m *model) pickerCorpus(infos []history.SessionInfo) map[string]string {
+func (m *model) pickerCorpus(infos []history.SessionInfo) (low, raw map[string]string) {
 	key := corpusKey(infos)
 	if m.pickCorpus != nil && m.pickCorpusFor == key {
-		return m.pickCorpus
+		return m.pickCorpus, m.pickCorpusRaw
 	}
 	corpus := make(map[string]string, len(infos))
+	orig := make(map[string]string, len(infos))
 	for _, in := range infos {
 		if in.Path == "" {
 			continue // no file to read (a synthesized row)
@@ -367,10 +372,11 @@ func (m *model) pickerCorpus(infos []history.SessionInfo) map[string]string {
 			b.WriteString(history.EntryText(e))
 			b.WriteByte('\n')
 		}
-		corpus[in.ID] = strings.ToLower(b.String())
+		orig[in.ID] = b.String()
+		corpus[in.ID] = strings.ToLower(orig[in.ID])
 	}
-	m.pickCorpus, m.pickCorpusFor = corpus, key
-	return corpus
+	m.pickCorpus, m.pickCorpusRaw, m.pickCorpusFor = corpus, orig, key
+	return corpus, orig
 }
 
 // corpusKey identifies a row set cheaply, so a mid-session re-read (or
@@ -492,9 +498,9 @@ func (m model) handlePickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.pick++
 		}
 	case "pgup":
-		m.pick = max(m.pick-m.pickerPage(cfg), 0)
+		m.pick = max(m.pick-pickerFit(rows, m.pick, m.pickerPage(cfg)), 0)
 	case "pgdown":
-		m.pick = max(min(m.pick+m.pickerPage(cfg), len(rows)-1), 0)
+		m.pick = max(min(m.pick+pickerFit(rows, m.pick, m.pickerPage(cfg)), len(rows)-1), 0)
 	case "enter":
 		if cfg.choose == nil || len(rows) == 0 {
 			return m, nil
@@ -578,8 +584,8 @@ func (m *model) resumeID(id string) {
 	*m = m.leavePicker(id)
 }
 
-// pickerPage is how many session rows fit between the picker's header
-// and its hint row (at least one).
+// pickerPage is how many lines fit between the picker's header and its
+// hint row (at least one).
 func (m *model) pickerPage(cfg *uiCfg) int {
 	header := 2 + 2 // title and blank, then the "N sessions" count and blank
 	if m.pickQuery != "" {
@@ -588,10 +594,24 @@ func (m *model) pickerPage(cfg *uiCfg) int {
 	if cfg.choose == nil {
 		header += 2
 	}
-	if m.pickQuery != "" {
-		return max((m.height-1-header)/2, 1) // a content hit takes a snippet line too
-	}
 	return max(m.height-1-header, 1)
+}
+
+// pickerFit is how many rows ending at end fit in budget lines, a row
+// with a snippet taking two (at least one).
+func pickerFit(rows []sessRow, end, budget int) int {
+	n := 0
+	for i := min(end, len(rows)-1); i >= 0; i-- {
+		budget--
+		if rows[i].snippet != "" {
+			budget--
+		}
+		if budget < 0 {
+			break
+		}
+		n++
+	}
+	return max(n, 1)
 }
 
 // pickerView renders the full-screen session list: this directory's
@@ -621,7 +641,7 @@ func (m *model) pickerView(cfg *uiCfg) string {
 	}
 	if len(rows) > 0 {
 		scope := "this project"
-		if m.pickAll {
+		if m.pickWide {
 			scope = "all projects"
 		}
 		lines = append(lines, th["dim"].Render("  "+plural(len(rows), "session")+" · "+scope), "")
@@ -630,7 +650,7 @@ func (m *model) pickerView(cfg *uiCfg) string {
 	cwd, _ := os.Getwd()
 	home, _ := os.UserHomeDir()
 	// Scroll so the selected row stays on screen above the hint row.
-	start := max(m.pick-m.pickerPage(cfg)+1, 0)
+	start := max(m.pick-pickerFit(rows, m.pick, m.pickerPage(cfg))+1, 0)
 	for i, s := range rows[start:] {
 		i += start
 		marker, st := "  ", th["result"]

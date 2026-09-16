@@ -134,6 +134,7 @@ type model struct {
 	pick        int            // picker cursor index into cfg.sessions
 	pickQuery   string         // session picker filter: typed text narrows rows by title
 	pickAll     bool           // session picker scope: every session, not just this project's (tab)
+	pickWide    bool           // the picker shows every session (tab, or an empty project scope)
 	mp          modelPicker    // "/model" picker (see modelpick.go)
 	rw          rewindPicker   // double-esc rewind menu (see rewind.go)
 	srch        searchBar      // ctrl+s transcript search (see search.go)
@@ -185,6 +186,7 @@ type model struct {
 	// session and not only how it opened. pickCorpusFor is the row set
 	// it was built from, so a re-read rebuilds it (see pickerCorpus).
 	pickCorpus    map[string]string
+	pickCorpusRaw map[string]string // the same, as written (snippets)
 	pickCorpusFor string
 }
 

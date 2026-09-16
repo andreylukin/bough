@@ -422,3 +422,17 @@ func TestPickerScopeAndSubagents(t *testing.T) {
 		t.Fatalf("tab should show every session:\n%s", p)
 	}
 }
+
+// A project scope that would leave nothing shows every session, and
+// says so.
+func TestPickerEmptyScopeSaysAllProjects(t *testing.T) {
+	t.Parallel()
+	cfg := cfgWith(t, nil, nil, nil)
+	cfg.picker = true
+	cfg.choose = func(string) {}
+	cfg.sessions = []history.SessionInfo{{ID: "else", Cwd: "/somewhere/else", ModTime: time.Now(), Title: "elsewhere work"}}
+	d := newDrv(t, 120, 30, cfg)
+	if p := d.plain(); !strings.Contains(p, "elsewhere work") || !strings.Contains(p, "all projects") {
+		t.Fatalf("a widened scope should be labelled all projects:\n%s", p)
+	}
+}

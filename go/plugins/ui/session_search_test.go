@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/andreylukin/bough/plugins/history"
 )
@@ -120,5 +121,28 @@ func TestPickerQueryShowsTheMatchingLine(t *testing.T) {
 	d.typeStr("rate limiter")
 	if p := d.plain(); !strings.Contains(p, "“the rate limiter drops the third retry”") {
 		t.Errorf("a transcript hit should show the line it matched:\n%s", p)
+	}
+}
+
+func TestPickerSnippetKeepsCaseAndRunes(t *testing.T) {
+	t.Parallel()
+	got := matchLine("intro\n“Привет, мир” — длинное вступление перед TODO: Fix API here\n", "todo: fix")
+	if !utf8.ValidString(got) {
+		t.Fatalf("snippet cut inside a rune: %q", got)
+	}
+	if !strings.HasPrefix(got, "…") || !strings.Contains(got, "TODO: Fix API here") {
+		t.Errorf("snippet should be cut near the match in its original case, got %q", got)
+	}
+}
+
+func TestPickerFitCountsSnippetLines(t *testing.T) {
+	t.Parallel()
+	rows := []sessRow{{}, {}, {}, {}}
+	if n := pickerFit(rows, 3, 4); n != 4 {
+		t.Errorf("title-only rows take one line each: fit %d, want 4", n)
+	}
+	rows[3].snippet, rows[2].snippet = "x", "x"
+	if n := pickerFit(rows, 3, 4); n != 2 {
+		t.Errorf("snippet rows take two lines: fit %d, want 2", n)
 	}
 }
