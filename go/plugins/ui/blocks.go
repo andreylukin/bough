@@ -209,7 +209,6 @@ func doneSummary(files []string, exit int, hasExit bool, ms int64, cost *float64
 		parts = append(parts, fmt.Sprintf("exit %d", exit))
 	}
 	if ms >= 1000 { // a sub-second turn: "0s" says nothing
-
 		parts = append(parts, durText(time.Duration(ms)*time.Millisecond))
 	}
 	if cost != nil {

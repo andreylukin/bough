@@ -32,7 +32,7 @@ func TestStatusBarShowsRepoAndBranch(t *testing.T) {
 		t.Errorf("outside a repo = %q, want empty", got)
 	}
 	d := defaultDrv(t)
-	d.m.where = "bough (main)"
+	d.feed(whereMsg("bough (main)")) // refreshWhere's result, off the UI goroutine
 	if p := d.plain(); !strings.Contains(p, "bough (main) · ? keys") {
 		t.Errorf("status bar missing repo (branch):\n%s", p)
 	}

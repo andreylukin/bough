@@ -242,7 +242,6 @@ func newModel(width, height int, send func(string), events <-chan Event, cfg *at
 	m := model{vp: vp, overlay: ov, input: ti, spin: sp, send: send, events: events, cfg: cfg,
 		focusID: -1, ovExpanded: map[int64]bool{}, mdCache: map[string]string{}, parts: map[int]partEntry{}, comp: composerState{recall: -1}}
 	m.resize(width, height)
-	m.where = repoLabel(cfg.Load().cwd)
 	if d := cfg.Load().draft; d != "" {
 		// The composer opens with the text; the person finishes it.
 		m.input.SetValue(d)
@@ -900,7 +899,7 @@ func (m model) waitEvent() tea.Cmd {
 }
 
 func (m model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.waitEvent(), tea.RequestBackgroundColor, m.cacheTick()}
+	cmds := []tea.Cmd{m.waitEvent(), tea.RequestBackgroundColor, m.cacheTick(), m.refreshWhere()}
 	return tea.Batch(cmds...)
 }
 
@@ -943,7 +942,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventMsg:
 		m.addEvent(Event(msg))
 		if Event(msg).Kind == "done" {
-			return m, tea.Batch(m.waitEvent(), m.cacheTick())
+			return m, tea.Batch(m.waitEvent(), m.cacheTick(), m.refreshWhere())
 		}
 		return m, m.waitEvent()
 
@@ -958,9 +957,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.deferRefresh = false
 		if done {
-			return m, tea.Batch(m.waitEvent(), m.cacheTick())
+			return m, tea.Batch(m.waitEvent(), m.cacheTick(), m.refreshWhere())
 		}
 		return m, m.waitEvent()
+
+	case whereMsg:
+		m.where = string(msg)
+		return m, nil
 
 	case cacheTickMsg:
 		return m, nil // the bar re-reads the clock on every draw
@@ -1131,7 +1134,6 @@ func (m *model) addEvent(ev Event) {
 	case "done":
 		m.running = false
 		m.lastRequest = time.Now()
-		m.where = repoLabel(m.cfg.Load().cwd) // the turn may have switched branch
 		if m.lastEnd != "cancelled" {
 			m.lastEnd = "done" // the cancelled marker came first when it did
 		}

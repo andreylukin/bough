@@ -692,6 +692,17 @@ func TestSubagentDiveOverlay(t *testing.T) {
 	}
 }
 
+// A resumed history entry decodes ms from JSON as float64.
+func TestFinishTurnReadsJSONDecodedMs(t *testing.T) {
+	m := testModel(t)
+	m.addEvent(Event{Kind: "assistant", Text: "ok"})
+	m.addEvent(Event{Kind: "done", Data: map[string]any{"ms": float64(20400)}})
+	b := m.blocks[len(m.blocks)-1]
+	if b.kind != "done" || b.ms != 20400 {
+		t.Fatalf("done block = %+v, want ms 20400", b)
+	}
+}
+
 // A cancelled turn already says "cancelled"; the "without a reply"
 // marker is for a turn that silently produced nothing.
 func TestCancelledTurnHasNoWithoutReplyMarker(t *testing.T) {
@@ -746,6 +757,9 @@ func TestDoneSummaryMarksFailureAndHidesKilled(t *testing.T) {
 	cost := 0.09
 	if got := doneSummary([]string{"a"}, 0, false, 20400, &cost); got != "✔ wrote a · 20s · $0.090" {
 		t.Errorf("elapsed and cost = %q", got)
+	}
+	if got := doneSummary(nil, 0, false, 999, nil); got != "" {
+		t.Errorf("sub-second turn = %q, want empty", got)
 	}
 	if got := collapseNote(true, 0); !strings.Contains(got, "already folded") {
 		t.Errorf("zero collapse note = %q", got)

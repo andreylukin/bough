@@ -16,6 +16,7 @@ package ui
 // via /sessions, not the bar.
 
 import (
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"fmt"
@@ -190,6 +191,16 @@ func ctxAbbrev(n int) string {
 // repoLabel names where the session works as "repo (branch)" — the
 // checkout's directory name and its branch, "repo" on a detached head
 // — or "" when dir is "" or not in a git checkout.
+// whereMsg carries a fresh repoLabel back to Update.
+type whereMsg string
+
+// refreshWhere reads the label off the UI goroutine: at start and after
+// each turn (which may have switched branch), never per replayed entry.
+func (m *model) refreshWhere() tea.Cmd {
+	dir := m.cfg.Load().cwd
+	return func() tea.Msg { return whereMsg(repoLabel(dir)) }
+}
+
 func repoLabel(dir string) string {
 	if dir == "" {
 		return ""
