@@ -750,7 +750,7 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 		// a command's output is where the verdict is; enter again
 		// shows every line.
 		text, earlier := b.text, 0
-		if lines := strings.Split(b.text, "\n"); !b.full && len(lines) > tailCap {
+		if lines := strings.Split(strings.TrimRight(b.text, "\n"), "\n"); !b.full && len(lines) > tailCap {
 			earlier = len(lines) - tailCap
 			text = strings.Join(lines[earlier:], "\n")
 		}
@@ -1477,8 +1477,9 @@ func (m *model) moveFocus(delta int) {
 }
 
 // toggleFocused flips the focused block's collapsed state; false when
-// nothing is focused.
-func (m *model) toggleFocused() bool {
+// nothing is focused. all (enter) first shows a tail-windowed result
+// in full.
+func (m *model) toggleFocused(all bool) bool {
 	for i := range m.blocks {
 		if m.blocks[i].id != m.focusID {
 			continue
@@ -1487,7 +1488,7 @@ func (m *model) toggleFocused() bool {
 			m.refold(i)
 			return true
 		}
-		if m.showAll(i) {
+		if all && m.showAll(i) {
 			return true
 		}
 		if m.blocks[i].collapsible() || m.closedLead(i) {
@@ -1505,15 +1506,12 @@ func (m *model) closedLead(i int) bool {
 	return ok && !r.open
 }
 
-// toggleBlock flips block i, focuses it, and keeps its header on
-// screen: with the transcript pinned to the bottom, expanding a long
-// block used to scroll the header you just clicked out of view.
 // showAll: enter on an open result showing its tail window shows the
 // rest in place, the viewport staying where the reader is. A click
 // still just toggles.
 func (m *model) showAll(i int) bool {
 	b := &m.blocks[i]
-	if b.kind != "result" || b.collapsed || b.full || strings.Count(b.text, "\n") < tailCap {
+	if b.kind != "result" || b.collapsed || b.full || strings.Count(strings.TrimRight(b.text, "\n"), "\n") < tailCap {
 		return false
 	}
 	b.full = true
@@ -1523,6 +1521,9 @@ func (m *model) showAll(i int) bool {
 	return true
 }
 
+// toggleBlock flips block i, focuses it, and keeps its header on
+// screen: with the transcript pinned to the bottom, expanding a long
+// block used to scroll the header you just clicked out of view.
 func (m *model) toggleBlock(i int) {
 	// The lead of a folded run answers for the whole run: opening it
 	// puts the steps back as rows, each still closed.
@@ -1705,7 +1706,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if action == "collapse_toggle" && key == "enter" {
 		// Enter toggles only a focused block on an empty composer;
 		// composing, or with nothing focused, it submits below.
-		if strings.TrimSpace(m.input.Value()) == "" && !m.inspecting && m.toggleFocused() {
+		if strings.TrimSpace(m.input.Value()) == "" && !m.inspecting && m.toggleFocused(true) {
 			return m, nil
 		}
 		action = ""

@@ -4,6 +4,7 @@ package ui
 // unknown kinds.
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -863,5 +864,37 @@ func TestInlineCodeIsNotPadded(t *testing.T) {
 		if !strings.Contains(p, want) {
 			t.Errorf("inline code should read as ordinary prose (%q):\n%s", want, p)
 		}
+	}
+}
+
+func TestResultTailWindow(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	rows := make([]string, 20)
+	for i := range rows {
+		rows[i] = fmt.Sprintf("row%02d", i+1)
+	}
+	d.event("result", strings.Join(rows, "\n")+"\n")
+	d.press(keyTab())
+	d.press(keyEnter())
+	render := func() string { return d.m.render(&d.m.blocks[0], d.m.cfg.Load()) }
+	if out := render(); !strings.Contains(out, "+5 earlier") || !strings.Contains(out, "row20") || strings.Contains(out, "row05") {
+		t.Errorf("open result should show the last 15 lines:\n%s", out)
+	}
+	d.press(keyEnter())
+	if out := render(); strings.Contains(out, "earlier") || !strings.Contains(out, "row01") || !strings.Contains(out, "row20") {
+		t.Errorf("second enter should show every line:\n%s", out)
+	}
+	d.press(keyEnter())
+	if !d.m.blocks[0].collapsed {
+		t.Fatal("third enter should collapse")
+	}
+	d.press(keyEnter())
+	if out := render(); !strings.Contains(out, "+5 earlier") {
+		t.Errorf("reopened result should be back to the tail window:\n%s", out)
+	}
+	d.m.blocks[0].text = strings.Join(rows[:15], "\n") + "\n"
+	if out := render(); strings.Contains(out, "earlier") || !strings.Contains(out, "row01") {
+		t.Errorf("15-line result should skip the window:\n%s", out)
 	}
 }

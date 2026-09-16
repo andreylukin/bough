@@ -128,8 +128,8 @@ func (m *model) runAction(name, via string, cfg *uiCfg) tea.Cmd {
 		m.flash = collapseNote(false, m.setAllCollapsed(false))
 	case "collapse_toggle":
 		// The focused block, else the newest collapsible one.
-		if !m.inspecting && !m.toggleFocused() {
-			if f := m.focusables(); len(f) > 0 && !m.showAll(f[len(f)-1].idx) {
+		if !m.inspecting && !m.toggleFocused(false) {
+			if f := m.focusables(); len(f) > 0 {
 				m.toggleBlock(f[len(f)-1].idx)
 			}
 		}
