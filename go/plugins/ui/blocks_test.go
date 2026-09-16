@@ -919,3 +919,17 @@ func TestResultTailWindow(t *testing.T) {
 		t.Errorf("15-line result should skip the window:\n%s", out)
 	}
 }
+
+// A closed error row leads with the error: past a subagent report the
+// block printed before it threw, and ahead of a bash call's long path.
+func TestErrorHeadLeadsWithTheError(t *testing.T) {
+	got := errorHead("[subagent 1 · task: audit]\nStatus: ok\nerror: ReferenceError: x is not defined", 100)
+	if got != "error: ReferenceError: x is not defined" {
+		t.Fatalf("subagent echo head = %q", got)
+	}
+	long := "error: bash: cd /very/long/path/" + strings.Repeat("nested/", 20) + "repo && bough project: exit status 1 — usage: bough project <command>"
+	got = errorHead(long, 100)
+	if !strings.HasPrefix(got, "error: bash: usage: bough project <command> · exit status 1 · cd /very") || !strings.Contains(got, "…") || len([]rune(got)) > 100 {
+		t.Fatalf("bash head = %q", got)
+	}
+}

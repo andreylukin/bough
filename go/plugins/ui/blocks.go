@@ -167,6 +167,48 @@ func errorText(text string) string {
 	return goErrRe.ReplaceAllString(nativeRe.ReplaceAllString(text, ""), "")
 }
 
+// bashErrRe is tools.bash's failure line ("bash: CMD: exit status 1 —
+// first output line"), optionally behind the loop's "error: ".
+var bashErrRe = regexp.MustCompile(`^(error: )?bash: (.+): (exit status -?\d+|signal: [^—]+) — (.+)$`)
+
+// errorHead is the one line a closed error row shows, fit to width.
+// A block that printed a subagent's report before it threw leads with
+// the error, not the report; a failed bash call leads with what the
+// command said and its status, and the command (often a long cd path)
+// is shortened in the middle so the message stays whole.
+func errorHead(text string, width int) string {
+	lines := strings.Split(text, "\n")
+	head := lines[0]
+	if strings.HasPrefix(head, "[subagent ") {
+		for _, l := range lines {
+			if strings.HasPrefix(l, "error: ") {
+				head = l
+				break
+			}
+		}
+	}
+	sm := bashErrRe.FindStringSubmatch(head)
+	if sm == nil {
+		return head
+	}
+	lead := sm[1] + "bash: " + sm[4] + " · " + sm[3]
+	room := width - len([]rune(lead)) - 3
+	if room < 8 {
+		return lead
+	}
+	return lead + " · " + midCut(sm[2], room)
+}
+
+// midCut shortens s to n runes by dropping its middle.
+func midCut(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	left := (n - 1) / 2
+	return string(r[:left]) + "…" + string(r[len(r)-(n-1-left):])
+}
+
 // anyFenceRe matches any ``` fence, closed or left open to the end:
 // a reply that is nothing but (malformed) fences said nothing.
 var anyFenceRe = regexp.MustCompile("(?s)```.*?```|```.*$")

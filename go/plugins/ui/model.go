@@ -808,8 +808,11 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 		if b.collapsible() && strings.Contains(b.text, "\n") {
 			glyph = "▾ "
 			if b.collapsed {
-				glyph, text = "▸ ", strings.SplitN(b.text, "\n", 2)[0]+" …"
+				glyph, text = "▸ ", errorHead(b.text, m.width-6)+" …"
 			}
+		}
+		if glyph == "" {
+			text = errorHead(b.text, w-2)
 		}
 		var out string
 		if b.collapsed {
