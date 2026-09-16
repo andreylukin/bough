@@ -67,6 +67,18 @@ test("a live turn's last segment carries the current step; running subagents sta
   expect(w.step).toBe("Running go test -run Clock ./kernel");
 });
 
+test("prose sent with its own program follows that program's work, which stays the running segment", () => {
+  const prog = bash("sleep 40");
+  const live: Line[] = [lines[0], { seq: 2, at: at(1), kind: "assistant", text: "Sleeping now; done.\n\n```js\n" + prog + "\n```" },
+    { seq: 3, at: at(1), kind: "code", text: prog }];
+  const segs = segsOf(live, true);
+  expect(segs.map((s) => s.kind)).toEqual(["work", "reply"]);
+  expect((segs[0] as Extract<(typeof segs)[number], { kind: "work" }>).last).toBe(true);
+  expect((segs[1] as Extract<(typeof segs)[number], { kind: "reply" }>).early).toBe(true);
+  // Words without a program keep their place.
+  expect(segsOf(lines).map((s) => s.kind)).toEqual(["work", "reply", "work", "reply"]);
+});
+
 test("a finished long turn shows collapsed work rows and the replies", () => {
   const html = renderToStaticMarkup(<TurnView turn={groupTurns(lines)[0]} />);
   expect(html).toContain("Worked for 9s · 2 actions");

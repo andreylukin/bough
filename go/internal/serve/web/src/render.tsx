@@ -505,7 +505,8 @@ export function resultLabel(subRunCount?: number | null): string {
  * segment is always a row: it is the turn's working indicator.
  */
 export type Segment =
-  | { kind: "reply"; item: Item }
+  /** early: the reply's words came with its own program, so they follow the work it started. */
+  | { kind: "reply"; item: Item; early?: boolean }
   | { kind: "pinned"; item: Item }
   | { kind: "work"; seq: number; items: Item[]; seqs: number[];
       /** Rows as rendered: consecutive todo or job records share one. */
@@ -584,20 +585,33 @@ export function splitWork(items: Item[], codes: string[], live: boolean): Segmen
     });
     cur = [];
   };
+  // Prose written in the same reply as a program predates that program's results:
+  // it is placed after the work, not above rows still running.
+  let held: Item | undefined;
+  const release = () => { if (held) out.push({ kind: "reply", item: held, early: true }); held = undefined; };
   for (const it of items) {
     if (it.kind === "line" && isReply(it.line, codes)) {
       flush();
+      release();
+      const text = it.line.text.replace(NOTE_RE, "");
+      if (stripRunFences(text, codes) !== text.trim() || splitBareProgram(text)[1]) { held = it; continue; }
       // A lone thought's span is until the reply it led to.
       const prev = out[out.length - 1];
       if (prev?.kind === "work" && prev.thinkingOnly && Date.parse(it.line.at) > Date.parse(prev.to)) prev.to = it.line.at;
       out.push({ kind: "reply", item: it });
       continue;
     }
-    if (live && it.kind === "sub" && it.agents.some((a) => !a.status)) { flush(); out.push({ kind: "pinned", item: it }); continue; }
+    if (live && it.kind === "sub" && it.agents.some((a) => !a.status)) { flush(); release(); out.push({ kind: "pinned", item: it }); continue; }
     cur.push(it);
   }
   flush();
-  for (let i = out.length - 1; i >= 0 && out[i].kind !== "reply"; i--) if (out[i].kind === "work") (out[i] as WorkSegment).last = true;
+  release();
+  // A reply moved after its work does not end that work: it may still be running.
+  for (let i = out.length - 1; i >= 0; i--) {
+    const s = out[i];
+    if (s.kind === "reply" && !s.early) break;
+    if (s.kind === "work") s.last = true;
+  }
   return out;
 }
 
