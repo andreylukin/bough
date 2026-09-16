@@ -20,6 +20,10 @@ import (
 // they are focused — one runaway result must not bury the transcript.
 const previewCap = 200
 
+// tailCap: an expanded result shows only its last tailCap lines until
+// enter asks for all of them.
+const tailCap = 15
+
 // thinkRe matches a <thinking…>…</thinking…> span (any suffix, e.g.
 // <thinking_analyses>), closed or running to the end of the text.
 var thinkRe = regexp.MustCompile(`(?s)<thinking[^>]*>(.*?)(</thinking[^>]*>|$)`)

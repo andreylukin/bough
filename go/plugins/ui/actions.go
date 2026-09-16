@@ -129,7 +129,7 @@ func (m *model) runAction(name, via string, cfg *uiCfg) tea.Cmd {
 	case "collapse_toggle":
 		// The focused block, else the newest collapsible one.
 		if !m.inspecting && !m.toggleFocused() {
-			if f := m.focusables(); len(f) > 0 {
+			if f := m.focusables(); len(f) > 0 && !m.showAll(f[len(f)-1].idx) {
 				m.toggleBlock(f[len(f)-1].idx)
 			}
 		}

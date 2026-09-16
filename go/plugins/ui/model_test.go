@@ -46,7 +46,7 @@ func TestCollapseDefaults(t *testing.T) {
 	if strings.Count(out, "\n") != 0 {
 		t.Errorf("collapsed render should be one line:\n%s", out)
 	}
-	m.blocks[0].collapsed = false
+	m.blocks[0].collapsed, m.blocks[0].full = false, true
 	out = m.render(&m.blocks[0], m.cfg.Load())
 	if !strings.Contains(out, "▾ result (20 lines)") || strings.Count(out, "line") < 20 {
 		t.Errorf("expanded render should show header plus all 20 lines:\n%s", out)

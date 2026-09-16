@@ -209,9 +209,10 @@ func TestFocusEnterTogglesBack(t *testing.T) {
 	d.event("result", nLines(20))
 	d.press(keyTab())
 	d.press(keyEnter())
+	d.press(keyEnter()) // tail window → every line
 	d.press(keyEnter())
 	if !d.m.blocks[0].collapsed {
-		t.Error("second enter should re-collapse")
+		t.Error("enter on a fully shown result should re-collapse")
 	}
 	if p := d.plain(); !strings.Contains(p, "▸ result (20 lines)") {
 		t.Errorf("re-collapsed result missing ▸ header:\n%s", p)

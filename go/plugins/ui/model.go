@@ -51,6 +51,7 @@ type block struct {
 	text      string
 	label     string // header tag override ("! <cmd>" bang blocks); "" = by kind
 	collapsed bool
+	full      bool     // result blocks: expanded past the tailCap window (enter again)
 	queued    bool     // user block submitted mid-turn, not yet started
 	steer     bool     // user block sent INTO the running turn (see steerLine)
 	pending   bool     // steer the loop has not landed yet (its next block boundary)
@@ -745,7 +746,19 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 		if b.collapsed {
 			return m.header(b, th)
 		}
-		return m.header(b, th) + "\n" + m.box(colorDiff(b.text, th), th["result"], th["border"])
+		// A long result opens as its last tailCap lines — the end of
+		// a command's output is where the verdict is; enter again
+		// shows every line.
+		text, earlier := b.text, 0
+		if lines := strings.Split(b.text, "\n"); !b.full && len(lines) > tailCap {
+			earlier = len(lines) - tailCap
+			text = strings.Join(lines[earlier:], "\n")
+		}
+		out := m.header(b, th) + "\n"
+		if earlier > 0 {
+			out += th["dim"].Render(fmt.Sprintf("… +%d earlier (enter to view all)", earlier)) + "\n"
+		}
+		return out + m.box(colorDiff(text, th), th["result"], th["border"])
 	case "spawn":
 		return m.renderSpawn(b, th)
 	case "command":
@@ -1474,6 +1487,9 @@ func (m *model) toggleFocused() bool {
 			m.refold(i)
 			return true
 		}
+		if m.showAll(i) {
+			return true
+		}
 		if m.blocks[i].collapsible() || m.closedLead(i) {
 			m.toggleBlock(i)
 			return true
@@ -1492,6 +1508,21 @@ func (m *model) closedLead(i int) bool {
 // toggleBlock flips block i, focuses it, and keeps its header on
 // screen: with the transcript pinned to the bottom, expanding a long
 // block used to scroll the header you just clicked out of view.
+// showAll: enter on an open result showing its tail window shows the
+// rest in place, the viewport staying where the reader is. A click
+// still just toggles.
+func (m *model) showAll(i int) bool {
+	b := &m.blocks[i]
+	if b.kind != "result" || b.collapsed || b.full || strings.Count(b.text, "\n") < tailCap {
+		return false
+	}
+	b.full = true
+	m.focusID = b.id
+	m.focusFold = false
+	m.refresh()
+	return true
+}
+
 func (m *model) toggleBlock(i int) {
 	// The lead of a folded run answers for the whole run: opening it
 	// puts the steps back as rows, each still closed.
@@ -1500,6 +1531,7 @@ func (m *model) toggleBlock(i int) {
 		return
 	}
 	m.blocks[i].collapsed = !m.blocks[i].collapsed
+	m.blocks[i].full = false
 	// Closing a block by hand keeps it a row: folded into a neighbour's
 	// run it would vanish, and enter again could not reopen it.
 	if m.blocks[i].collapsed {
