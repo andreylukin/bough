@@ -150,7 +150,9 @@ func (r *configReloadThemeAndKeymapWhilePickerOpenRun) pickerIntact(where string
 	}
 	seen := map[string]bool{}
 	for _, l := range strings.Split(s, "\n") {
-		l = strings.TrimPrefix(strings.TrimPrefix(l, "▸ "), "  ")
+		if strings.HasPrefix(l, "▸ ") { // the cursor row reads like its unselected self; headers keep no indent
+			l = "  " + strings.TrimPrefix(l, "▸ ")
+		}
 		if strings.TrimSpace(l) == "" || strings.Contains(l, "more above") || strings.Contains(l, "more below") {
 			continue
 		}

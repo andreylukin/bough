@@ -117,7 +117,8 @@ func TestModelEffortSwapAndCycle(t *testing.T) {
 		return m != nil && strings.HasPrefix(m[1], "llm-openai ")
 	}, "cursor on an llm-openai row")
 	choice := modelEffortCursor.FindStringSubmatch(a.text())[1]
-	prov, mdl, _ := strings.Cut(choice, " ")
+	f := strings.Fields(choice) // provider, model, then the price column
+	prov, mdl := f[0], f[1]
 	a.key(uv.KeyEnter, 0)
 	a.waitFor("model: " + prov + " · " + mdl)
 	a.waitUntil(func(string) bool { return strings.Contains(a.modelEffortStatus(), mdl) },

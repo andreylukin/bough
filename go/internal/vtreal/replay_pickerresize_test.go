@@ -145,7 +145,7 @@ func TestPickerResize(t *testing.T) {
 			tm.waitFor("pick a model")
 		}, func(sel string) {
 			f := strings.Fields(sel)
-			model := f[len(f)-1]
+			model := f[min(1, len(f)-1)] // provider, model, then the price column
 			tm.waitUntil(func(s string) bool {
 				return !strings.Contains(s, "pick a model") && strings.Contains(s, model)
 			}, model+" picked")

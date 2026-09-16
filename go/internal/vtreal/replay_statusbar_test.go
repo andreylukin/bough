@@ -278,9 +278,9 @@ func TestStatusbarSpinnerWhileStreaming(t *testing.T) {
 	}
 }
 
-// A flash takes the right side over — the usage chips give way to it —
-// and it expires on the next key, which puts them back.
-func TestStatusbarFlashReplacesRightSide(t *testing.T) {
+// A flash sits left of the status bar while the usage chips stay, and
+// it expires on the next key.
+func TestStatusbarFlashKeepsUsageChips(t *testing.T) {
 	t.Parallel()
 	hist := statusbarSeed(t, "flash.jsonl",
 		statusbarEntry("meta", map[string]any{"cwd": "/tmp/demo"}),
@@ -300,8 +300,8 @@ func TestStatusbarFlashReplacesRightSide(t *testing.T) {
 	if !strings.Contains(bar, "ctrl+x …") {
 		t.Fatalf("the flash is not on the bar: %q\nscreen:\n%s", bar, s)
 	}
-	if strings.Contains(bar, "$0.052") || strings.Contains(bar, "↑12.3k") {
-		t.Fatalf("the flash must replace the usage chips, not join them: %q\nscreen:\n%s", bar, s)
+	if !strings.Contains(bar, "$0.052") {
+		t.Fatalf("the usage chips must stay beside the flash: %q\nscreen:\n%s", bar, s)
 	}
 	a.key(uv.KeyEsc, 0) // any key ends the flash
 	a.waitUntil(func(s string) bool { return !strings.Contains(s, "ctrl+x …") }, "the flash to expire")
