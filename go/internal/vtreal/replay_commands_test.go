@@ -104,7 +104,6 @@ func TestCommandsDuringReplay(t *testing.T) {
 		{"help", "/help", "list commands"},
 		{"context", "/context", "Everything the model is told before your message"},
 		{"cost", "/cost", "cost:"},
-		{"keys", "/keys", "mid-turn: queue the line"},
 		{"theme", "/theme", "usage: /theme <name>"},
 		{"scratch", "/scratch", "scratchpad:"},
 		{"todo", "/todo", "no todos"},
@@ -124,6 +123,7 @@ func TestCommandsDuringReplay(t *testing.T) {
 	for _, tc := range []struct{ name, line, want string }{
 		{"model", "/model", "pick a model"},
 		{"sessions", "/sessions", "resume a session"},
+		{"keys", "/keys", "mid-turn: queue the line"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a.typeText(tc.line)

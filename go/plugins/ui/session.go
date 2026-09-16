@@ -280,7 +280,8 @@ func (m *model) pickerRows(cfg *uiCfg) []sessRow {
 // background runs nobody sat in front of (wiki ingests and the like;
 // a spawned agent stays, nested under its parent). The current session
 // and rows with no recorded directory always stay. A scope that would
-// leave nothing shows everything instead, and reports it widened.
+// leave nothing but the current session shows everything instead, and
+// reports it widened.
 func pickerScope(infos []history.SessionInfo, cur string) ([]history.SessionInfo, bool) {
 	cwd, _ := os.Getwd()
 	repo := repoRoot(cwd)
@@ -301,7 +302,7 @@ func pickerScope(infos []history.SessionInfo, cur string) ([]history.SessionInfo
 		}
 		return true
 	})
-	if len(kept) == 0 {
+	if !slices.ContainsFunc(kept, func(s history.SessionInfo) bool { return s.ID != cur }) {
 		return infos, true
 	}
 	return kept, false

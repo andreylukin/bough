@@ -436,3 +436,18 @@ func TestPickerEmptyScopeSaysAllProjects(t *testing.T) {
 		t.Fatalf("a widened scope should be labelled all projects:\n%s", p)
 	}
 }
+
+// Other projects' sessions show when the only one here is the current
+// session: a scope holding just that row widens to everything.
+func TestPickerScopeWidensPastCurrent(t *testing.T) {
+	t.Parallel()
+	here, _ := os.Getwd()
+	infos := []history.SessionInfo{
+		{ID: "cur", Cwd: here},
+		{ID: "else", Cwd: "/somewhere/else"},
+	}
+	got, wide := pickerScope(infos, "cur")
+	if !wide || len(got) != 2 {
+		t.Fatalf("scope should widen past the current session, got %d rows wide=%v", len(got), wide)
+	}
+}
