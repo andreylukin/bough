@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Back } from "./app";
-import { duration, EmptyState, Pending, useCopied } from "./loading";
+import { duration, EmptyState, ErrorNote, Pending, useCopied } from "./loading";
 import { Markdown } from "./render";
 
 // The wiki wire types live here, like the hooks ones: this view is
@@ -181,9 +181,10 @@ export function parseWikiHash(h: string): WikiRoute | null {
   if (h === "wiki") return { at: "index" };
   if (h === "wiki/review") return { at: "review" };
   if (h === "wiki/activity") return { at: "activity" };
-  const m = /^wiki\/p\/([^~]+\.md)(?:~([^~]+)~(\d+))?$/.exec(h);
+  const m = /^wiki\/p\/([^~]+?)(?:~([^~]+)~(\d+))?$/.exec(h);
   if (!m) return null;
-  const path = decodeURIComponent(m[1]);
+  // A path typed without its extension still names the page.
+  const path = decodeURIComponent(m[1]).replace(/(?<!\.md)$/, ".md");
   return m[2] ? { at: "page", path, cite: { session: decodeURIComponent(m[2]), seq: Number(m[3]) } } : { at: "page", path };
 }
 
@@ -195,6 +196,9 @@ export function wikiHash(r: WikiRoute): string {
     case "page": return `wiki/p/${r.path}${r.cite ? `~${q(r.cite.session)}~${r.cite.seq}` : ""}`;
   }
 }
+
+/** A page that is not there, or a path that cannot be one: trying again will not help. */
+export const pageMissing = (err?: string | null) => /not found|not a page path|^404\b/i.test(err ?? "");
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -732,7 +736,7 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
 
   const topic = page?.topic ?? (at.startsWith("topics/") ? at.split("/")[1] : "");
   const title = page ? humanTitle(page.title, page.path) : knownTitle ? humanTitle(knownTitle, at) : humanTitle("", at);
-  const notFound = !page && Boolean(pageError) && /not found|^404\b/i.test(pageError ?? "");
+  const notFound = !page && pageMissing(pageError);
   // A page written from a numbered view parses into nothing useful: show its text without the gutter instead.
   const numbered = page ? page.body.split("\n").filter((l) => /^\s*\d+\|/.test(l)).length >= 2 : false;
   return (
@@ -766,9 +770,9 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
         <div className="scroll wk-doc" ref={doc}>
           {!page ? (
             notFound ? (
-              <EmptyState title="This page isn’t in the wiki" action={{ label: "Back to wiki", onClick: onIndex }}>
+              <ErrorNote title="Page not found" err={pageError} action={{ label: "Back to wiki", onClick: onIndex }}>
                 Nothing lives at <code className="mono">{at}</code>; a later ingest may have renamed or merged it.
-              </EmptyState>
+              </ErrorNote>
             ) : <Pending what="The page" err={pageError} onRetry={onRetry} lines={pageError ? 0 : 6} />
           ) : (<>
           {err && <p className="hk2-alert">{err}</p>}

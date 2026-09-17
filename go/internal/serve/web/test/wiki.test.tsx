@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { humanError } from "../src/loading";
-import { cleanExcerpt, countsLine, denumber, humanTitle, literalUnderscores, stamp } from "../src/wiki";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ErrorNote, humanError } from "../src/loading";
+import { cleanExcerpt, countsLine, denumber, humanTitle, literalUnderscores, pageMissing, parseWikiHash, stamp } from "../src/wiki";
 
 test("literalUnderscores escapes prose underscores and leaves code alone", () => {
   expect(literalUnderscores("set max_retry and _init_ in `a_b`")).toBe("set max\\_retry and \\_init\\_ in `a_b`");
@@ -33,4 +34,23 @@ test("humanError turns not-found into a sentence", () => {
 
 test("stamp formats a bare date without a time", () => {
   expect(stamp("2026-09-11")).not.toContain(":");
+});
+
+test("parseWikiHash accepts a page path without .md", () => {
+  expect(parseWikiHash("wiki/p/topics/x/retry")).toEqual({ at: "page", path: "topics/x/retry.md" });
+  expect(parseWikiHash("wiki/p/topics/x/retry.md")).toEqual({ at: "page", path: "topics/x/retry.md" });
+});
+
+test("a bad page path is a missing page, not a retryable error", () => {
+  expect(pageMissing("wiki: not a page path")).toBe(true);
+  expect(pageMissing("wiki: not found")).toBe(true);
+  expect(pageMissing("Failed to fetch")).toBe(false);
+});
+
+test("ErrorNote puts the raw error behind a disclosure with one action", () => {
+  const html = renderToStaticMarkup(<ErrorNote title="Page not found" err="wiki: not a page path" action={{ label: "Back to wiki", onClick: () => {} }} />);
+  expect(html).toContain("Page not found");
+  expect(html).toContain("<details");
+  expect(html).toContain("wiki: not a page path");
+  expect(html.match(/<button/g)?.length).toBe(1);
 });

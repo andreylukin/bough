@@ -63,6 +63,29 @@ export function EmptyState({ title, children, action, role }: {
   );
 }
 
+/**
+ * One voice for a failure: a red dot and a title, a sentence, one action
+ * (Retry only when trying again can help, otherwise a way back), and the
+ * raw error behind a disclosure.
+ */
+export function ErrorNote({ title, err, children, action, className = "" }: {
+  title: string;
+  err?: unknown;
+  children?: React.ReactNode;
+  action?: { label: string; onClick: () => void };
+  className?: string;
+}) {
+  const raw = (err instanceof Error ? err.message : String(err ?? "")).trim();
+  return (
+    <div className={("error-note " + className).trim()} role="alert">
+      <p className="error-note-title"><span className="error-dot" aria-hidden="true" />{title}</p>
+      {(children ?? (raw && humanError(err))) && <p className="error-note-body">{children ?? humanError(err)}</p>}
+      {action && <button className="btn" onClick={action.onClick}>{action.label}</button>}
+      {raw && <details className="error-note-details"><summary>Details</summary><pre className="mono">{raw}</pre></details>}
+    </div>
+  );
+}
+
 export function Spinner({ size = 12 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -105,17 +128,17 @@ export function Pending({ what, err, onRetry, action, timeout = 20_000, hintAfte
 
   if ((err || timedOut) && !inline) {
     return (
-      <EmptyState role="alert" title={timedOut ? `${what} is taking too long` : `${what} did not load`}
+      <ErrorNote title={timedOut ? `${what} is taking too long` : `Couldn’t load ${what.toLowerCase()}`} err={timedOut ? undefined : err}
         action={action ?? (retry && { label: "Retry", onClick: retry })}>
-        {timedOut ? "The server has not answered yet. Try again." : humanError(err)}
-      </EmptyState>
+        {timedOut ? "The server has not answered yet. Try again." : undefined}
+      </ErrorNote>
     );
   }
   if (err || timedOut) {
     return (
       <div className={cls + " pending-err"} role="alert">
         <span className="pending-msg">
-          {timedOut ? `${what} is taking too long to load.` : `${what} did not load. ${humanError(err)}`}
+          {timedOut ? `${what} is taking too long to load.` : `Couldn’t load ${what.toLowerCase()}. ${humanError(err)}`}
         </span>
         {retry && <button className="btn" onClick={retry}>Retry</button>}
       </div>
