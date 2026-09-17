@@ -36,6 +36,8 @@ type OrbSummary struct {
 	Built bool   `json:"built"`           // that tag exists in the runtime
 	Build string `json:"build,omitempty"` // orb.Build.State
 	Error string `json:"error,omitempty"` // definition parse error
+	// Repos names the repos the definition declares (worktree names).
+	Repos []string `json:"repos,omitempty"`
 }
 
 // OrbState is a session's state.json as the wire sees it. Up says the
@@ -44,6 +46,8 @@ type OrbSummary struct {
 type OrbState struct {
 	orb.State
 	Up bool `json:"up,omitempty"`
+	// Title is the session's, so the orb list names archived sessions too.
+	Title string `json:"title,omitempty"`
 }
 
 // OrbRuntime says whether the engine can be used right now.
@@ -192,6 +196,9 @@ func (a *API) orbSummary(ctx context.Context, slug string) (OrbSummary, string) 
 	if err != nil {
 		sum.Error = err.Error()
 		return sum, ""
+	}
+	for _, r := range p.Def.Repos {
+		sum.Repos = append(sum.Repos, r.RepoName())
 	}
 	hash, err := projectdef.ImageHash(home, p)
 	if err != nil {
@@ -380,6 +387,7 @@ func (a *API) orbsOf(slug string) []OrbState {
 		}
 		st := a.orbState(d.Name())
 		if st.Session != "" && st.Project == slug {
+			st.Title = a.sup.childTitle(st.Session)
 			out = append(out, st)
 		}
 	}

@@ -36,10 +36,10 @@ export interface Project {
 /** local runs on the host and changes no files; project runs in the project's orb. */
 export type SessionMode = "local" | "project";
 export type OrbStatus = "" | "building" | "starting" | "running" | "stopped" | "failed";
-export interface OrbSummary { slug: string; image: string; built: boolean; build?: string; error?: string }
+export interface OrbSummary { slug: string; image: string; built: boolean; build?: string; error?: string; /** Repo names project.yml declares. */ repos?: string[] }
 /** One timed step of an orb start; endedAt is absent while it runs. */
 export interface OrbPhase { name: string; startedAt: string; endedAt?: string; error?: string }
-export interface OrbState { phase?: string; phases?: OrbPhase[]; session: string; project: string; status: OrbStatus; image?: string; container?: string; worktrees?: Record<string, string>; primary?: string; error?: string; updatedAt: string; up?: boolean; /** "legacy": created before proxy tokens, so its host proxy and relay are open to the bridge. */ proxyAuth?: "token" | "legacy" }
+export interface OrbState { phase?: string; phases?: OrbPhase[]; session: string; project: string; status: OrbStatus; image?: string; container?: string; worktrees?: Record<string, string>; primary?: string; error?: string; updatedAt: string; up?: boolean; /** The session's title, archived or not. */ title?: string; /** "legacy": created before proxy tokens, so its host proxy and relay are open to the bridge. */ proxyAuth?: "token" | "legacy" }
 /** What Remove orb deletes and keeps (GET /api/sessions/:id/orb/remove). */
 export interface OrbRemovePlan { session: string; project: string; status: OrbStatus; container?: string; dir: string; worktrees: string[]; bytes: number; branches: { repo: string; gitDir: string; branch: string; delete: boolean; reason: string }[] }
 export interface OrbBuild { tag: string; hash: string; state: "" | "building" | "ok" | "failed"; startedAt: string; endedAt?: string; error?: string }

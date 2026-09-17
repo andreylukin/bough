@@ -49,10 +49,12 @@ export function ModeChip({ row, bare = false, name, phases = false }: { row: Row
   const { project, status } = row.orb;
   const shown = name || project;
   // A failed setup is its own indicator, set apart from the run status that follows it.
+  // Bare sits beside a turn's own status (the sidebar): it says "Orb …" and
+  // a running orb stays quiet, so green only ever means a running turn.
   const chip = status === "failed"
     ? <SetupFailed name={shown} />
-    : <span className={"status mode-chip " + TONE[status]} title={`Runs in the ${shown} orb`}>
-        {bare ? orbWord(status) : `${shown} · ${orbWord(status)}`}
+    : <span className={"status mode-chip " + (bare && status === "running" ? "mode-up" : TONE[status])} title={`Runs in the ${shown} orb`}>
+        {bare ? `Orb ${orbWord(status).toLowerCase()}` : `${shown} · ${orbWord(status)}`}
       </span>;
   const sep = status === "failed" ? <span className="setup-sep" aria-hidden="true"> · </span> : null;
   if (!phases) return <>{chip}{sep}</>;

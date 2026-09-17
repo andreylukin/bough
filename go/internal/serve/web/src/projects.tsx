@@ -214,7 +214,7 @@ export function suggestName(repos: string[]): string {
   return useful.length > 0 ? useful.join("-") : "";
 }
 
-export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssignMany, onCreate, onRename, onDelete, orbOpen, onOrbOpen, onOrbChanged = () => {} }: {
+export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssignMany, onCreate, onRename, onDelete, orbOpen, onOrbOpen, onOrbChanged = () => {}, onNewSession }: {
   projects: Project[]; rows: Row[];
   /** The project whose orb section is expanded (#/projects/<id>/orb). */
   orbOpen?: string;
@@ -229,6 +229,8 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
   onCreate: (name: string) => Promise<{ id: string }>;
   onRename: (id: string, name: string) => Promise<void>;
   onDelete: (id: string) => void;
+  /** Starts a session in the project's orb (the palette's "New session in <project>"). */
+  onNewSession?: (project: Project) => void;
 }) {
   const [filter, setFilter] = useState("");
   // The page's one selection, whichever list or repo it was ticked from.
@@ -299,7 +301,8 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
     return [...m.entries()].sort(([a, x], [b, y]) => (a === UNKNOWN ? 1 : b === UNKNOWN ? -1 : y.length - x.length));
   }, [unassigned, repoOf]);
   // The same repo identities the sidebar shows, counted across every session.
-  const detected = useMemo(() => new Set(rows.map(repoOf).filter((k) => k !== UNKNOWN)).size, [rows, repoOf]);
+  // Plus the repos each project.yml declares, which may have no session yet.
+  const detected = useMemo(() => new Set([...rows.map(repoOf).filter((k) => k !== UNKNOWN), ...projects.flatMap((p) => p.orb?.repos ?? [])]).size, [rows, repoOf, projects]);
 
   // While a move runs its selection is locked: a second move cannot overlap it.
   const [moving, setMoving] = useState(false);
@@ -409,11 +412,13 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
                   <span className="num proj-count">{countLabel(p.id, rs)}</span>
                   <Chevron />
                 </button>
-                {!p.slug && (
+                {p.slug ? <>
+                  {onNewSession && <button className="btn btn-sm" onClick={() => onNewSession(p)}>New session</button>}
+                  <button className="btn btn-sm proj-orb-btn" aria-expanded={orbId === p.id} onClick={() => toggleOrb(p.id)}>Orb</button>
+                </> : (
                   <button className="btn btn-sm" aria-expanded={orbId === p.id} onClick={() => toggleOrb(p.id)}>Add orb</button>
                 )}
                 <GroupMenu name={p.name} items={[
-                  ...(p.slug ? [{ label: orbId === p.id ? "Hide orb" : "Orb", run: () => toggleOrb(p.id) }] : []),
                   { label: "Rename…", run: () => { void askText("Rename project", { initial: p.name, action: "Rename", onSubmit: (name) => onRename(p.id, name) }); } },
                   { label: "Delete…", danger: true, run: async () => {
                     const ok = await askConfirm(`Delete “${p.name}”?`,
