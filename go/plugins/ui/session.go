@@ -78,7 +78,7 @@ func (m *model) replay() {
 			continue
 		}
 		switch e.Kind {
-		case "meta", "origin", "undo", "hook", "turn-summary", "notice", "notice-delivered":
+		case "meta", "origin", "undo", "hook", "turn-summary", "notice", "notice-delivered", "model":
 			// session bookkeeping (cwd, a /undo's revert record —
 			// its system row follows; a hook fire, the control room's
 			// ledger — any notice it carried was recorded as its own
