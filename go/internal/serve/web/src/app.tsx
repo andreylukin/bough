@@ -1203,6 +1203,12 @@ export function Entry({ line, codes, nested, until }: { line: Line; codes: strin
         {/* There is one assistant; naming it above every reply said nothing. */}
         {!nested && k !== "assistant" && <div className="say-who"><span className="sub-dot" /><span>subagent</span></div>}
         {!blank(body) && <Markdown text={body} />}
+        {!nested && k === "assistant" && !blank(body) && (
+          <div className="msg-acts">
+            <CopyButton text={body} what="answer as Markdown" />
+            <span className="num say-time" title={new Date(line.at).toLocaleString()}>{when(line.at)}</span>
+          </div>
+        )}
         {program && (
           // A program that lost its fence never ran: it is code, not prose.
           <details className="block thin">
@@ -2404,6 +2410,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
   /** A later turn has ended, so this one can no longer be running. */ superseded?: boolean;
   /** The live turn's activity ("Thinking", "Running go test"): its working row says it, once. */ working?: string }) {
   const ctx = useWork();
+  const editPrompt = useContext(EditPrompt);
   const codes = turn.body.filter((l) => l.kind === "code" || l.kind === "sub:code").map((l) => l.text);
   const hooks = useMemo(() => turn.body.filter(isHookLine), [turn.body]);
   const items = useMemo<Item[]>(
@@ -2547,6 +2554,12 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
             )}
           </div>
           <span className="num prompt-time" title={new Date(turn.prompt.at).toLocaleString()}>{when(turn.prompt.at)}</span>
+          <div className="msg-acts prompt-acts">
+            <CopyButton text={raw} what="prompt" />
+            <button type="button" className="link" disabled={!editPrompt || editPrompt.busy}
+                    title={editPrompt?.busy ? "Send or clear the current draft first" : undefined}
+                    onClick={() => editPrompt?.edit(raw)}>Edit into composer</button>
+          </div>
         </div>
       )}
       <div className="turn-body">
@@ -2974,6 +2987,8 @@ function sendError(e?: string) {
 // A turn re-renders only when its own props change; only the open turn's
 // tail does while you type.
 const TurnViewMemo = memo(TurnView);
+/** Puts a sent prompt back in the composer; busy while a draft is there, so it never glues two prompts together. */
+const EditPrompt = createContext<{ busy: boolean; edit: (t: string) => void } | null>(null);
 
 /**
  * The image build a session waits on, live: polls the build log once a
@@ -3107,20 +3122,21 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   // One draft per session: switching away and back keeps what you were
   // typing there, and never carries it into another conversation.
   const draftKey = "bough:draft:" + row.id;
-  const [draft, setDraft] = useState(() => { try { return sessionStorage.getItem(draftKey) ?? ""; } catch { return ""; } });
+  const [draft, setDraft] = useState(() => { try { return localStorage.getItem(draftKey) ?? ""; } catch { return ""; } });
   useEffect(() => {
-    try { draft ? sessionStorage.setItem(draftKey, draft) : sessionStorage.removeItem(draftKey); } catch { /* storage off */ }
+    try { draft ? localStorage.setItem(draftKey, draft) : localStorage.removeItem(draftKey); } catch { /* storage off */ }
   }, [draft, draftKey]);
   // Whether the draft is an answer is decided when you start it, keyed to
   // the question on screen then: a question arriving mid-draft must not
   // quietly turn a message into an answer, nor a newer one inherit it.
   // Saved with the draft, so a remount never re-decides it against a newer question.
   const askKey = "bough:draft-ask:" + row.id;
-  const [draftAsk, setDraftAsk] = useState(() => { try { return sessionStorage.getItem(askKey) ?? row.ask?.id ?? ""; } catch { return row.ask?.id ?? ""; } });
+  const [draftAsk, setDraftAsk] = useState(() => { try { return localStorage.getItem(askKey) ?? row.ask?.id ?? ""; } catch { return row.ask?.id ?? ""; } });
   useEffect(() => {
-    try { draft.trim() ? sessionStorage.setItem(askKey, draftAsk) : sessionStorage.removeItem(askKey); } catch { /* storage off */ }
+    try { draft.trim() ? localStorage.setItem(askKey, draftAsk) : localStorage.removeItem(askKey); } catch { /* storage off */ }
   }, [draft, draftAsk, askKey]);
   const blank = !draft.trim();
+  const editPrompt = useMemo(() => ({ busy: !blank, edit: (t: string) => { setDraft(t); setDraftAsk(""); composer.current?.focus(); } }), [blank]);
   useEffect(() => { if (blank) setDraftAsk(row.ask?.id ?? ""); }, [blank, row.ask?.id]);
   const askChanged = !blank && draftAsk !== (row.ask?.id ?? "");
   const [trigger, setTrigger] = useState<Trigger | null>(null);
@@ -3544,14 +3560,14 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   if (!restored.current) {
     restored.current = true;
     try {
-      const a = JSON.parse(sessionStorage.getItem(attsKey) ?? "null") as { pastes: string[]; images: string[] } | null;
+      const a = JSON.parse(localStorage.getItem(attsKey) ?? "null") as { pastes: string[]; images: string[] } | null;
       if (a) { pastes.current = a.pastes; images.current = a.images; }
     } catch { /* storage off */ }
   }
   useEffect(() => {
     try {
-      if (draft && (pastes.current.length || images.current.length)) sessionStorage.setItem(attsKey, JSON.stringify({ pastes: pastes.current, images: images.current }));
-      else sessionStorage.removeItem(attsKey);
+      if (draft && (pastes.current.length || images.current.length)) localStorage.setItem(attsKey, JSON.stringify({ pastes: pastes.current, images: images.current }));
+      else localStorage.removeItem(attsKey);
     } catch { /* storage off */ }
   }, [draft, attsKey]);
   const [uploading, setUploading] = useState(0);
@@ -3577,7 +3593,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
       setUploading((n) => n + 1);
       try {
         images.current[slots[k]] = isImage(f) ? await api.attach(f) : await api.attachFile(row.id, f);
-        try { sessionStorage.setItem(attsKey, JSON.stringify({ pastes: pastes.current, images: images.current })); } catch { /* storage off */ }
+        try { localStorage.setItem(attsKey, JSON.stringify({ pastes: pastes.current, images: images.current })); } catch { /* storage off */ }
       } catch (err) {
         setAttachErr(`${tag(f, slots[k])} not attached: ${(err as Error).message}`);
       } finally {
@@ -3778,6 +3794,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
         {!loading && turns.length === 0 && !running && !row.ask && !unlanded.length && (
           <p className="meta-line transcript-state">No recorded turns yet. Type a prompt below to start.</p>
         )}
+        <EditPrompt.Provider value={editPrompt}>
         {turns.map((t, i) => (
           // Numbered by prompt, as the turn log counts: a leading /model
           // section has no prompt and no number.
@@ -3790,6 +3807,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
             working={i === turns.length - 1 && !t.done && running && !row.ask
               ? (stream.length && stream[stream.length - 1].kind === "thinking" ? "Thinking" : activity || "Working") : undefined} />
         ))}
+        </EditPrompt.Provider>
         {unlanded.map((p) => (
           <SendingPrompt key={p.id} p={p} accepted={running && !p.steer} clamp={fullPending !== p.id} clipped={clipped[p.id]}
             onClip={(el) => { if (!clipped[p.id] && el.scrollHeight > el.clientHeight + 1) setClipped((m) => ({ ...m, [p.id]: true })); }}
@@ -4711,9 +4729,9 @@ export default function App() {
             // The draft moves, unsent: the new session's composer holds it.
             const created = await api.create(home, "", "project", project);
             try {
-              if (draft.trim()) sessionStorage.setItem("bough:draft:" + created.id, draft);
-              sessionStorage.removeItem("bough:draft:" + row.id);
-              sessionStorage.removeItem("bough:draft-atts:" + row.id);
+              if (draft.trim()) localStorage.setItem("bough:draft:" + created.id, draft);
+              localStorage.removeItem("bough:draft:" + row.id);
+              localStorage.removeItem("bough:draft-atts:" + row.id);
             } catch { /* storage off */ }
             openSession(created.id);
           }, "start a project session") : undefined} />

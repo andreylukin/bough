@@ -120,3 +120,12 @@ test("a background agent's finish notice in a stopped turn is its own row, not w
   expect(html).toContain("Background agent finished");
   expect(html).not.toContain("[agent List files");
 });
+
+test("a prompt offers Copy and Edit into composer; an answer offers Copy as Markdown and its time", () => {
+  const lines: Line[] = [...live.slice(0, 1), { seq: 2, at: at(3), kind: "assistant", text: "Use **fake** clocks." }];
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns(lines)[0]} />);
+  expect(html).toContain('aria-label="Copy prompt"');
+  expect(html).toContain("Edit into composer");
+  expect(html).toContain('aria-label="Copy answer as Markdown"');
+  expect(html).toContain("say-time");
+});

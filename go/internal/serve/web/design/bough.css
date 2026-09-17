@@ -2302,3 +2302,12 @@ a.rt-link{text-decoration:none}
 @container (max-width:520px){.work-popover .work-body[data-stops] .work-row{grid-template-columns:minmax(0,1fr)}.work-popover .work-row-stop{justify-self:start;margin-top:var(--s-1)}.work-popover .work-body .work-row-stop:empty{display:none}}
 @media (max-width:480px){.work-sheet .work-body[data-stops] .work-row{grid-template-columns:minmax(0,1fr)}.work-sheet .work-row-stop{justify-self:start;margin-top:var(--s-1)}.work-sheet .work-body .work-row-stop:empty{display:none}}
 /* /WEB10 */
+/* WEB11: prompts and answers carry Copy (and Edit into composer) on hover
+   or keyboard focus; an answer shows its time there too */
+.msg-acts{display:flex;align-items:center;gap:8px;min-height:24px;font-size:12px;color:var(--text-3);opacity:0;transition:opacity .12s}
+.prompt:hover .msg-acts,.say:hover>.msg-acts,.msg-acts:focus-within{opacity:1}
+.msg-acts .copy-btn{opacity:1}
+.prompt-acts{grid-column:2}
+.say>.msg-acts{margin-top:-4px}
+@media (hover:none){.msg-acts{opacity:1}}
+/* /WEB11 */
