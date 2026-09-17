@@ -1188,6 +1188,8 @@ export function Entry({ line, codes, nested, until }: { line: Line; codes: strin
     const { text: said, note } = splitExecNote(line.text);
     const [body, program] = splitBareProgram(stripRunFences(said, codes));
     if (blank(body) && !program) return note ? <ExecNote note={note} /> : null; // the reply was only the program it ran
+    // The loop replaced the whole reply as model-guessed output: say so quietly, not as the answer.
+    if (!program && body.trim() === "[guessed output omitted]") return <p className="exec-note exec-note-quiet">The reply was only output the model guessed, so it was removed</p>;
     // Inside a subagent card the rail and the card's own header
     // already say whose words these are; repeating "subagent" above
     // every paragraph of a five-step run is noise.
@@ -2618,7 +2620,7 @@ export function StreamView({ runs }: { runs: DeltaRun[] }) {
         </details>
       ) : (
         <div key={i} className={"say stream-say" + (i === runs.length - 1 ? " stream-tip" : "")}>
-          <Markdown text={r.text} />
+          <Markdown text={r.text} live={i === runs.length - 1} />
         </div>
       ))}
     </>

@@ -2270,6 +2270,11 @@ a.rt-link{text-decoration:none}
 .waiting-dot i{width:8px;height:8px;border-radius:50%;background:var(--text-2);animation:pulse-dot 1.2s ease-in-out infinite}
 @media (prefers-reduced-motion:reduce){.waiting-dot i{animation:none;opacity:.7}}
 /* /WEB4 */
+/* WEB6: a code block's Copy button has its own gutter instead of covering
+   the code, and a streaming block scrolls sideways inside the reply. */
+.md pre.md-pre{padding-right:2.25rem}
+.stream-say .md pre{overflow-x:auto;max-width:100%}
+/* /WEB6 */
 </style>
 </head>
 <body>
