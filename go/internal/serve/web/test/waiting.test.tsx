@@ -20,7 +20,7 @@ test("a sent prompt shows at once with a waiting dot and a Sending hint", () => 
   expect(html).toContain("fix the tests");
   expect(html).toContain("waiting-dot");
   expect(html).toContain("Sending…");
-  expect(html).toMatch(/composer-hint[^>]*>Enter send · Esc stop/);
+  expect(html).toMatch(/composer-status[^>]*><span class="composer-dot" aria-hidden="true"><\/span>Sending</);
 });
 
 test("a session started from the welcome shows its prompt instead of Loading session", () => {
@@ -38,7 +38,7 @@ test("once the turn runs, the sent prompt is solid and the hint says Waiting", (
   expect(html).not.toContain("turn-sending");
   expect(html).not.toContain("Sending…");
   expect(html).toContain("Waiting for model");
-  expect(html).toMatch(/composer-hint[^>]*>Enter steer ·/);
+  expect(html).toMatch(/composer-status[^>]*><span class="composer-dot" aria-hidden="true"><\/span>Waiting for model</);
 });
 
 test("resending a stopped turn's prompt shows Sending, then lands on the new input", () => {
@@ -50,6 +50,8 @@ test("resending a stopped turn's prompt shows Sending, then lands on the new inp
     onBack={() => {}} onContext={() => {}} onAck={() => {}} projects={[]} busy={false} jump={null} />);
   expect(render(stopped)).toContain("turn-sending-state");
   expect(render([...stopped, { seq: 3, at, kind: "input", text: "fix the tests" }])).not.toContain("turn-sending-state");
+  expect(render(stopped)).toMatch(/composer-status[^>]*><span class="composer-dot" aria-hidden="true"><\/span>Sending</);
+  expect(render([...stopped, { seq: 3, at, kind: "input", text: "fix the tests" }])).not.toMatch(/composer-status[^>]*><span class="composer-dot" aria-hidden="true"><\/span>Sending</);
 });
 
 test("a send from a switched view still lands when the new session's input reuses a stale seq", () => {
@@ -59,6 +61,7 @@ test("a send from a switched view still lands when the new session's input reuse
     onInterrupt={() => {}} onArchive={() => {}} onRename={async () => {}} onModel={() => {}} onEffort={() => {}} onAssign={() => {}}
     onBack={() => {}} onContext={() => {}} onAck={() => {}} projects={[]} busy={false} jump={null} />);
   expect(html).not.toContain("turn-sending-state");
+  expect(html).not.toMatch(/composer-status[^>]*><span class="composer-dot" aria-hidden="true"><\/span>Sending</);
 });
 
 const props = { onSend: async () => null, onAnswer: async () => null, onInterrupt: () => {}, onArchive: () => {}, onRename: async () => {}, onModel: () => {},
@@ -83,6 +86,8 @@ test("R2-B: the status goes Sending, then Waiting once accepted, then Streaming"
   const streaming = renderToStaticMarkup(<Thread row={{ ...row, status: "running" } as Row} lines={[]} sending={[]} activity="Reading app.tsx" {...props} />);
   expect(streaming).toContain('class="working"');
   expect(streaming).not.toContain("Waiting for model");
+  expect(streaming).toContain("composer-status-working");
+  expect(streaming).not.toContain("Waiting for model…");
 });
 
 // R3-C: Esc before the first token really stops the server turn.
@@ -114,7 +119,7 @@ test("R3-D: a /model send lands on its command record, not on an assistant line"
   expect(html).toContain("Model changed");
   expect(html).not.toContain("Sending…");
   expect(html).not.toMatch(/thread-head[\s\S]*>(Sending|Working)</);
-  expect(html).not.toMatch(/composer-hint[^>]*>(Sending|Waiting) ·/);
+  expect(html).not.toMatch(/composer-status-(sending|waiting)/);
 });
 
 test("R3-D: an errored session never reads Working or Sending for a send it did not start", () => {
@@ -159,7 +164,7 @@ test("while the turn waits for the model, the composer offers to steer, not a ne
   const html = renderToStaticMarkup(<Thread row={row} lines={[]} sending={[{ ...sent[0], accepted: true }]} onSend={async () => null} onAnswer={async () => null}
     onInterrupt={() => {}} onArchive={() => {}} onRename={async () => {}} onModel={() => {}} onEffort={() => {}} onAssign={() => {}}
     onBack={() => {}} onContext={() => {}} onAck={() => {}} projects={[]} busy={false} jump={null} />);
-  expect(html).toMatch(/composer-hint[^>]*>[^<]*Esc stop/);
+  expect(html).toMatch(/composer-status[^>]*><span class="composer-dot" aria-hidden="true"><\/span>Waiting for model</);
   expect(html).toContain('placeholder="Steer the running turn…"');
 });
 
@@ -194,6 +199,6 @@ test("MB-STREAM: the wait is timed inside the waiting row once it passes 3s", as
 
 test("MB-STREAM: Stop is a secondary button that names Esc", () => {
   const html = renderToStaticMarkup(<Thread row={{ ...row, status: "running" } as Row} lines={[]} sending={[]} {...props} />);
-  expect(html).toMatch(/class="btn composer-stop"[^>]*aria-keyshortcuts="Escape"/);
+  expect(html).toMatch(/class="btn btn-ghost composer-stop"[^>]*aria-keyshortcuts="Escape"/);
   expect(html).toContain('title="Stop (Esc)"');
 });

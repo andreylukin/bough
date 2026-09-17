@@ -18,7 +18,7 @@ export interface Option { value: string; label: string; detail?: string; group?:
  * Keyboard: ↓/↑/Enter/Space open it; inside, ↓↑ move, Enter picks,
  * Esc closes and gives focus back to the button.
  */
-export function Select({ value, options: given, onChange, label, placeholder = "Choose", searchable = false, align = "start", note, detailHeading, footer, disabled = false }: {
+export function Select({ value, options: given, onChange, label, placeholder = "Choose", searchable = false, align = "start", note, detailHeading, footer, currentGroup = "Current", suffix, disabled = false }: {
   value: string;
   /** Shown but not choosable, when the setting does not apply yet. */
   disabled?: boolean;
@@ -36,6 +36,10 @@ export function Select({ value, options: given, onChange, label, placeholder = "
   detailHeading?: string;
   /** A fixed line under the list about the highlighted option. */
   footer?: (o: Option | undefined) => React.ReactNode;
+  /** The heading over the current value when the list is grouped. */
+  currentGroup?: string;
+  /** Muted text after the value in the button; shown only where CSS asks for it. */
+  suffix?: string;
 }) {
   // A placeholder is what the button says with nothing chosen; it is never a checked option.
   const options = useMemo(() => given.filter((o) => !(o.value === "" && o.label === placeholder)), [given, placeholder]);
@@ -59,10 +63,10 @@ export function Select({ value, options: given, onChange, label, placeholder = "
     // The current value leads, once, so it never hides mid-list.
     if (!t) {
       const cur = options.find((o) => o.value === value);
-      return cur ? [{ ...cur, group: cur.group ? "Current" : undefined }, ...options.filter((o) => o !== cur)] : options;
+      return cur ? [{ ...cur, group: cur.group ? currentGroup : undefined }, ...options.filter((o) => o !== cur)] : options;
     }
     return options.filter((o) => `${o.label} ${o.detail ?? ""} ${o.group ?? ""}`.toLowerCase().includes(t));
-  }, [options, q, value]);
+  }, [options, q, value, currentGroup]);
 
   const show = () => {
     setQ("");
@@ -156,6 +160,7 @@ export function Select({ value, options: given, onChange, label, placeholder = "
         {/* A value the options do not list yet (the catalogue still
             loading, a project since deleted) is shown as itself. */}
         <span className={"sel-value" + (current || value ? "" : " sel-placeholder")}>{current?.short ?? current?.label ?? (value ? value.split("/").pop() : placeholder)}</span>
+        {suffix && <span className="sel-suffix">· {suffix}</span>}
         <svg className="sel-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
              strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M6 9l6 6 6-6" />

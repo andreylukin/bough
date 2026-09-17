@@ -3003,6 +3003,160 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
 }
 @media (prefers-reduced-motion:reduce){.rt-more>.rt-pop{animation:none}.thread-head .head-ack:active,.thread-head>.runtime-strip .work-summary:active{scale:none}}
 /* /MB-HDR */
+/* MB-composer: composer polish (Perplexity/Copilot/v0/Claude iOS refs, see mobbin/composer/spec.md) */
+.composer-wrap{padding:8px 24px 16px}
+/* box: one hairline, one quiet focus glow */
+.composer,.composer-multi{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:12px 12px 8px 16px;gap:8px;
+  transition:border-color var(--dur-fast) var(--ease),box-shadow var(--dur-fast) var(--ease)}
+.composer:hover{border-color:var(--line-ctl)}
+.composer:has(> #composer:focus),.composer:has(> #composer:focus-visible){outline:0;border-color:var(--line-strong);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent)}
+.composer:has(> #composer:disabled){background:var(--bg);border-color:var(--line)}
+.composer textarea{font:var(--fs-base)/24px var(--sans);min-height:24px;max-height:34vh;padding:0}
+.composer textarea:disabled{cursor:not-allowed}
+.composer textarea::placeholder{color:var(--text-3);transition:color var(--dur) var(--ease)}
+/* toolbar: 28px ghost tools, 32px actions */
+.composer-bar{min-height:32px;gap:8px}
+.composer-tools{flex-wrap:nowrap;gap:2px;margin-inline-start:-6px}
+.composer-tools .controls,.composer-tools .ctl,.composer-tools .ctl-run{gap:2px}
+.composer-tools .ctl-run,.composer-tools .ctl-run:hover{background:none}
+.composer-tools .skills-btn,.composer-tools .sel-btn,.composer-tools .ctl-run .sel-btn,.composer-tools .ctl-run>.sel:first-of-type>.sel-btn{
+  display:inline-flex;align-items:center;gap:4px;height:28px;min-height:0;padding:0 8px;border:0;background:transparent;border-radius:var(--r-sm);
+  font:500 var(--fs-md)/1 var(--sans);color:var(--text-2);transition:background-color var(--dur-fast) var(--ease),color var(--dur-fast) var(--ease)}
+.composer-tools .skills-btn:hover:not(:disabled),.composer-tools .sel-btn:hover:not(:disabled),.composer-tools .ctl-run .sel-btn:hover:not(:disabled){background:var(--hover);color:var(--text-1)}
+.composer-tools .skills-btn[aria-expanded="true"],.composer-tools .sel-open .sel-btn{background:var(--sel);color:var(--text-1)}
+.composer-tools .ctl-run>.sel:first-of-type .sel-value{color:var(--text-1)}
+.composer-tools .sel-chevron{width:12px;height:12px;color:var(--text-3);transition:transform var(--dur) var(--ease-out)}
+.composer-tools .ctl-effort+.sel>.sel-btn::before{content:none}
+.skills-glyph{display:inline-grid;place-items:center;width:16px;font:500 var(--fs-md)/1 var(--mono);color:var(--text-3)}
+.composer-tools .skills-btn::before{content:none}
+.composer-sep{flex:none;width:1px;height:16px;margin:0 4px;background:var(--line)}
+.sel-suffix{display:none;color:var(--text-3)}
+.composer-tools .mode-badge,.composer-tools .mode-badge:hover{gap:4px;height:28px;padding:0 8px;border:0;background:transparent;font-size:var(--fs-sm);color:var(--text-3);cursor:default}
+.composer-tools .mode-badge svg{color:var(--text-3)}
+/* model / effort popovers: neutral highlight, check in text-2, price-only footer */
+.composer-tools .sel-pop,.head-pop .sel-pop{padding:4px}
+.sel-pop{background:var(--raised)}
+.sel-pop:has(.sel-search){width:min(360px,calc(100vw - 32px))}
+.sel-search{height:36px;font-size:var(--fs-ui);background:transparent;border-bottom:1px solid var(--line);margin-bottom:4px}
+.sel-search:focus-visible{outline:0}
+.sel-list{padding:0}
+.sel-group{padding:8px 8px 4px;font:600 var(--fs-xs)/16px var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--text-3)}
+.sel-item{min-height:32px;padding:0 8px;border-radius:var(--r-sm);font-size:var(--fs-md);color:var(--text-1)}
+.sel-on{background:var(--sel);box-shadow:none}
+.sel-check{width:16px;height:16px;color:var(--text-2);order:1}
+.sel-detail{order:2;margin-inline-start:0;font-size:var(--fs-sm);color:var(--text-3);font-variant-numeric:tabular-nums}
+.sel-label{margin-inline-end:auto}
+.sel-foot{display:flex;align-items:center;min-height:28px;margin-top:4px;padding:0 8px;border-top:1px solid var(--line);font:var(--fs-sm)/16px var(--sans);color:var(--text-3)}
+.sel-foot-unit{margin-inline-start:4px}
+/* primary action: word + key chip; neutral when disabled */
+.composer-bar .btn-primary{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:var(--r-sm);font:500 var(--fs-md)/1 var(--sans);
+  transition:background-color var(--dur-fast) var(--ease),color var(--dur-fast) var(--ease),scale var(--dur-fast) var(--ease)}
+.composer .btn-primary:disabled{opacity:1;color:var(--text-3);background:var(--raised);border-color:var(--raised);cursor:default}
+.send-key{display:none}
+.composer-bar .btn-primary .send-key{height:18px;min-width:18px;padding:0 4px;background:rgb(0 0 0/.18);box-shadow:none;color:color-mix(in srgb,var(--bg) 70%,transparent)}
+@media (min-width:721px) and (pointer:fine){.composer:has(> #composer:focus) .btn-primary:not(:disabled) .send-key{display:inline-grid}}
+.send-arrow{display:none}
+/* stop, stopping, couldn't stop; queue is a real secondary */
+.composer-stop,.composer-stop:disabled{display:grid;place-items:center;width:32px;height:32px;padding:0;border:0;border-radius:var(--r-sm);
+  background:var(--raised);box-shadow:inset 0 0 0 1px var(--line-ctl);color:var(--text-1)}
+.composer-stop:hover:not(:disabled){background:var(--sel);color:var(--text-1)}
+.composer-stop-err{color:var(--red)}
+.composer-stop-failed{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-sm);color:var(--red);white-space:nowrap}
+.composer-spin,.attach-spin{width:12px;height:12px;box-sizing:border-box;border:1.5px solid var(--text-3);border-top-color:transparent;border-radius:50%;animation:mbc-spin .8s linear infinite}
+@keyframes mbc-spin{to{rotate:360deg}}
+.composer-queue{height:32px}
+/* jump: a quiet icon, no width jitter beside Send */
+.jump-latest{position:relative;width:32px;padding:0;justify-content:center;margin-inline-end:4px;font-size:var(--fs-ui);color:var(--text-2);background:transparent;border-color:transparent}
+.jump-latest:hover:not(:disabled){background:var(--hover);border-color:transparent;color:var(--text-1)}
+.jump-latest .jump-word{display:none}
+.jump-latest[aria-label^="New activity"]::after{content:"";position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:var(--accent)}
+/* attach note: a small pill */
+.attach-note{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:var(--r-pill);background:var(--raised);box-shadow:inset 0 0 0 1px var(--line);font-size:var(--fs-sm);color:var(--text-2);white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.attach-err{background:var(--red-soft);box-shadow:inset 0 0 0 1px var(--red-line);color:var(--text-1)}
+.attach-bang{font-weight:600;color:var(--red)}
+/* footer: status left (always), keys right (focus only, fades) */
+.composer-foot{min-height:20px;margin-top:6px;padding-inline:16px;font-size:var(--fs-xs);color:var(--text-3)}
+.composer-status{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-sm);color:var(--text-2);white-space:nowrap}
+.composer-dot{width:6px;height:6px;border-radius:50%;background:var(--text-3)}
+.composer-status-working .composer-dot{background:var(--accent);animation:mbc-pulse 1.2s ease-in-out infinite}
+.composer-status-waiting .composer-dot{background:var(--amber)}
+@keyframes mbc-pulse{50%{opacity:.4}}
+.composer-hint{display:flex;gap:12px;margin-inline-start:auto;font-size:var(--fs-xs);line-height:20px;color:var(--text-3)}
+.composer-key{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.composer-wrap .composer-hint,.composer-wrap:not(:has(#composer:focus)) .composer-hint{visibility:visible;opacity:0;transition:opacity var(--dur) var(--ease-out)}
+.composer-wrap:has(#composer:focus) .composer-hint{opacity:1}
+.composer-local .sel-btn,.composer-start{height:24px;padding:0 8px;border:0;background:transparent;font-size:var(--fs-sm);color:var(--text-2)}
+/* queued: a tab joined to the box's top edge */
+.queued{margin:0 12px -1px;width:auto;padding:4px;gap:0;border:1px solid var(--line);border-bottom:0;border-radius:var(--r-md) var(--r-md) 0 0;background:var(--bg)}
+@media (min-width:985px){.queued{max-width:936px;margin-inline:auto}}
+.queued-row{min-height:32px;gap:8px;padding:0 8px;border:0;border-radius:var(--r-sm);background:none;animation:mbc-in var(--dur) var(--ease-out)}
+.queued-tag{display:inline-grid;place-items:center;color:var(--text-3)}
+.queued-text{font-size:var(--fs-md)}
+.queued-row .link{height:24px;padding:0 6px;font-size:var(--fs-sm);color:var(--text-2);opacity:0;transition:opacity var(--dur-fast) var(--ease)}
+.queued-row:hover .link,.queued-row:focus-within .link{opacity:1}
+@keyframes mbc-in{from{opacity:0;translate:0 4px}}
+/* notes above the box: one callout */
+.composer-note{display:flex;align-items:center;gap:8px;min-height:36px;margin:0 0 8px;padding:4px 4px 4px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface);font-size:var(--fs-md);color:var(--text-2);box-sizing:border-box}
+.composer-note .btn{height:28px;padding:0 10px;font-size:var(--fs-md)}
+.composer-note-lead{font-weight:500;color:var(--text-1);flex-shrink:0}
+.composer-note-body{flex:1;min-width:0}
+.composer-note-err{background:var(--red-soft);border-color:var(--red-line)}
+.composer-note-err strong{font-weight:500;color:var(--red)}
+.composer-note-err .send-failed-text{color:var(--text-1)}
+.composer-note-err .send-failed-body{border-inline-start:1px solid var(--red-line)}
+.ask-bar.composer-note{background:var(--amber-soft);border:1px solid var(--amber-line);border-radius:var(--r-sm)}
+.ask-bar.composer-note p{display:flex;align-items:center;gap:8px}
+.ask-bar.composer-note strong{font-weight:500;color:var(--text-1)}
+.composer-note-dot{width:6px;height:6px;border-radius:50%;background:var(--amber);flex-shrink:0}
+/* drafts: disabled Edit says why on touch */
+.edit-why{display:none}
+@media (pointer:coarse){
+  .composer-edit:disabled .edit-word{display:none}
+  .composer-edit:disabled .edit-why{display:inline;font-size:var(--fs-sm);color:var(--text-3)}
+  .queued-row .link{opacity:1;min-height:44px}
+  .composer-note .btn{height:44px}
+}
+/* key hints are for keyboards */
+@media (max-width:720px),(pointer:coarse){.composer-hint{display:none}}
+/* phone: round send/stop, one model · effort chip, bottom-sheet pickers */
+@media (max-width:720px){
+  .composer-wrap{padding:8px 12px calc(8px + env(safe-area-inset-bottom))}
+  .composer,.composer-multi,.composer:not(.composer-multi){padding:10px 8px 8px 14px;min-height:0}
+  .composer:has(> #composer:focus),.composer:has(> #composer:focus-visible){box-shadow:none}
+  .composer textarea{font-size:var(--fs-lg);line-height:24px;max-height:40vh;padding-block:0;min-height:24px}
+  .composer-bar{min-height:44px}
+  .composer-tools{margin-inline-start:-4px}
+  .composer-tools .skills-btn,.composer-tools .sel-btn,.composer-tools .ctl-run .sel-btn,.composer-tools .ctl-run>.sel:first-of-type>.sel-btn{height:36px;font-size:var(--fs-md);max-width:none}
+  .composer-tools .skills-btn{width:36px;padding:0;justify-content:center}
+  .composer-tools .skills-word,.composer-sep{display:none}
+  .skills-glyph{width:20px;font-size:var(--fs-lg)}
+  .composer-tools .ctl-run>.sel:first-of-type>.sel-btn{max-width:200px}
+  .composer-tools .ctl-run>.sel:first-of-type .sel-suffix{display:inline;white-space:nowrap}
+  .composer-tools .ctl-run .sel-chevron{display:block}
+  .composer-tools .mode-badge,.composer-tools .mode-badge:hover{width:36px;height:36px;padding:0;justify-content:center;font-size:0}
+  .composer-tools .mode-badge .mode-word{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .composer-bar .btn-primary{width:40px;height:40px;min-width:40px;padding:0;justify-content:center;border-radius:var(--r-pill)}
+  .composer-bar .btn-primary .send-word,.composer-bar .btn-primary .send-key{display:none}
+  .composer-bar .btn-primary .send-arrow{display:block}
+  .composer-stop,.composer-stop:disabled{width:40px;height:40px;min-width:40px;border-radius:var(--r-pill)}
+  .composer-stop svg{width:12px;height:12px}
+  .composer-queue{height:36px;min-width:0;border:0;background:transparent;color:var(--text-2)}
+  .jump-latest{width:40px;height:40px;min-width:40px}
+  .composer-foot{padding-inline:16px;font-size:var(--fs-sm)}
+  .composer-tools .sel-pop,.composer-local .sel-pop{position:fixed!important;inset:auto 0 0 0!important;top:auto!important;width:100%!important;max-width:none!important;min-width:0!important;
+    max-height:min(70vh,560px)!important;padding:20px 8px calc(8px + env(safe-area-inset-bottom));border-radius:14px 14px 0 0;box-shadow:var(--shadow-modal),0 0 0 100vmax rgb(0 0 0/.5);
+    animation:mbc-sheet var(--dur-slow) var(--ease-out)}
+  .composer-tools .sel-pop::before,.composer-local .sel-pop::before{content:"";position:absolute;top:8px;left:50%;width:36px;height:4px;margin-left:-18px;border-radius:2px;background:var(--line-ctl)}
+  .composer-tools .sel-list{max-height:none}
+  .composer-tools .sel-item,.composer-local .sel-item{min-height:44px}
+  .composer-tools .sel-search{height:44px;font-size:var(--fs-lg)}
+}
+@keyframes mbc-sheet{from{opacity:0;translate:0 16px}}
+@media (prefers-reduced-motion:reduce){
+  .composer-status-working .composer-dot,.composer-spin,.attach-spin,.queued-row,.composer-tools .sel-pop{animation:none}
+  .composer-hint,.composer-wrap .composer-hint,.composer,.composer-bar .btn-primary{transition:none}
+}
+/* /MB-composer */
 </style>
 </head>
 <body>
