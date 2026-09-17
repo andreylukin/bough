@@ -21,3 +21,12 @@ test("the key form defaults to a provider without a working key", () => {
   expect(pickProvider([p("anthropic", true), p("openai", false)], { anthropic: "ok" })).toBe("openai");
   expect(pickProvider([p("anthropic", true), p("openai", true)], { anthropic: "rejected", openai: "ok" })).toBe("anthropic");
 });
+
+// R4-C: a rejected key never wears the done badge, and plural keys "work".
+test("step 1 is not done while any set key is rejected", () => {
+  const { stepDone } = require("../src/welcome");
+  const mixed = keyLine([p("anthropic", true), p("openai", true)], { anthropic: "rejected", openai: "ok" });
+  expect(stepDone(mixed)).toBe(false);
+  expect(stepDone(keyLine([p("anthropic", true)], { anthropic: "ok" }))).toBe(true);
+  expect(keyLine([p("anthropic", true), p("openai", true)], { anthropic: "ok", openai: "ok" }).text).toContain("keys work");
+});

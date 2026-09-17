@@ -42,10 +42,15 @@ export function keyLine(providers: SetupProvider[], checks: KeyChecks): { text: 
   const bad = set.filter((p) => checks[p.name] === "rejected");
   const names = (l: SetupProvider[]) => l.map((p) => label(p.name)).join(", ");
   const parts: string[] = [];
-  if (good.length) parts.push(`${names(good)} key ${good.length > 1 ? "work" : "works"}.`);
+  if (good.length) parts.push(`${names(good)} ${good.length > 1 ? "keys work" : "key works"}.`);
   if (bad.length) parts.push(`${names(bad)} key was rejected: replace it${good.length ? " or pick a working provider’s model in the session" : ""}.`);
   if (good.length && !bad.length) parts.push("Pick a model inside the session.");
   return { text: parts.join(" "), tone: bad.length ? (good.length ? "warn" : "err") : "ok", working: good.length > 0 };
+}
+
+/** R4-C: the step-1 badge reads done only when a key works and none was rejected. */
+export function stepDone(keys: { tone: string; working: boolean }): boolean {
+  return keys.working && keys.tone === "ok";
 }
 
 /** The provider the key form opens on: a rejected key to replace, else one with no key. */
@@ -187,7 +192,7 @@ export function Welcome({ onStart, onSkip, onBack }: {
         </header>
 
         <ol className="welcome-steps">
-          <li className={"welcome-step" + (keys.working ? " done" : "")}>
+          <li className={"welcome-step" + (stepDone(keys) ? " done" : rejected ? " rejected" : "")}>
             <h2><span className="welcome-num" aria-hidden="true">1</span>Add a provider key</h2>
             {setup === null ? (
               loadErr ? (<>

@@ -29,7 +29,7 @@ test("Esc no longer leaves the session from the app shell", () => {
 });
 
 // R3-I: a provider 401 offers a way out of the model that cannot answer.
-test("a provider auth error offers Switch model; other errors do not", async () => {
+test("a provider auth error offers Switch model; R4-C: every turn error now offers Retry + Switch model", async () => {
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { Entry, authError } = await import("../src/app");
   expect(authError("llm-anthropic: 401 Unauthorized: invalid x-api-key")).toBe(true);
@@ -40,5 +40,5 @@ test("a provider auth error offers Switch model; other errors do not", async () 
   const bad = renderToStaticMarkup(<Entry line={l(3, "error", "anthropic: 401 invalid x-api-key")} codes={[]} />);
   expect(bad).toContain("Switch model");
   const other = renderToStaticMarkup(<Entry line={l(3, "error", "network down")} codes={[]} />);
-  expect(other).not.toContain("Switch model");
+  expect(other).toContain("Switch model"); // R4-C: every failed turn gets Retry + Switch model
 });
