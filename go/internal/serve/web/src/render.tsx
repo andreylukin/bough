@@ -310,7 +310,7 @@ export function hasOwnTitle(r: { title?: string; summary?: string }): boolean {
   return Boolean(plainTitle(r.title ?? "") || (r.summary ?? "").trim());
 }
 
-const QUIET = new Set(["job", "hook", "usage", "system", "nudge", "command", "meta", "title", "turn-summary", "undo"]);
+const QUIET = new Set(["job", "hook", "usage", "system", "nudge", "command", "meta", "title", "turn-summary", "undo", "model"]);
 
 /** Kinds that are bookkeeping, not conversation. */
 export function isQuiet(kind: string): boolean {
@@ -336,7 +336,7 @@ export function groupTurns(lines: Line[]): Turn[] {
   let cur: Turn | null = null;
   for (const l of lines) {
     // Turn summaries live in the sidebar's turn log, not the transcript.
-    if (l.kind === "meta" || l.kind === "title" || l.kind === "turn-summary") continue;
+    if (l.kind === "meta" || l.kind === "title" || l.kind === "turn-summary" || l.kind === "model") continue;
     if (l.kind === "input") {
       if (cur) turns.push(cur);
       cur = { seq: l.seq, prompt: l, body: [], done: null };

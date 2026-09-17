@@ -374,6 +374,8 @@ func main() {
 	resumePath, needPicker := resolveSession(contFlag, resumeFlag, resumeID, mode)
 	if resumePath != "" {
 		sets = append(sets, "history.file="+resumePath)
+		// Explicit --set flags still beat a recorded /model swap.
+		sets = append(setFlags(resumedModelSets(resumePath)), sets...)
 	}
 
 	rows, err := src.load()

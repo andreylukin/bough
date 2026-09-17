@@ -250,6 +250,18 @@ func runModel(ctx *kernel.Context, args string) (string, error) {
 	if err := set(sets...); err != nil {
 		return "", err
 	}
+	// Record the swap in the session's history: a resumed child (the
+	// web's Esc restarts it) replays these, or it comes back on
+	// bough.yml's model while the picker still shows this one.
+	if target == "" {
+		if rec, err := kernel.Get[func(string, map[string]any)](ctx, "history-record"); err == nil {
+			vals := make([]any, len(sets))
+			for i, s := range sets {
+				vals[i] = s
+			}
+			rec("model", map[string]any{"sets": vals})
+		}
+	}
 
 	// Reconcile tolerates a broken row (Failed/Pending) instead of
 	// erroring — report that loudly rather than claiming success.
