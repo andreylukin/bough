@@ -2249,6 +2249,20 @@ a.rt-link{text-decoration:none}
 /* WEB1: the no-checkpoint note links to the Working tree tab */
 .chg-nodiff .rt-link{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
 /* /WEB1 */
+/* WEB2: a thrown block names its error; tool edits read as diffs (a 3px
+   bar, changed lines only); a background agent's finish note is a quiet row. */
+.tool-thrown{min-width:0;flex:0 1 auto;font-size:12px;color:var(--red);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.edit-diff+.edit-diff,.tool-output>pre.hl+.edit-diff,.edit-diff+pre.hl{border-top:1px solid var(--line)}
+.edit-diff-head{display:flex;gap:var(--s-2);align-items:baseline;padding:var(--s-1) var(--s-3);font-size:12px;color:var(--text-2)}
+.edit-diff-body{margin:0;font-size:12px;line-height:18px;overflow-x:auto}
+.edit-diff-body>.dl{grid-template-columns:1fr;padding-inline-start:var(--s-2)}
+.edit-diff-body>.dl-add{box-shadow:inset 3px 0 var(--accent)}
+.edit-diff-body>.dl-del{box-shadow:inset 3px 0 var(--red)}
+.edit-diff-body>.dl-hunk{background:none;color:var(--text-3)}
+.block.thin.toolrun>summary .rt-add,.block.thin.toolrun>summary .rt-del{font-size:12px;flex-shrink:0}
+.agent-notice>summary .block-label{color:var(--text-2)}
+@media (max-width:720px){.block.thin.toolcall>summary .tool-thrown{display:none}}
+/* /WEB2 */
 </style>
 </head>
 <body>

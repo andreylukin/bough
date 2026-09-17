@@ -1856,6 +1856,9 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			// "error: ...") so the projection feeds it back to the
 			// model; the UI event keeps the "error" kind.
 			result := map[string]any{"text": out, "code": code, "ms": elapsed}
+			if runErr != nil {
+				result["error"] = runErr.Error()
+			}
 			if bash != nil {
 				if runs, exit := bash.Bash(); runs > runsBefore {
 					result["exit"] = exit

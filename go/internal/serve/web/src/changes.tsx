@@ -101,6 +101,49 @@ export function DiffBody({ text }: { text: string }) {
 /** Why a session edit has no patch; the Working tree tab still diffs it against HEAD. */
 const NO_DIFF = "Diff unavailable: this session has no checkpoint.";
 
+/** Output text, or one edit's "patched|wrote <path> (…)" head with the tagged lines under it. */
+export type OutputPart = { kind: "text"; text: string } | { kind: "edit"; path: string; head: string; lines: string[]; add: number; del: number };
+
+const EDIT_HEAD = /^(?:patched|wrote) (.+?) \((?:[+-]?\d+ lines|\d+ bytes, \d+ lines)\)$/;
+
+/** A result's output cut into plain text and the edits tools.patch and tools.write print. */
+export function outputParts(text: string): OutputPart[] {
+  const out: OutputPart[] = [];
+  let plain: string[] = [];
+  const src = text.split("\n");
+  for (let i = 0; i < src.length; i++) {
+    const m = EDIT_HEAD.exec(src[i]);
+    if (!m) { plain.push(src[i]); continue; }
+    const lines: string[] = [];
+    let j = i + 1;
+    if (src[j] === "" && /^[+\- …]/.test(src[j + 1] ?? "")) j++;
+    for (; j < src.length && /^[+\- ]|^…$/.test(src[j]); j++) lines.push(src[j]);
+    if (plain.length) out.push({ kind: "text", text: plain.join("\n") });
+    plain = [];
+    out.push({ kind: "edit", path: m[1], head: src[i], lines, add: lines.filter((l) => l.startsWith("+")).length, del: lines.filter((l) => l.startsWith("-")).length });
+    i = j - 1;
+  }
+  if (plain.length) out.push({ kind: "text", text: plain.join("\n") });
+  return out;
+}
+
+/** One edit as printed by the tool: changed lines only, tinted like the Changes page. */
+export function EditDiff({ part }: { part: Extract<OutputPart, { kind: "edit" }> }) {
+  return (
+    <div className="edit-diff">
+      <div className="edit-diff-head"><span className="mono">{part.path}</span>{" "}
+        {part.add > 0 && <span className="num rt-add">+{part.add}</span>}{" "}
+        {part.del > 0 && <span className="num rt-del">−{part.del}</span>}</div>
+      {part.lines.length > 0 && (
+        <pre className="mono dl-body edit-diff-body">{part.lines.map((l, i) => {
+          const kind = l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : l === "…" ? "hunk" : "ctx";
+          return <span key={i} className={"dl" + lineClass[kind]}><span className="dl-t">{l + "\n"}</span></span>;
+        })}</pre>
+      )}
+    </div>
+  );
+}
+
 const countBadge = (f: Change & { patch?: boolean }) =>
   f.patch === false ? <span className="rt-label">No diff</span>
     : f.new ? <><span className="chg-badge">new</span>{f.add > 0 && <span className="rt-add">+{f.add}</span>}</>

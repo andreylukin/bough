@@ -56,3 +56,67 @@ test("Stop rescues only rows unsent at Stop, once the turn ended after them", ()
   expect(swallowedByStop([p], new Set(["a"]), [done])).toEqual([p]);
   expect(swallowedByStop([p], new Set(["a"]), [done, { seq: 7, kind: "input", text: "hi", at: at(2) } as Line])).toEqual([]);
 });
+
+// WEB2: tool rows say what happened.
+const { ToolCall, ToolRun } = await import("../src/app");
+const { splitWork: split, groupTools } = await import("../src/render");
+
+test("a program that threw reads failed with its error, not exit 0", () => {
+  const c = 'console.log(tools.bash("ls -a"))\nconsole.log(tools.view("package.json"))';
+  const html = renderToStaticMarkup(<ToolCall code={{ seq: 1, at: at(0), kind: "code", text: c }}
+    result={{ seq: 2, at: at(1), kind: "result", text: ".\nsrc\nerror: GoError: open package.json: no such file or directory\n\n[the 1 code block(s) after this one in your reply were not run: this block failed.]", data: { code: c, exit: 0, ms: 10 } }} />);
+  expect(html).toContain("block-failed");
+  expect(html).toContain("GoError: open package.json");
+  expect(html).not.toContain("exit 0");
+});
+
+test("a recorded error field marks the call failed", () => {
+  const c = 'console.log(tools.view("x"))';
+  const html = renderToStaticMarkup(<ToolCall code={{ seq: 1, at: at(0), kind: "code", text: c }}
+    result={{ seq: 2, at: at(1), kind: "result", text: "error: patch: old text not found in x\nnear line 3", data: { code: c, error: "patch: old text not found in x\nnear line 3" } }} />);
+  expect(html).toContain("block-failed");
+  expect(html).toContain("patch: old text not found in x");
+});
+
+const edits: Line[] = [
+  { seq: 1, at: at(0), kind: "code", text: 'console.log(tools.bash("ls -a"))\nconsole.log(tools.view("src/math.ts"))' },
+  { seq: 2, at: at(1), kind: "result", text: ".\nsrc", data: { exit: 0, ms: 10 } },
+  { seq: 3, at: at(2), kind: "code", text: 'console.log(tools.patch("src/math.ts", "a", "a\\nb"))\nconsole.log(tools.patch("src/index.ts", "c", "d\\ne"))' },
+  { seq: 4, at: at(3), kind: "result", text: "patched src/math.ts (+1 lines)\n\n a\n+b\npatched src/index.ts (+1 lines)\n\n-c\n+d\n+e\n[lsp] no errors", data: { ms: 900 } },
+  { seq: 5, at: at(4), kind: "code", text: 'console.log(tools.bash("tsc --noEmit"))' },
+  { seq: 6, at: at(5), kind: "result", text: "", data: { exit: 0, ms: 600 } },
+];
+
+test("a mixed fold is named by its edits, never by its first command", () => {
+  const html = renderToStaticMarkup(<ToolRun lines={edits} codes={[]} />);
+  expect(html).not.toContain("Tool group");
+  expect(html).toContain("Edited math.ts, index.ts");
+  expect(html).toContain("+3</span>");
+  expect(html).toContain("−1</span>");
+  expect(html).toContain("read 1 file · ran 2 commands");
+});
+
+test("an edit's output renders as a diff with add and del lines", () => {
+  const html = renderToStaticMarkup(<ToolCall code={edits[2]} result={edits[3]} />);
+  expect(html).toContain("edit-diff");
+  expect(html).toContain("dl-add");
+  expect(html).toContain("dl-del");
+  expect(html).toContain("[lsp] no errors");
+});
+
+test("a background agent's finish notice in a stopped turn is its own row, not work", () => {
+  const ls: Line[] = [
+    { seq: 1, at: at(0), kind: "input", text: "tick" },
+    { seq: 2, at: at(1), kind: "code", text: 'tools.bash("sleep 1")' },
+    { seq: 3, at: at(2), kind: "result", text: "", data: { exit: 0 } },
+    { seq: 4, at: at(3), kind: "job", text: "[agent List files · 01a0 finished] Wrote COUNTS.md" },
+    { seq: 5, at: at(4), kind: "cancelled", text: "" },
+    { seq: 6, at: at(4), kind: "done", text: "", data: { exit: 0 } },
+  ];
+  const turn = groupTurns(ls)[0];
+  const segs = split(groupTools(turn.body.map((l) => ({ kind: "line", seq: l.seq, line: l }) as never), []), [], false);
+  expect(segs.some((s) => s.kind === "notice")).toBe(true);
+  const html = renderToStaticMarkup(<TurnView turn={turn} />);
+  expect(html).toContain("Background agent finished");
+  expect(html).not.toContain("[agent List files");
+});
