@@ -56,17 +56,17 @@ export function Markdown({ text, live }: { text: string; /** Still streaming: ho
   return <div className="md" ref={ref} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
+/** A few pixels of overflow is rounding, not a table worth swiping. */
+export function tableOverflows(scrollWidth: number, clientWidth: number): boolean {
+  return scrollWidth - clientWidth > 8;
+}
+
 /**
  * A streamed reply cut mid-token: "It exports `sub(a" rendered a raw
  * backtick until the closing one arrived. A trailing unclosed inline
  * backtick or link bracket on the last line is held back until it closes
  * or the stream ends. Inside an open fence nothing is held: that is code.
  */
-/** A few pixels of overflow is rounding, not a table worth swiping. */
-export function tableOverflows(scrollWidth: number, clientWidth: number): boolean {
-  return scrollWidth - clientWidth > 8;
-}
-
 export function holdPartial(text: string): string {
   const fences = (text.match(/^\s*```/gm) ?? []).length;
   if (fences % 2) return text;
