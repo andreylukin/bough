@@ -148,7 +148,8 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
           <summary>
             <span className="block-label">Build log</span>
             <span className="block-detail mono">{detail.build.tag}</span>
-            <span className="block-lines">{detail.build.state || "never built"}</span>
+            <span className="block-lines">{!building && detail.build.tag && detail.orb.image && detail.build.tag !== detail.orb.image
+              ? `older image · ${detail.build.state}` : detail.build.state || "never built"}</span>
           </summary>
           <pre ref={logRef} className="orb-log">{log || "Nothing logged yet."}</pre>
         </details>

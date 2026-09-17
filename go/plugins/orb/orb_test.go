@@ -1,10 +1,12 @@
 package orb
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/andreylukin/bough/internal/projectdef"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/codemode"
+	"github.com/andreylukin/bough/plugins/commands"
 	_ "github.com/andreylukin/bough/plugins/history"
 	_ "github.com/andreylukin/bough/plugins/scratch"
 )
@@ -91,6 +94,10 @@ func TestProjectRowOpensOrb(t *testing.T) {
 		{ID: "scratchpad", Plugin: "scratchpad", Config: map[string]any{"dir": filepath.Join(home, "scratch")}},
 	}
 	ctx.Provide("codemode", codemode.New(5*time.Second))
+	reg := commands.NewRegistry()
+	// The /orb setup skill is already registered by the skills row.
+	reg.Register(commands.CommandInfo{Name: "orb", Kind: "skill"}, func(string) (string, error) { return "", nil })
+	ctx.Provide("commands", reg)
 	if err := ctx.Mount(rows); err != nil {
 		t.Fatal(err)
 	}
@@ -131,6 +138,25 @@ func TestProjectRowOpensOrb(t *testing.T) {
 		t.Fatalf("reload stopped the orb: %+v", s)
 	}
 
+	// /orb status names every phase with its time; logs shows resume.log;
+	// anything else is still the setup skill; stop stops the container.
+	os.WriteFile(filepath.Join(iorb.Dir(home, "sess1"), "resume.log"), []byte("== resume.sh start x\n"), 0o644)
+	if out, err := reg.Run("orb", "status"); err != nil || !strings.Contains(out, "orb demo · running") || !strings.Contains(out, "build image") || !strings.Contains(out, "resume.sh") {
+		t.Errorf("/orb status = %q, %v", out, err)
+	}
+	if out, err := reg.Run("orb", "logs"); err != nil || !strings.Contains(out, "== resume.sh start") {
+		t.Errorf("/orb logs = %q, %v", out, err)
+	}
+	if _, err := reg.Run("orb", "demo"); err == nil || !strings.Contains(err.Error(), "/orb demo") {
+		t.Errorf("/orb demo = %v, want the skill submit", err)
+	}
+	if out, err := reg.Run("orb", "stop"); err != nil || !strings.Contains(out, "stopped") {
+		t.Errorf("/orb stop = %q, %v", out, err)
+	}
+	if s, _ := iorb.ReadState(home, "sess1"); s.Status != iorb.StatusStopped {
+		t.Errorf("after /orb stop %s", s.Status)
+	}
+
 	// A chdir failing after the orb is open must not leave it running
 	// with no owner.
 	chdir = func(string) error { return os.ErrNotExist }
@@ -141,3 +167,30 @@ func TestProjectRowOpensOrb(t *testing.T) {
 		t.Fatalf("failed chdir left the orb %s", s.Status)
 	}
 }
+
+// Before the TUI is up, a start prints one line that follows state.json.
+func TestProgressLine(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	now := time.Now().UTC()
+	b, _ := json.Marshal(iorb.State{Session: "s", Project: "demo", Status: iorb.StatusBuilding, Phase: iorb.PhaseBuild,
+		Phases: []iorb.Phase{{Name: iorb.PhaseBuild, StartedAt: now}}})
+	os.MkdirAll(iorb.Dir(home, "s"), 0o755)
+	os.WriteFile(filepath.Join(iorb.Dir(home, "s"), "state.json"), b, 0o644)
+	var buf syncBuf
+	stop := progress(&buf, home, "s", 5*time.Millisecond)
+	time.Sleep(30 * time.Millisecond)
+	stop()
+	out := buf.String()
+	if !strings.Contains(out, "\r\x1b[Korb demo · build image") || !strings.HasSuffix(out, "\r\x1b[K") {
+		t.Errorf("progress = %q", out)
+	}
+}
+
+type syncBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
+func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }

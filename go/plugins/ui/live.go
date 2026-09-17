@@ -94,6 +94,9 @@ type uiCfg struct {
 	// jobs is the background-job service, for the strip under the
 	// composer; nil when the tools row is absent.
 	jobs jobLister
+	// orb is a project session's orb ("orb-state"), for its one line in
+	// the status bar; nil in a local session.
+	orb interface{ Line() string }
 	// todo is the todo service, read once when a session replays so a
 	// resumed list is pinned before anything changes it; nil when the
 	// todo row is absent.
@@ -304,6 +307,9 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 		// kernel's warning goes to stderr, which under `bough web` is
 		// a log file nobody reads.
 		cfg.notice = strings.TrimSpace(cfg.notice + "\nan llm-small row is configured but provides no llm-small service: add `service: llm-small` to its config, or run `bough update` if this binary predates it")
+	}
+	if o, err := kernel.Get[interface{ Line() string }](ctx, "orb-state"); err == nil {
+		cfg.orb = o
 	}
 	if j, err := kernel.Get[jobLister](ctx, "job-notices"); err == nil {
 		cfg.jobs = j

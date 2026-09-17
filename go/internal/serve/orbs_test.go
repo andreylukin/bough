@@ -381,3 +381,54 @@ func TestBuildOrbClonesRemoteAndReportsEarlyFailure(t *testing.T) {
 		t.Errorf("summary = %v", o)
 	}
 }
+
+// While this serve builds, the detail's build says building (the page
+// decides from it whether to poll the log), and a failed build of an
+// older tag never contradicts the current image being built.
+func TestOrbDetailBuildState(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	id := mkProject(t, f, "bs")
+	f.do(t, "POST", "/api/projects/"+id+"/orb", `{}`)
+	f.do(t, "POST", "/api/projects/"+id+"/orb/build", `{}`)
+	waitFor(t, "build ok", func() bool {
+		_, lb := f.do(t, "GET", "/api/projects/"+id+"/orb/build/log?offset=0", "")
+		return lb["state"] == "ok"
+	})
+
+	f.sup.mu.Lock()
+	f.sup.building["bs"] = true
+	f.sup.mu.Unlock()
+	_, d := f.do(t, "GET", "/api/projects/"+id+"/orb", "")
+	if b, _ := d["build"].(map[string]any); b["state"] != "building" {
+		t.Errorf("detail build while building = %v", b)
+	}
+	f.sup.mu.Lock()
+	delete(f.sup.building, "bs")
+	f.sup.mu.Unlock()
+
+	// An older tag's failure: the current image exists, so it is built.
+	home := f.sup.Home()
+	b, _ := json.Marshal(orb.Build{Tag: "bough-orb/bs:old", State: "failed", Error: "boom"})
+	os.WriteFile(filepath.Join(home, ".bough", "orbs", "images", "bs", "build.json"), b, 0o644)
+	_, d = f.do(t, "GET", "/api/projects/"+id+"/orb", "")
+	sum, _ := d["orb"].(map[string]any)
+	if sum["built"] != true || sum["build"] == "failed" {
+		t.Errorf("summary contradicts itself: %v", sum)
+	}
+}
+
+// A session's orb carries its start phases.
+func TestSessionOrbPhases(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	seedModeSession(t, f, "ph1", map[string]any{"mode": "project", "project": "x"})
+	now := time.Now().UTC()
+	writeState(t, f.sup.Home(), orb.State{Session: "ph1", Project: "x", Status: orb.StatusBuilding, Phase: orb.PhaseBuild, PID: os.Getpid(), UpdatedAt: now,
+		Phases: []orb.Phase{{Name: orb.PhaseSync, StartedAt: now, EndedAt: now}, {Name: orb.PhaseBuild, StartedAt: now}}})
+	_, body := f.do(t, "GET", "/api/sessions/ph1/orb", "")
+	o, _ := body["orb"].(map[string]any)
+	if ph, _ := o["phases"].([]any); len(ph) != 2 || o["phase"] != "build" {
+		t.Fatalf("orb = %v", o)
+	}
+}

@@ -36,7 +36,83 @@ type State struct {
 	Error     string            `json:"error,omitempty"`
 	PID       int               `json:"pid,omitempty"`
 	ProxyAuth string            `json:"proxyAuth,omitempty"` // ProxyAuthToken or ProxyAuthLegacy
+	Phase     string            `json:"phase,omitempty"`     // the step in progress, or the last one reached
+	Phases    []Phase           `json:"phases,omitempty"`    // this start's steps, in order
 	UpdatedAt time.Time         `json:"updatedAt"`
+}
+
+// The named steps of a start, in order. A restart after Stop records
+// only container, resume.sh and ready.
+const (
+	PhaseSync      = "sync"      // clone or fetch remote repos
+	PhaseBuild     = "build"     // ensure the snapshot image
+	PhaseWorktree  = "worktree"  // the session's git worktrees and mounts
+	PhaseContainer = "container" // create or start the container
+	PhaseResume    = "resume.sh" // proxy, relay shim and resume.sh
+	PhaseReady     = "ready"
+)
+
+// Phase is one timed step. EndedAt is zero while it runs; Error is set
+// on the step a start failed in.
+type Phase struct {
+	Name      string    `json:"name"`
+	StartedAt time.Time `json:"startedAt"`
+	EndedAt   time.Time `json:"endedAt,omitzero"`
+	Error     string    `json:"error,omitempty"`
+}
+
+var phaseWords = map[string]string{
+	PhaseSync: "sync repos", PhaseBuild: "build image", PhaseWorktree: "worktree",
+	PhaseContainer: "start container", PhaseResume: "resume.sh", PhaseReady: "ready",
+}
+
+// begin ends the running step and starts name; ready ends at once.
+func (s *State) begin(name string) {
+	now := time.Now().UTC()
+	s.endPhase("")
+	ph := Phase{Name: name, StartedAt: now}
+	if name == PhaseReady {
+		ph.EndedAt = now
+	}
+	s.Phase = name
+	s.Phases = append(s.Phases, ph)
+}
+
+// endPhase closes the running step, recording why it failed when errMsg
+// is set.
+func (s *State) endPhase(errMsg string) {
+	if n := len(s.Phases); n > 0 && s.Phases[n-1].EndedAt.IsZero() {
+		s.Phases[n-1].EndedAt = time.Now().UTC()
+		s.Phases[n-1].Error = errMsg
+	}
+}
+
+// PhaseWord names a phase for people ("build image").
+func PhaseWord(name string) string {
+	if w, ok := phaseWords[name]; ok {
+		return w
+	}
+	return name
+}
+
+// PhaseLine is the one-line orb status: the running step with its
+// elapsed time while a start is under way, else the orb's state.
+func PhaseLine(s State, now time.Time) string {
+	head := "orb " + s.Project + " · "
+	switch s.Status {
+	case StatusRunning, StatusStopped:
+		return head + string(s.Status)
+	case StatusFailed:
+		if s.Phase != "" {
+			return head + "failed at " + s.Phase
+		}
+		return head + "failed"
+	}
+	if n := len(s.Phases); n > 0 && s.Phases[n-1].EndedAt.IsZero() {
+		ph := s.Phases[n-1]
+		return fmt.Sprintf("%s%s %s", head, PhaseWord(ph.Name), now.Sub(ph.StartedAt).Truncate(time.Second))
+	}
+	return head + "starting"
 }
 
 const stateFile = "state.json"

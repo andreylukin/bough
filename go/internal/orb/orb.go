@@ -51,6 +51,7 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 	o.state = State{Session: session, Project: p.Slug, Container: container.OrbName(session), PID: os.Getpid()}
 	fail := func(err error) (*Orb, error) {
 		o.state.Status, o.state.Error = StatusFailed, err.Error()
+		o.state.endPhase(err.Error())
 		writeState(home, o.state)
 		return nil, fmt.Errorf("orb: open %s: %w", session, err)
 	}
@@ -60,11 +61,15 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 	if err := rt.Available(ctx); err != nil {
 		return fail(fmt.Errorf("%w (run `bough update` or `container system start`)", err))
 	}
+	o.state.Status = StatusStarting
+	o.state.begin(PhaseSync)
+	writeState(home, o.state)
 	if err := SyncRepos(ctx, home, p); err != nil {
 		return fail(err)
 	}
 
 	o.state.Status = StatusBuilding
+	o.state.begin(PhaseBuild)
 	writeState(home, o.state)
 	tag, err := EnsureImage(ctx, rt, home, p, nil)
 	if err != nil {
@@ -72,6 +77,7 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 	}
 	o.state.Image = tag
 	o.state.Status = StatusStarting
+	o.state.begin(PhaseWorktree)
 	writeState(home, o.state)
 
 	mounts, err := o.prepareMounts(ctx)
@@ -82,6 +88,8 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 		Name: o.state.Container, Image: tag, Mounts: mounts,
 		Env: o.baseEnv(), Workdir: o.state.Primary, CPUs: p.Def.CPUs, Memory: p.Def.Memory,
 	}
+	o.state.begin(PhaseContainer)
+	writeState(home, o.state)
 	// An existing container is reused only when the last state we wrote
 	// proves it runs this tag: a missing or unreadable state.json says
 	// nothing about its image, mounts or env, and Start would silently
@@ -317,6 +325,8 @@ func (o *Orb) ensureProxyLocked(ctx context.Context) {
 // resumeLocked runs resume.sh and settles Running or Failed. A failing
 // script leaves the container usable so the agent can fix it.
 func (o *Orb) resumeLocked(ctx context.Context) {
+	o.state.begin(PhaseResume)
+	writeState(o.home, o.state)
 	o.ensureProxyLocked(ctx)
 	if o.scratch != "" {
 		if err := writeShim(o.scratch); err != nil {
@@ -329,6 +339,11 @@ func (o *Orb) resumeLocked(ctx context.Context) {
 		if err := o.runResume(ctx, script); err != nil {
 			o.state.Status, o.state.Error = StatusFailed, "resume.sh: "+err.Error()
 		}
+	}
+	if o.state.Status == StatusFailed {
+		o.state.endPhase(o.state.Error)
+	} else {
+		o.state.begin(PhaseReady)
 	}
 	writeState(o.home, o.state)
 }
@@ -362,8 +377,12 @@ func (o *Orb) State() State {
 	for k, v := range o.state.Worktrees {
 		s.Worktrees[k] = v
 	}
+	s.Phases = slices.Clone(o.state.Phases)
 	return s
 }
+
+// Line is the orb's one-line status (PhaseLine) for the TUI's bar.
+func (o *Orb) Line() string { return PhaseLine(o.State(), time.Now()) }
 
 func (o *Orb) Root() string { return Dir(o.home, o.session) }
 
@@ -418,14 +437,22 @@ func (o *Orb) ensureRunningLocked(ctx context.Context) error {
 	if st == container.StateRunning {
 		return nil
 	}
+	o.state.Phases = nil
+	o.state.Status = StatusStarting
+	o.state.begin(PhaseContainer)
+	writeState(o.home, o.state)
 	if st == container.StateMissing {
 		// Removed behind our back: Start creates it, so with a new token.
 		if err := o.newTokenLocked(); err != nil {
+			o.state.Status, o.state.Error = StatusFailed, err.Error()
+			o.state.endPhase(err.Error())
+			writeState(o.home, o.state)
 			return err
 		}
 	}
 	if err := o.rt.Start(ctx, o.spec); err != nil {
 		o.state.Status, o.state.Error = StatusFailed, err.Error()
+		o.state.endPhase(err.Error())
 		writeState(o.home, o.state)
 		return err
 	}
