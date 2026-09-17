@@ -58,3 +58,27 @@ test("a send from a switched view still lands when the new session's input reuse
     onBack={() => {}} onContext={() => {}} onAck={() => {}} projects={[]} busy={false} jump={null} />);
   expect(html).not.toMatch(/composer-hint[^>]*>Sending ·/);
 });
+
+const props = { onSend: async () => null, onAnswer: async () => null, onInterrupt: () => {}, onArchive: () => {}, onRename: async () => {}, onModel: () => {},
+  onEffort: () => {}, onAssign: () => {}, onBack: () => {}, onContext: () => {}, onAck: () => {}, projects: [], busy: false, jump: null };
+
+test("R2-B: while a send is pending the header never says Done", () => {
+  const html = renderToStaticMarkup(<Thread row={{ ...row, status: "done" } as Row} lines={[]} sending={sent} {...props} />);
+  const head = html.slice(html.indexOf("thread-head"), html.indexOf("</header>"));
+  expect(head).not.toContain(">Done<");
+  expect(head).toContain("Sending");
+});
+
+test("R2-B: the status goes Sending, then Waiting once accepted, then Streaming", () => {
+  expect(composerStatus({ sending: true, accepted: false, running: false, streamed: false, activity: "" })).toBe("Sending");
+  expect(composerStatus({ sending: true, accepted: true, running: false, streamed: false, activity: "" })).toBe("Waiting");
+  expect(composerStatus({ sending: false, running: true, streamed: true, activity: "" })).toBe("Streaming");
+  const accepted = renderToStaticMarkup(<Thread row={{ ...row, status: "done" } as Row} lines={[]} sending={[{ ...sent[0], accepted: true }]} {...props} />);
+  expect(accepted).toContain("Waiting for model…");
+  expect(accepted).toContain("breath-dot");
+  const waiting = renderToStaticMarkup(<Thread row={{ ...row, status: "running" } as Row} lines={[]} sending={sent} {...props} />);
+  expect(waiting).toContain("Waiting for model…");
+  const streaming = renderToStaticMarkup(<Thread row={{ ...row, status: "running" } as Row} lines={[]} sending={[]} activity="Reading app.tsx" {...props} />);
+  expect(streaming).toContain("typing-dots");
+  expect(streaming).not.toContain("Waiting for model…");
+});
