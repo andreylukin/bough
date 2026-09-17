@@ -2386,6 +2386,18 @@ pre.edit-rows,.block pre.edit-rows{text-indent:0;margin:2px 0 var(--s-2);padding
   .turn-foot>a.turn-files{min-height:44px;align-items:center}
 }
 /* /R2-G */
+/* R2-H: a phone composer keeps a compact model and effort control;
+   the lock badge gives up its words first. */
+@media (max-width:720px){
+  .composer-tools{flex-wrap:nowrap}
+  .composer-tools .controls{display:flex;min-width:0}
+  .composer-tools .ctl-run{min-width:0}
+  .composer-tools .ctl-run .sel{min-width:0}
+  .composer-tools .ctl-run .sel-btn{max-width:112px}
+  .composer-tools .ctl-run>.sel:last-of-type>.sel-btn{max-width:84px}
+  .composer-tools .mode-badge{flex-shrink:0;font-size:0;gap:0;width:28px;justify-content:center;padding:0}
+}
+/* /R2-H */
 </style>
 </head>
 <body>

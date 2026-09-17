@@ -1,7 +1,7 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { elapsed } from "./loading";
-import { clampToViewport } from "./popover";
+import { anchorPlace } from "./popover";
 import { Markdown, duration, execNote, lineCount, plainTitle } from "./render";
 import type { Line, Row } from "./types";
 import { jobSummaryLine, jobTitle, jobsFromLines, parseLegacyJob, useReviewed, workCounts, workElapsedMs, workSummaryText, type WorkCounts, type WorkKind, type WorkLife, type Worker } from "./work";
@@ -366,8 +366,8 @@ const when = (w: Worker) => Date.parse(w.endedAt ?? w.startedAt ?? "") || w.seq;
  * bottom sheet on a phone. Rows keep their group while pointed at,
  * focused or open, and regroup once they are let go.
  */
-export function WorkDialog({ workers, sheet, top, right, childState, onRetryChildren, paused, parent, onClose, onView, onOpenAgent }: {
-  workers: Worker[]; sheet: boolean; top?: number; /** From the pane's right edge to the Work button's. */ right?: number; childState: ChildState; onRetryChildren: () => void; paused?: boolean;
+export function WorkDialog({ workers, sheet, anchor, childState, onRetryChildren, paused, parent, onClose, onView, onOpenAgent }: {
+  workers: Worker[]; sheet: boolean; /** The Work button: the popover opens under it, inside its pane. */ anchor?: React.RefObject<HTMLElement | null>; childState: ChildState; onRetryChildren: () => void; paused?: boolean;
   /** The session whose Work this is: an agent's details are read on its behalf. */
   parent: string;
   /** refocus: give focus back to the Work button. */
@@ -393,7 +393,23 @@ export function WorkDialog({ workers, sheet, top, right, childState, onRetryChil
 
   // Focus lands on the heading; Escape closes; the page behind is inert.
   useLayoutEffect(() => { head.current?.focus(); }, []);
-  useLayoutEffect(() => { if (!sheet) clampToViewport(ref.current); }, [sheet, top, right]);
+  // Fixed against the button's rect, kept inside the pane and the window;
+  // the body scrolls inside the height left, so Close is never cut off.
+  const [place, setPlace] = useState<React.CSSProperties>();
+  useLayoutEffect(() => {
+    if (sheet) return;
+    const at = () => {
+      const el = ref.current, b = anchor?.current;
+      if (!el || !b) return;
+      const t = b.getBoundingClientRect(), pane = b.closest(".thread")?.getBoundingClientRect();
+      const p = anchorPlace(t, el.offsetWidth, el.scrollHeight,
+        { left: Math.max(0, pane?.left ?? 0), right: Math.min(innerWidth, pane?.right ?? innerWidth), top: 0, bottom: innerHeight }, "end");
+      setPlace({ position: "fixed", top: p.top, left: p.left, insetInlineEnd: "auto", maxHeight: Math.min(560, p.maxHeight) });
+    };
+    at();
+    addEventListener("resize", at);
+    return () => removeEventListener("resize", at);
+  }, [sheet, anchor, workers.length]);
   // A layout effect: the page is un-inerted in the same commit that closes
   // the dialog, so focus can move to the transcript right after.
   useLayoutEffect(() => {
@@ -448,7 +464,7 @@ export function WorkDialog({ workers, sheet, top, right, childState, onRetryChil
 
   return (
     <div ref={ref} className={sheet ? "work-sheet" : "work-popover"} role="dialog" aria-modal="true" aria-labelledby={titleId}
-         style={!sheet ? { top, insetInlineEnd: right } : undefined} onKeyDown={trap}>
+         style={!sheet ? place ?? (anchor ? { visibility: "hidden" } : undefined) : undefined} onKeyDown={trap}>
       {sheet && <div className="work-grabber" aria-hidden="true" />}
       <header>
         <h2 id={titleId} ref={head} tabIndex={-1} className="work-title">Work</h2>
