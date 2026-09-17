@@ -2233,10 +2233,10 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
       {facts.map((f) => <span key={f} className="num">{f}</span>)}
       {files.length > 0 && <TurnFiles files={files} turn={turn} edits={edits} />}
       {extra}
-      <span className="turn-foot-right">
+      {(u?.cost !== undefined || tokens || model) && <span className="turn-foot-right">
         {u?.cost !== undefined ? <span className="num" title={tokens}>{money(u.cost)}</span> : tokens && <span className="num">{tokens}</span>}
         {model && <span className="mono" title={model}>{(u?.cost !== undefined || tokens) ? " · " : ""}{model.split("/").pop()}</span>}
-      </span>
+      </span>}
       {failed && fail && !shownOpen && (
         <div className="turn-fail" role="note">
           <button type="button" className="link mono turn-fail-cmd" onClick={show}>{failCmd || "Show the failed command"}</button>

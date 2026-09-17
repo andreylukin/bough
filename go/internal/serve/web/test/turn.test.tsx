@@ -390,3 +390,11 @@ test("MB-STREAM: a stop during a tool keeps Stopped in the footer, in the neutra
   expect(html).toMatch(/turn-outcome turn-stopped[^>]*>(<span class="stop-mark"[^>]*><\/span>)?Stopped/);
   expect(html).not.toMatch(/turn-failed[^>]*>Stopped/);
 });
+
+test("a footer with no cost, tokens or model draws no empty right cell, so no trailing separator", () => {
+  const done: Line[] = [...live, { seq: 4, at: at(15), kind: "result", text: code + "\nok", data: { code, exit: 0 } },
+    { seq: 5, at: at(20), kind: "done", text: "", data: {} }];
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns(done)[0]} />);
+  expect(html).toContain("Worked for 20s");
+  expect(html).not.toContain("turn-foot-right");
+});
