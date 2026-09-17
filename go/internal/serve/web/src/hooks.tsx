@@ -484,11 +484,11 @@ function PluginRow({ p, off, setOff, onOff }: {
 }
 
 /** A glyph and a sentence-case word; red only when something failed. */
-function StateWord({ word, failed = false }: { word: string; failed?: boolean }) {
+export function StateWord({ word, failed = false }: { word: string; failed?: boolean }) {
   return (
     <span className={"hk2-mark " + (failed ? "is-failed" : "is-done")}>
       <svg className="state-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
-           strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{(failed ? STATUS.error : STATUS.idle).glyph}</svg>
+           strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{(failed ? STATUS.error : word === "Passed" ? STATUS.done : STATUS.idle).glyph}</svg>
       {word}
     </span>
   );
