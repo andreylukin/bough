@@ -31,11 +31,12 @@ type Orb struct {
 	project projectdef.Project
 	scratch string
 
-	mu    sync.Mutex
-	state State
-	spec  container.RunSpec
-	proxy *proxy // host egress for the guest; nil when it could not start
-	token string // proxy/relay token; "" for a container created before tokens
+	mu       sync.Mutex
+	state    State
+	spec     container.RunSpec
+	proxy    *proxy      // host egress for the guest; nil when it could not start
+	token    string      // proxy/relay token; "" for a container created before tokens
+	onResume func(State) // called under mu after each start settles; must not call back into o
 
 	secretWarned sync.Map // secret names already reported unresolved
 }
@@ -110,14 +111,16 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 	// token; a reused one keeps the token (or the lack of one) it has.
 	if st == container.StateMissing {
 		err = o.newTokenLocked()
+		o.planPortsLocked()
 	} else {
 		o.token, err = readToken(home, session)
 		o.setTokenEnvLocked()
+		o.keepPortsLocked(prev.Ports)
 	}
 	if err != nil {
 		return fail(fmt.Errorf("orb token: %w", err))
 	}
-	if err := rt.Start(ctx, o.spec); err != nil {
+	if err := startErr(rt.Start(ctx, o.spec), o.spec.Ports); err != nil {
 		// A concurrent session's build may have pruned our tag between
 		// EnsureImage and Start (no container used it yet): rebuild once.
 		if ok, ierr := rt.ImageExists(ctx, tag); ierr != nil || ok {
@@ -128,7 +131,7 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 		}
 		o.state.Image, o.spec.Image = tag, tag
 		writeState(home, o.state)
-		if err := rt.Start(ctx, o.spec); err != nil {
+		if err := startErr(rt.Start(ctx, o.spec), o.spec.Ports); err != nil {
 			return fail(err)
 		}
 	}
@@ -351,6 +354,7 @@ func (o *Orb) resumeLocked(ctx context.Context) {
 	o.state.begin(PhaseResume)
 	writeState(o.home, o.state)
 	o.ensureProxyLocked(ctx)
+	o.addressLocked(ctx)
 	if o.scratch != "" {
 		if err := writeShim(o.scratch); err != nil {
 			fmt.Fprintf(os.Stderr, "bough: orb: bough shim: %v\n", err)
@@ -369,6 +373,17 @@ func (o *Orb) resumeLocked(ctx context.Context) {
 		o.state.begin(PhaseReady)
 	}
 	writeState(o.home, o.state)
+	if o.onResume != nil {
+		o.onResume(o.state)
+	}
+}
+
+// OnResume sets f to run after every later start (a restart gets a new
+// IP); nil clears it. f must not call methods on o.
+func (o *Orb) OnResume(f func(State)) {
+	o.mu.Lock()
+	o.onResume = f
+	o.mu.Unlock()
 }
 
 func (o *Orb) runResume(ctx context.Context, script string) error {
@@ -480,8 +495,9 @@ func (o *Orb) ensureRunningLocked(ctx context.Context) error {
 			writeState(o.home, o.state)
 			return err
 		}
+		o.planPortsLocked()
 	}
-	if err := o.rt.Start(ctx, o.spec); err != nil {
+	if err := startErr(o.rt.Start(ctx, o.spec), o.spec.Ports); err != nil {
 		o.state.Status, o.state.Error = StatusFailed, err.Error()
 		o.state.endPhase(err.Error())
 		writeState(o.home, o.state)

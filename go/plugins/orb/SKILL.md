@@ -45,8 +45,12 @@ cd /bough-setup/lock/<repo> && npm ci
 - setup.sh gets no project env. Export what it needs inside the script.
 - In a Dockerfile, order RUN lines the same way: apt first, deps last.
 - Only setup.sh, `base:`, declared files and a Dockerfile dir rebuild
-  the image. Env, secrets, checks, caches, cpus, memory and resume.sh
-  do not.
+  the image. Env, secrets, checks, caches, cpus, memory, ports and
+  resume.sh do not.
+- Servers in the orb are reached at the container IP, not localhost.
+  Only if the user asks for a 127.0.0.1 forward: `bough project set
+  <slug> ports 3000,8080:80` (host:container; a busy host port is
+  skipped). Forwards are fixed when the container is created.
 
 ## 3. setup.sh vs resume.sh
 

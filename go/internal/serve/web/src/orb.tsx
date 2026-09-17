@@ -5,6 +5,7 @@ import { sessionTitle } from "./render";
 import { CopyButton, Pending } from "./loading";
 import { STATUS, StatusMark } from "./status";
 import { idTail } from "./palette";
+import { OrbAddress } from "./mode";
 
 const FILES: OrbFile[] = ["project.yml", "Dockerfile", "setup.sh", "resume.sh"];
 
@@ -225,6 +226,7 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
             {/* Every row keeps the action slot, so the columns line up whether or not it can stop. */}
             <span className="orb-act">{orbUp(o) ? <button className="btn btn-sm" onClick={() => onStopOrb(o.session)}>Stop orb</button>
               : onRemoveOrb && <button className="btn btn-sm btn-danger-quiet" onClick={() => onRemoveOrb(o.session)}>Remove…</button>}</span>
+            {o.status === "running" && (o.ip || o.ports?.length) ? <div className="orb-note"><OrbAddress orb={o} /></div> : null}
             {o.proxyAuth === "legacy" && (
               <p className="orb-note"><Mark status="needs-you" word="Proxy unauthenticated"
                 detail="this orb predates proxy tokens, so any VM on the bridge can use its host proxy and relay; remove the orb and start a session to recreate it with a token" /></p>

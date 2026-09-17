@@ -94,7 +94,18 @@ func orbStatus(st iorb.State, now time.Time) string {
 		}
 		b.WriteString("\n")
 	}
-	fmt.Fprintf(&b, "container %s\nimage %s\nworktree %s", st.Container, st.Image, st.Primary)
+	fmt.Fprintf(&b, "container %s\n", st.Container)
+	if st.IP != "" && st.Status == iorb.StatusRunning {
+		fmt.Fprintf(&b, "ip %s\n", st.IP)
+	}
+	for _, p := range st.Ports {
+		if p.Error != "" {
+			fmt.Fprintf(&b, "port %d not forwarded: %s\n", p.Guest, p.Error)
+		} else {
+			fmt.Fprintf(&b, "port 127.0.0.1:%d → %d\n", p.Host, p.Guest)
+		}
+	}
+	fmt.Fprintf(&b, "image %s\nworktree %s", st.Image, st.Primary)
 	return b.String()
 }
 

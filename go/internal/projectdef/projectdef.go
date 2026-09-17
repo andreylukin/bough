@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -51,6 +52,87 @@ type Def struct {
 	Identity []string `yaml:"identity,omitempty"`
 	CPUs     int      `yaml:"cpus,omitempty"`
 	Memory   string   `yaml:"memory,omitempty"`
+	// Ports opts into host forwards: each is published on 127.0.0.1 only.
+	// A host port already in use is skipped, not fatal. The container's own
+	// IP always reaches every port.
+	Ports []Port `yaml:"ports,omitempty"`
+}
+
+// Port forwards 127.0.0.1:Host on the host to Guest in the container.
+// In YAML it is 3000 (same port both sides) or "8080:80" (host:guest).
+type Port struct{ Host, Guest int }
+
+func (p Port) String() string {
+	if p.Host == p.Guest {
+		return strconv.Itoa(p.Host)
+	}
+	return fmt.Sprintf("%d:%d", p.Host, p.Guest)
+}
+
+func (p Port) MarshalYAML() (any, error) {
+	if p.Host == p.Guest {
+		return p.Host, nil
+	}
+	return p.String(), nil
+}
+
+func (p *Port) UnmarshalYAML(n *yaml.Node) error {
+	q, err := parsePort(n.Value)
+	if err != nil {
+		return fmt.Errorf("ports: %w", err)
+	}
+	*p = q
+	return nil
+}
+
+func parsePort(s string) (Port, error) {
+	num := func(v string) (int, error) {
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil || n < 1 || n > 65535 {
+			return 0, fmt.Errorf("%q is not a port (want 1-65535, or host:guest like 8080:80)", s)
+		}
+		return n, nil
+	}
+	h, g, pair := strings.Cut(s, ":")
+	host, err := num(h)
+	if err != nil {
+		return Port{}, err
+	}
+	if !pair {
+		return Port{Host: host, Guest: host}, nil
+	}
+	guest, err := num(g)
+	if err != nil {
+		return Port{}, err
+	}
+	return Port{Host: host, Guest: guest}, nil
+}
+
+// ParsePorts reads a comma-separated list ("3000, 8080:80"); "" is none.
+func ParsePorts(s string) ([]Port, error) {
+	var ports []Port
+	for f := range strings.SplitSeq(s, ",") {
+		if strings.TrimSpace(f) == "" {
+			continue
+		}
+		p, err := parsePort(strings.TrimSpace(f))
+		if err != nil {
+			return nil, err
+		}
+		ports = append(ports, p)
+	}
+	return ports, checkPorts(ports)
+}
+
+func checkPorts(ports []Port) error {
+	seen := map[int]bool{}
+	for i, p := range ports {
+		if seen[p.Host] {
+			return fmt.Errorf("ports[%d]: host port %d is listed twice", i, p.Host)
+		}
+		seen[p.Host] = true
+	}
+	return nil
 }
 
 // Project is one definition on disk.
@@ -113,6 +195,9 @@ func Parse(b []byte) (Def, error) {
 			return Def{}, fmt.Errorf("projectdef: %s: repos[%d]: duplicate name %q (set name:)", FileYAML, i, n)
 		}
 		seen[n] = true
+	}
+	if err := checkPorts(d.Ports); err != nil {
+		return Def{}, fmt.Errorf("projectdef: %s: %w", FileYAML, err)
 	}
 	if d.CPUs < 0 {
 		return Def{}, fmt.Errorf("projectdef: %s: cpus must be >= 0", FileYAML)

@@ -235,3 +235,24 @@ func TestParseImageLists(t *testing.T) {
 		t.Fatalf("refs = %v, %v", refs, err)
 	}
 }
+
+func TestPublishLoopbackOnly(t *testing.T) {
+	t.Parallel()
+	got := runArgs(RunSpec{Name: "n", Image: "img", Ports: []PortMap{{Host: 3000, Guest: 3000}, {Host: 8080, Guest: 80}}})
+	want := []string{"run", "-d", "--init", "--name", "n", "-p", "127.0.0.1:3000:3000", "-p", "127.0.0.1:8080:80", "img", "sleep", "infinity"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("run args\n%v\n%v", got, want)
+	}
+}
+
+// Shape from `container inspect` on 1.1.0: status.networks[].ipv4Address.
+func TestParseAddress(t *testing.T) {
+	t.Parallel()
+	out := []byte(`[{"status":{"state":"running","networks":[{"hostname":"n","ipv4Address":"192.168.64.41/24","ipv4Gateway":"192.168.64.1","network":"default"}]}}]`)
+	if ip, err := parseAddress(out); err != nil || ip != "192.168.64.41" {
+		t.Fatalf("parseAddress = %q %v", ip, err)
+	}
+	if ip, err := parseAddress([]byte(`[{"status":{"state":"stopped","networks":[]}}]`)); err != nil || ip != "" {
+		t.Fatalf("stopped = %q %v", ip, err)
+	}
+}

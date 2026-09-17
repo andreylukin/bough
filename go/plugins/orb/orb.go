@@ -227,8 +227,11 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		say(ctx, uiModeOf(ctx), report)
 	}
 	if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
-		s.Set("orb", promptSection(o.Root(), st, p.Def, missing))
-		ctx.Effect(func() { s.Set("orb", "") })
+		root := o.Root()
+		s.Set("orb", promptSection(root, st, p.Def, missing))
+		// A restart gets a new IP: keep the prompt's address current.
+		o.OnResume(func(st iorb.State) { s.Set("orb", promptSection(root, st, p.Def, missing)) })
+		ctx.Effect(func() { o.OnResume(nil); s.Set("orb", "") })
 	}
 	if reg, err := kernel.Get[*commands.Registry](ctx, "commands"); err == nil {
 		registerOrbCommand(ctx, reg, o, home)
@@ -396,6 +399,29 @@ func failedPromptSection(slug string, err error) string {
 		"Tell the user this error plainly. If it comes from the project definition (setup.sh, Dockerfile, resume.sh, project.yml), say what to change and give the exact command, e.g. `bough project show %s setup.sh` and `bough project write %s setup.sh < fixed.sh`; the next session start rebuilds.", slug, err, slug, slug)
 }
 
+// addressSection says where servers in the container are reachable: its
+// IP, and the opted-in 127.0.0.1 forwards. Without it the model sent the
+// user to localhost, where nothing listens.
+func addressSection(b *strings.Builder, st iorb.State) {
+	if st.IP != "" {
+		fmt.Fprintf(b, "The container's address is %s. A server you start here is not on the user's localhost: the user opens http://%s:<port> from their machine (not localhost), so bind servers to 0.0.0.0, not 127.0.0.1.\n", st.IP, st.IP)
+	}
+	var fwd []string
+	for _, p := range st.Ports {
+		if p.Error != "" {
+			fmt.Fprintf(b, "Container port %d is not forwarded: %s; use the container address instead.\n", p.Guest, p.Error)
+			continue
+		}
+		fwd = append(fwd, fmt.Sprintf("http://127.0.0.1:%d (container port %d)", p.Host, p.Guest))
+	}
+	if len(fwd) > 0 {
+		fmt.Fprintf(b, "Forwarded to the user's host: %s.\n", strings.Join(fwd, ", "))
+	}
+	if len(st.Ports) == 0 {
+		fmt.Fprintf(b, "No ports are forwarded to the host's 127.0.0.1. If the user needs that, ask, then run \"bough project set %s ports 3000,8080:80\" (host:container); it applies when the orb is removed and recreated.\n", st.Project)
+	}
+}
+
 // promptSection tells the model where its shell runs and what to check.
 func promptSection(root string, st iorb.State, def projectdef.Def, missing []string) string {
 	checks := def.Checks
@@ -407,6 +433,7 @@ func promptSection(root string, st iorb.State, def projectdef.Def, missing []str
 		b.WriteString("No host identity is lent to this container: no GH_TOKEN and no cloud or cluster config (~/.aws, ~/.kube, ...).\n")
 	}
 	fmt.Fprintf(&b, "If a command needs one of the user's logins, ask the user to allow it, then run \"bough project add-identity %s gh\" or \"... %s .aws\" (append :rw only for token caches that must refresh); it applies to the next session. Network traffic leaves through the host, so internal hosts the user can reach work here too.\n", st.Project, st.Project)
+	addressSection(&b, st)
 	names := make([]string, 0, len(st.Worktrees))
 	for n := range st.Worktrees {
 		names = append(names, n)

@@ -61,7 +61,17 @@ type State struct {
 	ProxyAuth string            `json:"proxyAuth,omitempty"` // ProxyAuthToken or ProxyAuthLegacy
 	Phase     string            `json:"phase,omitempty"`     // the step in progress, or the last one reached
 	Phases    []Phase           `json:"phases,omitempty"`    // this start's steps, in order
+	IP        string            `json:"ip,omitempty"`        // the container's bridge address, set each start
+	Ports     []PortState       `json:"ports,omitempty"`     // project.yml ports as the container was created with them
 	UpdatedAt time.Time         `json:"updatedAt"`
+}
+
+// PortState is one opted-in forward: 127.0.0.1:Host on the host to Guest
+// in the container. Error says why it was not published (host port in use).
+type PortState struct {
+	Host  int    `json:"host"`
+	Guest int    `json:"guest"`
+	Error string `json:"error,omitempty"`
 }
 
 // The named steps of a start, in order. A restart after Stop records
@@ -123,7 +133,12 @@ func PhaseWord(name string) string {
 func PhaseLine(s State, now time.Time) string {
 	head := "orb " + s.Project + " · "
 	switch s.Status {
-	case StatusRunning, StatusStopped:
+	case StatusRunning:
+		if s.IP != "" {
+			return head + "running · " + s.IP
+		}
+		return head + "running"
+	case StatusStopped:
 		return head + string(s.Status)
 	case StatusFailed:
 		if s.Phase != "" {
