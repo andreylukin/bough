@@ -67,3 +67,11 @@ test("R3-J: Projects empty state sits at the top; page subtitle next to the titl
   expect(r3j).toMatch(/\.page-head \.head-main h1\{min-width:0\}/);
   expect(r3j).toMatch(/\.rt-del\.rt-zero\{color:var\(--text-3\)\}/);
 });
+
+test("R4-F: strip chips, the … summary and Edit into composer are at least 24px tall", () => {
+  const block = css.slice(css.indexOf("/* R4-F */"));
+  expect(block.indexOf("/* R4-F */")).toBe(0);
+  expect(block).toMatch(/\.rt[,{][^}]*min-height:24px/);
+  expect(block).toMatch(/\.rt-more>summary[^{]*\{[^}]*min-height:24px/);
+  expect(block).toMatch(/\.prompt-acts>\.link[^{]*\{[^}]*min-height:24px/);
+});

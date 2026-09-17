@@ -2522,3 +2522,16 @@ pre.edit-rows,.block pre.edit-rows{text-indent:0;margin:2px 0 var(--s-2);padding
 .page-head .head-main h1{min-width:0}
 .rt-del.rt-zero{color:var(--text-3)}
 /* /R3-J */
+/* R4-F */
+/* Header strip hit targets: every chip, the "…" and Edit into composer are at least 24x24 (44 on a phone). */
+.rt,.rt-jobs>summary{min-height:24px}
+.rt-metrics>.rt,.rt-jobs>summary{align-items:center}
+.rt-more>summary{min-height:24px;min-width:24px;justify-content:center;align-items:center;padding:0 4px;border-radius:var(--r-xs)}
+.prompt-acts>.link{display:inline-flex;align-items:center;min-height:24px;padding:0 4px}
+/* Mark seen / Stop orb sit on the chips' line, not 8px taller. */
+.thread-head .head-ack{height:24px;min-height:24px;padding:0 10px;align-self:center}
+@media (max-width:480px){
+  .rt,.rt-jobs>summary,.runtime-strip .rt-link,.rt-more>summary,.prompt-acts>.link,.thread-head .head-ack{min-height:var(--row-touch)}
+  .rt-more>summary{min-width:var(--row-touch)}
+}
+/* /R4-F */
