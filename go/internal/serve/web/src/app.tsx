@@ -3148,7 +3148,7 @@ function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onR
               {runningRow
                 ? <p className="ov-empty-title"><button className="link ov-point" onClick={() => onReveal(runningRow.id)}>{running} running</button></p>
                 : <p className="ov-empty-title">Nothing needs your attention</p>}
-              <p className="ov-empty-keys">{overviewKeys(modKey()).map((k) => <Fragment key={k.label}><kbd>{k.key}</kbd> {k.label} </Fragment>)}<kbd>?</kbd> all shortcuts</p>
+              <p className="ov-empty-keys">{overviewKeys(modKey()).map((k) => <span key={k.label} className="ov-key"><kbd>{k.key}</kbd> {k.label}</span>)}<span className="ov-key"><kbd>?</kbd> All shortcuts</span></p>
             </div>
           )
         )}
@@ -4442,10 +4442,10 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           {!pickerOpen && (
             <span className="hint composer-hint">
               {(running && !draftAsk
-                ? [["↵", "steer"], [modKey() + "↵", "queue"], ["⇧↵", "newline"], ["Esc", "stop"]]
-                : live ? [["↵", "send"], ["⇧↵", "newline"], ["Esc", "stop"], ["/", "commands"]]
-                : [["↵", "send"], ["⇧↵", "newline"], ["/", "commands"], ["@", "files"]]
-              ).map(([k, w]) => <span key={w} className="composer-key"><kbd>{k}</kbd> {w}</span>)}
+                ? [["↵", "steer"], [[modKey() === "\u2318" ? "\u2318" : "Ctrl", "↵"], "queue"], [[modKey() === "\u2318" ? "\u21e7" : "Shift", "↵"], "newline"], ["Esc", "stop"]]
+                : live ? [["↵", "send"], [[modKey() === "\u2318" ? "\u21e7" : "Shift", "↵"], "newline"], ["Esc", "stop"], ["/", "commands"]]
+                : [["↵", "send"], [[modKey() === "\u2318" ? "\u21e7" : "Shift", "↵"], "newline"], ["/", "commands"], ["@", "files"]]
+              ).map(([k, w]) => <span key={w as string} className="composer-key">{Array.isArray(k) ? <span className="keys-combo">{k.map((c) => <kbd key={c}>{c}</kbd>)}</span> : <kbd>{k}</kbd>} {w}</span>)}
             </span>
           )}
         </div>

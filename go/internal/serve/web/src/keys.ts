@@ -3,31 +3,40 @@
  * hints both read it, so neither can promise a key the other forgot.
  * "Mod" is ⌘ on a Mac and Ctrl+ elsewhere.
  */
-export interface Binding { section: "Global" | "Session" | "Composer"; keys: string[]; label: string; overview?: boolean }
+export interface Binding { section: "Global" | "Session" | "Composer"; keys: string[]; label: string; note?: string; overview?: boolean }
 
+// keys are alternatives ("or"); a space inside one ("↑ ↓") is a pair shown side by side.
 export const BINDINGS: Binding[] = [
-  { section: "Global", keys: ["ModK"], label: "search or start", overview: true },
-  { section: "Global", keys: ["/"], label: "filter the list", overview: true },
-  { section: "Global", keys: ["ModB"], label: "sidebar", overview: true },
-  { section: "Global", keys: ["ModP"], label: "switch session (↵ goes back to the last one)" },
-  { section: "Global", keys: ["AltN"], label: "new session in a known folder" },
-  { section: "Global", keys: ["AltI"], label: "focus the composer" },
-  { section: "Global", keys: ["?"], label: "keyboard shortcuts (in an empty composer too)" },
-  { section: "Global", keys: ["F6", "Shift+F6"], label: "next or previous region" },
-  { section: "Global", keys: ["↑", "↓", "j", "k"], label: "move in the sidebar" },
-  { section: "Global", keys: ["←", "→"], label: "fold or unfold in the sidebar" },
-  { section: "Global", keys: ["↵"], label: "open the focused row" },
-  { section: "Session", keys: ["Home", "End"], label: "top or latest of the transcript" },
-  { section: "Session", keys: ["ModEnd"], label: "jump to latest" },
-  { section: "Session", keys: ["Esc"], label: "close Context or Changes" },
-  { section: "Composer", keys: ["↵"], label: "send, or steer a running turn" },
-  { section: "Composer", keys: ["Mod↵"], label: "queue behind a running turn" },
-  { section: "Composer", keys: ["Shift+↵"], label: "newline" },
-  { section: "Composer", keys: ["Esc"], label: "stop a running turn" },
-  { section: "Composer", keys: ["/", "@"], label: "commands, files" },
+  { section: "Global", keys: ["ModK"], label: "Search or start", overview: true },
+  { section: "Global", keys: ["/"], label: "Filter the list", overview: true },
+  { section: "Global", keys: ["ModB"], label: "Toggle sidebar", overview: true },
+  { section: "Global", keys: ["ModP"], label: "Switch session", note: "↵ reopens the last one" },
+  { section: "Global", keys: ["AltN"], label: "New session in a known folder" },
+  { section: "Global", keys: ["AltI"], label: "Focus the composer" },
+  { section: "Global", keys: ["?"], label: "Show keyboard shortcuts", note: "also in an empty composer" },
+  { section: "Global", keys: ["F6", "Shift+F6"], label: "Next or previous region" },
+  { section: "Global", keys: ["↑ ↓", "j k"], label: "Move in the sidebar" },
+  { section: "Global", keys: ["← →"], label: "Fold or unfold in the sidebar" },
+  { section: "Global", keys: ["↵"], label: "Open the focused row" },
+  { section: "Session", keys: ["Home", "End"], label: "Top or latest of the transcript" },
+  { section: "Session", keys: ["ModEnd"], label: "Jump to latest" },
+  { section: "Session", keys: ["Esc"], label: "Close Context or Changes" },
+  { section: "Composer", keys: ["↵"], label: "Send, or steer a running turn" },
+  { section: "Composer", keys: ["Mod↵"], label: "Queue behind a running turn" },
+  { section: "Composer", keys: ["Shift+↵"], label: "Newline" },
+  { section: "Composer", keys: ["Esc"], label: "Stop a running turn" },
+  { section: "Composer", keys: ["/", "@"], label: "Commands or files" },
 ];
 
 export const keyText = (k: string, mod: string) => k.replace(/^Mod/, mod).replace(/^Alt/, mod === "\u2318" ? "\u2325" : "Alt+");
+
+/** One chip per key: "ModEnd" is ["⌘", "End"] on a Mac, ["Ctrl", "End"] elsewhere. */
+export function keyChips(k: string, mac: boolean): string[] {
+  const m = /^(Mod|Alt|Shift\+)(.+)$/.exec(k);
+  if (!m) return [k];
+  const mods = { Mod: mac ? "\u2318" : "Ctrl", Alt: mac ? "\u2325" : "Alt", "Shift+": mac ? "\u21e7" : "Shift" } as Record<string, string>;
+  return [mods[m[1]], m[2]];
+}
 
 /** The Overview's empty-state hints. */
 export function overviewKeys(mod: string): { key: string; label: string }[] {

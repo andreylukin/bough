@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { Fragment, useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { BINDINGS, keyText } from "./keys";
+import { BINDINGS, keyChips } from "./keys";
 
 /**
  * Asking for a name, or whether to go ahead.
@@ -201,8 +201,18 @@ export function DialogHost() {
             <dl className="keys-list">
               {BINDINGS.filter((b) => b.section === sec).map((b) => (
                 <div key={b.label} className="keys-row">
-                  <dt>{b.keys.map((k) => <kbd key={k}>{keyText(k, req.mod)}</kbd>)}</dt>
-                  <dd>{b.label}</dd>
+                  <dt>{b.keys.map((alt, i) => (
+                    <Fragment key={alt}>
+                      {i > 0 && <span className="keys-or">or</span>}
+                      {alt.split(" ").map((k) => {
+                        const chips = keyChips(k, req.mod === "\u2318");
+                        return chips.length > 1
+                          ? <span key={k} className="keys-combo">{chips.map((c) => <kbd key={c}>{c}</kbd>)}</span>
+                          : <kbd key={k}>{chips[0]}</kbd>;
+                      })}
+                    </Fragment>
+                  ))}</dt>
+                  <dd>{b.label}{b.note && <span className="keys-note">{b.note}</span>}</dd>
                 </div>
               ))}
             </dl>
@@ -217,7 +227,8 @@ export function DialogHost() {
         )}
         {failed && <p id="dlg-err" className="dlg-err" role="alert">Not saved: {failed}</p>}
         <div className="dlg-actions">
-          <button ref={cancel} className="btn" onClick={dismiss} disabled={saving}>{req.kind === "keys" ? "Close" : "Cancel"}</button>
+          {req.kind === "keys" && <p className="keys-foot">Press <kbd>?</kbd> anywhere to open this</p>}
+          <button ref={cancel} className={req.kind === "keys" ? "btn btn-ghost" : "btn"} onClick={dismiss} disabled={saving}>{req.kind === "keys" ? "Close" : "Cancel"}</button>
           {req.kind === "keys" ? null : req.kind === "choice" ? [...req.actions].reverse().map((a, i, all) => (
             <button key={a} ref={i === all.length - 1 ? ok : undefined} className={"btn" + (i === all.length - 1 ? " btn-primary" : "")}
                     onClick={() => finish(a)}>{a}</button>
