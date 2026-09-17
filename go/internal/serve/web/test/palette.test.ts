@@ -30,3 +30,23 @@ test("snippet matches are split out for <mark>", () => {
   ]);
   expect(markParts("plain", [])).toEqual([{ t: "plain", m: false }]);
 });
+
+import { recentSessions, startFolders, visit } from "../src/palette";
+
+const r = (id: string, lastAt: string, cwd = "/r/" + id, extra = {}) => ({ id, title: id, cwd, lastAt, status: "done", ...extra }) as never;
+
+test("visits keep most-recent-first order without repeats", () => {
+  expect(visit(["b", "a"], "a")).toEqual(["a", "b"]);
+  expect(visit([], "x")).toEqual(["x"]);
+});
+
+test("the switcher lists the previous session first, then the rest by activity", () => {
+  const rows = [r("a", "2026-09-10T00:00:00Z"), r("b", "2026-09-12T00:00:00Z"), r("c", "2026-09-11T00:00:00Z"), r("d", "2026-09-13T00:00:00Z", "/x", { archived: true })];
+  // At a, having come from c: Enter goes back to c.
+  expect(recentSessions(rows, "a", ["a", "c"], 5).map((x: { id: string }) => x.id)).toEqual(["c", "b"]);
+});
+
+test("new session offers each known folder once, newest first, not home", () => {
+  const rows = [r("a", "2026-09-10T00:00:00Z", "/r/one"), r("b", "2026-09-12T00:00:00Z", "/r/two"), r("c", "2026-09-11T00:00:00Z", "/r/one"), r("h", "2026-09-13T00:00:00Z", "/home")];
+  expect(startFolders(rows, "/home")).toEqual(["/r/two", "/r/one"]);
+});

@@ -7,7 +7,7 @@ import { ProjectsView } from "./projects";
 import { ModeChip, ModePicker, type ModeValue } from "./mode";
 import { Select, type Option } from "./select";
 import { DialogHost, askChoice, askConfirm, askText, showShortcuts } from "./dialog";
-import { overviewKeys, sheetKey, treeKey } from "./keys";
+import { focusComposerKey, newSessionKey, overviewKeys, sheetKey, switchKey, treeKey } from "./keys";
 import { Welcome, welcomeDismissed } from "./welcome";
 import { clampToViewport } from "./popover";
 import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount, changedPath } from "./render";
@@ -20,7 +20,7 @@ import { Mentions, triggerAt, type Trigger } from "./mention";
 import { FireInspection, HooksPage, type Fire, type Load, type Save } from "./hooks";
 import { ContextPage } from "./context";
 import { ChangesBody, ChangesPage, EditDiff, countOf, outputParts, useChanges } from "./changes";
-import { Palette, idTail, isTypingTarget, useFullText, usePaletteKey, type Command } from "./palette";
+import { Palette, idTail, isTypingTarget, startFolders, useFullText, usePaletteKey, visit, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
 import { Elapsed, ErrorNote, Pending, elapsed } from "./loading";
 
@@ -241,6 +241,11 @@ function useHistoryNav(): { back: boolean; forward: boolean } {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return state;
+}
+
+/** The sidebar row to mark: none while a page other than a session is on screen, or the address is lost. */
+export function sidebarSelected(view: View, lost: string | null, selected: string | null, lastId: string | null): string | null {
+  return view !== "sessions" || lost !== null ? null : selected ?? lastId;
 }
 
 export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, saidElsewhere, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry }: {
@@ -4308,6 +4313,8 @@ export default function App() {
   // What the palette opens with, when something other than ⌘K opened it
   // (Review's "Search history" hands it the claim).
   const [palQuery, setPalQuery] = useState("");
+  // ⌘K is everything; ⌘P switches sessions; ⌥N starts one.
+  const [palMode, setPalMode] = useState<"all" | "switch" | "new">("all");
   const [home, setHome] = useState("");
   useEffect(() => { api.home().then(setHome).catch(() => setHome("")); }, []);
   // Where serve was started: usually the repo someone ran `bough serve` in.
@@ -4384,7 +4391,7 @@ export default function App() {
     if (window.location.hash !== want) window.history.pushState(null, "", want);
   }, []);
 
-  usePaletteKey(useCallback(() => setPalette(true), []));
+  usePaletteKey(useCallback(() => { setPalMode("all"); setPalette(true); }, []));
   const narrow = useMedia("(max-width:720px)");
   const onView = (v: View) => {
     setLost(null);
@@ -4421,6 +4428,9 @@ export default function App() {
   // A turn picked from a session's log, for its thread to scroll to.
   const [jump, setJump] = useState<{ id: string; turn: number; at: number; seq?: number; q?: string } | null>(null);
   useEffect(() => { if (selected) setLastId(selected); }, [selected]);
+  // Sessions in the order you were last in them, for ⌘P.
+  const [visited, setVisited] = useState<string[]>([]);
+  useEffect(() => { if (selected) setVisited((v) => v[0] === selected ? v : visit(v, selected)); }, [selected]);
 
   // Esc closes the Context and Changes pages, unless something nearer owns it.
   // It never leaves the session: in the composer it stops a running turn.
@@ -4443,6 +4453,21 @@ export default function App() {
       if (e.defaultPrevented || palette || !sheetKey(e)) return;
       e.preventDefault();
       showShortcuts(modKey());
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [palette]);
+
+  // ⌘P switches session, ⌥N starts one, ⌥I goes to the composer: from anywhere, a text field included.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || document.querySelector(".dlg-scrim")) return;
+      if (switchKey(e)) { e.preventDefault(); setPalCwd(""); setPalMode("switch"); setPalette(true); }
+      else if (newSessionKey(e)) { e.preventDefault(); setPalCwd(""); setPalMode("new"); setPalette(true); }
+      else if (focusComposerKey(e) && !palette) {
+        const c = document.getElementById("composer");
+        if (c) { e.preventDefault(); c.focus(); }
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -4570,6 +4595,11 @@ export default function App() {
       hint: "Folder: " + shortPath(home, home),
       run: () => start(home, ""),
     }] : []),
+    // Every folder sessions ran in, so New is never only home.
+    ...(home ? startFolders(rows, home).filter((p) => p !== row?.cwd && p !== startDir?.path).map((p) => ({
+      id: `new:dir:${p}`, group: "Start", label: `New session in ${folderName(p)}`,
+      hint: "Folder: " + shortPath(p, home), run: () => start(p, ""),
+    })) : []),
     // A project session runs in that project's orb; home is only where serve records it.
     ...(home ? projects.filter((p) => p.slug).map((p) => ({
       id: `new:orb:${p.id}`, group: "Start", label: `New session in ${p.name}`,
@@ -4598,8 +4628,10 @@ export default function App() {
     { id: "help:keys", group: "Navigation", label: "Keyboard shortcuts", hint: "?",
       run: () => showShortcuts(modKey()) },
     // ⌘P elsewhere: here it is this palette again, cleared, where titles are searched.
-    { id: "go:switch", group: "Navigation", label: "Switch session", hint: "type a title",
-      run: () => requestAnimationFrame(() => setPalette(true)) },
+    { id: "go:switch", group: "Navigation", label: "Switch session", hint: `${modKey()}P`,
+      run: () => requestAnimationFrame(() => { setPalMode("switch"); setPalette(true); }) },
+    { id: "go:composer", group: "Navigation", label: "Focus the composer", hint: modKey() === "\u2318" ? "\u2325I" : "Alt+I",
+      run: () => requestAnimationFrame(() => document.getElementById("composer")?.focus()) },
     { id: "go:side", group: "Navigation", label: "Toggle sidebar", hint: `${modKey()}B`,
       run: () => window.dispatchEvent(new Event("bough:toggle-side")) },
     { id: "wiki:review", group: "Wiki", label: "Review flagged claims",
@@ -4648,13 +4680,13 @@ export default function App() {
           <button className="skip-link" onClick={() => document.getElementById("composer")?.focus()}>Skip to composer</button>
         </div>
       )}
-      <Palette open={palette} onClose={() => { setPalette(false); setPalQuery(""); setPalCwd(""); }} rows={rows}
+      <Palette open={palette} onClose={() => { setPalette(false); setPalQuery(""); setPalCwd(""); setPalMode("all"); }} rows={rows} mode={palMode} visited={visited}
                commands={commands} onOpenSession={(id, seq, q) => { openSession(id); if (seq) setJump({ id, turn: 0, seq, q, at: Date.now() }); }} initialQuery={palQuery} current={selected}
                onOpenWikiPage={(path) => goWiki({ at: "page", path })}
                onStart={palCwd || home ? (text) => start(palCwd || home, text) : undefined}
                onStartIn={(path) => { setPalCwd(path); setPalette(true); }}
                startIn={palCwd ? palCwd.split("/").filter(Boolean).pop() || palCwd : undefined} />
-      <Sidebar rows={visible} projects={projects} selected={selected ?? lastId} active={pane === "list"}
+      <Sidebar rows={visible} projects={projects} selected={sidebarSelected(view, lost, selected, lastId)} active={pane === "list"}
                onSelect={(id) => {
                  openSession(id);
                  // A row there only for what was said lands on the line that said it.

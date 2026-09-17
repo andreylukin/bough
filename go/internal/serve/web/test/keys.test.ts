@@ -16,7 +16,7 @@ test("Ctrl+K in a Mac text field is left to the field", () => {
 
 test("? opens the sheet only outside typing", () => {
   expect(sheetKey(ev({ key: "?", shiftKey: true }))).toBe(true);
-  expect(sheetKey(ev({ key: "?", shiftKey: true }, "TEXTAREA"))).toBe(false);
+  expect(sheetKey(ev({ key: "?", shiftKey: true }, "INPUT"))).toBe(false);
   expect(sheetKey(ev({ key: "?", metaKey: true }))).toBe(false);
 });
 
@@ -33,4 +33,34 @@ test("one bindings table: every section filled, overview hints drawn from it", (
   expect(ov.every((o) => BINDINGS.some((b) => b.label === o.label))).toBe(true);
   expect(BINDINGS.some((b) => b.keys.includes("?"))).toBe(true);
   expect(BINDINGS.some((b) => b.keys.includes("F6"))).toBe(true);
+});
+
+import { focusComposerKey, newSessionKey, switchKey } from "../src/keys";
+type Ev = Parameters<typeof switchKey>[0];
+const kev = (o: Partial<Ev> & { value?: string }, tag = "DIV"): Ev =>
+  ({ key: "", code: "", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...o, target: { tagName: tag, value: o.value ?? "" } as unknown as EventTarget });
+
+test("? in an empty composer opens the sheet; with text it is typed", () => {
+  expect(sheetKey(kev({ key: "?", shiftKey: true }, "TEXTAREA"))).toBe(true);
+  expect(sheetKey(kev({ key: "?", shiftKey: true, value: "why" }, "TEXTAREA"))).toBe(false);
+  expect(sheetKey(kev({ key: "?", shiftKey: true }, "INPUT"))).toBe(false);
+});
+
+test("Mod+P switches sessions, from a text field too", () => {
+  expect(switchKey(kev({ key: "p", metaKey: true }, "TEXTAREA"))).toBe(true);
+  expect(switchKey(kev({ key: "p", ctrlKey: true }))).toBe(true);
+  expect(switchKey(kev({ key: "p", metaKey: true, shiftKey: true }))).toBe(false);
+  expect(switchKey(kev({ key: "p" }))).toBe(false);
+});
+
+test("⌥N starts a session and ⌥I focuses the composer, by physical key", () => {
+  expect(newSessionKey(kev({ key: "˜", code: "KeyN", altKey: true }, "TEXTAREA"))).toBe(true);
+  expect(newSessionKey(kev({ key: "n", code: "KeyN" }))).toBe(false);
+  expect(focusComposerKey(kev({ key: "ˆ", code: "KeyI", altKey: true }))).toBe(true);
+  expect(focusComposerKey(kev({ key: "i", code: "KeyI", altKey: true, metaKey: true }))).toBe(false);
+});
+
+test("the sheet lists the switcher, new session and composer keys", () => {
+  const all = BINDINGS.flatMap((b) => b.keys);
+  for (const k of ["ModP", "AltN", "AltI"]) expect(all).toContain(k);
 });

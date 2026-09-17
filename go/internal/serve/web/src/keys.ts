@@ -9,7 +9,10 @@ export const BINDINGS: Binding[] = [
   { section: "Global", keys: ["ModK"], label: "search or start", overview: true },
   { section: "Global", keys: ["/"], label: "filter the list", overview: true },
   { section: "Global", keys: ["ModB"], label: "sidebar", overview: true },
-  { section: "Global", keys: ["?"], label: "keyboard shortcuts" },
+  { section: "Global", keys: ["ModP"], label: "switch session (↵ goes back to the last one)" },
+  { section: "Global", keys: ["AltN"], label: "new session in a known folder" },
+  { section: "Global", keys: ["AltI"], label: "focus the composer" },
+  { section: "Global", keys: ["?"], label: "keyboard shortcuts (in an empty composer too)" },
   { section: "Global", keys: ["F6", "Shift+F6"], label: "next or previous region" },
   { section: "Global", keys: ["↑", "↓", "j", "k"], label: "move in the sidebar" },
   { section: "Global", keys: ["←", "→"], label: "fold or unfold in the sidebar" },
@@ -24,7 +27,7 @@ export const BINDINGS: Binding[] = [
   { section: "Composer", keys: ["/", "@"], label: "commands, files" },
 ];
 
-export const keyText = (k: string, mod: string) => k.replace(/^Mod/, mod);
+export const keyText = (k: string, mod: string) => k.replace(/^Mod/, mod).replace(/^Alt/, mod === "\u2318" ? "\u2325" : "Alt+");
 
 /** The Overview's empty-state hints. */
 export function overviewKeys(mod: string): { key: string; label: string }[] {
@@ -37,7 +40,7 @@ export function isTypingTarget(t: EventTarget | null): boolean {
   return Boolean(el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName ?? "")));
 }
 
-type KeyLike = { key: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey?: boolean; target: EventTarget | null };
+type KeyLike = { key: string; code?: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey?: boolean; target: EventTarget | null };
 
 /** ⌘K anywhere; Ctrl+K too, except in a Mac text field, where it is kill-line. */
 export function paletteKeyOpens(e: KeyLike, mac: boolean): boolean {
@@ -45,10 +48,26 @@ export function paletteKeyOpens(e: KeyLike, mac: boolean): boolean {
   return !(mac && e.ctrlKey && !e.metaKey && isTypingTarget(e.target));
 }
 
-/** ? opens the shortcut sheet, never while typing. */
+/** ? opens the shortcut sheet, never while typing; an empty composer has nothing to type it into yet. */
 export function sheetKey(e: KeyLike): boolean {
-  return e.key === "?" && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingTarget(e.target);
+  if (e.key !== "?" || e.metaKey || e.ctrlKey || e.altKey) return false;
+  const el = e.target as HTMLTextAreaElement | null;
+  return !isTypingTarget(el) || (el?.tagName === "TEXTAREA" && !el.value);
 }
+
+/** ⌘P (Ctrl+P): the recent-session switcher, from anywhere, the browser's print included. */
+export function switchKey(e: KeyLike): boolean {
+  return (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "p";
+}
+
+/** Option+letter by physical key: on a Mac e.key is a symbol (˜, ˆ). */
+const altCode = (e: KeyLike, code: string) => e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.code === code;
+
+/** ⌥N: new session, the palette offering the folders you work in. */
+export const newSessionKey = (e: KeyLike) => altCode(e, "KeyN");
+
+/** ⌥I: into the composer. */
+export const focusComposerKey = (e: KeyLike) => altCode(e, "KeyI");
 
 /** j and k are the sidebar's down and up. */
 export function treeKey(key: string): string {
