@@ -33,7 +33,7 @@ func TestProjectCommand(t *testing.T) {
 	if _, err := run("", "add-repo", "web", "git@github.com:me/api.git", "--branch", "dev"); err != nil {
 		t.Fatal(err)
 	}
-	for _, kv := range [][2]string{{"checks.fast", "go test ./..."}, {"env.GOFLAGS", "-mod=mod"}, {"cpus", "4"}} {
+	for _, kv := range [][2]string{{"checks.fast", "go test ./..."}, {"env.GOFLAGS", "-mod=mod"}, {"cpus", "4"}, {"ports", "3000, 8080:80"}} {
 		if _, err := run("", "set", "web", kv[0], kv[1]); err != nil {
 			t.Fatal(err)
 		}
@@ -52,6 +52,12 @@ func TestProjectCommand(t *testing.T) {
 	}
 	if d.Checks.Fast != "go test ./..." || d.Env["GOFLAGS"] != "-mod=mod" || d.CPUs != 4 {
 		t.Errorf("def = %+v", d)
+	}
+	if len(d.Ports) != 2 || d.Ports[1] != (projectdef.Port{Host: 8080, Guest: 80}) {
+		t.Errorf("ports = %+v", d.Ports)
+	}
+	if _, err := run("", "set", "web", "ports", "3000,3000"); err == nil {
+		t.Error("duplicate host port accepted")
 	}
 	if s, _ := projectdef.ReadFile(home, "web", "resume.sh"); s != "git fetch\n" {
 		t.Errorf("resume.sh = %q", s)

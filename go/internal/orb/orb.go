@@ -110,14 +110,16 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 	// token; a reused one keeps the token (or the lack of one) it has.
 	if st == container.StateMissing {
 		err = o.newTokenLocked()
+		o.planPortsLocked()
 	} else {
 		o.token, err = readToken(home, session)
 		o.setTokenEnvLocked()
+		o.keepPortsLocked(prev.Ports)
 	}
 	if err != nil {
 		return fail(fmt.Errorf("orb token: %w", err))
 	}
-	if err := rt.Start(ctx, o.spec); err != nil {
+	if err := startErr(rt.Start(ctx, o.spec), o.spec.Ports); err != nil {
 		// A concurrent session's build may have pruned our tag between
 		// EnsureImage and Start (no container used it yet): rebuild once.
 		if ok, ierr := rt.ImageExists(ctx, tag); ierr != nil || ok {
@@ -128,7 +130,7 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 		}
 		o.state.Image, o.spec.Image = tag, tag
 		writeState(home, o.state)
-		if err := rt.Start(ctx, o.spec); err != nil {
+		if err := startErr(rt.Start(ctx, o.spec), o.spec.Ports); err != nil {
 			return fail(err)
 		}
 	}
@@ -351,6 +353,7 @@ func (o *Orb) resumeLocked(ctx context.Context) {
 	o.state.begin(PhaseResume)
 	writeState(o.home, o.state)
 	o.ensureProxyLocked(ctx)
+	o.addressLocked(ctx)
 	if o.scratch != "" {
 		if err := writeShim(o.scratch); err != nil {
 			fmt.Fprintf(os.Stderr, "bough: orb: bough shim: %v\n", err)
@@ -480,8 +483,9 @@ func (o *Orb) ensureRunningLocked(ctx context.Context) error {
 			writeState(o.home, o.state)
 			return err
 		}
+		o.planPortsLocked()
 	}
-	if err := o.rt.Start(ctx, o.spec); err != nil {
+	if err := startErr(o.rt.Start(ctx, o.spec), o.spec.Ports); err != nil {
 		o.state.Status, o.state.Error = StatusFailed, err.Error()
 		o.state.endPhase(err.Error())
 		writeState(o.home, o.state)

@@ -21,7 +21,7 @@ import (
 // CLI shapes used (from `--help` on 1.1.0):
 //
 //	container build -t TAG -f FILE --progress plain DIR
-//	container run -d --init --name N -v SRC:DST[:ro] --mount type=volume,source=V,target=DST[,readonly] -w DIR -e K=V -c CPUS -m MEM IMAGE sleep infinity
+//	container run -d --init --name N -v SRC:DST[:ro] --mount type=volume,source=V,target=DST[,readonly] -w DIR -e K=V -c CPUS -m MEM -p 127.0.0.1:H:G IMAGE sleep infinity
 //	container start N | stop N | delete --force N | inspect N
 //	container exec [-i] [-w DIR] [-e K=V] N ARGV...
 //	container image inspect TAG   (exit status = exists)
@@ -236,6 +236,9 @@ func runArgs(spec RunSpec) []string {
 	if spec.Memory != "" {
 		args = append(args, "-m", spec.Memory)
 	}
+	for _, p := range spec.Ports {
+		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", p.Host, p.Guest))
+	}
 	return append(args, spec.Image, "sleep", "infinity")
 }
 
@@ -355,6 +358,37 @@ func parseInspect(out []byte) (State, error) {
 		return StateRunning, nil
 	}
 	return StateStopped, nil
+}
+
+// Address reads the container's IPv4 address from inspect's
+// status.networks (checked on 1.1.0).
+func (a *Apple) Address(ctx context.Context, name string) (string, error) {
+	out, err := a.run(ctx, "inspect", name)
+	if err != nil {
+		return "", err
+	}
+	return parseAddress(out)
+}
+
+func parseAddress(out []byte) (string, error) {
+	var items []struct {
+		Status struct {
+			Networks []struct {
+				IPv4Address string `json:"ipv4Address"`
+			} `json:"networks"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(out, &items); err != nil {
+		return "", fmt.Errorf("container: apple: inspect json: %w", err)
+	}
+	for _, it := range items {
+		for _, n := range it.Status.Networks {
+			if ip, _, _ := strings.Cut(n.IPv4Address, "/"); ip != "" {
+				return ip, nil
+			}
+		}
+	}
+	return "", nil
 }
 
 // Images reads `container image list --format json`: the tag is

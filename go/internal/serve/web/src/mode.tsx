@@ -103,7 +103,26 @@ export function OrbPhases({ orb, now }: { orb: OrbState; now: number }) {
         ))}
       </ol>
       {orb.container && <p className="orb-phase-foot mono" title={orb.image}>{orb.container}</p>}
+      <OrbAddress orb={orb} />
     </div>
+  );
+}
+
+/**
+ * Where a running orb's servers are reachable: the container IP (never
+ * localhost) and each opted-in 127.0.0.1 forward; a skipped forward says why.
+ * Nothing while stopped: the address goes with the VM.
+ */
+export function OrbAddress({ orb }: { orb: OrbState }) {
+  const ports = orb.ports ?? [];
+  if (orb.status !== "running" || (!orb.ip && !ports.length)) return null;
+  return (
+    <p className="orb-addr">
+      {orb.ip && <span><span className="orb-addr-k">IP</span> <span className="mono">{orb.ip}</span></span>}
+      {ports.map((p) => p.error
+        ? <span key={p.host} className="orb-addr-skip" >{`Not forwarded: ${p.error}`}</span>
+        : <a key={p.host} className="mono" href={`http://127.0.0.1:${p.host}`} target="_blank" rel="noreferrer">{`127.0.0.1:${p.host}${p.host === p.guest ? "" : ` → ${p.guest}`}`}</a>)}
+    </p>
   );
 }
 

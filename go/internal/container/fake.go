@@ -26,6 +26,9 @@ type Fake struct {
 	cimages      map[string]string // container -> image
 	volumes      map[string]bool
 	LastCommit   CommitSpec
+	LastRun      RunSpec // the spec of the last container created
+	Addr         string  // Address of a running container
+	FailStart    error
 }
 
 func NewFake() *Fake {
@@ -90,11 +93,15 @@ func (f *Fake) Start(_ context.Context, spec RunSpec) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.record("start " + spec.Name)
+	if f.FailStart != nil {
+		return f.FailStart
+	}
 	if _, ok := f.containers[spec.Name]; !ok && !f.images[spec.Image] {
 		return fmt.Errorf("container: fake: image %s not built", spec.Image)
 	}
 	if _, ok := f.containers[spec.Name]; !ok {
 		f.cimages[spec.Name] = spec.Image
+		f.LastRun = spec
 	}
 	f.containers[spec.Name] = StateRunning
 	return nil
@@ -148,6 +155,15 @@ func (f *Fake) Inspect(_ context.Context, name string) (State, error) {
 		return s, nil
 	}
 	return StateMissing, nil
+}
+
+func (f *Fake) Address(_ context.Context, name string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.containers[name] != StateRunning {
+		return "", nil
+	}
+	return f.Addr, nil
 }
 
 func (f *Fake) CreateVolume(_ context.Context, name string) error {

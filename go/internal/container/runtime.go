@@ -81,8 +81,18 @@ type RunSpec struct {
 	Mounts  []Mount
 	Env     []string
 	Workdir string
-	CPUs    int    // 0 = engine default
-	Memory  string // "" = engine default, e.g. "8G"
+	CPUs    int       // 0 = engine default
+	Memory  string    // "" = engine default, e.g. "8G"
+	Ports   []PortMap // published on 127.0.0.1 only; fixed at create
+}
+
+// PortMap forwards 127.0.0.1:Host to Guest in the container.
+type PortMap struct{ Host, Guest int }
+
+// Addresser is a runtime that knows a running container's IP on its
+// bridge network ("" when it has none, e.g. stopped).
+type Addresser interface {
+	Address(ctx context.Context, name string) (string, error)
 }
 
 type ExecOptions struct {

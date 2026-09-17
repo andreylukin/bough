@@ -4,8 +4,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func git(t *testing.T, dir string, args ...string) {
@@ -185,7 +188,7 @@ func TestImageHash(t *testing.T) {
 	os.MkdirAll(filepath.Join(home, ".circleci"), 0o755)
 	for _, extra := range []string{
 		"checks: {fast: make}\n", "env: {A: b}\n", "identity: [.circleci]\n",
-		"cpus: 4\n", "memory: 8G\n", "caches: [/root/.cache/uv]\n", "lsp: [.]\n",
+		"cpus: 4\n", "memory: 8G\n", "ports: [3000]\n", "caches: [/root/.cache/uv]\n", "lsp: [.]\n",
 	} {
 		if err := WriteFile(home, "h", FileYAML, yml+extra); err != nil {
 			t.Fatal(err)
@@ -396,5 +399,38 @@ func TestSetSecretSkipsHostCheck(t *testing.T) {
 	}
 	if err := SetSecret(home, "fresh", "TOKEN", "keychain:bough/fresh/TOKEN"); err != nil {
 		t.Fatalf("SetSecret on skeleton: %v", err)
+	}
+}
+
+func TestParsePorts(t *testing.T) {
+	t.Parallel()
+	d, err := Parse([]byte("repos:\n  - path: /x\nports: [3000, \"8080:80\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Port{{Host: 3000, Guest: 3000}, {Host: 8080, Guest: 80}}
+	if !slices.Equal(d.Ports, want) {
+		t.Fatalf("ports = %v", d.Ports)
+	}
+	b, _ := yaml.Marshal(d)
+	if back, err := Parse(b); err != nil || !slices.Equal(back.Ports, want) {
+		t.Fatalf("round trip %s: %v %v", b, back.Ports, err)
+	}
+	for yml, msg := range map[string]string{
+		"ports: [0]\n":              "ports: \"",
+		"ports: [70000]\n":          "ports: \"",
+		"ports: [\"web\"]\n":        "ports: \"",
+		"ports: [\"1:2:3\"]\n":      "ports: \"",
+		"ports: [3000, \"3000:1\"]": "ports[1]: host port 3000 is listed twice",
+	} {
+		if _, err := Parse([]byte("repos:\n  - path: /x\n" + yml)); err == nil || !strings.Contains(err.Error(), msg) {
+			t.Errorf("%q: err %v, want %q", yml, err, msg)
+		}
+	}
+	if p, err := ParsePorts("3000, 8080:80"); err != nil || !slices.Equal(p, want) {
+		t.Fatalf("ParsePorts = %v %v", p, err)
+	}
+	if p, err := ParsePorts(""); err != nil || p != nil {
+		t.Fatalf("ParsePorts empty = %v %v", p, err)
 	}
 }

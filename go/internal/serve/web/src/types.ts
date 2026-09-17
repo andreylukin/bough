@@ -39,7 +39,8 @@ export type OrbStatus = "" | "building" | "starting" | "running" | "stopped" | "
 export interface OrbSummary { slug: string; image: string; built: boolean; build?: string; error?: string }
 /** One timed step of an orb start; endedAt is absent while it runs. */
 export interface OrbPhase { name: string; startedAt: string; endedAt?: string; error?: string }
-export interface OrbState { phase?: string; phases?: OrbPhase[]; session: string; project: string; status: OrbStatus; image?: string; container?: string; worktrees?: Record<string, string>; primary?: string; error?: string; updatedAt: string; up?: boolean; /** "legacy": created before proxy tokens, so its host proxy and relay are open to the bridge. */ proxyAuth?: "token" | "legacy" }
+export interface OrbState { phase?: string; phases?: OrbPhase[]; session: string; project: string; status: OrbStatus; image?: string; container?: string; worktrees?: Record<string, string>; primary?: string; error?: string; updatedAt: string; up?: boolean; /** "legacy": created before proxy tokens, so its host proxy and relay are open to the bridge. */ proxyAuth?: "token" | "legacy"; /** The container's bridge address, set each start. */ ip?: string; /** project.yml ports as created: 127.0.0.1:host → guest; error = skipped (host port in use). */ ports?: OrbPort[] }
+export interface OrbPort { host: number; guest: number; error?: string }
 /** What Remove orb deletes and keeps (GET /api/sessions/:id/orb/remove). */
 export interface OrbRemovePlan { session: string; project: string; status: OrbStatus; container?: string; dir: string; worktrees: string[]; bytes: number; branches: { repo: string; gitDir: string; branch: string; delete: boolean; reason: string }[] }
 export interface OrbBuild { tag: string; hash: string; state: "" | "building" | "ok" | "failed"; startedAt: string; endedAt?: string; error?: string }

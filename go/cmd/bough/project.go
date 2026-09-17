@@ -29,7 +29,8 @@ const projectUsage = `usage: bough project <command>
   add-identity <slug> <dir>             lend the container gh, or a $HOME config dir like .aws (read-only; <dir>:rw for read-write)
   remove-identity <slug> <dir>
   set <slug> <key> <value>              checks.fast, checks.full, base, memory, cpus, env.NAME,
-                                        secrets.NAME keychain:<service>; "" clears
+                                        secrets.NAME keychain:<service>, ports 3000,8080:80
+                                        (127.0.0.1 forwards; host:container); "" clears
   write <slug> <file>                   replace a file with stdin (empty stdin deletes a script)
   rm <session> [--branches] [--yes]     remove a session's orb: container, worktrees, orb dir
   prune [slug] [--branches] [--yes]     remove failed and archived sessions' orbs and unused images
@@ -211,6 +212,12 @@ func setKey(d *projectdef.Def, key, val string) error {
 			}
 		}
 		d.CPUs = n
+	case "ports":
+		ports, err := projectdef.ParsePorts(val)
+		if err != nil {
+			return fmt.Errorf("ports: %w", err)
+		}
+		d.Ports = ports
 	default:
 		if name, ok := strings.CutPrefix(key, "secrets."); ok && name != "" {
 			if val == "" {
@@ -225,7 +232,7 @@ func setKey(d *projectdef.Def, key, val string) error {
 		}
 		name, ok := strings.CutPrefix(key, "env.")
 		if !ok || name == "" {
-			return fmt.Errorf("unknown key %q (checks.fast, checks.full, base, memory, cpus, env.NAME, secrets.NAME)", key)
+			return fmt.Errorf("unknown key %q (checks.fast, checks.full, base, memory, cpus, ports, env.NAME, secrets.NAME)", key)
 		}
 		if val == "" {
 			delete(d.Env, name)
