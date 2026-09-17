@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useModal } from "./dialog";
-import type { Row } from "./types";
+import type { Row, Status } from "./types";
 import { ago } from "./app";
 import { hasOwnTitle, plainTitle, sessionTitle, titleKey } from "./render";
-import { shownStatus, statusWord } from "./status";
+import { StatusMark, shownStatus, statusWord } from "./status";
 import { isMac, paletteKeyOpens } from "./keys";
 
 /**
@@ -25,6 +25,8 @@ export interface Command {
   suggest?: boolean;
   /** Never the default selection: it has to be chosen on purpose. */
   destructive?: boolean;
+  /** A session's status, drawn as its glyph ahead of the label. */
+  mark?: Status;
 }
 
 interface WikiHit { path: string; title: string; topic: string; excerpt: string; counts: { cited: number } }
@@ -66,8 +68,10 @@ export function pathRows(typed: string, places: { folder: DirHit | null; dirs: D
   const folders = [...(places.folder?.exists ? [places.folder] : []), ...places.dirs];
   const rows = folders.map((d, i): Command => ({
     id: "dir:" + d.path,
-    label: `New session in ${short(d.path).replace(/(.)\/+$/, "$1")}`,
-    hint: i === 0 && places.folder?.exists ? can(d) : `${can(d)} · tab to complete`,
+    // The leaf names the row; the path, cut from its start, tells same-named folders apart.
+    label: `New session in ${short(d.path).replace(/(.)\/+$/, "$1").split("/").filter(Boolean).pop() ?? short(d.path)}`,
+    hint: short(d.path).replace(/(.)\/+$/, "$1"),
+    detail: can(d),
     group: "Start",
     // Nothing is created here: the palette stays, aimed at the folder, for the first prompt.
     run: () => startIn(d.path),
@@ -163,8 +167,7 @@ export function closeOnNavigate(win: Pick<Window, "addEventListener" | "removeEv
 }
 
 /** A session or wiki page, as opposed to a command or a place to start. */
-const RESULT_GROUPS = new Set(["Recent sessions", "Sessions", "Found in the conversation", "Wiki pages"]);
-export const isResult = (c: Command) => RESULT_GROUPS.has(c.group);
+export const isResult = (c: Command) => c.id.startsWith("s:") || c.id.startsWith("w:");
 
 /** Results counted in the footer: the Start action is an offer, not a match. */
 export const shownCount = (hits: Command[]) => hits.filter((c) => !c.id.startsWith("start:")).length;
@@ -416,7 +419,8 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
         id: "s:" + r.id,
         label: sessionTitle(r),
         hint: meta(r, r.repo, !hasOwnTitle(r)),
-        group: "Recent sessions",
+        mark: shownStatus(r),
+        group: "Recent",
         run: () => onOpenSession(r.id),
       } as Command })),
       ...cmds.map((x) => ({ s: x.s, c: x.c })),
@@ -424,7 +428,9 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
         id: "s:" + r.id,
         label: title,
         hint: (r.id === current ? "Current · " : "") + meta(r, r.repo || foundBy.get(r.id)?.repo, twice.has(same(title)) || !hasOwnTitle(r)),
-        group: s <= 50 ? "Found in the conversation" : "Sessions",
+        mark: shownStatus(r),
+        // A query that is only filters matched no text: its sessions are not "mentioned in" anything.
+        group: s <= 50 && ops.text ? "Mentioned in" : "Sessions",
         detail: detailFor(r, title),
         run: () => onOpenSession(r.id),
       } as Command })),
@@ -443,7 +449,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
           id: "w:" + p.path,
           label: p.title,
           hint: [p.topic, p.counts.cited ? `${p.counts.cited} cited` : ""].filter(Boolean).join(" · "),
-          group: "Wiki pages",
+          group: "Wiki",
           detail: p.excerpt,
           run: () => onOpenWikiPage(p.path),
         });
@@ -460,7 +466,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
         id: "s:" + h.id,
         label,
         hint: [h.repo?.split("/").pop(), idTail(h.id)].filter(Boolean).join(" · "),
-        group: "Found in the conversation",
+        group: "Mentioned in",
         detail: [h.branch, evidence(h, label, needle)].filter(Boolean).join("\n") || undefined,
         run: () => onOpenSession(h.id, h.lines[0]?.seq, q.trim()),
       });
@@ -515,56 +521,104 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
   };
 
   const terms = parseOps(q).text.toLowerCase().split(/\s+/).filter((t) => t.length >= 2);
+  const cq = commandQuery(q);
+  const ops = cq.only ? { text: cq.text } : parseOps(q);
+  const typed = q.trim();
+  // Recognised filters, as typed: an after: value that did not parse is text, so it gets no chip.
+  const opWords = cq.only ? [] : typed.split(/\s+/).filter((w) => /^(project|after|status):\S+$/i.test(w) && hasOps(parseOps(w)));
+  const offers = (c: Command) => c.id.startsWith("start:") || c.id.startsWith("dir:");
+  const onlyStart = hits.length > 0 && hits.every(offers) && !isPathQuery(typed) && searching !== "loading";
+  const cut = typed.length > 40 ? typed.slice(0, 40) + "…" : typed;
+  const sel = hits[at];
+  const enter = !sel ? "Open" : offers(sel) ? "Start" : isResult(sel) ? "Open" : "Run";
+  const insert = (token: string) => { setQ(token + " "); setAtId(null); field.current?.focus(); };
+  const noMatch = (line2: React.ReactNode, cls = "") => (
+    <div className={"pal-none" + cls} role="status">
+      <p className="pal-none-1">No results for “{cut}”</p>
+      <p className="pal-none-2">{line2}</p>
+    </div>
+  );
   let lastGroup = "";
   let groupId = "";
   return createPortal(
     <div ref={box} style={{ display: "contents" }}>
       <div className="pal-scrim" onClick={close} />
       <div className="pal" role="dialog" aria-modal="true" aria-label="Quick access">
-        <input ref={field} className="pal-field" value={q} onChange={(e) => { setQ(e.target.value); setAtId(null); }}
-               onKeyDown={keys} placeholder={mode === "switch" ? "Switch to a session…" : mode === "new" ? "Start where? Or type a first message…" : "Search sessions or run a command…"}
-               aria-label="Search sessions or run a command"
-               role="combobox" aria-expanded={hits.length > 0} aria-controls="pal-list" aria-autocomplete="list"
-               aria-activedescendant={hits[at] ? "pal-" + hits[at].id : undefined} />
+        <div className="pal-top">
+          <svg className="pal-glass" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" />
+          </svg>
+          <input ref={field} className={"pal-field" + (mode === "switch" ? " pal-field-tag" : "")} value={q} onChange={(e) => { setQ(e.target.value); setAtId(null); }}
+                 onKeyDown={keys} placeholder={mode === "switch" ? "Switch to a session…" : mode === "new" ? "Start in a folder, or type a first message…" : "Search sessions or run a command…"}
+                 aria-label="Search sessions or run a command"
+                 role="combobox" aria-expanded={hits.length > 0} aria-controls="pal-list" aria-autocomplete="list"
+                 aria-activedescendant={hits[at] ? "pal-" + hits[at].id : undefined} />
+          {mode === "switch" && <span className="pal-mode" aria-hidden="true">Sessions</span>}
+        </div>
+        {opWords.length > 0 && (
+          <div className="pal-ops" aria-label="Filters">
+            {opWords.map((w) => { const i = w.indexOf(":"); return <code key={w} className="pal-op"><span className="pal-op-k">{w.slice(0, i + 1)}</span><span className="pal-op-v">{w.slice(i + 1)}</span></code>; })}
+          </div>
+        )}
         <div id="pal-list" ref={list} className="pal-list" role="listbox" aria-label="Results">
+          {searching === "error" && (
+            <div className="pal-none" role="status">
+              <p className="pal-none-1">
+                <svg className="pal-warn" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 4.5L21 19H3z" /><path d="M12 10v4" /><path d="M12 16.5h.01" /></svg>
+                Text search failed
+              </p>
+              <p className="pal-none-2">Showing title matches only. <button className="btn btn-ghost btn-sm" onClick={retry}>Retry</button></p>
+            </div>
+          )}
+          {onlyStart && searching !== "error" && noMatch(<>Press <kbd>↵</kbd> to start a session with it.</>, " pal-none-lead")}
           {hits.map((c, i) => {
             const head = c.group !== lastGroup ? (lastGroup = c.group) : "";
             if (head) groupId = "palg-" + c.id;
+            const n = head && isResult(c) ? hits.filter((x) => x.group === head).length : 0;
+            const dir = c.id.startsWith("dir:") && c.hint !== "Folder not found";
             return (
               <div key={c.id} role="presentation">
-                {head && <p className="pal-group eyebrow" role="presentation" id={groupId}>{head}</p>}
+                {head && <p className="pal-group eyebrow" role="presentation" id={groupId}>{head}{n >= 4 && <span className="pal-group-n num">{n}</span>}</p>}
                 <button id={"pal-" + c.id} role="option" aria-selected={i === at} tabIndex={-1} aria-describedby={groupId}
                         data-at={i === at ? 1 : 0}
-                        className={"pal-item" + (i === at ? " pal-on" : "")}
+                        className={"pal-item" + (i === at ? " pal-on" : "") + (c.destructive ? " pal-bad-item" : "")}
                         onMouseEnter={() => setAtId(c.id)} onClick={() => pick(c)}>
-                  <span className="pal-label">{c.label}</span>
-                  {c.hint && <span className="pal-hint">{c.hint}</span>}
+                  {c.mark && <span className="pal-glyph"><StatusMark status={c.mark} size={14} bare /></span>}
+                  <span className="pal-label"><Marked text={c.label} terms={terms} /></span>
+                  {c.hint && (dir
+                    ? <span className="pal-hint pal-path"><bdi>{c.hint}</bdi></span>
+                    : <span className="pal-hint">{c.hint.split(" · ").map((part, k) => <span key={k}>{k > 0 && <span className="pal-sep"> · </span>}{part === "Tests failed" ? <span className="pal-bad">{part}</span> : part}</span>)}</span>)}
+                  {i === at && <kbd className="pal-enter" aria-hidden="true">↵</kbd>}
                 </button>
-                {i === at && c.detail && <span className="pal-ev"><Marked text={c.detail} terms={terms} /></span>}
+                {i === at && c.detail && <span className={"pal-ev" + (/^(\$|bash|tool|\/|~)/.test(c.detail) ? " pal-ev-code" : "")}><Marked text={c.detail} terms={terms} /></span>}
               </div>
             );
           })}
-          {hits.length === 0 && (
-            <p className="pal-none" role="status">
-              {searching === "loading" ? "Searching…"
-                : searching === "error" ? "Search failed. Titles only, and none match."
-                : q.trim() ? "No matching sessions or commands." : "Type to search your sessions."}
+          {hits.length === 0 && searching === "loading" && (
+            <p className="pal-none pal-none-2" role="status"><StatusMark status="running" size={12} bare /> Searching…</p>
+          )}
+          {hits.length === 0 && searching !== "loading" && searching !== "error" && typed && (
+            noMatch(hasOps(ops) ? "Check the filter: project, after and status." : "Try fewer words, or search a phrase from the conversation.")
+          )}
+          {!typed && mode !== "new" && (
+            <p className="pal-tip">Filter with
+              {[`project:${syntaxProject(rows) ?? "name"}`, "after:7d", "status:failed"].map((t) => (
+                <button key={t} className="pal-op" tabIndex={-1} onMouseDown={(e) => e.preventDefault()} onClick={() => insert(t)}>
+                  <span className="pal-op-k">{t.slice(0, t.indexOf(":") + 1)}</span><span className="pal-op-v">{t.slice(t.indexOf(":") + 1)}</span>
+                </button>
+              ))}
             </p>
           )}
         </div>
-        {!q.trim() && mode !== "new" && (
-          <p className="pal-syntax">Narrow with <code>project:{syntaxProject(rows) ?? "name"}</code> <code>after:7d</code> <code>status:failed</code></p>
-        )}
-        {/* Never scrolls away: a failed text search is not hidden under the list. */}
-        <div className="pal-foot" role="status">
-          {/* A list of commands only is short and whole: a count there is noise. */}
-          {hits.some(isResult) && <span className="num">{shownCount(hits)} shown</span>}
-          {searching === "loading" && <span>Searching text…</span>}
-          {/* Only when nothing matched at all: listed title matches are matches. */}
-          {searching === "done" && found.length === 0 && !hits.some(isResult) && <span>No text matches</span>}
-          {searching === "error" && <span className="pal-foot-bad">Text search failed · titles only</span>}
-          {searching === "error" && <button className="link" onClick={retry}>Retry</button>}
-          <span className="pal-foot-keys"><span><kbd>↑↓</kbd> move</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></span>
+        <div className="pal-foot">
+          <span className="pal-k"><kbd>↑</kbd><kbd>↓</kbd> Navigate</span>
+          <span className="pal-k"><kbd>↵</kbd> {enter}</span>
+          {sel?.id.startsWith("dir:") && <span className="pal-k"><kbd>Tab</kbd> Complete</span>}
+          <span className="pal-k"><kbd>Esc</kbd> Close</span>
+          <span className="pal-count num" role="status">
+            {searching === "loading" ? <><StatusMark status="running" size={12} bare /> Searching…</>
+              : hits.some(isResult) ? `${shownCount(hits)} ${shownCount(hits) === 1 ? "result" : "results"}` : ""}
+          </span>
         </div>
       </div>
     </div>
@@ -573,7 +627,8 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
 
 /** A session's meta, one shape everywhere in the palette: repo · Status · age, and the id tail when the name alone does not tell it apart. */
 function meta(r: Row, repo: string | undefined, withId: boolean): string {
-  const status = r.testsFailed ? "Tests failed" : statusWord(shownStatus(r));
+  // The glyph carries the status; only a test failure stays a word.
+  const status = r.testsFailed ? "Tests failed" : "";
   return [repo?.split("/").pop(), status, r.lastAt ? `${ago(r.lastAt)} ago` : "", withId ? idTail(r.id) : ""].filter(Boolean).join(" · ");
 }
 
