@@ -1995,7 +1995,7 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
       {pop}
       <div className="block-body">
         {/* Output first; the call that made it is one disclosure, once. */}
-        {result && !empty && <span className="body-copy"><CopyButton text={out} what="output" /></span>}
+        {result && !empty && !(failed && diag.length > 0) && <span className="body-copy"><CopyButton text={out} what="output" /></span>}
         {stopped && !result && !card && <p className="tool-noresult">No result was recorded.</p>}
         {!result && call.body && <Code text={call.body} lang={call.lang} />}
         {failed && diag.length > 0 && (

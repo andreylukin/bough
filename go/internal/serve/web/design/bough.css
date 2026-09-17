@@ -2586,7 +2586,7 @@ kbd,.keys-row kbd,.ov-empty-keys kbd,.mention-foot kbd{display:inline-grid;place
 .body-copy{position:absolute;top:8px;right:8px;z-index:1}
 .block-body:has(>.fail-diag)>.body-copy{display:none}
 .block.thin>.block-body .body-copy{opacity:0}
-.block.thin>.block-body:hover .body-copy,.body-copy:focus-visible{opacity:1}
+.block.thin>.block-body:hover .body-copy,.body-copy:focus-within{opacity:1}
 .block-inner{border-top:1px solid var(--line);background:none}
 .block-inner>summary{display:flex;align-items:center;gap:8px;min-height:28px;padding:0 12px;cursor:pointer;list-style:none;font-size:var(--fs-sm)}
 .block-inner>summary::before{content:"";flex:none;box-sizing:border-box;width:5px;height:5px;margin:0 3px;border-right:1.5px solid var(--text-3);border-bottom:1.5px solid var(--text-3);transform:rotate(-45deg);transition:transform var(--dur-fast) var(--ease)}
