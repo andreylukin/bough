@@ -34,3 +34,39 @@ test("resultLabel never leaks payload", () => {
   expect(resultLabel(3)).toBe("Subagent results · 3");
   expect(resultLabel()).toBe("Result");
 });
+
+// R2-G: a program's edits, counted from the calls themselves.
+import { callEdits, diffRows } from "../src/changes";
+
+const flows = 'console.log(tools.patch("src/math.js",\n`export function add(a, b) {\n  return a + b;\n}`,\n`export function add(a, b) {\n  return a + b;\n}\n\nexport function subtract(a, b) {\n  return a - b;\n}`))\n\ntools.write("src/main.js",\n`import { add, subtract } from "./math.js";\nconsole.log(add(2, 3));\nconsole.log(subtract(5, 2));\n`)\n\nconsole.log(tools.patch("README.md",\n`# Demo\n\nA tiny calculator.`,\n`# Demo\n\nA tiny calculator. Supports add(a, b) and subtract(a, b).`))\n\nconsole.log(tools.bash("node src/main.js"))\n';
+
+test("every patched and written file is counted, a write as all additions", () => {
+  const e = callEdits(flows);
+  expect(e.map((f) => [f.path, f.add, f.del])).toEqual([["src/math.js", 4, 0], ["src/main.js", 3, 0], ["README.md", 1, 1]]);
+});
+
+test("a diff never opens on a blank line", () => {
+  for (const f of callEdits(flows)) {
+    const first = diffRows(f.hunks).find((l) => l.kind !== "hunk")!;
+    expect(first.text.slice(1).trim()).not.toBe("");
+  }
+  // A git hunk too: the blank context line above the change is dropped, numbers kept.
+  const rows = diffRows(parseHunks("@@ -1,3 +1,3 @@\n # Demo\n \n-A tiny calculator.\n+A tiny calculator. Supports add.\n"));
+  expect(rows[0]).toMatchObject({ kind: "ctx", text: " # Demo", old: 1, new: 1 });
+  expect(rows.filter((l) => l.kind !== "hunk").map((l) => l.text)).toEqual([" # Demo", " ", "-A tiny calculator.", "+A tiny calculator. Supports add."].slice(0, 4));
+});
+
+test("an added block that starts blank is slid so it starts with code", () => {
+  const [math] = callEdits(flows);
+  const adds = diffRows(math.hunks).filter((l) => l.kind === "add");
+  expect(adds[0].text).not.toBe("+");
+  expect(adds.length).toBe(4);
+});
+
+test("context is cut to two lines around each change", () => {
+  const old = Array.from({ length: 12 }, (_, i) => `l${i + 1}`).join("\n");
+  const rows = diffRows(parseHunks(`@@ -1,12 +1,12 @@\n${old.split("\n").map((l, i) => (i === 5 ? `-${l}\n+L6` : ` ${l}`)).join("\n")}\n`));
+  expect(rows.map((l) => l.text)).toEqual([" l4", " l5", "-l6", "+L6", " l7", " l8"]);
+  expect(rows[0]).toMatchObject({ old: 4, new: 4 });
+});
+import { parseHunks } from "../src/changes";

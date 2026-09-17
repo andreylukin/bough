@@ -137,16 +137,59 @@ func relPath(dir, p string) string {
 // the session started is not counted as the agent's. A file put back as
 // it was drops out. ok is false outside a repository.
 func SessionEdits(ctx context.Context, dir string, entries []history.Entry) (edits []Edit, ok bool) {
+	base, files := baseline(entries)
+	return editsBetween(ctx, dir, base, "", files)
+}
+
+// turnSpan is one turn's checkpoint (its input's), the next turn's
+// checkpoint ("" when it is the last: the tree now), and the files the
+// turn recorded. found is false when no input has that seq.
+func turnSpan(entries []history.Entry, turn int) (base, end string, files []string, found bool) {
+	seen := map[string]bool{}
+	for _, e := range entries {
+		if e.Kind == "input" {
+			if found {
+				end, _ = e.Data["checkpoint"].(string)
+				break
+			}
+			if e.Seq == int64(turn) {
+				found = true
+				base, _ = e.Data["checkpoint"].(string)
+			}
+			continue
+		}
+		if !found || e.Kind != "done" {
+			continue
+		}
+		fs, _ := e.Data["files"].([]any)
+		for _, f := range fs {
+			if p, _ := f.(string); p != "" && !seen[p] {
+				seen[p] = true
+				files = append(files, p)
+			}
+		}
+	}
+	return base, end, files, found
+}
+
+// TurnEdits is what one turn (the seq of its input) changed: its files,
+// from its checkpoint to the next turn's.
+func TurnEdits(ctx context.Context, dir string, entries []history.Entry, turn int) ([]Edit, bool) {
+	base, end, files, _ := turnSpan(entries, turn)
+	return editsBetween(ctx, dir, base, end, files)
+}
+
+// editsBetween diffs files from the base checkpoint to end (the tree now when "").
+func editsBetween(ctx context.Context, dir, base, end string, files []string) (edits []Edit, ok bool) {
 	// git -C "" is the server's own cwd: a session with no recorded cwd has no repository.
 	if dir == "" || exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--git-dir").Run() != nil {
 		return nil, false
 	}
-	base, files := baseline(entries)
 	if len(files) == 0 {
 		return nil, true
 	}
-	var now string
-	if base != "" {
+	now := end
+	if base != "" && now == "" {
 		now, _ = history.SnapshotContext(ctx, dir)
 	}
 	if now == "" {
@@ -192,12 +235,31 @@ func SessionDiff(ctx context.Context, dir string, entries []history.Entry, path 
 		return "", fmt.Errorf("no working directory was recorded for this session")
 	}
 	base, _ := baseline(entries)
+	return diffBetween(ctx, dir, base, "", path)
+}
+
+// TurnDiff is one file's patch across one turn (the seq of its input).
+func TurnDiff(ctx context.Context, dir string, entries []history.Entry, turn int, path string) (string, error) {
+	if dir == "" {
+		return "", fmt.Errorf("no working directory was recorded for this session")
+	}
+	base, end, _, found := turnSpan(entries, turn)
+	if !found {
+		return "", fmt.Errorf("no turn %d in this session", turn)
+	}
+	return diffBetween(ctx, dir, base, end, path)
+}
+
+func diffBetween(ctx context.Context, dir, base, end, path string) (string, error) {
 	if base == "" {
 		return "", fmt.Errorf("no checkpoint was recorded for this session")
 	}
-	now, err := history.Snapshot(dir)
-	if err != nil {
-		return "", err
+	now := end
+	if now == "" {
+		var err error
+		if now, err = history.Snapshot(dir); err != nil {
+			return "", err
+		}
 	}
 	out, err := exec.CommandContext(ctx, "git", "-C", dir, "diff", "-U3", "--relative", base, now, "--", path).Output()
 	return string(out), err
@@ -217,7 +279,13 @@ func (a *API) edits(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), changesTimeout)
 	defer cancel()
-	files, repo := sessionEdits(ctx, in.Cwd, entries)
+	var files []Edit
+	var repo bool
+	if turn, err := strconv.Atoi(r.URL.Query().Get("turn")); err == nil {
+		files, repo = TurnEdits(ctx, in.Cwd, entries, turn)
+	} else {
+		files, repo = sessionEdits(ctx, in.Cwd, entries)
+	}
 	if ctx.Err() != nil {
 		writeErr(w, http.StatusGatewayTimeout, fmt.Errorf("serve: api: reading this session's edits took longer than %s (a large working tree?)", changesTimeout))
 		return
@@ -254,13 +322,17 @@ func (a *API) diff(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	var text string
 	var err error
-	if r.URL.Query().Get("scope") == "session" {
+	if scope := r.URL.Query().Get("scope"); scope == "session" || scope == "turn" {
 		entries, rerr := a.sup.Entries(in.ID)
 		if rerr != nil {
 			writeErr(w, http.StatusInternalServerError, rerr)
 			return
 		}
-		text, err = SessionDiff(ctx, in.Cwd, entries, path)
+		if turn, terr := strconv.Atoi(r.URL.Query().Get("turn")); scope == "turn" && terr == nil {
+			text, err = TurnDiff(ctx, in.Cwd, entries, turn, path)
+		} else {
+			text, err = SessionDiff(ctx, in.Cwd, entries, path)
+		}
 	} else {
 		text, err = Diff(ctx, in.Cwd, path)
 	}

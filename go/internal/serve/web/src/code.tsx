@@ -103,6 +103,22 @@ function firstCall(src: string): { name: string; args: string[] } | null {
   return { name: m[1], args };
 }
 
+/** Every `tools.<name>(` call with its leading string arguments (up to `max`), in order. */
+export function toolCalls(src: string, max = 3): { name: string; args: string[] }[] {
+  return [...src.matchAll(/tools\.(\w+)\s*\(/g)].map((m) => {
+    const args: string[] = [];
+    let i = m.index + m[0].length;
+    for (let n = 0; n < max && i < src.length; n++) {
+      while (i < src.length && /[\s,]/.test(src[i])) i++;
+      const s = readString(src, i);
+      if (!s) break;
+      args.push(s.value);
+      i = s.end + 1;
+    }
+    return { name: m[1], args };
+  });
+}
+
 /**
  * A shell command's operation and target, from a small table of
  * commands bough runs often. Anything else is shown as it was run:
