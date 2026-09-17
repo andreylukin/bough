@@ -20,3 +20,20 @@ test("the header's Tab order is its visual order: the strip's chips, then Settin
   expect(strip).toBeGreaterThan(-1);
   expect(settings).toBeGreaterThan(strip);
 });
+
+// R3-G: two groups. Identity (title, repo, status) on the left; the metrics
+// cluster, then the actions (Work, Mark seen) on the right, never inside the title row.
+test("R3-G: Mark seen sits with the actions after the metrics, not in the title group", () => {
+  const html = renderToStaticMarkup(<Thread row={{ ...row, trouble: "tests failed", repo: "github.com/a/head-repo" } as Row} lines={lines} {...props} />);
+  const main = html.slice(html.indexOf('class="head-main"'), html.indexOf('class="runtime-strip"'));
+  expect(main).toContain("<h1");
+  expect(main).toContain("head-repo");
+  expect(main).not.toContain("Mark seen");
+  const metrics = html.indexOf('class="rt-metrics"'), actions = html.indexOf('class="rt-actions"');
+  const ack = html.indexOf(">Mark seen<"), settings = html.indexOf('aria-label="Session settings"');
+  expect(metrics).toBeGreaterThan(-1);
+  expect(html.indexOf("Context", metrics)).toBeLessThan(actions);
+  expect(actions).toBeGreaterThan(metrics);
+  expect(ack).toBeGreaterThan(actions);
+  expect(settings).toBeGreaterThan(ack);
+});
