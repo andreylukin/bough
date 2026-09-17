@@ -3090,7 +3090,8 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
 .composer-wrap:has(#composer:focus) .composer-hint{opacity:1}
 .composer-local .sel-btn,.composer-start{height:24px;padding:0 8px;border:0;background:transparent;font-size:var(--fs-sm);color:var(--text-2)}
 .composer-start{white-space:nowrap;flex-shrink:0}
-.composer-foot>.composer-hint{min-width:0;overflow:hidden}
+.composer-foot>.composer-local{flex-shrink:0}
+.composer-foot>.composer-hint{min-width:0;overflow:hidden;flex-wrap:wrap;justify-content:flex-end;height:20px}
 /* queued: a tab joined to the box's top edge */
 .queued{margin:0 12px -1px;width:auto;padding:4px;gap:0;border:1px solid var(--line);border-bottom:0;border-radius:var(--r-md) var(--r-md) 0 0;background:var(--bg)}
 @media (min-width:985px){.queued{max-width:936px;margin-inline:auto}}

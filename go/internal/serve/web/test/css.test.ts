@@ -100,5 +100,6 @@ test("MB-composer: a narrow desktop pane folds the mode badge to its icon so it 
 test("MB-composer: the foot's Start project session stays one line; the key hints give way instead", () => {
   const comp = css.match(/\/\* MB-composer:[\s\S]*?\/\* \/MB-composer \*\//)![0];
   expect(comp).toMatch(/\.composer-start\{white-space:nowrap;flex-shrink:0\}/);
-  expect(comp).toMatch(/\.composer-foot>\.composer-hint\{min-width:0;overflow:hidden\}/);
+  expect(comp).toMatch(/\.composer-foot>\.composer-local\{flex-shrink:0\}/);
+  expect(comp).toMatch(/\.composer-foot>\.composer-hint\{min-width:0;overflow:hidden;flex-wrap:wrap;justify-content:flex-end;height:20px\}/);
 });
