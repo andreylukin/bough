@@ -2903,3 +2903,93 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
 @keyframes mb-toast-out{from{opacity:1;transform:none}to{opacity:0;transform:translateY(8px)}}
 @media (prefers-reduced-motion:reduce){.state,.error-note,.empty-state,.err.err-card,.toast,.toast[data-leaving]{animation:none}.state-details>summary svg,.err-raw>summary svg{transition:none}}
 /* /MB-ERR */
+/* MB-HDR: session header (Linear/Vercel/GitHub/Cursor refs, see mobbin/header/spec.md). One row height per row, inline properties, ghost icons. */
+.thread-head:not(.page-head){padding:8px 24px;min-height:48px;column-gap:16px;row-gap:0}
+.thread-head .head-main{gap:12px}
+.thread-head:not(.page-head) .head-main h1{font:600 var(--fs-h2)/24px var(--sans);letter-spacing:-.01em;color:var(--text-1)}
+.thread-head:not(.page-head) .head-main h1:focus{outline:none}
+.thread-head .head-main>.status{gap:6px;font:500 var(--fs-sm)/16px var(--sans)}
+.thread-head .head-main>.status svg{width:12px;height:12px}
+.thread-head .head-live{color:var(--text-2)}
+.thread-head .head-trouble{color:var(--text-1)}
+.thread-head .head-main>.status:not(.head-live):not(.head-trouble):not(.head-failed):not(.mode-chip):not(.setup-failed){color:var(--text-3)!important}
+.thread-head .head-repo{font-size:var(--fs-sm);color:var(--text-3)}
+.thread-head .head-clock{font-size:var(--fs-sm);color:var(--text-3);font-variant-numeric:tabular-nums;margin-inline-start:-6px}
+.thread-head .head-clock::before{content:"·";margin-inline-end:6px}
+.thread-head .mode-chip{height:20px;padding:0 8px;border-radius:var(--r-pill);font:500 var(--fs-sm)/1 var(--sans);color:var(--text-2);background:var(--raised);box-shadow:inset 0 0 0 1px var(--line);border:0}
+.thread-head .head-main>.link{font:500 var(--fs-sm)/16px var(--sans);color:var(--text-2);text-decoration:none}
+.thread-head .head-main>.link:hover{text-decoration:underline}
+/* metrics: inline properties, 28px hit area, no borders */
+.thread-head .rt-metrics{gap:16px}
+.rt-metrics>.rt:not(details),.rt-metrics>details.rt>summary{display:inline-flex;align-items:center;gap:6px;height:28px;min-height:28px;padding:0 6px;margin:0 -6px;border-radius:var(--r-sm);
+  font:var(--fs-sm)/16px var(--sans);transition:background-color var(--dur-fast) var(--ease)}
+.rt-metrics .rt-label{font-weight:400;color:var(--text-3)}
+.rt-metrics .rt-value{font-weight:500;color:var(--text-1);font-variant-numeric:tabular-nums}
+.rt-metrics>.rt-link:hover,.rt-metrics>.rt-tip:hover,.rt-metrics>details.rt>summary:hover{background:var(--hover)}
+.rt-metrics>.rt-link:hover .rt-value{text-decoration:none}
+.rt-metrics>.rt:focus-visible,.rt-metrics>details.rt>summary:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.rt-metrics>details.rt[open]>summary,.rt-metrics>.rt[aria-expanded="true"]{background:var(--sel)}
+.rt-metrics .rt-bar{width:40px;height:4px;border-radius:2px;background:var(--raised)}
+.rt-metrics .rt-bar>span{background:var(--text-3)}
+.rt-metrics .rt-bar>.rt-warm{background:var(--text-2)}
+.rt-metrics .rt-bar>.rt-hot{background:var(--amber)}
+.rt-metrics .rt-add{color:var(--accent)}
+.rt-metrics .rt-del{color:var(--red)}
+.rt-metrics .rt-del.rt-zero,.rt-metrics .rt-add.rt-zero{color:var(--text-3)}
+.rt-cache-hot .rt-value{color:var(--text-1);display:inline-flex;align-items:center;gap:6px}
+.rt-warm-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0}
+.rt-metrics .rt-test-passed{color:var(--text-2)}
+.rt-metrics .rt-test-passed>.rt-mark{color:var(--text-3)}
+.rt-metrics .rt-test-failed{color:var(--text-1)}
+.rt-metrics .rt-test-failed>.rt-mark{color:var(--red)}
+/* overflow: a ghost dots button; the word shows on a phone */
+.rt-metrics>.rt-more>summary{justify-content:center;width:28px;margin:0;padding:0;color:var(--text-2)}
+.rt-metrics>.rt-more>summary:hover{color:var(--text-1)}
+.rt-more-word{display:none}
+.rt-more>.rt-pop,.rt-pop.rt-diff{border:0;border-radius:var(--r-md);box-shadow:var(--shadow-pop)}
+.rt-more>.rt-pop{top:calc(100% + 4px);min-width:220px;padding:4px;gap:0;align-items:stretch;transform-origin:top right;animation:mb-hdr-pop var(--dur) var(--ease-out)}
+.rt-more>.rt-pop>.rt:not(details),.rt-more>.rt-pop>details.rt>summary{display:flex;justify-content:space-between;align-items:center;gap:12px;width:100%;min-height:32px;padding:0 8px;border-radius:var(--r-sm)}
+.rt-more>.rt-pop>.rt-link:hover,.rt-more>.rt-pop>.rt-tip:hover,.rt-more>.rt-pop>details.rt>summary:hover{background:var(--sel)}
+.rt-more>.rt-pop .rt-value{margin-inline-start:auto;font-weight:500}
+@keyframes mb-hdr-pop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.chg-scope{min-height:28px}
+.chg-scope[aria-selected="true"]{border-color:transparent}
+/* actions: secondary buttons at one height, settings a ghost icon */
+.thread-head>.runtime-strip .work-summary,.thread-head .head-ack{height:32px;min-height:32px;padding:0 12px;border-radius:var(--r-sm);
+  font:500 var(--fs-md)/1 var(--sans);color:var(--text-1);background:var(--raised);border:1px solid var(--line-ctl);
+  transition:background-color var(--dur-fast) var(--ease),border-color var(--dur-fast) var(--ease)}
+.thread-head>.runtime-strip .work-summary:hover,.thread-head .head-ack:hover{background:var(--sel);border-color:var(--line-strong)}
+.thread-head>.runtime-strip .work-summary:active,.thread-head .head-ack:active{scale:.98}
+.thread-head>.runtime-strip .work-summary-2{color:var(--text-2)}
+.thread-head .head-stop{color:var(--red)}
+.thread-head .more{width:32px;height:32px;border:0;border-radius:var(--r-sm);background:none;color:var(--text-2);transition:background-color var(--dur-fast) var(--ease)}
+.thread-head .more svg{width:16px;height:16px}
+.thread-head .more:hover{background:var(--hover);color:var(--text-1)}
+.thread-head .more[aria-expanded="true"]{background:var(--sel);color:var(--text-1)}
+/* paused: amber word and dot, the rest quiet */
+.rt-paused{display:inline-flex;align-items:center;gap:4px;font:var(--fs-sm)/16px var(--sans);color:var(--text-2);white-space:nowrap}
+.rt-paused-word{display:inline-flex;align-items:center;gap:6px;color:var(--amber)}
+.rt-paused-word::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.rt-paused .link{font:500 var(--fs-sm)/16px var(--sans)}
+/* wrapped strip (narrow pane): row 2 is one 32px line, actions pushed right */
+@container (max-width:899px){
+  .thread-head:not(.page-head)>.runtime-strip{min-height:32px;padding-bottom:0}
+  .thread-head:not(.page-head) .rt-actions{margin-inline-start:auto}
+  .rt-metrics>.rt:not(details),.rt-metrics>details.rt>summary{height:32px;min-height:32px}
+  .rt-metrics>details.rt-more>summary{width:32px}
+}
+@media (max-width:720px){
+  .thread-head:not(.page-head){padding:0 16px 0 8px}
+  .thread-head:not(.page-head) .head-main h1{font:600 var(--fs-md)/20px var(--sans);font-size:15px}
+  .thread-head .more{width:44px;height:44px}
+  .thread-head:not(.page-head)>.runtime-strip{grid-column:1/-1;padding-inline-start:8px;min-height:44px;flex-wrap:nowrap;gap:8px}
+  .thread-head:not(.page-head) .rt-actions{min-width:0;flex-shrink:1}
+  .thread-head:not(.page-head) .rt-actions>.work-summary{flex-shrink:1;min-width:0}
+  .thread-head>.runtime-strip .work-summary,.thread-head .head-ack{height:44px;min-height:44px;flex-direction:row}
+  .thread-head>.runtime-strip .work-summary-2{display:inline}
+  .rt-metrics>details.rt-more>summary{width:auto;height:44px;min-height:44px;padding:0 12px;margin:0 0 0 -12px;gap:6px}
+  .rt-more-word{display:inline;font:500 var(--fs-md)/1 var(--sans);color:var(--text-2)}
+  .rt-more>.rt-pop>.rt:not(details),.rt-more>.rt-pop>details.rt>summary{min-height:44px}
+}
+@media (prefers-reduced-motion:reduce){.rt-more>.rt-pop{animation:none}.thread-head .head-ack:active,.thread-head>.runtime-strip .work-summary:active{scale:none}}
+/* /MB-HDR */

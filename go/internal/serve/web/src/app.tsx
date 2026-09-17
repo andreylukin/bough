@@ -2351,7 +2351,7 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, l
       <span className={"num rt-value" + (u ? "" : " rt-stale")}>{!u ? "—" :`${tokenCount(u.lastIn)}${limit ? ` · ${tokenCount(Math.max(0, limit - u.lastIn))} left` : ""}`}</span>
       {pct !== undefined && (
         <span className="rt-bar" role="meter" aria-label="Context used" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-          <span className={pct >= 80 ? "rt-hot" : undefined} style={{ width: `${pct}%` }} />
+          <span className={pct >= 80 ? "rt-hot" : pct >= 60 ? "rt-warm" : undefined} style={{ width: `${pct}%` }} />
         </span>
       )}
     </>;
@@ -2371,7 +2371,7 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, l
     <div className="runtime-strip" ref={strip}>
       {paused !== undefined && (
         <span className="rt-paused" role="status">
-          Updates paused · last synced {clock(new Date(paused).toISOString())} · <button className="link" onClick={onRetry}>Retry</button>
+          <span className="rt-paused-word">Updates paused</span> · last synced {clock(new Date(paused).toISOString())} · <button className="link" onClick={onRetry}>Retry</button>
         </span>
       )}
       <div className="rt-metrics">
@@ -2382,7 +2382,10 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, l
         {fold < 1 && cache}
         {folded.length > 0 && (
           <details className="rt rt-jobs rt-more">
-            <summary aria-label="More session details">…</summary>
+            <summary aria-label="More session details">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
+              <span className="rt-more-word">Details</span>
+            </summary>
             <div className="rt-pop">{folded}</div>
           </details>
         )}
@@ -2440,7 +2443,7 @@ export function ChangesChip({ row }: { row: Row }) {
   const none = c.text === "None";
   const aria = none ? `No edits. Working tree: ${t.text}` : `Session edits: ${c.text}${c.add !== undefined ? `, ${c.add} added, ${c.del} removed` : ""}. Working tree: ${t.text}${data.session.failed || data.tree.failed ? ", stale" : ""}`;
   const body = none ? <span className="rt-label">No edits</span> : <>
-    <span className="rt-label">Session edits</span>
+    <span className="rt-label">Edits</span>
     <span className={"num rt-value" + (c.quiet ? " rt-stale" : "")}>{c.text}{c.add !== undefined && <> <span className="rt-add">+{c.add}</span> <span className={"rt-del" + (c.del ? "" : " rt-zero")}>−{c.del}</span></>}</span>
   </>;
   // A failed read is no value: no chip, rather than "Unavailable".
@@ -2480,9 +2483,9 @@ function TestsChip({ lines, running }: { lines: Line[]; running: boolean }) {
               el.scrollIntoView({ block: "center" });
               (el.querySelector<HTMLElement>("summary,button") ?? el).focus();
             }}>
-      <span className="rt-label">Last tests</span>
-      <span className={"num rt-value " + (failed ? "rt-del" : last.state === "passed" ? "rt-add" : "rt-stale")}>{failed && <span aria-hidden="true" className="rt-mark"><StatusMark status="error" bare /></span>}{word}</span>
-      {(last.state === "passed" || last.state === "failed") && <span className="num rt-label">{ago(last.at)} ago</span>}
+      <span className="rt-label">Tests</span>
+      <span className={"num rt-value " + (failed ? "rt-test-failed" : last.state === "passed" ? "rt-test-passed" : "rt-stale")}>{failed && <span aria-hidden="true" className="rt-mark"><StatusMark status="error" bare /></span>}{last.state === "passed" && <span aria-hidden="true" className="rt-mark">✓</span>}{word}</span>
+      {(last.state === "passed" || last.state === "failed") && <span className="num rt-label">· {ago(last.at)} ago</span>}
     </button>
   );
 }
@@ -2520,8 +2523,8 @@ function CacheChip({ cache, model }: { cache: NonNullable<Row["cache"]>; model?:
   return (
     <Tip className="rt-cache-hot"
          tip={`Estimate: ${provider}'s documented cache window since the last turn ended, not a measured hit. Last turn read ${tokenCount(cache.read)} of ${tokenCount(cache.in)} input tokens from the cache (${hit}%), wrote ${tokenCount(cache.write)}`}>
-      <span className="rt-label">Cache TTL</span>
-      <span className="num rt-value">
+      <span className="rt-label">Cache</span>
+      <span className="num rt-value"><span className="rt-warm-dot" aria-hidden="true" />
         ~{Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}
       </span>
     </Tip>
@@ -4054,12 +4057,6 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
         <div className="head-main">
           {row.spawnedBy && <ParentLink id={row.spawnedBy} rows={rows} onOpen={onOpenSession} />}
           <h1 title={row.title} ref={headRef} tabIndex={-1}>{sessionTitle(row)}</h1>
-          {(row.repo || row.branch) && (
-            <span className="mono head-repo">
-              {row.repo?.split("/").pop()}
-              {row.branch && <span style={{ color: "var(--line-strong)" }}>/</span>}{row.branch}
-            </span>
-          )}
           {/* Until the transcript is read the header names no status: "Done" became "Done · 11 failed" a moment later. */}
           {loading ? null : (status === "Sending" || status === "Waiting" || row.status === "running") ? (
             // R4-D: while a turn runs the header says the transcript's word, Working, not the list's Running.
@@ -4071,10 +4068,17 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           ) : row.mode === "project" && row.orb?.status === "failed" ? null /* Setup failed says it; "Done" beside it contradicted it. */
             // Worst outcome first: a finished session whose work failed does not read as a bare Done.
             : row.status === "done" && counts.failed > 0
-              ? <span className="status head-trouble"><StatusMark status="error" bare />{statusWord("done")} · {counts.failed} failed</span>
+              ? <span className="status head-trouble"><StatusMark status="error" bare /><span className="visually-hidden">{statusWord("done")}, </span>{counts.failed} failed</span>
               : row.status === "done" && lastFail
                 ? <span className="status head-failed" title={`${lastFail} failed`}><WarnMark />Failed</span>
                 : <StatusMark status={row.status} />}
+          {/* MB-HDR: the settings popover has no "Where" line, so the repo stays here, quiet, after the status. */}
+          {(row.repo || row.branch) && (
+            <span className="mono head-repo">
+              {row.repo?.split("/").pop()}
+              {row.branch && <span style={{ color: "var(--line-strong)" }}>/</span>}{row.branch}
+            </span>
+          )}
           <ModeChip row={row} name={projects.find((p) => p.id === row.orb?.project)?.name} />
           {/* A short link beside the chip: a full button pushed the title row
               past its 32px and covered the strip below. */}
@@ -4095,7 +4099,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
         </div>
         <RuntimeStrip cat={catalogue.cat} row={row} lines={lines} paused={paused} onRetry={onRetry} onContext={onContext} loading={loading} failed={failedLoad}
           actions={<>
-            {row.orb?.status === "running" && onStopOrb && <button className="btn head-ack" onClick={onStopOrb}>Stop orb</button>}
+            {row.orb?.status === "running" && onStopOrb && <button className="btn head-ack head-stop" onClick={onStopOrb}>Stop orb</button>}
             {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
           </>}
           work={showWork && (
