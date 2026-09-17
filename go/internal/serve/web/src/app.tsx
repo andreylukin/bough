@@ -8,6 +8,7 @@ import { ModeChip, ModePicker, type ModeValue } from "./mode";
 import { Select, type Option } from "./select";
 import { DialogHost, askChoice, askConfirm, askText } from "./dialog";
 import { Welcome, welcomeDismissed } from "./welcome";
+import { clampToViewport } from "./popover";
 import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount, changedPath } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
@@ -2082,7 +2083,8 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, loading }:
     if (!el || !head || !main || typeof ResizeObserver === "undefined") return;
     const check = () => {
       if (getComputedStyle(el).flexWrap !== "nowrap") return setFold(0);
-      if (main.clientWidth < Math.min(main.scrollWidth, 240)) setFold((f) => Math.min(f + 1, 3));
+      const h1 = main.querySelector("h1");
+      if (main.clientWidth < Math.min(main.scrollWidth, 240) || (h1 && h1.scrollWidth > h1.clientWidth)) setFold((f) => Math.min(f + 1, 3));
     };
     let w = head.clientWidth;
     const ro = new ResizeObserver(() => {
@@ -2162,6 +2164,7 @@ function usePopovers(root: React.RefObject<HTMLElement | null>) {
     const toggle = (e: Event) => {
       const d = e.target as HTMLDetailsElement;
       if (d.open) for (const o of open()) if (o !== d && !o.contains(d)) o.open = false;
+      if (d.open) clampToViewport(d.querySelector<HTMLElement>(":scope>.rt-pop"));
     };
     const key = (e: KeyboardEvent) => {
       const d = open()[0];
@@ -3948,7 +3951,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             {attachErr && <span className="attach-note attach-err" role="alert">{attachErr}</span>}
             <div className="composer-actions">
               {/* Beside Send, so it never covers what you are reading. */}
-              {down && (
+              {down && !away && (
                 <button className="btn jump-latest" onClick={toStart} title="Home" aria-label="Top">
                   <span aria-hidden="true">↑ </span>
                   <span className="jump-word">Top</span>
@@ -3957,7 +3960,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
               {away && (
                 <button className="btn jump-latest" onClick={() => toLatest()} title={modKey() + "End"}
                         aria-label={newest > awayAt.current ? "New activity, jump to latest" : "Jump to latest"}>
-                  <span aria-hidden="true">↓</span>
+                  <span aria-hidden="true">↓ </span>
                   <span className="jump-word">{newest > awayAt.current ? "New activity" : "Latest"}</span>
                 </button>
               )}
