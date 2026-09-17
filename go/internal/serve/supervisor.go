@@ -155,6 +155,12 @@ type child struct {
 	metaID           string // a session id the child volunteered on a "meta" line
 	buffer           []pending
 	dropped          bool // the lease has already been handed back
+	// unread: a prompt was written that the child has not yet reported
+	// taking (no "input"/"steer" since). held: an interrupt that came in
+	// that gap, sent once the child takes the prompt. A SIGINT before
+	// then cancels nothing: a booting child dies of it, a booted one
+	// exits without the turn ever starting.
+	unread, held bool
 }
 
 // Supervisor is safe for concurrent use. One mutex guards the lease
@@ -397,7 +403,7 @@ func (s *Supervisor) Create(opt CreateOptions) (string, error) {
 				return "", err
 			}
 			if prompt != "" {
-				if err := s.write(ch, prompt); err != nil {
+				if err := s.writePrompt(ch, prompt); err != nil {
 					return id, err
 				}
 			}
@@ -449,7 +455,7 @@ func (s *Supervisor) createWithID(id, cwd, prompt string, extra, args []string) 
 				return "", err
 			}
 			if prompt != "" {
-				if err := s.write(ch, prompt); err != nil {
+				if err := s.writePrompt(ch, prompt); err != nil {
 					return id, err
 				}
 			}
@@ -702,6 +708,10 @@ func (s *Supervisor) pumpStderr(ch *child, r io.Reader) {
 func (s *Supervisor) emit(ch *child, kind, text string, extra map[string]any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if kind == "input" || kind == "steer" {
+		ch.unread = false
+		s.releaseLocked(ch)
+	}
 	if ch.id == "" {
 		if kind == "meta" && ch.metaID == "" {
 			ch.metaID = metaSession(extra)
@@ -828,7 +838,7 @@ func (s *Supervisor) Send(id, text string) error {
 	if err != nil {
 		return err
 	}
-	return s.write(ch, text)
+	return s.writePrompt(ch, text)
 }
 
 // Answer replies to the armed tools.ask over the same pipe.
@@ -857,6 +867,21 @@ func (s *Supervisor) Answer(id, text string) error {
 	delete(s.asks, id)
 	s.mu.Unlock()
 	return nil
+}
+
+// holdLimit bounds how long an interrupt waits for the child to take
+// its prompt, so a line that never becomes a turn cannot swallow it.
+var holdLimit = 20 * time.Second
+
+// writePrompt writes a line the child will run (or steer with), noting
+// it unread first so an interrupt in the gap is held, not lost.
+func (s *Supervisor) writePrompt(ch *child, text string) error {
+	if !strings.HasPrefix(text, "/") && !strings.HasPrefix(text, "!") {
+		s.mu.Lock()
+		ch.unread = true
+		s.mu.Unlock()
+	}
+	return s.write(ch, text)
 }
 
 func (s *Supervisor) write(ch *child, text string) error {
@@ -909,10 +934,31 @@ func (s *Supervisor) Interrupt(id string) error {
 	if !ch.started() || ch.cmd == nil || ch.cmd.Process == nil {
 		return nil
 	}
+	s.mu.Lock()
+	if ch.unread {
+		ch.held = true
+		s.mu.Unlock()
+		time.AfterFunc(holdLimit, func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.releaseLocked(ch)
+		})
+		return nil
+	}
+	s.mu.Unlock()
 	if err := ch.cmd.Process.Signal(os.Interrupt); err != nil {
 		return fmt.Errorf("serve: supervisor: interrupt %s: %w", id, err)
 	}
 	return nil
+}
+
+// releaseLocked sends a held interrupt. Caller holds s.mu.
+func (s *Supervisor) releaseLocked(ch *child) {
+	if !ch.held || ch.dropped {
+		return
+	}
+	ch.held = false
+	_ = ch.cmd.Process.Signal(os.Interrupt)
 }
 
 // Kill hard-stops the child and waits for the reap, so the lease is
