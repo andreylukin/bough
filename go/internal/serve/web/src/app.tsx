@@ -2907,7 +2907,9 @@ function ParentLink({ id, rows, onOpen }: { id: string; rows: Row[]; onOpen?: (i
 /** steer: whether a turn was running when you sent it. Read off the live
  *  status instead, the message itself flipped the session to running before
  *  the transcript showed it, so every new turn read "Steer pending…". */
-type Pending = { id: string; text: string; after: number; steer?: boolean };
+/** `seen`: seq|at keys of inputs on hand at send time; a prompt resent after a
+ *  stop must not count its earlier copy as landed. */
+type Pending = { id: string; text: string; after: number; steer?: boolean; seen?: string[] };
 
 /** The composer's status word: a send not yet recorded, a turn with no
  *  output yet, then output arriving. Derived from the same render as the
@@ -3494,7 +3496,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   // created or switched to) the recorded prompt showed at the top while
   // its "Sending…" copy stayed stuck at the bottom.
   const inputs = lines.filter((l) => l.kind === "input");
-  const sameText = (p: Pending) => { const want = p.text.trim().slice(0, 200); return inputs.slice(-(sending.length + 3)).some((l) => (l.text ?? "").trim().startsWith(want)); };
+  const sameText = (p: Pending) => { const want = p.text.trim().slice(0, 200); return inputs.slice(-(sending.length + 3)).some((l) => !p.seen?.includes(`${l.seq}|${l.at}`) && (l.text ?? "").trim().startsWith(want)); };
   const unlanded = loading ? sending : sending.filter((p, i) => inputs.filter((l) => l.seq > p.after).length <= i && !sameText(p));
   const landedIds = sending.length - unlanded.length;
   useEffect(() => { if (landedIds) setSending((q) => q.slice(landedIds)); }, [landedIds]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -3519,7 +3521,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     }
     // A retry is the same request, so it keeps its id.
     const id = retried?.id ?? (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
-    if (!answer) setSending((q) => [...q, { id, text: t, after: newest, steer: running }]);
+    if (!answer) setSending((q) => [...q, { id, text: t, after: newest, steer: running, seen: inputs.map((l) => `${l.seq}|${l.at}`) }]);
     else setAnswering({ ask: ask ?? "", text: t });
     const error = await (answer ? onAnswer(t, ask) : onSend(t));
     if (answer) setAnswering(null);
