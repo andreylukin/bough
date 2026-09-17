@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OrbDetail, OrbFile, Project, Row } from "./types";
 import { api } from "./api";
-import { ProjectOrb, confirmStopOrb } from "./orb";
+import { ProjectOrb, confirmStopOrb, removeOrbQuestion } from "./orb";
 import { STATUS, StatusMark, TESTS_FAILED_GLYPH, shownStatus } from "./status";
 import { humanError } from "./loading";
 import { hasOwnTitle, sessionTitle } from "./render";
@@ -118,7 +118,11 @@ function OrbSection({ project, onOpen, onChanged, titles, rows = [] }: {
       }}
       onSave={async (name: OrbFile, text: string) => { await api.putOrbFile(project.id, name, text); load(); }}
       onBuild={() => { void run(() => api.buildOrb(project.id)); }}
-      onStopOrb={async (session) => { if (await confirmStopOrb(rows.find((r) => r.id === session)?.jobs)) void run(() => api.stopOrb(session)); }} />
+      onStopOrb={async (session) => { if (await confirmStopOrb(rows.find((r) => r.id === session)?.jobs)) void run(() => api.stopOrb(session)); }}
+      onRemoveOrb={(session) => { void run(async () => {
+        const q = removeOrbQuestion((await api.orbRemovePlan(session)).plan);
+        if (await askConfirm(q.title, q.body, { action: "Remove orb", danger: true })) await api.removeOrb(session);
+      }); }} />
   );
 }
 

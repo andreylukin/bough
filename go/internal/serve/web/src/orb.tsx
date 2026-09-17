@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Job, OrbDetail, OrbFile, OrbStatus, Project, Status } from "./types";
+import type { Job, OrbDetail, OrbRemovePlan, OrbFile, OrbStatus, Project, Status } from "./types";
 import { askConfirm } from "./dialog";
 import { sessionTitle } from "./render";
 import { CopyButton, Pending } from "./loading";
@@ -51,7 +51,7 @@ const STATE: Record<OrbStatus, Status> = {
  * One project's orb: the definition files, the snapshot image and the
  * containers sessions run in. Presentational; ProjectsView fetches.
  */
-export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, onSave, onBuild, onStopOrb, onOpen, titles = {} }: {
+export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, onSave, onBuild, onStopOrb, onRemoveOrb, onOpen, titles = {} }: {
   project: Project; detail?: OrbDetail; log: string;
   /** Session id to title, so a container row names the work. */
   titles?: Record<string, string>;
@@ -60,7 +60,7 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
   onAttach: () => void; onDetach: () => void;
   /** Rejects with the server's parse error, which stays beside the editor. */
   onSave: (name: OrbFile, text: string) => Promise<void>;
-  onBuild: () => void; onStopOrb: (session: string) => void;
+  onBuild: () => void; onStopOrb: (session: string) => void; onRemoveOrb?: (session: string) => void;
   onOpen?: (session: string) => void;
 }) {
   const [tab, setTab] = useState<OrbFile>("project.yml");
@@ -171,7 +171,8 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
             </span>
             <span className="orb-st" title={o.error}><StatusMark status={STATE[o.status]} /></span>
             {/* Every row keeps the action slot, so the columns line up whether or not it can stop. */}
-            <span className="orb-act">{orbUp(o) && <button className="btn btn-sm" onClick={() => onStopOrb(o.session)}>Stop orb</button>}</span>
+            <span className="orb-act">{orbUp(o) ? <button className="btn btn-sm" onClick={() => onStopOrb(o.session)}>Stop orb</button>
+              : onRemoveOrb && <button className="btn btn-sm btn-danger-quiet" onClick={() => onRemoveOrb(o.session)}>Remove…</button>}</span>
             {o.proxyAuth === "legacy" && (
               <p className="orb-note"><Mark status="needs-you" word="Proxy unauthenticated"
                 detail="this orb predates proxy tokens, so any VM on the bridge can use its host proxy and relay; remove the orb and start a session to recreate it with a token" /></p>
@@ -181,4 +182,25 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
         </div>}
     </div>
   );
+}
+
+function bytes(n: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return i === 0 ? `${n} B` : `${n.toFixed(1)} ${units[i]}`;
+}
+
+/** Remove orb's confirm: exactly what goes and what stays. Branches are kept here; `bough project prune --branches` deletes merged ones. */
+export function removeOrbQuestion(plan: OrbRemovePlan): { title: string; body: string } {
+  const del = [
+    ...(plan.container ? [`container ${plan.container}`] : []),
+    ...plan.worktrees.map((w) => `worktree ${w}`),
+    `${plan.dir} (${bytes(plan.bytes)} on disk)`,
+  ];
+  const keep = [
+    ...plan.branches.map((b) => `branch ${b.branch} in ${b.repo} (${b.reason})`),
+    "the session's history",
+  ];
+  return { title: "Remove this orb?", body: `Deletes:\n${del.map((l) => `• ${l}`).join("\n")}\n\nKeeps:\n${keep.map((l) => `• ${l}`).join("\n")}` };
 }

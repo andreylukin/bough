@@ -31,6 +31,9 @@ const projectUsage = `usage: bough project <command>
   set <slug> <key> <value>              checks.fast, checks.full, base, memory, cpus, env.NAME,
                                         secrets.NAME keychain:<service>; "" clears
   write <slug> <file>                   replace a file with stdin (empty stdin deletes a script)
+  rm <session> [--branches] [--yes]     remove a session's orb: container, worktrees, orb dir
+  prune [slug] [--branches] [--yes]     remove failed and archived sessions' orbs and unused images
+                                        branches bough/<session> are kept; --branches deletes merged or pushed ones
 Changes apply to the next session started in the project.`
 
 func runProject(args []string) {
@@ -159,6 +162,10 @@ func project(out io.Writer, in io.Reader, args []string) error {
 			return err
 		}
 		return mutate(out, home, args[1], func(d *projectdef.Def) error { return setKey(d, args[2], args[3]) })
+	case "rm":
+		return projectRm(out, in, home, args[1:])
+	case "prune":
+		return projectPrune(out, in, home, args[1:])
 	case "write":
 		if err := need(2); err != nil {
 			return err

@@ -381,3 +381,42 @@ func TestBuildOrbClonesRemoteAndReportsEarlyFailure(t *testing.T) {
 		t.Errorf("summary = %v", o)
 	}
 }
+
+// B1: Remove orb shows its plan first, then deletes container and orb
+// dir; an orb another live process owns is refused.
+func TestRemoveOrb(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	ctx := context.Background()
+	id := "failedstart"
+	seedModeSession(t, f, id, map[string]any{"cwd": "/w", "mode": "project", "project": "app"})
+	f.rt.Build(ctx, container.BuildSpec{Tag: "img"}, nil)
+	if err := f.rt.Start(ctx, container.RunSpec{Name: container.OrbName(id), Image: "img"}); err != nil {
+		t.Fatal(err)
+	}
+	writeState(t, f.home, orb.State{Session: id, Project: "app", Status: orb.StatusFailed, Error: "resume.sh: exit 1", UpdatedAt: time.Now()})
+	code, body := f.do(t, "GET", "/api/sessions/"+id+"/orb/remove?branches=1", "")
+	plan, _ := body["plan"].(map[string]any)
+	if code != http.StatusOK || plan["container"] != container.OrbName(id) {
+		t.Fatalf("plan = %d %v", code, body)
+	}
+	if code, body := f.do(t, "DELETE", "/api/sessions/"+id+"/orb", ""); code != http.StatusOK {
+		t.Fatalf("remove = %d %v", code, body)
+	}
+	if st, _ := f.rt.Inspect(ctx, container.OrbName(id)); st != container.StateMissing {
+		t.Errorf("container = %s", st)
+	}
+	if _, err := os.Stat(orb.Dir(f.home, id)); !os.IsNotExist(err) {
+		t.Errorf("orb dir kept: %v", err)
+	}
+
+	busy := "owned"
+	seedModeSession(t, f, busy, map[string]any{"cwd": "/w", "mode": "project", "project": "app"})
+	writeState(t, f.home, orb.State{Session: busy, Project: "app", Status: orb.StatusRunning, PID: os.Getpid(), UpdatedAt: time.Now()})
+	if code, _ := f.do(t, "DELETE", "/api/sessions/"+busy+"/orb", ""); code != http.StatusConflict {
+		t.Errorf("remove of a live owner's orb = %d, want 409", code)
+	}
+	if _, err := os.Stat(orb.Dir(f.home, busy)); err != nil {
+		t.Errorf("live orb removed: %v", err)
+	}
+}
