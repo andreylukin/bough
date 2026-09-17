@@ -226,6 +226,22 @@ const ICONS = {
   filter: <path d="M4 6.5h16M7 12h10M10 17.5h4" />,
 };
 
+/** A route change puts focus on .app, so the next Tab reaches the skip links; a field or dialog in use keeps it. */
+export function focusAppOnRoute(doc: Document) {
+  const a = doc.activeElement as HTMLElement | null;
+  if (a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName ?? "") || a.closest?.("[role=dialog], dialog"))) return;
+  doc.querySelector<HTMLElement>(".app")?.focus({ preventScroll: true });
+}
+
+/** Back and forward keep their slot with no history, so the icons after them never shift. */
+export function HistoryArrows({ back, forward }: { back: boolean; forward: boolean }) {
+  const hide = !back && !forward;
+  return <>
+    <button className={"side-icon" + (hide ? " side-icon-reserved" : "")} onClick={() => window.history.back()} disabled={!back} aria-hidden={hide || undefined} tabIndex={hide ? -1 : undefined} aria-label="Back" title="Back"><Icon d={ICONS.back} /></button>
+    <button className={"side-icon" + (hide ? " side-icon-reserved" : "")} onClick={() => window.history.forward()} disabled={!forward} aria-hidden={hide || undefined} tabIndex={hide ? -1 : undefined} aria-label="Forward" title="Forward"><Icon d={ICONS.forward} /></button>
+  </>;
+}
+
 /** Whether history can go back or forward from here, where the browser says (the Navigation API); else both stay on. */
 function useHistoryNav(): { back: boolean; forward: boolean } {
   type Nav = EventTarget & { canGoBack: boolean; canGoForward: boolean };
@@ -799,11 +815,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
       </button>
       {/* A phone's list is the root: a title, no history arrows. */}
       {narrow && <h2 className="side-title">Sessions</h2>}
-      {/* One order folded or not: back, forward, find, new; the arrows only once there is history. */}
-      {!narrow && (hist.back || hist.forward) && <>
-        <button className="side-icon" onClick={() => window.history.back()} disabled={!hist.back} aria-label="Back" title="Back"><Icon d={ICONS.back} /></button>
-        <button className="side-icon" onClick={() => window.history.forward()} disabled={!hist.forward} aria-label="Forward" title="Forward"><Icon d={ICONS.forward} /></button>
-      </>}
+      {/* One order folded or not: back, forward, find, new; the arrows hold their slot before there is history. */}
+      {!narrow && <HistoryArrows back={hist.back} forward={hist.forward} />}
       {folded
         // The same slot does the same thing folded: it unfolds the list with its filter open.
         ? <button className="side-icon" onClick={() => { setSide(false); setSearching(true); }}
@@ -4625,7 +4638,7 @@ export default function App() {
     read();
     // Any navigation of yours beats opening a session on arrival: going to
     // #/ while the first load was still out bounced into the latest session.
-    const nav = () => { arrived.current = true; read(); };
+    const nav = () => { arrived.current = true; read(); requestAnimationFrame(() => focusAppOnRoute(document)); };
     window.addEventListener("popstate", nav);
     window.addEventListener("hashchange", nav);
     return () => {
@@ -4948,7 +4961,7 @@ export default function App() {
   ];
 
   return (
-    <div className="app" data-pane={pane}>
+    <div className="app" data-pane={pane} tabIndex={-1}>
       {row && !sub && view === "sessions" && (
         <div className="skip-links">
           <button className="skip-link" onClick={() => { const t = document.querySelector<HTMLElement>(".transcript"); if (t) focusRegion(t); }}>Skip to transcript</button>
