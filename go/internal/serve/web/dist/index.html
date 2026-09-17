@@ -2007,6 +2007,24 @@ a.rt-link{text-decoration:none}
 .orb-row>.orb-note{grid-column:1/-1;grid-row:auto;margin:0 0 var(--s-2);font-size:var(--fs-sm)}
 .orb-note .orb-mark{display:block}
 /* /ORB-TOKEN */
+/* ORB-PHASES */
+.orb-phases{position:relative;display:inline-flex}
+.orb-phases>summary{display:inline-flex;align-items:center;list-style:none;cursor:pointer;border-radius:var(--r-pill)}
+.orb-phases>summary::-webkit-details-marker{display:none}
+.orb-phases>summary:hover .mode-chip{background:var(--hover)}
+.orb-phases>summary:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+.orb-pop{position:absolute;top:calc(100% + 6px);left:0;z-index:var(--z-menu);width:max-content;min-width:240px;max-width:min(420px,calc(100vw - 16px));
+         padding:var(--s-2) var(--s-3);border-radius:var(--r-md);background:var(--raised);box-shadow:var(--shadow-pop);font:400 var(--fs-md)/20px var(--sans);color:var(--text-1)}
+.orb-pop-head{margin:0 0 var(--s-1);font:500 var(--fs-xs)/16px var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--text-3)}
+.orb-phase-list{margin:0;padding:0;list-style:none}
+.orb-phase{display:grid;grid-template-columns:16px minmax(0,1fr) auto;column-gap:var(--s-2);align-items:center;min-height:28px}
+.orb-phase .state-mark{width:14px;height:14px}
+.orb-phase-time{font:400 var(--fs-sm)/16px var(--mono);font-variant-numeric:tabular-nums;color:var(--text-3);text-align:end}
+.orb-phase.is-running .orb-phase-time{color:var(--accent)}
+.orb-phase.is-pending .orb-phase-name{color:var(--text-3)}
+.orb-phase-err{grid-column:2/-1;margin-bottom:var(--s-1);font-size:var(--fs-sm);color:var(--text-2);overflow-wrap:anywhere}
+.orb-phase-foot{margin:var(--s-1) 0 0;padding-top:var(--s-2);border-top:1px solid var(--line);font-size:var(--fs-sm);color:var(--text-3);overflow-wrap:anywhere}
+/* /ORB-PHASES */
 .orb-why code{padding:0 var(--s-1);border-radius:var(--r-xs);background:var(--raised)}
 .orb-hint{font-size:var(--fs-sm);color:var(--text-3)}
 .orb-sessions .orb-cols,.orb-row{display:grid;grid-template-columns:minmax(0,1fr) 13ch 128px 10ch;column-gap:var(--s-3);padding:0}

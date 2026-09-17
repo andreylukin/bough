@@ -22,6 +22,8 @@ import (
 	iorb "github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/internal/projectdef"
 	"github.com/andreylukin/bough/kernel"
+	"github.com/andreylukin/bough/plugins/commands"
+	"github.com/andreylukin/bough/plugins/tools"
 )
 
 // chdir is swapped by tests: os.Chdir is process-global and would race
@@ -161,7 +163,15 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	}
 	o := prev.o
 	if !reused {
-		if o, err = iorb.Open(octx, rt, home, session, p, pad.Dir()); err != nil {
+		// Before the TUI is up the terminal would stay blank for a whole
+		// image build: one line follows the start's phases instead.
+		stopProgress := func() {}
+		if mode, _ := kernel.Get[string](ctx, "ui-mode"); mode == "tui" && !uiActive(ctx) && isTerminal(os.Stderr) {
+			stopProgress = progress(os.Stderr, home, session, 250*time.Millisecond)
+		}
+		o, err = iorb.Open(octx, rt, home, session, p, pad.Dir())
+		stopProgress()
+		if err != nil {
 			// Not a row failure: the first mount is strict, so an error here
 			// killed the whole session process before it read stdin, and a
 			// message sent to it vanished with no error anywhere. A broken
@@ -200,6 +210,9 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		s.Set("orb", promptSection(o.Root(), st, p.Def, missing))
 		ctx.Effect(func() { s.Set("orb", "") })
 	}
+	if reg, err := kernel.Get[*commands.Registry](ctx, "commands"); err == nil {
+		registerOrbCommand(ctx, reg, o, home)
+	}
 	ctx.Provide("orb", o)
 	ctx.Provide("orb-state", o)
 	// Stop, never Remove: a resumed session reuses its worktrees and
@@ -234,6 +247,55 @@ func reloading(ctx *kernel.Context, cfg map[string]any) bool {
 		}
 	}
 	return false
+}
+
+// registerOrbCommand takes over /orb from the setup skill for this
+// session (orbCommand still forwards everything else to the skill) and
+// gives it back on unmount.
+func registerOrbCommand(ctx *kernel.Context, reg *commands.Registry, o *iorb.Orb, home string) {
+	jobs := func() []tools.Running {
+		if j, err := kernel.Get[interface{ Running() []tools.Running }](ctx, "job-notices"); err == nil {
+			return j.Running()
+		}
+		return nil
+	}
+	var prev *commands.CommandInfo
+	for _, c := range reg.List() {
+		if c.Name == "orb" {
+			prev = &c
+		}
+	}
+	reg.Unregister("orb")
+	info := commands.CommandInfo{Name: "orb", Usage: "status|logs|stop|<slug>", Summary: "this session's orb: status, logs, stop; /orb <slug> sets a project up"}
+	if err := reg.Register(info, orbCommand(o, home, jobs)); err != nil {
+		fmt.Fprintf(os.Stderr, "bough: orb: /orb: %v\n", err)
+		return
+	}
+	ctx.Effect(func() {
+		reg.Unregister("orb")
+		if prev == nil {
+			return
+		}
+		reg.Register(*prev, func(args string) (string, error) {
+			return "", commands.SubmitAction(strings.TrimSpace("/orb " + args))
+		})
+	})
+}
+
+// uiActive reports whether the ui row is already mounted (the TUI owns
+// the terminal, so nothing may print to it).
+func uiActive(ctx *kernel.Context) bool {
+	for _, r := range ctx.Rows() {
+		if r.Plugin == "ui" && r.State == kernel.StateActive {
+			return true
+		}
+	}
+	return false
+}
+
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
 func stopOrb(o *iorb.Orb) {

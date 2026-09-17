@@ -202,6 +202,10 @@ func (a *API) orbSummary(ctx context.Context, slug string) (OrbSummary, string) 
 	if ok, err := a.sup.Runtime().ImageExists(ctx, sum.Image); err == nil {
 		sum.Built = ok
 	}
+	// A failure recorded for another tag says nothing about this one.
+	if sum.Built && sum.Build == "failed" {
+		sum.Build = "ok"
+	}
 	return sum, hash
 }
 
@@ -342,6 +346,12 @@ func (a *API) orbDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	if msg := a.buildFailure(p.Slug); msg != "" {
 		d.Build.State, d.Build.Error = "failed", msg
+	}
+	// The page polls the log only while this says building: build.json
+	// still holds the previous build until EnsureImage rewrites it.
+	if a.building(p.Slug) {
+		d.Build.State, d.Build.Error = "building", ""
+		d.Build.Tag = d.Summary.Image
 	}
 	d.Orbs = a.orbsOf(p.Slug)
 	rt := a.sup.Runtime()

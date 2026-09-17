@@ -583,3 +583,18 @@ func TestStatusBarNoticeKeepsChips(t *testing.T) {
 		t.Errorf("5k of 1.05M: want <1%% ctx: %q", got)
 	}
 }
+
+type fakeOrbLine string
+
+func (f fakeOrbLine) Line() string { return string(f) }
+
+// A project session's bar carries its orb's one status line.
+func TestStatusBarShowsOrbLine(t *testing.T) {
+	t.Parallel()
+	cfg := cfgWith(t, nil, nil, nil)
+	cfg.orb = fakeOrbLine("orb web · failed at resume.sh")
+	d := newDrv(t, 120, 24, cfg)
+	if p := d.plain(); !strings.Contains(p, "orb web · failed at resume.sh") {
+		t.Errorf("status bar missing the orb line:\n%s", p)
+	}
+}

@@ -4096,7 +4096,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
               {row.branch && <span style={{ color: "var(--line-strong)" }}>/</span>}{row.branch}
             </span>
           )}
-          <ModeChip row={row} name={projects.find((p) => p.id === row.orb?.project)?.name} />
+          <ModeChip row={row} phases name={projects.find((p) => p.id === row.orb?.project)?.name} />
           {/* A short link beside the chip: a full button pushed the title row
               past its 32px and covered the strip below. */}
           {row.orb?.status === "failed" && (

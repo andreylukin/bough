@@ -639,3 +639,56 @@ func TestOrbToken(t *testing.T) {
 		t.Fatalf("recreated: auth %q token %q", o.State().ProxyAuth, tok2)
 	}
 }
+
+// Open records one timed phase per start step in state.json; a failure
+// marks the phase it stopped in, and a restart records its own steps.
+func TestOpenRecordsPhases(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	home := t.TempDir()
+	p := newProject(t, home, "ph", "  - path: "+newRepo(t)+"\n")
+	rt := container.NewFake()
+	o, err := Open(ctx, rt, home, "p1", p, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{PhaseSync, PhaseBuild, PhaseWorktree, PhaseContainer, PhaseResume, PhaseReady}
+	disk, _ := ReadState(home, "p1")
+	if got := phaseNames(disk); !slices.Equal(got, want) || disk.Phase != PhaseReady {
+		t.Fatalf("phases %v (phase %q), want %v", got, disk.Phase, want)
+	}
+	for _, ph := range disk.Phases {
+		if ph.StartedAt.IsZero() || ph.EndedAt.IsZero() || ph.EndedAt.Before(ph.StartedAt) || ph.Error != "" {
+			t.Fatalf("phase %+v not timed", ph)
+		}
+	}
+
+	o.Stop(ctx)
+	if err := o.Command(ctx, "true").Run(); err != nil {
+		t.Fatal(err)
+	}
+	if got := phaseNames(o.State()); !slices.Equal(got, []string{PhaseContainer, PhaseResume, PhaseReady}) {
+		t.Fatalf("restart phases %v", got)
+	}
+
+	rt2 := container.NewFake()
+	rt2.FailBuild = errors.New("nope")
+	projectdef.WriteFile(home, "ph", projectdef.FileSetup, "#!/bin/sh\necho v2\n")
+	if _, err := Open(ctx, rt2, home, "p2", p, ""); err == nil {
+		t.Fatal("want build failure")
+	}
+	st, _ := ReadState(home, "p2")
+	last := st.Phases[len(st.Phases)-1]
+	if st.Phase != PhaseBuild || last.Name != PhaseBuild || last.Error == "" || last.EndedAt.IsZero() {
+		t.Fatalf("failed state %+v", st)
+	}
+
+	projectdef.WriteFile(home, "ph", projectdef.FileResume, "#!/bin/sh\nexit 3\n")
+	if _, err := Open(ctx, rt, home, "p3", p, ""); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = ReadState(home, "p3")
+	if st.Phase != PhaseResume || st.Phases[len(st.Phases)-1].Error == "" {
+		t.Fatalf("resume failure %+v", st)
+	}
+}

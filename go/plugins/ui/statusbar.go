@@ -83,7 +83,13 @@ func (m *model) statusBar(cfg *uiCfg) string {
 		if m.v.mode != "" {
 			mic = "🎤 space"
 		}
+		orb := ""
+		if cfg.orb != nil {
+			orb = cfg.orb.Line()
+		}
 		cands = slices.Compact([]string{
+			join(orb, m.where, tokens, cost, ctx, cache, think, mdl, mic),
+			join(orb, cost, ctx, cache, think, mdl, mic),
 			join(m.where, tokens, cost, ctx, cache, think, mdl, mic),
 			join(m.where, cost, ctx, cache, think, mdl, mic),
 			join(tokens, cost, ctx, cache, think, mdl, mic),
