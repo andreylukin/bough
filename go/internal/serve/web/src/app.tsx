@@ -3439,7 +3439,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     if (!atBottom.current && !away) awayAt.current = newest;
     setAway(!atBottom.current);
     // A screen or more down: a long read gets a way back to the start too.
-    setDown(el.scrollTop > el.clientHeight);
+    setDown(el.scrollTop > 40 && el.scrollHeight > el.clientHeight);
   };
   const [down, setDown] = useState(false);
   const toStart = () => {
@@ -3523,7 +3523,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     };
     fold(memo?.shut, false);
     fold(memo?.open, true);
-    if (memo && !memo.follow && root) { root.scrollTop = memo.top; awayAt.current = newest; setAway(true); }
+    if (memo && !memo.follow && root) { root.scrollTop = memo.top; awayAt.current = newest; setAway(root.scrollHeight - root.scrollTop - root.clientHeight >= 40); }
     const focus = arrivals.get(row.id) ?? memo?.focus;
     arrivals.delete(row.id);
     if (focus === "head") headRef.current?.focus({ preventScroll: true });
@@ -4195,11 +4195,11 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
             onClose={() => { if (trigger) dismissed.current = `${trigger.from}:${trigger.kind}${trigger.token}`; setTrigger(null); }}
             onOpen={setPickerOpen} onActive={setActiveOpt} />
           <textarea id="composer" ref={composer} value={draft} rows={1}
-            aria-label={(row.archived ? "Unarchive to continue this session" : row.ask?.secret ? "Answer in the secret field" :row.ask && !askChanged ? "Answer…" : running ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…").replace(/…$/, "")}
+            aria-label={(row.archived ? "Unarchive to continue this session" : row.ask?.secret ? "Answer in the secret field" :row.ask && !askChanged ? "Answer…" : running || status === "Waiting" ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…").replace(/…$/, "")}
             aria-controls={pickerOpen ? "mention-list" : undefined}
             aria-activedescendant={pickerOpen ? activeOpt : undefined}
             disabled={Boolean(row.ask?.secret) || row.archived}
-            placeholder={row.archived ? "Unarchive to continue this session" : row.ask?.secret ? "Answer in the secret field" :row.ask && !askChanged ? "Answer…" : running ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…"}
+            placeholder={row.archived ? "Unarchive to continue this session" : row.ask?.secret ? "Answer in the secret field" :row.ask && !askChanged ? "Answer…" : running || status === "Waiting" ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…"}
             onPaste={(e) => take({ dataTransfer: e.clipboardData, preventDefault: () => e.preventDefault() }, false)}
             onChange={(e) => {
               setDraft(e.target.value);

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { programRan, splitBareProgram, stripRunFences } from "../src/render";
+import { programRan, splitBareProgram, stripRunFences, tableOverflows } from "../src/render";
 
 const fence = (body: string) => "```js\n" + body + "\n```";
 
@@ -112,3 +112,9 @@ test("context is cut to two lines around each change", () => {
   expect(rows[0]).toMatchObject({ old: 4, new: 4 });
 });
 import { parseHunks } from "../src/changes";
+
+test("a table a few pixels too wide gets no swipe hint", () => {
+  expect(tableOverflows(379, 375)).toBe(false);
+  expect(tableOverflows(383, 375)).toBe(false);
+  expect(tableOverflows(384, 375)).toBe(true);
+});

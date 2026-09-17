@@ -152,3 +152,11 @@ test("R4-D: context does not decrease on a cancelled done without usage", async 
   ];
   expect(sessionUsage(lines as never)?.lastIn).toBe(42000);
 });
+
+test("while the turn waits for the model, the composer offers to steer, not a new task", () => {
+  const html = renderToStaticMarkup(<Thread row={row} lines={[]} sending={[{ ...sent[0], accepted: true }]} onSend={async () => null} onAnswer={async () => null}
+    onInterrupt={() => {}} onArchive={() => {}} onRename={async () => {}} onModel={() => {}} onEffort={() => {}} onAssign={() => {}}
+    onBack={() => {}} onContext={() => {}} onAck={() => {}} projects={[]} busy={false} jump={null} />);
+  expect(html).toMatch(/composer-hint[^>]*>Waiting for model… ·/);
+  expect(html).toContain('placeholder="Steer the running turn…"');
+});

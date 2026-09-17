@@ -28,7 +28,7 @@ export function Markdown({ text, live }: { text: string; /** Still streaming: ho
       const p = b.parentElement!;
       p.toggleAttribute("data-end", b.scrollLeft + b.clientWidth >= b.scrollWidth - 1);
       // Only a table that overflows says how many columns it has and that it scrolls.
-      const over = b.scrollWidth > b.clientWidth + 1;
+      const over = tableOverflows(b.scrollWidth, b.clientWidth);
       if (over) p.setAttribute("data-over", `${b.querySelector("tr")?.children.length ?? 0} columns · swipe →`);
       else p.removeAttribute("data-over");
     };
@@ -54,6 +54,11 @@ export function Markdown({ text, live }: { text: string; /** Still streaming: ho
     return () => { ro.disconnect(); boxes.forEach((b) => b.removeEventListener("scroll", on)); copies.forEach((c) => c.remove()); };
   }, [html]);
   return <div className="md" ref={ref} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/** A few pixels of overflow is rounding, not a table worth swiping. */
+export function tableOverflows(scrollWidth: number, clientWidth: number): boolean {
+  return scrollWidth - clientWidth > 8;
 }
 
 /**
