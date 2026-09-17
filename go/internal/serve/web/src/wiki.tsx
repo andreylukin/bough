@@ -304,7 +304,7 @@ function Crumbs({ onIndex, trail, title, slug, muted }: { onIndex?: () => void; 
       {(trail ?? []).map((t) => <span key={t} className="wk-crumb-link wk-crumb-static wk-crumb-trail">{t}<span className="wk-sep" aria-hidden="true">/</span></span>)}
       <h1 className={muted ? "wk-crumb-missing" : undefined}>{title}</h1>
       {/* Phones read "Wiki / <title>" on one line, cut when long. */}
-      {slug && <span className="wk-crumb-slug" aria-hidden="true">{title}</span>}
+      {slug && <span className={"wk-crumb-slug" + (muted ? " wk-crumb-missing" : "")} aria-hidden="true">{title}</span>}
     </div>
   );
 }
