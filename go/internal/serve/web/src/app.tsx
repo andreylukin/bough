@@ -13,7 +13,7 @@ import { clampToViewport } from "./popover";
 import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount, changedPath } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
-import { agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
+import { agentWakeNotes, agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
 import { ExecNote, JobLines, JobRow, LIFE_WORD, WorkButton, WorkContext, WorkDialog, WorkState, agentReports, jobIdOf, spokenDuration, splitExecNote, stateText, useChildren, useStopStore, useWork, useWorkAnnouncer, type WorkCtx } from "./work-ui";
 import { SkillPicker } from "./skills";
 import { Mentions, triggerAt, type Trigger } from "./mention";
@@ -1952,6 +1952,8 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
   const files = Array.isArray(done.data?.files) ? (done.data!.files as string[]) : [];
   const exit = typeof done.data?.exit === "number" ? done.data.exit : fail?.data?.exit;
   const failed = typeof exit === "number" && exit !== 0;
+  // A turn whose last word was an error (a 401, a retry that failed again) failed, whatever its exit.
+  const errored = turn.body.filter((l) => !["system", "usage", "job", "hook", "meta"].includes(l.kind)).at(-1)?.kind === "error";
   const facts: string[] = [];
   const worked = turn.prompt?.at ? Math.max(Date.parse(done.at) - Date.parse(turn.prompt.at), longest) : 0;
   // Under a second is not a fact worth a slot ("Worked for 0s").
@@ -2003,8 +2005,8 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
           <button type="button" className="link turn-fail-jump" onClick={show}>Jump to command</button>
         </span>
       ) : (
-        <span className={"turn-outcome" + (failed || failedWork ? " turn-failed" : "")}>
-          {turn.stopped || done.kind === "cancelled" ? statusWord("stopped") : failed ? `${statusWord("done")} with a failed command · exit ${exit}` : statusWord("done") + (failedWork ? ` · ${failedWork} failed` : "")}
+        <span className={"turn-outcome" + (failed || failedWork || errored ? " turn-failed" : "")}>
+          {turn.stopped || done.kind === "cancelled" ? statusWord("stopped") : errored ? statusWord("error") : failed ? `${statusWord("done")} with a failed command · exit ${exit}` : statusWord("done") + (failedWork ? ` · ${failedWork} failed` : "")}
         </span>
       )}
       {facts.map((f) => <span key={f} className="num">{f}</span>)}
@@ -2431,9 +2433,14 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
   // its prompt is the loop's instruction to the model plus the job notes.
   const wakeJobs = useMemo(() => {
     const notes = turn.prompt ? jobWakeNotes(raw) : null;
-    if (!notes || !turn.prompt) return null;
+    if (!notes?.length || !turn.prompt) return null;
     const at = turn.prompt.at;
     return jobsFromLines(notes.map((text, i) => ({ seq: turn.prompt!.seq * 1000 + i, at, kind: "job", text })), "", false);
+  }, [turn.prompt, raw]);
+  // The same wake-up, started by a background agent's finish note.
+  const wakeAgents = useMemo(() => {
+    const notes = turn.prompt ? agentWakeNotes(raw) : null;
+    return notes?.length ? notes.map((text, i): Line => ({ seq: turn.prompt!.seq * 1000 + 500 + i, at: turn.prompt!.at, kind: "job", text })) : null;
   }, [turn.prompt, raw]);
   // A turn that ended on a failed command opens that command, and only that one:
   // an earlier failure the agent went on to fix is history, still counted.
@@ -2478,7 +2485,9 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
   const loose = atts.map((_, i) => i).filter((i) => atts[i].at < 0);
   // No done and nothing live to write one (the session stopped, or a later
   // turn began): the turn was cut off, and its open rows stop ticking.
-  const cut = !turn.done && Boolean(superseded || (ctx && !ctx.live));
+  // A slash command (/model) writes no done: it was never a turn to cut off.
+  const commandOnly = !turn.prompt && turn.body.every((l) => l.kind === "command" || l.kind === "system");
+  const cut = !turn.done && !commandOnly && Boolean(superseded || (ctx && !ctx.live));
   const live = !turn.done && !turn.stopped && !cut;
   const segs = useMemo(() => splitWork(items, codes, live && (ctx?.live ?? true)),
     // codes is derived from items' turn.body.
@@ -2519,6 +2528,14 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
   };
   return (
     <section className="turn" data-turn={n}>
+      {turn.prompt && wakeAgents && !wakeJobs && (
+        <div className="job-wake" role="note">
+          <p className="meta-line">
+            {wakeAgents.length === 1 ? "A background agent finished" : `${wakeAgents.length} background agents finished`} while the agent was idle · {when(turn.prompt.at)}
+          </p>
+          {wakeAgents.map((l) => <Entry key={l.seq} line={l} codes={codes} />)}
+        </div>
+      )}
       {turn.prompt && wakeJobs && (
         <div className="job-wake" role="note">
           <p className="meta-line">
@@ -2527,7 +2544,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
           {wakeJobs.map((w) => <JobRow key={w.key} w={w} />)}
         </div>
       )}
-      {turn.prompt && !wakeJobs && (
+      {turn.prompt && !wakeJobs && !wakeAgents && (
         <div className="prompt">
           <span className="mono prompt-mark">&gt;</span>
           <div className="prompt-text">

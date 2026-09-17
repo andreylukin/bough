@@ -15,3 +15,12 @@ test("a wake-up yields its job notes, output kept with each", () => {
     "job 9 [exited 0] go test ./... (4s)\nok  pkg\t0.1s",
   ]);
 });
+
+// R2-D: an agent's finish note wakes the parent with the same prefix, but carries no job notes.
+test("an agent wake-up yields no job notes and its agent notes", async () => {
+  const { agentWakeNotes } = await import("../src/work");
+  const text = wake + "[agent List files · 01a0 finished] Wrote COUNTS.md\n\n[agent Lint · 02b1 failed] boom";
+  expect(jobWakeNotes(text)).toEqual([]);
+  expect(agentWakeNotes(text)).toEqual(["[agent List files · 01a0 finished] Wrote COUNTS.md", "[agent Lint · 02b1 failed] boom"]);
+  expect(agentWakeNotes("run the tests")).toBeNull();
+});

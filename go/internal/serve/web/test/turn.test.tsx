@@ -129,3 +129,37 @@ test("a prompt offers Copy and Edit into composer; an answer offers Copy as Mark
   expect(html).toContain('aria-label="Copy answer as Markdown"');
   expect(html).toContain("say-time");
 });
+
+// R2-D: failed turns, wake copy, command-only turns.
+test("a turn that ended on an error says Failed, not Done", () => {
+  const ls: Line[] = [...live.slice(0, 1),
+    { seq: 2, at: at(1), kind: "error", text: "401 Unauthorized" },
+    { seq: 3, at: at(2), kind: "done", text: "", data: {} }];
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns(ls)[0]} />);
+  expect(html).toContain("turn-failed");
+  expect(html).toContain(">Failed<");
+  expect(html).not.toContain(">Done<");
+});
+
+test("a failed retry says Failed; a retry that recovered says Done", () => {
+  const base: Line[] = [...live.slice(0, 1),
+    { seq: 2, at: at(1), kind: "error", text: "429" },
+    { seq: 3, at: at(2), kind: "system", text: "provider hiccup — retrying in 2s, attempt 2 of 3" }];
+  const failed = [...base, { seq: 4, at: at(3), kind: "error", text: "429" }, { seq: 5, at: at(4), kind: "done", text: "", data: {} }];
+  expect(renderToStaticMarkup(<TurnView turn={groupTurns(failed)[0]} />)).toContain(">Failed<");
+  const ok = [...base, { seq: 4, at: at(3), kind: "assistant", text: "Fixed." }, { seq: 5, at: at(4), kind: "done", text: "", data: {} }];
+  expect(renderToStaticMarkup(<TurnView turn={groupTurns(ok)[0]} />)).toContain(">Done<");
+});
+
+test("an agent wake-up says a background agent finished, never 0 jobs", () => {
+  const wake = "[background job] A command you started in the background has finished while you were idle. Deal with it if it needs anything, then reply to the user with what happened.\n\n[agent List files · 01a0 finished] Wrote COUNTS.md";
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns([{ seq: 1, at: at(0), kind: "input", text: wake }])[0]} />);
+  expect(html).not.toContain("0 background jobs");
+  expect(html).toContain("A background agent finished");
+  expect(html).not.toContain("[background job]");
+});
+
+test("a command-only turn is not Interrupted", () => {
+  const ls: Line[] = [{ seq: 1, at: at(0), kind: "command", text: "/model opus" }, { seq: 2, at: at(0), kind: "system", text: "model: opus" }];
+  expect(renderToStaticMarkup(<TurnView turn={groupTurns(ls)[0]} superseded />)).not.toContain("Interrupted");
+});

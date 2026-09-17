@@ -388,3 +388,14 @@ export function jobWakeNotes(text: string): string[] | null {
   }
   return notes.map((n) => n.trimEnd());
 }
+
+/** The "[agent … finished]" notes of a wake-up a background agent started, or null for a typed prompt. */
+export function agentWakeNotes(text: string): string[] | null {
+  if (!text.startsWith(JOB_WAKE_PREFIX)) return null;
+  const notes: string[] = [];
+  for (const l of text.split("\n")) {
+    if (/^\[agent [^\]]* (?:finished|failed|stopped)\]/.test(l)) notes.push(l);
+    else if (notes.length && !/^job \d+ \[/.test(l)) notes[notes.length - 1] += "\n" + l;
+  }
+  return notes.map((n) => n.trimEnd());
+}
