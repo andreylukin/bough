@@ -1093,7 +1093,7 @@ export function JobBlock({ line }: { line: Line }) {
   if (id === undefined && isAgentNotice(line)) {
     const m = /^\[agent (.*?)(?: · [0-9a-f-]+)? (finished|failed|stopped)\]\s*([\s\S]*)$/.exec(line.text)!;
     return (
-      <details className="block thin agent-notice" role="note">
+      <details className="block thin agent-notice">
         <summary>
           <span className="block-label">Background agent {m[2]}</span>
           <span className="block-detail" title={m[1]}>{m[1]}</span>
