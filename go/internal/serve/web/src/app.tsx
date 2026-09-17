@@ -2828,6 +2828,21 @@ export function swallowedByStop(unlanded: Pending[], stopped: Set<string>, lines
     && !lines.some((l) => l.kind === "input" && l.seq > p.after));
 }
 
+/** Esc in the composer stops a running turn; an open picker or an IME composition takes it first. */
+export function escStops(e: { key: string; running: boolean; pickerOpen: boolean; composing?: boolean }): boolean {
+  return e.key === "Escape" && e.running && !e.pickerOpen && !e.composing;
+}
+
+/** The prompt of a turn that was stopped before any reply, to put back in the composer; "" otherwise. */
+export function stoppedPrompt(lines: Line[]): string {
+  let i = lines.length - 1;
+  while (i >= 0 && lines[i].kind !== "input") i--;
+  if (i < 0) return "";
+  const after = lines.slice(i + 1);
+  if (!after.some((l) => l.kind === "cancelled") || after.some((l) => l.kind === "assistant")) return "";
+  return lines[i].text ?? "";
+}
+
 /** "503 Service Unavailable" or a bare "503" reads as what happened, code last. */
 function sendError(e?: string) {
   const m = /^(\d{3})\b\s*(.*)$/.exec(e ?? "");
@@ -3070,12 +3085,14 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     scroller.current?.scrollTo({ top: 0, behavior: still ? "auto" : "smooth" });
   };
   const awayAt = useRef(0);
-  const toLatest = () => {
+  const toLatest = (instant = false) => {
     atBottom.current = true; setAway(false);
     scrollMemo.delete(row.id);
-    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const still = instant || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     end.current?.scrollIntoView({ block: "end", behavior: still ? "auto" : "smooth" });
   };
+  // More than a screen from the end: a smooth scroll would crawl, so jump.
+  const far = () => { const el = scroller.current; return !!el && el.scrollHeight - el.scrollTop - el.clientHeight > el.clientHeight; };
   // The block summaries are one tab stop: the current one is tabbable, and
   // so are its own controls; every other summary and its Copy wait for ↑/↓.
   // A closed <details> hides its content without clearing offsetParent: skip rows inside one.
@@ -3370,7 +3387,17 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   // Stop is asked once; the button says so until the ask is answered.
   const [stopping, setStopping] = useState<"" | "stopping" | "failed">("");
   useEffect(() => { if (!running) setStopping(""); }, [running]);
+  useEffect(() => {
+    if (!restoreOnStop.current || running || loading) return;
+    const t = stoppedPrompt(lines);
+    if (!t) return;
+    restoreOnStop.current = false;
+    if (!draft.trim()) setDraft(t);
+  }, [running, loading, newest]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Stopped before any reply: the prompt comes back to an empty composer.
+  const restoreOnStop = useRef(false);
   const stop = async () => {
+    restoreOnStop.current = true;
     setStopping("stopping");
     const ok = await onInterrupt();
     if (ok === false) setStopping("failed");
@@ -3458,6 +3485,8 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     setDraft("");
     const full = expand(t);
     pastes.current = []; images.current = [];
+    // What you send is followed into view, even from far up the history.
+    if (!atBottom.current) toLatest(far());
     await deliver(full, Boolean(draftAsk), draftAsk || undefined);
   };
 
@@ -3804,6 +3833,11 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
               // An open picker takes its keys before this runs (capture),
               // including Enter in its empty, loading and error states.
               // Enter that confirms an IME composition is not a send.
+              if (escStops({ key: e.key, running, pickerOpen, composing: e.nativeEvent.isComposing })) {
+                e.preventDefault();
+                if (stopping !== "stopping") stop();
+                return;
+              }
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 if (running && (e.metaKey || e.ctrlKey)) enqueue(); else send();
@@ -3839,7 +3873,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
                 </button>
               )}
               {away && (
-                <button className="btn jump-latest" onClick={toLatest} title={modKey() + "End"}
+                <button className="btn jump-latest" onClick={() => toLatest()} title={modKey() + "End"}
                         aria-label={newest > awayAt.current ? "New activity, jump to latest" : "Jump to latest"}>
                   <span aria-hidden="true">↓</span>
                   <span className="jump-word">{newest > awayAt.current ? "New activity" : "Latest"}</span>
@@ -4251,21 +4285,6 @@ export default function App() {
   // A turn picked from a session's log, for its thread to scroll to.
   const [jump, setJump] = useState<{ id: string; turn: number; at: number; seq?: number; q?: string } | null>(null);
   useEffect(() => { if (selected) setLastId(selected); }, [selected]);
-
-  // Esc leaves a session for the list, unless something nearer owns it:
-  // the composer or a field, a picker, a dialog, the palette.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented || palette || view !== "sessions" || !selected) return;
-      const a = document.activeElement as HTMLElement | null;
-      if (a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT" || a.isContentEditable)) return;
-      if (document.querySelector(".dlg-scrim, .sel-pop, .skills-pop, .mention")) return;
-      e.preventDefault();
-      if (sub) setSub(null); else goList();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [palette, view, selected, sub, goList]);
 
   // F6 / Shift+F6 cycle the regions: sidebar, header, transcript, composer.
   useEffect(() => {

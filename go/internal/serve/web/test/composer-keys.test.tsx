@@ -1,0 +1,29 @@
+import { expect, mock, test } from "bun:test";
+import { readFileSync } from "fs";
+import { join } from "path";
+mock.module("dompurify", () => ({ default: { sanitize: (s: string) => s } }));
+const { escStops, stoppedPrompt } = await import("../src/app");
+import type { Line } from "../src/types";
+
+const at = "2026-01-02T10:00:00Z";
+const l = (seq: number, kind: string, text = "") => ({ seq, at, kind, text }) as Line;
+
+test("Esc in the composer stops a running turn unless a picker owns it", () => {
+  expect(escStops({ key: "Escape", running: true, pickerOpen: false })).toBe(true);
+  expect(escStops({ key: "Escape", running: true, pickerOpen: true })).toBe(false);
+  expect(escStops({ key: "Escape", running: false, pickerOpen: false })).toBe(false);
+  expect(escStops({ key: "Enter", running: true, pickerOpen: false })).toBe(false);
+  expect(escStops({ key: "Escape", running: true, pickerOpen: false, composing: true })).toBe(false);
+});
+
+test("a stopped turn with no reply gives its prompt back", () => {
+  expect(stoppedPrompt([l(1, "input", "old"), l(2, "done"), l(3, "input", "fix it"), l(4, "code"), l(5, "cancelled")])).toBe("fix it");
+  expect(stoppedPrompt([l(1, "input", "fix it"), l(2, "assistant", "Looking"), l(3, "cancelled")])).toBe("");
+  expect(stoppedPrompt([l(1, "input", "fix it"), l(2, "done")])).toBe("");
+  expect(stoppedPrompt([l(1, "input", "fix it")])).toBe("");
+});
+
+test("Esc no longer leaves the session from the app shell", () => {
+  const src = readFileSync(join(import.meta.dir, "../src/app.tsx"), "utf8");
+  expect(src).not.toContain("Esc leaves a session");
+});
