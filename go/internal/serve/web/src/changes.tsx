@@ -21,6 +21,7 @@ export function useChanges(id: string, tick: number) {
   const [tree, setTree] = useState<Read>(empty);
   const [nonce, setNonce] = useState(0);
   useEffect(() => {
+    if (!id) return; // not yet known: nothing to read
     let live = true;
     api.edits(id).then((r) => { if (live) setSession({ files: r.files, repo: r.repo, failed: false, at: Date.now() }); })
       .catch(() => { if (live) setSession((s) => ({ ...s, failed: true })); });

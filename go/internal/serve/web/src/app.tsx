@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, subscribe, type Scope, type TurnLine } from "./api";
 import type { Line, Project, Row } from "./types";
@@ -2016,10 +2016,14 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
  * review. Counts come from the session's edits by path (session scope:
  * there is no per-turn diff yet), so they can include other turns' lines.
  */
+/** The thread's one read of its edits and working tree, shared by the header chip and every turn's files. */
+const unread = { files: null, repo: true, failed: false };
+const SessionChanges = createContext<ReturnType<typeof useChanges> | null>(null);
+
 function TurnFiles({ files, cwd }: { files: string[]; cwd: string }) {
   const ctx = useWork();
   const id = ctx?.session ?? "";
-  const edits = useChanges(id, 0).session.files ?? [];
+  const edits = useContext(SessionChanges)?.session.files ?? [];
   const rel = (f: string) => changedPath(f, cwd);
   const find = (f: string) => edits.find((e) => e.path === rel(f) || f.endsWith("/" + e.path) || e.path === f);
   const counts = files.map(find);
@@ -2050,15 +2054,12 @@ function TurnFiles({ files, cwd }: { files: string[]; cwd: string }) {
  * actually answering. The window is only named when the session records
  * its model; a default model is not guessed at.
  */
-function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, loading }: { row: Row; lines: Line[]; paused?: number; onRetry?: () => void; onContext?: () => void; /** The Work button, after the metrics. */ work?: React.ReactNode; loading?: boolean }) {
-  const [limits, setLimits] = useState<Record<string, number>>({});
-  useEffect(() => {
-    fetch("/api/models").then((r) => r.json()).then((c: { providers?: ProviderInfo[] }) => {
-      const m: Record<string, number> = {};
-      for (const p of c.providers ?? []) for (const x of p.models ?? []) if (x.context) m[x.id] = x.context;
-      setLimits(m);
-    }).catch(() => setLimits({}));
-  }, []);
+function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, loading, cat }: { row: Row; lines: Line[]; paused?: number; onRetry?: () => void; onContext?: () => void; /** The Work button, after the metrics. */ work?: React.ReactNode; loading?: boolean; /** The thread's model catalogue, read once for the strip and the pickers. */ cat: Catalogue | null }) {
+  const limits = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const p of cat?.providers ?? []) for (const x of p.models ?? []) if (x.context) m[x.id] = x.context;
+    return m;
+  }, [cat]);
   const u = useMemo(() => sessionUsage(lines), [lines]);
   // Headroom is measured against the model that took the last input. A
   // /model after the last finished turn means the picker names a model
@@ -2094,7 +2095,7 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, loading }:
   }, []);
   const cache = row.cache && <CacheChip key="cache" cache={row.cache} model={row.model} />;
   const tests = <TestsChip key="tests" lines={lines} running={row.status === "running"} />;
-  const edits = <ChangesChip key="edits" row={row} tick={lines.length} />;
+  const edits = <ChangesChip key="edits" row={row} />;
   const folded = [fold >= 3 && edits, fold >= 2 && tests, fold >= 1 && cache].filter(Boolean);
   // Work first: it is never folded. Cache, changes and tests stand on their
   // own: a session with no usage recorded can still have a server running.
@@ -2184,8 +2185,8 @@ function usePopovers(root: React.RefObject<HTMLElement | null>) {
  * the working tree one tab away. A phone has no room for a popover and
  * goes to the full page, #/s/<id>/changes.
  */
-function ChangesChip({ row, tick }: { row: Row; tick: number }) {
-  const data = useChanges(row.id, tick);
+function ChangesChip({ row }: { row: Row }) {
+  const data = useContext(SessionChanges) ?? { session: unread, tree: unread, retry: () => {} };
   const phone = useMedia("(max-width:720px)");
   const [scope, setScope] = useState<Scope>("session");
   // The chip is the one place that names a missing repository; the body's tabs show a dash.
@@ -2649,19 +2650,32 @@ if (typeof window !== "undefined" && window.visualViewport) {
   vv.addEventListener("resize", fit);
 }
 
-export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
+type Catalogue = { providers: ProviderInfo[]; efforts: string[] };
+
+/** GET /api/models, once per caller; `enabled` false reads nothing (the caller was handed one). */
+function useCatalogue(enabled = true) {
+  const [cat, setCat] = useState<Catalogue | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [nonce, setNonce] = useState(0);
+  useEffect(() => {
+    if (!enabled) return;
+    setFailed(false);
+    fetch("/api/models").then((r) => r.json()).then(setCat).catch(() => { setCat(null); setFailed(true); });
+  }, [nonce, enabled]);
+  const retry = useCallback(() => setNonce((n) => n + 1), []);
+  return useMemo(() => ({ cat, failed, retry }), [cat, failed, retry]);
+}
+
+export function Controls({ row, projects, onModel, onEffort, onAssign, only, catalogue }: {
   row: Row; projects: Project[];
   onModel: (m: string, plugin?: string) => Promise<boolean> | void; onEffort: (e: string) => Promise<boolean> | void; onAssign: (p: string) => void;
   /** Render just the model picker, or everything but it. */
   only?: "model" | "rest";
+  /** A catalogue already read by the thread; without one, Controls reads its own. */
+  catalogue?: ReturnType<typeof useCatalogue>;
 }) {
-  const [cat, setCat] = useState<{ providers: ProviderInfo[]; efforts: string[] } | null>(null);
-  const [catFailed, setCatFailed] = useState(false);
-  const [nonce, setNonce] = useState(0);
-  useEffect(() => {
-    setCatFailed(false);
-    fetch("/api/models").then((r) => r.json()).then(setCat).catch(() => { setCat(null); setCatFailed(true); });
-  }, [nonce]);
+  const own = useCatalogue(!catalogue);
+  const { cat, failed: catFailed, retry: retryCat } = catalogue ?? own;
 
   // A session that has not answered yet genuinely has no model to name;
   // one running a model the catalogue does not list still shows it.
@@ -2709,7 +2723,7 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only }: {
           <Select label="Next turn effort" value={row.effort ?? ""} align="end" note="Applies to the next turn" onChange={(v) => (v ? onEffort(v) : undefined)}
                   disabled={efforts.length === 0} placeholder={catFailed ? "Unavailable" : cat ? "Not offered" : "Loading"}
                   options={efforts.length ? [...(row.effort ? [] : [{ value: "", label: "Provider default" }]), ...efforts.map((e) => ({ value: e, label: effortLabel(e) }))] : []} />
-          {catFailed && <button className="btn" onClick={() => setNonce((n) => n + 1)}>Models unavailable · Retry</button>}
+          {catFailed && <button className="btn" onClick={retryCat}>Models unavailable · Retry</button>}
         </div>
       )}
       {only !== "model" && (
@@ -3047,7 +3061,9 @@ function OrbFailure({ id, project, onRebuild, rebuildErr }: { id: string; projec
   );
 }
 
-export function Thread({ row, lines, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
+const noLines: Line[] = [];
+
+export function Thread({ row, lines: given, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
   /** Loaded sessions: names the parent of a background agent and lists this session's agents. */
   rows?: Row[]; onOpenSession?: (id: string) => void;
   row: Row; lines: Line[]; loading?: boolean; stream?: DeltaRun[];
@@ -3071,6 +3087,12 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   /** This session's unrecorded sends, kept by the app across session switches. */
   sending?: Pending[]; setSending?: (f: (q: Pending[]) => Pending[]) => void;
 }) {
+  // The parent still holds the session just left for a render: never show it under this title.
+  const lines = loading ? noLines : given;
+  // Read once the transcript is: id and length change in the same render, so a switch reads each once.
+  const changesRead = useChanges(loading ? "" : row.id, lines.length);
+  const catalogue = useCatalogue();
+  const changes = useMemo(() => changesRead, [changesRead.session, changesRead.tree]); // eslint-disable-line react-hooks/exhaustive-deps
   // One draft per session: switching away and back keeps what you were
   // typing there, and never carries it into another conversation.
   const draftKey = "bough:draft:" + row.id;
@@ -3240,7 +3262,8 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
   const memo = scrollMemo.get(row.id);
   if (memo && !memo.follow) atBottom.current = false;
   const restoredAt = useRef(false);
-  useEffect(() => {
+  // Layout effects, both: a long transcript painted at the top first and jumped to the end a frame later.
+  useLayoutEffect(() => {
     if (loading || restoredAt.current) return;
     restoredAt.current = true;
     const root = scroller.current;
@@ -3257,7 +3280,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     else if (focus === "work") workBtn.current?.focus({ preventScroll: true });
     else if (focus) root?.querySelector<HTMLElement>(`[data-open-key="${CSS.escape(focus)}"] > summary`)?.focus({ preventScroll: true });
   }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (atBottom.current) end.current?.scrollIntoView({ block: "end" });
   }, [lines.length, streamLen]);
   const turns = useMemo(() => groupTurns(lines), [lines]);
@@ -3640,6 +3663,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
 
   return (
     <WorkContext.Provider value={workCtx}>
+    <SessionChanges.Provider value={changes}>
     <div className="thread" ref={threadRef}>
       <header className="thread-head">
         <Back onBack={onBack} />
@@ -3652,7 +3676,8 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
               {row.branch && <span style={{ color: "var(--line-strong)" }}>/</span>}{row.branch}
             </span>
           )}
-          {row.trouble && row.trouble !== "tests failed" ? (
+          {/* Until the transcript is read the header names no status: "Done" became "Done · 11 failed" a moment later. */}
+          {loading ? null : row.trouble && row.trouble !== "tests failed" ? (
             // One status: the reason replaces "Done".
             <span className="status head-trouble"><StatusMark status="error" bare />{capital(row.trouble)}</span>
           ) : row.mode === "project" && row.orb?.status === "failed" ? null /* Setup failed says it; "Done" beside it contradicted it. */
@@ -3699,8 +3724,8 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
                 const here = document.activeElement;
                 if ((e.shiftKey && (here === first || here === e.currentTarget)) || (!e.shiftKey && here === last)) { e.preventDefault(); closeMore(true); }
               }}>
-                <div className="head-pop-run"><Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" /></div>
-                <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="rest" />
+                <div className="head-pop-run"><Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" catalogue={catalogue} /></div>
+                <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="rest" catalogue={catalogue} />
                 <button className="head-pop-item" onClick={async () => {
                   closeMore(false);
                   // Empty is allowed: it hands the title back to the session.
@@ -3721,7 +3746,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
             )}
           </div>
         </div>
-        <RuntimeStrip row={row} lines={lines} paused={paused} onRetry={onRetry} onContext={onContext} loading={loading}
+        <RuntimeStrip cat={catalogue.cat} row={row} lines={lines} paused={paused} onRetry={onRetry} onContext={onContext} loading={loading}
           work={showWork && (
             <WorkButton btnRef={workBtn} counts={counts} loading={kids.state === "loading"} unavailable={kids.state === "error"}
                         paused={paused !== undefined} narrow={paneNarrow || sheet} expanded={workOpen}
@@ -3936,7 +3961,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
                 });
                 document.getElementById("composer")?.focus();
               }} />
-              <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" />
+              <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" catalogue={catalogue} />
               {row.mode !== "project" && row.writable && (
                 <span className="mode-local mode-badge" title={`File edits are allowed only inside ${row.writable}. The shell runs as you.`}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z" /></svg>Local · edits {row.writable.split("/").pop()}</span>
               )}
@@ -4008,6 +4033,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
       {/* Transitions after the first load, batched: never a clock ticking. */}
       <span className="visually-hidden" role="status" aria-live="polite">{announce}</span>
     </div>
+    </SessionChanges.Provider>
     </WorkContext.Provider>
   );
 }
