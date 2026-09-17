@@ -85,6 +85,9 @@ func printPlan(out io.Writer, p orb.RemovePlan) {
 		fmt.Fprintf(out, "          worktree %s\n", wt)
 	}
 	fmt.Fprintf(out, "          %s\n", p.Dir)
+	for _, wt := range p.Dirty {
+		fmt.Fprintf(out, "  refuse  worktree %s has uncommitted changes; commit or discard them first\n", wt)
+	}
 	for _, b := range p.Branches {
 		verb := "keep  "
 		if b.Delete {

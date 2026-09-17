@@ -274,6 +274,9 @@ function bytes(n: number): string {
 
 /** Remove orb's confirm: exactly what goes and what stays. Branches are kept here; `bough project prune --branches` deletes merged ones. */
 export function removeOrbQuestion(plan: OrbRemovePlan): { title: string; body: string } {
+  if (plan.dirty?.length) {
+    return { title: "Uncommitted changes", body: `Commit or discard the changes first; removing would lose them:\n${plan.dirty.map((d) => `• ${d}`).join("\n")}` };
+  }
   const del = [
     ...(plan.container ? [`container ${plan.container}`] : []),
     ...plan.worktrees.map((w) => `worktree ${w}`),

@@ -24,6 +24,7 @@ type RemovePlan struct {
 	Container string       `json:"container,omitempty"` // "" when there is none
 	Dir       string       `json:"dir"`
 	Worktrees []string     `json:"worktrees"`
+	Dirty     []string     `json:"dirty"` // worktrees with uncommitted changes; removal refuses while any remain
 	Bytes     int64        `json:"bytes"` // disk the orb dir (worktrees included) frees
 	Branches  []BranchPlan `json:"branches"`
 }
@@ -76,7 +77,7 @@ func PlanRemove(ctx context.Context, rt container.Runtime, home, session string,
 	if _, err := os.Stat(dir); err != nil {
 		return RemovePlan{}, fmt.Errorf("orb: remove: no orb for session %q", session)
 	}
-	plan := RemovePlan{Session: session, Project: st.Project, Status: st.Status, Dir: dir, Worktrees: []string{}, Branches: []BranchPlan{}}
+	plan := RemovePlan{Session: session, Project: st.Project, Status: st.Status, Dir: dir, Worktrees: []string{}, Dirty: []string{}, Branches: []BranchPlan{}}
 	name := container.OrbName(session)
 	if cs, err := rt.Inspect(ctx, name); err != nil || cs != container.StateMissing {
 		plan.Container = name // an engine that cannot answer still gets a delete
@@ -95,6 +96,14 @@ func PlanRemove(ctx context.Context, rt container.Runtime, home, session string,
 		}
 		return nil
 	})
+	dirtyRepo := map[string]bool{}
+	for repo, wt := range st.Worktrees {
+		if out, err := gitOut(ctx, wt, "status", "--porcelain"); err == nil && strings.TrimSpace(out) != "" {
+			dirtyRepo[repo] = true
+			plan.Dirty = append(plan.Dirty, wt)
+		}
+	}
+	sort.Strings(plan.Dirty)
 	branch := "bough/" + session
 	seen := map[string]bool{}
 	add := func(repo, gd, base string) {
@@ -113,6 +122,8 @@ func PlanRemove(ctx context.Context, rt container.Runtime, home, session string,
 			safe = "pushed to " + strings.Fields(out)[0]
 		}
 		switch {
+		case dirtyRepo[repo]:
+			b.Reason = "worktree has uncommitted changes"
 		case safe == "":
 			b.Reason = "has commits not merged or pushed"
 		case branches:
@@ -138,6 +149,9 @@ func PlanRemove(ctx context.Context, rt container.Runtime, home, session string,
 // RemovePlanned removes the orb and then deletes the branches the plan
 // marked; branches go last because git refuses one a worktree holds.
 func RemovePlanned(ctx context.Context, rt container.Runtime, home string, plan RemovePlan) error {
+	if len(plan.Dirty) > 0 {
+		return fmt.Errorf("orb: remove: uncommitted changes in %s; commit or discard them first", strings.Join(plan.Dirty, ", "))
+	}
 	errs := []error{Remove(ctx, rt, home, plan.Session)}
 	for _, b := range plan.Branches {
 		if b.Delete {

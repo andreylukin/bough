@@ -713,6 +713,10 @@ func (a *API) removeOrb(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: remove orb %q: %w", id, err))
 		return
 	}
+	if len(plan.Dirty) > 0 {
+		writeErr(w, http.StatusConflict, fmt.Errorf("serve: api: remove orb %q: uncommitted changes in %s; commit or discard them first", id, strings.Join(plan.Dirty, ", ")))
+		return
+	}
 	if err := orb.RemovePlanned(ctx, a.sup.Runtime(), a.sup.Home(), plan); err != nil {
 		writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: remove orb %q: %w", id, err))
 		return

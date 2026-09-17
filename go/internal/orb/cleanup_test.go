@@ -119,3 +119,45 @@ func TestPlanRemoveFailedStart(t *testing.T) {
 		t.Fatalf("still listed %+v", list)
 	}
 }
+
+// Uncommitted edits in a worktree block removal, and that worktree's
+// branch is never marked for deletion even though it looks merged.
+func TestPlanRemoveDirtyWorktree(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	home := t.TempDir()
+	src := newRepo(t)
+	p := newProject(t, home, "dy", "  - path: "+src+"\n    branch: main\n")
+	rt := container.NewFake()
+	o, err := Open(ctx, rt, home, "s3", p, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wt string
+	for _, w := range o.State().Worktrees {
+		wt = w
+	}
+	os.WriteFile(filepath.Join(wt, "unsaved.txt"), []byte("work in progress"), 0o644)
+
+	plan, err := PlanRemove(ctx, rt, home, "s3", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Dirty) != 1 || plan.Dirty[0] != wt {
+		t.Fatalf("dirty %v, want [%s]", plan.Dirty, wt)
+	}
+	for _, b := range plan.Branches {
+		if b.Delete {
+			t.Fatalf("branch of a dirty worktree marked for deletion: %+v", b)
+		}
+	}
+	if err := RemovePlanned(ctx, rt, home, plan); err == nil || !strings.Contains(err.Error(), "uncommitted") {
+		t.Fatalf("remove err = %v, want uncommitted refusal", err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "unsaved.txt")); err != nil {
+		t.Fatal("uncommitted file deleted")
+	}
+	if out := git(t, src, "branch", "--list", "bough/s3"); out == "" {
+		t.Fatal("branch deleted")
+	}
+}

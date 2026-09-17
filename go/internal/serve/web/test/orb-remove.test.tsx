@@ -36,6 +36,13 @@ test("B1: the confirm lists what is deleted and what is kept, with the disk it f
   expect(bare.body).toContain("Keeps:\n• the session's history");
 });
 
+test("B1: uncommitted changes replace the remove confirm with a refusal naming the worktrees", () => {
+  const q = removeOrbQuestion({ session: "s1", project: "web", status: "stopped", dir: "/d", worktrees: ["/d/web"], dirty: ["/d/web"], bytes: 1, branches: [] });
+  expect(q.title).toBe("Uncommitted changes");
+  expect(q.body).toContain("• /d/web");
+  expect(q.body).not.toContain("Deletes:");
+});
+
 test("B1: the confirm body keeps its line breaks, mirrored in design/bough.css", () => {
   for (const f of ["../dist/index.html", "../design/bough.css"]) {
     const css = readFileSync(new URL(f, import.meta.url), "utf8");
