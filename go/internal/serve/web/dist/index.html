@@ -414,7 +414,6 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
   border-radius:var(--r-6);background:var(--surface);color:var(--text-3);white-space:pre-wrap;overflow-wrap:anywhere}
 .prompt-time{align-self:start;font-size:var(--fs-xs);line-height:24px;color:var(--text-3);white-space:nowrap}
 .turn-body{display:flex;flex-direction:column;gap:12px;padding-left:22px}
-.turn-body>.block+.block{margin-top:-6px}
 .turn-done{padding-left:22px;font-size:var(--fs-sm);color:var(--text-3)}
 /* A turn ends with what it did and what it cost. */
 .turn-foot{padding-left:22px;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;
@@ -526,11 +525,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .chg-page .rt-file{min-height:40px}
 .dl-body{padding:0}
 .dl-body>.dl{display:grid;grid-template-columns:max-content max-content 1fr;min-width:max-content}
-.dl-n{min-width:4ch;padding:0 var(--s-2);text-align:right;color:var(--text-3);opacity:.7;user-select:none}
 .dl-t{padding:0 var(--s-2)}
-.dl-add{background:color-mix(in srgb,var(--accent) 12%,transparent);box-shadow:inset 2px 0 var(--accent)}
-.dl-del{background:color-mix(in srgb,var(--red) 12%,transparent);box-shadow:inset 2px 0 var(--red)}
-.dl-hunk{background:var(--hover);margin-block:2px}
 .dl-hunk .dl-n,.dl-meta .dl-n{opacity:0}
 .chg-summary{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--s-2)}
 .chg-summary>.rt-label{margin:0}
@@ -842,22 +837,13 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 
 /* a block's contents, and the call folded one layer inside it */
 .block-body{border-top:1px solid var(--line)}
-.block-inner{border-top:1px solid var(--line);background:var(--bg)}
-.block-inner>summary{display:flex;align-items:center;gap:8px;padding:6px 14px;cursor:pointer;
-                     list-style:none;font-size:var(--fs-sm)}
 .block-inner>summary::-webkit-details-marker{display:none}
-.block-inner>summary::before{content:"\203a";color:var(--text-3);font-family:var(--mono);width:8px}
-.block-inner[open]>summary::before{content:"\2304"}
-.block-inner>summary .block-label{font-size:var(--fs-sm);color:var(--text-3)}
 .block-inner pre{border-top:1px solid var(--line)}
 /* Collapse in levels: a run of tool calls is one row; opened, it lists
    the calls, and each call opens onto its output. */
-.toolrun-body{display:flex;flex-direction:column;gap:6px;padding:8px;border-top:1px solid var(--line);background:var(--bg)}
-.toolrun-failed{margin-left:auto;font-size:var(--fs-sm);color:var(--red);flex-shrink:0}
 /* A call's recorded exit and duration lead its metadata; the line count follows. */
 .tool-meta{margin-left:auto;font-size:var(--fs-sm);color:var(--text-3);flex-shrink:0;white-space:nowrap}
 .tool-meta+.block-lines{margin-left:0}
-.tool-meta-failed{color:var(--red);font-weight:600}
 /* Hooks and rules fire on every call: one quiet row per turn, the ledger inside. */
 .turn-hooks{background:none;border:1px solid var(--line)}
 .turn-hooks>summary{padding:5px 12px}
@@ -877,38 +863,18 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 /* Bookkeeping rows are one thin line: no card, muted 12px, detail on hover
    (.thin-pop) and the full blocks one click in. */
 .block.thin{background:none;border:0;border-radius:0;overflow:visible}
-.block.thin>summary{gap:8px;padding:4px;min-height:28px;font-size:var(--fs-md);line-height:20px;border-radius:var(--r-xs)}
-.block.thin>summary>.block-detail{flex:1 1 auto}
-.block.thin>summary .block-label{font-weight:500}
-.block.thin>summary:focus-visible{outline-offset:0}
-.block.thin>summary::before{width:8px}
-.block.thin>summary .block-label,.block.thin>summary .block-detail{font-size:var(--fs-md);color:var(--text-3)}
-.block.thin>summary:hover .block-label,.block.thin>summary:hover .block-detail{color:var(--text-2)}
 .block.thin>summary .thin-failed{color:var(--red)}
 /* A single call names its operation in the neutral colour; only its status turns red. */
-.block.thin.toolcall>summary .block-label{color:var(--text-2)}
 .block.thin>summary .block-detail{min-width:0}
-.block.thin>summary .tool-meta,.block.thin>summary .toolrun-failed{margin-left:0}
 .block.thin>summary .tool-meta::before,.block.thin>summary .toolrun-failed::before{content:"· ";color:var(--text-3)}
-.block.thin:not([open]):not(.block-failed)>summary .copy-btn{display:none}
 /* Output states: empty, running, never recorded. A row that says so, never an empty box. */
 .tool-state{display:flex;align-items:center;gap:8px;min-height:24px;padding:0 4px 0 20px;font-size:var(--fs-sm);line-height:16px;color:var(--text-3)}
-.tool-unrecorded{display:inline-flex;align-items:center;gap:6px;min-height:24px;font-size:var(--fs-sm);line-height:16px;color:var(--amber);white-space:nowrap}
 .tool-running{display:inline-flex;align-items:center;gap:6px}
 .tool-more{font-size:var(--fs-sm);color:var(--text-3)}
 .block.thin>summary .tool-more::before{content:"· "}
-.block.thin.toolrun>summary{min-height:32px}
-.block.thin.toolrun>summary .block-label{color:var(--text-2)}
-.fail-diag{border-left:2px solid var(--red);background:var(--surface);padding:12px}
-.fail-diag pre{border:0;padding:0;text-indent:0;font:var(--fs-md)/20px var(--mono);color:var(--text-2);white-space:pre-wrap}
-.fail-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 /* The exact command, above what it printed: what Copy command copies, in view. */
-.fail-diag pre.fail-cmd{margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--line);color:var(--text-1);overflow-wrap:anywhere}
 .fail-diag+.tool-output{border-top:1px solid var(--line)}
 .md-empty{font-size:var(--fs-sm);color:var(--text-3)}
-.block.thin[open]>summary .copy-btn{margin-inline-start:auto;width:20px;height:20px}
-.block.thin>.block-body,.block.thin>pre,.block.thin>.think-body,.block.thin>.turn-hooks-body{
-  margin:4px 0 6px;border:1px solid var(--line);border-radius:var(--r-6);background:var(--surface);overflow:hidden}
 .block.thin>.think-body{background:none;padding-top:10px}
 .todo-run-list{margin:2px 0 6px;padding:0 0 0 22px;list-style:none;display:flex;flex-direction:column;gap:2px;font-size:var(--fs-md);line-height:20px;color:var(--text-2)}
 .todo-run-list s{color:var(--text-3)}
@@ -922,23 +888,11 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .todo-plan-list li[data-done]{color:var(--text-3)}
 .todo-plan-list li[data-current]>.todo-mark{color:var(--accent);align-self:center}
 .todo-history{margin:0 0 var(--s-1) 22px}
-.block.thin.toolrun>.toolrun-body{gap:2px;padding:2px 0 4px 10px;margin-inline-start:7px;border-top:0;border-left:1px solid var(--line);background:none}
 /* A stretch of work between replies, folded to one row; opened, the same rail as a tool run. */
-.block.thin.work-seg>.work-seg-body{display:flex;flex-direction:column;gap:6px;padding:4px 0 6px 10px;margin-inline-start:7px;border-left:1px solid var(--line)}
-.block.thin.work-seg>summary .block-label{color:var(--text-2)}
-.block.thin.work-seg>summary .toolrun-failed{margin-left:0}
-.work-seg-live>summary .spin-mark{color:var(--text-2);flex-shrink:0}
-.work-seg-time{font-size:var(--fs-sm);color:var(--text-3);flex-shrink:0}
 .work-seg-time::before{content:"· "}
 .block.thin.work-seg>summary .work-seg-step::before{content:"· ";color:var(--text-3)}
 .turn-seg-all{font-size:var(--fs-sm)}
-@media (max-width:720px),(pointer:coarse){.block.thin.work-seg>summary{min-height:44px}}
 @media (prefers-reduced-motion:reduce){.work-seg-live .spin-mark{animation:none}}
-.turn-body>.block.thin+.block.thin{margin-top:-10px}
-/* thinking and tool rows sit tight against the reply around them */
-.turn-body>.block.thin{margin-block:-6px}
-.block.thin>summary{padding-block:2px;min-height:24px}
-.sub-body>.block.thin+.block.thin{margin-top:-8px}
 .thin-pop{position:fixed;z-index:var(--z-modal);max-height:min(240px,calc(100vh - 32px));overflow:auto;max-width:min(640px,calc(100vw - 32px));
   display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:2px 10px;padding:6px 10px;
   background:var(--raised);border:1px solid var(--line);border-radius:var(--r-sm);box-shadow:0 6px 20px rgba(0,0,0,.18);
@@ -948,7 +902,6 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .thin-pop-row .num{color:var(--text-3);text-align:end;white-space:nowrap}
 .thin-pop-failed>span,.thin-pop-failed .num{color:var(--red)}
 .thin-pop-out{grid-column:1/-1;margin:0;white-space:pre;overflow:hidden;text-overflow:ellipsis;color:var(--text-2)}
-.block.thin>summary .toolrun-failed{height:auto;color:var(--red)}
 .block.thin>summary .toolrun-failed:hover{text-decoration:underline}
 /* thin lines stay one line at any width: the full text is one tap in */
 .block.thin>summary{flex-wrap:nowrap}
@@ -1355,18 +1308,7 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   /* Transcript: thin lines keep their look, get a hit area that does not overlap. */
   .transcript{gap:20px}
   .md ul,.md ol{padding-inline-start:18px}
-  .turn-body>.block.thin+.block.thin,.sub-body>.block.thin+.block.thin{margin-top:0}
-  .block.thin>summary{min-height:44px}
-  /* A group's counts drop to a second line, so the target keeps its filename. */
-  .block.thin.toolrun>summary,.block.thin.toolcall>summary{flex-wrap:wrap;min-height:56px;align-content:center;column-gap:8px}
-  .block.thin.toolrun>summary>.block-detail,.block.thin.toolcall>summary>.block-detail{flex:1 1 0}
-  .block.thin.toolrun>summary .tool-more{order:1}
-  .block.thin.toolcall>summary .copy-btn{order:1}
-  .block.thin.toolrun>summary .tool-meta,.block.thin.toolcall>summary .tool-meta,.block.thin.toolcall>summary .tool-unrecorded{order:2;flex-basis:100%;padding-inline-start:16px}
-  .block.thin.toolrun>summary .tool-meta::before,.block.thin.toolcall>summary .tool-meta::before{content:none}
   .turn-fail-row,.turn-fail-jump,.composer-start{min-height:44px}
-  .block.thin.toolrun>summary .toolrun-failed{order:3}
-  .fail-actions .btn{min-height:44px}
   /* Tables: the first column stays put while the rest scroll under it. */
   .md table{font-size:var(--fs-md);line-height:18px}
   .md th,.md td{padding:8px;min-width:180px}
@@ -2252,12 +2194,6 @@ a.rt-link{text-decoration:none}
    bar, changed lines only); a background agent's finish note is a quiet row. */
 .tool-thrown{min-width:0;flex:0 1 auto;font-size:var(--fs-sm);color:var(--red);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .edit-diff+.edit-diff,.tool-output>pre.hl+.edit-diff,.edit-diff+pre.hl{border-top:1px solid var(--line)}
-.edit-diff-head{display:flex;gap:var(--s-2);align-items:baseline;padding:var(--s-1) var(--s-3);font-size:var(--fs-sm);color:var(--text-2)}
-.edit-diff-body{margin:0;font-size:var(--fs-sm);line-height:18px;overflow-x:auto}
-.edit-diff-body>.dl{grid-template-columns:1fr;padding-inline-start:var(--s-2)}
-.edit-diff-body>.dl-add{box-shadow:inset 3px 0 var(--accent)}
-.edit-diff-body>.dl-del{box-shadow:inset 3px 0 var(--red)}
-.edit-diff-body>.dl-hunk{background:none;color:var(--text-3)}
 .block.thin.toolrun>summary .rt-add,.block.thin.toolrun>summary .rt-del{font-size:var(--fs-sm);flex-shrink:0}
 .agent-notice>summary .block-label{color:var(--text-2)}
 @media (max-width:720px){.block.thin.toolcall>summary .tool-thrown{display:none}}
@@ -2375,8 +2311,6 @@ pre.edit-rows,.block pre.edit-rows{text-indent:0;margin:2px 0 var(--s-2);padding
 .edit-rows>.dl{display:grid;grid-template-columns:max-content max-content 1fr;min-width:max-content}
 .edit-rows .dl-n{box-sizing:content-box;min-width:2ch;padding:0 6px;font-size:inherit;line-height:inherit}
 .edit-rows .dl-t{padding:0 var(--s-3) 0 var(--s-2)}
-.edit-rows>.dl-add{box-shadow:inset 3px 0 var(--accent)}
-.edit-rows>.dl-del{box-shadow:inset 3px 0 var(--red)}
 .edit-rows>.dl-hunk{margin:0;background:var(--hover);color:var(--text-3)}
 .edit-rows>.dl-add .dl-t{color:var(--text-1)}
 .turn-foot>a.turn-files{display:inline-flex;gap:6px;align-items:baseline;color:var(--text-2);text-decoration:none}
@@ -2427,44 +2361,21 @@ pre.edit-rows,.block pre.edit-rows{text-indent:0;margin:2px 0 var(--s-2);padding
 .empty-state p{max-width:60ch}
 /* /R2-J */
 /* R3-C: a steer the running turn took reads inside that turn, quieter than its prompt. */
-.steer-note{display:grid;grid-template-columns:14px auto minmax(0,1fr);column-gap:8px;align-items:baseline;margin:4px 0;max-width:78ch;color:var(--text-2);white-space:pre-wrap;overflow-wrap:anywhere}
-.steer-word{font-size:var(--fs-sm);color:var(--text-3)}
 /* /R3-C */
 /* R3-F: tool rows. A failed call says "failed" once, quietly, at the row's
    end; its error is a muted one-line detail. Work rows sit a step back from
    the prose, counts in the accent. The group's "N failed" button sits beside
    its summary (never inside it), pinned to the row's end so a phone never
    wraps it onto a line of its own. The footer's files link is a button. */
-.block.thin.toolcall>summary .block-label,.block.thin.toolcall>summary .block-detail{color:var(--text-2);opacity:.85}
-.block.thin.toolcall>summary:hover .block-label,.block.thin.toolcall>summary:hover .block-detail{opacity:1}
-.block.thin.toolrun>summary .tool-meta,.block.thin.toolrun>summary .tool-more{color:color-mix(in srgb,var(--accent) 70%,var(--text-3))}
 .block.thin>summary .tool-thrown{font-family:inherit;color:var(--text-3);font-size:var(--fs-sm);flex:0 1 auto;min-width:0;max-width:48ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tool-state{margin-left:auto;flex-shrink:0;font-size:var(--fs-sm);font-style:italic;color:var(--text-3);white-space:nowrap}
-.tool-state-failed{color:color-mix(in srgb,var(--red) 75%,var(--text-3))}
-.fail-diag{border-left-color:color-mix(in srgb,var(--red) 55%,var(--line))}
-.fail-diag pre:not(.fail-cmd){font-size:var(--fs-sm);line-height:18px;color:var(--text-3);max-height:calc(18px * 6);overflow:auto}
 .toolrun-wrap{position:relative;display:flex;flex-direction:column;min-width:0}
-.toolrun-has-failed>.block.thin.toolrun>summary{padding-inline-end:84px}
-.toolrun-wrap>button.toolrun-failed{position:absolute;top:0;right:4px;margin:0;height:32px;display:inline-flex;align-items:center;font-size:var(--fs-sm);font-style:italic;color:color-mix(in srgb,var(--red) 75%,var(--text-3));white-space:nowrap}
 .toolrun-wrap>button.toolrun-failed:hover{text-decoration:underline}
 .turn-foot>button.turn-files{display:inline-flex;gap:6px;align-items:baseline;color:var(--text-2);text-decoration:none;font:inherit;padding:0;background:none;border:0;cursor:pointer}
 .turn-foot>button.turn-files::after{content:"\203a"}
 .turn-foot>button.turn-files:hover{color:var(--text-1)}
 @media (max-width:720px){
-  .toolrun-wrap>button.toolrun-failed{height:44px;top:6px}
-  .block.thin.toolrun>summary:has(.tool-more)::after{content:"";order:1;flex-basis:100%;height:0}
-  .block.thin.toolrun>summary .tool-more{order:2;padding-inline-start:16px}
-  .block.thin.toolrun>summary .tool-more::before{content:none}
-  .block.thin.toolrun>summary .tool-more~.tool-meta{flex-basis:auto;padding-inline-start:0}
-  .block.thin.toolrun>summary .tool-more~.tool-meta::before{content:"· "}
-  .block.thin.toolcall>summary .tool-state{order:2}
   .turn-foot>button.turn-files{min-height:44px;align-items:center}
 }
-/* The wrapper stands in for its details as a thin block: siblings keep their tucked spacing. */
-.turn-body>.toolrun-wrap+.block.thin,.turn-body>.block.thin+.toolrun-wrap,.turn-body>.toolrun-wrap+.toolrun-wrap{margin-top:-10px}
-.sub-body>.toolrun-wrap+.block.thin,.sub-body>.block.thin+.toolrun-wrap,.sub-body>.toolrun-wrap+.toolrun-wrap{margin-top:-8px}
-.turn-body>.block:not(.thin)+.toolrun-wrap,.turn-body>.toolrun-wrap+.block:not(.thin){margin-top:-6px}
-@media (max-width:720px){.turn-body>.toolrun-wrap+.block.thin,.turn-body>.block.thin+.toolrun-wrap,.turn-body>.toolrun-wrap+.toolrun-wrap,.sub-body>.toolrun-wrap+.block.thin,.sub-body>.block.thin+.toolrun-wrap,.sub-body>.toolrun-wrap+.toolrun-wrap{margin-top:0}}
 /* /R3-F */
 /* R3-G: header in two groups. Identity (title, repo, status) left; the
    metrics cluster, then the actions (Work, Mark seen), right. Flex gaps, one
@@ -2539,7 +2450,6 @@ pre.edit-rows,.block pre.edit-rows{text-indent:0;margin:2px 0 var(--s-2);padding
 /* /R4-B */
 /* R4-C: stopped-turn marker at the cut; calm error card with Retry; rejected-key step badge. */
 .turn-interrupted{display:flex;align-items:center;gap:6px;margin:var(--s-2) 0 0;font-size:var(--fs-sm);color:var(--text-3)}
-.turn-interrupted svg{flex-shrink:0}
 .turn-body>.say+.turn-interrupted{margin-top:-8px}
 .err.err-card{display:flex;flex-direction:column;gap:var(--s-2);color:var(--text-2);border:1px solid var(--line);border-radius:var(--r-md);padding:12px 14px}
 .err-card .err-head{display:flex;align-items:baseline;gap:8px;margin:0;color:var(--text-1);font-weight:500}
@@ -2777,6 +2687,118 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
   .turn-foot>button.turn-files,.turn-foot>.turn-files{display:inline-flex;flex-basis:auto;order:0;min-height:0;padding-block:10px;margin-block:-10px;border:0}
 }
 @media (prefers-reduced-motion:reduce){.msg-acts,.turn:hover .msg-acts,.msg-acts .copy-btn,.say .md a{transition:none}.msg-acts .copy-btn:active{scale:none}}
+/* /MB-TR */
+/* MB-TR: tool rows and grouped work (Devin/Cursor/v0/Codex/Vercel/Vapi/Replit/Laravel refs, see mobbin/toolrows/spec.md) */
+/* T1 row anatomy: chevron box, label, detail, meta on the right, copy */
+.block.thin>summary{gap:8px;padding:0 8px 0 4px;min-height:28px;font-size:var(--fs-md);line-height:20px;border-radius:var(--r-sm);
+  transition:background-color var(--dur-fast) var(--ease),color var(--dur-fast) var(--ease)}
+.block.thin>summary::before{content:"";flex:none;box-sizing:border-box;width:6px;height:6px;margin:0 5px;font:0/0 a;
+  border-right:1.5px solid var(--text-3);border-bottom:1.5px solid var(--text-3);transform:rotate(-45deg);transition:transform var(--dur-fast) var(--ease)}
+.block.thin[open]>summary::before{content:"";transform:rotate(45deg)}
+.block.thin>summary:hover{background:var(--hover)}
+.block.thin>summary:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.block.thin>summary .block-label{font-size:var(--fs-md);line-height:20px;font-weight:500;color:var(--text-2);transition:color var(--dur-fast) var(--ease)}
+.block.thin>summary:hover .block-label{color:var(--text-1)}
+.block.thin>summary .block-detail{font:var(--fs-sm)/20px var(--mono);color:var(--text-3);min-width:0}
+.block.thin>summary .tool-meta{margin-left:auto;font-size:var(--fs-sm);font-variant-numeric:tabular-nums;color:var(--text-3)}
+.block.thin>summary .copy-btn{width:20px;height:20px;opacity:0}
+.block.thin>summary:hover .copy-btn,.block.thin>summary:focus-within .copy-btn{opacity:1}
+.fail-mark{flex:none;color:var(--red)}
+/* T2 grouped work: quiet row, edit counts and failures the only colour, one rail */
+.work-seg-edits{display:inline-flex;gap:6px;flex:none;font-size:var(--fs-sm);font-variant-numeric:tabular-nums}
+.block.thin>summary .toolrun-failed{display:inline-flex;align-items:center;gap:4px;flex:none;margin-left:0;font-size:var(--fs-sm);font-weight:500;font-style:normal;color:var(--red)}
+.block.thin>summary .toolrun-failed::before{margin-inline-end:0}
+.work-seg-live>summary .spin-mark{flex:none;color:var(--text-2)}
+.work-seg-live>summary .block-label{color:var(--text-1)}
+.work-seg-time{flex:none;font-size:var(--fs-sm);font-variant-numeric:tabular-nums;color:var(--text-3)}
+.block.thin .spin-mark{animation-duration:1s}
+.block.thin.toolrun>.toolrun-body,.block.thin.work-seg>.work-seg-body{display:flex;flex-direction:column;gap:2px;margin-inline-start:11px;padding:2px 0 4px 12px;border:0;border-left:1px solid var(--line);background:none}
+.block.thin[open]>:not(summary){animation:mbtr-in var(--dur) var(--ease-out)}
+@keyframes mbtr-in{from{opacity:0}to{opacity:1}}
+.toolrun-has-failed>.block.thin.toolrun>summary{padding-inline-end:96px}
+.toolrun-wrap>button.toolrun-failed{position:absolute;top:0;right:8px;margin:0;height:28px;display:inline-flex;align-items:center;gap:4px;
+  font-size:var(--fs-sm);font-weight:500;font-style:normal;color:var(--red);white-space:nowrap}
+/* T3 bodies: one surface; the call is a footer strip on it */
+.block.thin>.block-body,.block.thin>pre,.block.thin>.think-body,.block.thin>.turn-hooks-body{
+  position:relative;margin:4px 0 8px 20px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);overflow:hidden}
+.block.thin>.block-body pre{border-top:0;padding:8px 12px;text-indent:0;font:var(--fs-sm)/18px var(--mono);max-height:320px;overflow:auto}
+.block.thin>.block-body>*+*{border-top:1px solid var(--line)}
+.body-copy{position:absolute;top:8px;right:8px;z-index:1}
+.block-body:has(>.fail-diag)>.body-copy{display:none}
+.block.thin>.block-body .body-copy{opacity:0}
+.block.thin>.block-body:hover .body-copy,.body-copy:focus-within{opacity:1}
+.block-inner{border-top:1px solid var(--line);background:none}
+.block-inner>summary{display:flex;align-items:center;gap:8px;min-height:28px;padding:0 12px;cursor:pointer;list-style:none;font-size:var(--fs-sm)}
+.block-inner>summary::before{content:"";flex:none;box-sizing:border-box;width:5px;height:5px;margin:0 3px;border-right:1.5px solid var(--text-3);border-bottom:1.5px solid var(--text-3);transform:rotate(-45deg);transition:transform var(--dur-fast) var(--ease)}
+.block-inner[open]>summary::before{content:"";transform:rotate(45deg)}
+.block-inner>summary .block-label{font-size:var(--fs-sm);font-weight:500;color:var(--text-3)}
+.block-inner>summary:hover .block-label{color:var(--text-2)}
+.block-inner pre{border-top:0}
+/* T4 failed: a red glyph and exit in the row, a red-soft callout head, neutral output */
+.tool-meta-failed{color:var(--red);font-weight:500}
+.fail-diag{background:none;padding:0}
+.fail-head{display:flex;align-items:baseline;gap:6px;min-width:0;padding:8px 12px;background:var(--red-soft);border-bottom:1px solid var(--red-line);font-size:var(--fs-md);line-height:20px;color:var(--text-1)}
+.fail-lead{flex:none;font-weight:500;color:var(--red)}
+.fail-first{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fail-diag pre{margin:0;border:0;padding:8px 12px;text-indent:0;font:var(--fs-sm)/18px var(--mono);color:var(--text-2);white-space:pre-wrap}
+.fail-diag pre.fail-cmd{border-bottom:1px solid var(--line);color:var(--text-1);overflow-wrap:anywhere}
+.fail-diag pre.fail-out{max-height:calc(18px * 8 + 16px);overflow:auto}
+.fail-line{display:block;min-height:18px}
+.fail-line-err{margin:0 -12px;padding:0 12px;background:var(--red-soft)}
+.fail-actions{display:flex;justify-content:flex-end;align-items:center;gap:4px;min-height:28px;padding:0 8px;border-top:1px solid var(--line)}
+.fail-actions button{height:24px;min-height:24px;padding:0 8px;border:0;border-radius:var(--r-sm);box-shadow:none;background:none;font-size:var(--fs-sm);font-weight:500;color:var(--text-2)}
+.fail-actions button:hover{background:var(--hover);color:var(--text-1)}
+/* T5 stopped: neutral, a small filled square */
+.stop-mark{display:inline-block;flex:none;width:10px;height:10px;border-radius:2px;background:var(--text-3)}
+.tool-unrecorded{display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:var(--fs-sm);line-height:16px;color:var(--amber);white-space:nowrap}
+.tool-unrecorded.tool-stopped{color:var(--text-3)}
+.tool-noresult{margin:0;padding:8px 12px;font-size:var(--fs-sm);color:var(--text-3)}
+.turn-interrupted{gap:8px}
+.turn-foot>.turn-outcome.turn-stopped{display:inline-flex;align-items:center;gap:6px;font-weight:500;color:var(--text-2)}
+/* T6 inline edit diff: sign gutter, whole-row tints, an Unchanged lines strip */
+.edit-diff-head{display:flex;align-items:center;gap:8px;min-height:32px;padding:0 12px;font-size:var(--fs-sm);font-variant-numeric:tabular-nums}
+.edit-diff-path{min-width:0;color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.edit-diff-dir{color:var(--text-3)}
+.block.thin>.block-body pre.edit-diff-body,.edit-diff-body{margin:0;padding:0;font:var(--fs-sm)/20px var(--mono);white-space:pre;max-height:360px;overflow:auto}
+.edit-diff-body>.dl{display:grid;grid-template-columns:24px 1fr;min-width:max-content}
+.edit-diff-body .dl-s{text-align:center;color:var(--text-3);user-select:none}
+.edit-diff-body .dl-t{padding:0 12px 0 4px;color:var(--text-1)}
+.dl-add{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.dl-del{background:var(--red-soft)}
+.edit-diff-body>.dl-add .dl-s{color:var(--accent)}
+.edit-diff-body>.dl-del .dl-s{color:var(--red)}
+.edit-diff-body>.dl-del .dl-t{color:var(--text-2)}
+.dl-hunk{background:var(--hover)}
+.edit-diff-body>.dl-hunk{display:flex;align-items:center;min-height:24px;padding-inline-start:24px;font-family:var(--sans);color:var(--text-3)}
+.dl-n{min-width:4ch;padding:0 8px;text-align:right;font-size:var(--fs-sm);font-variant-numeric:tabular-nums;color:var(--text-3);user-select:none}
+.dl-body>.dl-hunk,.edit-rows>.dl-hunk{min-height:24px;align-items:center}
+/* T7 steer note */
+.steer-note{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:8px;align-items:baseline;margin:4px 0;max-width:78ch;font-size:var(--fs-md);color:var(--text-2);white-space:pre-wrap;overflow-wrap:anywhere}
+.steer-word{margin-inline-start:20px;font-size:var(--fs-sm);font-weight:500;color:var(--text-3);white-space:nowrap}
+/* T8 turn foot */
+.turn-foot{align-items:center;min-height:28px;margin-top:8px;font-variant-numeric:tabular-nums}
+.turn-foot>.turn-outcome.turn-failed{font-weight:500}
+/* T9 phones: one 44px line per row */
+@media (max-width:720px),(pointer:coarse){
+  .block.thin>summary{min-height:44px}
+  .block.thin>summary .copy-btn{display:none}
+  .block.thin>.block-body .body-copy{opacity:1}
+  .toolrun-wrap>button.toolrun-failed{height:44px}
+  .block.thin>.block-body,.block.thin>pre,.block.thin>.turn-hooks-body{margin-inline-start:0;border-radius:var(--r-sm)}
+  .fail-actions button{min-height:44px}
+}
+@media (max-width:720px){
+  .block.thin>summary .tool-meta>.tool-meta-failed~*,.block.thin.toolcall>summary .tool-thrown{display:none}
+}
+@media (max-width:480px){
+  .block.thin>summary .tool-more,.block.thin>summary .work-seg-edits,.block.thin.work-seg>summary .work-seg-step{display:none}
+}
+/* T10 reduced motion */
+@media (prefers-reduced-motion:reduce){
+  .block.thin>summary,.block.thin>summary::before,.block.thin>summary .block-label,.block-inner>summary::before{transition:none}
+  .block.thin[open]>:not(summary){animation:none}
+  .block.thin .spin-mark{animation:none}
+}
 /* /MB-TR */
 </style>
 </head>
