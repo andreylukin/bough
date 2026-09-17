@@ -21,7 +21,7 @@ import { ContextPage } from "./context";
 import { ChangesBody, ChangesPage, EditDiff, countOf, outputParts, useChanges } from "./changes";
 import { Palette, isTypingTarget, useFullText, usePaletteKey, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
-import { Elapsed, Pending, elapsed } from "./loading";
+import { Elapsed, ErrorNote, Pending, elapsed } from "./loading";
 
 export type View = "sessions" | "projects" | "hooks" | "wiki";
 
@@ -857,7 +857,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
       {/* Only on trouble: a slow first load, or a list that stopped refreshing. */}
       {loadErr ? (
         <p className="side-fresh" role="status">
-          {loadedAt === null ? "Sessions unavailable" : `Updates delayed · ${ago(new Date(loadedAt).toISOString())}`}
+          {loadedAt === null ? "Sessions unavailable" : `Updates delayed · synced ${ago(new Date(loadedAt).toISOString())} ago`}
           {onRetry && <button className="link" onClick={onRetry}>Retry</button>}
         </p>
       ) : loadedAt === null && slow && <p className="side-fresh" role="status">Loading sessions…</p>}
@@ -889,7 +889,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
           bgFailed ? <span title={`${bgFailed} failed of ${background.length}`}>{bgFailed}</span> : bgUrgent.length ? <span title={`${bgUrgent.length} need you of ${background.length}`}>{bgUrgent.length}</span> : background.length,
           workspaces(byWorkspace(background.filter((r) => !needIds.has(r.id)), projectNames), "background"), bgAlert)}
         {/* Archived is not loaded until opened, so a search cannot have looked there. */}
-        {section("archived", q && !showArchived ? <>Archived not searched · <span className="sec-include">Include</span></> : "Archived", showArchived && !archFolded,
+        {/* Opened and empty, the fold has nothing to offer. */}
+        {!(showArchived && archivedState === "ready" && !archived.length && !q) && section("archived", q && !showArchived ? <>Archived not searched · <span className="sec-include">Include</span></> : "Archived", showArchived && !archFolded,
           // Once included, folding only hides the section; a search still covers it.
           () => (showArchived ? setArchFolded((v) => !v) : (setArchFolded(false), archFromFilter.current = Boolean(q), onToggleArchived())),
           showArchived && archivedState === "ready" ? archived.length : null,
@@ -2671,13 +2672,15 @@ function useCatalogue(enabled = true) {
   return useMemo(() => ({ cat, failed, retry }), [cat, failed, retry]);
 }
 
-export function Controls({ row, projects, onModel, onEffort, onAssign, only, catalogue }: {
+export function Controls({ row, projects, onModel, onEffort, onAssign, only, catalogue, disabled = false }: {
   row: Row; projects: Project[];
   onModel: (m: string, plugin?: string) => Promise<boolean> | void; onEffort: (e: string) => Promise<boolean> | void; onAssign: (p: string) => void;
   /** Render just the model picker, or everything but it. */
   only?: "model" | "rest";
   /** A catalogue already read by the thread; without one, Controls reads its own. */
   catalogue?: ReturnType<typeof useCatalogue>;
+  /** The transcript did not load, so the picker waits for it. */
+  disabled?: boolean;
 }) {
   const own = useCatalogue(!catalogue);
   const { cat, failed: catFailed, retry: retryCat } = catalogue ?? own;
@@ -2711,7 +2714,7 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only, cat
         <div className="ctl ctl-run" title="Model and effort for the next turn">
           <span className="ctl-label ctl-next">Next turn</span>
           <span className="ctl-label ctl-field">Model</span>
-          <Select label="Next turn model" value={row.model ?? ""} options={models} searchable align="end" note="Applies to the next turn"
+          <Select label="Next turn model" value={row.model ?? ""} options={models} searchable align="end" disabled={disabled} note="Applies to the next turn"
                   detailHeading="Context tokens"
                   footer={(o) => {
                     const m = o && cat?.providers.flatMap((p) => p.models ?? []).find((x) => x.id === o.value);
@@ -3508,6 +3511,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const status = composerStatus({ sending: !running && unlanded.some((p) => !p.steer), running, streamed: stream.length > 0, activity });
   // Stop is asked once; the button says so until the ask is answered.
   const [stopping, setStopping] = useState<"" | "stopping" | "failed">("");
+  const failedLoad = loading && Boolean(loadError);
   useEffect(() => { if (!running) setStopping(""); }, [running]);
   useEffect(() => {
     if (!restoreOnStop.current || running || loading) return;
@@ -3729,7 +3733,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                 const here = document.activeElement;
                 if ((e.shiftKey && (here === first || here === e.currentTarget)) || (!e.shiftKey && here === last)) { e.preventDefault(); closeMore(true); }
               }}>
-                <div className="head-pop-run"><Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" catalogue={catalogue} /></div>
+                <div className="head-pop-run"><Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" catalogue={catalogue} disabled={failedLoad} /></div>
                 <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="rest" catalogue={catalogue} />
                 <button className="head-pop-item" onClick={async () => {
                   closeMore(false);
@@ -3765,9 +3769,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
            onFocus={(e) => { const t = e.target as HTMLElement; if (t.matches("details.block > summary") && t !== rovingAt.current) rove(summaries(), t); }}
            tabIndex={0} role="region" aria-label="Transcript">
         {loading && loadError && (
-          <p className="meta-line transcript-state transcript-retry" role="alert">
-            Couldn't load transcript <button className="link" onClick={onRetry}>Retry</button>
-          </p>
+          <ErrorNote className="transcript-state" title="Couldn’t load transcript" err={loadError} action={onRetry && { label: "Retry", onClick: onRetry }} />
         )}
         {loading && !loadError && slow && <p className="meta-line transcript-state" role="status">Loading transcript…</p>}
         {!loading && turns.length === 0 && !running && !row.ask && !unlanded.length && (
@@ -3957,7 +3959,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
             }} />
           <div className="composer-bar">
             <div className="composer-tools">
-              <SkillPicker onPick={(name, known) => {
+              <SkillPicker disabled={failedLoad} onPick={(name, known) => {
                 // A skill runs only as the lead word, so a pick replaces a
                 // skill already there, never a leading path like /tmp/x.
                 setDraft((d) => {
@@ -3966,7 +3968,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                 });
                 document.getElementById("composer")?.focus();
               }} />
-              <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" catalogue={catalogue} />
+              <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" catalogue={catalogue} disabled={failedLoad} />
               {row.mode !== "project" && row.writable && (
                 <span className="mode-local mode-badge" title={`File edits are allowed only inside ${row.writable}. The shell runs as you.`}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z" /></svg>Local · edits {row.writable.split("/").pop()}</span>
               )}
@@ -4002,8 +4004,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                 <button className="btn btn-ghost" onClick={enqueue} disabled={uploading > 0 || askChanged}
                         title={modKey() + "Enter"}>Queue</button>
               )}
-              <button className="btn btn-primary" onClick={send} disabled={busy || uploading > 0 || blank || askChanged || row.archived}
-                      title={running && !draftAsk ? "Enter" : undefined}>
+              <button className="btn btn-primary" onClick={send} disabled={failedLoad || busy || uploading > 0 || blank || askChanged || row.archived}
+                      title={failedLoad ? "Transcript didn’t load" : running && !draftAsk ? "Enter" : undefined}>
                 {(blank ? row.ask : draftAsk) ? "Answer" : running ? "Steer" : "Send"}
               </button>
             </div>

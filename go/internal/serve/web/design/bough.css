@@ -382,7 +382,6 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .prompt-images{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .prompt-images a{display:grid;place-items:center;width:72px;height:54px;border:1px solid var(--line);border-radius:4px;background:var(--surface);overflow:hidden;font-size:11px;color:var(--text-3);text-align:center}
 .prompt-images img{width:100%;height:100%;object-fit:contain}
-.transcript-retry{display:flex;align-items:center;justify-content:center;gap:10px}
 .rt-paused{color:#e2ba78}
 .rt-paused .link{color:#e2ba78;text-decoration:underline}
 .turn{display:flex;flex-direction:column;gap:10px}
@@ -2275,3 +2274,12 @@ a.rt-link{text-decoration:none}
 .keys-row dd{margin:0;color:var(--text-2)}
 .keys-row kbd{font:500 11px/16px var(--mono);padding:1px 6px;border:1px solid var(--line-strong);border-radius:4px;color:var(--text-1)}
 /* /WEB7 */
+/* WEB8: one error voice: a red dot and title, a sentence, one action, raw error behind Details */
+.error-note{display:flex;flex-direction:column;align-items:center;gap:var(--s-2);margin:auto;padding:var(--s-4);max-width:52ch;text-align:center;color:var(--text-2)}
+.error-note-title{display:flex;align-items:center;gap:8px;margin:0;font:600 var(--fs-h2)/var(--lh-tight) var(--sans);color:var(--text-1)}
+.error-dot{flex-shrink:0;width:8px;height:8px;border-radius:50%;background:color-mix(in srgb,var(--red) 70%,transparent)}
+.error-note-body{margin:0}
+.error-note-details{font-size:var(--fs-sm);color:var(--text-3)}
+.error-note-details summary{cursor:pointer}
+.error-note-details pre{margin:var(--s-2) 0 0;white-space:pre-wrap;overflow-wrap:anywhere;text-align:start}
+/* /WEB8 */

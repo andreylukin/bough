@@ -9,7 +9,7 @@ import { Spinner } from "./loading";
 
 export interface Skill { name: string; summary: string; manual: boolean }
 
-export function SkillPicker({ onPick }: { onPick: (name: string, known: string[]) => void }) {
+export function SkillPicker({ onPick, disabled = false }: { onPick: (name: string, known: string[]) => void; disabled?: boolean }) {
   const [open, setOpen] = useState(false);
   const { all, error, retry } = useSkills(open);
   const [q, setQ] = useState("");
@@ -51,8 +51,8 @@ export function SkillPicker({ onPick }: { onPick: (name: string, known: string[]
 
   return (
     <div className="skills-anchor">
-      <button ref={trigger} className="btn skills-btn" aria-expanded={open} aria-haspopup="dialog"
-        onClick={() => setOpen((v) => !v)}>Skills</button>
+      <button ref={trigger} className="btn skills-btn" aria-expanded={open} aria-haspopup="dialog" disabled={disabled}
+        title={disabled ? "Transcript didn’t load" : undefined} onClick={() => setOpen((v) => !v)}>Skills</button>
 
       {open && (
         <>
