@@ -30,3 +30,8 @@ test("R4-J: a passed hook wears a check, not a hollow circle", async () => {
 test("R4-J: the thin tool row meta has no leading separator", () => {
   expect(r4j).toMatch(/\.block\.thin>summary \.tool-meta::before[^{]*\{content:none\}/);
 });
+
+test("R4-J: the 28px button height stays off touch layouts", () => {
+  expect(r4j).not.toMatch(/(^|\n)\.btn\{height:28px/);
+  expect(r4j).toMatch(/@media \(min-width:721px\) and \(pointer:fine\)\{\.btn\{height:28px/);
+});
