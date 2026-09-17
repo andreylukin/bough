@@ -14,7 +14,7 @@ import { Markdown, programRan, codeLabel, groupSubs, groupTools, groupTurns, isH
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
 import { agentWakeNotes, agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
-import { ExecNote, JobLines, JobRow, LIFE_WORD, WorkButton, WorkContext, WorkDialog, WorkState, agentReports, jobIdOf, spokenDuration, splitExecNote, stateText, useChildren, useStopStore, useWork, useWorkAnnouncer, type WorkCtx } from "./work-ui";
+import { ExecNote, JobLines, JobRow, LIFE_WORD, WorkButton, WorkContext, WorkDialog, WorkGlyph, WorkState, agentReports, jobIdOf, spokenDuration, splitExecNote, stateText, useChildren, useStopStore, useWork, useWorkAnnouncer, type WorkCtx } from "./work-ui";
 import { SkillPicker } from "./skills";
 import { Mentions, triggerAt, type Trigger } from "./mention";
 import { FireInspection, HooksPage, type Fire, type Load, type Save } from "./hooks";
@@ -663,7 +663,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     // reason, a question, a background life or a setup failure. Plain
     // running, waiting and done rows stay one line.
     const plain = !failed && !asking && (r.status === "running" || r.status === "needs-you" || r.status === "done");
-    const stacked = Boolean((label && !plain) || life || setup);
+    // A child's glyph says running, finished and stopped; only a failure or a wait takes a second line.
+    const stacked = Boolean((label && !plain) || life === "failed" || life === "queued" || setup);
     return (
       <Fragment key={r.id}>
       <div className={"session" + (child ? " session-child" : "")}>
@@ -678,7 +679,9 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
                   title={`${title}\n${why} · ${ago(r.lastAt)} ago${r.branch ? ` · ${r.branch}` : ""}${setup ? `\n${setup}: setup failed` : ""}`}>
             {/* A failure you have not seen is a red mark; the reason is its label. */}
             <span className="row-mark">
-              {failed
+              {life
+                ? <WorkGlyph life={life} />
+                : failed
                 ? <span className="status"><svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{STATUS.error.glyph}</svg><span className="visually-hidden">{why}</span></span>
                 : <StatusMark status={r.status} size={16} bare />}
             </span>
@@ -687,18 +690,23 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
             <span className="row-name">
             <span className={"row-title" + (own ? "" : " row-untitled")}>{marked(shown, q)}</span>{chip && <span className="mono row-id" title={`Session id ending ${idTail(r.id)}`}><span className="visually-hidden">session id </span>{idTail(r.id)}</span>}
             {/* The age, on every row at the same right edge; the title is what gives way. */}
-            <span className="row-when" aria-hidden="true">{!stacked && <ModeChip row={r} bare />}{ago(failed === "tests failed" && r.testsAt ? r.testsAt : r.lastAt)}</span>
+            <span className="row-when" aria-hidden="true">{!stacked && <ModeChip row={r} bare />}{bg && (bg.running > 0 || bg.failed > 0) && (
+              <span className="row-bg" data-running={bg.running ? "" : undefined}>
+                {bg.failed > 0 && <span className="work-dot" />}
+                {bg.running > 0 && <><WorkGlyph life="running" size={10} />{bg.running}</>}
+              </span>
+            )}<span className="row-age">{ago(failed === "tests failed" && r.testsAt ? r.testsAt : r.lastAt)}</span></span>
             </span>
             {stacked && (label || setup) && !life && <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : r.status === "running" ? " row-meta-run" : "") + (failed || asking || setup || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
               <ModeChip row={r} bare name={setup} />{label}
             </span>}
             {life && <span className={"num row-meta row-meta-live" + (life === "failed" ? " row-meta-bad" : life === "running" ? " row-meta-run" : "")} aria-hidden="true">
-              <ModeChip row={r} bare name={setup} />{life === "queued" ? `${LIFE_WORD[life]} · waiting` : LIFE_WORD[life]}
+              <ModeChip row={r} bare name={setup} />{life === "queued" ? `${LIFE_WORD[life]} · waiting` : <span className="row-life-word">{LIFE_WORD[life]}</span>}
             </span>}
             </span>
             {r.jobs && r.jobs.length > 0 && (
               <span className="num row-jobs" title={r.jobs.map((j) => j.cmd).join("\n")}>
-                {r.jobs.length}<span className="visually-hidden"> {r.jobs.length === 1 ? "job" : "jobs"}</span>
+                <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 17l6-5-6-5M12 19h8" /></svg>{r.jobs.length}<span className="visually-hidden"> {r.jobs.length === 1 ? "job" : "jobs"}</span>
               </span>
             )}
           </button>
