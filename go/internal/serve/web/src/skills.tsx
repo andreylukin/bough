@@ -51,8 +51,8 @@ export function SkillPicker({ onPick, disabled = false }: { onPick: (name: strin
 
   return (
     <div className="skills-anchor">
-      <button ref={trigger} className="btn skills-btn" aria-expanded={open} aria-haspopup="dialog" disabled={disabled}
-        title={disabled ? "Transcript didn’t load" : undefined} onClick={() => setOpen((v) => !v)}>Skills</button>
+      <button ref={trigger} className="btn skills-btn" aria-expanded={open} aria-haspopup="dialog" disabled={disabled} aria-label="Skills"
+        title={disabled ? "Transcript didn’t load" : undefined} onClick={() => setOpen((v) => !v)}><span className="skills-glyph" aria-hidden="true">/</span><span className="skills-word">Skills</span></button>
 
       {open && (
         <>

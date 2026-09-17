@@ -2956,23 +2956,20 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only, cat
         <div className="ctl ctl-run" title="Model and effort for the next turn">
           <span className="ctl-label ctl-next">Next turn</span>
           <span className="ctl-label ctl-field">Model</span>
-          <Select label="Next turn model" value={row.model ?? ""} options={models} searchable align="end" disabled={disabled} note="Applies to the next turn"
-                  detailHeading="Context tokens"
+          <Select label="Next turn model" value={row.model ?? ""} options={models} searchable align="end" disabled={disabled} currentGroup="Next turn"
+                  suffix={row.effort}
                   footer={(o) => {
                     const m = o && cat?.providers.flatMap((p) => p.models ?? []).find((x) => x.id === o.value);
-                    const price = (n?: number) => (n ? `$${+n.toFixed(2)}` : "Unavailable");
-                    // The footer stays put while the list scrolls, so it names the model it prices.
-                    const name = <span className="mono sel-foot-name">{o?.short ?? o?.label}</span>;
-                    return m ? <>{name} · Input {price(m.input)} · Output {price(m.output)} <span className="sel-foot-unit">per 1M tokens</span></>
-                      : o?.value ? <>{name} · Price unavailable</> : "Price unavailable";
+                    // Input / output per 1M tokens; the highlighted row already names the model.
+                    return m?.input && m?.output ? <>${+m.input.toFixed(2)} / ${+m.output.toFixed(2)} <span className="sel-foot-unit">per 1M</span></> : "Price unavailable";
                   }}
                   // The provider that lists the model runs it; a bare id would stay on the current one.
                   onChange={(v) => (v ? onModel(v, cat?.providers.find((p) => p.models?.some((m) => m.id === v))?.plugin) : undefined)} />
           {/* Always present, so Settings keeps one shape: disabled with the reason until levels are known. */}
           <span className="ctl-label ctl-field ctl-effort">Effort</span>
-          <Select label="Next turn effort" value={row.effort ?? ""} align="end" note="Applies to the next turn" onChange={(v) => (v ? onEffort(v) : undefined)}
+          <Select label="Next turn effort" value={row.effort ?? ""} align="end" onChange={(v) => (v ? onEffort(v) : undefined)}
                   disabled={efforts.length === 0} placeholder={catFailed ? "Unavailable" : cat ? "Not offered" : "Loading"}
-                  options={efforts.length ? [...(row.effort ? [] : [{ value: "", label: "Provider default" }]), ...efforts.map((e) => ({ value: e, label: effortLabel(e) }))] : []} />
+                  options={efforts.length ? [...(row.effort ? [] : [{ value: "", label: "Default effort" }]), ...efforts.map((e) => ({ value: e, label: effortLabel(e) }))] : []} />
           {catFailed && <button className="btn" onClick={retryCat}>Models unavailable · Retry</button>}
         </div>
       )}
@@ -4127,14 +4124,15 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
       <div className="composer-wrap">
         {/* Archived stays readable, but says so before anything is typed into it. */}
         {row.archived && (
-          <p className="archived-note" role="status">
-            This session is archived.
+          <p className="archived-note composer-note" role="status">
+            <strong className="composer-note-lead">Archived</strong>
+            <span className="composer-note-body">This session is read-only until unarchived.</span>
             <button className="btn" onClick={onArchive}>Unarchive</button>
           </p>
         )}
         {row.ask && !askSeen && (
-          <div className="ask-bar">
-            <p><strong>Needs your answer</strong></p>
+          <div className="ask-bar composer-note">
+            <p><span className="composer-note-dot" aria-hidden="true" /><strong>Needs your answer</strong></p>
             <button className="btn" onClick={() => {
               // Land on the answer, not just near it: the first option if
               // there are any, otherwise the composer the answer is typed in.
@@ -4146,7 +4144,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           </div>
         )}
         {askChanged && (
-          <div className="send-failed" role="alert">
+          <div className="send-failed composer-note composer-note-err" role="alert">
             <span className="send-failed-line">
               <strong>Question changed</strong>
               <span className="send-failed-text">{draftAsk ? "the one this answer was for is gone" : "this draft was written as a message"}</span>
@@ -4159,7 +4157,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           </div>
         )}
         {failures.map((failed, i) => (
-          <div key={failed.id ?? i} className="send-failed" role="alert">
+          <div key={failed.id ?? i} className="send-failed composer-note composer-note-err" role="alert">
             {/* What failed and why on one line; Retry and Edit need no expanding. */}
             <details>
               <summary>
@@ -4178,8 +4176,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
             <span className="send-failed-actions">
               <button className="btn" disabled={busy} onClick={() => deliver(failed.text, failed.answer, failed.ask, failed)}>Retry</button>
               {/* Edit never lands on a newer draft: two prompts glued together is a third nobody wrote. */}
-              <button className="btn" disabled={Boolean(draft.trim())} title={draft.trim() ? "Send or clear the current draft first" : undefined}
-                onClick={() => { setDraft(failed.text); setDraftAsk(failed.answer ? failed.ask ?? "" : ""); drop(failed); composer.current?.focus(); }}>Edit</button>
+              <button className="btn composer-edit" disabled={Boolean(draft.trim())} title={draft.trim() ? "Send or clear the current draft first" : undefined}
+                onClick={() => { setDraft(failed.text); setDraftAsk(failed.answer ? failed.ask ?? "" : ""); drop(failed); composer.current?.focus(); }}><span className="edit-word">Edit</span>{draft.trim() && <span className="edit-why">Clear the draft to edit</span>}</button>
             </span>
           </div>
         ))}
@@ -4187,11 +4185,14 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           <ol className="queued" aria-label="Queued until the turn ends">
             {queued.map((m) => (
               <li key={m.id} className="queued-row">
-                <span className="queued-tag">Queued</span>
+                <span className="queued-tag" title="Queued">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><circle cx="6" cy="6" r="4.75" /><path d="M6 3.5V6l1.75 1.25" strokeLinecap="round" /></svg>
+                  <span className="visually-hidden">Queued</span>
+                </span>
                 <span className="queued-text">{m.text}</span>
                 {/* Edit never lands on a newer draft, as with a failed send. */}
-                <button className="link" disabled={Boolean(draft.trim())} title={draft.trim() ? "Send or clear the current draft first" : undefined}
-                  onClick={() => { setDraft(m.text); setQueued((q) => q.filter((x) => x.id !== m.id)); composer.current?.focus(); }}>Edit</button>
+                <button className="link composer-edit" disabled={Boolean(draft.trim())} title={draft.trim() ? "Send or clear the current draft first" : undefined}
+                  onClick={() => { setDraft(m.text); setQueued((q) => q.filter((x) => x.id !== m.id)); composer.current?.focus(); }}><span className="edit-word">Edit</span>{draft.trim() && <span className="edit-why">Clear the draft to edit</span>}</button>
                 <button className="link" onClick={() => setQueued((q) => q.filter((x) => x.id !== m.id))}>Remove</button>
               </li>
             ))}
@@ -4218,11 +4219,11 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
             onClose={() => { if (trigger) dismissed.current = `${trigger.from}:${trigger.kind}${trigger.token}`; setTrigger(null); }}
             onOpen={setPickerOpen} onActive={setActiveOpt} />
           <textarea id="composer" ref={composer} value={draft} rows={1}
-            aria-label={(row.archived ? "Unarchive to continue this session" : row.ask?.secret ? "Answer in the secret field" :row.ask && !askChanged ? "Answer…" : running || status === "Waiting" ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…").replace(/…$/, "")}
+            aria-label={(row.archived ? "Archived. Unarchive to continue" : row.ask?.secret ? "Answer in the secret field above" : row.ask && !askChanged ? "Type your answer…" : running || status === "Waiting" ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…").replace(/…$/, "")}
             aria-controls={pickerOpen ? "mention-list" : undefined}
             aria-activedescendant={pickerOpen ? activeOpt : undefined}
             disabled={Boolean(row.ask?.secret) || row.archived}
-            placeholder={row.archived ? "Unarchive to continue this session" : row.ask?.secret ? "Answer in the secret field" :row.ask && !askChanged ? "Answer…" : running || status === "Waiting" ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…"}
+            placeholder={row.archived ? "Archived. Unarchive to continue" : row.ask?.secret ? "Answer in the secret field above" : row.ask && !askChanged ? "Type your answer…" : running || status === "Waiting" ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…"}
             onPaste={(e) => take({ dataTransfer: e.clipboardData, preventDefault: () => e.preventDefault() }, false)}
             onChange={(e) => {
               setDraft(e.target.value);
@@ -4274,16 +4275,17 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                 });
                 document.getElementById("composer")?.focus();
               }} />
+              <span className="composer-sep" aria-hidden="true" />
               <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" catalogue={catalogue} disabled={failedLoad} />
               {row.mode !== "project" && row.writable && (
-                <span className="mode-local mode-badge" title={`File edits are allowed only inside ${row.writable}. The shell runs as you.`}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z" /></svg>Local · edits {row.writable.split("/").pop()}</span>
+                <span className="mode-local mode-badge" title={`File edits are allowed only inside ${row.writable}. The shell runs as you.`}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z" /></svg><span className="mode-word">Edits {row.writable.split("/").pop()}</span></span>
               )}
               {row.mode !== "project" && !row.writable && (
-                <span className="mode-local mode-badge" title="Runs on this machine. Can edit files only inside a git checkout; read-only elsewhere."><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>Local · read-only</span>
+                <span className="mode-local mode-badge" title="Runs on this machine. Can edit files only inside a git checkout; read-only elsewhere."><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg><span className="mode-word">Read-only</span></span>
               )}
             </div>
-            {uploading > 0 && <span className="attach-note">Attaching image…</span>}
-            {attachErr && <span className="attach-note attach-err" role="alert">{attachErr}</span>}
+            {uploading > 0 && <span className="attach-note" role="status"><span className="attach-spin" aria-hidden="true" />Attaching image…</span>}
+            {attachErr && <span className="attach-note attach-err" role="alert"><span className="attach-bang" aria-hidden="true">!</span>{attachErr}</span>}
             <div className="composer-actions">
               {/* Beside Send, so it never covers what you are reading. */}
               {down && !away && (
@@ -4300,30 +4302,42 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                 </button>
               )}
               {/* One filled control: Stop is a square icon, Queue shows once there is a draft to queue. */}
-              {live && (stopping === "failed"
-                ? <button className="btn" onClick={stop}>Couldn’t stop · Retry</button>
-                : <button className="btn btn-ghost composer-stop" disabled={stopping === "stopping"} onClick={stop}
-                          aria-label={stopping === "stopping" ? "Stopping" : "Stop"} title="Esc">
-                    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="1" y="1" width="10" height="10" rx="2" fill="currentColor" /></svg>
-                  </button>)}
+              {live && stopping === "failed" && (
+                <span className="composer-stop-failed" role="alert">Couldn’t stop <button className="link" onClick={stop}>Retry</button></span>
+              )}
+              {live && (
+                <button className={"btn btn-ghost composer-stop" + (stopping === "failed" ? " composer-stop-err" : "")} disabled={stopping === "stopping"} onClick={stop}
+                        aria-label={stopping === "stopping" ? "Stopping" : "Stop"} title="Stop (Esc)">
+                  {stopping === "stopping" ? <span className="composer-spin" aria-hidden="true" />
+                    : <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect width="10" height="10" rx="2" fill="currentColor" /></svg>}
+                </button>
+              )}
               {running && !draftAsk && !blank && (
-                <button className="btn btn-ghost" onClick={enqueue} disabled={uploading > 0 || askChanged}
+                <button className="btn composer-queue" onClick={enqueue} disabled={uploading > 0 || askChanged}
                         title={modKey() + "Enter"}>Queue</button>
               )}
               <button className="btn btn-primary" onClick={send} disabled={failedLoad || busy || uploading > 0 || blank || askChanged || row.archived}
-                      title={failedLoad ? "Transcript didn’t load" : running && !draftAsk ? "Enter" : undefined}>
-                {(blank ? row.ask : draftAsk) ? "Answer" : running ? "Steer" : "Send"}
+                      title={failedLoad ? "Transcript didn’t load" : running && !draftAsk ? "Enter" : undefined}
+                      aria-label={(blank ? row.ask : draftAsk) ? "Answer" : running ? "Steer" : "Send"}>
+                <span className="send-word">{(blank ? row.ask : draftAsk) ? "Answer" : running ? "Steer" : "Send"}</span>
+                <kbd className="send-key" aria-hidden="true">↵</kbd>
+                <svg className="send-arrow" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10 16V4M5 9l5-5 5 5" /></svg>
               </button>
             </div>
           </div>
         </div>
         <div className="composer-foot">
+          {status && (
+            <span className={"composer-status composer-status-" + status.toLowerCase()}>
+              <span className="composer-dot" aria-hidden="true" />{status === "Waiting" ? WAITING_MODEL : status}
+            </span>
+          )}
           {/* A session that can already edit its checkout has no reason to move; the offer is for read-only ones. */}
           {row.mode !== "project" && !row.writable && (
             <span className="composer-local">
               {onStartProject && projects.some((p) => p.slug) ? (
                 <Select label="Start project session" value="" placeholder="Start project session…" align="start"
-                        note="Your draft moves to the new session, unsent"
+                        note="Your draft moves with you, unsent"
                         options={projects.filter((p) => p.slug).map((p) => ({ value: p.id, label: p.name }))}
                         onChange={(id) => onStartProject(id, expand(draft))} />
               ) : onNewProject && (
@@ -4334,7 +4348,10 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           )}
           {!pickerOpen && (
             <span className="hint composer-hint">
-              {status && <>{status === "Waiting" ? WAITING_MODEL : status}{status === "Working" && <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>} · </>}{running && !draftAsk ? `Enter steer · ${modKey()}Enter queue · Shift+Enter newline` : "Enter send · Shift+Enter newline"} · / commands · @ files
+              {(running && !draftAsk
+                ? [["↵", "steer"], [modKey() + "↵", "queue"], ["⇧↵", "newline"], ["Esc", "stop"]]
+                : [["↵", "send"], ["⇧↵", "newline"], ["/", "commands"], ["@", "files"]]
+              ).map(([k, w]) => <span key={w} className="composer-key"><kbd>{k}</kbd> {w}</span>)}
             </span>
           )}
         </div>
