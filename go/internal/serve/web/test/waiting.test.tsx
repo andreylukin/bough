@@ -82,3 +82,30 @@ test("R2-B: the status goes Sending, then Waiting once accepted, then Streaming"
   expect(streaming).toContain("typing-dots");
   expect(streaming).not.toContain("Waiting for model…");
 });
+
+const threadProps = {
+  onSend: async () => null, onAnswer: async () => null, onInterrupt: () => {}, onArchive: () => {}, onRename: async () => {},
+  onModel: () => {}, onEffort: () => {}, onAssign: () => {}, onBack: () => {}, onContext: () => {}, onAck: () => {},
+  projects: [], busy: false, jump: null,
+};
+
+test("R3-D: a /model send lands on its command record, not on an assistant line", () => {
+  const at = "2026-01-02T10:00:00Z";
+  const lines = [
+    { seq: 1, at, kind: "input", text: "hi" }, { seq: 3, at, kind: "done", text: "" },
+    { seq: 4, at, kind: "command", text: "/model openai/gpt-5" }, { seq: 5, at, kind: "system", text: "model: openai/gpt-5" },
+  ] as any;
+  const cmd = [{ id: "c1", text: "/model openai/gpt-5", after: 3, accepted: true }];
+  const html = renderToStaticMarkup(<Thread row={row} lines={lines} sending={cmd as any} {...threadProps} />);
+  expect(html).toContain("Model changed");
+  expect(html).not.toContain("Sending…");
+  expect(html).not.toMatch(/thread-head[\s\S]*>(Sending|Working)</);
+  expect(html).not.toMatch(/composer-hint[^>]*>(Sending|Waiting) ·/);
+});
+
+test("R3-D: an errored session never reads Working or Sending for a send it did not start", () => {
+  const cmd = [{ id: "c2", text: "/model nope", after: 0, accepted: true }];
+  const html = renderToStaticMarkup(<Thread row={{ ...row, status: "error" } as Row} lines={[]} sending={cmd as any} {...threadProps} />);
+  expect(html).not.toMatch(/thread-head[\s\S]*>(Sending|Working)</);
+  expect(html).not.toContain("Waiting for model");
+});

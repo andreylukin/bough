@@ -3545,7 +3545,12 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   // its "Sending…" copy stayed stuck at the bottom.
   const inputs = lines.filter((l) => l.kind === "input");
   const sameText = (p: Pending) => { const want = p.text.trim().slice(0, 200); return inputs.slice(-(sending.length + 3)).some((l) => !p.seen?.includes(`${l.seq}|${l.at}`) && (l.text ?? "").trim().startsWith(want)); };
-  const unlanded = loading ? sending : sending.filter((p, i) => inputs.filter((l) => l.seq > p.after).length <= i && !sameText(p));
+  // R3-D: a local command (/model, /think) records a command line, never an
+  // input: that record is what lands it, or its row said "Sending…" forever.
+  const isCmd = (p: Pending) => /^\/[a-z]/i.test(p.text.trim());
+  const cmdLanded = (p: Pending) => { const verb = p.text.trim().split(/\s+/)[0]; return lines.some((l) => l.kind === "command" && l.seq > p.after && (l.text ?? "").trim().split(/\s+/)[0] === verb); };
+  const prompts = sending.filter((p) => !isCmd(p));
+  const unlanded = loading ? sending : sending.filter((p) => isCmd(p) ? !cmdLanded(p) : inputs.filter((l) => l.seq > p.after).length <= prompts.indexOf(p) && !sameText(p));
   // A running turn whose prompt has not landed yet: its stream sits in the
   // prompt's own section, with the prompt time, as the recorded turn will.
   // Built after `status` is known (it is declared below), hence a thunk.
@@ -3557,8 +3562,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     ? () => <div className="turn-body"><StreamView runs={stream} />{status === "Waiting" ? <WaitingModel /> : <Working label={activity || "Working"} />}</div> : null;
   const liveHost = liveBodyFn ? unlanded.filter((p) => !p.steer).at(-1) : undefined;
   useEffect(() => { window.dispatchEvent(new Event(TRANSCRIPT_GREW)); }, [stream, lines.length, sending.length]);
-  const landedIds = sending.length - unlanded.length;
-  useEffect(() => { if (landedIds) setSending((q) => q.slice(landedIds)); }, [landedIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  const landedIds = sending.filter((p) => !unlanded.includes(p)).map((p) => p.id).join(" ");
+  useEffect(() => { if (landedIds) { const ids = new Set(landedIds.split(" ")); setSending((q) => q.filter((p) => !ids.has(p.id))); } }, [landedIds]); // eslint-disable-line react-hooks/exhaustive-deps
   const [fullPending, setFullPending] = useState("");
   // Offered whenever the clamp actually hides something, whatever the length.
   const [clipped, setClipped] = useState<Record<string, boolean>>({});
@@ -3589,7 +3594,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     // Each request is its own row; a retry that fails again replaces its own.
     if (error) setFailures((q) => [...q.filter((f) => f.id !== id), { id, at: Date.now(), text: t, answer, ask, error }]);
   };
-  const status = composerStatus({ sending: !running && unlanded.some((p) => !p.steer), accepted: unlanded.some((p) => !p.steer && p.accepted), running, streamed: stream.length > 0, activity });
+  // R3-D: the server's error status wins over a send it never started.
+  const status = row.status === "error" ? "" : composerStatus({ sending: !running && unlanded.some((p) => !p.steer), accepted: unlanded.some((p) => !p.steer && p.accepted), running, streamed: stream.length > 0, activity });
   // Stop is asked once; the button says so until the ask is answered.
   const [stopping, setStopping] = useState<"" | "stopping" | "failed">("");
   const failedLoad = loading && Boolean(loadError);
