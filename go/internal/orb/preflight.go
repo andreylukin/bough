@@ -3,6 +3,7 @@ package orb
 import (
 	"context"
 	"errors"
+	"net/url"
 	"os"
 	"os/exec"
 	"slices"
@@ -78,8 +79,8 @@ func Preflight(ctx context.Context, home string, rt container.Runtime, p project
 
 // cloneCheck: a path repo must be a git checkout; a remote must answer
 // ls-remote, or at least have a cached clone to fall back on.
-func cloneCheck(ctx context.Context, home, slug string, r projectdef.Repo) PreflightCheck {
-	c := PreflightCheck{Kind: "clone", Name: r.RepoName(), Status: PreflightOK}
+func cloneCheck(ctx context.Context, home, slug string, r projectdef.Repo) (c PreflightCheck) {
+	c = PreflightCheck{Kind: "clone", Name: r.RepoName(), Status: PreflightOK}
 	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
 	defer cancel()
 	if r.Path != "" {
@@ -99,12 +100,25 @@ func cloneCheck(ctx context.Context, home, slug string, r projectdef.Repo) Prefl
 	if why == "" {
 		why = err.Error()
 	}
+	defer func() { c.Detail = stripUserinfo(c.Detail, r.Remote) }()
 	if _, serr := os.Stat(projectdef.CacheGitDir(home, slug, r)); serr == nil {
 		c.Status, c.Detail = PreflightWarn, "remote unreachable, the cached clone is used: "+why
 		return c
 	}
 	c.Status, c.Detail = PreflightFail, "cannot reach "+r.Remote+": "+why
 	return c
+}
+
+// stripUserinfo keeps a token embedded in a remote URL out of the detail.
+func stripUserinfo(s, remote string) string {
+	u, err := url.Parse(remote)
+	if err != nil || u.User == nil {
+		return s
+	}
+	if pw, ok := u.User.Password(); ok && pw != "" {
+		s = strings.ReplaceAll(s, pw, "***")
+	}
+	return strings.ReplaceAll(s, u.User.Username(), "***")
 }
 
 func lastLine(s string) string {

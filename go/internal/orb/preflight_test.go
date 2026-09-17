@@ -83,3 +83,11 @@ func TestPreflight(t *testing.T) {
 		t.Fatalf("bare project: %+v", checks)
 	}
 }
+
+func TestPreflightRemoteCredentialsNotEchoed(t *testing.T) {
+	home := t.TempDir()
+	c := cloneCheck(context.Background(), home, "p", projectdef.Repo{Remote: "https://user:ghp_leaky123@127.0.0.1:1/x.git"})
+	if c.Status != PreflightFail || strings.Contains(c.Detail, "ghp_leaky123") {
+		t.Fatalf("credential in detail: %+v", c)
+	}
+}
