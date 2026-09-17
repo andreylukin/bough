@@ -3078,7 +3078,7 @@ function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onR
               {runningRow
                 ? <p className="ov-empty-title"><button className="link ov-point" onClick={() => onReveal(runningRow.id)}>{running} running</button></p>
                 : <p className="ov-empty-title">Nothing needs your attention</p>}
-              <p className="ov-empty-keys">{overviewKeys(modKey()).map((k) => <Fragment key={k.label}><kbd>{k.key}</kbd> {k.label} </Fragment>)}<kbd>?</kbd> all shortcuts</p>
+              <p className="ov-empty-keys">{overviewKeys(modKey()).map((k) => <span key={k.label} className="ov-key"><kbd>{k.key}</kbd> {k.label}</span>)}<span className="ov-key"><kbd>?</kbd> All shortcuts</span></p>
             </div>
           )
         )}
@@ -4334,7 +4334,10 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           )}
           {!pickerOpen && (
             <span className="hint composer-hint">
-              {status && <>{status === "Waiting" ? WAITING_MODEL : status}{status === "Working" && <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>} · </>}{running && !draftAsk ? `Enter steer · ${modKey()}Enter queue · Shift+Enter newline` : "Enter send · Shift+Enter newline"} · / commands · @ files
+              {status && <>{status === "Waiting" ? WAITING_MODEL : status}{status === "Working" && <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>} · </>}{running && !draftAsk
+                ? <><span className="ov-key"><kbd>↵</kbd> steer</span><span className="ov-key"><span className="keys-combo"><kbd>{modKey() === "\u2318" ? "\u2318" : "Ctrl"}</kbd><kbd>↵</kbd></span> queue</span><span className="ov-key"><kbd>Esc</kbd> stop</span></>
+                : <><span className="ov-key"><kbd>↵</kbd> send</span><span className="ov-key"><span className="keys-combo"><kbd>{modKey() === "\u2318" ? "\u21e7" : "Shift"}</kbd><kbd>↵</kbd></span> newline</span></>}
+              <span className="ov-key"><kbd>/</kbd> commands</span><span className="ov-key"><kbd>@</kbd> files</span>
             </span>
           )}
         </div>

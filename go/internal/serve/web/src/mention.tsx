@@ -239,9 +239,9 @@ export function Mentions({ trigger, session, onPick, onClose, onOpen, onActive }
         })}
       </div>
       <div className="mention-foot" aria-hidden="true">
-        <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
-        <span><kbd>↵</kbd> insert</span>
-        <span><kbd>esc</kbd> close</span>
+        <span className="ov-key"><span className="keys-combo"><kbd>↑</kbd><kbd>↓</kbd></span> navigate</span>
+        <span className="ov-key"><kbd>↵</kbd> insert</span>
+        <span className="ov-key"><kbd>Esc</kbd> close</span>
       </div>
     </div>
   );

@@ -69,3 +69,13 @@ test("the sheet lists the switcher, new session and composer keys", () => {
   const all = BINDINGS.flatMap((b) => b.keys);
   for (const k of ["ModP", "AltN", "AltI"]) expect(all).toContain(k);
 });
+
+import { keyChips } from "../src/keys";
+test("combos split into one chip per key, mac glyphs or words", () => {
+  expect(keyChips("ModEnd", true)).toEqual(["⌘", "End"]);
+  expect(keyChips("Shift+↵", true)).toEqual(["⇧", "↵"]);
+  expect(keyChips("AltN", false)).toEqual(["Alt", "N"]);
+  expect(keyChips("ModK", false)).toEqual(["Ctrl", "K"]);
+  expect(keyChips("Esc", true)).toEqual(["Esc"]);
+  expect(BINDINGS.every((b) => /^[A-Z]/.test(b.label))).toBe(true);
+});

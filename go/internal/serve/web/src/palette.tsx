@@ -564,7 +564,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
           {searching === "done" && found.length === 0 && !hits.some(isResult) && <span>No text matches</span>}
           {searching === "error" && <span className="pal-foot-bad">Text search failed · titles only</span>}
           {searching === "error" && <button className="link" onClick={retry}>Retry</button>}
-          <span className="pal-foot-keys"><span><kbd>↑↓</kbd> move</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></span>
+          <span className="pal-foot-keys"><span className="ov-key"><span className="keys-combo"><kbd>↑</kbd><kbd>↓</kbd></span> move</span><span className="ov-key"><kbd>↵</kbd> open</span><span className="ov-key"><kbd>Esc</kbd> close</span></span>
         </div>
       </div>
     </div>
