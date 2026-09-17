@@ -603,7 +603,7 @@ function WorkRow({ w, now, parent, inReview, inHistory, open, onToggle, onPin, o
         <span className="work-row-task">
           {w.kind === "job"
             ? <><span className="work-row-job">{w.label} </span><span className="work-row-cmd">{task && task !== w.label ? task : "command not recorded"}</span></>
-            : w.kind === "agent" ? plainTitle(w.label) : task && task !== w.label ? `${w.label} · ${task}` : w.kind === "subagent" ? `${w.label} · task not recorded` : w.label}
+            : <span className="work-row-text">{w.kind === "agent" ? plainTitle(w.label) : task && task !== w.label ? `${w.label} · ${task}` : w.kind === "subagent" ? `${w.label} · task not recorded` : w.label}</span>}
           <svg className="work-chev" width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
         </span>
       </button>

@@ -2710,6 +2710,8 @@ kbd,.keys-row kbd,.ov-empty-keys kbd,.mention-foot kbd{display:inline-grid;place
 .work-row-job{color:var(--text-2);font-weight:500;flex-shrink:0;white-space:pre}
 .work-row-cmd{min-width:0;overflow:hidden;text-overflow:ellipsis;font:var(--fs-sm)/20px var(--mono);color:var(--text-1)}
 .work-row-task{text-overflow:ellipsis}
+.work-row-text{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.work-row-task>.work-chev{flex-shrink:0}
 .work-row-meta{grid-column:2;grid-row:2;min-width:0;font:400 var(--fs-sm)/16px var(--sans);color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
 .work-row-meta .work-state{display:inline;font:500 var(--fs-sm)/16px var(--sans)}
 .work-cause{font:var(--fs-sm)/16px var(--mono)}
