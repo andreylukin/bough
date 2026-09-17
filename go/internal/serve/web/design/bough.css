@@ -2522,3 +2522,7 @@ pre.edit-rows,.block pre.edit-rows{text-indent:0;margin:2px 0 var(--s-2);padding
 .page-head .head-main h1{min-width:0}
 .rt-del.rt-zero{color:var(--text-3)}
 /* /R3-J */
+/* R4-I: .app takes focus on a route change without a ring; a history slot with no history holds its width unseen. */
+.app:focus{outline:none}
+.side-icon-reserved{visibility:hidden}
+/* /R4-I */
