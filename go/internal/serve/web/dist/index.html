@@ -2347,6 +2347,16 @@ a.rt-link{text-decoration:none}
    token now read the token; off-scale values (11.5px, 7px, 999px...) stay. */
 :root{--z-menu:20;--z-tip:30;--z-pop:40;--z-toast:50;--z-modal:60}
 /* /WEB14 */
+/* R2-B: live status before the first token: a breathing dot while the model is silent, typing dots while it streams */
+.head-live{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--accent)}
+@keyframes breath-dot{0%,100%{opacity:.55;scale:.76}50%{opacity:1;scale:1}}
+.waiting-model{display:flex;align-items:center;gap:8px;margin:2px 0 0;padding-inline-start:2px;font-size:var(--fs-sm);color:var(--text-2)}
+.breath-dot{width:8px;height:8px;border-radius:50%;background:var(--text-2);animation:breath-dot 1.4s ease-in-out infinite}
+.typing-dots{display:inline-flex;gap:2px;margin-inline-start:3px;vertical-align:middle}
+.typing-dots i{width:3px;height:3px;border-radius:50%;background:currentColor;animation:breath-dot 1.4s ease-in-out infinite}
+.typing-dots i:nth-child(2){animation-delay:.2s}.typing-dots i:nth-child(3){animation-delay:.4s}
+@media (prefers-reduced-motion:reduce){.breath-dot,.typing-dots i{animation:none;opacity:.8}}
+/* /R2-B */
 </style>
 </head>
 <body>
