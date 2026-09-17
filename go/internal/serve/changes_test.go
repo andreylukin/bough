@@ -113,3 +113,31 @@ func TestSessionEditsNoCwd(t *testing.T) {
 		t.Fatal("no cwd diffed the server's own checkout")
 	}
 }
+
+// A repository with no commit yet still gets real patches: the
+// checkpoint is a tree object, not HEAD.
+func TestSessionEditsNoCommit(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tree, err := history.Snapshot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("one\ntwo\nthree\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entries := []history.Entry{
+		{Seq: 1, Kind: "input", Data: map[string]any{"text": "go", "checkpoint": tree}},
+		{Seq: 2, Kind: "done", Data: map[string]any{"files": []any{"a.go"}}},
+	}
+	edits, ok := SessionEdits(context.Background(), dir, entries)
+	if !ok || len(edits) != 1 || !edits[0].Patch || edits[0].Add != 2 || edits[0].Del != 0 {
+		t.Fatalf("edits = %+v ok=%v, want a.go +2 with a patch", edits, ok)
+	}
+}

@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/google/uuid"
 )
@@ -251,6 +252,12 @@ func metaMode(data map[string]any) (mode, project string) {
 		mode = "local"
 	}
 	return mode, project
+}
+
+// snapshotsTurns is whether a session in mode started in cwd can change
+// files, so its turns take checkpoints.
+func snapshotsTurns(mode, cwd, home string) bool {
+	return mode == "project" || (cwd != "" && orb.CheckoutRoot(cwd, home) != "")
 }
 
 // sessionMode is the launcher's "session-mode" service, local when
@@ -759,10 +766,13 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	// A plain func so tools can write typed entries without importing
 	// this plugin for the Entry type.
 	ctx.Provide("history-record", func(kind string, data map[string]any) { s.Append(kind, data) })
-	// Only a project session changes files, so only it snapshots turns;
-	// a local session is read-only on local files and a checkpoint of ~
-	// would be a slow no-op (the loop treats the service as optional).
-	if mode == "project" {
+	// A session that can change files snapshots its turns: a project
+	// session, or a local one inside the git checkout it may write. A
+	// read-only local session skips it, since a checkpoint of ~ would be a
+	// slow no-op (the loop treats the service as optional).
+	cwd, _ := os.Getwd()
+	home, _ := os.UserHomeDir()
+	if snapshotsTurns(mode, cwd, home) {
 		ctx.Provide("checkpoints", &Checkpoints{session: strings.TrimSuffix(filepath.Base(s.Path()), ".jsonl")})
 	}
 	ctx.Effect(func() {

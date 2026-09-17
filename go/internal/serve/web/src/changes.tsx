@@ -98,8 +98,11 @@ export function DiffBody({ text }: { text: string }) {
   );
 }
 
+/** Why a session edit has no patch; the Working tree tab still diffs it against HEAD. */
+const NO_DIFF = "Diff unavailable: this session has no checkpoint.";
+
 const countBadge = (f: Change & { patch?: boolean }) =>
-  f.patch === false ? <span className="rt-label">Patch not recorded</span>
+  f.patch === false ? <span className="rt-label">No diff</span>
     : f.new ? <><span className="chg-badge">new</span>{f.add > 0 && <span className="rt-add">+{f.add}</span>}</>
     : f.add < 0 ? <span className="chg-badge">binary</span>
     : <><span className="rt-add">+{f.add}</span> <span className="rt-del">−{f.del}</span></>;
@@ -157,7 +160,7 @@ function FileCard({ row, file, scope, at, first }: { row: Row; file: Change & { 
         <span className="num chg-card-count">{countBadge(file)}</span>
         <span onClick={(e) => e.stopPropagation()}><CopyCommand text={file.path} label="Copy path" /></span>
       </summary>
-      {open && (file.patch === false ? <p className="rt-label chg-card-note">Patch not recorded: no checkpoint was taken for this session</p>
+      {open && (file.patch === false ? <p className="rt-label chg-card-note">{NO_DIFF} See Working tree.</p>
         : !canDiff ? <p className="rt-label chg-card-note">Binary file: no text diff to show</p>
         : diff.text != null ? <DiffBody text={diff.text} />
         : diff.failed ? <p className="chg-card-note"><button className="btn rt-stop" onClick={() => setNonce((n) => n + 1)}>Couldn’t read the diff · Retry</button></p>
@@ -221,12 +224,16 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
       {r.files !== null && r.repo && !files.length && (
         <p className="rt-label">{scope === "session" ? "This session has not changed any files" : "No uncommitted changes"}</p>
       )}
+      {scope === "session" && files.some((f) => f.patch === false) && (
+        <p className="rt-label chg-nodiff">{NO_DIFF}{" "}
+          <button type="button" className="rt-link" onClick={() => onScope("tree")}>See Working tree</button></p>
+      )}
       {cards && files.length > 0 && <FileCards row={row} files={files} scope={scope} at={r.at} open={pick} />}
       {!cards && files.length > (only ? 1 : 0) && (
         <ul className="chg-files">
           {files.map((f) => (
             <li key={f.path}>
-              <button className={"rt-link rt-file" + (f.path === path ? " chg-on" : "")} title={f.patch === false ? `${f.path} · no patch was recorded, so there is no diff to open` : f.path}
+              <button className={"rt-link rt-file" + (f.path === path ? " chg-on" : "")} title={f.patch === false ? `${f.path} · ${NO_DIFF} See Working tree.` : f.path}
                       aria-current={f.path === path || undefined} disabled={f.patch === false}
                       onClick={() => {
                         setPick(f.path === pick ? null : f.path);
@@ -235,7 +242,7 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
                       }}>
                 <span className="mono rt-job-cmd">{f.path}</span>
                 <span className="num">
-                  {f.patch === false ? <span className="rt-label">Patch not recorded</span>
+                  {f.patch === false ? <span className="rt-label">No diff</span>
                     : f.new ? <span className="rt-add">new{f.add > 0 ? ` · +${f.add}` : ""}</span>
                     : f.add < 0 ? <span className="rt-label">binary</span>
                     : <><span className="rt-add">+{f.add}</span> <span className="rt-del">−{f.del}</span></>}
@@ -251,7 +258,7 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
             <span className="mono rt-job-cmd" title={path}>{path}</span>
             <CopyCommand text={path} label="Copy path" />
           </div>
-          {file.patch === false ? <p className="rt-label">Patch not recorded: no checkpoint was taken for this session</p>
+          {file.patch === false ? <p className="rt-label">{NO_DIFF} See Working tree.</p>
             : diff?.text != null ? (
               <DiffBody text={diff.text} />
             )
