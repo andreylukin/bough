@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs";
 
 const css = readFileSync(new URL("../dist/index.html", import.meta.url), "utf8");
 
-test("the composer primary stays accent-filled, disabled included", () => {
-  const rules = [...css.matchAll(/([^{}]*\.btn-primary[^{}]*)\{([^}]*)\}/g)].filter(([, sel]) => /\.composer/.test(sel));
+test("the composer primary stays accent-filled while enabled (R3-J: disabled goes neutral)", () => {
+  const rules = [...css.matchAll(/([^{}]*\.btn-primary[^{}]*)\{([^}]*)\}/g)].filter(([, sel]) => /\.composer/.test(sel) && !/:disabled/.test(sel));
   expect(rules.length).toBeGreaterThan(0);
   for (const [, , body] of rules) expect(body).not.toMatch(/background:var\(--(surface|raised|bg)\)/);
 });
@@ -43,4 +43,27 @@ test("R3-G: header groups use flex gaps, Mark seen matches 32px icon buttons, me
   expect(r3g).toMatch(/\.thread-head \.head-ack\{[^}]*height:32px[^}]*min-height:32px/);
   expect(r3g).toMatch(/\.rt-metrics\{[^}]*display:flex[^}]*flex-wrap:nowrap/);
   expect(r3g).not.toMatch(/position:absolute/);
+});
+
+// R3-J: visual polish.
+const r3j = [...css.matchAll(/\/\* R3-J[^*]*\*\/([\s\S]*?)\/\* \/R3-J \*\//g)].map((m) => m[1]).join("\n");
+
+test("R3-J: disabled Send is neutral grey, not dimmed accent", () => {
+  expect(r3j).toMatch(/\.composer \.btn-primary:disabled\{[^}]*opacity:1[^}]*color:var\(--text-3\)[^}]*background:var\(--surface\)[^}]*border-color:var\(--line\)/);
+});
+
+test("R3-J: the user prompt is a raised bubble", () => {
+  expect(r3j).toMatch(/\.prompt-bubble\{[^}]*background:var\(--raised\)[^}]*border-radius:12px[^}]*padding:8px 12px[^}]*max-width:min\(85%,672px\)/);
+});
+
+test("R3-J: New session matches .btn; hover eases and uses the overlay", () => {
+  expect(r3j).toMatch(/\.side-new-label\{[^}]*border-radius:var\(--r-sm\)[^}]*font:500 var\(--fs-md\)/);
+  expect(r3j).toMatch(/\.sel-btn,button\.more,\.side-nav-item,\.composer\{transition:[^}]*\.12s cubic-bezier\(\.2,\.8,\.2,1\)/);
+  expect(r3j).toMatch(/\.side-nav-item:hover[^{]*\{background:var\(--hover\)\}/);
+});
+
+test("R3-J: Projects empty state sits at the top; page subtitle next to the title; −0 muted", () => {
+  expect(r3j).toMatch(/\.proj-body>\.empty-state\{margin:0 auto\}/);
+  expect(r3j).toMatch(/\.page-head \.head-main h1\{min-width:0\}/);
+  expect(r3j).toMatch(/\.rt-del\.rt-zero\{color:var\(--text-3\)\}/);
 });

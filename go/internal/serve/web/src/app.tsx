@@ -2324,7 +2324,7 @@ function ChangesChip({ row }: { row: Row }) {
   const aria = `Session edits: ${c.text}${c.add !== undefined ? `, ${c.add} added, ${c.del} removed` : ""}. Working tree: ${t.text}${data.session.failed || data.tree.failed ? ", stale" : ""}`;
   const body = <>
     <span className="rt-label">Session edits</span>
-    <span className={"num rt-value" + (c.quiet ? " rt-stale" : "")}>{c.text}{c.add !== undefined && <> <span className="rt-add">+{c.add}</span> <span className="rt-del">−{c.del}</span></>}</span>
+    <span className={"num rt-value" + (c.quiet ? " rt-stale" : "")}>{c.text}{c.add !== undefined && <> <span className="rt-add">+{c.add}</span> <span className={"rt-del" + (c.del ? "" : " rt-zero")}>−{c.del}</span></>}</span>
   </>;
   // A failed read is no value: no chip, rather than "Unavailable".
   if (data.session.files === null && data.session.failed) return null;
@@ -2668,7 +2668,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
       {turn.prompt && !wakeJobs && !wakeAgents && (
         <div className="prompt">
           <span className="mono prompt-mark">&gt;</span>
-          <div className="prompt-text">
+          <div className="prompt-text prompt-bubble">
             {/* A long brief (pasted logs, a spec) is evidence, not the
                 thing to navigate by: four lines, and one click for the rest. */}
             {said.trim() || images.length || atts.length
@@ -3081,7 +3081,7 @@ function SendingPrompt({ p, accepted = false, clamp = true, onClip, clipped, onT
     <section className={"turn" + (accepted ? "" : " turn-sending")}>
       <div className="prompt">
         <span className="mono prompt-mark">&gt;</span>
-        <div className="prompt-text">
+        <div className="prompt-text prompt-bubble">
           <p className={clamp ? "prompt-clamp" : ""} ref={(el) => { if (el) onClip?.(el); }}>{p.text}</p>
           {clipped && <button className="link" onClick={onToggle}>{clamp ? "Show full prompt" : "Show less"}</button>}
         </div>
