@@ -89,6 +89,8 @@ export interface Row {
   queued?: boolean;
   /** Background agents this session started; absent when it started none. */
   agents?: { running: number; queued: number; total: number };
+  /** A failed background agent's first error line (children listing only). */
+  error?: string;
 }
 
 export interface Job { id: number; cmd: string; started: string }

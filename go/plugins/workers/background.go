@@ -26,12 +26,12 @@ const (
 // errNoServe is the exact text the model reads when serve is not up.
 var errNoServe = errors.New("background agents need bough serve (start it with `bough serve`)")
 
-// spawnBackground is tools.spawn(task, {background: true, project?}).
+// spawnBackground is tools.spawn(task, {background: true, project?, model?}).
 // It never touches the blocking spawn's per-turn budget or depth flag:
 // the child is a separate process with its own turn.
 func (w *Workers) spawnBackground(task string, opts map[string]any) (any, error) {
 	for k := range opts {
-		if k != "background" && k != "project" {
+		if k != "background" && k != "project" && k != "model" {
 			return nil, fmt.Errorf("workers: a background agent reports text; drop the schema")
 		}
 	}
@@ -46,6 +46,12 @@ func (w *Workers) spawnBackground(task string, opts map[string]any) (any, error)
 		return nil, fmt.Errorf("workers: a background agent cannot start agents (depth 1)")
 	}
 	slug, _ := opts["project"].(string)
+	// The child runs on this session's model unless told otherwise: the
+	// config default may be a provider this person has no key for.
+	model, _ := opts["model"].(string)
+	if model == "" {
+		model = w.currentModel()
+	}
 	c, err := w.client()
 	if err != nil {
 		return nil, err
@@ -54,7 +60,7 @@ func (w *Workers) spawnBackground(task string, opts map[string]any) (any, error)
 	ctx, cancel := context.WithTimeout(w.turnCtx(), serveTimeout)
 	defer cancel()
 	resp, err := c.CreateChild(ctx, serveclient.ChildRequest{
-		Cwd: cwd, Prompt: task, Slug: slug, SpawnedBy: c.Parent,
+		Cwd: cwd, Prompt: task, Slug: slug, Model: model, SpawnedBy: c.Parent,
 		MaxPerSession: w.maxPerSession, MaxRunning: w.maxRunning,
 	})
 	if err != nil {
@@ -76,6 +82,23 @@ func (w *Workers) spawnBackground(task string, opts map[string]any) (any, error)
 		status = "queued"
 	}
 	return map[string]any{"session": resp.Session, "status": status}, nil
+}
+
+// currentModel is this session's llm row as "plugin/model", read per
+// call since /model swaps the row mid-session; "" when unknown.
+func (w *Workers) currentModel() string {
+	if w.kctx == nil {
+		return ""
+	}
+	for _, r := range w.kctx.Desired() {
+		if r.ID != "llm" {
+			continue
+		}
+		if m, _ := r.Config["model"].(string); m != "" && r.Plugin != "" {
+			return r.Plugin + "/" + m
+		}
+	}
+	return ""
 }
 
 // agent is tools.agent(id).

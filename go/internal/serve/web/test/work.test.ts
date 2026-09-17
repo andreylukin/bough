@@ -198,3 +198,8 @@ test("a job that finished while the agent was idle keeps its row: the wake-up tu
   expect(ws[0]).toMatchObject({ id: "2", life: "finished", exit: 0, cmd: "sleep 150 && echo b", ms: 150000, output: "b" });
   expect(jobsFromLines([line("input", "job 3 [exited 0] typed by a person (1s)")], "s", true)).toHaveLength(0);
 });
+
+test("a failed agent row carries serve's reason", () => {
+  const [w] = agentsFromRows(row({ id: "p" }), [], [row({ id: "c", spawnedBy: "p", status: "error", live: false, error: "llm-anthropic: 401 Unauthorized" })]);
+  expect(w).toMatchObject({ life: "failed", error: "llm-anthropic: 401 Unauthorized" });
+});

@@ -266,6 +266,7 @@ export function agentsFromRows(parent: Row, rows: Row[], children?: Row[] | null
     w.life = queued ? "queued" : AGENT_LIFE[c.status] ?? (c.status === "idle" ? (c.live ? "running" : "finished") : "unknown");
     if (TERMINAL.has(w.life)) w.endedAt = c.lastAt;
     w.canStop = c.live && w.life === "running";
+    if (w.life === "failed" && c.error) w.error = c.error;
     out.push(w);
   }
   return out;

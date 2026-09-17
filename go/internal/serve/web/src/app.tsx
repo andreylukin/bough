@@ -1102,13 +1102,16 @@ export function JobBlock({ line }: { line: Line }) {
   // A background agent's finish note: a notice row, its report one click in.
   if (id === undefined && isAgentNotice(line)) {
     const m = /^\[agent (.*?)(?: · [0-9a-f-]+)? (finished|failed|stopped)\]\s*([\s\S]*)$/.exec(line.text)!;
+    // serve leads a failure with its reason: it belongs in the label, not one click in.
+    const why = m[2] === "failed" ? /^Background agent failed: (.*)\n?([\s\S]*)$/.exec(m[3]) : null;
+    const body = (why ? why[2] : m[3]).trim();
     return (
       <details className="block thin agent-notice">
         <summary>
-          <span className="block-label">Background agent {m[2]}</span>
+          <span className="block-label">Background agent {m[2]}{why ? `: ${why[1]}` : ""}</span>
           <span className="block-detail" title={m[1]}>{m[1]}</span>
         </summary>
-        {m[3].trim() && <div className="block-body"><Markdown text={m[3].trim()} /></div>}
+        {body && <div className="block-body"><Markdown text={body} /></div>}
       </details>
     );
   }

@@ -70,7 +70,7 @@ func TestChildReportsOnceToStoppedParent(t *testing.T) {
 func TestChildReportWords(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ prompt, word, reply string }{
-		{"FAIL now", "failed", "echo FAIL now"},
+		{"FAIL now", "failed", "Background agent failed: boom\necho FAIL now"},
 		{"CANCEL now", "stopped", ""},
 		{"EXIT now", "stopped", ""},
 		// The done event arrives before the entries: the report waits.
@@ -274,5 +274,40 @@ func TestChildAPI(t *testing.T) {
 	}
 	if code, _ := f.do(t, "POST", "/api/sessions/other/notify", `{"text":"hi"}`); code != 200 {
 		t.Fatalf("notify = %d", code)
+	}
+}
+
+// The child starts on the model its parent asked for, and a failure
+// notice carries the child's first error line, cleaned.
+func TestChildModelAndFailReason(t *testing.T) {
+	t.Parallel()
+	f := childFixture(t)
+	id, _, err := f.sup.CreateChild(CreateOptions{Prompt: "FAIL now", SpawnedBy: "parent", Model: "llm-openrouter/z-ai/glm-5"}, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := waitNotices(t, f, "parent", 1)
+	want := "[agent FAIL now · " + id + " failed] Background agent failed: boom\necho FAIL now"
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("notices = %q, want [%q]", got, want)
+	}
+	es, _ := history.ReadFile(filepath.Join(f.hist, id+".jsonl"))
+	if args, _ := es[0].Data["args"].(string); !strings.Contains(args, "--set llm.plugin=llm-openrouter --set llm.model=z-ai/glm-5") {
+		t.Fatalf("child args = %q", args)
+	}
+	if c := f.sup.Children("parent"); len(c) != 1 || c[0].Error != "boom" {
+		t.Fatalf("children = %+v", c)
+	}
+}
+
+func TestFailReason(t *testing.T) {
+	for in, want := range map[string]string{
+		"GoError: llm-anthropic: 401 Unauthorized\nbody":    "llm-anthropic: 401 Unauthorized",
+		"read /private/tmp/claude-501/x/y.go: no such file": "read y.go: no such file",
+		"  \n": "",
+	} {
+		if got := failReason(in); got != want {
+			t.Errorf("failReason(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

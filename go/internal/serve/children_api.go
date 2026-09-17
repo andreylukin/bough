@@ -101,7 +101,9 @@ func (a *API) children(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if in, ok := a.info(c.ID); ok {
-			rows = append(rows, a.row(in))
+			row := a.row(in)
+			row.Error = c.Error
+			rows = append(rows, row)
 			continue
 		}
 		// Started but its history file is not written yet: still a child.

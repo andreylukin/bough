@@ -53,6 +53,7 @@ type ChildRequest struct {
 	Prompt        string `json:"prompt"`
 	Mode          string `json:"mode,omitempty"`
 	Slug          string `json:"slug,omitempty"`
+	Model         string `json:"model,omitempty"` // "plugin/model"; "" = child's config
 	SpawnedBy     string `json:"spawnedBy"`
 	MaxPerSession int    `json:"maxPerSession,omitempty"`
 	MaxRunning    int    `json:"maxRunning,omitempty"`

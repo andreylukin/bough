@@ -95,6 +95,7 @@ type CreateOptions struct {
 	Args                    []string // extra argv after --headless --json (e.g. --set llm.model=x)
 	Env                     []string // extra env
 	Origin                  string   // BOUGH_ORIGIN override; "" = web
+	Model                   string   // background agent: "plugin/model" to start on; "" = config
 }
 
 // Options configures a Supervisor. Every path is explicit so tests can

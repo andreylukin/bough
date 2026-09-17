@@ -211,3 +211,28 @@ func TestAgentAndStopAgent(t *testing.T) {
 		t.Fatalf("idle stop = %s", got)
 	}
 }
+
+// A background agent runs on the parent's current model, not the
+// config default: a child on a provider without a key failed at once.
+func TestBackgroundSpawnInheritsModel(t *testing.T) {
+	t.Parallel()
+	rows := []kernel.Row{{ID: "llm", Plugin: "llm-openrouter", Config: map[string]any{"model": "z-ai/glm-5"}, Disabled: true}}
+	r := bgMount(t, true, func(k *kernel.Context) {
+		if err := k.Mount(rows); err != nil {
+			t.Fatal(err)
+		}
+	}, nil)
+	r.serve.codes["/api/sessions"] = 201
+	r.serve.reply["/api/sessions"] = `{"session":{"id":"c"},"queued":false}`
+	var req map[string]any
+	r.run(t, `tools.spawn("t", {background: true})`)
+	json.Unmarshal([]byte(r.serve.body("/api/sessions")), &req)
+	if req["model"] != "llm-openrouter/z-ai/glm-5" {
+		t.Fatalf("model not inherited: %v", req)
+	}
+	r.run(t, `tools.spawn("t", {background: true, model: "llm-anthropic/claude-sonnet-5"})`)
+	json.Unmarshal([]byte(r.serve.body("/api/sessions")), &req)
+	if req["model"] != "llm-anthropic/claude-sonnet-5" {
+		t.Fatalf("opts.model not honoured: %v", req)
+	}
+}

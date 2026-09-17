@@ -102,6 +102,9 @@ type Row struct {
 	SpawnedBy string      `json:"spawnedBy,omitempty"`
 	Queued    bool        `json:"queued,omitempty"`
 	Agents    *AgentCount `json:"agents,omitempty"`
+	// Error is a failed background agent's first error line, cleaned;
+	// only the children listing fills it.
+	Error string `json:"error,omitempty"`
 }
 
 // AgentCount is a parent's background agents.
@@ -285,6 +288,7 @@ func (a *API) createSession(w http.ResponseWriter, r *http.Request) {
 		Project string `json:"project"` // label id, project mode only
 		// Background agent fields: a session starting a child.
 		Slug          string `json:"slug"`
+		Model         string `json:"model"`
 		SpawnedBy     string `json:"spawnedBy"`
 		MaxPerSession int    `json:"maxPerSession"`
 		MaxRunning    int    `json:"maxRunning"`
@@ -293,7 +297,7 @@ func (a *API) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.SpawnedBy != "" {
-		a.createChild(w, CreateOptions{Cwd: body.Cwd, Prompt: body.Prompt, Slug: body.Slug, SpawnedBy: body.SpawnedBy}, body.MaxPerSession, body.MaxRunning)
+		a.createChild(w, CreateOptions{Cwd: body.Cwd, Prompt: body.Prompt, Slug: body.Slug, Model: body.Model, SpawnedBy: body.SpawnedBy}, body.MaxPerSession, body.MaxRunning)
 		return
 	}
 	switch body.Mode {
