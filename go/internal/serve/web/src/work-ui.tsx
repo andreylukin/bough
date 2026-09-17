@@ -106,7 +106,8 @@ export function agentReports(lines: Line[]): Map<string, string> {
   const out = new Map<string, string>();
   for (const l of lines) {
     const m = /^\[agent .* · (\S+) \w+\] ([\s\S]*)$/.exec(l.text ?? "");
-    if (m && m[2].trim()) out.set(m[1], m[2].trim());
+    const reply = m?.[2].replace(/^Background agent failed: .*\n?/, "").trim();
+    if (m && reply) out.set(m[1], reply);
   }
   return out;
 }
@@ -595,6 +596,7 @@ function AgentPreview({ w, parent }: { w: Worker; parent: string }) {
   const text = w.result || state.reply;
   return <>
     {w.task && w.task !== w.label && <p className="meta-line">{firstLine(w.task)}</p>}
+    {w.life === "failed" && w.error && <><span className="block-label sub-fail-head">Failure</span><pre>{w.error}</pre></>}
     {text ? <><span className="block-label">Result</span><Markdown text={text} /></>
       : state.err ? <p className="meta-line" role="alert">Couldn’t load agent details. <button type="button" className="link" onClick={() => setNonce((n) => n + 1)}>Try again</button></p>
       : state.reply === undefined ? <p className="meta-line" role="status">Loading agent details…</p>

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -36,7 +38,7 @@ const (
 // minted at create time so the parent gets an answer at once.
 type queuedChild struct {
 	id, dir, prompt string
-	extra           []string
+	extra, args     []string
 }
 
 // ChildTask is a queued child's start as meta.json keeps it.
@@ -44,6 +46,7 @@ type ChildTask struct {
 	Dir    string   `json:"dir,omitempty"`
 	Prompt string   `json:"prompt,omitempty"`
 	Extra  []string `json:"extra,omitempty"`
+	Args   []string `json:"args,omitempty"`
 }
 
 // requeueLocked rebuilds the queue from persisted tasks, oldest first
@@ -60,7 +63,7 @@ func (s *Supervisor) requeueLocked() {
 		m := s.meta[id]
 		m.Queued = true
 		s.meta[id] = m
-		s.queue = append(s.queue, queuedChild{id: id, dir: m.Task.Dir, prompt: m.Task.Prompt, extra: m.Task.Extra})
+		s.queue = append(s.queue, queuedChild{id: id, dir: m.Task.Dir, prompt: m.Task.Prompt, extra: m.Task.Extra, args: m.Task.Args})
 	}
 }
 
@@ -69,6 +72,7 @@ type ChildInfo struct {
 	ID, Parent, Title, Project string
 	Queued                     bool
 	Status                     Status // derived; "" when queued
+	Error                      string // failed last turn: its first error line, cleaned
 }
 
 // CreateChild starts (or queues) a background agent for opt.SpawnedBy.
@@ -91,6 +95,11 @@ func (s *Supervisor) CreateChild(opt CreateOptions, maxPerSession, maxRunning in
 		return "", false, ErrDepth
 	}
 	q := queuedChild{id: history.NewID(), prompt: opt.Prompt}
+	// The parent's model, as the loop pipeline pins one: the child's
+	// config default may be a provider with no key here.
+	if plugin, name, ok := strings.Cut(opt.Model, "/"); ok && plugin != "" && name != "" {
+		q.args = []string{"--set", "llm.plugin=" + plugin, "--set", "llm.model=" + name}
+	}
 	slug := opt.Slug
 	if slug == "" && pinfo.Mode == "project" {
 		slug = pinfo.Project
@@ -138,7 +147,7 @@ func (s *Supervisor) CreateChild(opt CreateOptions, maxPerSession, maxRunning in
 	}
 	if len(s.running) >= s.maxRunning {
 		m.Queued = true
-		m.Task = &ChildTask{Dir: q.dir, Prompt: q.prompt, Extra: q.extra}
+		m.Task = &ChildTask{Dir: q.dir, Prompt: q.prompt, Extra: q.extra, Args: q.args}
 		s.meta[q.id] = m
 		s.queue = append(s.queue, q)
 		err := s.saveMetaLocked()
@@ -179,7 +188,16 @@ func firstDir(dirs ...string) string {
 // ever reads its task, since SIGINT to an idle process cancels nothing
 // and the prompt would then run in full.
 func (s *Supervisor) launch(ch *child, q queuedChild) error {
-	if err := s.start(ch, q.dir, "", q.extra, nil); err != nil {
+	if len(q.args) > 0 {
+		// A respawn through ensure keeps the model.
+		s.mu.Lock()
+		if s.spawnArgs == nil {
+			s.spawnArgs = map[string]spawnSpec{}
+		}
+		s.spawnArgs[q.id] = spawnSpec{args: slices.Clone(q.args)}
+		s.mu.Unlock()
+	}
+	if err := s.start(ch, q.dir, "", q.extra, q.args); err != nil {
 		s.abandon(ch)
 		return err
 	}
@@ -276,6 +294,7 @@ type turnEnd struct {
 	closing  *history.Entry // nil while the last turn is open
 	input    *history.Entry // the input that opened the last turn, if any
 	errored  bool
+	errText  string // the turn's first error entry
 	reply    string
 	hasEntry bool
 }
@@ -292,6 +311,9 @@ func lastTurn(entries []history.Entry) turnEnd {
 			t = turnEnd{input: e, hasEntry: true}
 			open, lastClose = true, ""
 		case "error":
+			if !t.errored {
+				t.errText, _ = e.Data["text"].(string)
+			}
 			t.errored = true
 		case "assistant":
 			if txt, _ := e.Data["text"].(string); txt != "" {
@@ -365,7 +387,38 @@ func (s *Supervisor) report(id, parent, trigger string) {
 	_ = s.saveMetaLocked()
 	s.mu.Unlock()
 	// A parent that cannot be told (deleted file) has nobody to tell.
-	_ = s.notifyFrom(parent, id, reportText(id, s.childTitle(id), word, t.reply))
+	_ = s.notifyFrom(parent, id, reportText(id, s.childTitle(id), word, failText(word, t)))
+}
+
+// failText is the notice body: a failure leads with its reason, since
+// "failed" alone gave the parent nothing to act on.
+func failText(word string, t turnEnd) string {
+	if word != "failed" {
+		return t.reply
+	}
+	r := failReason(t.errText)
+	if r == "" {
+		return t.reply
+	}
+	out := "Background agent failed: " + r
+	if t.reply != "" {
+		out += "\n" + t.reply
+	}
+	return out
+}
+
+var tempPath = regexp.MustCompile(`(?:/private)?/(?:tmp|var/folders)/\S*/`)
+
+// failReason is an error's first non-blank line without goja's
+// "GoError: " prefix or temp directories (noise, and long).
+func failReason(text string) string {
+	for _, l := range strings.Split(text, "\n") {
+		l = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(l), "GoError: "))
+		if l != "" {
+			return tempPath.ReplaceAllString(l, "")
+		}
+	}
+	return ""
 }
 
 func reportText(id, title, word, reply string) string {
@@ -430,6 +483,9 @@ func (s *Supervisor) Children(parent string) []ChildInfo {
 		}
 		entries, _ := s.Entries(c.ID)
 		c.Status, _ = StatusOf(entries, s.Live(c.ID))
+		if t := lastTurn(entries); t.errored {
+			c.Error = failReason(t.errText)
+		}
 		_, c.Project = sessionMode(entries)
 		if c.Title == "" {
 			c.Title = s.childTitle(c.ID)
