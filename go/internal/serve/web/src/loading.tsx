@@ -48,41 +48,136 @@ export function elapsed(ms: number): string {
   return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-/** One centered empty/loading/error state: a title, one sentence, one primary action. */
-export function EmptyState({ title, children, action, role }: {
+/** A turn error's first line as a short title, and the provider's own message: "Anthropic returned 401 Unauthorized", "API key is invalid.". */
+export function providerError(text: string): { title: string; body: string } {
+  const first = text.trim().split("\n")[0] ?? "";
+  const names: Record<string, string> = { anthropic: "Anthropic", openai: "OpenAI", openrouter: "OpenRouter", cerebras: "Cerebras", google: "Google", gemini: "Gemini" };
+  const m = /^llm-([a-z]+):.*?\b(\d{3})\b:?\s*([A-Za-z ]+)?/.exec(first);
+  let title: string, code = "";
+  if (m) {
+    code = m[2];
+    const name = names[m[1]] ?? m[1].replace(/^./, (c) => c.toUpperCase());
+    // Only a status phrase ("Unauthorized"), not the start of a sentence ("Missing Authentication header").
+    const phrase = (m[3] ?? "").trim();
+    title = `${name} returned ${code}${/^(Unauthorized|Forbidden|Not Found|Bad Request|Too Many Requests|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout|Payment Required|Request Timeout|Overloaded)$/i.test(phrase) ? " " + phrase : ""}`;
+  } else {
+    title = humanError(first);
+    if (title.length > 120) title = title.slice(0, 119).trimEnd() + "…";
+  }
+  let body = "";
+  const j = text.indexOf("{");
+  if (j >= 0) {
+    try {
+      const v = JSON.parse(text.slice(j, text.lastIndexOf("}") + 1));
+      const msg = v?.error?.message ?? v?.message;
+      if (typeof msg === "string") body = msg.trim();
+    } catch { /* not JSON */ }
+  }
+  if (code === "401" || code === "403") body = (body ? body.replace(/([^.!?])$/, "$1.") + " " : "") + "Check the key in Settings, or switch to another model.";
+  return { title, body };
+}
+
+type Glyph = "alert" | "missing" | "search";
+/** The 16px mark of a state: a red alert for a failure, a neutral question or search for a fact. */
+export function StateIcon({ kind, size = 16 }: { kind: Glyph; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
+         strokeLinejoin="round" aria-hidden="true" className={"state-icon state-icon-" + kind}>
+      {kind === "alert" ? <><circle cx="12" cy="12" r="9" /><path d="M12 7.5v5M12 16h.01" /></>
+        : kind === "missing" ? <><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z" /><path d="M14 3v5h5M10.3 12.2a1.8 1.8 0 1 1 2.5 1.7c-.5.2-.8.6-.8 1.1M12 17.5h.01" /></>
+        : <><circle cx="11" cy="11" r="6.5" /><path d="m20 20-4.2-4.2" /></>}
+    </svg>
+  );
+}
+
+/** An inline list failure: a small red glyph, a quiet sentence, a ghost Retry. */
+export function InlineFail({ what, onRetry }: { what: string; onRetry?: () => void }) {
+  return (
+    <span className="inline-fail" role="alert">
+      <StateIcon kind="alert" size={12} />
+      <span className="inline-fail-text">{what}</span>
+      {onRetry && <button type="button" className="link" onClick={onRetry}>Retry</button>}
+    </span>
+  );
+}
+
+type Act = { label: string; onClick: () => void; busy?: boolean };
+function StateButton({ a, primary }: { a: Act; primary?: boolean }) {
+  return (
+    <button className={"btn" + (primary ? " btn-primary" : "")} onClick={a.onClick} disabled={a.busy} aria-busy={a.busy || undefined}>
+      {a.busy ? <><Spinner /> Retrying…</> : a.label}
+    </button>
+  );
+}
+
+/** "Show details" over the verbatim text; closed by default. */
+export function RawDetails({ raw, className = "state-details" }: { raw: string; className?: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className={className} onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
+      <summary>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+        {open ? "Hide details" : "Show details"}
+      </summary>
+      <pre className="mono">{raw}</pre>
+    </details>
+  );
+}
+
+/** One centered empty/not-found state (MB-ERR): an optional neutral glyph, a title, one sentence, at most one primary. */
+export function EmptyState({ title, children, action, secondary, glyph, primary = true, card = false, role }: {
   title: string;
   children?: React.ReactNode;
-  action?: { label: string; onClick: () => void };
+  action?: Act;
+  secondary?: Act;
+  glyph?: Glyph;
+  /** The action is the point of the page (New project…); otherwise it is a secondary button. */
+  primary?: boolean;
+  /** An empty section inside a page sits in a hairline card. */
+  card?: boolean;
   role?: "alert" | "status";
 }) {
   return (
-    <div className="empty-state" role={role}>
+    <div className={"empty-state state" + (card ? " state-card" : "") + (glyph ? " state-" + glyph : "")} role={role}>
+      {glyph && <span className="state-glyph"><StateIcon kind={glyph} /></span>}
       <h2>{title}</h2>
       {children && <p>{children}</p>}
-      {action && <button className="btn btn-primary" onClick={action.onClick}>{action.label}</button>}
+      {(action || secondary) && (
+        <div className="state-actions">
+          {action && <StateButton a={action} primary={primary} />}
+          {secondary && <StateButton a={secondary} />}
+        </div>
+      )}
     </div>
   );
 }
 
 /**
- * One voice for a failure: a red dot and a title, a sentence, one action
- * (Retry only when trying again can help, otherwise a way back), and the
- * raw error behind a disclosure.
+ * One voice for a failure: a red alert glyph in a neutral box, a title, a
+ * sentence, a primary action (Retry when trying again can help, otherwise a
+ * way back), an optional way out, and the raw error behind "Show details".
  */
-export function ErrorNote({ title, err, children, action, className = "" }: {
+export function ErrorNote({ title, err, children, action, secondary, className = "" }: {
   title: string;
   err?: unknown;
   children?: React.ReactNode;
-  action?: { label: string; onClick: () => void };
+  action?: Act;
+  secondary?: Act;
   className?: string;
 }) {
   const raw = (err instanceof Error ? err.message : String(err ?? "")).trim();
   return (
-    <div className={("error-note " + className).trim()} role="alert">
-      <p className="error-note-title"><span className="error-dot" aria-hidden="true" />{title}</p>
+    <div className={("error-note state state-alert " + className).trim()}>
+      <span className="state-glyph"><StateIcon kind="alert" /></span>
+      <h2 className="error-note-title" role="alert">{title}</h2>
       {(children ?? (raw && humanError(err))) && <p className="error-note-body">{children ?? humanError(err)}</p>}
-      {action && <button className="btn" onClick={action.onClick}>{action.label}</button>}
-      {raw && <details className="error-note-details"><summary>Details</summary><pre className="mono">{raw}</pre></details>}
+      {(action || secondary) && (
+        <div className="state-actions">
+          {action && <StateButton a={action} primary />}
+          {secondary && <StateButton a={secondary} />}
+        </div>
+      )}
+      {raw && <RawDetails raw={raw} className="state-details error-note-details" />}
     </div>
   );
 }
@@ -131,7 +226,7 @@ export function Pending({ what, err, onRetry, action, timeout = 20_000, hintAfte
     return (
       <ErrorNote title={timedOut ? `${what} is taking too long` : `Couldn’t load ${what.toLowerCase()}`} err={timedOut ? undefined : err}
         action={action ?? (retry && { label: "Retry", onClick: retry })}>
-        {timedOut ? "The server has not answered yet. Try again." : undefined}
+        {timedOut ? "The server has not answered yet." : undefined}
       </ErrorNote>
     );
   }

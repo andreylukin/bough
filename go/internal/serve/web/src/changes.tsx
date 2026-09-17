@@ -4,7 +4,7 @@ import { Back } from "./app";
 import { changedPath, sessionTitle } from "./render";
 import { CopyCommand } from "./work-ui";
 import { toolCalls } from "./code";
-import { Pending } from "./loading";
+import { InlineFail, Pending } from "./loading";
 import type { Row } from "./types";
 
 // Two scopes, always named: what this session's turns changed (the
@@ -383,7 +383,7 @@ function FileCard({ row, file, scope, at, first, turn }: { row: Row; file: Chang
       {open && (file.patch === false ? <p className="rt-label chg-card-note">{NO_DIFF} See Working tree.</p>
         : !canDiff ? <p className="rt-label chg-card-note">Binary file: no text diff to show</p>
         : diff.text != null ? <DiffBody text={diff.text} />
-        : diff.failed ? <p className="chg-card-note"><button className="btn rt-stop" onClick={() => setNonce((n) => n + 1)}>Couldn’t read the diff · Retry</button></p>
+        : diff.failed ? <p className="chg-card-note"><InlineFail what="Couldn’t read the diff" onRetry={() => setNonce((n) => n + 1)} /></p>
         : <div className="chg-card-note"><Pending what="Diff" inline onRetry={() => setNonce((n) => n + 1)} /></div>)}
     </details>
   );
@@ -483,7 +483,7 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
             : diff?.text != null ? (
               <DiffBody text={diff.text} />
             )
-            : diff?.failed ? <button className="btn rt-stop" onClick={data.retry}>Couldn’t read the diff · Retry</button>
+            : diff?.failed ? <p className="rt-label"><InlineFail what="Couldn’t read the diff" onRetry={data.retry} /></p>
             : <Pending what="Diff" inline onRetry={data.retry} />}
         </div>
       )}
