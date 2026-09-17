@@ -122,9 +122,11 @@ func sighupTerminalCloseHistoryCheck(t *testing.T, home string, whole []string) 
 			continue
 		}
 		text, _ := e.Data["text"].(string)
+		// A cancel keeps the streamed prefix, marked partial (loop finish).
+		partial, _ := e.Data["partial"].(bool)
 		ok := false
 		for _, w := range whole {
-			ok = ok || text == w
+			ok = ok || text == w || (partial && text != "" && strings.HasPrefix(w, text))
 		}
 		if !ok {
 			t.Errorf("half-written assistant entry after the terminal closed: %q (kinds %s)", text, crashResumeIntegrityKinds(es))
