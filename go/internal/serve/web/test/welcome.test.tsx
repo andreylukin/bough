@@ -30,3 +30,12 @@ test("step 1 is not done while any set key is rejected", () => {
   expect(stepDone(keyLine([p("anthropic", true)], { anthropic: "ok" }))).toBe(true);
   expect(keyLine([p("anthropic", true), p("openai", true)], { anthropic: "ok", openai: "ok" }).text).toContain("keys work");
 });
+
+// MB-PAGES: a rejected key is a callout with a short lead, naming the providers that work.
+test("a rejected key reads as a lead and what to do", () => {
+  const { keyCallout } = require("../src/welcome");
+  expect(keyCallout([p("anthropic", true)], { anthropic: "ok" })).toBeNull();
+  const mixed = keyCallout([p("anthropic", true), p("openai", true), p("openrouter", true)], { anthropic: "rejected", openai: "ok", openrouter: "ok" });
+  expect(mixed.lead).toBe("Anthropic key rejected.");
+  expect(mixed.body).toBe("Replace it, or pick a model from a provider that works (OpenAI, OpenRouter).");
+});

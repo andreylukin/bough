@@ -15,16 +15,15 @@ export function ModePicker({ projects, value, onChange }: {
   const withOrb = projects.filter((p) => p.slug).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   const local = value.mode === "local";
   return (
-    <div className="ctl mode-picker" role="group" aria-label="Session mode">
-      <span className="ctl-label">Run</span>
-      <button className={"btn" + (local ? " btn-primary" : "")} aria-pressed={local}
+    <div className="mode-picker seg" role="group" aria-label="Where a new session runs">
+      <button type="button" className="seg-item" aria-pressed={local}
               title="Runs on this machine. Can edit files only inside a git checkout; read-only elsewhere."
               onClick={() => onChange({ mode: "local" })}>Local</button>
       {withOrb.length > 0
         ? <Select label="Project" value={local ? "" : value.project ?? ""} align="start" placeholder="In a project…"
                   options={withOrb.map((p) => ({ value: p.id, label: p.name }))}
                   onChange={(id) => onChange(id ? { mode: "project", project: id } : { mode: "local" })} />
-        : <span className="ctl-label">No project has an orb yet</span>}
+        : <button type="button" className="seg-item" disabled title="No project has an orb yet">Project</button>}
     </div>
   );
 }

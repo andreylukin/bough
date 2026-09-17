@@ -486,7 +486,7 @@ function PluginRow({ p, off, setOff, onOff }: {
 /** A glyph and a sentence-case word; red only when something failed. */
 export function StateWord({ word, failed = false }: { word: string; failed?: boolean }) {
   return (
-    <span className={"hk2-mark " + (failed ? "is-failed" : "is-done")}>
+    <span className={"hk2-mark " + (failed ? "is-failed" : word === "Passed" ? "is-done" : word === "Blocked" ? "is-blocked" : "is-changed")}>
       <svg className="state-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{(failed ? STATUS.error : word === "Passed" ? STATUS.done : STATUS.idle).glyph}</svg>
       {word}
@@ -526,10 +526,10 @@ function FireRow({ f, n, all, titles, load, save }: {
           ? <a className="hk-sess link" href={`#/s/${f.session}`} title={f.session}>{title}</a>
           : <span className="hk-sess" />}
         <span className="mono hk-when hk-ev" title={f.event}>{f.event}</span>
-        <span className="num hk-when hk-took">{f.ms}ms</span>
-        <span className="hk-dec"><Decision fire={f} />{n > 1 && <span className="num hk-when"> ×{n}</span>}</span>
+        <span className="num hk-when hk-took">{f.ms < 1 ? "<1ms" : `${f.ms}ms`}</span>
+        <span className="hk-dec"><Decision fire={f} />{n > 1 && <span className="num hk-count" title={`${n} runs collapsed`}>{n}</span>}</span>
         <button className="hk-chev" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
-          <span aria-hidden="true">›</span>
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
           <span className="visually-hidden">{open ? "Hide" : "Show"} input and output of {f.name}, {outcomeWord(f)}</span>
         </button>
       </div>
@@ -699,8 +699,9 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
         <section className="proj hk-decisions">
           <div className="proj-head">
             <h2>Recent decisions</h2>
-            <span className="num proj-count">last {recent.length} {recent.length === 1 ? "run" : "runs"}{builtin > 0 && ` · ${builtin} from built-in handlers`} · newest first</span>
+            <span className="num proj-count">last {recent.length} {recent.length === 1 ? "run" : "runs"}{builtin > 0 && builtin !== recent.length && ` · ${builtin} from built-in handlers`} · newest first</span>
           </div>
+          <div className="hk-table">
           <div className="hk-main hk-cols" aria-hidden="true">
             <span>Time</span><span>Hook</span><span>Session</span><span className="hk-ev">Event</span><span className="hk-took">Took</span><span className="hk-dec">Outcome</span><span />
           </div>
@@ -717,6 +718,7 @@ export function HooksView({ data, onBack, load = hooksApi.read, save = hooksApi.
             ))}
             </div>
           ))}
+          </div>
         </section>
           ))}
         {watchers.length > 0 && (

@@ -48,6 +48,30 @@ export function keyLine(providers: SetupProvider[], checks: KeyChecks): { text: 
   return { text: parts.join(" "), tone: bad.length ? (good.length ? "warn" : "err") : "ok", working: good.length > 0 };
 }
 
+/** A rejected key as a callout: the lead names what failed, the body what to do. */
+export function keyCallout(providers: SetupProvider[], checks: KeyChecks): { lead: string; body: string } | null {
+  const set = providers.filter((p) => p.set);
+  const bad = set.filter((p) => checks[p.name] === "rejected");
+  if (!bad.length) return null;
+  const good = set.filter((p) => checks[p.name] === "ok" || checks[p.name] === "unknown");
+  const names = (l: SetupProvider[]) => l.map((p) => label(p.name)).join(", ");
+  return {
+    lead: `${names(bad)} ${bad.length > 1 ? "keys" : "key"} rejected.`,
+    body: good.length ? `Replace it, or pick a model from a provider that works (${names(good)}).` : "Replace it with a key the provider accepts.",
+  };
+}
+
+/** A warning or error as a tinted callout: a glyph, a lead in full contrast, the rest muted. */
+function Callout({ tone, lead, body, role = "status" }: { tone: "warn" | "err"; lead: string; body?: string; role?: "status" | "alert" }) {
+  return (
+    <p className={"welcome-callout " + tone} role={role}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"
+           strokeLinejoin="round" aria-hidden="true"><path d="M12 4 2.8 19.5h18.4Z" /><path d="M12 10v4M12 17h.01" /></svg>
+      <span><b>{lead}</b>{body && <> {body}</>}</span>
+    </p>
+  );
+}
+
 /** R4-C: the step-1 badge reads done only when a key works and none was rejected. */
 export function stepDone(keys: { tone: string; working: boolean }): boolean {
   return keys.working && keys.tone === "ok";
@@ -158,15 +182,34 @@ export function Welcome({ onStart, onSkip, onBack }: {
     }
   };
 
-  let status: { text: string; tone: "ok" | "warn" | "err" | "" };
+  let status: { text: string; tone: "ok" | "warn" | "err" | ""; lead?: string };
   if (!path.trim()) status = { text: "Type the path of a project folder.", tone: "" };
-  else if (check.state === "failed") status = { text: "Couldn’t check this folder. Try again.", tone: "err" };
+  else if (check.state === "failed") status = { lead: "Couldn’t check this folder.", text: "Try again.", tone: "err" };
   else if (!folder) status = { text: "Checking folder…", tone: "" };
-  else if (!folder.exists) status = { text: "There is no folder at this path.", tone: "warn" };
+  else if (!folder.exists) status = { lead: "No folder at this path.", text: "", tone: "warn" };
   else if (folder.checkout) {
     const at = folder.checkout === folder.path ? "" : ` at ${tilde(folder.checkout, home)}`;
     status = { text: `Git checkout found${at}. File tools can edit it; shell commands run with your user permissions.`, tone: "ok" };
-  } else status = { text: "Not a git checkout: file tools can’t edit here, but shell commands still run with your user permissions and can change files. Pick a repo to let the agent make edits.", tone: "warn" };
+  } else status = { lead: "Not a git checkout.", text: "File tools can’t edit here; shell commands still run as you. Pick a repo to let the agent edit.", tone: "warn" };
+
+  // One step is current: the first one not done. A later step opens once
+  // what it needs already works, so a usable key never hides the folder.
+  const done = [stepDone(keys), !!folder?.checkout, false];
+  const current = done.indexOf(false);
+  const [reopen, setReopen] = useState<Set<number>>(new Set());
+  const flip = (i: number) => setReopen((s) => { const n = new Set(s); n.has(i) ? n.delete(i) : n.add(i); return n; });
+  const reach = [true, keys.working || current === 1, (keys.working && !!folder?.exists) || current === 2];
+  const open = (i: number) => (done[i] ? reopen.has(i) : reach[i]);
+  const glyph = (i: number, failed = false) => (
+    <span className="welcome-num" data-state={done[i] ? "done" : failed ? "failed" : i === current ? "current" : "todo"} aria-hidden="true">
+      {done[i] ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12.5l5 5L20 6.5" /></svg> : i + 1}
+    </span>
+  );
+  const change = (i: number) => done[i] && (
+    <button type="button" className="btn btn-ghost btn-sm welcome-change" aria-expanded={reopen.has(i)} onClick={() => flip(i)}>{reopen.has(i) ? "Done" : "Change"}</button>
+  );
+  const callout = keyCallout(providers, checks);
+  const count = done.filter(Boolean).length;
 
   let hint = "";
   if (setup !== null && !checking && !keys.working) hint = keyed.length ? "Add a key the provider accepts to enable these." : "Add a provider key to enable these.";
@@ -191,18 +234,26 @@ export function Welcome({ onStart, onSkip, onBack }: {
           <p>A coding agent that writes one JavaScript program per step.</p>
         </header>
 
+        <section className="welcome-setup" aria-label="Set up">
+          <div className="welcome-setup-head">
+            <h2>Set up</h2>
+            <span className="num welcome-count">{count} of 3 done</span>
+            <span className="welcome-track" aria-hidden="true"><span style={{ width: `${(count / 3) * 100}%` }} /></span>
+          </div>
         <ol className="welcome-steps">
-          <li className={"welcome-step" + (stepDone(keys) ? " done" : rejected ? " rejected" : "")}>
-            <h2><span className="welcome-num" aria-hidden="true">1</span>Add a provider key</h2>
-            {setup === null ? (
+          <li className={"welcome-step" + (done[0] ? " done" : rejected ? " rejected" : "")}>
+            <h2>{glyph(0, rejected)}Add a provider key{change(0)}</h2>
+            {done[0] && !reopen.has(0) ? <p className="welcome-sum">{keyed.filter((p) => checks[p.name] !== "rejected").map((p) => label(p.name)).join(", ")}</p>
+            : setup === null ? (
               loadErr ? (<>
-                <p className="welcome-status err" role="alert">Couldn’t load setup: {loadErr}</p>
+                <Callout tone="err" role="alert" lead="Couldn’t load setup." body={loadErr} />
                 <button className="btn welcome-retry" onClick={loadSetup}>Retry</button>
               </>) : <p className="welcome-note">Checking for keys…</p>
             ) : keyed.length && !rejected ? (
               <p className={"welcome-status " + keys.tone} role="status">{keys.text}</p>
             ) : (<>
-              {rejected && <p className={"welcome-status " + keys.tone} role="alert">{keys.text}</p>}
+              {rejected && (callout ? <Callout tone={keys.tone === "err" ? "err" : "warn"} role="alert" lead={callout.lead} body={callout.body} />
+                : <p className={"welcome-status " + keys.tone} role="alert">{keys.text}</p>)}
               <p className="welcome-note">
                 Saved to <code>{tilde(setup.envFile, home)}</code> on the machine running bough, and sent only to {label(prov)}.
               </p>
@@ -212,22 +263,28 @@ export function Welcome({ onStart, onSkip, onBack }: {
                 </select>
                 <input className="welcome-field" type="password" aria-label={`${label(prov)} API key`} placeholder="API key"
                   autoComplete="off" spellCheck={false} value={key} onChange={(e) => setKey(e.target.value)} />
-                <button className="btn btn-primary" disabled={!key.trim() || saving}>{saving ? "Saving…" : "Save key"}</button>
+                <button className={"btn" + (key.trim() && current === 0 ? " btn-primary" : "")} disabled={!key.trim() || saving}>{saving ? "Saving…" : "Save key"}</button>
               </form>
-              {keyErr && <p className="welcome-status err" role="alert">{keyErr}</p>}
+              {keyErr && <Callout tone="err" role="alert" lead="Key not saved." body={keyErr} />}
             </>)}
           </li>
 
-          <li className={"welcome-step" + (folder?.checkout ? " done" : "")}>
-            <h2><span className="welcome-num" aria-hidden="true">2</span>Pick a folder</h2>
-            <input className="welcome-field wide" aria-label="Folder" placeholder="~/code/your-repo" spellCheck={false} autoComplete="off"
-              value={path} onChange={(e) => setPath(e.target.value)} />
-            <p className={"welcome-status " + status.tone} role="status">{status.text}</p>
-            {check.state === "failed" && <button className="btn welcome-retry" onClick={() => setCheckRev((n) => n + 1)}>Retry</button>}
+          <li className={"welcome-step" + (done[1] ? " done" : "")}>
+            <h2>{glyph(1)}Pick a folder{change(1)}</h2>
+            {done[1] && !reopen.has(1) ? <p className="welcome-sum mono" title={folder?.checkout}>{tilde(folder!.checkout!, home)}</p>
+            : open(1) && (<>
+              <input className="welcome-field wide welcome-path" aria-label="Folder" placeholder="~/code/your-repo" spellCheck={false} autoComplete="off"
+                title={path} value={path} onChange={(e) => setPath(e.target.value)} />
+              {status.tone === "warn" || status.tone === "err"
+                ? <Callout tone={status.tone} lead={status.lead ?? status.text} body={status.lead ? status.text : undefined} />
+                : <p className={"welcome-status " + status.tone} role="status">{status.text}</p>}
+              {check.state === "failed" && <button className="btn welcome-retry" onClick={() => setCheckRev((n) => n + 1)}>Retry</button>}
+            </>)}
           </li>
 
           <li className="welcome-step">
-            <h2><span className="welcome-num" aria-hidden="true">3</span>Ask for something</h2>
+            <h2>{glyph(2)}Ask for something</h2>
+            {open(2) && (<>
             <div className="welcome-chips">
               {PROMPTS.map((p) => (
                 <button key={p} className="welcome-chip" disabled={!ready} onClick={() => void go(p)}>{p}</button>
@@ -236,12 +293,14 @@ export function Welcome({ onStart, onSkip, onBack }: {
             <form className="welcome-row" onSubmit={(e) => { e.preventDefault(); void go(prompt); }}>
               <input className="welcome-field grow" aria-label="Your first prompt" placeholder="Or describe a task…"
                 value={prompt} onChange={(e) => setPrompt(e.target.value)} />
-              <button className="btn btn-primary" disabled={!ready || !prompt.trim()}>{starting ? "Starting…" : "Start"}</button>
+              <button className={"btn" + (prompt.trim() ? " btn-primary" : "")} disabled={!ready || !prompt.trim()}>{starting ? "Starting…" : "Start"}</button>
             </form>
             {hint && <p className="welcome-note">{hint}</p>}
-            {startErr && <p className="welcome-status err" role="alert">{startErr}</p>}
+            {startErr && <Callout tone="err" role="alert" lead="Couldn’t start the session." body={startErr} />}
+            </>)}
           </li>
         </ol>
+        </section>
 
         <section className="welcome-how" aria-label="How bough works">
           <h2>How it works</h2>

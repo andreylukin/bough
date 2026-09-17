@@ -3,7 +3,7 @@ import type { OrbDetail, OrbFile, Project, Row } from "./types";
 import { api } from "./api";
 import { ProjectOrb } from "./orb";
 import { STATUS, StatusMark, TESTS_FAILED_GLYPH, shownStatus } from "./status";
-import { EmptyState, humanError } from "./loading";
+import { humanError } from "./loading";
 import { hasOwnTitle, sessionTitle } from "./render";
 import { Back, ago } from "./app";
 import { Select } from "./select";
@@ -40,7 +40,7 @@ function Conversation({ row, repo, projects, onOpen, onAssign, picked, onPick, l
       {/* Title and when in one target, so a phone row is two short lines, not three. */}
       <button className="proj-open" onClick={() => onOpen(row.id)}
               aria-label={[title + (chip ? ` ${idTail(row.id)}` : ""), repo, ago(at), STATUS[status]?.label ?? status].filter(Boolean).join(", ")}>
-        <span className="proj-title" title={title}>{title}{chip && <span className="mono row-id"> {idTail(row.id)}</span>}</span>
+        <span className="proj-title" title={title}>{title}{chip && <span className={"mono row-id proj-id" + (hasOwnTitle(row) ? "" : " is-always")}> {idTail(row.id)}</span>}</span>
         {/* The repo column stays even when empty, so every row's age and status line up. */}
         <span className="mono proj-repo">{repo}</span>
         {/* The sidebar's format: how long ago, with the date on hover. */}
@@ -362,27 +362,32 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
         <div className="head-main">
           <h1 title={LEDE}>Projects</h1>
           <span className="head-repo">
-            {projects.length} configured {projects.length === 1 ? "project" : "projects"} · {detected} detected {detected === 1 ? "repo" : "repos"}
+            {projects.length} {projects.length === 1 ? "project" : "projects"} · {detected} {detected === 1 ? "repo" : "repos"}
           </span>
         </div>
         {/* With no projects the empty state carries the one New project button. */}
         {(projects.length > 0 || needle) && (
           <div className="head-side">
-            <button className="btn btn-primary" onClick={() => { void createProject(); }}>New project…</button>
+            <button className="btn" onClick={() => { void createProject(); }}>New project…</button>
           </div>
         )}
       </header>
 
       <div className="scroll proj-body">
-        <div className="proj-filter">
-          <input className="field" type="search" value={filter} placeholder="Filter sessions by title or repo"
-                 aria-label="Filter sessions" onChange={(e) => setFilter(e.target.value)} />
-        </div>
+        {rows.length > 0 && (
+          <div className="proj-filter">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"
+                 aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4 4" /></svg>
+            <input className="field" type="search" value={filter} placeholder="Filter sessions" title="Filter sessions by title or repo"
+                   aria-label="Filter sessions" onChange={(e) => setFilter(e.target.value)} />
+          </div>
+        )}
         {needle && shown.length === 0 && <p className="proj-nomatch" role="status">No sessions match “{filter.trim()}”.</p>}
         {projects.length === 0 && !needle && (
-          <EmptyState title="No projects yet" action={{ label: "New project…", onClick: () => { void createProject(); } }}>
-            {LEDE}
-          </EmptyState>
+          <div className="proj-empty-row">
+            <p><b>No projects yet.</b> Group sessions from any repo under one name; moving a session doesn’t change it.</p>
+            <button className="btn btn-primary" onClick={() => { void createProject(); }}>New project…</button>
+          </div>
         )}
 
         {sorted.map((p) => {
@@ -447,13 +452,13 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
                   <div className="rp-repo-head">
                     <label className="rp-pick">
                       <input type="checkbox" checked={on} disabled={moving} onChange={() => pickMany(rs.map((r) => r.id), !on)} />
-                      <span className={repo === UNKNOWN ? "rp-norepo" : "mono hk2-name"}>{repo}</span>
+                      <span className={repo === UNKNOWN ? "rp-norepo" : "rp-repo-name"}>{repo}</span>
                       <span className="visually-hidden">: select all</span>
                     </label>
                     <span className="num proj-count">{rs.length} {rs.length === 1 ? "session" : "sessions"}</span>
                     {/* rs is already filtered; the head above carries "N of M match". */}
                     {repo !== UNKNOWN && (
-                      <button className="link" disabled={moving} onClick={() => { void fromRepo(repo, rs); }}>Create project from repo…</button>
+                      <button className="btn btn-ghost btn-sm rp-create" title={`Create a project from ${repo} and move its sessions there`} disabled={moving} onClick={() => { void fromRepo(repo, rs); }}>Create project</button>
                     )}
                   </div>
                   {list(rs, true)}

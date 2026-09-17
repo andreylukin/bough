@@ -2991,7 +2991,9 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only, cat
  * Home: the sidebar is the one list of sessions, so Home lists none. It
  * says how many need you and points at the first such row there.
  */
-function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onRetry }: {
+function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onRetry, actions }: {
+  /** Header controls: where a new session runs, and New session. */
+  actions?: React.ReactNode;
   rows: Row[]; onReveal: (id: string) => void; loadedAt: number | null; loadErr: string | null; onRetry: () => void;
   /** Open the session at the failing call, when its transcript names one. */
   onOpenFailure: (id: string, seq?: number) => void;
@@ -3019,11 +3021,13 @@ function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onR
     return () => { on = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
+  const project = (r: Row) => r.repo?.split("/").pop();
   return (
     <div className="ov">
       <header className="ov-head">
         <h1>Overview</h1>
-        <span className="ov-hint">{modKey()}K to search or start a session</span>
+        <span className="ov-hint"><kbd>{modKey()}</kbd><kbd>K</kbd> to search or start a session</span>
+        {actions && <div className="ov-actions">{actions}</div>}
       </header>
       <div className="scroll ov-body">
         {/* Lists are only as current as the last refresh, and say so. */}
@@ -3033,42 +3037,49 @@ function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onR
             <button className="link" onClick={onRetry}>Retry</button>
           </p>
         )}
-        {needs.length > 0 ? (
+        {needs.length > 0 && (failed.length > 0 || questions.length > 0) ? (
           <>
-            {failed.length > 0 && (
-              <div className="ov-fails" role="list" aria-label="Unresolved failures">
-                {failed.map((r) => {
-                  const e = evid[r.id];
-                  return (
-                    <div key={r.id} className="ov-fail" role="listitem">
-                      {/* The failing call when the transcript names one; else the only identity there is. */}
-                      <span className="ov-fail-what" title={plainTitle(r.title) || r.id}>{e?.cmd ?? `${sessionTitle(r)} · ${r.trouble || (r.testsFailed ? "tests failed" : "failed")}`}</span>
-                      {e?.exit !== undefined && <span className="num ov-fail-exit">exit {e.exit}</span>}
-                      <span className="num">{r.repo?.split("/").pop()}</span>
-                      <span className="num">{ago(e?.at ?? r.lastAt)} ago</span>
-                      <button className="btn" onClick={() => onOpenFailure(r.id, e?.seq)}>Open failure</button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {questions.length > 0 && (
-              // Waiting sessions are cards in the empty-state column: the question is what you came for.
-              <div className={failed.length ? "ov-waits" : "ov-empty"} role="status">
-                {failed.length === 0 && <p className="ov-empty-title">{statusWord("needs-you")}</p>}
+            <section className="ov-card" aria-label="Needs you">
+              <div className="ov-card-head"><span className="eyebrow">Needs you</span><span className="num ov-card-count">{failed.length + questions.length}</span></div>
+              {failed.length > 0 && (
+                <div className="ov-fails" role="list" aria-label="Unresolved failures">
+                  {failed.map((r) => {
+                    const e = evid[r.id];
+                    return (
+                      <div key={r.id} className="ov-fail" role="listitem">
+                        <StatusMark status="error" size={16} bare />
+                        <span className="ov-fail-main">
+                          <span className="ov-fail-what" title={plainTitle(r.title) || r.id}>{sessionTitle(r)}</span>
+                          <span className="ov-state is-failed">{r.trouble ? r.trouble[0].toUpperCase() + r.trouble.slice(1) : r.testsFailed ? "Tests failed" : "Failed"}</span>
+                          {/* The failing call when the transcript names one. */}
+                          {e?.cmd && <span className="mono ov-fail-cmd" title={e.cmd}>{e.cmd}{e.exit !== undefined && ` · exit ${e.exit}`}</span>}
+                        </span>
+                        <span className="ov-meta">{project(r)}</span>
+                        <span className="num ov-meta">{ago(e?.at ?? r.lastAt)} ago</span>
+                        <button className="btn btn-sm" onClick={() => onOpenFailure(r.id, e?.seq)} aria-label={`Open failure in ${sessionTitle(r)}`}>Open</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {questions.length > 0 && (
                 <div className="ov-wait-list" role="group" aria-label="Waiting for you">
                   {questions.map((r) => (
                     <button key={r.id} className="ov-wait" onClick={() => onReveal(r.id)}>
-                      <span className="ov-wait-title"><StatusMark status="needs-you" bare />{sessionTitle(r)}</span>
-                      {r.ask?.text && <span className="ov-wait-q">{r.ask.text}</span>}
-                      <span className="num ov-wait-meta">{[r.repo?.split("/").pop(), `${ago(r.lastAt)} ago`].filter(Boolean).join(" · ")}</span>
+                      <StatusMark status="needs-you" size={16} bare />
+                      <span className="ov-fail-main">
+                        <span className="ov-wait-line"><span className="ov-wait-title">{sessionTitle(r)}</span><span className="ov-state is-waiting">Waiting</span></span>
+                        {r.ask?.text && <span className="ov-wait-q">{r.ask.text}</span>}
+                      </span>
+                      <span className="ov-meta">{project(r)}</span>
+                      <span className="num ov-meta">{ago(r.lastAt)} ago</span>
                     </button>
                   ))}
                 </div>
-                {failed.length === 0 && runningRow && (
-                  <p className="ov-empty-sub"><button className="link ov-point" onClick={() => onReveal(runningRow.id)}>{running} running</button></p>
-                )}
-              </div>
+              )}
+            </section>
+            {runningRow && (
+              <p className="ov-empty-sub"><button className="link ov-point" onClick={() => onReveal(runningRow.id)}>{running} running</button></p>
             )}
           </>
         ) : !loadErr && (
@@ -5061,13 +5072,10 @@ export default function App() {
       ) : (
         <div className={"thread" + (selected ? " empty" : "")}>
           {!selected ? (showWelcome ? <Welcome onStart={(cwd, p) => start(cwd, p)} onSkip={() => { setWelcome("off"); if (narrow) goList(); }} onBack={narrow ? () => { setWelcome("off"); goList(); } : undefined} /> : <>
-            {home && (
-              <div className="controls mode-start">
+            <ControlOverview actions={home ? <>
                 <ModePicker projects={projects} value={newMode} onChange={setNewMode} />
-                <button className="btn" onClick={() => { void start(newMode.mode === "local" && startDir?.checkout ? startDir.path : home, "", newMode); }}>New session</button>
-              </div>
-            )}
-            <ControlOverview rows={rows} onOpenFailure={(id, seq) => { openSession(id); if (seq) setJump({ id, turn: 0, seq, at: Date.now() }); }} onReveal={(id) => { setPane("list"); setQuery(""); setReveal({ id, at: Date.now() }); }} loadedAt={loadedAt} loadErr={loadErr} onRetry={() => void refresh()} />
+                <button className="btn ov-new" onClick={() => { void start(newMode.mode === "local" && startDir?.checkout ? startDir.path : home, "", newMode); }}>New session</button>
+              </> : undefined} rows={rows} onOpenFailure={(id, seq) => { openSession(id); if (seq) setJump({ id, turn: 0, seq, at: Date.now() }); }} onReveal={(id) => { setPane("list"); setQuery(""); setReveal({ id, at: Date.now() }); }} loadedAt={loadedAt} loadErr={loadErr} onRetry={() => void refresh()} />
           </>) : (
             // A link to a session the list does not hold: looked up on its
             // own, so an empty or slow list never leaves a blank pane.
