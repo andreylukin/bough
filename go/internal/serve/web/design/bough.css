@@ -2291,3 +2291,14 @@ a.rt-link{text-decoration:none}
 .runtime-strip>.rt-jobs>summary,.runtime-strip>.rt-link,.runtime-strip>.rt-tip{padding-block:4px;margin-block:-4px}
 .head-main h1{min-width:min(12ch,100%)}
 /* /WEB9 */
+/* WEB10: the Work popover sits on the pop shadow like the other popovers;
+   Stop gets its own column so every row's Stop lines up; Show all finished. */
+.work-popover{border:0;border-radius:var(--r-md);box-shadow:var(--shadow-pop)}
+.work-row-stop{justify-self:end;display:flex;align-items:center}
+.work-body:not([data-stops]) .work-row-stop,.work-row-stop:empty{display:none}
+.work-body[data-stops] .work-row{grid-template-columns:minmax(0,1fr) auto 72px}
+.work-body[data-stops] .work-row-stop:empty{display:block}
+.work-more{margin:var(--s-2) var(--s-3) 0}
+@container (max-width:520px){.work-popover .work-body[data-stops] .work-row{grid-template-columns:minmax(0,1fr)}.work-popover .work-row-stop{justify-self:start;margin-top:var(--s-1)}.work-popover .work-body .work-row-stop:empty{display:none}}
+@media (max-width:480px){.work-sheet .work-body[data-stops] .work-row{grid-template-columns:minmax(0,1fr)}.work-sheet .work-row-stop{justify-self:start;margin-top:var(--s-1)}.work-sheet .work-body .work-row-stop:empty{display:none}}
+/* /WEB10 */
