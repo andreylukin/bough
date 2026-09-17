@@ -154,6 +154,10 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
             <span className="orb-st" title={o.error}><StatusMark status={STATE[o.status]} /></span>
             {/* Every row keeps the action slot, so the columns line up whether or not it can stop. */}
             <span className="orb-act">{o.status === "running" && <button className="btn btn-sm" onClick={() => onStopOrb(o.session)}>Stop orb</button>}</span>
+            {o.proxyAuth === "legacy" && (
+              <p className="orb-note"><Mark status="needs-you" word="Proxy unauthenticated"
+                detail="this orb predates proxy tokens, so any VM on the bridge can use its host proxy and relay; remove the orb and start a session to recreate it with a token" /></p>
+            )}
           </div>
           ))}
         </div>}

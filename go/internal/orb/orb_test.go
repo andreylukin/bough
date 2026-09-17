@@ -573,3 +573,69 @@ func (s *syncBuffer) String() string {
 	defer s.mu.Unlock()
 	return s.b.String()
 }
+
+func TestOrbToken(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	home := t.TempDir()
+	p := newProject(t, home, "tk", "  - path: "+newRepo(t)+"\n")
+	rt := container.NewFake()
+	envToken := func(o *Orb) string {
+		out, err := o.Command(ctx, "sh", "-c", "printf %s \"$BOUGH_ORB_TOKEN\"").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	}
+	tokenPath := filepath.Join(Dir(home, "s7"), tokenFile)
+
+	o, err := Open(ctx, rt, home, "s7", p, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(tokenPath)
+	if err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("token file: %v %v", fi, err)
+	}
+	tok1, _ := os.ReadFile(tokenPath)
+	if len(tok1) < 32 || o.State().ProxyAuth != ProxyAuthToken || envToken(o) != string(tok1) {
+		t.Fatalf("fresh orb: token %q auth %q env %q", tok1, o.State().ProxyAuth, envToken(o))
+	}
+	if b, _ := os.ReadFile(filepath.Join(Dir(home, "s7"), stateFile)); strings.Contains(string(b), string(tok1)) {
+		t.Fatal("token leaked into state.json")
+	}
+
+	// Reusing the container keeps its token.
+	o, err = Open(ctx, rt, home, "s7", p, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok, _ := os.ReadFile(tokenPath); string(tok) != string(tok1) || envToken(o) != string(tok1) {
+		t.Fatalf("reuse changed token: %q", tok)
+	}
+
+	// A container created before tokens keeps running, unauthenticated,
+	// and says how to fix it.
+	os.Remove(tokenPath)
+	o, err = Open(ctx, rt, home, "s7", p, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st := o.State(); st.ProxyAuth != ProxyAuthLegacy || envToken(o) != "" {
+		t.Fatalf("legacy orb: %+v env %q", st, envToken(o))
+	}
+	if n := count(rt.CallList(), "remove "); n != 0 {
+		t.Fatalf("legacy orb was recreated: %v", rt.CallList())
+	}
+
+	// Recreating it (a new image here) enables the token.
+	projectdef.WriteFile(home, "tk", projectdef.FileSetup, "#!/bin/sh\necho v2\n")
+	o, err = Open(ctx, rt, home, "s7", p, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok2, _ := os.ReadFile(tokenPath)
+	if o.State().ProxyAuth != ProxyAuthToken || len(tok2) < 32 || string(tok2) == string(tok1) || envToken(o) != string(tok2) {
+		t.Fatalf("recreated: auth %q token %q", o.State().ProxyAuth, tok2)
+	}
+}

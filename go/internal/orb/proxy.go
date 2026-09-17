@@ -2,6 +2,8 @@ package orb
 
 import (
 	"context"
+	"crypto/subtle"
+	"encoding/base64"
 	"io"
 	"net"
 	"net/http"
@@ -14,25 +16,76 @@ import (
 // do not tunnel, so internal hosts the user reaches are unreachable from
 // the guest. Pointing HTTPS_PROXY at this listener makes every connection
 // originate from the host process, with the user's network access.
+//
+// The listener is on the VM bridge, which every orb shares, so a token
+// (the orb's, see token.go) is required: as proxy credentials in the URL
+// for proxied traffic, as a bearer token for the relay. An empty token is
+// an orb created before tokens: open, as it always was.
 type proxy struct {
-	ln  net.Listener
-	srv *http.Server
+	ln    net.Listener
+	srv   *http.Server
+	token string
 }
 
 // startProxy listens on addr (the guest's gateway IP, so only the host and
 // its VMs can reach it) on a free port.
-func startProxy(addr string) (*proxy, error) {
+func startProxy(addr, token string) (*proxy, error) {
 	ln, err := net.Listen("tcp", net.JoinHostPort(addr, "0"))
 	if err != nil {
 		return nil, err
 	}
-	p := &proxy{ln: ln}
+	p := &proxy{ln: ln, token: token}
 	p.srv = &http.Server{Handler: http.HandlerFunc(p.serve), ReadHeaderTimeout: 30 * time.Second}
 	go p.srv.Serve(ln)
 	return p, nil
 }
 
-func (p *proxy) URL() string { return "http://" + p.ln.Addr().String() }
+// Addr is host:port, with no credentials.
+func (p *proxy) Addr() string { return p.ln.Addr().String() }
+
+// URL carries the token as proxy credentials, which curl, git, Go,
+// Python and Node send as Proxy-Authorization.
+func (p *proxy) URL() string {
+	if p.token == "" {
+		return "http://" + p.Addr()
+	}
+	return "http://" + proxyUser + ":" + p.token + "@" + p.Addr()
+}
+
+const proxyUser = "bough"
+
+// relayDenied is the shim's hint when the relay refuses it.
+const relayDenied = "orb relay: missing or wrong orb token (an orb created before proxy tokens has none: remove the orb and start a session to recreate it)"
+
+func (p *proxy) tokenOK(got string) bool {
+	return subtle.ConstantTimeCompare([]byte(got), []byte(p.token)) == 1
+}
+
+// proxyAuthorized checks Proxy-Authorization: Basic bough:<token>.
+func (p *proxy) proxyAuthorized(r *http.Request) bool {
+	if p.token == "" {
+		return true
+	}
+	h, ok := strings.CutPrefix(r.Header.Get("Proxy-Authorization"), "Basic ")
+	if !ok {
+		return false
+	}
+	b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(h))
+	if err != nil {
+		return false
+	}
+	user, pass, _ := strings.Cut(string(b), ":")
+	return user == proxyUser && p.tokenOK(pass)
+}
+
+// relayAuthorized checks Authorization: Bearer <token>.
+func (p *proxy) relayAuthorized(r *http.Request) bool {
+	if p.token == "" {
+		return true
+	}
+	h, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return ok && p.tokenOK(strings.TrimSpace(h))
+}
 
 func (p *proxy) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -43,12 +96,21 @@ func (p *proxy) Close() error {
 var transport = &http.Transport{Proxy: nil, ForceAttemptHTTP2: false, IdleConnTimeout: 90 * time.Second}
 
 func (p *proxy) serve(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodConnect {
-		p.tunnel(w, r)
+	if r.URL.Host == "" && r.Method == http.MethodPost && r.URL.Path == "/bough/exec" {
+		if !p.relayAuthorized(r) {
+			http.Error(w, relayDenied, http.StatusUnauthorized)
+			return
+		}
+		relayExec(w, r)
 		return
 	}
-	if r.URL.Host == "" && r.Method == http.MethodPost && r.URL.Path == "/bough/exec" {
-		relayExec(w, r)
+	if !p.proxyAuthorized(r) {
+		w.Header().Set("Proxy-Authenticate", `Basic realm="bough orb"`)
+		http.Error(w, "orb proxy: orb token required", http.StatusProxyAuthRequired)
+		return
+	}
+	if r.Method == http.MethodConnect {
+		p.tunnel(w, r)
 		return
 	}
 	// Plain HTTP through a proxy arrives with an absolute URI.

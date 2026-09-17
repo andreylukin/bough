@@ -24,7 +24,7 @@ func TestRelayRunsOnlyMCPOnHost(t *testing.T) {
 	prev := hostBough
 	hostBough = func() (string, error) { return fake, nil }
 	defer func() { hostBough = prev }()
-	p, err := startProxy("127.0.0.1")
+	p, err := startProxy("127.0.0.1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestShimRelaysThroughHost(t *testing.T) {
 	prev := hostBough
 	hostBough = func() (string, error) { return fake, nil }
 	defer func() { hostBough = prev }()
-	p, err := startProxy("127.0.0.1")
+	p, err := startProxy("127.0.0.1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestProxyForwardsHTTPAndConnect(t *testing.T) {
 		fmt.Fprint(w, "hello "+r.URL.Path)
 	}))
 	defer up.Close()
-	p, err := startProxy("127.0.0.1")
+	p, err := startProxy("127.0.0.1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestProxyForwardsHTTPAndConnect(t *testing.T) {
 		t.Fatalf("plain: got %q", b)
 	}
 
-	conn, err := net.Dial("tcp", p.ln.Addr().String())
+	conn, err := net.Dial("tcp", p.Addr())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,5 +120,102 @@ func TestProxyForwardsHTTPAndConnect(t *testing.T) {
 	b, _ = io.ReadAll(tr.Body)
 	if string(b) != "hello /tunnel" {
 		t.Fatalf("tunnel: got %q", b)
+	}
+}
+
+func TestProxyRequiresToken(t *testing.T) {
+	t.Parallel()
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ok")
+	}))
+	defer up.Close()
+	p, err := startProxy("127.0.0.1", "s3cret-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if !strings.Contains(p.URL(), "bough:s3cret-token@") || strings.Contains(p.Addr(), "s3cret") {
+		t.Fatalf("url %q addr %q", p.URL(), p.Addr())
+	}
+	get := func(proxyURL string) int {
+		pu, _ := url.Parse(proxyURL)
+		c := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(pu)}}
+		resp, err := c.Get(up.URL + "/x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := get("http://" + p.Addr()); code != http.StatusProxyAuthRequired {
+		t.Fatalf("no creds: %d", code)
+	}
+	if code := get("http://bough:wrong@" + p.Addr()); code != http.StatusProxyAuthRequired {
+		t.Fatalf("wrong creds: %d", code)
+	}
+	if code := get(p.URL()); code != 200 {
+		t.Fatalf("token: %d", code)
+	}
+
+	conn, err := net.Dial("tcp", p.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	host := strings.TrimPrefix(up.URL, "http://")
+	fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", host, host)
+	if cr, err := http.ReadResponse(bufio.NewReader(conn), nil); err != nil || cr.StatusCode != http.StatusProxyAuthRequired {
+		t.Fatalf("connect without token: %v %v", cr, err)
+	}
+
+	post := func(auth string) int {
+		req, _ := http.NewRequest("POST", "http://"+p.Addr()+"/bough/exec", strings.NewReader(`{"args":["update"]}`))
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := post(""); code != http.StatusUnauthorized {
+		t.Fatalf("relay without token: %d", code)
+	}
+	// Past auth, the command check answers.
+	if code := post("Bearer s3cret-token"); code != http.StatusForbidden {
+		t.Fatalf("relay with token: %d", code)
+	}
+}
+
+func TestShimSendsToken(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not installed")
+	}
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "host-bough")
+	os.WriteFile(fake, []byte("#!/bin/sh\necho ok\n"), 0o755)
+	prev := hostBough
+	hostBough = func() (string, error) { return fake, nil }
+	defer func() { hostBough = prev }()
+	p, err := startProxy("127.0.0.1", "tok-12345")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	scratch := t.TempDir()
+	writeShim(scratch)
+	run := func(env ...string) (string, error) {
+		c := exec.Command(filepath.Join(shimDir(scratch), "bough"), "mcp", "list")
+		c.Env = append(os.Environ(), append(env, "BOUGH_HOST=http://"+p.Addr())...)
+		out, err := c.CombinedOutput()
+		return string(out), err
+	}
+	if out, err := run("BOUGH_ORB_TOKEN=tok-12345"); err != nil || out != "ok\n" {
+		t.Fatalf("with token: %q %v", out, err)
+	}
+	if out, err := run("BOUGH_ORB_TOKEN="); err == nil || !strings.Contains(out, "recreate") {
+		t.Fatalf("without token: %q %v", out, err)
 	}
 }
