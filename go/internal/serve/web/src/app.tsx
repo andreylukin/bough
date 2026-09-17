@@ -20,7 +20,7 @@ import { Mentions, triggerAt, type Trigger } from "./mention";
 import { FireInspection, HooksPage, type Fire, type Load, type Save } from "./hooks";
 import { ContextPage } from "./context";
 import { ChangesBody, ChangesPage, EditDiff, countOf, outputParts, useChanges } from "./changes";
-import { Palette, isTypingTarget, useFullText, usePaletteKey, type Command } from "./palette";
+import { Palette, idTail, isTypingTarget, useFullText, usePaletteKey, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
 import { Elapsed, ErrorNote, Pending, elapsed } from "./loading";
 
@@ -664,7 +664,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
             {/* Status metadata goes under the title, so a chip never cuts the name. */}
             <span className={stacked ? "row-stack" : "row-line"}>
             <span className="row-name">
-            <span className={"row-title" + (own ? "" : " row-untitled")}>{marked(shown, q)}</span>{chip && <span className="mono row-id" title={`Session id ending ${r.id.slice(-6)}`}><span className="visually-hidden">session id </span>{r.id.slice(-6)}</span>}
+            <span className={"row-title" + (own ? "" : " row-untitled")}>{marked(shown, q)}</span>{chip && <span className="mono row-id" title={`Session id ending ${idTail(r.id)}`}><span className="visually-hidden">session id </span>{idTail(r.id)}</span>}
             {/* The age, on every row at the same right edge; the title is what gives way. */}
             <span className="row-when" aria-hidden="true">{!stacked && <ModeChip row={r} bare />}{ago(failed === "tests failed" && r.testsAt ? r.testsAt : r.lastAt)}</span>
             </span>

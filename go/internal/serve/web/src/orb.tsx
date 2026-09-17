@@ -3,6 +3,7 @@ import type { OrbDetail, OrbFile, OrbStatus, Project, Status } from "./types";
 import { sessionTitle } from "./render";
 import { CopyButton, Pending } from "./loading";
 import { STATUS, StatusMark } from "./status";
+import { idTail } from "./palette";
 
 const FILES: OrbFile[] = ["project.yml", "Dockerfile", "setup.sh", "resume.sh"];
 
@@ -144,7 +145,7 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
             <button className="proj-open" onClick={() => onOpen?.(o.session)}>
               <span className="proj-title">{sessionTitle({ id: o.session, title: titles[o.session] })}</span>
               {/* A fallback name is the same for every untitled session: the id tail tells them apart. */}
-              {!titles[o.session] && <span className="mono row-id">{o.session.slice(-6)}</span>}
+              {!titles[o.session] && <span className="mono row-id">{idTail(o.session)}</span>}
             </button>
             {/* The container name is for pasting into a terminal, not for reading. */}
             <span className="orb-ctr" title={o.container}>

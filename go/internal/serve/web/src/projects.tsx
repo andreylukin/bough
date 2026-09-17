@@ -8,6 +8,7 @@ import { hasOwnTitle, sessionTitle } from "./render";
 import { Back, ago } from "./app";
 import { Select } from "./select";
 import { askConfirm, askText } from "./dialog";
+import { idTail } from "./palette";
 
 const clock = (iso: string) =>
   new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -38,8 +39,8 @@ function Conversation({ row, repo, projects, onOpen, onAssign, picked, onPick, l
       </label>
       {/* Title and when in one target, so a phone row is two short lines, not three. */}
       <button className="proj-open" onClick={() => onOpen(row.id)}
-              aria-label={[title + (chip ? ` ${row.id.slice(-6)}` : ""), repo, ago(at), STATUS[status]?.label ?? status].filter(Boolean).join(", ")}>
-        <span className="proj-title" title={title}>{title}{chip && <span className="mono row-id"> {row.id.slice(-6)}</span>}</span>
+              aria-label={[title + (chip ? ` ${idTail(row.id)}` : ""), repo, ago(at), STATUS[status]?.label ?? status].filter(Boolean).join(", ")}>
+        <span className="proj-title" title={title}>{title}{chip && <span className="mono row-id"> {idTail(row.id)}</span>}</span>
         {/* The repo column stays even when empty, so every row's age and status line up. */}
         <span className="mono proj-repo">{repo}</span>
         {/* The sidebar's format: how long ago, with the date on hover. */}
