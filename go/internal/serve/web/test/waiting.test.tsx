@@ -38,3 +38,14 @@ test("once the turn runs, the sent prompt is solid and the hint says Waiting", (
   expect(html).not.toContain("Sending…");
   expect(html).toMatch(/composer-hint[^>]*>Waiting ·/);
 });
+
+test("resending a stopped turn's prompt shows Sending, then lands on the new input", () => {
+  const at = "2026-01-02T10:00:00Z";
+  const stopped = [{ seq: 1, at, kind: "input", text: "fix the tests" }, { seq: 2, at, kind: "cancelled", text: "" }] as any;
+  const again = [{ id: "p2", text: "fix the tests", after: 2, seen: [1] }];
+  const render = (lines: any) => renderToStaticMarkup(<Thread row={row} lines={lines} sending={again} onSend={async () => null} onAnswer={async () => null}
+    onInterrupt={() => {}} onArchive={() => {}} onRename={async () => {}} onModel={() => {}} onEffort={() => {}} onAssign={() => {}}
+    onBack={() => {}} onContext={() => {}} onAck={() => {}} projects={[]} busy={false} jump={null} />);
+  expect(render(stopped)).toMatch(/composer-hint[^>]*>Sending ·/);
+  expect(render([...stopped, { seq: 3, at, kind: "input", text: "fix the tests" }])).not.toMatch(/composer-hint[^>]*>Sending ·/);
+});
