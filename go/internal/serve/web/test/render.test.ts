@@ -65,3 +65,8 @@ test("prose that only mentions code, or fenced code, stays prose", () => {
   expect(splitBareProgram(text)).toEqual([text, ""]);
   expect(splitBareProgram("const words are not code here.")).toEqual(["const words are not code here.", ""]);
 });
+
+test("a bracket inside a line comment does not swallow the prose after the run", () => {
+  const text = "Intro.\n\nawait tools.bash(\"ls\") // step 1 (list\n\nAll done.";
+  expect(splitBareProgram(text)).toEqual(["Intro.\n\nAll done.", "await tools.bash(\"ls\") // step 1 (list"]);
+});

@@ -236,10 +236,12 @@ export function splitBareProgram(text: string): [string, string] {
     // Scan the run: track open template literals, quotes and brackets across lines.
     let tpl = false, depth = 0, j = i;
     for (;;) {
-      let quote = "";
+      let quote = "", prev = "";
       for (const ch of lines[j]) {
         if (tpl) { if (ch === "`") tpl = false; continue; }
         if (quote) { if (ch === quote) quote = ""; continue; }
+        if (ch === "/" && prev === "/") break; // line comment
+        prev = ch;
         if (ch === "`") tpl = true;
         else if (ch === '"' || ch === "'") quote = ch;
         else if ("([{".includes(ch)) depth++;
