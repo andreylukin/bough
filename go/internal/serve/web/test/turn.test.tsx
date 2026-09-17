@@ -291,3 +291,47 @@ test("a turn that ended on an error states Failed once, in the error", () => {
   expect(html).not.toContain(">Failed<");
   expect(html).not.toContain(">Done<");
 });
+
+// R4-B: the footer names the command that failed, not the file the program edited first.
+test("a failed chained command names its failing sub-command in the footer", () => {
+  const prog = 'console.log(tools.write("src/greet.go", "package main\\n"))\nconsole.log(tools.bash("gofmt -w src/greet.go && go test ./..."))';
+  const out = "wrote src/greet.go (13 bytes, 1 lines)\n+package main\npattern ./...: directory prefix . does not contain main module";
+  const lines: Line[] = [
+    { seq: 1, at: at(0), kind: "input", text: "Rename greet." },
+    { seq: 2, at: at(1), kind: "code", text: prog },
+    { seq: 3, at: at(2), kind: "result", text: prog + "\n" + out, data: { code: prog, exit: 1 } },
+    { seq: 4, at: at(3), kind: "done", text: "", data: { exit: 1, files: ["src/greet.go"] } },
+  ];
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns(lines)[0]} />);
+  expect(html).toContain("go test failed · exit 1");
+  expect(html).not.toContain("src/greet.go failed");
+});
+
+test("a read of two files renders a header before each file", () => {
+  const prog = 'console.log(tools.view("src/main.go"))\nconsole.log(tools.view("src/greet.go"))';
+  const out = '1│package main\n2│\n3│func main() {}\n\n1│package main\n2│func greet() {}';
+  const html = renderToStaticMarkup(<ToolCall code={{ seq: 1, at: at(0), kind: "code", text: prog }} result={{ seq: 2, at: at(1), kind: "result", text: out, data: { code: prog, exit: 0 } }} current />);
+  expect(html.match(/class="mono read-file-head/g)?.length).toBe(2);
+  expect(html).toContain("src/greet.go</div>");
+});
+
+test("a failed card with a rendered diff does not repeat the -/+ lines as text", () => {
+  const prog = 'console.log(tools.patch("src/main.go", "greet(", "Greeting("))\nconsole.log(tools.bash("go test ./..."))';
+  const out = 'patched src/main.go (+0 lines)\n-\tfmt.Println(greet("world"))\n+\tfmt.Println(Greeting("world"))\nFAIL\texample 0.01s';
+  const html = renderToStaticMarkup(<ToolCall code={{ seq: 1, at: at(0), kind: "code", text: prog }} result={{ seq: 2, at: at(1), kind: "result", text: out, data: { code: prog, exit: 1 } }} current />);
+  const diag = /<div class="fail-diag">[\s\S]*?<div class="fail-actions">/.exec(html)?.[0] ?? "";
+  expect(diag).toContain("FAIL");
+  expect(diag).not.toContain("+\tfmt.Println");
+});
+
+test("a done session whose last turn failed says Failed in the header, not a checked Done", async () => {
+  const { Thread } = await import("../src/app");
+  const props = { onSend: async () => null, onAnswer: async () => null, onInterrupt: () => {}, onArchive: () => {}, onRename: async () => {},
+    onModel: () => {}, onEffort: () => {}, onAssign: () => {}, onBack: () => {}, onContext: () => {}, onAck: () => {}, projects: [], busy: false, jump: null } as const;
+  const prog = 'console.log(tools.bash("gofmt -w x.go && go test ./..."))';
+  const html = renderToStaticMarkup(<Thread {...props} row={{ id: "s1", cwd: "/tmp/x", status: "done" } as never} lines={[
+    { seq: 1, at: at(0), kind: "input", text: "fix" }, { seq: 2, at: at(1), kind: "code", text: prog },
+    { seq: 3, at: at(2), kind: "result", text: "FAIL\tpkg", data: { code: prog, exit: 1 } }, { seq: 4, at: at(3), kind: "done", text: "", data: { exit: 1 } }] as never} />);
+  expect(html).toContain('class="status head-failed"');
+  expect(html).toContain("go test failed · exit 1");
+});

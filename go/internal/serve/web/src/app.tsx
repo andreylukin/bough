@@ -1564,6 +1564,41 @@ function gistOf(text: string): string {
   return firstLine(text);
 }
 
+/**
+ * R4-B: what a failed program's failure is called: a go test FAIL name, else
+ * the sub-command of its last shell call that stopped the chain ("go test"
+ * from "gofmt -w x && go test ./..."), never a file it edited or its first call.
+ */
+export function failNameOf(code: string, out: string): string {
+  const test = /--- FAIL: (\S+)/.exec(out)?.[1];
+  if (test) return test;
+  const calls = [...code.matchAll(/tools\.bash\(\s*(["'`])((?:\\.|(?!\1)[^\\])*)\1/g)].map((m) => m[2]);
+  const cmd = calls.at(-1);
+  if (!cmd) return "";
+  const parts = cmd.split(/\s*(?:&&|\|\||;)\s*/).map((c) => c.trim()).filter(Boolean);
+  const short = (c: string) => {
+    const w = c.split(/\s+/);
+    return w.length > 1 && /^[a-z][\w-]*$/.test(w[1]) ? `${w[0]} ${w[1]}` : w[0];
+  };
+  // An earlier sub-command that complained under its own name stopped the chain there.
+  const named = parts.slice(0, -1).find((c) => new RegExp(`^${short(c).split(" ")[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:`, "m").test(out));
+  return short(named ?? parts.at(-1) ?? cmd);
+}
+
+/** R4-B: a multi-file read's output cut at each file, when every file restarts its numbering at 1. */
+export function readChunks(code: string, out: string): { path: string; text: string }[] | null {
+  if (!/^\s*tools\.view|console\.log\(\s*tools\.view/m.test(code) || /tools\.(?!view)\w+\(/.test(code)) return null;
+  const paths = [...code.matchAll(/tools\.view\(\s*(["'`])([^"'`]+)\1/g)].map((m) => m[2]);
+  if (paths.length < 2) return null;
+  const chunks: string[][] = [];
+  for (const l of out.split("\n")) {
+    if (/^\s*1\s*[|│]/.test(l) || !chunks.length) chunks.push([]);
+    chunks.at(-1)!.push(l);
+  }
+  if (chunks.length !== paths.length) return null;
+  return chunks.map((c, i) => ({ path: paths[i], text: c.join("\n").replace(/\n+$/, "") }));
+}
+
 /** One call's recorded facts, for its thin line and the hover list. */
 interface CallFacts { verb: string; gist: string; cmd: string; exit?: number; ms?: number; failed: boolean; preview?: string }
 
@@ -1888,7 +1923,8 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
   const [opened, setOpened] = useState(Boolean(current));
   const phone = useMedia("(max-width:720px)");
   // The last lines of a failure are where the diagnosis is.
-  const diag = failed ? cleanError(out).split("\n").filter((l) => l.trim()).slice(-10) : [];
+  // R4-B: an edit shown as a rendered diff below is not repeated here as -/+ text.
+  const diag = failed ? cleanError(outputParts(out).filter((p) => p.kind !== "edit" || !edits.some((f) => f.path === p.path)).map((p) => (p.kind === "text" ? p.text : "")).join("\n")).split("\n").filter((l) => l.trim()).slice(-10) : [];
   const cmdText = call.lang === "bash" ? call.body : call.raw;
   return (
     <>
@@ -1942,6 +1978,8 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
           const parts = outputParts(out).filter((p) => p.kind !== "edit" || !edits.some((f) => f.path === p.path));
           if (!parts.some((p) => p.kind === "edit")) {
             const text = parts.map((p) => (p.kind === "text" ? p.text : "")).join("\n").replace(/^\n+|\n+$/g, "");
+            const files = !edits.length && readChunks(code.text, out);
+            if (files) return <div className="tool-output">{files.map((f) => <Fragment key={f.path}><div className="mono read-file-head">{f.path}</div><Code text={f.text} lang={langForPath(f.path)} /></Fragment>)}</div>;
             return text.trim() ? <div className="tool-output"><Code text={edits.length ? text : out} lang={resultLang(result)} /></div> : null;
           }
           return <div className="tool-output">{parts.map((p, i) => p.kind === "edit" ? <EditDiff key={i} part={p} />
@@ -2067,7 +2105,7 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
   // What failed, said where the turn ends: a phone has no hover to read it from.
   const failCmd = fail ? gistOf(parseCall(str(fail.data?.code)).gist) : "";
   const failOut = fail ? resultBody(fail).split("\n").filter((l) => l.trim()).slice(-3) : [];
-  const failName = fail ? /--- FAIL: (\S+)/.exec(resultBody(fail))?.[1] ?? failCmd : "";
+  const failName = fail ? failNameOf(str(fail.data?.code), resultBody(fail)) || failCmd : "";
   // The failed call already open on screen says it all; the footer then only points at it.
   const [shownOpen, setShownOpen] = useState(Boolean(fail));
   useEffect(() => {
@@ -3470,6 +3508,15 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     if (atBottom.current) end.current?.scrollIntoView({ block: "end" });
   }, [lines.length, streamLen]);
   const turns = useMemo(() => groupTurns(lines), [lines]);
+  // R4-B: the last finished turn ended on a failed command: the header says Failed, as its footer does, never a checked Done.
+  const lastFail = useMemo(() => {
+    const t = [...turns].reverse().find((u) => u.done);
+    if (!t?.done || t.stopped || t.done.kind === "cancelled") return null;
+    const exit = t.done.data?.exit;
+    const r = [...t.body].reverse().find((l) => l.kind === "result" && typeof l.data?.exit === "number" && l.data.exit !== 0);
+    if (typeof exit === "number" ? exit === 0 : !r || r !== [...t.body].reverse().find((l) => l.kind === "result")) return null;
+    return r ? failNameOf(str(r.data?.code), resultBody(r)) || "Command" : "Command";
+  }, [turns]);
   // Numbered by prompt, as the turn log counts; once per transcript, not a rescan per turn per render.
   const turnNums = useMemo(() => { let n = 0; return turns.map((t) => (t.prompt ? ++n : undefined)); }, [turns]);
 
@@ -3895,7 +3942,9 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
             // Worst outcome first: a finished session whose work failed does not read as a bare Done.
             : row.status === "done" && counts.failed > 0
               ? <span className="status head-trouble"><StatusMark status="error" bare />{statusWord("done")} · {counts.failed} failed</span>
-              : <StatusMark status={row.status} />}
+              : row.status === "done" && lastFail
+                ? <span className="status head-failed" title={`${lastFail} failed`}><WarnMark />Failed</span>
+                : <StatusMark status={row.status} />}
           <ModeChip row={row} name={projects.find((p) => p.id === row.orb?.project)?.name} />
           {/* A short link beside the chip: a full button pushed the title row
               past its 32px and covered the strip below. */}
