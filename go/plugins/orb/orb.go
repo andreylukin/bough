@@ -227,8 +227,11 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		say(ctx, uiModeOf(ctx), report)
 	}
 	if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
-		s.Set("orb", promptSection(o.Root(), st, p.Def, missing))
-		ctx.Effect(func() { s.Set("orb", "") })
+		root := o.Root()
+		s.Set("orb", promptSection(root, st, p.Def, missing))
+		// A restart gets a new IP: keep the prompt's address current.
+		o.OnResume(func(st iorb.State) { s.Set("orb", promptSection(root, st, p.Def, missing)) })
+		ctx.Effect(func() { o.OnResume(nil); s.Set("orb", "") })
 	}
 	if reg, err := kernel.Get[*commands.Registry](ctx, "commands"); err == nil {
 		registerOrbCommand(ctx, reg, o, home)

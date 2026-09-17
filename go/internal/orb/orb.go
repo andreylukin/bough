@@ -31,11 +31,12 @@ type Orb struct {
 	project projectdef.Project
 	scratch string
 
-	mu    sync.Mutex
-	state State
-	spec  container.RunSpec
-	proxy *proxy // host egress for the guest; nil when it could not start
-	token string // proxy/relay token; "" for a container created before tokens
+	mu       sync.Mutex
+	state    State
+	spec     container.RunSpec
+	proxy    *proxy      // host egress for the guest; nil when it could not start
+	token    string      // proxy/relay token; "" for a container created before tokens
+	onResume func(State) // called under mu after each start settles; must not call back into o
 
 	secretWarned sync.Map // secret names already reported unresolved
 }
@@ -372,6 +373,17 @@ func (o *Orb) resumeLocked(ctx context.Context) {
 		o.state.begin(PhaseReady)
 	}
 	writeState(o.home, o.state)
+	if o.onResume != nil {
+		o.onResume(o.state)
+	}
+}
+
+// OnResume sets f to run after every later start (a restart gets a new
+// IP); nil clears it. f must not call methods on o.
+func (o *Orb) OnResume(f func(State)) {
+	o.mu.Lock()
+	o.onResume = f
+	o.mu.Unlock()
 }
 
 func (o *Orb) runResume(ctx context.Context, script string) error {

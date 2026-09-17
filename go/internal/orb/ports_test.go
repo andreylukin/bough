@@ -91,3 +91,27 @@ func TestStartPortCollisionMessage(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+// The IP changes on every restart: a restart behind the session (/orb
+// stop, then a command) must tell the plugin, or the prompt keeps the old
+// address.
+func TestRestartReportsNewAddress(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	home := t.TempDir()
+	p := newProject(t, home, "ra", "  - path: "+newRepo(t)+"\n")
+	rt := container.NewFake()
+	rt.Addr = "192.168.64.7"
+	o, err := Open(ctx, rt, home, "s1", p, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	o.OnResume(func(st State) { got = st.IP })
+	o.Stop(ctx)
+	rt.Addr = "192.168.64.8"
+	o.Command(ctx, "true")
+	if got != "192.168.64.8" {
+		t.Fatalf("OnResume ip %q", got)
+	}
+}
