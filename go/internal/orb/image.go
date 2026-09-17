@@ -37,6 +37,13 @@ func ReadBuild(home, slug string) (Build, error) {
 	return b, nil
 }
 
+// FailedBuild reports that the last build of this hash failed: a failed
+// build can leave its tag behind, and that tag is not a usable image.
+func FailedBuild(home, slug, hash string) bool {
+	b, _ := ReadBuild(home, slug)
+	return b.State == "failed" && b.Hash == hash
+}
+
 // EnsureImage builds the project's snapshot image when its tag is missing.
 // Builds are serialised per project by build.lock; a waiter re-hashes
 // under the lock (the definition may have changed while it waited), so N
@@ -50,7 +57,7 @@ func EnsureImage(ctx context.Context, rt container.Runtime, home string, p proje
 	tag := projectdef.ImageTag(p.Slug, hash)
 	if ok, err := rt.ImageExists(ctx, tag); err != nil {
 		return "", fmt.Errorf("orb: image %s: %w", tag, err)
-	} else if ok {
+	} else if ok && !FailedBuild(home, p.Slug, hash) {
 		return tag, nil
 	}
 	dir := imagesDir(home, p.Slug)
@@ -79,7 +86,7 @@ func EnsureImage(ctx context.Context, rt container.Runtime, home string, p proje
 	tag = projectdef.ImageTag(p.Slug, hash)
 	if ok, err := rt.ImageExists(ctx, tag); err != nil {
 		return "", fmt.Errorf("orb: image %s: %w", tag, err)
-	} else if ok {
+	} else if ok && !FailedBuild(home, p.Slug, hash) {
 		return tag, nil
 	}
 

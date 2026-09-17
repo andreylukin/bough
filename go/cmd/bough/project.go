@@ -7,9 +7,11 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,7 +23,7 @@ import (
 )
 
 const projectUsage = `usage: bough project <command>
-  list                                  every project and its repos
+  list                                  every project: repos, image and orb state
   show <slug> [file]                    print project.yml, Dockerfile, setup.sh, resume.sh (or one)
   create <slug> <repo>...               new project; a repo is a local path (~ ok) or a git remote
   add-repo <slug> <repo> [--branch B] [--name N]
@@ -31,6 +33,10 @@ const projectUsage = `usage: bough project <command>
   set <slug> <key> <value>              checks.fast, checks.full, base, memory, cpus, env.NAME,
                                         secrets.NAME keychain:<service>; "" clears
   write <slug> <file>                   replace a file with stdin (empty stdin deletes a script)
+  build <slug>                          build the project's image now (streams the log)
+  status [slug|session]                 orbs and their state; one session's orb in detail
+  logs <slug|session>                   a project's build.log, or a session's resume.log
+  stop <session> [--yes]                stop a session's container (asks when its session runs)
   rm <session> [--branches] [--yes]     remove a session's orb: container, worktrees, orb dir
   prune [slug] [--branches] [--yes]     remove failed and archived sessions' orbs and unused images
                                         branches bough/<session> are kept; --branches deletes merged or pushed ones
@@ -51,6 +57,10 @@ func project(out io.Writer, in io.Reader, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("%s", projectUsage)
 	}
+	if args[0] == "--help" || args[0] == "-h" || args[0] == "help" || args[0] == "-help" {
+		fmt.Fprintln(out, projectUsage)
+		return nil
+	}
 	need := func(n int) error {
 		if len(args)-1 < n {
 			return fmt.Errorf("%s", projectUsage)
@@ -59,22 +69,22 @@ func project(out io.Writer, in io.Reader, args []string) error {
 	}
 	switch args[0] {
 	case "list":
-		ps, err := projectdef.List(home)
-		for _, p := range ps {
-			names := make([]string, len(p.Def.Repos))
-			for i, r := range p.Def.Repos {
-				names[i] = r.RepoName()
-			}
-			fmt.Fprintf(out, "%s\t%s\n", p.Slug, strings.Join(names, ", "))
-		}
-		return err
+		return projectList(out, home)
+	case "build":
+		return projectBuild(out, home, args[1:])
+	case "status":
+		return projectStatus(out, home, args[1:])
+	case "logs":
+		return projectLogs(out, home, args[1:])
+	case "stop":
+		return projectStop(out, in, home, args[1:])
 	case "show":
 		if err := need(1); err != nil {
 			return err
 		}
 		// A missing project must fail, not print nothing: scripts test
 		// `show` to decide whether to create one.
-		if _, err := projectdef.Load(home, args[1]); err != nil {
+		if _, err := loadProject(home, args[1]); err != nil {
 			return err
 		}
 		files := projectdef.EditableFiles
@@ -92,10 +102,15 @@ func project(out io.Writer, in io.Reader, args []string) error {
 		}
 		return nil
 	case "create":
+		if len(args) == 2 {
+			return fmt.Errorf("create needs a repo: bough project create %s <path or remote>...", args[1])
+		}
 		if err := need(2); err != nil {
 			return err
 		}
-		if _, err := projectdef.Create(home, args[1]); err != nil {
+		if _, err := projectdef.Create(home, args[1]); errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("project %q exists (bough project show %s)", args[1], args[1])
+		} else if err != nil {
 			return err
 		}
 		// The skeleton's example repo is a placeholder; the given repos replace it.
@@ -242,7 +257,7 @@ func setKey(d *projectdef.Def, key, val string) error {
 // mutate rewrites project.yml from the parsed definition. Comments in the
 // file do not survive; the fields do.
 func mutate(out io.Writer, home, slug string, change func(*projectdef.Def) error) error {
-	p, err := projectdef.Load(home, slug)
+	p, err := loadProject(home, slug)
 	if err != nil {
 		return err
 	}

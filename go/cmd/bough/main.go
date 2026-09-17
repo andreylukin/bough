@@ -773,6 +773,8 @@ commands:
   serve     [addr] start the session control API detached (default
             127.0.0.1:7684; off loopback needs --insecure-bind);
             "serve status" / "serve stop"
+  project   project definitions and their orbs: list, create, set,
+            build, status, logs, stop, rm, prune ("project --help")
   loop      run <pipeline.yml> [--detach] | status [id] | stop <id>:
             agent and check nodes routed by exit codes (docs/loops.md)
 
