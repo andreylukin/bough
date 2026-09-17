@@ -6,7 +6,8 @@ import { STATUS, StatusMark, Working, hasFailure, hasQuestion, sessionSignal, st
 import { ProjectsView } from "./projects";
 import { ModeChip, ModePicker, type ModeValue } from "./mode";
 import { Select, type Option } from "./select";
-import { DialogHost, askChoice, askConfirm, askText } from "./dialog";
+import { DialogHost, askChoice, askConfirm, askText, showShortcuts } from "./dialog";
+import { overviewKeys, sheetKey, treeKey } from "./keys";
 import { Welcome, welcomeDismissed } from "./welcome";
 import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount, changedPath } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
@@ -552,22 +553,24 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   const walk = (e: React.KeyboardEvent<HTMLDivElement>) => {
     // Escape in the tree drops a filter in force; focus stays where it is.
     if (e.key === "Escape" && query) { e.preventDefault(); onQuery(""); setSearching(false); return; }
-    if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+    if (e.altKey || e.metaKey || e.ctrlKey || isTypingTarget(e.target)) return;
+    const key = treeKey(e.key);
+    if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"].includes(key)) return;
     const items = [...e.currentTarget.querySelectorAll<HTMLElement>(TREE_ITEMS)];
     if (!items.length) return;
     const at = document.activeElement as HTMLElement | null;
     const cur = at?.closest(".row-wrap")?.querySelector<HTMLElement>("button.row") ?? at;
     const go = (el?: HTMLElement | null) => { if (el) { el.focus(); el.scrollIntoView({ block: "nearest" }); } };
     e.preventDefault();
-    if (e.key === "Home" || e.key === "End") { go(items[e.key === "Home" ? 0 : items.length - 1]); return; }
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    if (key === "Home" || key === "End") { go(items[key === "Home" ? 0 : items.length - 1]); return; }
+    if (key === "ArrowDown" || key === "ArrowUp") {
       const i = cur ? items.indexOf(cur) : -1;
-      go(items[i < 0 ? (e.key === "ArrowDown" ? 0 : items.length - 1)
-        : Math.max(0, Math.min(items.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))]);
+      go(items[i < 0 ? (key === "ArrowDown" ? 0 : items.length - 1)
+        : Math.max(0, Math.min(items.length - 1, i + (key === "ArrowDown" ? 1 : -1)))]);
       return;
     }
     if (!cur) return;
-    const right = e.key === "ArrowRight";
+    const right = key === "ArrowRight";
     if (cur.classList.contains("sec-fold") || cur.classList.contains("ws-head")) {
       const open = cur.getAttribute("aria-expanded") === "true";
       // Right on an open group steps into its first child; left on a shut one steps out.
@@ -2830,7 +2833,7 @@ function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onR
               {runningRow
                 ? <p className="ov-empty-title"><button className="link ov-point" onClick={() => onReveal(runningRow.id)}>{running} running</button></p>
                 : <p className="ov-empty-title">Nothing needs your attention</p>}
-              <p className="ov-empty-keys"><kbd>{modKey()}K</kbd> search or start <kbd>/</kbd> filter the list <kbd>{modKey()}B</kbd> sidebar</p>
+              <p className="ov-empty-keys">{overviewKeys(modKey()).map((k) => <Fragment key={k.label}><kbd>{k.key}</kbd> {k.label} </Fragment>)}<kbd>?</kbd> all shortcuts</p>
             </div>
           )
         )}
@@ -4411,6 +4414,17 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [palette, view, selected, sub]);
 
+  // ? shows every shortcut, from anywhere that is not taking typing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || palette || !sheetKey(e)) return;
+      e.preventDefault();
+      showShortcuts(modKey());
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [palette]);
+
   // F6 / Shift+F6 cycle the regions: sidebar, header, transcript, composer.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -4558,6 +4572,11 @@ export default function App() {
     { id: "go:hooks", group: "Navigation", label: "Hooks",
       run: () => { setView("hooks"); setPane("thread"); } },
     { id: "go:wiki", group: "Navigation", label: "Wiki", run: () => goWiki({ at: "index" }) },
+    { id: "help:keys", group: "Navigation", label: "Keyboard shortcuts", hint: "?",
+      run: () => showShortcuts(modKey()) },
+    // ⌘P elsewhere: here it is this palette again, cleared, where titles are searched.
+    { id: "go:switch", group: "Navigation", label: "Switch session", hint: "type a title",
+      run: () => requestAnimationFrame(() => setPalette(true)) },
     { id: "go:side", group: "Navigation", label: "Toggle sidebar", hint: `${modKey()}B`,
       run: () => window.dispatchEvent(new Event("bough:toggle-side")) },
     { id: "wiki:review", group: "Wiki", label: "Review flagged claims",

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import { BINDINGS, keyText } from "./keys";
 
 /**
  * Asking for a name, or whether to go ahead.
@@ -17,7 +18,8 @@ type Req =
       resolve: (v: boolean) => void }
 
   | { kind: "choice"; title: string; body: string; actions: string[];
-      resolve: (v: string | null) => void };
+      resolve: (v: string | null) => void }
+  | { kind: "keys"; title: string; mod: string; resolve: () => void };
 
 let push: ((r: Req) => void) | null = null;
 
@@ -86,6 +88,12 @@ export function askChoice(title: string, body: string, actions: string[]): Promi
   });
 }
 
+/** The keyboard shortcut sheet, drawn from the one bindings table. */
+export function showShortcuts(mod: string) {
+  if (!push || document.querySelector("[aria-modal='true']")) return;
+  push({ kind: "keys", title: "Keyboard shortcuts", mod, resolve: () => {} });
+}
+
 /**
  * What aria-modal promises but does not do: Tab cycles inside the box,
  * and everything else on the page is inert while it is up. The modal is
@@ -149,7 +157,7 @@ export function DialogHost() {
     requestAnimationFrame(() => {
       if (req.kind === "text") { input.current?.focus(); input.current?.select(); }
       // A safe confirm starts on Cancel: Enter alone never archives.
-      else (req.kind === "confirm" && req.safe ? cancel : ok).current?.focus();
+      else (req.kind === "keys" || (req.kind === "confirm" && req.safe) ? cancel : ok).current?.focus();
     });
   }, [req]);
 
@@ -160,6 +168,7 @@ export function DialogHost() {
     const r = req;
     setReq(null);
     if (r.kind === "confirm") r.resolve(result as boolean);
+    else if (r.kind === "keys") r.resolve();
     else r.resolve(result as string | null);
   };
   // Blank is allowed where it means something (a session title handed
@@ -185,7 +194,20 @@ export function DialogHost() {
       <div ref={box} className="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-title" aria-busy={saving || undefined}
            onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); dismiss(); } }}>
         <h2 id="dlg-title" className="dlg-title">{req.title}</h2>
-        {req.kind !== "text" && <p className="dlg-body">{req.body}</p>}
+        {(req.kind === "confirm" || req.kind === "choice") && <p className="dlg-body">{req.body}</p>}
+        {req.kind === "keys" && (["Global", "Session", "Composer"] as const).map((sec) => (
+          <section key={sec} className="keys-sec" aria-labelledby={`keys-${sec}`}>
+            <h3 id={`keys-${sec}`} className="keys-h">{sec}</h3>
+            <dl className="keys-list">
+              {BINDINGS.filter((b) => b.section === sec).map((b) => (
+                <div key={b.label} className="keys-row">
+                  <dt>{b.keys.map((k) => <kbd key={k}>{keyText(k, req.mod)}</kbd>)}</dt>
+                  <dd>{b.label}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ))}
         {req.kind === "text" && (
           <input ref={input} className="field dlg-input" value={text} placeholder={req.placeholder}
                  aria-labelledby="dlg-title" readOnly={saving} aria-invalid={failed ? true : undefined}
@@ -195,8 +217,8 @@ export function DialogHost() {
         )}
         {failed && <p id="dlg-err" className="dlg-err" role="alert">Not saved: {failed}</p>}
         <div className="dlg-actions">
-          <button ref={cancel} className="btn" onClick={dismiss} disabled={saving}>Cancel</button>
-          {req.kind === "choice" ? [...req.actions].reverse().map((a, i, all) => (
+          <button ref={cancel} className="btn" onClick={dismiss} disabled={saving}>{req.kind === "keys" ? "Close" : "Cancel"}</button>
+          {req.kind === "keys" ? null : req.kind === "choice" ? [...req.actions].reverse().map((a, i, all) => (
             <button key={a} ref={i === all.length - 1 ? ok : undefined} className={"btn" + (i === all.length - 1 ? " btn-primary" : "")}
                     onClick={() => finish(a)}>{a}</button>
           )) : <button ref={ok} className={"btn " + (req.kind === "confirm" && req.danger ? "btn-danger" : "btn-primary")}

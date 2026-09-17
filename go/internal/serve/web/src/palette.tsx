@@ -4,6 +4,7 @@ import { useModal } from "./dialog";
 import type { Row } from "./types";
 import { hasOwnTitle, plainTitle, sessionTitle, titleKey } from "./render";
 import { shownStatus, statusWord } from "./status";
+import { isMac, paletteKeyOpens } from "./keys";
 
 /**
  * ⌘K. With 150 conversations the sidebar is a scroll, not an index —
@@ -51,11 +52,7 @@ export function isPathQuery(q: string): boolean {
   return /^(\/|~(\/|$))/.test(q.trim());
 }
 
-/** True when a key event lands where someone is typing: single-key shortcuts leave it alone. */
-export function isTypingTarget(t: EventTarget | null): boolean {
-  const el = t as HTMLElement | null;
-  return Boolean(el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName ?? "")));
-}
+export { isTypingTarget } from "./keys";
 
 /**
  * A typed path is a place to start, ahead of everything else: it is never
@@ -458,11 +455,11 @@ function evidence(h: SearchHit | undefined, title: string, needle: string): stri
   return line ? trimLine(line.text, needle) : "";
 }
 
-/** ⌘K on a Mac, Ctrl+K elsewhere, and never inside a text field. */
+/** ⌘K on a Mac, Ctrl+K elsewhere; Ctrl+K in a Mac text field stays kill-line. */
 export function usePaletteKey(onOpen: () => void) {
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      if (paletteKeyOpens(e, isMac())) {
         e.preventDefault();
         onOpen();
       }
