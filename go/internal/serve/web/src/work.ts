@@ -374,6 +374,9 @@ export function useReviewed(session: string): { isReviewed(w: Worker): boolean; 
 /** The loop's prefix for a turn a finished background job starts on its own. */
 export const JOB_WAKE_PREFIX = "[background job] ";
 
+/** A background agent's finish note, as serve's reportText writes it. */
+const AGENT_NOTE = /^\[agent .* (?:finished|failed|stopped)\]/;
+
 /**
  * The job notes of a background-job wake-up turn, or null for a prompt a
  * person typed. That turn is recorded as an input, so it rendered as if you
@@ -382,9 +385,11 @@ export const JOB_WAKE_PREFIX = "[background job] ";
 export function jobWakeNotes(text: string): string[] | null {
   if (!text.startsWith(JOB_WAKE_PREFIX)) return null;
   const notes: string[] = [];
+  let open = false;
   for (const l of text.split("\n")) {
-    if (/^job \d+ \[/.test(l)) notes.push(l);
-    else if (notes.length && l.trim()) notes[notes.length - 1] += "\n" + l;
+    if (/^job \d+ \[/.test(l)) { notes.push(l); open = true; }
+    else if (AGENT_NOTE.test(l)) open = false;
+    else if (open && l.trim()) notes[notes.length - 1] += "\n" + l;
   }
   return notes.map((n) => n.trimEnd());
 }
@@ -393,9 +398,11 @@ export function jobWakeNotes(text: string): string[] | null {
 export function agentWakeNotes(text: string): string[] | null {
   if (!text.startsWith(JOB_WAKE_PREFIX)) return null;
   const notes: string[] = [];
+  let open = false;
   for (const l of text.split("\n")) {
-    if (/^\[agent [^\]]* (?:finished|failed|stopped)\]/.test(l)) notes.push(l);
-    else if (notes.length && !/^job \d+ \[/.test(l)) notes[notes.length - 1] += "\n" + l;
+    if (AGENT_NOTE.test(l)) { notes.push(l); open = true; }
+    else if (/^job \d+ \[/.test(l)) open = false;
+    else if (open) notes[notes.length - 1] += "\n" + l;
   }
   return notes.map((n) => n.trimEnd());
 }

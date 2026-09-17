@@ -2528,7 +2528,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
   };
   return (
     <section className="turn" data-turn={n}>
-      {turn.prompt && wakeAgents && !wakeJobs && (
+      {turn.prompt && wakeAgents && (
         <div className="job-wake" role="note">
           <p className="meta-line">
             {wakeAgents.length === 1 ? "A background agent finished" : `${wakeAgents.length} background agents finished`} while the agent was idle · {when(turn.prompt.at)}

@@ -24,3 +24,10 @@ test("an agent wake-up yields no job notes and its agent notes", async () => {
   expect(agentWakeNotes(text)).toEqual(["[agent List files · 01a0 finished] Wrote COUNTS.md", "[agent Lint · 02b1 failed] boom"]);
   expect(agentWakeNotes("run the tests")).toBeNull();
 });
+
+test("a mixed wake-up keeps agent notes out of the job's output", async () => {
+  const { agentWakeNotes } = await import("../src/work");
+  const text = wake + "job 3 [exited 0] make (1s)\nok\n[agent Lint · 02b1 finished] clean";
+  expect(jobWakeNotes(text)).toEqual(["job 3 [exited 0] make (1s)\nok"]);
+  expect(agentWakeNotes(text)).toEqual(["[agent Lint · 02b1 finished] clean"]);
+});

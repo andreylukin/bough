@@ -163,3 +163,10 @@ test("a command-only turn is not Interrupted", () => {
   const ls: Line[] = [{ seq: 1, at: at(0), kind: "command", text: "/model opus" }, { seq: 2, at: at(0), kind: "system", text: "model: opus" }];
   expect(renderToStaticMarkup(<TurnView turn={groupTurns(ls)[0]} superseded />)).not.toContain("Interrupted");
 });
+
+test("a wake-up from a job and an agent shows both", () => {
+  const wake = "[background job] A command you started in the background has finished while you were idle.\n\njob 3 [exited 0] make (1s)\n[agent Lint · 02b1 finished] clean";
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns([{ seq: 1, at: at(0), kind: "input", text: wake }])[0]} />);
+  expect(html).toContain("A background agent finished");
+  expect(html).toContain("A background job finished");
+});
