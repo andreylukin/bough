@@ -40,3 +40,22 @@ test("a reply that was only guessed output is a quiet note, prose around it stay
   const mixed = renderToStaticMarkup(<Entry line={{ seq: 1, at: "", kind: "assistant", text: "It printed:\n[guessed output omitted]\nThat is all." }} codes={[]} />);
   expect(mixed).toContain("That is all.");
 });
+
+test("R2-E: the running and finished prompt rows share one structure, so nothing shifts when the turn ends", async () => {
+  const { Thread } = await import("../src/app");
+  const at = "2026-09-16T10:00:00Z";
+  const row = { id: "s1", cwd: "/tmp/x", status: "running" } as never;
+  const props = { onSend: async () => null, onAnswer: async () => null, onInterrupt: () => {}, onArchive: () => {}, onRename: async () => {},
+    onModel: () => {}, onEffort: () => {}, onAssign: () => {}, onBack: () => {}, onContext: () => {}, onAck: () => {}, projects: [], busy: false, jump: null } as const;
+  const running = renderToStaticMarkup(<Thread {...props} row={row} lines={[]} sending={[{ id: "p1", text: "write an essay", after: 0, at }]} stream={[{ kind: "text", text: "Bonsai is" }] as never} />);
+  const done = renderToStaticMarkup(<Thread {...props} row={{ ...(row as object), status: "idle" } as never} lines={[
+    { seq: 1, at, kind: "input", text: "write an essay" }, { seq: 2, at, kind: "assistant", text: "Bonsai is" }, { seq: 3, at, kind: "done", text: "" }] as never} />);
+  const shape = (html: string) => {
+    const t = html.slice(html.indexOf('aria-label="Transcript"'));
+    const sections = t.match(/<(section|div) class="turn[" ]/g)?.length ?? 0;
+    const prompt = t.match(/<div class="prompt">.*?<\/div><\/div>/)?.[0] ?? "";
+    return { sections, time: /class="num prompt-time"[^>]*>[^<]+</.test(t), mark: prompt.includes("prompt-mark"), acts: t.includes("msg-acts prompt-acts") };
+  };
+  expect(shape(running)).toEqual({ sections: 1, time: true, mark: true, acts: true });
+  expect(shape(running)).toEqual(shape(done));
+});

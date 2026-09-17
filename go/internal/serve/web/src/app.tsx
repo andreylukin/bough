@@ -1534,6 +1534,9 @@ function callFacts(code: Line, result?: Line): CallFacts {
   return { verb: call.verb, gist: gistOf(call.gist), cmd: gistOf(call.target || call.gist), exit, ms, failed: (exit !== undefined && exit !== 0) || Boolean(thrownError(result)), edits: outputParts(out) };
 }
 
+/** Fired when a turn starts or output streams in; open output cards close. */
+const TRANSCRIPT_GREW = "bough:transcript-grew";
+
 const canHover = () => typeof window !== "undefined" && window.matchMedia?.("(hover: hover)").matches;
 
 /**
@@ -1550,6 +1553,7 @@ function useThinPop(rows: CallFacts[]) {
   const hideSoon = () => { clearTimeout(timer.current); timer.current = setTimeout(() => setAt(null), 150); };
   const keep = () => clearTimeout(timer.current);
   const ref = useRef<HTMLDivElement>(null);
+  const anchor = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (!at) return;
     // Escape closes the popover only; it must not also leave the thread.
@@ -1561,9 +1565,17 @@ function useThinPop(rows: CallFacts[]) {
     // Moving to another session or view leaves nothing to describe.
     window.addEventListener("hashchange", hide);
     window.addEventListener("popstate", hide);
+    // A new turn or streamed output: the card would cover what is arriving.
+    window.addEventListener(TRANSCRIPT_GREW, hide);
+    // The line moved without a scroll event (content above it grew): it no longer points at it.
+    let frame = requestAnimationFrame(function watch() {
+      if (!anchor.current?.isConnected || Math.abs(anchor.current.getBoundingClientRect().top - at.top) > 1) { hide(); return; }
+      frame = requestAnimationFrame(watch);
+    });
     return () => {
       window.removeEventListener("keydown", key, true); window.removeEventListener("scroll", scroll, true);
       window.removeEventListener("hashchange", hide); window.removeEventListener("popstate", hide);
+      window.removeEventListener(TRANSCRIPT_GREW, hide); cancelAnimationFrame(frame);
     };
   }, [at, hide]);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -1573,7 +1585,7 @@ function useThinPop(rows: CallFacts[]) {
     // A fine pointer only: focus walking the summaries never opens a preview.
     if (!canHover()) return;
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => setAt(el.getBoundingClientRect()), 300);
+    timer.current = setTimeout(() => { anchor.current = el; setAt(el.getBoundingClientRect()); }, 300);
   };
   const handlers = {
     onMouseEnter: show, onMouseLeave: hideSoon, onBlur: hide, onClick: hide,
@@ -2907,7 +2919,7 @@ function ParentLink({ id, rows, onOpen }: { id: string; rows: Row[]; onOpen?: (i
 /** steer: whether a turn was running when you sent it. Read off the live
  *  status instead, the message itself flipped the session to running before
  *  the transcript showed it, so every new turn read "Steer pending…". */
-type Pending = { id: string; text: string; after: number; steer?: boolean };
+type Pending = { id: string; text: string; after: number; steer?: boolean; /** When it was sent, for the prompt time. */ at?: string };
 
 /** The composer's status word: a send not yet recorded, a turn with no
  *  output yet, then output arriving. Derived from the same render as the
@@ -2923,7 +2935,8 @@ function WaitingDot() {
   return <div className="waiting-dot" aria-hidden="true"><i /></div>;
 }
 
-function SendingPrompt({ p, accepted = false, clamp = true, onClip, clipped, onToggle }: { p: Pending; /** The turn it started is running: no longer on its way. */ accepted?: boolean; clamp?: boolean; onClip?: (el: HTMLParagraphElement) => void; clipped?: boolean; onToggle?: () => void }) {
+function SendingPrompt({ p, accepted = false, clamp = true, onClip, clipped, onToggle, children }: { p: Pending; /** The turn it started is running: no longer on its way. */ accepted?: boolean; clamp?: boolean; onClip?: (el: HTMLParagraphElement) => void; clipped?: boolean; onToggle?: () => void;
+  /** The running turn's body: inside the same section, as a recorded turn has it, so no separator appears and then goes. */ children?: React.ReactNode }) {
   return (
     <section className={"turn" + (accepted ? "" : " turn-sending")}>
       <div className="prompt">
@@ -2932,8 +2945,12 @@ function SendingPrompt({ p, accepted = false, clamp = true, onClip, clipped, onT
           <p className={clamp ? "prompt-clamp" : ""} ref={(el) => { if (el) onClip?.(el); }}>{p.text}</p>
           {clipped && <button className="link" onClick={onToggle}>{clamp ? "Show full prompt" : "Show less"}</button>}
         </div>
-        {!accepted && <span className="num prompt-time turn-sending-state" role="status">{p.steer ? "Steer pending…" : "Sending…"}</span>}
+        {!accepted ? <span className="num prompt-time turn-sending-state" role="status">{p.steer ? "Steer pending…" : "Sending…"}</span>
+          : p.at && <span className="num prompt-time" title={new Date(p.at).toLocaleString()}>{when(p.at)}</span>}
+        {/* The recorded prompt's action row keeps its height here, so the body does not drop when it lands. */}
+        <div className="msg-acts prompt-acts"><CopyButton text={p.text} what="prompt" /></div>
       </div>
+      {children}
     </section>
   );
 }
@@ -3496,6 +3513,12 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const inputs = lines.filter((l) => l.kind === "input");
   const sameText = (p: Pending) => { const want = p.text.trim().slice(0, 200); return inputs.slice(-(sending.length + 3)).some((l) => (l.text ?? "").trim().startsWith(want)); };
   const unlanded = loading ? sending : sending.filter((p, i) => inputs.filter((l) => l.seq > p.after).length <= i && !sameText(p));
+  // A running turn whose prompt has not landed yet: its stream sits in the
+  // prompt's own section, with the prompt time, as the recorded turn will.
+  const liveBody = running && (turns.length === 0 || turns[turns.length - 1].done) && !row.ask
+    ? <div className="turn-body"><StreamView runs={stream} /><Working label={activity || "Working"} /></div> : null;
+  const liveHost = liveBody ? unlanded.filter((p) => !p.steer).at(-1) : undefined;
+  useEffect(() => { window.dispatchEvent(new Event(TRANSCRIPT_GREW)); }, [stream, lines.length, sending.length]);
   const landedIds = sending.length - unlanded.length;
   useEffect(() => { if (landedIds) setSending((q) => q.slice(landedIds)); }, [landedIds]); // eslint-disable-line react-hooks/exhaustive-deps
   const [fullPending, setFullPending] = useState("");
@@ -3519,7 +3542,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     }
     // A retry is the same request, so it keeps its id.
     const id = retried?.id ?? (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
-    if (!answer) setSending((q) => [...q, { id, text: t, after: newest, steer: running }]);
+    if (!answer) setSending((q) => [...q, { id, text: t, after: newest, steer: running, at: new Date().toISOString() }]);
     else setAnswering({ ask: ask ?? "", text: t });
     const error = await (answer ? onAnswer(t, ask) : onSend(t));
     if (answer) setAnswering(null);
@@ -3811,12 +3834,12 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
         {unlanded.map((p) => (
           <SendingPrompt key={p.id} p={p} accepted={running && !p.steer} clamp={fullPending !== p.id} clipped={clipped[p.id]}
             onClip={(el) => { if (!clipped[p.id] && el.scrollHeight > el.clientHeight + 1) setClipped((m) => ({ ...m, [p.id]: true })); }}
-            onToggle={() => setFullPending((v) => (v === p.id ? "" : p.id))} />
+            onToggle={() => setFullPending((v) => (v === p.id ? "" : p.id))}>
+            {p === liveHost && liveBody}
+          </SendingPrompt>
         ))}
         {!running && unlanded.some((p) => !p.steer) && <WaitingDot />}
-        {running && (turns.length === 0 || turns[turns.length - 1].done) && !row.ask && (
-          <div className="turn"><div className="turn-body"><StreamView runs={stream} /><Working label={activity || "Working"} /></div></div>
-        )}
+        {liveBody && !liveHost && <div className="turn">{liveBody}</div>}
         {row.ask && (
           <div className="ask" ref={ask}>
             <StatusMark status="needs-you" size={16} />
@@ -4528,7 +4551,7 @@ export default function App() {
   const start = (cwd: string, prompt: string, mode?: ModeValue) => act(async () => {
     const created = await api.create(cwd, prompt, mode?.mode, mode?.project);
     // The prompt shows where it will land while the new row is fetched.
-    if (prompt.trim()) setPending((m) => ({ ...m, [created.id]: [{ id: created.id, text: prompt, after: 0 }] }));
+    if (prompt.trim()) setPending((m) => ({ ...m, [created.id]: [{ id: created.id, text: prompt, after: 0, at: new Date().toISOString() }] }));
     openSession(created.id);
   }, "start a session");
   // New starts where the open session works, and the new session's header
