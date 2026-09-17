@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Back } from "./app";
+import { Back, ago } from "./app";
 import { duration, EmptyState, ErrorNote, Pending, useCopied } from "./loading";
 import { Markdown } from "./render";
 
@@ -218,12 +218,7 @@ const shortIds = (s: string) => s.replace(UUID, (id) => `session ${shortId(id)}`
 // Dates: one relative style (the sidebar's "1h ago") and one absolute
 // style ("Sep 14, 16:41"; the time alone for today) on every wiki surface.
 function since(iso: string | null): string {
-  if (!iso) return "never";
-  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
+  return iso ? `${ago(iso)} ago` : "never";
 }
 const hhmm = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const dayOf = (iso: string) => new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" });
@@ -308,8 +303,8 @@ function Crumbs({ onIndex, trail, title, slug }: { onIndex?: () => void; trail?:
       {onIndex && <><button className="wk-crumb-link" onClick={onIndex}>Wiki</button><span className="wk-sep" aria-hidden="true">/</span></>}
       {(trail ?? []).map((t) => <span key={t} className="wk-crumb-link wk-crumb-static wk-crumb-trail">{t}<span className="wk-sep" aria-hidden="true">/</span></span>)}
       <h1>{title}</h1>
-      {/* Phones read "Wiki / <slug>": the title is the in-body H1. */}
-      {slug && <span className="wk-crumb-slug mono" aria-hidden="true">{slug}</span>}
+      {/* Phones read "Wiki / <title>" on one line, cut when long. */}
+      {slug && <span className="wk-crumb-slug" aria-hidden="true">{title}</span>}
     </div>
   );
 }
