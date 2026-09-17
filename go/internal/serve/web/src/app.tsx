@@ -10,7 +10,7 @@ import { DialogHost, askChoice, askConfirm, askText, showShortcuts } from "./dia
 import { overviewKeys, sheetKey, treeKey } from "./keys";
 import { Welcome, welcomeDismissed } from "./welcome";
 import { clampToViewport } from "./popover";
-import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount, changedPath } from "./render";
+import { Markdown, programRan, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount, changedPath } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
 import { agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
@@ -1191,7 +1191,8 @@ export function Entry({ line, codes, nested, until }: { line: Line; codes: strin
   if (k === "assistant" || k === "sub:assistant") {
     // The loop's "blocks dropped" marker is a notice about the reply, not part of it.
     const { text: said, note } = splitExecNote(line.text);
-    const [body, program] = splitBareProgram(stripRunFences(said, codes));
+    const [body, bare] = splitBareProgram(stripRunFences(said, codes));
+    const program = programRan(bare, codes) ? "" : bare; // the recorded Program row already shows it
     if (blank(body) && !program) return note ? <ExecNote note={note} /> : null; // the reply was only the program it ran
     // The loop replaced the whole reply as model-guessed output: say so quietly, not as the answer.
     if (!program && body.trim() === "[guessed output omitted]") return <p className="exec-note exec-note-quiet">The reply was only output the model guessed, so it was removed</p>;

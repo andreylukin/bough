@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { splitBareProgram, stripRunFences } from "../src/render";
+import { programRan, splitBareProgram, stripRunFences } from "../src/render";
 
 const fence = (body: string) => "```js\n" + body + "\n```";
 
@@ -69,4 +69,11 @@ test("prose that only mentions code, or fenced code, stays prose", () => {
 test("a bracket inside a line comment does not swallow the prose after the run", () => {
   const text = "Intro.\n\nawait tools.bash(\"ls\") // step 1 (list\n\nAll done.";
   expect(splitBareProgram(text)).toEqual(["Intro.\n\nAll done.", "await tools.bash(\"ls\") // step 1 (list"]);
+});
+
+test("a bare copy of a program that ran is not flagged as unrecorded", () => {
+  const code = "await tools.patch('a.js', `x\n\ny`)\nawait tools.write('b.md', 'z')";
+  expect(programRan("await tools.patch('a.js', `x\n\ny`)\n\nawait tools.write('b.md',  'z')", [code])).toBe(true);
+  expect(programRan("await tools.bash('rm x')", [code])).toBe(false);
+  expect(programRan("await tools.bash('rm x')", [])).toBe(false);
 });

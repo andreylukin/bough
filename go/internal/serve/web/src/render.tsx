@@ -213,6 +213,13 @@ export function stripRunFences(text: string, codes: string[]): string {
   ).replace(/\n{3,}/g, "\n\n").trim();
 }
 
+/** A bare program whose text (ignoring whitespace) is inside a code the loop recorded: a duplicate of a run, not an unrun program. */
+export function programRan(program: string, codes: string[]): boolean {
+  const squash = (t: string) => t.replace(/\s+/g, "");
+  const p = squash(program);
+  return !!p && squash(codes.join("")).includes(p);
+}
+
 /**
  * A reply whose fence was lost carries a bare program: marked renders
  * it as run-on paragraphs of escaped JavaScript. Every run of lines
