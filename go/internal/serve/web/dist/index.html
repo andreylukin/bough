@@ -2648,6 +2648,72 @@ kbd,.keys-row kbd,.ov-empty-keys kbd,.mention-foot kbd{display:inline-grid;place
 .row:focus-visible,.side-new:focus-visible,.ws-head:focus-visible,.sec-fold:focus-visible,.turn-line:focus-visible,.ws-older:focus-visible,.sel-search:focus-visible,.hk-fold>summary.hk-main:focus-visible{outline-color:var(--focus)}
 @media (min-width:721px) and (pointer:fine){.welcome .btn,.welcome .btn-lg{height:var(--ctl)}}
 /* /MB-DL */
+/* MB-PAL: ⌘K palette and ⌘P switcher (see mobbin/palette/spec.md) */
+.pal{width:min(640px,calc(100vw - 32px));max-height:min(520px,calc(var(--vvh,100dvh) - 32px));inset-block-start:max(72px,14vh);
+  background:var(--raised);animation:pal-in var(--dur) var(--ease-out)}
+@keyframes pal-in{from{opacity:0;transform:translateY(-4px) scale(.98)}}
+.pal-scrim{animation:tip-in var(--dur-fast) linear}
+.pal-top{position:relative;flex-shrink:0;border-bottom:1px solid var(--line)}
+.pal-glass{position:absolute;left:16px;top:50%;translate:0 -50%;color:var(--text-3);pointer-events:none}
+.pal-field{display:block;width:100%;height:48px;box-sizing:border-box;padding:0 16px 0 44px;background:transparent;border:0;
+  font:15px var(--sans);color:var(--text-1);caret-color:var(--accent)}
+.pal-field-tag{padding-inline-end:88px}
+.pal-mode{position:absolute;right:12px;top:50%;translate:0 -50%;display:inline-flex;align-items:center;height:20px;padding:0 8px;
+  border-radius:var(--r-pill);background:var(--sel);font:500 11px/1 var(--sans);color:var(--text-3)}
+.pal-ops{flex-shrink:0;display:flex;align-items:center;gap:6px;height:28px;padding:0 16px;border-bottom:1px solid var(--line);overflow:hidden}
+.pal-op{display:inline-flex;align-items:center;height:20px;padding:0 6px;border:0;border-radius:var(--r-xs);background:var(--sel);
+  font:12px/1 var(--mono);color:var(--text-2);cursor:default}
+.pal-op-k{color:var(--text-3)}
+.pal-ops .pal-op-v{color:var(--accent)}
+button.pal-op{cursor:pointer}
+button.pal-op:hover .pal-op-v{color:var(--text-1)}
+.pal-list{padding:8px}
+.pal-group{display:flex;align-items:flex-end;gap:6px;height:28px;box-sizing:border-box;margin:8px 0 0;padding:0 8px 4px}
+.pal-list>div:first-child>.pal-group,.pal-none+div>.pal-group{margin-top:0}
+.pal-group-n{font:500 11px/1.2 var(--sans);letter-spacing:0;color:var(--text-3);opacity:.7}
+.pal-item{align-items:center;gap:12px;min-height:36px;padding:0 8px;transition:background-color var(--dur-fast) var(--ease)}
+.pal-glyph{display:inline-flex;flex:0 0 16px;justify-content:center}
+.pal-label{flex:1 1 auto;min-width:0;font-size:14px;font-weight:400;color:var(--text-1)}
+.pal-on .pal-label{font-weight:500}
+.pal-bad-item .pal-label,.pal-bad-item.pal-on .pal-label{color:var(--red)}
+.pal-hint{flex:0 1 auto;max-width:40%;font:12px var(--sans);font-variant-numeric:tabular-nums;color:var(--text-3);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pal-sep{opacity:.6}
+.pal-bad{color:var(--red)}
+.pal-path{direction:rtl;text-align:left}
+.pal-enter{flex-shrink:0;margin-inline-start:-4px}
+.pal-label mark,.pal-ev mark{background:color-mix(in srgb,var(--accent) 22%,transparent);color:inherit;border-radius:2px;padding:0 1px}
+.pal-ev{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;margin:2px 8px 6px 36px;padding:6px 10px;
+  border-radius:var(--r-xs);font:13px/20px var(--sans);color:var(--text-2);animation:tip-in var(--dur-fast) var(--ease-out)}
+.pal-ev-code{font:12px/20px var(--mono)}
+.pal-none{margin:0;padding:32px 16px;text-align:center}
+.pal-none p{margin:0}
+.pal-none-lead{padding:20px 16px 12px}
+.pal-none-1{font:500 14px/20px var(--sans);color:var(--text-1)}
+.pal-none-2,.pal-none.pal-none-2{font:13px/20px var(--sans);color:var(--text-3)}
+.pal-none-2 .btn{margin-inline-start:6px}
+.pal-none .status,.pal-count .status{vertical-align:-1px;margin-inline-end:4px}
+.pal-warn{color:var(--amber);vertical-align:-1px;margin-inline-end:6px}
+.pal-tip{margin:0;padding:8px 8px 4px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;font:12px/20px var(--sans);color:var(--text-3)}
+.pal-foot{height:36px;padding:0 12px;gap:16px;border-top:1px solid var(--line);font:12px var(--sans);color:var(--text-3)}
+.pal-k{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.pal-k kbd+kbd{margin-inline-start:-2px}
+.pal-count{margin-inline-start:auto;font-variant-numeric:tabular-nums;white-space:nowrap}
+@media (max-width:720px){
+  .pal{inset-block-start:calc(var(--vvt,0px) + 8px);width:calc(100vw - 16px)}
+  .pal-field{height:52px;font-size:16px}
+}
+@media (max-width:720px),(pointer:coarse){
+  .pal-item{min-height:48px;padding:6px 8px;flex-wrap:wrap;row-gap:0}
+  .pal-label{font-size:15px;flex-basis:calc(100% - 28px)}
+  .pal-item:not(:has(.pal-glyph)) .pal-label{flex-basis:100%}
+  .pal-hint{flex-basis:100%;max-width:none;padding-inline-start:28px}
+  .pal-item:not(:has(.pal-glyph)) .pal-hint{padding-inline-start:0}
+  .pal-enter{display:none}
+  .pal-foot{display:none}
+}
+@media (prefers-reduced-motion:reduce){.pal,.pal-scrim,.pal-ev{animation:none}.pal-item{transition:none}}
+/* /MB-PAL */
 </style>
 </head>
 <body>
