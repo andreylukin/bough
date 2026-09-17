@@ -2666,7 +2666,7 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
 .pal-label{flex:1 1 auto;min-width:0;font-size:14px;font-weight:400;color:var(--text-1)}
 .pal-on .pal-label{font-weight:500}
 .pal-bad-item .pal-label,.pal-bad-item.pal-on .pal-label{color:var(--red)}
-.pal-hint{flex:0 1 auto;max-width:40%;font:12px var(--sans);font-variant-numeric:tabular-nums;color:var(--text-3);
+.pal-hint{flex:0 0 auto;max-width:40%;font:12px var(--sans);font-variant-numeric:tabular-nums;color:var(--text-3);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pal-sep{opacity:.6}
 .pal-bad{color:var(--red)}
