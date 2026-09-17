@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Job, OrbDetail, OrbFile, OrbStatus, Project, Status } from "./types";
-import { askConfirm } from "./dialog";
+import { askChoice, askConfirm } from "./dialog";
 import { sessionTitle } from "./render";
 import { CopyButton, Pending } from "./loading";
 import { STATUS, StatusMark } from "./status";
@@ -39,6 +39,57 @@ export function stopOrbQuestion(jobs?: Job[]): { title: string; body: string } |
 export async function confirmStopOrb(jobs?: Job[]): Promise<boolean> {
   const q = stopOrbQuestion(jobs);
   return !q || askConfirm(q.title, q.body, { action: "Stop orb", danger: true });
+}
+
+/** The project's last image build failed and no image stands in for it: a session started now rebuilds and likely fails again. */
+export const failedBuild = (p?: Project) => !!p?.orb && p.orb.build === "failed" && !p.orb.built;
+
+/**
+ * Before starting a session on a failed image: start anyway, or open the
+ * project's orb to fix it. Resolves true to start; opening the orb navigates.
+ */
+export async function confirmFailedBuild(p?: Project): Promise<boolean> {
+  if (!p || !failedBuild(p)) return true;
+  const c = await askChoice(`${p.name}’s image build failed`,
+    "A new session rebuilds the image first and will likely fail the same way. Fix the recipe in Projects → Orb, or start anyway.",
+    ["Open orb", "Start anyway"]);
+  if (c === "Open orb") location.hash = `#/projects/${p.id}/orb`;
+  return c === "Start anyway";
+}
+
+export interface OrbFailureLog { phase?: string; log?: string; error: string; text: string }
+
+const FAILED: Record<string, string> = { build: "Image build failed", setup: "Setup failed", start: "Orb failed to start" };
+
+/**
+ * Why a session's orb failed: the phase, the log lines that say why, and
+ * only the fix that applies (Rebuild for a build, Edit resume.sh and Retry
+ * for setup). The fix lives on the project's orb page, linked, not as CLI text.
+ */
+export function OrbFailureBody({ log, projectId, name, onRebuild, onRetry }: {
+  log: OrbFailureLog; projectId?: string; name: string; onRebuild?: () => void; onRetry?: () => void;
+}) {
+  const phase = log.phase || "start";
+  const [first, ...rest] = (log.error || "The orb failed without an error message.").split("\n");
+  const lines = rest.filter((l) => !l.startsWith("full log: ")).map((l) => l.trim());
+  const orbHref = projectId ? `#/projects/${projectId}/orb` : undefined;
+  const tail = log.text ? log.text.split("\n").slice(-120).join("\n") : "";
+  return <>
+    <p className="orb-failure-title"><strong>{FAILED[phase] ?? FAILED.start}</strong> <span className="meta-line">{first}</span></p>
+    {lines.length > 0 && <pre className="mono orb-failure-lines">{lines.join("\n")}</pre>}
+    {tail && (
+      <details className="orb-failure-log">
+        <summary>Full {log.log || "log"}</summary>
+        <pre className="mono">{tail}</pre>
+      </details>
+    )}
+    <span className="orb-actions">
+      {phase === "build" && onRebuild && <button className="btn" onClick={onRebuild}>Rebuild image</button>}
+      {phase === "setup" && orbHref && <a className="btn" href={orbHref}>Edit resume.sh</a>}
+      {phase === "setup" && onRetry && <button className="btn" onClick={onRetry}>Retry</button>}
+      {orbHref && <a className="link" href={orbHref}>Projects → {name} → Orb</a>}
+    </span>
+  </>;
 }
 
 /** An orb's state in the session vocabulary, so its rows read like every other list. */

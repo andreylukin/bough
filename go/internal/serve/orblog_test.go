@@ -34,3 +34,22 @@ func TestSessionOrbLog(t *testing.T) {
 		t.Errorf("unknown session = %d, want 404", code)
 	}
 }
+
+// A build failure has no resume.log: the web read "resume.log is empty".
+// It gets the project's build.log and the phase, so it offers Rebuild.
+func TestSessionOrbLogBuildPhase(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	seedModeSession(t, f, "nobuild", map[string]any{"cwd": "/w", "mode": "project", "project": "app"})
+	writeState(t, f.home, orb.State{Session: "nobuild", Project: "app", Status: orb.StatusFailed, Phase: orb.PhaseBuild, Error: "image: exit status 1", PID: 1 << 30, UpdatedAt: time.Now()})
+	if err := os.MkdirAll(filepath.Dir(orb.ImageLogPath(f.home, "app")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(orb.ImageLogPath(f.home, "app"), []byte("E: Unable to locate package nope\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, body := f.do(t, "GET", "/api/sessions/nobuild/orb/log", "")
+	if code != http.StatusOK || body["phase"] != "build" || body["log"] != "build.log" || !strings.Contains(body["text"].(string), "Unable to locate package") {
+		t.Fatalf("orb log = %d %v", code, body)
+	}
+}

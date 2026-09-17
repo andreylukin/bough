@@ -15,6 +15,14 @@ import (
 
 type Status string
 
+// What a failed orb failed at, so a ui offers the fix that applies:
+// rebuild the image, edit resume.sh, or fix the definition/runtime.
+const (
+	PhaseBuild = "build" // the image build (setup.sh / Dockerfile)
+	PhaseSetup = "setup" // resume.sh in the running container
+	PhaseStart = "start" // runtime, repos, worktrees or the container start
+)
+
 const (
 	StatusNone     Status = ""         // local session
 	StatusBuilding Status = "building" // image build in progress
@@ -34,6 +42,7 @@ type State struct {
 	Worktrees map[string]string `json:"worktrees,omitempty"` // repo name -> host path
 	Primary   string            `json:"primary,omitempty"`
 	Error     string            `json:"error,omitempty"`
+	Phase     string            `json:"phase,omitempty"` // with StatusFailed: PhaseBuild, PhaseSetup or PhaseStart
 	PID       int               `json:"pid,omitempty"`
 	ProxyAuth string            `json:"proxyAuth,omitempty"` // ProxyAuthToken or ProxyAuthLegacy
 	UpdatedAt time.Time         `json:"updatedAt"`

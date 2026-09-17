@@ -97,12 +97,16 @@ func EnsureImage(ctx context.Context, rt container.Runtime, home string, p proje
 	if err := writeJSON(buildJSON, b); err != nil {
 		return "", fmt.Errorf("orb: image %s: %w", tag, err)
 	}
-	berr := build(ctx, rt, home, p, tag, w)
+	var out tailBuffer
+	berr := build(ctx, rt, home, p, tag, io.MultiWriter(w, &out))
+	if berr != nil {
+		berr = withLogLines(berr, out.String(), ImageLogPath(home, p.Slug))
+	}
 	b.EndedAt = time.Now().UTC()
 	b.State = "ok"
 	if berr != nil {
 		b.State, b.Error = "failed", berr.Error()
-		fmt.Fprintf(w, "\nbuild failed: %v\n", berr)
+		fmt.Fprintf(w, "\nbuild failed: %v\n", errors.Unwrap(berr))
 	}
 	if err := writeJSON(buildJSON, b); err != nil && berr == nil {
 		berr = err

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net"
 	"os"
@@ -49,8 +50,9 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 	prev, prevErr := ReadState(home, session)
 	o := &Orb{rt: rt, home: home, session: session, project: p, scratch: scratchDir}
 	o.state = State{Session: session, Project: p.Slug, Container: container.OrbName(session), PID: os.Getpid()}
+	phase := PhaseStart
 	fail := func(err error) (*Orb, error) {
-		o.state.Status, o.state.Error = StatusFailed, err.Error()
+		o.state.Status, o.state.Error, o.state.Phase = StatusFailed, err.Error(), phase
 		writeState(home, o.state)
 		return nil, fmt.Errorf("orb: open %s: %w", session, err)
 	}
@@ -68,6 +70,7 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 	writeState(home, o.state)
 	tag, err := EnsureImage(ctx, rt, home, p, nil)
 	if err != nil {
+		phase = PhaseBuild
 		return fail(err)
 	}
 	o.state.Image = tag
@@ -323,11 +326,11 @@ func (o *Orb) resumeLocked(ctx context.Context) {
 			fmt.Fprintf(os.Stderr, "bough: orb: bough shim: %v\n", err)
 		}
 	}
-	o.state.Status, o.state.Error = StatusRunning, ""
+	o.state.Status, o.state.Error, o.state.Phase = StatusRunning, "", ""
 	script := filepath.Join(o.project.Dir, projectdef.FileResume)
 	if _, err := os.Stat(script); err == nil {
 		if err := o.runResume(ctx, script); err != nil {
-			o.state.Status, o.state.Error = StatusFailed, "resume.sh: "+err.Error()
+			o.state.Status, o.state.Error, o.state.Phase = StatusFailed, "resume.sh: "+err.Error(), PhaseSetup
 		}
 	}
 	writeState(o.home, o.state)
@@ -341,7 +344,10 @@ func (o *Orb) runResume(ctx context.Context, script string) error {
 	defer f.Close()
 	text, _ := os.ReadFile(script)
 	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: o.state.Primary, Env: o.execEnv(o.proxyURLLocked(), o.token), Secrets: o.secretEnv()}, container.ScriptArgv(text, script)...)
-	cmd.Stdout, cmd.Stderr = f, f
+	// This run's output only, for the error: resume.log appends every start.
+	var out tailBuffer
+	w := io.MultiWriter(f, &out)
+	cmd.Stdout, cmd.Stderr = w, w
 	// Timestamps let session starts be measured without parsing output.
 	start := time.Now()
 	fmt.Fprintf(f, "== resume.sh start %s\n", start.UTC().Format(time.RFC3339))
@@ -351,7 +357,10 @@ func (o *Orb) runResume(ctx context.Context, script string) error {
 		status = err.Error()
 	}
 	fmt.Fprintf(f, "== resume.sh end %s duration %s: %s\n", time.Now().UTC().Format(time.RFC3339), time.Since(start).Round(time.Millisecond), status)
-	return err
+	if err != nil {
+		return withLogLines(err, out.String(), f.Name())
+	}
+	return nil
 }
 
 func (o *Orb) State() State {
@@ -425,7 +434,7 @@ func (o *Orb) ensureRunningLocked(ctx context.Context) error {
 		}
 	}
 	if err := o.rt.Start(ctx, o.spec); err != nil {
-		o.state.Status, o.state.Error = StatusFailed, err.Error()
+		o.state.Status, o.state.Error, o.state.Phase = StatusFailed, err.Error(), PhaseStart
 		writeState(o.home, o.state)
 		return err
 	}
