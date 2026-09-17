@@ -96,3 +96,9 @@ test("MB-composer: a narrow desktop pane folds the mode badge to its icon so it 
   const comp = css.match(/\/\* MB-composer:[\s\S]*?\/\* \/MB-composer \*\//)![0];
   expect(comp).toMatch(/@container \(max-width:600px\)\{[^@]*\.composer-tools \.mode-badge \.mode-word\{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset\(50%\)/);
 });
+
+test("MB-composer: the foot's Start project session stays one line; the key hints give way instead", () => {
+  const comp = css.match(/\/\* MB-composer:[\s\S]*?\/\* \/MB-composer \*\//)![0];
+  expect(comp).toMatch(/\.composer-start\{white-space:nowrap;flex-shrink:0\}/);
+  expect(comp).toMatch(/\.composer-foot>\.composer-hint\{min-width:0;overflow:hidden\}/);
+});
