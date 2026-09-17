@@ -37,13 +37,15 @@ test("one bindings table: every section filled, overview hints drawn from it", (
 
 import { focusComposerKey, newSessionKey, switchKey } from "../src/keys";
 type Ev = Parameters<typeof switchKey>[0];
-const kev = (o: Partial<Ev> & { value?: string }, tag = "DIV"): Ev =>
-  ({ key: "", code: "", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...o, target: { tagName: tag, value: o.value ?? "" } as unknown as EventTarget });
+const kev = (o: Partial<Ev> & { value?: string; id?: string }, tag = "DIV"): Ev =>
+  ({ key: "", code: "", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...o, target: { tagName: tag, value: o.value ?? "", id: o.id ?? (tag === "TEXTAREA" ? "composer" : "") } as unknown as EventTarget });
 
 test("? in an empty composer opens the sheet; with text it is typed", () => {
   expect(sheetKey(kev({ key: "?", shiftKey: true }, "TEXTAREA"))).toBe(true);
   expect(sheetKey(kev({ key: "?", shiftKey: true, value: "why" }, "TEXTAREA"))).toBe(false);
   expect(sheetKey(kev({ key: "?", shiftKey: true }, "INPUT"))).toBe(false);
+  // An empty hook or wiki editor is still somewhere to type.
+  expect(sheetKey(kev({ key: "?", shiftKey: true, id: "wk-body" }, "TEXTAREA"))).toBe(false);
 });
 
 test("Mod+P switches sessions, from a text field too", () => {
@@ -51,6 +53,9 @@ test("Mod+P switches sessions, from a text field too", () => {
   expect(switchKey(kev({ key: "p", ctrlKey: true }))).toBe(true);
   expect(switchKey(kev({ key: "p", metaKey: true, shiftKey: true }))).toBe(false);
   expect(switchKey(kev({ key: "p" }))).toBe(false);
+  // Ctrl+P in a Mac text field is previous-line.
+  expect(switchKey(kev({ key: "p", ctrlKey: true }, "TEXTAREA"), true)).toBe(false);
+  expect(switchKey(kev({ key: "p", ctrlKey: true }), true)).toBe(true);
 });
 
 test("⌥N starts a session and ⌥I focuses the composer, by physical key", () => {

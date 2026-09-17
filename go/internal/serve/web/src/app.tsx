@@ -7,7 +7,7 @@ import { ProjectsView } from "./projects";
 import { ModeChip, ModePicker, type ModeValue } from "./mode";
 import { Select, type Option } from "./select";
 import { DialogHost, askChoice, askConfirm, askText, showShortcuts } from "./dialog";
-import { focusComposerKey, newSessionKey, overviewKeys, sheetKey, switchKey, treeKey } from "./keys";
+import { focusComposerKey, isMac, newSessionKey, overviewKeys, sheetKey, switchKey, treeKey } from "./keys";
 import { Welcome, welcomeDismissed } from "./welcome";
 import { clampToViewport } from "./popover";
 import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount, changedPath } from "./render";
@@ -4462,7 +4462,7 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || document.querySelector(".dlg-scrim")) return;
-      if (switchKey(e)) { e.preventDefault(); setPalCwd(""); setPalMode("switch"); setPalette(true); }
+      if (switchKey(e, isMac())) { e.preventDefault(); setPalCwd(""); setPalMode("switch"); setPalette(true); }
       else if (newSessionKey(e)) { e.preventDefault(); setPalCwd(""); setPalMode("new"); setPalette(true); }
       else if (focusComposerKey(e) && !palette) {
         const c = document.getElementById("composer");

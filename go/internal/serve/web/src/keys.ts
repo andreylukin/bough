@@ -52,12 +52,13 @@ export function paletteKeyOpens(e: KeyLike, mac: boolean): boolean {
 export function sheetKey(e: KeyLike): boolean {
   if (e.key !== "?" || e.metaKey || e.ctrlKey || e.altKey) return false;
   const el = e.target as HTMLTextAreaElement | null;
-  return !isTypingTarget(el) || (el?.tagName === "TEXTAREA" && !el.value);
+  return !isTypingTarget(el) || (el?.id === "composer" && !el.value);
 }
 
 /** ⌘P (Ctrl+P): the recent-session switcher, from anywhere, the browser's print included. */
-export function switchKey(e: KeyLike): boolean {
-  return (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "p";
+export function switchKey(e: KeyLike, mac = false): boolean {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "p") return false;
+  return !(mac && e.ctrlKey && !e.metaKey && isTypingTarget(e.target));
 }
 
 /** Option+letter by physical key: on a Mac e.key is a symbol (˜, ˆ). */
