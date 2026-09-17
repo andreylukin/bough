@@ -3988,7 +3988,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           ) : row.mode === "project" && row.orb?.status === "failed" ? null /* Setup failed says it; "Done" beside it contradicted it. */
             // Worst outcome first: a finished session whose work failed does not read as a bare Done.
             : row.status === "done" && counts.failed > 0
-              ? <span className="status head-trouble" aria-label={`${statusWord("done")}, ${counts.failed} failed`}><StatusMark status="error" bare />{counts.failed} failed</span>
+              ? <span className="status head-trouble"><StatusMark status="error" bare /><span className="visually-hidden">{statusWord("done")}, </span>{counts.failed} failed</span>
               : row.status === "done" && lastFail
                 ? <span className="status head-failed" title={`${lastFail} failed`}><WarnMark />Failed</span>
                 : <StatusMark status={row.status} />}
