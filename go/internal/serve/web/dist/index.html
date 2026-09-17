@@ -2263,6 +2263,13 @@ a.rt-link{text-decoration:none}
 .agent-notice>summary .block-label{color:var(--text-2)}
 @media (max-width:720px){.block.thin.toolcall>summary .tool-thrown{display:none}}
 /* /WEB2 */
+/* WEB4: a sent prompt is half-strength until recorded; a breathing dot
+   holds its place until the model's first output. */
+.turn-sending .prompt-text{opacity:.5}
+.waiting-dot{display:flex;align-items:center;height:16px;margin:2px 0 0;padding-inline-start:6px}
+.waiting-dot i{width:8px;height:8px;border-radius:50%;background:var(--text-2);animation:pulse-dot 1.2s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.waiting-dot i{animation:none;opacity:.7}}
+/* /WEB4 */
 </style>
 </head>
 <body>
