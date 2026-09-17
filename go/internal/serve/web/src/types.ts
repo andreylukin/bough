@@ -45,7 +45,9 @@ export interface OrbPort { host: number; guest: number; error?: string }
 export interface OrbRemovePlan { session: string; project: string; status: OrbStatus; container?: string; dir: string; worktrees: string[]; bytes: number; branches: { repo: string; gitDir: string; branch: string; delete: boolean; reason: string }[] }
 export interface OrbBuild { tag: string; hash: string; state: "" | "building" | "ok" | "failed"; startedAt: string; endedAt?: string; error?: string }
 export type OrbFile = "project.yml" | "Dockerfile" | "setup.sh" | "resume.sh";
-export interface OrbDetail { project: Project; files: Record<OrbFile, string>; hash: string; orb: OrbSummary; build: OrbBuild; orbs: OrbState[]; runtime: { name: string; available: boolean; error?: string } }
+export interface OrbDetail { project: Project; files: Record<OrbFile, string>; hash: string; orb: OrbSummary; build: OrbBuild; orbs: OrbState[]; runtime: { name: string; available: boolean; error?: string }; preflight?: PreflightCheck[] }
+/** One thing a session start needs, checked when the orb panel loads. */
+export interface PreflightCheck { kind: "runtime" | "clone" | "gh" | "secret"; name: string; status: "ok" | "warn" | "fail"; detail?: string }
 
 /** One session, as GET /api/sessions returns it. */
 export interface Row {

@@ -35,7 +35,8 @@ const projectUsage = `usage: bough project <command>
                                         (127.0.0.1 forwards; host:container); "" clears
   write <slug> <file>                   replace a file with stdin (empty stdin deletes a script)
   build <slug>                          build the project's image now (streams the log)
-  status [slug|session]                 orbs and their state; one session's orb in detail
+  status [slug|session]                 orbs and their state; a slug adds the preflight (runtime up,
+                                        repos clone, gh token, secrets resolve); a session in detail
   logs <slug|session>                   a project's build.log, or a session's resume.log
   stop <session> [--yes]                stop a session's container (asks when its session runs)
   rm <session> [--branches] [--yes]     remove a session's orb: container, worktrees, orb dir

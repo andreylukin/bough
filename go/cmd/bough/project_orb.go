@@ -173,6 +173,11 @@ func projectStatus(out io.Writer, home string, args []string) error {
 			return fmt.Errorf("no project or orb session %q", args[0])
 		}
 	}
+	var preflightErr error
+	if len(args) == 1 {
+		preflightErr = projectPreflight(out, home, args[0])
+		fmt.Fprintln(out)
+	}
 	states, err := orb.List(home)
 	if err != nil {
 		return err
@@ -186,7 +191,10 @@ func projectStatus(out io.Writer, home string, args []string) error {
 		s = cliOrbStatus(s)
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", s.Session, s.Project, phaseText(s), s.UpdatedAt.Local().Format("2006-01-02 15:04"))
 	}
-	return tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	return preflightErr
 }
 
 // projectLogs prints a project's build.log, or the log that explains a
