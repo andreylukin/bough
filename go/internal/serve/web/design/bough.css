@@ -2446,4 +2446,9 @@ pre.edit-rows,.block pre.edit-rows{text-indent:0;margin:2px 0 var(--s-2);padding
   .block.thin.toolcall>summary .tool-state{order:2}
   .turn-foot>button.turn-files{min-height:44px;align-items:center}
 }
+/* The wrapper stands in for its details as a thin block: siblings keep their tucked spacing. */
+.turn-body>.toolrun-wrap+.block.thin,.turn-body>.block.thin+.toolrun-wrap,.turn-body>.toolrun-wrap+.toolrun-wrap{margin-top:-10px}
+.sub-body>.toolrun-wrap+.block.thin,.sub-body>.block.thin+.toolrun-wrap,.sub-body>.toolrun-wrap+.toolrun-wrap{margin-top:-8px}
+.turn-body>.block:not(.thin)+.toolrun-wrap,.turn-body>.toolrun-wrap+.block:not(.thin){margin-top:-6px}
+@media (max-width:720px){.turn-body>.toolrun-wrap+.block.thin,.turn-body>.block.thin+.toolrun-wrap,.turn-body>.toolrun-wrap+.toolrun-wrap,.sub-body>.toolrun-wrap+.block.thin,.sub-body>.block.thin+.toolrun-wrap,.sub-body>.toolrun-wrap+.toolrun-wrap{margin-top:0}}
 /* /R3-F */
