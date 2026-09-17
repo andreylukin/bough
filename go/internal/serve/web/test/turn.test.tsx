@@ -323,3 +323,15 @@ test("a failed card with a rendered diff does not repeat the -/+ lines as text",
   expect(diag).toContain("FAIL");
   expect(diag).not.toContain("+\tfmt.Println");
 });
+
+test("a done session whose last turn failed says Failed in the header, not a checked Done", async () => {
+  const { Thread } = await import("../src/app");
+  const props = { onSend: async () => null, onAnswer: async () => null, onInterrupt: () => {}, onArchive: () => {}, onRename: async () => {},
+    onModel: () => {}, onEffort: () => {}, onAssign: () => {}, onBack: () => {}, onContext: () => {}, onAck: () => {}, projects: [], busy: false, jump: null } as const;
+  const prog = 'console.log(tools.bash("gofmt -w x.go && go test ./..."))';
+  const html = renderToStaticMarkup(<Thread {...props} row={{ id: "s1", cwd: "/tmp/x", status: "done" } as never} lines={[
+    { seq: 1, at: at(0), kind: "input", text: "fix" }, { seq: 2, at: at(1), kind: "code", text: prog },
+    { seq: 3, at: at(2), kind: "result", text: "FAIL\tpkg", data: { code: prog, exit: 1 } }, { seq: 4, at: at(3), kind: "done", text: "", data: { exit: 1 } }] as never} />);
+  expect(html).toContain('class="status head-failed"');
+  expect(html).toContain("go test failed · exit 1");
+});
