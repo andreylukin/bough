@@ -511,15 +511,24 @@ func (o *Orb) ensureRunningLocked(ctx context.Context) error {
 func (o *Orb) Stop(ctx context.Context) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	// Mark stopped first: jobs killed by the stop check StoppedSince as
+	// they exit, before the runtime says the container is down.
+	prev := o.state.Status
+	o.state.Status = StatusStopped
+	if err := writeState(o.home, o.state); err != nil {
+		o.state.Status = prev
+		return err
+	}
 	if err := o.rt.Stop(ctx, o.spec.Name); err != nil {
+		o.state.Status = prev
+		writeState(o.home, o.state)
 		return fmt.Errorf("orb: stop %s: %w", o.session, err)
 	}
 	if o.proxy != nil {
 		o.proxy.Close()
 		o.proxy = nil
 	}
-	o.state.Status = StatusStopped
-	return writeState(o.home, o.state)
+	return nil
 }
 
 // Remove deletes the container, the session's worktrees and its orb dir.

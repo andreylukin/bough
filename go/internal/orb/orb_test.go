@@ -692,3 +692,38 @@ func TestOpenRecordsPhases(t *testing.T) {
 		t.Fatalf("resume failure %+v", st)
 	}
 }
+
+// stopHookRT runs hook while the runtime is still stopping the container,
+// the moment a killed exec returns and its job asks StoppedSince.
+type stopHookRT struct {
+	*container.Fake
+	hook func()
+}
+
+func (r *stopHookRT) Stop(ctx context.Context, name string) error {
+	r.hook()
+	return r.Fake.Stop(ctx, name)
+}
+
+// A job killed by the session's own Stop (TUI /orb stop) must see the stop
+// already, or it records a failure and wakes a paid turn.
+func TestStopMarksStoppedBeforeJobsDie(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	src := newRepo(t)
+	p := newProject(t, home, "web", "  - path: "+src+"\n    branch: main\n")
+	rt := &stopHookRT{Fake: container.NewFake()}
+	o, err := Open(ctx, rt, home, "s1", p, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	seen := false
+	rt.hook = func() { seen = o.StoppedSince(started) }
+	if err := o.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !seen {
+		t.Fatal("a job dying mid-stop did not see StoppedSince")
+	}
+}
