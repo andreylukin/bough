@@ -103,3 +103,10 @@ test("MB-composer: the foot's Start project session stays one line; the key hint
   expect(comp).toMatch(/\.composer-foot>\.composer-local\{flex-shrink:0\}/);
   expect(comp).toMatch(/\.composer-foot>\.composer-hint\{min-width:0;overflow:hidden;flex-wrap:wrap;justify-content:flex-end;height:20px\}/);
 });
+
+test("MB-KEYS: key hints under the composer stay hidden on phones and touch, after the kbd restyle", () => {
+  const keys = css.match(/\/\* MB-KEYS:[\s\S]*?\/\* \/MB-KEYS \*\//)![0];
+  const at = keys.indexOf(".composer-hint{display:inline-flex");
+  expect(at).toBeGreaterThan(-1);
+  expect(keys.slice(at)).toMatch(/@media \(max-width:720px\),\(pointer:coarse\)\{\.composer-foot>\.composer-hint\{display:none\}\}/);
+});
