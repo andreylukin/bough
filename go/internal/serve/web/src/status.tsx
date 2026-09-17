@@ -187,13 +187,13 @@ export function StatusMark({ status, size = 13, bare }: { status: Status; size?:
 export function Working({ label = "Working", children }: { label?: string; /** Trailing detail, e.g. the live elapsed time. */ children?: ReactNode }) {
   return (
     <p className="working" role="status">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
            strokeLinecap="round" className="spin-mark" aria-hidden="true">
         <circle cx="12" cy="12" r="8.5" strokeDasharray="40 14" />
       </svg>
       <span>{label}</span>
-      {/* The spinner carries liveness; the elapsed time follows the house separator. */}
-      {children && <><span className="working-after" aria-hidden="true">·</span><span className="working-after">{children}</span></>}
+      {/* The spinner carries liveness; the elapsed time follows after the gap. */}
+      {children && <span className="working-after">{children}</span>}
     </p>
   );
 }

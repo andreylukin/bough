@@ -58,7 +58,7 @@ test("Stop rescues only rows unsent at Stop, once the turn ended after them", ()
 });
 
 // R2-C: Esc mid-stream keeps the partial answer above the Stopped footer.
-test("a turn stopped mid-answer shows the partial text and Stopped", () => {
+test("a turn stopped mid-answer shows the partial text and Interrupted, not Stopped again in the footer", () => {
   const lines: Line[] = [
     { seq: 1, at: at(0), kind: "input", text: "Explain the loop." },
     { seq: 2, at: at(5), kind: "assistant", text: "The loop reads input and streams", data: { partial: true } },
@@ -67,7 +67,8 @@ test("a turn stopped mid-answer shows the partial text and Stopped", () => {
   ] as Line[];
   const html = renderToStaticMarkup(<TurnView turn={groupTurns(lines)[0]} />);
   expect(html).toContain("The loop reads input and streams");
-  expect(html).toContain("Stopped");
+  expect(html).toContain("Interrupted");
+  expect(html.slice(html.indexOf("turn-foot"))).not.toContain("Stopped");
   expect(html.indexOf("The loop reads input")).toBeLessThan(html.indexOf("turn-foot"));
 });
 
@@ -361,4 +362,18 @@ test("a failed turn's error is a calm card with Retry and Switch model", () => {
   const auth = renderToStaticMarkup(<TurnView turn={groupTurns([lines[0], { ...lines[1], text: "401 Unauthorized: invalid x-api-key" }, lines[2]] as Line[])[0]} />);
   expect(auth).toContain(">Retry</button>");
   expect(auth).toContain("Switch model");
+});
+
+// MB-STREAM: a stop during a tool has no prose cut to mark, so the footer keeps Stopped, quietly.
+test("MB-STREAM: a stop during a tool keeps Stopped in the footer, in the neutral stopped tone", () => {
+  const lines: Line[] = [
+    { seq: 1, at: at(0), kind: "input", text: "run it" },
+    { seq: 2, at: at(1), kind: "code", text: code },
+    { seq: 3, at: at(5), kind: "cancelled", text: "" },
+    { seq: 4, at: at(5), kind: "done", text: "" },
+  ] as Line[];
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns(lines)[0]} />);
+  expect(html).not.toContain("turn-interrupted");
+  expect(html).toMatch(/turn-outcome turn-stopped[^>]*>Stopped/);
+  expect(html).not.toMatch(/turn-failed[^>]*>Stopped/);
 });

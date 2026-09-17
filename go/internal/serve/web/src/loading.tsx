@@ -28,7 +28,7 @@ export function duration(d: string | number): string {
 }
 
 /** A live, ticking elapsed time since `since` (ISO or ms), in the `.num` face. */
-export function Elapsed({ since, title }: { since: string | number; title?: string }) {
+export function Elapsed({ since, title, from = 0 }: { since: string | number; title?: string; /** Seconds before it shows at all. */ from?: number }) {
   const start = typeof since === "number" ? since : Date.parse(since);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -36,6 +36,7 @@ export function Elapsed({ since, title }: { since: string | number; title?: stri
     return () => clearInterval(t);
   }, []);
   if (!Number.isFinite(start)) return null;
+  if (now - start < from * 1000) return null;
   return <span className="num elapsed" title={title}>{elapsed(Math.max(0, now - start))}</span>;
 }
 

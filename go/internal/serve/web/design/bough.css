@@ -114,7 +114,6 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:var(--fs-base)/1.5 v
 /* .visually-hidden is absolute: without a positioned ancestor each one sat at its
    place deep in the transcript and stretched the document past the viewport. */
 .transcript{position:relative}
-.turn-sending .prompt-text{opacity:.75}
 .turn-sending-state{font-size:var(--fs-sm);line-height:16px;color:var(--text-2)}
 .transcript-state{margin:auto 0;text-align:center}
 /* The toolbar: sidebar, back, forward, search, and New set apart on the right. */
@@ -2254,7 +2253,6 @@ a.rt-link{text-decoration:none}
 /* /WEB2 */
 /* WEB4: a sent prompt is half-strength until recorded; a breathing dot
    holds its place until the model's first output. */
-.turn-sending .prompt-text{opacity:.5}
 .waiting-dot{display:flex;align-items:center;height:16px;margin:2px 0 0;padding-inline-start:6px}
 .waiting-dot i{width:8px;height:8px;border-radius:50%;background:var(--text-2);animation:pulse-dot 1.2s ease-in-out infinite}
 @media (prefers-reduced-motion:reduce){.waiting-dot i{animation:none;opacity:.7}}
@@ -2339,13 +2337,9 @@ a.rt-link{text-decoration:none}
 /* /WEB14 */
 /* R2-B: live status before the first token: a breathing dot while the model is silent, typing dots while it streams */
 .head-live{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--accent)}
-@keyframes breath-dot{0%,100%{opacity:.55;scale:.76}50%{opacity:1;scale:1}}
 .waiting-model{display:flex;align-items:center;gap:8px;margin:2px 0 0;padding-inline-start:2px;font-size:var(--fs-sm);color:var(--text-2)}
 .breath-dot{width:8px;height:8px;border-radius:50%;background:var(--text-2);animation:breath-dot 1.4s ease-in-out infinite}
-.typing-dots{display:inline-flex;gap:2px;margin-inline-start:3px;vertical-align:middle}
-.typing-dots i{width:3px;height:3px;border-radius:50%;background:currentColor;animation:breath-dot 1.4s ease-in-out infinite}
-.typing-dots i:nth-child(2){animation-delay:.2s}.typing-dots i:nth-child(3){animation-delay:.4s}
-@media (prefers-reduced-motion:reduce){.breath-dot,.typing-dots i{animation:none;opacity:.8}}
+@media (prefers-reduced-motion:reduce){.breath-dot{animation:none;opacity:.8}}
 /* /R2-B */
 /* R2-G: diffs read like a review. An editing call is headed "Edited N files
    +a −d"; each file is a row that opens to 12px mono lines with old and new
@@ -2638,3 +2632,44 @@ kbd,.keys-row kbd,.ov-empty-keys kbd,.mention-foot kbd{display:inline-grid;place
 .row:focus-visible,.side-new:focus-visible,.ws-head:focus-visible,.sec-fold:focus-visible,.turn-line:focus-visible,.ws-older:focus-visible,.sel-search:focus-visible,.hk-fold>summary.hk-main:focus-visible{outline-color:var(--focus)}
 @media (min-width:721px) and (pointer:fine){.welcome .btn,.welcome .btn-lg{height:var(--ctl)}}
 /* /MB-DL */
+/* MB-STREAM: streaming and waiting states (Perplexity/Cursor/v0/Grok refs, see mobbin/streaming/spec.md) */
+/* header: the phase word, neutral; only the glyph keeps the accent */
+.head-live{gap:6px;font-size:var(--fs-sm);font-weight:400;line-height:16px;color:var(--text-2)}
+.head-live>.status-mark,.head-live svg{color:var(--accent)}
+.head-stopping{color:var(--text-3)}
+.head-stop-mark{width:6px;height:6px;background:var(--text-3);flex-shrink:0}
+@media (prefers-reduced-motion:reduce){.head-live svg{display:none}.head-live:not(.head-stopping)::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent)}}
+/* sending: one opacity, fading in when the prompt lands */
+.turn .prompt-text{transition:opacity var(--dur) var(--ease-out)}
+.turn-sending .prompt-text{opacity:.72}
+.turn-sending-state{font-size:var(--fs-sm);line-height:16px;color:var(--text-3);font-variant-numeric:tabular-nums}
+/* waiting and working rows: one 24px geometry on the prose edge */
+.waiting-model,.working{display:flex;align-items:center;gap:8px;min-height:24px;margin:8px 0 0;padding-inline-start:22px;
+  font-size:var(--fs-sm);line-height:16px;color:var(--text-2)}
+.waiting-model .elapsed,.working-after{color:var(--text-3);font-size:var(--fs-sm);font-variant-numeric:tabular-nums}
+.turn-body>.waiting-model,.turn-body>.working{padding-inline-start:0}
+@media (max-width:720px){.waiting-model,.working{padding-inline-start:0}}
+@keyframes breath-dot{0%,100%{opacity:.35}50%{opacity:1}}
+.breath-dot{width:6px;height:6px;border-radius:50%;background:var(--text-3);opacity:0;animation:breath-dot 1600ms var(--ease-out) 150ms infinite both}
+.working>.spin-mark{color:var(--text-3);animation-duration:900ms}
+.stream-tip .md>:last-child::after{width:2px;height:1em;margin-inline-start:2px;background:var(--text-2);animation:bough-blink 1s steps(1,end) infinite}
+@media (prefers-reduced-motion:reduce){.breath-dot{animation:none;opacity:.7}.working>.spin-mark{animation:none}.stream-tip .md>:last-child::after{animation:none}}
+/* stop: a secondary square in Send's row, same box while stopping */
+.composer-stop{display:grid;place-items:center;width:var(--ctl);height:var(--ctl);padding:0;color:var(--text-1);background:var(--raised);
+  border:1px solid var(--line-ctl);border-radius:var(--r-sm);transition:background-color var(--dur-fast),border-color var(--dur-fast)}
+.composer-stop:hover:not(:disabled){background:var(--sel);border-color:var(--line-strong)}
+.composer-stop:disabled{opacity:1;color:var(--text-3);cursor:default}
+.composer-stop-retry{height:var(--ctl);color:var(--red)}
+@media (pointer:coarse){.composer-stop{width:var(--row-touch,44px);height:var(--row-touch,44px)}}
+/* composer: the field focus, not a loud 2px ring */
+.composer:has(> #composer:focus){outline:none;border-color:var(--line-strong);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent)}
+/* interrupted: a quiet square under faded prose */
+.turn-interrupted{min-height:20px;gap:6px;margin:4px 0 0;padding:0;font-size:var(--fs-sm);color:var(--text-3)}
+/* the cut prose keeps its copy action, moved onto the marker's row so the marker sits 4px under the text */
+.turn-body>.say:has(+.turn-interrupted){position:relative}
+.turn-body>.say:has(+.turn-interrupted)>.msg-acts{position:absolute;inset-inline-end:0;top:calc(100% + 2px);margin:0}
+.turn-body>.say+.turn-interrupted{margin-top:calc(4px - var(--turn-body-gap,12px))}
+.turn-body>.say:has(+.turn-interrupted) .md>:last-child{-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 1.55em),rgb(0 0 0/.55));mask-image:linear-gradient(to bottom,#000 calc(100% - 1.55em),rgb(0 0 0/.55))}
+.turn-outcome.turn-stopped{color:var(--text-3)}
+.tool-unrecorded.tool-interrupted{color:var(--text-3)}
+/* /MB-STREAM */
