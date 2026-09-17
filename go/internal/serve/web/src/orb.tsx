@@ -122,7 +122,7 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
   const logRef = useRef<HTMLPreElement>(null);
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [log]);
 
-  const about = <p className="proj-none orb-about">An orb is a container image for this project: its sessions run inside it and with the project's repos checked out on a branch of their own.</p>;
+  const about = <p className="proj-none orb-about">An orb is a container image for this project: its sessions run inside it, with the project's repos checked out on a branch of their own.</p>;
   if (!project.slug) {
     return (
       <div className="proj-orb">
