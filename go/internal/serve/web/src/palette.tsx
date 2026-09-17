@@ -162,6 +162,10 @@ export function closeOnNavigate(win: Pick<Window, "addEventListener" | "removeEv
   };
 }
 
+/** A session or wiki page, as opposed to a command or a place to start. */
+const RESULT_GROUPS = new Set(["Recent sessions", "Sessions", "Found in the conversation", "Wiki pages"]);
+export const isResult = (c: Command) => RESULT_GROUPS.has(c.group);
+
 /** Results counted in the footer: the Start action is an offer, not a match. */
 export const shownCount = (hits: Command[]) => hits.filter((c) => !c.id.startsWith("start:")).length;
 
@@ -176,11 +180,24 @@ export function visit(visited: string[], id: string): string[] {
   return [id, ...visited.filter((x) => x !== id)].slice(0, 50);
 }
 
+/** The sessions the sidebar lists as rows: a background agent whose parent is listed is not one. */
+export function listable(rows: Row[]): Row[] {
+  const ids = new Set(rows.map((r) => r.id));
+  return rows.filter((r) => !(r.spawnedBy && ids.has(r.spawnedBy)));
+}
+
+/** A leading ">" asks for commands only, as in an editor's palette. */
+export function commandQuery(q: string): { only: boolean; text: string } {
+  const t = q.trimStart();
+  return t.startsWith(">") ? { only: true, text: t.slice(1).trim() } : { only: false, text: q };
+}
+
 /** Sessions to switch to: the ones visited, last first (so Enter goes back), then the rest by activity. */
 export function recentSessions(rows: Row[], current: string | null, visited: string[], n: number): Row[] {
   const at = (id: string) => { const i = visited.indexOf(id); return i < 0 ? Infinity : i; };
-  return rows
-    .filter((r) => !r.archived && !r.empty && r.id !== current)
+  // Empty sessions the sidebar shows (live, or a failed orb) are reachable here too.
+  return listable(rows)
+    .filter((r) => !r.archived && !(r.empty && !r.live && r.orb?.status !== "failed") && r.id !== current)
     .sort((a, b) => at(a.id) - at(b.id) || Date.parse(b.lastAt) - Date.parse(a.lastAt))
     .slice(0, n);
 }
@@ -338,22 +355,24 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     return closeOnNavigate(window, onClose, window.matchMedia?.("(max-width:720px)") ?? null);
   }, [open, onClose]);
 
-  const { hits: found, state: searching, retry } = useFullText(q, open && mode !== "new");
-  const pages = useWikiHits(q, open, Boolean(onOpenWikiPage) && mode === "all");
+  const { hits: found, state: searching, retry } = useFullText(q, open && mode !== "new" && !commandQuery(q).only);
+  const pages = useWikiHits(q, open, Boolean(onOpenWikiPage) && mode === "all" && !commandQuery(q).only);
   const places = useDirs(q, open, Boolean(onStartIn));
 
   const hits = useMemo(() => {
     // project:, after: and status: narrow the sessions; the rest is matched.
-    const ops = parseOps(q);
+    const cq = commandQuery(q);
+    const ops = cq.only ? { text: cq.text } : parseOps(q);
     const narrowed = hasOps(ops);
     const needle = ops.text.toLowerCase();
     // With no query: what you would do next, not the sitemap.
     const cmds = commands
-      .filter((c) => mode === "new" ? c.id.startsWith("new:") && !narrowed : mode === "all" && !narrowed && (needle || c.suggest))
+      .filter((c) => mode === "new" ? c.id.startsWith("new:") && !narrowed : mode === "all" && !narrowed && (needle || c.suggest || cq.only))
       .map((c) => ({ c, s: needle ? score(c.label, needle, true) : 10 }))
       .filter((x) => x.s >= 0);
-    const sessions = rows
-      .filter((r) => matchesOps(r, ops))
+    const listed = listable(rows);
+    const sessions = listed
+      .filter((r) => !cq.only && matchesOps(r, ops))
       .map((r) => {
         const title = sessionTitle(r);
         const s = needle ? Math.max(score(title, needle, false), score(r.repo ?? "", needle, false)) : 0;
@@ -366,17 +385,18 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     // With no query, the three sessions you touched last (not this one):
     // a list of 150 titles is the sidebar again.
     // ⌘P lists more of them, in the order you visited them.
-    const recent = needle || narrowed || mode === "new" ? [] : recentSessions(rows, current, visited, mode === "switch" ? 12 : 3);
+    const recent = needle || narrowed || cq.only || mode === "new" ? [] : recentSessions(rows, current, visited, mode === "switch" ? 12 : 3);
     // Same-named sessions are told apart under the active row: branch,
     // age, and the line the full-text search matched, when it did.
     const foundBy = new Map(found.map((h) => [h.id, h]));
     // One candidate per session, whether its title or its text matched:
     // a text-only hit ranks below any title match but inside the same cap.
     const byId = new Map(sessions.map((x) => [x.r.id, x]));
-    for (const h of found) {
-      const r = rows.find((x) => x.id === h.id);
+    const texts = cq.only ? [] : found.filter((h) => !rows.some((x) => x.id === h.id && x.spawnedBy && rows.some((p) => p.id === x.spawnedBy)));
+    for (const h of texts) {
+      const r = listed.find((x) => x.id === h.id);
       if (!r || byId.has(h.id)) continue;
-      byId.set(h.id, { r, title: plainTitle(r.title) || sessionTitle({ id: h.id, title: h.title }), s: h.id === current ? 49 : 50 });
+      byId.set(h.id, { r, title: sessionTitle({ ...r, title: plainTitle(r.title) || h.title }), s: h.id === current ? 49 : 50 });
     }
     const cands = [...byId.values()].sort((a, b) => b.s - a.s);
     // Titles that repeat carry the id's tail, the one thing always different.
@@ -384,11 +404,10 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     const seenTitle = new Set<string>();
     const same = titleKey;
     for (const { title } of cands) (seenTitle.has(same(title)) ? twice : seenTitle).add(same(title));
+    // The hint already says repo, status and age: the detail adds only what it does not.
     const detailFor = (r: Row, title: string) => {
       const h = foundBy.get(r.id);
-      const line = evidence(h, title, needle);
-      return [[r.branch || h?.branch, r.lastAt ? `${ago(r.lastAt)} ago` : ""].filter(Boolean).join(" · "), line]
-        .filter(Boolean).join("\n") || undefined;
+      return [twice.has(same(title)) ? r.branch || h?.branch : "", evidence(h, title, needle)].filter(Boolean).join("\n") || undefined;
     };
     // One relevance order across commands and titles, so a weak match
     // in one kind never leapfrogs a strong one in the other.
@@ -414,7 +433,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     // A wiki page carries the claim that matched: the point of the wiki
     // is the join between a page and the entry behind it, and a title
     // alone does not show which is which.
-    if (onOpenWikiPage && mode === "all") {
+    if (onOpenWikiPage && mode === "all" && !cq.only) {
       for (const p of pages) {
         all.push({
           id: "w:" + p.path,
@@ -429,9 +448,10 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     // A text hit on a session the list does not hold (archived, hidden)
     // still opens, showing the line that matched.
     const seen = new Set(all.map((c) => c.id));
-    for (const h of found) {
+    for (const h of texts) {
       if (seen.has("s:" + h.id)) continue;
-      const label = sessionTitle({ id: h.id, title: h.title });
+      const r = rows.find((x) => x.id === h.id);
+      const label = sessionTitle({ id: h.id, title: h.title, lastAt: r?.lastAt } as Row);
       all.push({
         id: "s:" + h.id,
         label,
@@ -446,11 +466,11 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     // A typed path is a place to start, ahead of everything else: it is
     // never a first message, which is what a pasted ~/repos/x used to become.
     const typed = q.trim();
-    const placeRows = pathRows(typed, places, onStartIn && ((path) => { onStartIn(path); setQ(""); setAtId(null); }));
+    const placeRows = cq.only ? [] : pathRows(typed, places, onStartIn && ((path) => { onStartIn(path); setQ(""); setAtId(null); }));
     capped.unshift(...placeRows);
     // Last, always explicit: typing never starts anything by itself. A path
     // offers it only below its folder rows, so Enter never sends the path.
-    if (onStart && typed.length >= 2 && !typed.includes(":") && (!isPathQuery(typed) || placeRows.length)) {
+    if (onStart && !cq.only && typed.length >= 2 && !typed.includes(":") && (!isPathQuery(typed) || placeRows.length)) {
       capped.push({
         id: "start:" + typed,
         label: startIn ? `Start a session in ${startIn}: “${typed}”` : `Start a session: “${typed}”`,
@@ -533,9 +553,11 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
         )}
         {/* Never scrolls away: a failed text search is not hidden under the list. */}
         <div className="pal-foot" role="status">
-          <span className="num">{shownCount(hits)} shown</span>
+          {/* A list of commands only is short and whole: a count there is noise. */}
+          {hits.some(isResult) && <span className="num">{shownCount(hits)} shown</span>}
           {searching === "loading" && <span>Searching text…</span>}
-          {searching === "done" && found.length === 0 && <span>No text matches</span>}
+          {/* Only when nothing matched at all: listed title matches are matches. */}
+          {searching === "done" && found.length === 0 && !hits.some(isResult) && <span>No text matches</span>}
           {searching === "error" && <span className="pal-foot-bad">Text search failed · titles only</span>}
           {searching === "error" && <button className="link" onClick={retry}>Retry</button>}
           <span className="pal-foot-keys"><span><kbd>↑↓</kbd> move</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></span>
