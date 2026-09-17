@@ -144,6 +144,18 @@ test("a prompt offers Copy and Edit into composer; an answer offers Copy as Mark
   expect(html).toContain("say-time");
 });
 
+test("MB-TR: a finished turn's answer keeps its Copy and time on the footer line, once", () => {
+  const lines: Line[] = [...live.slice(0, 1), { seq: 2, at: at(3), kind: "assistant", text: "First." }, { seq: 3, at: at(4), kind: "assistant", text: "Use **fake** clocks." }, { seq: 4, at: at(5), kind: "done", text: "" }];
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns(lines)[0]} />);
+  const foot = html.slice(html.indexOf('class="turn-foot"'));
+  expect(foot).toContain('aria-label="Copy answer as Markdown"');
+  expect(foot).toContain("say-time");
+  // The earlier message keeps its own; the answer's is not repeated under the prose.
+  expect(html.split('aria-label="Copy answer as Markdown"').length - 1).toBe(2);
+  expect(html).toContain('aria-label="Edit into composer"');
+  expect(html).not.toContain("prompt-mark");
+});
+
 // R2-D: failed turns, wake copy, command-only turns.
 test("a turn that ended on an error says Failed, not Done", () => {
   const ls: Line[] = [...live.slice(0, 1),
