@@ -3390,6 +3390,7 @@ function OrbFailure({ id, project, name, onRebuild, onRetry, rebuildErr }: { id:
   const [log, setLog] = useState<OrbFailureLog | null>(null);
   const [err, setErr] = useState("");
   const [retried, setRetried] = useState(false);
+  const [retryErr, setRetryErr] = useState("");
   const load = () => {
     setErr("");
     api.sessionOrbLog(id).then((l) => setLog(l), (e) => setErr((e as Error).message));
@@ -3402,8 +3403,9 @@ function OrbFailure({ id, project, name, onRebuild, onRetry, rebuildErr }: { id:
       {err ? <p className="send-failed-text" role="alert">Couldn’t load the log: {err}</p>
         : !log ? <p className="meta-line">Loading…</p>
         : <OrbFailureBody log={log} projectId={project} name={name} onRebuild={onRebuild}
-            onRetry={onRetry && (async () => { await onRetry(); setRetried(true); })} />}
+            onRetry={onRetry && (async () => { try { await onRetry(); setRetried(true); } catch (e) { if ((e as Error).message !== "cancelled") setRetryErr((e as Error).message); } })} />}
       {retried && <p className="meta-line" role="status">Stopped. The orb restarts and reruns resume.sh on the session’s next command.</p>}
+      {retryErr && <p className="send-failed-text" role="alert">Couldn’t stop the orb: {retryErr}</p>}
       {rebuildErr && <p className="send-failed-text" role="alert">Couldn’t start a rebuild: {rebuildErr}</p>}
       <button className="link" onClick={load}>Refresh</button>
     </div>
@@ -4159,7 +4161,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           </div>
         </div>
       </header>
-      {orbView === "why" && row.orb?.status === "failed" && <OrbFailure key={row.id} id={row.id} project={row.project} name={projects.find((p) => p.id === row.project)?.name ?? row.orb.project} onRebuild={row.project ? rebuild : undefined} onRetry={onStopOrb ? async () => { await api.stopOrb(row.id); } : undefined} rebuildErr={rebuildErr} />}
+      {orbView === "why" && row.orb?.status === "failed" && <OrbFailure key={row.id} id={row.id} project={row.project} name={projects.find((p) => p.id === row.project)?.name ?? row.orb.project} onRebuild={row.project ? rebuild : undefined} onRetry={onStopOrb ? async () => { if (!(await confirmStopOrb(row.jobs))) throw new Error("cancelled"); await api.stopOrb(row.id); } : undefined} rebuildErr={rebuildErr} />}
       {orbView === "build" && row.orb && <OrbBuildLog key={row.id} id={row.id} project={row.orb.project} onRebuild={row.project ? rebuild : undefined} rebuildErr={rebuildErr} />}
 
       <div className="scroll transcript" ref={scroller} onScroll={onScroll} onKeyDown={latestKey}

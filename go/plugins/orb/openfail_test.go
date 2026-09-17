@@ -3,6 +3,7 @@ package orb
 import (
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -130,5 +131,37 @@ func TestTUIOrbFailureIsNotice(t *testing.T) {
 	n, err := kernel.Get[string](ctx, "orb-notice")
 	if err != nil || !strings.Contains(n, "broken") || !strings.Contains(n, "bough project show broken") {
 		t.Errorf("orb-notice = %q, %v", n, err)
+	}
+}
+
+// resume.sh failing leaves the container running but the project broken
+// (no deps, no dev server): a headless run must not answer from it either.
+func TestHeadlessResumeFailureFailsMount(t *testing.T) {
+	home := t.TempDir()
+	repo := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"}} {
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	if _, err := projectdef.Create(home, "broken"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectdef.Root(home), "broken", projectdef.FileYAML), []byte("repos:\n  - path: "+repo+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectdef.Root(home), "broken", projectdef.FileResume), []byte("#!/bin/sh\necho 'npm ERR! missing script: dev' >&2\nexit 3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	userHome = func() (string, error) { return home, nil }
+	chdir = func(string) error { return nil }
+
+	ctx, err := mountBroken(t, home, "headless", "headless")
+	if err == nil {
+		ctx.Unmount()
+		t.Fatal("a headless resume.sh failure mounted")
+	}
+	if !strings.Contains(err.Error(), "npm ERR! missing script: dev") || !strings.Contains(err.Error(), "resume.sh") {
+		t.Errorf("err = %v", err)
 	}
 }

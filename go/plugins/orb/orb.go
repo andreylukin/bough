@@ -171,9 +171,8 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			// says why, and the next start retries the build.
 			st, _ := iorb.ReadState(home, session)
 			report := failureReport(slug, st.Phase, err)
-			uiMode, _ := kernel.Get[string](ctx, "ui-mode")
-			origin, _ := kernel.Get[string](ctx, "origin")
-			if uiMode == "headless" && origin != "web" {
+			uiMode := uiModeOf(ctx)
+			if headlessRun(ctx) {
 				// A person or script ran this one turn: running it without
 				// the orb would answer from nowhere, and exit 0 or a model
 				// error hid the cause. serve's children (origin web) stay
@@ -209,7 +208,13 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		say(ctx, uiModeOf(ctx), fmt.Sprintf("orb: %s: unset env %s (resume.sh/checks)", slug, strings.Join(missing, ", ")))
 	}
 	if st.Status == iorb.StatusFailed && !reused {
-		say(ctx, uiModeOf(ctx), failureReport(slug, st.Phase, fmt.Errorf("%s", st.Error)))
+		report := failureReport(slug, st.Phase, fmt.Errorf("%s", st.Error))
+		if headlessRun(ctx) {
+			// Same as a failed open: no turn runs against a broken orb.
+			stopOrb(o)
+			return fmt.Errorf("%s", report)
+		}
+		say(ctx, uiModeOf(ctx), report)
 	}
 	if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
 		s.Set("orb", promptSection(o.Root(), st, p.Def, missing))
@@ -257,6 +262,13 @@ func stopOrb(o *iorb.Orb) {
 	if err := o.Stop(sctx); err != nil {
 		fmt.Fprintf(os.Stderr, "bough: orb: stop: %v\n", err)
 	}
+}
+
+// headlessRun is a person or script running one turn; serve's children
+// (origin web) are headless too but stay up to show the failure.
+func headlessRun(ctx *kernel.Context) bool {
+	origin, _ := kernel.Get[string](ctx, "origin")
+	return uiModeOf(ctx) == "headless" && origin != "web"
 }
 
 func uiModeOf(ctx *kernel.Context) string {
