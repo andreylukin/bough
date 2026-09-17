@@ -114,6 +114,7 @@ test("a running turn's work row says Working and its current step, once", () => 
   const live = lines.slice(0, 5);
   const html = renderToStaticMarkup(<TurnView turn={groupTurns(live)[0]} working="Working" />);
   expect(html).toContain("work-seg-live");
-  expect(html).toContain("Running go test ./...");
+  // R4-D: its result landed, so the step reads done.
+  expect(html).toContain("Ran go test ./...");
   expect(html).not.toContain('class="working"');
 });

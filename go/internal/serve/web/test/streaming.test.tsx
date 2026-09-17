@@ -81,3 +81,21 @@ test("a prompt sent right after a /model switch streams under its own prompt, no
     sending={[{ id: "p1", text: "write an essay", after: 5, at }]} stream={[{ kind: "text", text: "Bonsai is" }] as never} />);
   expect(html.indexOf("Bonsai is")).toBeGreaterThan(html.indexOf("write an essay"));
 });
+
+// R4-D: a tool block whose result landed is done, even while the activity label lags.
+test("a segment with a result renders no running label", async () => {
+  const { TurnView } = await import("../src/app");
+  const { groupTurns } = await import("../src/render");
+  const c = 'tools.bash("ls -la")', d = 'tools.bash("pwd")';
+  const at = (s: number) => new Date(Date.parse("2026-01-02T10:00:00Z") + s * 1000).toISOString();
+  const lines = [
+    { seq: 1, at: at(0), kind: "input", text: "list" },
+    { seq: 2, at: at(1), kind: "code", text: c },
+    { seq: 3, at: at(2), kind: "result", text: "ok", data: { code: c, exit: 0 } },
+    { seq: 4, at: at(3), kind: "code", text: d },
+    { seq: 5, at: at(4), kind: "result", text: "ok", data: { code: d, exit: 0 } },
+  ];
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns(lines as never)[0]} working="Running pwd" />);
+  expect(html).not.toContain("Running pwd");
+  expect(html).not.toMatch(/>Running /);
+});
