@@ -3,7 +3,7 @@ import { groupTurns } from "../src/render";
 import type { Line, Row } from "../src/types";
 import {
   agentsFromRows, isNewWork, jobTitle, jobsFromLines, loadReviewed, parseLegacyJob, saveReviewed, subagentsFromTurn,
-  workCounts, workFingerprint, workIndex, workSummaryText, type Worker,
+  workCounts, workElapsedMs, workFingerprint, workIndex, workSummaryText, type Worker,
 } from "../src/work";
 
 let seq = 0;
@@ -179,4 +179,22 @@ test("job summary lines drop tree glyphs and shorten paths", async () => {
   const s = jobSummaryLine("open /home/dev/.bough/scratch/0a1b2c/run/out.log: no such file");
   expect(s).toEqual({ text: "open …/out.log: no such file", full: "open /home/dev/.bough/scratch/0a1b2c/run/out.log: no such file" });
   expect(jobSummaryLine("\n──\n")).toBeNull();
+});
+
+test("workElapsed: a recorded duration, else a running worker's time since it started, else nothing", () => {
+  const w = { life: "running", startedAt: at(0) } as Worker;
+  expect(workElapsedMs(w, t0 + 65_000)).toBe(65_000);
+  expect(workElapsedMs({ ...w, ms: 4000 }, t0 + 65_000)).toBe(4000);
+  expect(workElapsedMs({ ...w, life: "finished" }, t0 + 65_000)).toBeUndefined();
+  expect(workElapsedMs({ life: "running" } as Worker, t0)).toBeUndefined();
+  expect(workElapsedMs(w, t0 - 5000)).toBe(0);
+});
+
+test("a job that finished while the agent was idle keeps its row: the wake-up turn's note is its outcome", () => {
+  // serve drops typed job entries from the transcript; with no loop note the wake-up input is the only record.
+  const wake = line("input", "[background job] A command you started in the background has finished while you were idle.\n\njob 2 [exited 0] sleep 150 && echo b (2m30s)\nb");
+  const ws = jobsFromLines([wake], "s", true);
+  expect(ws).toHaveLength(1);
+  expect(ws[0]).toMatchObject({ id: "2", life: "finished", exit: 0, cmd: "sleep 150 && echo b", ms: 150000, output: "b" });
+  expect(jobsFromLines([line("input", "job 3 [exited 0] typed by a person (1s)")], "s", true)).toHaveLength(0);
 });

@@ -1,9 +1,10 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { elapsed } from "./loading";
 import { clampToViewport } from "./popover";
 import { Markdown, duration, execNote, lineCount, plainTitle } from "./render";
 import type { Line, Row } from "./types";
-import { jobSummaryLine, jobTitle, jobsFromLines, parseLegacyJob, useReviewed, workCounts, workSummaryText, type WorkCounts, type WorkKind, type WorkLife, type Worker } from "./work";
+import { jobSummaryLine, jobTitle, jobsFromLines, parseLegacyJob, useReviewed, workCounts, workElapsedMs, workSummaryText, type WorkCounts, type WorkKind, type WorkLife, type Worker } from "./work";
 
 /*
  * The Work surfaces: one state word for every worker, the Stop button,
@@ -352,7 +353,9 @@ export function WorkButton({ counts, loading, unavailable, paused, narrow, expan
 }
 
 type Group = "review" | "running" | "queued" | "history";
-const GROUP_WORD: Record<Group, string> = { review: "Needs review", running: "Running", queued: "Queued", history: "History" };
+const GROUP_WORD: Record<Group, string> = { review: "Needs review", running: "Running", queued: "Queued", history: "Finished" };
+/** Finished rows shown before "Show all". */
+const FINISHED_SHOWN = 10;
 type Filter = "all" | WorkKind;
 const FILTER_WORD: Record<Filter, string> = { all: "All", subagent: "Subagents", job: "Jobs", agent: "Background agents" };
 
@@ -378,6 +381,15 @@ export function WorkDialog({ workers, sheet, top, right, childState, onRetryChil
   const [filter, setFilter] = useState<Filter>("all");
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [pins, setPins] = useState<Record<string, Group>>({});
+  const [allFinished, setAllFinished] = useState(false);
+  // Running rows tick their elapsed time.
+  const [now, setNow] = useState(Date.now());
+  const ticking = workers.some((w) => w.life === "running" && w.ms === undefined && w.startedAt);
+  useEffect(() => {
+    if (!ticking) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [ticking]);
 
   // Focus lands on the heading; Escape closes; the page behind is inert.
   useLayoutEffect(() => { head.current?.focus(); }, []);
@@ -444,14 +456,14 @@ export function WorkDialog({ workers, sheet, top, right, childState, onRetryChil
           ? <button type="button" className="btn work-close" aria-label="Close" style={{ marginInlineStart: "auto" }} onClick={() => onClose(true)}>✕</button>
           : <button type="button" className="btn" style={{ marginInlineStart: "auto" }} onClick={() => onClose(true)}>Close</button>}
       </header>
-      {kinds.length > 1 && (
+      {kinds.length > 0 && (
         <div className="work-filters" role="group" aria-label="Show">
           {(["all", ...kinds] as Filter[]).map((f) => (
             <button key={f} type="button" aria-pressed={filter === f} onClick={() => setFilter(f)}>{FILTER_WORD[f]}</button>
           ))}
         </div>
       )}
-      <div className="work-body">
+      <div className="work-body" data-stops={shown.some((w) => w.live && (w.canStop || ctx?.stops[w.key])) ? "" : undefined}>
         {paused && <p className="meta-line work-note" role="status">Updates paused · Reconnecting…</p>}
         {(filter === "all" || filter === "agent") && (childState === "loading" && !agents.length
           ? <p className="meta-line work-note" role="status">Loading background agents…</p>
@@ -465,8 +477,8 @@ export function WorkDialog({ workers, sheet, top, right, childState, onRetryChil
             <h3 className="work-group-head" id={`${titleId}-${g}`}>
               {GROUP_WORD[g]} · {list.length}{g === "review" && list.some((w) => w.life === "failed") && list.some((w) => w.life !== "failed") ? ` · ${list.filter((w) => w.life === "failed").length} failed` : ""}
             </h3>
-            {list.map((w) => (
-              <WorkRow key={w.key} w={w} parent={parent} inReview={g === "review"} open={openKey === w.key}
+            {(g === "history" && !allFinished ? list.slice(0, FINISHED_SHOWN) : list).map((w) => (
+              <WorkRow key={w.key} w={w} now={now} parent={parent} inReview={g === "review"} open={openKey === w.key}
                        onToggle={(open) => {
                          setOpenKey(open ? w.key : null);
                          if (open) pin(w);
@@ -476,6 +488,9 @@ export function WorkDialog({ workers, sheet, top, right, childState, onRetryChil
                        onPin={() => pin(w)} onUnpin={(el) => unpin(w, el)}
                        onView={() => onView(w)} onOpenAgent={() => onOpenAgent(w)} />
             ))}
+            {g === "history" && !allFinished && list.length > FINISHED_SHOWN && (
+              <button type="button" className="link work-more" onClick={() => setAllFinished(true)}>Show all {list.length} finished</button>
+            )}
           </section>
         ))}
       </div>
@@ -483,8 +498,8 @@ export function WorkDialog({ workers, sheet, top, right, childState, onRetryChil
   );
 }
 
-function WorkRow({ w, parent, inReview, open, onToggle, onPin, onUnpin, onView, onOpenAgent }: {
-  w: Worker; parent: string; inReview: boolean; open: boolean; onToggle: (open: boolean) => void;
+function WorkRow({ w, now, parent, inReview, open, onToggle, onPin, onUnpin, onView, onOpenAgent }: {
+  w: Worker; now: number; parent: string; inReview: boolean; open: boolean; onToggle: (open: boolean) => void;
   onPin: () => void; onUnpin: (el: HTMLElement) => void; onView: () => void; onOpenAgent: () => void;
 }) {
   const ctx = useWork();
@@ -496,7 +511,7 @@ function WorkRow({ w, parent, inReview, open, onToggle, onPin, onUnpin, onView, 
   const jc = jobCause(w);
   const cause = w.life === "failed" ? firstLine(w.error ?? "") || jc.text : w.exitNote ?? "";
   // A job's label already says "Job N"; the kind word only names the others.
-  const meta = [w.kind === "job" ? "" : KIND_WORD[w.kind], w.ms !== undefined ? duration(w.ms) : "", cause, fresh ? "New result" : ""].filter(Boolean);
+  const meta = [w.kind === "job" ? "" : KIND_WORD[w.kind], w.ms !== undefined ? duration(w.ms) : workElapsedMs(w, now) !== undefined ? elapsed(workElapsedMs(w, now)!) : "", cause, fresh ? "New result" : ""].filter(Boolean);
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   return (
     <div className="work-row" data-life={w.life} onPointerEnter={onPin} onPointerLeave={(e) => onUnpin(e.currentTarget)}
@@ -509,12 +524,12 @@ function WorkRow({ w, parent, inReview, open, onToggle, onPin, onUnpin, onView, 
         <button type="button" className="link" aria-expanded={open} aria-controls={previewId} onClick={(e) => { stop(e); onToggle(!open); }}>
           {open ? "Hide preview" : "Preview"}
         </button>
-        {w.live && <StopWorkButton w={w} fromWork />}
         {inReview && <button type="button" className="link" onClick={(e) => { stop(e); ctx?.review.markReviewed(w); }}>Mark reviewed</button>}
         {w.kind === "agent"
           ? <button type="button" className="link" onClick={(e) => { stop(e); onOpenAgent(); }}>Open agent session</button>
           : <button type="button" className="link" onClick={(e) => { stop(e); onView(); }}>View in transcript</button>}
       </div>
+      <div className="work-row-stop">{w.live && <StopWorkButton w={w} fromWork />}</div>
       {open && <div className="work-row-preview" id={previewId}><Preview w={w} parent={parent} /></div>}
     </div>
   );

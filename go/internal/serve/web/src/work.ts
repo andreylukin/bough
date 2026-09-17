@@ -119,6 +119,12 @@ export function jobsFromLines(lines: Line[], session: string, live: boolean, run
     return w;
   };
   for (const l of lines) {
+    // A job that finished while the agent was idle is recorded only in the
+    // wake-up turn's input (serve drops the typed entries): its notes are outcomes.
+    if (l.kind === "input") {
+      for (const note of jobWakeNotes(l.text ?? "") ?? []) legacy(l, {}, note);
+      continue;
+    }
     if (l.kind !== "job") continue;
     const d = l.data ?? {};
     if (typeof d.event === "string" && typeof d.id === "number") {
@@ -142,9 +148,12 @@ export function jobsFromLines(lines: Line[], session: string, live: boolean, run
       }
       continue;
     }
+    legacy(l, d, String(d.text ?? l.text ?? ""));
+  }
+  function legacy(l: Line, d: Record<string, unknown>, note: string) {
     // "job N matched … while running" and other notices are not outcomes.
-    const p = parseLegacyJob(String(d.text ?? l.text ?? ""));
-    if (!p || p.id === undefined || p.life === "running") continue;
+    const p = parseLegacyJob(note);
+    if (!p || p.id === undefined || p.life === "running") return;
     const w = get(p.id, l.seq);
     w.seq = Math.max(w.seq, l.seq);
     // serve folds the typed entry's whole command onto the note; the note's own is "first line …".
@@ -267,6 +276,13 @@ export function workIndex(input: { session: string; lines: Line[]; turns: Turn[]
   const { session, lines, turns, row, rows, children, live } = input;
   const subs = turns.flatMap((t) => subagentsFromTurn(t, session, live));
   return [...jobsFromLines(lines, session, live, row.jobs), ...subs, ...agentsFromRows(row, rows, children)];
+}
+
+/** A row's time: its recorded duration, else how long a running worker has run since its recorded start. */
+export function workElapsedMs(w: Pick<Worker, "life" | "ms" | "startedAt">, now: number): number | undefined {
+  if (w.ms !== undefined) return w.ms;
+  const start = w.life === "running" && w.startedAt ? Date.parse(w.startedAt) : NaN;
+  return Number.isFinite(start) ? Math.max(0, now - start) : undefined;
 }
 
 export type WorkCounts = { running: number; queued: number; failed: number; unknown: number; stopped: number; finished: number; newResults: number; total: number };
