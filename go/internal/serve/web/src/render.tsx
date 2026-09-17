@@ -213,22 +213,63 @@ export function stripRunFences(text: string, codes: string[]): string {
   ).replace(/\n{3,}/g, "\n\n").trim();
 }
 
+/** A bare program whose text (ignoring whitespace) is inside a code the loop recorded: a duplicate of a run, not an unrun program. */
+export function programRan(program: string, codes: string[]): boolean {
+  const squash = (t: string) => t.replace(/\s+/g, "");
+  const p = squash(program);
+  return !!p && squash(codes.join("")).includes(p);
+}
+
 /**
- * A reply whose fence was lost ends in a bare program: marked renders
- * it as one run-on paragraph of escaped JavaScript. Split it off at the
- * first code-shaped line outside any fence, when a tools call follows.
+ * A reply whose fence was lost carries a bare program: marked renders
+ * it as run-on paragraphs of escaped JavaScript. Every run of lines
+ * outside a fence that starts code-shaped (await/const/tools.* …) and
+ * calls a tool is program text, wherever it sits between the prose.
+ * A run continues while a template literal, string or bracket is still
+ * open, and across blank lines when the next line is code-shaped too.
+ * Returns [prose, program].
  */
+const CODE_START = /^\s*(?:const |let |var |await |console\.log\(|out\.push\(|tools\.\w+\s*\()/;
 export function splitBareProgram(text: string): [string, string] {
   const lines = text.split("\n");
+  const prose: string[] = [];
+  const runs: string[] = [];
   let fenced = false;
-  for (let i = 0; i < lines.length; i++) {
-    if (/^\s*```/.test(lines[i])) { fenced = !fenced; continue; }
-    if (fenced || !/^\s*(?:const |let |var |await |console\.log\(|out\.push\()/.test(lines[i])) continue;
-    const rest = lines.slice(i).join("\n");
-    if (/tools\.\w+\s*\(/.test(rest)) return [lines.slice(0, i).join("\n").replace(/`+\s*$/, "").trim(), rest.trim()];
-    return [text, ""];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) fenced = !fenced;
+    if (fenced || /^\s*```/.test(line) || !CODE_START.test(line)) { prose.push(line); i++; continue; }
+    // Scan the run: track open template literals, quotes and brackets across lines.
+    let tpl = false, depth = 0, j = i;
+    for (;;) {
+      let quote = "", prev = "";
+      for (const ch of lines[j]) {
+        if (tpl) { if (ch === "`") tpl = false; continue; }
+        if (quote) { if (ch === quote) quote = ""; continue; }
+        if (ch === "/" && prev === "/") break; // line comment
+        prev = ch;
+        if (ch === "`") tpl = true;
+        else if (ch === '"' || ch === "'") quote = ch;
+        else if ("([{".includes(ch)) depth++;
+        else if (")]}".includes(ch)) depth--;
+      }
+      j++;
+      if (j >= lines.length) break;
+      if (tpl || depth > 0) continue;
+      let k = j;
+      while (k < lines.length && !lines[k].trim()) k++;
+      if (k < lines.length && CODE_START.test(lines[k])) { j = k; continue; }
+      break;
+    }
+    const run = lines.slice(i, j).join("\n").trim();
+    if (/\btools\.\w+\s*\(/.test(run)) runs.push(run);
+    else prose.push(...lines.slice(i, j));
+    i = j;
   }
-  return [text, ""];
+  if (!runs.length) return [text, ""];
+  const body = prose.join("\n").replace(/`+\s*$/, "").replace(/\n{3,}/g, "\n\n").trim();
+  return [body, runs.join("\n\n")];
 }
 
 /**
