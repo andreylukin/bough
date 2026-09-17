@@ -140,6 +140,56 @@ function score(text: string, q: string, loose: boolean): number {
   return 100;
 }
 
+/** The operators the palette reads out of a query; the rest is text. */
+export interface Ops { text: string; project?: string; after?: number; status?: string }
+
+const OP = /^(project|after|status):(\S+)$/i;
+
+export function parseOps(q: string): Ops {
+  const o: Ops = { text: "" };
+  const words: string[] = [];
+  for (const w of q.trim().split(/\s+/).filter(Boolean)) {
+    const m = OP.exec(w);
+    if (!m) { words.push(w); continue; }
+    const name = m[1].toLowerCase(), val = m[2].toLowerCase();
+    if (name === "project") o.project = val;
+    else if (name === "status") o.status = val;
+    else {
+      const d = /^(\d+)([hdw])$/.exec(val);
+      const at = d ? Date.now() - Number(d[1]) * { h: 3_600_000, d: 86_400_000, w: 604_800_000 }[d[2] as "h" | "d" | "w"] : Date.parse(val);
+      if (Number.isFinite(at)) o.after = at; else words.push(w);
+    }
+  }
+  o.text = words.join(" ");
+  return o;
+}
+
+export const hasOps = (o: Ops) => o.project !== undefined || o.after !== undefined || o.status !== undefined;
+
+/** A row passes the operators: status matches the API word or the one the UI shows. */
+export function matchesOps(r: Row, o: Ops): boolean {
+  if (o.project && !(r.repo ?? "").toLowerCase().includes(o.project)) return false;
+  if (o.after !== undefined && !(Date.parse(r.lastAt) >= o.after)) return false;
+  if (o.status) {
+    const s = shownStatus(r);
+    const alias: Record<string, string> = { failed: "error", waiting: "needs-you" };
+    if (s !== (alias[o.status] ?? o.status) && statusWord(s).toLowerCase() !== o.status) return false;
+  }
+  return true;
+}
+
+/** text cut into runs, the ones matching a term flagged for <mark>. */
+export function markParts(text: string, terms: string[]): { t: string; m: boolean }[] {
+  const ts = terms.filter(Boolean).map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (!ts.length) return [{ t: text, m: false }];
+  const re = new RegExp(`(${ts.join("|")})`, "gi");
+  return text.split(re).filter(Boolean).map((t) => ({ t, m: ts.some((x) => new RegExp(`^${x}$`, "i").test(t)) }));
+}
+
+function Marked({ text, terms }: { text: string; terms: string[] }) {
+  return <>{markParts(text, terms).map((p, i) => p.m ? <mark key={i}>{p.t}</mark> : p.t)}</>;
+}
+
 interface SearchLine { seq: number; kind: string; text: string }
 interface SearchHit { id: string; title: string; repo: string; branch: string; hits: number; lines: SearchLine[] }
 
@@ -230,13 +280,17 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
   const places = useDirs(q, open, Boolean(onStartIn));
 
   const hits = useMemo(() => {
-    const needle = q.trim().toLowerCase();
+    // project:, after: and status: narrow the sessions; the rest is matched.
+    const ops = parseOps(q);
+    const narrowed = hasOps(ops);
+    const needle = ops.text.toLowerCase();
     // With no query: what you would do next, not the sitemap.
     const cmds = commands
-      .filter((c) => needle || c.suggest)
+      .filter((c) => !narrowed && (needle || c.suggest))
       .map((c) => ({ c, s: needle ? score(c.label, needle, true) : 10 }))
       .filter((x) => x.s >= 0);
     const sessions = rows
+      .filter((r) => matchesOps(r, ops))
       .map((r) => {
         const title = sessionTitle(r);
         const s = needle ? Math.max(score(title, needle, false), score(r.repo ?? "", needle, false)) : 0;
@@ -244,11 +298,11 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
         return { r, title, s: s >= 0 && r.id === current ? Math.min(s, 51) : s };
       })
       // Best first, then the cap: slicing first dropped strong matches.
-      .filter((x) => needle && x.s >= 0)
+      .filter((x) => (needle || narrowed) && x.s >= 0)
       .sort((a, b) => b.s - a.s);
     // With no query, the three sessions you touched last (not this one):
     // a list of 150 titles is the sidebar again.
-    const recent = needle ? [] : rows
+    const recent = needle || narrowed ? [] : rows
       .filter((r) => !r.archived && !r.empty && r.id !== current)
       .sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt))
       .slice(0, 3);
@@ -375,6 +429,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); if (hits[at]) pick(hits[at]); }
   };
 
+  const terms = parseOps(q).text.toLowerCase().split(/\s+/).filter((t) => t.length >= 2);
   let lastGroup = "";
   let groupId = "";
   return createPortal(
@@ -400,7 +455,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
                   <span className="pal-label">{c.label}</span>
                   {c.hint && <span className="pal-hint">{c.hint}</span>}
                 </button>
-                {i === at && c.detail && <span className="pal-ev">{c.detail}</span>}
+                {i === at && c.detail && <span className="pal-ev"><Marked text={c.detail} terms={terms} /></span>}
               </div>
             );
           })}
@@ -412,6 +467,9 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
             </p>
           )}
         </div>
+        {!q.trim() && (
+          <p className="pal-syntax">Narrow with <code>project:bough</code> <code>after:7d</code> <code>status:failed</code></p>
+        )}
         {/* Never scrolls away: a failed text search is not hidden under the list. */}
         <div className="pal-foot" role="status">
           <span className="num">{hits.length} shown</span>
