@@ -211,17 +211,6 @@ func pending(ts []Turn, logged int) []int {
 	return ns
 }
 
-// provisional names a session from its first log line until the final
-// naming: "You fixed x; agent ..." reads as "Fixed x".
-func provisional(line string) string {
-	ask, _, _ := strings.Cut(line, ";")
-	ask = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(ask), "You "))
-	if r := []rune(ask); len(r) > 0 {
-		ask = strings.ToUpper(string(r[0])) + string(r[1:])
-	}
-	return Clean(ask)
-}
-
 // turnLog is the session's running log as the prompts show it ("3. You
 // ...") and the highest turn it covers.
 func turnLog(entries []history.Entry) (lines []string, last int) {

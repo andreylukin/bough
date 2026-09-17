@@ -23,8 +23,8 @@ func TestClean(t *testing.T) {
 		`"Fix the flaky golden test."`:                          "Fix the flaky golden test",
 		"**Fix the flaky golden test**":                         "Fix the flaky golden test",
 		"Fix the flaky golden test\n\nThis names the…":          "Fix the flaky golden test",
-		strings.Repeat("very long title ", 10):                  strings.TrimSpace(strings.Repeat("very long title ", 10)[:60]) + "…",
-		strings.Repeat("ש", 59) + "🚀 tail":                      strings.Repeat("ש", 59) + "🚀…",
+		strings.Repeat("very long title ", 10):                  strings.Repeat("very long title ", 3) + "very long",
+		strings.Repeat("ש", 59) + "🚀 tail":                      strings.Repeat("ש", 59) + "🚀",
 	}
 	for in, want := range cases {
 		if got := Clean(in); got != want {
@@ -202,7 +202,7 @@ func newTitler(l llm.LLM, h History) (*Titler, *fakeTimer, *[]string) {
 }
 
 // Each finished turn gets one log line, never two; the first one also
-// names a new session provisionally.
+// names the session.
 func TestLogsEachTurnOnce(t *testing.T) {
 	l := &stubLLM{}
 	h := &memHist{entries: []history.Entry{input("the gate is red"), done()}}
@@ -217,10 +217,10 @@ func TestLogsEachTurnOnce(t *testing.T) {
 		t.Fatalf("line = %v", line)
 	}
 	ts := kinds(h, "title")
-	if len(ts) != 1 || ts[0].Data["text"] != "Fixed thing 1" || ts[0].Data["final"] != nil || l.finals != 0 {
-		t.Fatalf("provisional = %v (%d finals)", ts, l.finals)
+	if len(ts) != 1 || ts[0].Data["text"] != "Fix gate 1" || ts[0].Data["final"] != true || l.finals != 1 {
+		t.Fatalf("title = %v (%d finals)", ts, l.finals)
 	}
-	if len(*emitted) != 1 || (*emitted)[0] != "title:Fixed thing 1" {
+	if len(*emitted) != 1 || (*emitted)[0] != "title:Fix gate 1" {
 		t.Fatalf("emitted %v", *emitted)
 	}
 	if ft.armed != 2 || ft.stopped != 1 || ft.d != 30*time.Minute {
@@ -235,7 +235,7 @@ func TestLogsEachTurnOnce(t *testing.T) {
 }
 
 // A session that predates the log gets only its latest turn logged, and
-// keeps its old name (no provisional rename).
+// replaces a non-final (placeholder) name once.
 func TestOldSessionLogsOnlyLatestTurn(t *testing.T) {
 	l := &stubLLM{}
 	h := &memHist{entries: []history.Entry{
@@ -245,38 +245,51 @@ func TestOldSessionLogsOnlyLatestTurn(t *testing.T) {
 	tr, _, _ := newTitler(l, h)
 	tr.turnDone()
 	got := kinds(h, "turn-summary")
-	if l.turns != 1 || len(got) != 1 || got[0].Data["turn"] != 4 || len(kinds(h, "title")) != 1 {
+	if l.turns != 1 || len(got) != 1 || got[0].Data["turn"] != 4 || len(kinds(h, "title")) != 2 || l.finals != 1 {
 		t.Fatalf("%d calls, lines %v", l.turns, got)
 	}
 }
 
-// Quiet past the cache window names the session from its log; an input
-// before the timer fires cancels it; nothing new means no second call.
+// A first naming that failed is retried when the session goes quiet,
+// but not while a turn is open; once named, quiet does nothing more.
 func TestQuietTimerNamesSession(t *testing.T) {
-	l := &stubLLM{}
+	l := &flakyLLM{stubLLM: &stubLLM{}, failFinals: 1}
 	h := &memHist{entries: []history.Entry{input("the gate is red"), done()}}
 	tr, ft, _ := newTitler(l, h)
 	tr.turnDone()
-
+	if len(kinds(h, "title")) != 0 {
+		t.Fatal("named despite a failed call")
+	}
 	h.add(input("and another thing")) // the person came back
 	ft.fire()
 	if l.finals != 0 {
 		t.Fatal("named while a turn was open")
 	}
 	h.add(done())
-	tr.turnDone()
 	ft.fire()
 	ts := kinds(h, "title")
-	final := ts[len(ts)-1].Data
-	if l.finals != 1 || final["final"] != true || final["text"] != "Fix gate 1" ||
-		final["summary"] != "You fix gate; agent on it." || final["turn"] != 2 {
-		t.Fatalf("final = %v (%d finals)", final, l.finals)
+	if len(ts) != 1 || ts[0].Data["final"] != true || ts[0].Data["text"] != "Fix gate 1" ||
+		ts[0].Data["summary"] != "You fix gate; agent on it." {
+		t.Fatalf("titles = %v", ts)
 	}
 	ft.fire()
 	tr.shutdown()
 	if l.finals != 1 {
-		t.Fatalf("renamed with nothing new (%d finals)", l.finals)
+		t.Fatalf("renamed (%d finals)", l.finals)
 	}
+}
+
+type flakyLLM struct {
+	*stubLLM
+	failFinals int
+}
+
+func (f *flakyLLM) Complete(ctx context.Context, system string, msgs []llm.Message) (string, error) {
+	if system == FinalPrompt && f.failFinals > 0 {
+		f.failFinals--
+		return "", context.DeadlineExceeded
+	}
+	return f.stubLLM.Complete(ctx, system, msgs)
 }
 
 // Shutting down names the session when turns were logged since the last
@@ -450,4 +463,34 @@ type hangLLM struct{}
 func (hangLLM) Complete(ctx context.Context, _ string, _ []llm.Message) (string, error) {
 	<-ctx.Done()
 	return "", ctx.Err()
+}
+
+// The session is named once, right after its first turn, from the model
+// (no interim "Asked …" name); turns 2 and 3 leave it alone, and no
+// stored title ends in an ellipsis.
+func TestTitleSettlesOnce(t *testing.T) {
+	l := &stubLLM{}
+	h := &memHist{entries: []history.Entry{input("the gate is red"), done()}}
+	tr, ft, emitted := newTitler(l, h)
+	tr.turnDone()
+	ts := kinds(h, "title")
+	if len(ts) != 1 || ts[0].Data["text"] != "Fix gate 1" || len(*emitted) != 1 {
+		t.Fatalf("after turn 1: titles %v, emitted %v", ts, *emitted)
+	}
+	for _, ask := range []string{"now ship it", "and tag it"} {
+		h.add(input(ask), done())
+		tr.turnDone()
+	}
+	ft.fire()
+	tr.shutdown()
+	if ts := kinds(h, "title"); len(ts) != 1 || l.finals != 1 || len(*emitted) != 1 {
+		t.Fatalf("retitled: titles %v, %d finals, emitted %v", ts, l.finals, *emitted)
+	}
+	if got := Clean(strings.Repeat("very long title ", 10)); strings.HasSuffix(got, "…") || len([]rune(got)) > 60 {
+		t.Fatalf("Clean stored %q", got)
+	}
+	title, _ := Parse("Title: " + strings.Repeat("word ", 20))
+	if strings.HasSuffix(title, "…") {
+		t.Fatalf("Parse title %q", title)
+	}
 }

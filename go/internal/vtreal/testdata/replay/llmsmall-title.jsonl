@@ -1,3 +1,4 @@
 {"seq":1,"at":"2026-09-11T10:00:00Z","kind":"meta","data":{"cwd":"/tmp/demo"}}
-{"seq":2,"at":"2026-09-11T10:00:01Z","kind":"assistant","data":{"text":"Fix the flaky golden test"}}
-{"seq":3,"at":"2026-09-11T10:00:02Z","kind":"assistant","data":{"text":"SMALL-SECOND was never asked for"}}
+{"seq":2,"at":"2026-09-11T10:00:01Z","kind":"assistant","data":{"text":"You asked for a listing; agent ran ls, exit 0."}}
+{"seq":3,"at":"2026-09-11T10:00:01Z","kind":"assistant","data":{"text":"Fix the flaky golden test"}}
+{"seq":4,"at":"2026-09-11T10:00:02Z","kind":"assistant","data":{"text":"SMALL-SECOND was never asked for"}}

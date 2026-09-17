@@ -40,13 +40,17 @@ func sessionTitleUnicodeAndRenameTape(t *testing.T, path string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The first reply is turn one's log line; the naming reply after it.
+	n := 0
 	for _, l := range strings.Split(string(b), "\n") {
 		var e struct {
 			Kind string
 			Data struct{ Text string }
 		}
 		if json.Unmarshal([]byte(l), &e) == nil && e.Kind == "assistant" {
-			return e.Data.Text
+			if n++; n == 2 {
+				return e.Data.Text
+			}
 		}
 	}
 	t.Fatal("no title on the small tape")
