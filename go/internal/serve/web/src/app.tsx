@@ -1208,7 +1208,13 @@ export function Entry({ line, codes, nested, until }: { line: Line; codes: strin
       <div className="say">
         {/* There is one assistant; naming it above every reply said nothing. */}
         {!nested && k !== "assistant" && <div className="say-who"><span className="sub-dot" /><span>subagent</span></div>}
-        {!blank(body) && <Markdown text={body} />}
+        {!blank(body) && body.split(/^[ \t]*\[guessed output omitted\][ \t]*$/m).map((part, i) => (
+          // The loop swapped a fenced block of invented output for a sentinel line: a quiet note, not prose.
+          <Fragment key={i}>
+            {i > 0 && <p className="exec-note exec-note-quiet">A code block with guessed output was removed</p>}
+            {!blank(part) && <Markdown text={part} />}
+          </Fragment>
+        ))}
         {!nested && k === "assistant" && !blank(body) && (
           <div className="msg-acts">
             <CopyButton text={body} what="answer as Markdown" />
