@@ -1,6 +1,8 @@
 package serve
 
 import (
+	"context"
+	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -159,5 +161,35 @@ func TestSetupSavesKey(t *testing.T) {
 		if code, _ := f.do(t, "POST", "/api/setup/key", bad); code != 400 {
 			t.Errorf("POST %s = %d, want 400", bad, code)
 		}
+	}
+}
+
+func TestSetupChecksKey(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	home := setupHome(t, f)
+	if err := os.MkdirAll(filepath.Join(home, ".bough"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".bough", "env"), []byte("export ANTHROPIC_API_KEY='sk-ant-bad'\nOPENAI_API_KEY=sk-good\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.api.checkKey = func(_ context.Context, provider, key string) (int, error) {
+		switch key {
+		case "sk-good":
+			return 200, nil
+		case "sk-ant-bad":
+			return 401, nil
+		}
+		return 0, errors.New("offline")
+	}
+	for provider, want := range map[string]string{"anthropic": "rejected", "openai": "ok", "cerebras": "unset"} {
+		code, body := f.do(t, "GET", "/api/setup/check?provider="+provider, "")
+		if code != 200 || body["state"] != want {
+			t.Errorf("check %s = %d %v, want state %q", provider, code, body, want)
+		}
+	}
+	if code, _ := f.do(t, "GET", "/api/setup/check?provider=nope", ""); code != 400 {
+		t.Errorf("unknown provider = %d, want 400", code)
 	}
 }

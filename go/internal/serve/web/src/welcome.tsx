@@ -5,7 +5,7 @@
 // an empty "Nothing needs your attention" and a New button that started a
 // read-only session in home.
 import { useEffect, useState } from "react";
-import { api, type Setup, type SetupFolder, type SetupProvider } from "./api";
+import { api, type KeyState, type Setup, type SetupFolder, type SetupProvider } from "./api";
 
 const DONE = "bough:welcome-done";
 
@@ -28,10 +28,39 @@ const label = (name: string) => LABEL[name] ?? name;
 
 const tilde = (p: string, home: string) => (home && (p === home || p.startsWith(home + "/")) ? "~" + p.slice(home.length) : p);
 
+export type KeyChecks = Record<string, KeyState | "checking">;
+
+/**
+ * What step 1 says about the keys that are set. "Key found" alone was a
+ * promise: a key the provider rejects failed every session with a 401.
+ * A key that could not be checked (offline) still counts as usable.
+ */
+export function keyLine(providers: SetupProvider[], checks: KeyChecks): { text: string; tone: "ok" | "warn" | "err" | ""; working: boolean } {
+  const set = providers.filter((p) => p.set);
+  if (set.some((p) => (checks[p.name] ?? "checking") === "checking")) return { text: "Checking your keys…", tone: "", working: false };
+  const good = set.filter((p) => checks[p.name] === "ok" || checks[p.name] === "unknown");
+  const bad = set.filter((p) => checks[p.name] === "rejected");
+  const names = (l: SetupProvider[]) => l.map((p) => label(p.name)).join(", ");
+  const parts: string[] = [];
+  if (good.length) parts.push(`${names(good)} key ${good.length > 1 ? "work" : "works"}.`);
+  if (bad.length) parts.push(`${names(bad)} key was rejected: replace it${good.length ? " or pick a working provider’s model in the session" : ""}.`);
+  if (good.length && !bad.length) parts.push("Pick a model inside the session.");
+  return { text: parts.join(" "), tone: bad.length ? (good.length ? "warn" : "err") : "ok", working: good.length > 0 };
+}
+
+/** The provider the key form opens on: a rejected key to replace, else one with no key. */
+export function pickProvider(providers: SetupProvider[], checks: KeyChecks): string {
+  return (providers.find((p) => p.set && checks[p.name] === "rejected") ?? providers.find((p) => !p.set) ?? providers[0])?.name ?? "anthropic";
+}
+
 /** The folder check for the path as typed now: never a result for a path that was typed before. */
 type Check = { state: "idle" | "checking" | "failed" } | { state: "done"; folder: SetupFolder };
 
-export function Welcome({ onStart, onSkip }: { onStart: (cwd: string, prompt: string) => Promise<unknown> | void; onSkip: () => void }) {
+export function Welcome({ onStart, onSkip, onBack }: {
+  onStart: (cwd: string, prompt: string) => Promise<unknown> | void; onSkip: () => void;
+  /** A phone's way to the session list; the welcome filled the screen with no nav. */
+  onBack?: () => void;
+}) {
   const [setup, setSetup] = useState<Setup | null>(null);
   const [loadErr, setLoadErr] = useState("");
   const [providers, setProviders] = useState<SetupProvider[]>([]);
@@ -44,6 +73,7 @@ export function Welcome({ onStart, onSkip }: { onStart: (cwd: string, prompt: st
   const [prompt, setPrompt] = useState("");
   const [starting, setStarting] = useState(false);
   const [startErr, setStartErr] = useState("");
+  const [checks, setChecks] = useState<KeyChecks>({});
 
   const loadSetup = () => {
     setLoadErr("");
@@ -54,6 +84,19 @@ export function Welcome({ onStart, onSkip }: { onStart: (cwd: string, prompt: st
     }).catch((e: Error) => setLoadErr(e.message));
   };
   useEffect(loadSetup, []);
+  // Every set key is asked once per change of the provider list (a saved key re-asks).
+  useEffect(() => {
+    let on = true;
+    const set = providers.filter((p) => p.set);
+    setChecks(Object.fromEntries(set.map((p) => [p.name, "checking"])));
+    for (const p of set) {
+      api.checkKey(p.name).then((r) => r.state, () => "unknown" as const)
+        .then((st) => { if (on) setChecks((c) => ({ ...c, [p.name]: st })); });
+    }
+    return () => { on = false; };
+  }, [providers]);
+  const keys = keyLine(providers, checks);
+  useEffect(() => { if (!keys.text.startsWith("Checking")) setProv(pickProvider(providers, checks)); }, [keys.text]); // eslint-disable-line react-hooks/exhaustive-deps
   // Bumped by Retry, so an unchanged path can be checked again.
   const [checkRev, setCheckRev] = useState(0);
 
@@ -77,8 +120,10 @@ export function Welcome({ onStart, onSkip }: { onStart: (cwd: string, prompt: st
 
   const home = setup?.home ?? "";
   const keyed = providers.filter((p) => p.set);
+  const checking = keyed.length > 0 && keys.text.startsWith("Checking");
+  const rejected = keyed.length > 0 && !checking && keys.tone !== "ok";
   const folder = check.state === "done" ? check.folder : null;
-  const ready = keyed.length > 0 && !!folder?.exists && !starting;
+  const ready = keys.working && !!folder?.exists && !starting;
 
   const save = async () => {
     setSaving(true);
@@ -119,12 +164,22 @@ export function Welcome({ onStart, onSkip }: { onStart: (cwd: string, prompt: st
   } else status = { text: "Not a git checkout: file tools can’t edit here, but shell commands still run with your user permissions and can change files. Pick a repo to let the agent make edits.", tone: "warn" };
 
   let hint = "";
-  if (setup !== null && !keyed.length) hint = "Add a provider key to enable these.";
+  if (setup !== null && !checking && !keys.working) hint = keyed.length ? "Add a key the provider accepts to enable these." : "Add a provider key to enable these.";
   else if (folder && !folder.exists) hint = "Pick a folder that exists.";
   else if (ready) hint = "Choosing a suggestion starts a session right away.";
 
   return (
     <div className="welcome scroll">
+      {onBack && (
+        <nav className="welcome-nav" aria-label="Welcome">
+          <button type="button" className="back" onClick={onBack} aria-label="Back to sessions">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
+                 strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+          </button>
+          <span className="welcome-nav-title">Sessions</span>
+          <button type="button" className="link welcome-nav-skip" onClick={() => { dismiss(); onSkip(); }}>Skip</button>
+        </nav>
+      )}
       <div className="welcome-inner">
         <header className="welcome-head">
           <h1>Welcome to bough</h1>
@@ -132,16 +187,17 @@ export function Welcome({ onStart, onSkip }: { onStart: (cwd: string, prompt: st
         </header>
 
         <ol className="welcome-steps">
-          <li className={"welcome-step" + (keyed.length ? " done" : "")}>
+          <li className={"welcome-step" + (keys.working ? " done" : "")}>
             <h2><span className="welcome-num" aria-hidden="true">1</span>Add a provider key</h2>
             {setup === null ? (
               loadErr ? (<>
                 <p className="welcome-status err" role="alert">Couldn’t load setup: {loadErr}</p>
                 <button className="btn welcome-retry" onClick={loadSetup}>Retry</button>
               </>) : <p className="welcome-note">Checking for keys…</p>
-            ) : keyed.length ? (
-              <p className="welcome-status ok">Key found for {keyed.map((p) => label(p.name)).join(", ")}. Pick a model inside the session.</p>
+            ) : keyed.length && !rejected ? (
+              <p className={"welcome-status " + keys.tone} role="status">{keys.text}</p>
             ) : (<>
+              {rejected && <p className={"welcome-status " + keys.tone} role="alert">{keys.text}</p>}
               <p className="welcome-note">
                 Saved to <code>{tilde(setup.envFile, home)}</code> on the machine running bough, and sent only to {label(prov)}.
               </p>
@@ -191,7 +247,7 @@ export function Welcome({ onStart, onSkip }: { onStart: (cwd: string, prompt: st
           </ul>
         </section>
 
-        <p className="welcome-foot"><button className="link" onClick={() => { dismiss(); onSkip(); }}>Skip the welcome</button></p>
+        <p className="welcome-foot"><button className="link welcome-skip" onClick={() => { dismiss(); onSkip(); }}>Skip the welcome</button></p>
       </div>
     </div>
   );

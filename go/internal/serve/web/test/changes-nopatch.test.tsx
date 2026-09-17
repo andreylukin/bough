@@ -37,3 +37,12 @@ test("the turn scope is a tab only when a turn is named", () => {
   expect(turn).toContain("This turn");
   expect(turn).toContain("a.ts");
 });
+
+// R3-I: a fresh load of #/s/<id>/changes?turn=4 lost ?turn before the router had read the hash.
+test("the router never rewrites the hash before it has read it, and keeps a sub-page's query", async () => {
+  const { hashToReplace } = await import("../src/app");
+  const link = "#/s/s1/changes?turn=4";
+  expect(hashToReplace(link, "#/", null, true)).toBeNull();
+  expect(hashToReplace(link, "#/s/s1/changes", "changes", false)).toBeNull();
+  expect(hashToReplace("#/s/s1/changes", "#/s/s1", null, false)).toBe("#/s/s1");
+});

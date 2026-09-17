@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,6 +41,8 @@ type API struct {
 	start  string
 	getenv func(string) string
 	setenv func(string, string) error
+	// checkKey asks a provider whether a key is accepted: the HTTP status, or an error when it could not ask.
+	checkKey func(ctx context.Context, provider, key string) (int, error)
 }
 
 // Row is one session as the wire sees it: what history knows, what the
@@ -130,12 +133,13 @@ const heartbeat = 15 * time.Second
 func NewAPI(sup *Supervisor) *API {
 	home, _ := os.UserHomeDir()
 	start, _ := os.Getwd()
-	a := &API{sup: sup, mux: http.NewServeMux(), home: home, start: start, getenv: os.Getenv, setenv: os.Setenv}
+	a := &API{sup: sup, mux: http.NewServeMux(), home: home, start: start, getenv: os.Getenv, setenv: os.Setenv, checkKey: checkProviderKey}
 	a.ingest = a.spawnIngest
 	a.mux.HandleFunc("GET /api/health", a.health)
 	a.mux.HandleFunc("GET /api/setup", a.setup)
 	a.mux.HandleFunc("GET /api/dirs", a.dirs)
 	a.mux.HandleFunc("POST /api/setup/key", a.setKey)
+	a.mux.HandleFunc("GET /api/setup/check", a.checkSetupKey)
 	a.mux.HandleFunc("GET /api/sessions", a.listSessions)
 	a.mux.HandleFunc("POST /api/sessions", a.createSession)
 	a.mux.HandleFunc("GET /api/sessions/{id}", a.getSession)

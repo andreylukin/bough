@@ -7,12 +7,14 @@ package serve
 // and guess why their first session could not edit anything.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	iorb "github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/plugins/connect"
@@ -115,14 +117,85 @@ func (a *API) setupProviders() []setupProvider {
 	return out
 }
 
-func envFileSets(file, env string) bool {
+func envFileSets(file, env string) bool { return envFileValue(file, env) != "" }
+
+func envFileValue(file, env string) string {
+	val := ""
 	for line := range strings.SplitSeq(file, "\n") {
 		k, v, ok := strings.Cut(strings.TrimPrefix(strings.TrimSpace(line), "export "), "=")
-		if ok && strings.TrimSpace(k) == env && strings.Trim(strings.TrimSpace(v), `"'`) != "" {
-			return true
+		if ok && strings.TrimSpace(k) == env {
+			val = strings.Trim(strings.TrimSpace(v), `"'`)
 		}
 	}
-	return false
+	return val
+}
+
+// checkURL is an authenticated read per provider that costs no tokens.
+var checkURL = map[string]string{
+	"anthropic":  "https://api.anthropic.com/v1/models",
+	"openai":     "https://api.openai.com/v1/models",
+	"openrouter": "https://openrouter.ai/api/v1/key",
+	"cerebras":   "https://api.cerebras.ai/v1/models",
+}
+
+func checkProviderKey(ctx context.Context, provider, key string) (int, error) {
+	u, ok := checkURL[provider]
+	if !ok {
+		return 0, fmt.Errorf("no check for %s", provider)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return 0, err
+	}
+	if provider == "anthropic" {
+		req.Header.Set("x-api-key", key)
+		req.Header.Set("anthropic-version", "2023-06-01")
+	} else {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	resp.Body.Close()
+	return resp.StatusCode, nil
+}
+
+// checkSetupKey says whether a provider's key works: "ok", "rejected"
+// (401/403), "unset", or "unknown" when the provider could not be asked.
+// A key that is merely present used to read as "Key found" while every
+// session on it failed with a 401.
+func (a *API) checkSetupKey(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("provider")
+	for _, p := range connect.Providers() {
+		if p.Name != name {
+			continue
+		}
+		key := a.getenv(p.Env)
+		if key == "" {
+			file, _ := os.ReadFile(a.envFile())
+			key = envFileValue(string(file), p.Env)
+		}
+		if key == "" {
+			writeJSON(w, http.StatusOK, map[string]any{"state": "unset"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+		defer cancel()
+		code, err := a.checkKey(ctx, p.Name, key)
+		switch {
+		case err != nil:
+			writeJSON(w, http.StatusOK, map[string]any{"state": "unknown", "detail": err.Error()})
+		case code == http.StatusUnauthorized || code == http.StatusForbidden:
+			writeJSON(w, http.StatusOK, map[string]any{"state": "rejected", "detail": fmt.Sprintf("%s answered %d", p.Name, code)})
+		case code >= 200 && code < 300:
+			writeJSON(w, http.StatusOK, map[string]any{"state": "ok"})
+		default:
+			writeJSON(w, http.StatusOK, map[string]any{"state": "unknown", "detail": fmt.Sprintf("%s answered %d", p.Name, code)})
+		}
+		return
+	}
+	writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: unknown provider %q", name))
 }
 
 // setKey records a key the way /connect does, and sets it in this
