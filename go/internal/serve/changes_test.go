@@ -196,4 +196,9 @@ func TestTurnEdits(t *testing.T) {
 	if _, err := TurnDiff(ctx, dir, entries, 9, "a.go"); err == nil {
 		t.Fatal("an unknown turn diffed")
 	}
+	// A turn with no checkpoint of its own still lists its files, counts unknown.
+	nocp := append([]history.Entry{{Seq: 1, Kind: "input", Data: map[string]any{}}}, entries[1:]...)
+	if e, ok := TurnEdits(ctx, dir, nocp, 1); !ok || len(e) != 1 || e[0].Add != -1 || e[0].Patch {
+		t.Fatalf("no-checkpoint turn = %+v ok=%v, want a.go with unknown counts", e, ok)
+	}
 }

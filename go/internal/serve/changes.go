@@ -188,9 +188,11 @@ func editsBetween(ctx context.Context, dir, base, end string, files []string) (e
 	if len(files) == 0 {
 		return nil, true
 	}
-	now := end
-	if base != "" && now == "" {
-		now, _ = history.SnapshotContext(ctx, dir)
+	var now string
+	if base != "" {
+		if now = end; now == "" {
+			now, _ = history.SnapshotContext(ctx, dir)
+		}
 	}
 	if now == "" {
 		for _, f := range files {

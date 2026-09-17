@@ -66,13 +66,13 @@ export function countOf(r: Read): { text: string; add?: number; del?: number; qu
 
 export const scopeName = (s: Scope) => (s === "session" ? "Session edits" : s === "turn" ? "This turn" : "Working tree");
 
-/** The ?file=<path> of a #/s/<id>/changes?file=… link, if any. */
 /** The ?turn=<seq> of a #/s/<id>/changes?turn=… link, if any. */
 export function hashTurn(): number | undefined {
   const m = /[?&]turn=(\d+)/.exec(typeof window === "undefined" ? "" : window.location.hash);
   return m ? +m[1] : undefined;
 }
 
+/** The ?file=<path> of a #/s/<id>/changes?file=… link, if any. */
 export function hashFile(): string | null {
   const m = /[?&]file=([^&]*)/.exec(typeof window === "undefined" ? "" : window.location.hash);
   if (!m) return null;

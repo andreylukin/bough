@@ -1795,13 +1795,15 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
   const card = !result && spawned && /tools\.spawn(All)?\(/.test(code.text) ? spawned : undefined;
   const missing = result || card ? null : live ? "running" : stopped ? "Interrupted · result not recorded" : "Result not recorded";
   const [full, setFull] = useState(false);
+  // File rows fetch their numbered diffs only once the call is opened.
+  const [opened, setOpened] = useState(Boolean(current));
   const phone = useMedia("(max-width:720px)");
   // The last lines of a failure are where the diagnosis is.
   const diag = failed ? out.split("\n").filter((l) => l.trim()).slice(-10) : [];
   const cmdText = call.lang === "bash" ? call.body : call.raw;
   return (
     <>
-    <details className={"block thin toolcall" + (failed ? " block-failed" : "")} data-seq={result?.seq} open={current || undefined}>
+    <details className={"block thin toolcall" + (failed ? " block-failed" : "")} data-seq={result?.seq} open={current || undefined} onToggle={(e) => setOpened(e.currentTarget.open)}>
       <summary role="button" {...handlers}>
         <span className="block-label">{timedOut ? "Question timed out" : label ?? (edits.length ? "Edited" : call.verb)}</span>
         {!label && edits.length > 0 && !timedOut ? <>
@@ -1842,7 +1844,7 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
         {/* Output keeps its columns: a docker ps or a table wrapped at the
             block's edge scatters every row across three lines. */}
         {result && edits.length > 0 && (
-          <div className="edit-files">{edits.map((f) => <FileEdit key={f.path} edit={f} session={session} turn={turnSeq} />)}</div>
+          <div className="edit-files">{edits.map((f) => <FileEdit key={f.path} edit={f} session={opened ? session : undefined} turn={turnSeq} />)}</div>
         )}
         {result && !empty && (!failed || full || !diag.length) && (() => {
           // Edits the tools printed read as diffs; everything else keeps its columns.
