@@ -84,7 +84,11 @@ host = os.environ.get("BOUGH_HOST")
 if not host:
     sys.exit("bough: no host relay in this orb (BOUGH_HOST unset)")
 stdin = "" if sys.stdin.isatty() else sys.stdin.read()
-req = urllib.request.Request(host + "/bough/exec", data=json.dumps({"args": sys.argv[1:], "stdin": stdin}).encode(), headers={"Content-Type": "application/json"})
+headers = {"Content-Type": "application/json"}
+token = os.environ.get("BOUGH_ORB_TOKEN")
+if token:
+    headers["Authorization"] = "Bearer " + token
+req = urllib.request.Request(host + "/bough/exec", data=json.dumps({"args": sys.argv[1:], "stdin": stdin}).encode(), headers=headers)
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 try:
     resp = json.load(opener.open(req, timeout=660))

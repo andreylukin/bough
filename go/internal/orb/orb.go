@@ -34,6 +34,7 @@ type Orb struct {
 	state State
 	spec  container.RunSpec
 	proxy *proxy // host egress for the guest; nil when it could not start
+	token string // proxy/relay token; "" for a container created before tokens
 
 	secretWarned sync.Map // secret names already reported unresolved
 }
@@ -94,6 +95,18 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 		if err := rt.Remove(ctx, o.spec.Name); err != nil {
 			return fail(fmt.Errorf("remove stale %s: %w", o.spec.Name, err))
 		}
+		st = container.StateMissing
+	}
+	// A container's env is fixed at create: only a new one gets a new
+	// token; a reused one keeps the token (or the lack of one) it has.
+	if st == container.StateMissing {
+		err = o.newTokenLocked()
+	} else {
+		o.token, err = readToken(home, session)
+		o.setTokenEnvLocked()
+	}
+	if err != nil {
+		return fail(fmt.Errorf("orb token: %w", err))
 	}
 	if err := rt.Start(ctx, o.spec); err != nil {
 		// A concurrent session's build may have pruned our tag between
@@ -198,6 +211,28 @@ func (o *Orb) baseEnv() []string {
 	return append(o.coreEnv(), envList(o.project.Def.Env)...)
 }
 
+func (o *Orb) newTokenLocked() error {
+	tok, err := newToken(o.home, o.session)
+	if err != nil {
+		return err
+	}
+	o.token = tok
+	o.setTokenEnvLocked()
+	if o.proxy != nil { // started without the token
+		o.proxy.Close()
+		o.proxy = nil
+	}
+	return nil
+}
+
+func (o *Orb) setTokenEnvLocked() {
+	o.spec.Env = slices.DeleteFunc(o.spec.Env, func(e string) bool { return strings.HasPrefix(e, tokenEnv+"=") })
+	if o.token != "" {
+		o.spec.Env = append(o.spec.Env, tokenEnv+"="+o.token)
+	}
+	o.state.ProxyAuth = proxyAuth(o.token)
+}
+
 func (o *Orb) coreEnv() []string {
 	env := []string{"HOME=/root", "TERM=dumb"}
 	if o.scratch != "" {
@@ -210,11 +245,15 @@ func (o *Orb) coreEnv() []string {
 // host environment: the base env, the user's identity and the proxy.
 // Project env comes last; projectdef refuses env names this sets. Secrets
 // go separately in ExecOptions.Secrets, so they never reach argv.
-func (o *Orb) execEnv(proxyURL string) []string {
+func (o *Orb) execEnv(proxyURL, token string) []string {
 	env := append(o.coreEnv(), identityEnv(o.project.Def.Identity)...)
+	if token != "" {
+		env = append(env, tokenEnv+"="+token)
+	}
 	if proxyURL != "" {
 		env = append(env, proxyEnv(proxyURL)...)
-		env = append(env, "BOUGH_HOST="+proxyURL)
+		// The relay takes the token as a bearer header, not in the URL.
+		env = append(env, "BOUGH_HOST="+strings.Replace(proxyURL, proxyUser+":"+token+"@", "", 1))
 	}
 	if o.scratch != "" {
 		// The shim's dir first, so `bough` in the guest is the relay.
@@ -265,7 +304,7 @@ func (o *Orb) ensureProxyLocked(ctx context.Context) {
 	if err != nil || ip == nil || ip.IsLoopback() {
 		return
 	}
-	p, err := startProxy(ip.String())
+	p, err := startProxy(ip.String(), o.token)
 	if err != nil {
 		if o.rt.Name() != "fake" {
 			fmt.Fprintf(os.Stderr, "bough: orb: proxy on %s: %v\n", ip, err)
@@ -301,7 +340,7 @@ func (o *Orb) runResume(ctx context.Context, script string) error {
 	}
 	defer f.Close()
 	text, _ := os.ReadFile(script)
-	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: o.state.Primary, Env: o.execEnv(o.proxyURLLocked()), Secrets: o.secretEnv()}, container.ScriptArgv(text, script)...)
+	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: o.state.Primary, Env: o.execEnv(o.proxyURLLocked(), o.token), Secrets: o.secretEnv()}, container.ScriptArgv(text, script)...)
 	cmd.Stdout, cmd.Stderr = f, f
 	// Timestamps let session starts be measured without parsing output.
 	start := time.Now()
@@ -335,13 +374,14 @@ func (o *Orb) Command(ctx context.Context, argv ...string) *exec.Cmd {
 	err := o.ensureRunningLocked(ctx)
 	primary := o.state.Primary
 	proxyURL := o.proxyURLLocked()
+	token := o.token
 	o.mu.Unlock()
 	if err != nil {
 		cmd := exec.CommandContext(ctx, "false")
 		cmd.Err = fmt.Errorf("orb: %s: restart: %w", o.session, err)
 		return cmd
 	}
-	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: primary, Env: o.execEnv(proxyURL), Secrets: o.secretEnv()}, argv...)
+	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: primary, Env: o.execEnv(proxyURL, token), Secrets: o.secretEnv()}, argv...)
 	// Killing the host `container exec` client does not end the guest
 	// processes, so cancel also kills them inside the orb. A caller that
 	// replaces Cancel (tools' process-group kill) must call this one too.
@@ -377,6 +417,12 @@ func (o *Orb) ensureRunningLocked(ctx context.Context) error {
 	}
 	if st == container.StateRunning {
 		return nil
+	}
+	if st == container.StateMissing {
+		// Removed behind our back: Start creates it, so with a new token.
+		if err := o.newTokenLocked(); err != nil {
+			return err
+		}
 	}
 	if err := o.rt.Start(ctx, o.spec); err != nil {
 		o.state.Status, o.state.Error = StatusFailed, err.Error()

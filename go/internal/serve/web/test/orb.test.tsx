@@ -84,3 +84,21 @@ test("ORB-A5: a multi-problem save error keeps one problem per line beside the e
     expect(css).toMatch(/\/\* ORB-A5 \*\/[\s\S]*\.orb-save-err\{[^}]*white-space:pre-line[\s\S]*\/\* \/ORB-A5 \*\//);
   }
 });
+
+test("an orb created before proxy tokens says how to get one", () => {
+  const detail = {
+    files: {}, runtime: { name: "apple", available: true },
+    orb: { image: "t", built: true }, build: { tag: "t", state: "ok" },
+    orbs: [
+      { session: "2026-09-13-legacy", status: "running", proxyAuth: "legacy" },
+      { session: "2026-09-13-tokend", status: "running", proxyAuth: "token" },
+    ],
+  } as unknown as OrbDetail;
+  const html = renderToStaticMarkup(
+    <ProjectOrb project={{ id: "p1", name: "Web", slug: "web" } as Project} detail={detail} log=""
+                onAttach={noop} onDetach={noop} onSave={async () => {}} onBuild={noop} onStopOrb={noop} />,
+  );
+  expect(html.match(/orb-note/g)?.length).toBe(1);
+  expect(html).toContain("Proxy unauthenticated");
+  expect(html).toContain("recreate");
+});

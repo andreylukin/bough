@@ -35,6 +35,7 @@ type State struct {
 	Primary   string            `json:"primary,omitempty"`
 	Error     string            `json:"error,omitempty"`
 	PID       int               `json:"pid,omitempty"`
+	ProxyAuth string            `json:"proxyAuth,omitempty"` // ProxyAuthToken or ProxyAuthLegacy
 	UpdatedAt time.Time         `json:"updatedAt"`
 }
 

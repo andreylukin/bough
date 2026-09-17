@@ -177,6 +177,9 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		}
 	}
 	st := o.State()
+	if st.ProxyAuth == iorb.ProxyAuthLegacy && !reused {
+		fmt.Fprintf(os.Stderr, "bough: orb: %s: %s\n", slug, iorb.LegacyProxyNotice)
+	}
 	// Checkpoints and relative paths use the process cwd: it must be the
 	// primary worktree, which is also the container's workdir.
 	if st.Primary != "" {

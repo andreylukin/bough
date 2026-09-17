@@ -37,7 +37,7 @@ export interface Project {
 export type SessionMode = "local" | "project";
 export type OrbStatus = "" | "building" | "starting" | "running" | "stopped" | "failed";
 export interface OrbSummary { slug: string; image: string; built: boolean; build?: string; error?: string }
-export interface OrbState { session: string; project: string; status: OrbStatus; image?: string; container?: string; worktrees?: Record<string, string>; primary?: string; error?: string; updatedAt: string; up?: boolean }
+export interface OrbState { session: string; project: string; status: OrbStatus; image?: string; container?: string; worktrees?: Record<string, string>; primary?: string; error?: string; updatedAt: string; up?: boolean; /** "legacy": created before proxy tokens, so its host proxy and relay are open to the bridge. */ proxyAuth?: "token" | "legacy" }
 export interface OrbBuild { tag: string; hash: string; state: "" | "building" | "ok" | "failed"; startedAt: string; endedAt?: string; error?: string }
 export type OrbFile = "project.yml" | "Dockerfile" | "setup.sh" | "resume.sh";
 export interface OrbDetail { project: Project; files: Record<OrbFile, string>; hash: string; orb: OrbSummary; build: OrbBuild; orbs: OrbState[]; runtime: { name: string; available: boolean; error?: string } }
