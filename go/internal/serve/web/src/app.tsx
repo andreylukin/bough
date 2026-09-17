@@ -1194,6 +1194,20 @@ export function TodoRun({ lines, live }: { lines: Line[]; live?: boolean }) {
   );
 }
 
+// Splits a reply on the loop's sentinel lines, skipping any quoted inside a fenced block.
+function splitGuessed(text: string): string[] {
+  const parts: string[] = [];
+  let cur: string[] = [], fence = "";
+  for (const l of text.split("\n")) {
+    const f = /^[ \t]*(`{3,}|~{3,})/.exec(l);
+    if (f) fence = !fence ? f[1] : l.trim().startsWith(fence) ? "" : fence;
+    if (!fence && !f && l.trim() === "[guessed output omitted]") { parts.push(cur.join("\n")); cur = []; continue; }
+    cur.push(l);
+  }
+  parts.push(cur.join("\n"));
+  return parts;
+}
+
 export function Entry({ line, codes, nested, until }: { line: Line; codes: string[]; nested?: boolean; /** When the next entry landed: a thinking block's end. */ until?: string }) {
   const k = line.kind;
   if (k === "assistant" || k === "sub:assistant") {
@@ -1211,7 +1225,13 @@ export function Entry({ line, codes, nested, until }: { line: Line; codes: strin
       <div className="say">
         {/* There is one assistant; naming it above every reply said nothing. */}
         {!nested && k !== "assistant" && <div className="say-who"><span className="sub-dot" /><span>subagent</span></div>}
-        {!blank(body) && <Markdown text={body} />}
+        {!blank(body) && splitGuessed(body).map((part, i) => (
+          // The loop swapped a fenced block of invented output for a sentinel line: a quiet note, not prose.
+          <Fragment key={i}>
+            {i > 0 && <p className="exec-note exec-note-quiet">A code block with guessed output was removed</p>}
+            {!blank(part) && <Markdown text={part} />}
+          </Fragment>
+        ))}
         {!nested && k === "assistant" && !blank(body) && (
           <div className="msg-acts">
             <CopyButton text={body} what="answer as Markdown" />

@@ -39,6 +39,16 @@ test("a reply that was only guessed output is a quiet note, prose around it stay
   expect(only).not.toContain("[guessed output omitted]");
   const mixed = renderToStaticMarkup(<Entry line={{ seq: 1, at: "", kind: "assistant", text: "It printed:\n[guessed output omitted]\nThat is all." }} codes={[]} />);
   expect(mixed).toContain("That is all.");
+  expect(mixed).not.toContain("[guessed output omitted]");
+  expect(mixed).toContain("A code block with guessed output was removed");
+  const table = renderToStaticMarkup(<Entry line={{ seq: 1, at: "", kind: "assistant", text: "| a | b |\n|---|---|\n| 1 | 2 |\n\n[guessed output omitted]" }} codes={[]} />);
+  expect(table).toContain("<table");
+  expect(table).not.toContain("[guessed output omitted]");
+  expect(table).toContain("exec-note-quiet");
+  // A sentinel line quoted inside a fenced block is code, not a removal: the fence must stay whole.
+  const fenced = renderToStaticMarkup(<Entry line={{ seq: 1, at: "", kind: "assistant", text: "The loop writes:\n\n```go\nx := 1\n[guessed output omitted]\ny := 2\n```" }} codes={[]} />);
+  expect(fenced).not.toContain("exec-note-quiet");
+  expect(fenced.match(/<pre/g)?.length).toBe(1);
 });
 
 test("R2-E: the running and finished prompt rows share one structure, so nothing shifts when the turn ends", async () => {
