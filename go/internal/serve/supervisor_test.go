@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -33,9 +34,17 @@ const (
 	// envTurns makes the fake record input/assistant/done in its history
 	// file like the real loop, so background-agent reports can read them.
 	envTurns = "BOUGH_FAKE_TURNS"
+	// envSlowSig boots slowly before catching SIGINT and takes a moment
+	// to read each line, as the real child does: an interrupt in either
+	// gap cancels nothing (or kills it) unless serve holds it back.
+	envSlowSig = "BOUGH_FAKE_SLOWSIG"
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv(envFake) != "" && os.Getenv(envSlowSig) != "" {
+		fakeSlowSigChild()
+		return
+	}
 	if os.Getenv(envFake) != "" {
 		fakeChild()
 		return
@@ -101,6 +110,51 @@ func fakeChild() {
 		say(map[string]any{"kind": "done", "text": ""})
 	}
 	os.Exit(0)
+}
+
+// fakeSlowSigChild mirrors the real headless child's SIGINT handling:
+// the default disposition until boot installs a handler, then a SIGINT
+// with no turn read exits quietly, and one mid-turn records cancelled.
+func fakeSlowSigChild() {
+	time.Sleep(300 * time.Millisecond)
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt)
+	say(map[string]any{"kind": "meta", "text": "ready"})
+	lines := make(chan string)
+	go func() {
+		sc := bufio.NewScanner(os.Stdin)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+	}()
+	for {
+		select {
+		case <-sig:
+			os.Exit(0) // idle: nothing to cancel
+		case line := <-lines:
+			time.Sleep(150 * time.Millisecond) // the gap before the loop takes it
+			select {
+			case <-sig:
+				os.Exit(0) // not yet a turn: the prompt is dropped, nothing recorded
+			default:
+			}
+			say(map[string]any{"kind": "input", "text": line})
+			select {
+			case <-sig:
+				say(map[string]any{"kind": "cancelled"})
+				say(map[string]any{"kind": "done"})
+				os.Exit(130)
+			case <-lines: // a steer lands only at the next boundary, none yet
+				<-sig
+				say(map[string]any{"kind": "cancelled"})
+				say(map[string]any{"kind": "done"})
+				os.Exit(130)
+			case <-time.After(2 * time.Second):
+				say(map[string]any{"kind": "assistant", "text": "echo " + line})
+				say(map[string]any{"kind": "done"})
+			}
+		}
+	}
 }
 
 // fakeTurn records one turn the way the loop does. The line picks the
@@ -494,6 +548,62 @@ func TestSupervisorInterruptKeepsTheLease(t *testing.T) {
 	}
 	if err := f.sup.Interrupt("sess-unknown"); err == nil {
 		t.Error("Interrupt of an unknown session = nil, want ErrUnknownSession")
+	}
+}
+
+// An interrupt sent before the child has taken the prompt (still
+// booting, or the line not yet read) must still cancel that turn: it
+// used to be lost, and the turn ran to the end.
+func TestSupervisorInterruptBeforeReady(t *testing.T) {
+	t.Parallel()
+	for _, warm := range []bool{false, true} {
+		f := newFixture(t, envSlowSig+"=1")
+		id := fmt.Sprintf("sess-early-%v", warm)
+		f.seed(t, id)
+		if warm {
+			if err := f.sup.Adopt(id); err != nil {
+				t.Fatalf("Adopt: %v", err)
+			}
+			waitFor(t, "boot", func() bool { return hasKind(f.sup.Recent(id), "meta") })
+		}
+		if err := f.sup.Send(id, "tell a long story"); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+		if err := f.sup.Interrupt(id); err != nil {
+			t.Fatalf("Interrupt: %v", err)
+		}
+		waitFor(t, "the turn to end", func() bool { return hasKind(f.sup.Recent(id), "exit") || hasKind(f.sup.Recent(id), "done") })
+		waitFor(t, "cancelled (warm="+fmt.Sprint(warm)+")", func() bool { return hasKind(f.sup.Recent(id), "cancelled") })
+		if hasKind(f.sup.Recent(id), "assistant") {
+			t.Errorf("warm=%v: the interrupted turn still replied: %v", warm, kinds(f.sup.Recent(id)))
+		}
+	}
+}
+
+// A steer the running turn has not taken yet must not hold Esc back:
+// the turn is live, so the interrupt goes straight through.
+func TestSupervisorInterruptWithPendingSteer(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, envSlowSig+"=1")
+	id := "sess-steer"
+	f.seed(t, id)
+	if err := f.sup.Send(id, "tell a long story"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitFor(t, "the turn", func() bool { return hasKind(f.sup.Recent(id), "input") })
+	if err := f.sup.Send(id, "shorter please"); err != nil {
+		t.Fatalf("Send steer: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := f.sup.Interrupt(id); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for !hasKind(f.sup.Recent(id), "cancelled") {
+		if time.Now().After(deadline) {
+			t.Fatalf("Esc with a steer pending was held: %v", kinds(f.sup.Recent(id)))
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

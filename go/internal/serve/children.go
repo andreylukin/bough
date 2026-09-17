@@ -210,7 +210,7 @@ func (s *Supervisor) launch(ch *child, q queuedChild) error {
 		return nil
 	}
 	if q.prompt != "" {
-		if err := s.write(ch, q.prompt); err != nil {
+		if err := s.writePrompt(ch, q.prompt); err != nil {
 			return err
 		}
 	}

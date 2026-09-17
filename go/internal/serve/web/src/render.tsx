@@ -337,6 +337,8 @@ export function groupTurns(lines: Line[]): Turn[] {
   for (const l of lines) {
     // Turn summaries live in the sidebar's turn log, not the transcript.
     if (l.kind === "meta" || l.kind === "title" || l.kind === "turn-summary" || l.kind === "model") continue;
+    // R3-C: a steer the open turn took belongs to that turn, not a new one.
+    if (l.kind === "input" && l.data?.steer && cur?.prompt) { cur.body.push(l); continue; }
     if (l.kind === "input") {
       if (cur) turns.push(cur);
       cur = { seq: l.seq, prompt: l, body: [], done: null };

@@ -1244,6 +1244,10 @@ export function Entry({ line, codes, nested, until }: { line: Line; codes: strin
       </details>
     );
   }
+  if (k === "input") {
+    // R3-C: a steer the running turn took, inside that turn.
+    return <p className="steer-note"><span className="mono prompt-mark" aria-hidden="true">&gt;</span><span className="steer-word">Steer</span>{line.text}</p>;
+  }
   if (k === "model-switch") {
     // A /model switch records the command and the loop's echo: one line, the record inside.
     const recs = (line.data?.lines ?? []) as string[];
@@ -2645,10 +2649,12 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
       {/* No done and nothing live to write one: the turn was cut off, and says so where it ends, like Stopped. */}
       {cut && (
         <div className="turn-foot">
-          <span className="turn-outcome">{statusWord("interrupted")}</span>
+          {/* R3-C: one stop word and one duration phrase, as a stopped turn's footer has. */}
+          <span className="turn-outcome">{statusWord("stopped")}</span>
           {turn.prompt?.at && (() => {
             const end = turn.body[turn.body.length - 1]?.at ?? turn.prompt.at;
-            return <span className="num">Turn: {duration(Date.parse(end) - Date.parse(turn.prompt.at))}</span>;
+            const ms = Date.parse(end) - Date.parse(turn.prompt.at);
+            return ms >= 1000 && <span className="num">Worked for {duration(ms)}</span>;
           })()}
         </div>
       )}
@@ -2959,7 +2965,8 @@ type Pending = { id: string; text: string; after: number; steer?: boolean; seen?
 /** The composer's status word: a send not yet recorded, a turn with no
  *  output yet, then output arriving. Derived from the same render as the
  *  transcript, so the word never runs ahead of what is shown. */
-export function composerStatus({ sending, accepted = false, running, streamed, activity }: { sending: boolean; /** The send was taken, the turn not yet started. */ accepted?: boolean; running: boolean; streamed: boolean; activity: string }): "" | "Sending" | "Waiting" | "Streaming" {
+export function composerStatus({ sending, accepted = false, running, streamed, activity, stopping = false }: { sending: boolean; /** The send was taken, the turn not yet started. */ accepted?: boolean; running: boolean; streamed: boolean; activity: string; /** Stop was asked and the server has not recorded it yet. */ stopping?: boolean }): "" | "Sending" | "Waiting" | "Streaming" | "Stopping" {
+  if (stopping && (sending || running)) return "Stopping";
   if (sending) return accepted ? "Waiting" : "Sending";
   if (!running) return "";
   return streamed || activity ? "Streaming" : "Waiting";
@@ -3026,7 +3033,7 @@ export function escStops(e: { key: string; running: boolean; pickerOpen: boolean
 /** The prompt of a turn that was stopped before any reply, to put back in the composer; "" otherwise. */
 export function stoppedPrompt(lines: Line[]): string {
   let i = lines.length - 1;
-  while (i >= 0 && lines[i].kind !== "input") i--;
+  while (i >= 0 && (lines[i].kind !== "input" || lines[i].data?.steer)) i--;
   if (i < 0) return "";
   const after = lines.slice(i + 1);
   if (!after.some((l) => l.kind === "cancelled") || after.some((l) => l.kind === "assistant")) return "";
@@ -3549,6 +3556,13 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const inputs = lines.filter((l) => l.kind === "input");
   const sameText = (p: Pending) => { const want = p.text.trim().slice(0, 200); return inputs.slice(-(sending.length + 3)).some((l) => !p.seen?.includes(`${l.seq}|${l.at}`) && (l.text ?? "").trim().startsWith(want)); };
   const unlanded = loading ? sending : sending.filter((p, i) => inputs.filter((l) => l.seq > p.after).length <= i && !sameText(p));
+  // R3-C: a turn is live from the moment its prompt is sent, not only once
+  // the row says running: Esc in that gap must stop it, and a message sent
+  // then steers it.
+  const live = running || unlanded.some((p) => !p.steer);
+  // Sends still on their way to the server: a stop waits for them, or it
+  // would reach a session with nothing to stop and the prompt would run.
+  const inflight = useRef(new Set<Promise<unknown>>());
   // A running turn whose prompt has not landed yet: its stream sits in the
   // prompt's own section, with the prompt time, as the recorded turn will.
   // Built after `status` is known (it is declared below), hence a thunk.
@@ -3583,20 +3597,22 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     }
     // A retry is the same request, so it keeps its id.
     const id = retried?.id ?? (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
-    if (!answer) setSending((q) => [...q, { id, text: t, after: newest, steer: running, seen: inputs.map((l) => `${l.seq}|${l.at}`), at: new Date().toISOString() }]);
+    if (!answer) setSending((q) => [...q, { id, text: t, after: newest, steer: live, seen: inputs.map((l) => `${l.seq}|${l.at}`), at: new Date().toISOString() }]);
     else setAnswering({ ask: ask ?? "", text: t });
-    const error = await (answer ? onAnswer(t, ask) : onSend(t));
+    const req = Promise.resolve(answer ? onAnswer(t, ask) : onSend(t));
+    inflight.current.add(req);
+    const error = await req.finally(() => inflight.current.delete(req));
     if (answer) setAnswering(null);
     if (error) setSending((q) => q.filter((p) => p.id !== id));
     else if (!answer) setSending((q) => q.map((p) => (p.id === id ? { ...p, accepted: true } : p)));
     // Each request is its own row; a retry that fails again replaces its own.
     if (error) setFailures((q) => [...q.filter((f) => f.id !== id), { id, at: Date.now(), text: t, answer, ask, error }]);
   };
-  const status = composerStatus({ sending: !running && unlanded.some((p) => !p.steer), accepted: unlanded.some((p) => !p.steer && p.accepted), running, streamed: stream.length > 0, activity });
-  // Stop is asked once; the button says so until the ask is answered.
+  // Stop is asked once; the button says so until the server records it.
   const [stopping, setStopping] = useState<"" | "stopping" | "failed">("");
+  const status = composerStatus({ sending: !running && unlanded.some((p) => !p.steer), accepted: unlanded.some((p) => !p.steer && p.accepted), running, streamed: stream.length > 0, activity, stopping: stopping === "stopping" });
   const failedLoad = loading && Boolean(loadError);
-  useEffect(() => { if (!running) setStopping(""); }, [running]);
+  useEffect(() => { if (!live) setStopping(""); }, [live]);
   useEffect(() => {
     if (!restoreOnStop.current || running || loading) return;
     const t = stoppedPrompt(lines);
@@ -3609,6 +3625,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const stop = async () => {
     restoreOnStop.current = true;
     setStopping("stopping");
+    await Promise.allSettled([...inflight.current]);
     const ok = await onInterrupt();
     if (ok === false) setStopping("failed");
   };
@@ -4037,7 +4054,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
               // An open picker takes its keys before this runs (capture),
               // including Enter in its empty, loading and error states.
               // Enter that confirms an IME composition is not a send.
-              if (escStops({ key: e.key, running, pickerOpen, composing: e.nativeEvent.isComposing })) {
+              if (escStops({ key: e.key, running: live, pickerOpen, composing: e.nativeEvent.isComposing })) {
                 e.preventDefault();
                 if (stopping !== "stopping") stop();
                 return;
@@ -4084,7 +4101,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                 </button>
               )}
               {/* One filled control: Stop is a square icon, Queue shows once there is a draft to queue. */}
-              {running && (stopping === "failed"
+              {live && (stopping === "failed"
                 ? <button className="btn" onClick={stop}>Couldn’t stop · Retry</button>
                 : <button className="btn btn-ghost composer-stop" disabled={stopping === "stopping"} onClick={stop}
                           aria-label={stopping === "stopping" ? "Stopping" : "Stop"} title="Esc">

@@ -210,3 +210,26 @@ test("a turn's files chip opens Changes on that turn", async () => {
   expect(html).toContain('href="#/s/s1/changes?turn=7"');
   expect(html).toContain("+2</span>");
 });
+
+// R3-C: a steer the server took while the turn ran is part of that turn.
+test("R3-C: a steer recorded while the turn ran stays inside that turn", () => {
+  const lines = [
+    { seq: 1, at: at(0), kind: "input", text: "write a story" },
+    { seq: 2, at: at(3), kind: "input", text: "say hi", data: { steer: true } },
+    { seq: 3, at: at(4), kind: "assistant", text: "Hi there" },
+    { seq: 4, at: at(5), kind: "done", text: "" },
+  ] as Line[];
+  const turns = groupTurns(lines);
+  expect(turns.length).toBe(1);
+  const html = renderToStaticMarkup(<TurnView turn={turns[0]} />);
+  expect(html).toContain("steer-note");
+  expect(html).toContain("say hi");
+  expect(html).not.toContain("Interrupted");
+});
+
+test("R3-C: a cut-off turn uses the same stop word and duration as a stopped one", () => {
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns([live[0], live[1]])[0]} superseded />);
+  expect(html).toContain("Stopped");
+  expect(html).toContain("Worked for 1s");
+  expect(html).not.toContain("Turn: ");
+});

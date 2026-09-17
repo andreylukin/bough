@@ -82,3 +82,15 @@ test("R2-B: the status goes Sending, then Waiting once accepted, then Streaming"
   expect(streaming).toContain("typing-dots");
   expect(streaming).not.toContain("Waiting for model…");
 });
+
+// R3-C: Esc before the first token really stops the server turn.
+test("R3-C: a send not yet running already offers Stop, so Esc before the first token is not lost", () => {
+  const html = renderToStaticMarkup(<Thread row={{ ...row, status: "done" } as Row} lines={[]} sending={[{ ...sent[0], accepted: true }]} {...props} />);
+  expect(html).toContain("composer-stop");
+});
+
+test("R3-C: the composer says Stopping until the server records the stop", () => {
+  expect(composerStatus({ sending: false, running: true, streamed: true, activity: "", stopping: true })).toBe("Stopping");
+  expect(composerStatus({ sending: true, accepted: true, running: false, streamed: false, activity: "", stopping: true })).toBe("Stopping");
+  expect(composerStatus({ sending: false, running: false, streamed: false, activity: "", stopping: true })).toBe("");
+});
