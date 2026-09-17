@@ -193,3 +193,23 @@ func mustLoad(t *testing.T, home, slug string) projectdef.Project {
 	}
 	return p
 }
+
+// A failed build that left its tag behind is rebuilt, not "Up to date".
+func TestProjectBuildAfterFailedTag(t *testing.T) {
+	home, rt, run := orbFixture(t)
+	if _, err := run("", "create", "web", "~/repos/web"); err != nil {
+		t.Fatal(err)
+	}
+	h, _ := projectdef.ImageHash(home, mustLoad(t, home, "web"))
+	rt.AddImage(projectdef.ImageTag("web", h))
+	dir := filepath.Dir(orb.ImageLogPath(home, "web"))
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "build.json"), []byte(`{"state":"failed","hash":"`+h+`"}`), 0o644)
+	out, err := run("", "build", "web")
+	if err != nil || !strings.Contains(out, "Built bough-") {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	if b, _ := orb.ReadBuild(home, "web"); b.State != "ok" {
+		t.Errorf("build.json state = %q", b.State)
+	}
+}

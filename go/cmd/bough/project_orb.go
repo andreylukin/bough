@@ -64,7 +64,7 @@ func imageWord(rt container.Runtime, home string, p projectdef.Project) string {
 		return "invalid"
 	}
 	// A failed build can leave its tag behind; the record wins.
-	if b.State == "failed" && b.Hash == h {
+	if orb.FailedBuild(home, p.Slug, h) {
 		return "build failed"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -113,7 +113,7 @@ func projectBuild(out io.Writer, home string, args []string) error {
 		return err
 	}
 	tag := projectdef.ImageTag(p.Slug, h)
-	if ok, err := rt.ImageExists(ctx, tag); err == nil && ok {
+	if ok, err := rt.ImageExists(ctx, tag); err == nil && ok && !orb.FailedBuild(home, p.Slug, h) {
 		fmt.Fprintf(out, "Up to date: %s\n", tag)
 		return nil
 	}
