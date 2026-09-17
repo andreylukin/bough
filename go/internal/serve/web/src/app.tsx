@@ -226,7 +226,6 @@ const ICONS = {
   filter: <path d="M4 6.5h16M7 12h10M10 17.5h4" />,
 };
 
-/** Whether history can go back or forward from here, where the browser says (the Navigation API); else both stay on. */
 /** A route change puts focus on .app, so the next Tab reaches the skip links; a field or dialog in use keeps it. */
 export function focusAppOnRoute(doc: Document) {
   const a = doc.activeElement as HTMLElement | null;
@@ -243,6 +242,7 @@ export function HistoryArrows({ back, forward }: { back: boolean; forward: boole
   </>;
 }
 
+/** Whether history can go back or forward from here, where the browser says (the Navigation API); else both stay on. */
 function useHistoryNav(): { back: boolean; forward: boolean } {
   type Nav = EventTarget & { canGoBack: boolean; canGoForward: boolean };
   const nav = (window as unknown as { navigation?: Nav }).navigation;
