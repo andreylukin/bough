@@ -59,3 +59,15 @@ test("R2-E: the running and finished prompt rows share one structure, so nothing
   expect(shape(running)).toEqual({ sections: 1, time: true, mark: true, acts: true });
   expect(shape(running)).toEqual(shape(done));
 });
+
+test("a prompt sent right after a /model switch streams under its own prompt, not the command's", async () => {
+  const { Thread } = await import("../src/app");
+  const at = "2026-09-16T10:00:00Z";
+  const props = { onSend: async () => null, onAnswer: async () => null, onInterrupt: () => {}, onArchive: () => {}, onRename: async () => {},
+    onModel: () => {}, onEffort: () => {}, onAssign: () => {}, onBack: () => {}, onContext: () => {}, onAck: () => {}, projects: [], busy: false, jump: null } as const;
+  const html = renderToStaticMarkup(<Thread {...props} row={{ id: "s1", cwd: "/tmp/x", status: "running" } as never} lines={[
+    { seq: 1, at, kind: "input", text: "hi" }, { seq: 2, at, kind: "assistant", text: "Hello" }, { seq: 3, at, kind: "done", text: "" },
+    { seq: 4, at, kind: "command", text: "/model llm-openai gpt-5.4-mini" }, { seq: 5, at, kind: "system", text: "model: llm-openai · gpt-5.4-mini" }] as never}
+    sending={[{ id: "p1", text: "write an essay", after: 5, at }]} stream={[{ kind: "text", text: "Bonsai is" }] as never} />);
+  expect(html.indexOf("Bonsai is")).toBeGreaterThan(html.indexOf("write an essay"));
+});

@@ -3549,7 +3549,11 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   // A running turn whose prompt has not landed yet: its stream sits in the
   // prompt's own section, with the prompt time, as the recorded turn will.
   // Built after `status` is known (it is declared below), hence a thunk.
-  const liveBodyFn = running && (turns.length === 0 || turns[turns.length - 1].done) && !row.ask
+  // A trailing /model (or other command) section never gets a done: a
+  // prompt sent after it is still the turn that runs, not that section.
+  const tailTurn = turns[turns.length - 1];
+  const openTail = Boolean(tailTurn && !tailTurn.done && !(tailTurn.prompt === null && tailTurn.body.every((l) => isQuiet(l.kind)) && unlanded.some((p) => !p.steer)));
+  const liveBodyFn = running && !openTail && !row.ask
     ? () => <div className="turn-body"><StreamView runs={stream} />{status === "Waiting" ? <WaitingModel /> : <Working label={activity || "Working"} />}</div> : null;
   const liveHost = liveBodyFn ? unlanded.filter((p) => !p.steer).at(-1) : undefined;
   useEffect(() => { window.dispatchEvent(new Event(TRANSCRIPT_GREW)); }, [stream, lines.length, sending.length]);
@@ -3864,9 +3868,9 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
             // The preview belongs to the turn that is still open, so it
             // sits where the recorded entry will appear and is replaced
             // in place rather than jumping up the page.
-            tail={i === turns.length - 1 && !t.done ? <StreamView runs={stream} /> : undefined}
+            tail={i === turns.length - 1 && openTail ? <StreamView runs={stream} /> : undefined}
             // The turn says it is working once: on its running row of work, or under the tail when there is none.
-            working={i === turns.length - 1 && !t.done && running && !row.ask
+            working={i === turns.length - 1 && openTail && running && !row.ask
               ? (stream.length && stream[stream.length - 1].kind === "thinking" ? "Thinking" : activity || (stream.length ? "Working" : WAITING_MODEL)) : undefined} />
         ))}
         </EditPrompt.Provider>
