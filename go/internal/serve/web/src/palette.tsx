@@ -141,6 +141,36 @@ function score(text: string, q: string, loose: boolean): number {
   return 100;
 }
 
+/**
+ * Close first, run once the close has committed: a command that opens a
+ * dialog (Keyboard shortcuts) found the palette still aria-modal and no-opped.
+ */
+export function afterClose(close: () => void, run: () => void) {
+  close();
+  setTimeout(run, 0);
+}
+
+/** The palette is over a route: a hash change, Back, or a layout switch closes it. Returns the unsubscribe. */
+export function closeOnNavigate(win: Pick<Window, "addEventListener" | "removeEventListener">, close: () => void, mq: MediaQueryList | null): () => void {
+  win.addEventListener("hashchange", close);
+  win.addEventListener("popstate", close);
+  mq?.addEventListener("change", close);
+  return () => {
+    win.removeEventListener("hashchange", close);
+    win.removeEventListener("popstate", close);
+    mq?.removeEventListener("change", close);
+  };
+}
+
+/** Results counted in the footer: the Start action is an offer, not a match. */
+export const shownCount = (hits: Command[]) => hits.filter((c) => !c.id.startsWith("start:")).length;
+
+/** A project the operator hint can name: the newest session's repo, or none. */
+export function syntaxProject(rows: Row[]): string | null {
+  const r = [...rows].filter((x) => x.repo).sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt))[0];
+  return r?.repo?.split("/").filter(Boolean).pop() ?? null;
+}
+
 /** Visit order, most recent first, each session once. */
 export function visit(visited: string[], id: string): string[] {
   return [id, ...visited.filter((x) => x !== id)].slice(0, 50);
@@ -303,6 +333,11 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     field.current?.focus();
   }, [open, initialQuery]);
 
+  useEffect(() => {
+    if (!open) return;
+    return closeOnNavigate(window, onClose, window.matchMedia?.("(max-width:720px)") ?? null);
+  }, [open, onClose]);
+
   const { hits: found, state: searching, retry } = useFullText(q, open && mode !== "new");
   const pages = useWikiHits(q, open, Boolean(onOpenWikiPage) && mode === "all");
   const places = useDirs(q, open, Boolean(onStartIn));
@@ -437,7 +472,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
   if (!open) return null;
 
   const close = () => onClose();
-  const pick = (c: Command) => { opener.current = null; onClose(); c.run(); };
+  const pick = (c: Command) => { opener.current = null; afterClose(onClose, c.run); };
 
   const keys = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") { e.preventDefault(); close(); return; }
@@ -494,11 +529,11 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
           )}
         </div>
         {!q.trim() && mode !== "new" && (
-          <p className="pal-syntax">Narrow with <code>project:bough</code> <code>after:7d</code> <code>status:failed</code></p>
+          <p className="pal-syntax">Narrow with <code>project:{syntaxProject(rows) ?? "name"}</code> <code>after:7d</code> <code>status:failed</code></p>
         )}
         {/* Never scrolls away: a failed text search is not hidden under the list. */}
         <div className="pal-foot" role="status">
-          <span className="num">{hits.length} shown</span>
+          <span className="num">{shownCount(hits)} shown</span>
           {searching === "loading" && <span>Searching text…</span>}
           {searching === "done" && found.length === 0 && <span>No text matches</span>}
           {searching === "error" && <span className="pal-foot-bad">Text search failed · titles only</span>}

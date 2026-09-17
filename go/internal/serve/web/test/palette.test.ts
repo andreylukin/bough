@@ -50,3 +50,42 @@ test("new session offers each known folder once, newest first, not home", () => 
   const rows = [r("a", "2026-09-10T00:00:00Z", "/r/one"), r("b", "2026-09-12T00:00:00Z", "/r/two"), r("c", "2026-09-11T00:00:00Z", "/r/one"), r("h", "2026-09-13T00:00:00Z", "/home")];
   expect(startFolders(rows, "/home")).toEqual(["/r/two", "/r/one"]);
 });
+
+import { afterClose, closeOnNavigate, shownCount, syntaxProject } from "../src/palette";
+
+// R3-H: picking "Keyboard shortcuts" ran showShortcuts while the palette was still aria-modal, so it no-opped.
+test("a picked command runs only after the close has committed", async () => {
+  const order: string[] = [];
+  afterClose(() => order.push("close"), () => order.push("run"));
+  expect(order).toEqual(["close"]);
+  await new Promise((r) => setTimeout(r, 50));
+  expect(order).toEqual(["close", "run"]);
+});
+
+test("the palette closes when the route changes under it", () => {
+  const win = new EventTarget();
+  let closed = 0;
+  const stop = closeOnNavigate(win as never, () => closed++, null);
+  win.dispatchEvent(new Event("hashchange"));
+  win.dispatchEvent(new Event("popstate"));
+  expect(closed).toBe(2);
+  stop();
+  win.dispatchEvent(new Event("hashchange"));
+  expect(closed).toBe(2);
+  const mq = new EventTarget();
+  const stop2 = closeOnNavigate(new EventTarget() as never, () => closed++, mq as never);
+  mq.dispatchEvent(new Event("change"));
+  expect(closed).toBe(3);
+  stop2();
+});
+
+test("the count does not include the Start action", () => {
+  const c = (id: string) => ({ id, label: id, group: "g", run: () => {} });
+  expect(shownCount([c("start:zzz")])).toBe(0);
+  expect(shownCount([c("s:a"), c("start:a")])).toBe(1);
+});
+
+test("the syntax hint names a real project or none", () => {
+  expect(syntaxProject([])).toBe(null);
+  expect(syntaxProject([{ id: "a", repo: "/Users/x/repos/tern", lastAt: "2026-09-10T00:00:00Z" } as never])).toBe("tern");
+});
