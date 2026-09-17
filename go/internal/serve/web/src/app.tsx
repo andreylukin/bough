@@ -2820,8 +2820,6 @@ function ParentLink({ id, rows, onOpen }: { id: string; rows: Row[]; onOpen?: (i
  *  the transcript showed it, so every new turn read "Steer pending…". */
 type Pending = { id: string; text: string; after: number; steer?: boolean };
 
-/** Rows a Stop swallowed: unsent when Stop was pressed, and a done or
- * cancel was recorded after them with no input of theirs. */
 /** The composer's status word: a send not yet recorded, a turn with no
  *  output yet, then output arriving. Derived from the same render as the
  *  transcript, so the word never runs ahead of what is shown. */
@@ -2864,6 +2862,8 @@ export function PendingThread({ sending }: { sending: Pending[] }) {
   );
 }
 
+/** Rows a Stop swallowed: unsent when Stop was pressed, and a done or
+ * cancel was recorded after them with no input of theirs. */
 export function swallowedByStop(unlanded: Pending[], stopped: Set<string>, lines: Line[]): Pending[] {
   return unlanded.filter((p) => stopped.has(p.id)
     && lines.some((l) => (l.kind === "done" || l.kind === "cancelled") && l.seq > p.after)
