@@ -57,6 +57,20 @@ test("Stop rescues only rows unsent at Stop, once the turn ended after them", ()
   expect(swallowedByStop([p], new Set(["a"]), [done, { seq: 7, kind: "input", text: "hi", at: at(2) } as Line])).toEqual([]);
 });
 
+// R2-C: Esc mid-stream keeps the partial answer above the Stopped footer.
+test("a turn stopped mid-answer shows the partial text and Stopped", () => {
+  const lines: Line[] = [
+    { seq: 1, at: at(0), kind: "input", text: "Explain the loop." },
+    { seq: 2, at: at(5), kind: "assistant", text: "The loop reads input and streams", data: { partial: true } },
+    { seq: 3, at: at(5), kind: "cancelled", text: "" },
+    { seq: 4, at: at(5), kind: "done", text: "" },
+  ] as Line[];
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns(lines)[0]} />);
+  expect(html).toContain("The loop reads input and streams");
+  expect(html).toContain("Stopped");
+  expect(html.indexOf("The loop reads input")).toBeLessThan(html.indexOf("turn-foot"));
+});
+
 // WEB2: tool rows say what happened.
 const { ToolCall, ToolRun } = await import("../src/app");
 const { splitWork: split, groupTools } = await import("../src/render");

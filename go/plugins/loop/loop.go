@@ -681,7 +681,10 @@ func (m *memHistory) Path() string { return "" }
 // and proj are optional seams; nil means built-in behavior. hist is
 // never nil (memHistory fallback).
 type runner struct {
-	mu       sync.Mutex
+	mu sync.Mutex
+	// streamed is the reply text the current model call has streamed
+	// so far: kept when esc cancels the call mid-answer.
+	streamed strings.Builder
 	llm      LLM
 	code     Codemode
 	maxSteps int // model steps per turn; 0 = defaultMaxSteps
@@ -1270,6 +1273,11 @@ func (r *runner) completeMsgs(ctx context.Context, sys string, msgs []Message, e
 	ctx = llm.WithRetryNotice(ctx, func(_ error, attempt, attempts int, wait time.Duration) {
 		emit("system", fmt.Sprintf("provider hiccup — retrying in %s, attempt %d of %d", wait, attempt, attempts))
 	})
+	r.streamed.Reset()
+	delta := func(d string) {
+		r.streamed.WriteString(d)
+		emit("assistant-delta", d)
+	}
 	// A reasoning model's thinking is streamed to the ui as it arrives
 	// and recorded once at the end. It is NEVER fed back: DefaultProject
 	// ignores "thinking" entries, so the model re-reasons each step
@@ -1277,7 +1285,7 @@ func (r *runner) completeMsgs(ctx context.Context, sys string, msgs []Message, e
 	if th, ok := r.llm.(llm.ThinkingStreamer); ok {
 		var think strings.Builder
 		reply, err := th.StreamThinking(ctx, sys, msgs,
-			func(delta string) { emit("assistant-delta", delta) },
+			delta,
 			func(delta string) {
 				think.WriteString(delta)
 				emit("thinking-delta", delta)
@@ -1289,7 +1297,7 @@ func (r *runner) completeMsgs(ctx context.Context, sys string, msgs []Message, e
 		return reply, err
 	}
 	if st, ok := r.llm.(llm.Streamer); ok {
-		return st.Stream(ctx, sys, msgs, func(delta string) { emit("assistant-delta", delta) })
+		return st.Stream(ctx, sys, msgs, delta)
 	}
 	return r.llm.Complete(ctx, sys, msgs)
 }
@@ -1581,6 +1589,16 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	// [cancelled] note, so nothing runs on its own) and the gate
 	// shuts, then the marker (if any) and the done.
 	finish := func(marker string, extra map[string]any) {
+		// Esc mid-stream: the answer streamed so far stays in the
+		// transcript and the context, ahead of the cancelled note.
+		if marker == "cancelled" {
+			if t := strings.TrimSpace(r.streamed.String()); t != "" {
+				data := r.provenance()
+				data["partial"] = true
+				note("assistant", t, data)
+			}
+		}
+		r.streamed.Reset()
 		r.landSteers(ctx, emit, true)
 		if marker != "" {
 			note(marker, "", nil)
@@ -1677,6 +1695,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			finish("cancelled", r.doneData()) // what it wrote so far: /undo after esc reverts it
 			return ctx.Err()
 		}
+		r.streamed.Reset() // the reply is recorded below; a later cancel must not repeat it
 		if err == nil && strings.TrimSpace(reply) == "" {
 			// A provider hiccup (a stream that ends with no content)
 			// gets one silent retry; a second empty reply is an error
@@ -1884,6 +1903,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		finish("cancelled", r.doneData()) // same reason as above
 		return ctx.Err()
 	}
+	r.streamed.Reset()
 	if err != nil {
 		note("error", err.Error(), nil)
 		finish("", r.doneData())
