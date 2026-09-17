@@ -35,6 +35,8 @@ test("a provider auth error offers Switch model; other errors do not", async () 
   expect(authError("llm-anthropic: 401 Unauthorized: invalid x-api-key")).toBe(true);
   expect(authError("authentication_error: invalid api key")).toBe(true);
   expect(authError("context deadline exceeded")).toBe(false);
+  expect(authError("block 2: SyntaxError at line 401")).toBe(false);
+  expect(authError("git push: Authentication failed for github.com")).toBe(false);
   const bad = renderToStaticMarkup(<Entry line={l(3, "error", "anthropic: 401 invalid x-api-key")} codes={[]} />);
   expect(bad).toContain("Switch model");
   const other = renderToStaticMarkup(<Entry line={l(3, "error", "network down")} codes={[]} />);

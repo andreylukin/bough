@@ -1193,7 +1193,7 @@ export function TodoRun({ lines, live }: { lines: Line[]; live?: boolean }) {
 
 /** A provider refusing the key (401/403), which no retry of the same model fixes. */
 export function authError(text: string): boolean {
-  return /\b40[13]\b|unauthori[sz]ed|authentication|invalid[ _-]?(x-)?api[ _-]?key/i.test(text);
+  return /\b(HTTP|status) 40[13]\b|\b40[13] (unauthori[sz]ed|forbidden)\b|authentication_error|invalid[ _-]?(x-)?api[ _-]?key/i.test(text);
 }
 
 /**
