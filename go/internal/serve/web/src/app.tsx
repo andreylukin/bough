@@ -2201,7 +2201,7 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
           <span aria-hidden="true">·</span>
           <button type="button" className="link turn-fail-jump" onClick={show}>Jump to command</button>
         </span>
-      ) : errored && !(turn.stopped || done.kind === "cancelled") ? null : (
+      ) : (errored && !(turn.stopped || done.kind === "cancelled")) || cutAfterProse(turn) ? null : (
         // R3-F: a turn that ended on an error says so in the error itself, not again under it.
         <span className={"turn-outcome" + (turn.stopped || done.kind === "cancelled" ? " turn-stopped" : failed || failedWork ? " turn-failed" : "")}>
           {(turn.stopped || done.kind === "cancelled") && <StopMark />}
@@ -2839,14 +2839,14 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
         })}
         {tail}
         {/* R4-C: a stopped turn marks the cut right where its prose ends, not only in the footer. */}
-        {(turn.stopped || turn.done?.kind === "cancelled") && [...turn.body].reverse().find((l) => !isHookLine(l) && l.kind !== "cancelled" && l.kind !== "done" && l.kind !== "usage")?.kind === "assistant" && (
+        {cutAfterProse(turn) && (
           <p className="turn-interrupted">
             <StopMark />
             Interrupted
           </p>
         )}
         {/* No stretch of work to carry it (the turn opened on a reply, or has said nothing yet). */}
-        {working === WAITING_MODEL && !runningSeg && live ? <WaitingModel /> : working !== undefined && !runningSeg && live && <Working label={working === "Thinking" ? working : "Working"}>{turn.prompt?.at && <Elapsed since={turn.prompt.at} />}</Working>}
+        {working === WAITING_MODEL && !runningSeg && live ? <WaitingModel since={turn.prompt?.at} /> : working !== undefined && !runningSeg && live && <Working label={working === "Thinking" ? working : "Working"}>{turn.prompt?.at && <Elapsed since={turn.prompt.at} />}</Working>}
         <TurnHooks lines={hooks} />
       </div>
       </TurnSeq.Provider>
@@ -3195,16 +3195,22 @@ export function composerStatus({ sending, accepted = false, running, streamed, a
   return streamed || activity ? "Working" : "Waiting";
 }
 
+/** A stopped turn whose last word was prose: the cut is marked under that prose, and the footer does not repeat it. */
+function cutAfterProse(turn: Turn) {
+  return Boolean((turn.stopped || turn.done?.kind === "cancelled") && [...turn.body].reverse().find((l) => !isHookLine(l) && l.kind !== "cancelled" && l.kind !== "done" && l.kind !== "usage")?.kind === "assistant");
+}
+
 /** Shown until the model's first output: a breathing dot, nothing to read. */
 function WaitingDot() {
   return <div className="waiting-dot" aria-hidden="true"><i /></div>;
 }
 
-const WAITING_MODEL = "Waiting for model…";
+const WAITING_MODEL = "Waiting for model";
 
-/** R2-B: the send was taken and nothing has come back yet. */
-function WaitingModel() {
-  return <p className="waiting-model" role="status"><i className="breath-dot" aria-hidden="true" />{WAITING_MODEL}</p>;
+/** R2-B: the send was taken and nothing has come back yet. MB-STREAM: the wait is timed from 3s. */
+export function WaitingModel({ since }: { since?: string | number }) {
+  const [mounted] = useState(() => Date.now());
+  return <p className="waiting-model" role="status"><i className="breath-dot" aria-hidden="true" /><span>{WAITING_MODEL}</span><Elapsed since={since ?? mounted} from={3} /></p>;
 }
 
 function SendingPrompt({ p, accepted = false, clamp = true, onClip, clipped, onToggle, children }: { p: Pending; /** The turn it started is running: no longer on its way. */ accepted?: boolean; clamp?: boolean; onClip?: (el: HTMLParagraphElement) => void; clipped?: boolean; onToggle?: () => void;
@@ -3811,7 +3817,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const tailTurn = turns[turns.length - 1];
   const openTail = Boolean(tailTurn && !tailTurn.done && !(tailTurn.prompt === null && tailTurn.body.every((l) => isQuiet(l.kind)) && unlanded.some((p) => !p.steer)));
   const liveBodyFn = running && !openTail && !row.ask
-    ? () => <div className="turn-body"><StreamView runs={stream} />{status === "Waiting" ? <WaitingModel /> : <Working>{activity || undefined}</Working>}</div> : null;
+    ? () => <div className="turn-body"><StreamView runs={stream} />{status === "Waiting" ? <WaitingModel since={unlanded.find((p) => !p.steer)?.at} /> : <Working label={stream.at(-1)?.kind === "thinking" ? "Thinking" : "Working"}>{unlanded.find((p) => !p.steer)?.at && <Elapsed since={unlanded.find((p) => !p.steer)!.at!} />}</Working>}</div> : null;
   const liveHost = liveBodyFn ? unlanded.filter((p) => !p.steer).at(-1) : undefined;
   useEffect(() => { window.dispatchEvent(new Event(TRANSCRIPT_GREW)); }, [stream, lines.length, sending.length]);
   const landedIds = sending.filter((p) => !unlanded.includes(p)).map((p) => p.id).join(" ");
@@ -3852,6 +3858,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const [stopping, setStopping] = useState<"" | "stopping" | "failed">("");
   // R3-D: the server's error status wins over a send it never started.
   const status = row.status === "error" ? "" : composerStatus({ sending: !running && unlanded.some((p) => !p.steer), accepted: unlanded.some((p) => !p.steer && p.accepted), running, streamed: stream.length > 0, activity, stopping: stopping === "stopping" });
+  // MB-STREAM: a status row (Waiting, Working) that appears between sends is followed like new output.
+  useLayoutEffect(() => { if (atBottom.current) end.current?.scrollIntoView({ block: "end" }); }, [status]);
   const failedLoad = loading && Boolean(loadError);
   useEffect(() => { if (!live) setStopping(""); }, [live]);
   useEffect(() => {
@@ -4032,7 +4040,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           {loading ? null : (status === "Sending" || status === "Waiting" || row.status === "running") ? (
             // R4-D: while a turn runs the header says the transcript's word, Working, not the list's Running.
             // R2-B: a send on its way is work, never the last turn's Done.
-            <span className="status head-live"><StatusMark status="running" bare />{status === "Sending" ? "Sending" : "Working"}</span>
+            <span className={"status head-live" + (status === "Stopping" ? " head-stopping" : "")}>{status === "Stopping" ? <i className="head-stop-mark" aria-hidden="true" /> : <StatusMark status="running" bare />}{status || "Working"}</span>
           ) : row.trouble && row.trouble !== "tests failed" ? (
             // One status: the reason replaces "Done".
             <span className="status head-trouble"><StatusMark status="error" bare />{capital(row.trouble)}</span>
@@ -4148,7 +4156,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
             {p === liveHost && liveBodyFn?.()}
           </SendingPrompt>
         ))}
-        {!running && unlanded.some((p) => !p.steer) && (status === "Waiting" ? <WaitingModel /> : <WaitingDot />)}
+        {!running && unlanded.some((p) => !p.steer) && (status === "Waiting" ? <WaitingModel since={unlanded.find((p) => !p.steer)?.at} /> : <WaitingDot />)}
         {liveBodyFn && !liveHost && <div className="turn">{liveBodyFn()}</div>}
         {row.ask && (
           <div className="ask" ref={ask}>
@@ -4349,10 +4357,12 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
               )}
               {/* One filled control: Stop is a square icon, Queue shows once there is a draft to queue. */}
               {live && (stopping === "failed"
-                ? <button className="btn" onClick={stop}>Couldn’t stop · Retry</button>
-                : <button className="btn btn-ghost composer-stop" disabled={stopping === "stopping"} onClick={stop}
-                          aria-label={stopping === "stopping" ? "Stopping" : "Stop"} title="Esc">
-                    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="1" y="1" width="10" height="10" rx="2" fill="currentColor" /></svg>
+                ? <button className="btn composer-stop-retry" onClick={stop} title="Stop (Esc)" aria-keyshortcuts="Escape">Retry stop</button>
+                : <button className="btn composer-stop" disabled={stopping === "stopping"} onClick={stop}
+                          aria-label={stopping === "stopping" ? "Stopping" : "Stop"} title="Stop (Esc)" aria-keyshortcuts="Escape">
+                    {stopping === "stopping"
+                      ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="spin-mark" aria-hidden="true"><circle cx="12" cy="12" r="8.5" strokeDasharray="40 14" /></svg>
+                      : <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect width="10" height="10" rx="2" fill="currentColor" /></svg>}
                   </button>)}
               {running && !draftAsk && !blank && (
                 <button className="btn btn-ghost" onClick={enqueue} disabled={uploading > 0 || askChanged}
@@ -4382,7 +4392,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           )}
           {!pickerOpen && (
             <span className="hint composer-hint">
-              {status && <>{status === "Waiting" ? WAITING_MODEL : status}{status === "Working" && <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>} · </>}{running && !draftAsk ? `Enter steer · ${modKey()}Enter queue · Shift+Enter newline` : "Enter send · Shift+Enter newline"} · / commands · @ files
+              {running && !draftAsk ? `Enter steer · ${modKey()}Enter queue · Esc stop · Shift+Enter newline` : live ? "Enter send · Esc stop · Shift+Enter newline" : "Enter send · Shift+Enter newline"} · / commands · @ files
             </span>
           )}
         </div>

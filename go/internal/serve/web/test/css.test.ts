@@ -75,3 +75,14 @@ test("R4-F: strip chips, the … summary and Edit into composer are at least 24p
   expect(block).toMatch(/\.rt-more>summary[^{]*\{[^}]*min-height:24px/);
   expect(block).toMatch(/\.prompt-acts>\.link[^{]*\{[^}]*min-height:24px/);
 });
+
+// MB-STREAM: streaming and waiting states.
+const mbStream = [...css.matchAll(/\/\* MB-STREAM[^*]*\*\/([\s\S]*?)\/\* \/MB-STREAM \*\//g)].map((m) => m[1]).join("\n");
+
+test("MB-STREAM: the block exists and the breathing dot fades without scaling", () => {
+  expect(mbStream).toMatch(/\.breath-dot\{/);
+  const frames = [...css.matchAll(/@keyframes breath-dot\{([^@]*?\})\}/g)].map((m) => m[1]).join("");
+  expect(frames).not.toMatch(/scale|transform/);
+  expect(css).not.toContain("typing-dots");
+  expect(css.match(/\.turn-sending \.prompt-text\{/g)?.length).toBe(1);
+});
