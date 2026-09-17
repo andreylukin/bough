@@ -243,6 +243,21 @@ type SessionInfo struct {
 	SpawnedBy string
 }
 
+// projectCwd is where a session works: a project session's primary
+// worktree once its orb recorded one, since meta was written from $HOME
+// before the orb opened and chdir'd there; otherwise the recorded cwd.
+// Read after the listing cache: state.json appears without the
+// transcript changing.
+func projectCwd(home string, in SessionInfo) string {
+	if in.Mode != "project" || home == "" {
+		return in.Cwd
+	}
+	if st, err := orb.ReadState(home, in.ID); err == nil && st.Primary != "" {
+		return st.Primary
+	}
+	return in.Cwd
+}
+
 // metaMode reads a meta entry's mode and project, normalizing the
 // missing mode of an old file to "local".
 func metaMode(data map[string]any) (mode, project string) {
@@ -435,6 +450,9 @@ func List(dir string) ([]SessionInfo, error) {
 		listMu.Lock()
 		listCache[p] = listed{size: st.Size(), mod: st.ModTime(), info: infos[len(infos)-1]}
 		listMu.Unlock()
+	}
+	for i := range infos {
+		infos[i].Cwd = projectCwd(home, infos[i])
 	}
 	slices.SortFunc(infos, func(a, b SessionInfo) int {
 		return cmp.Or(b.ModTime.Compare(a.ModTime), cmp.Compare(b.ID, a.ID))
@@ -773,7 +791,11 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	cwd, _ := os.Getwd()
 	home, _ := os.UserHomeDir()
 	if snapshotsTurns(mode, cwd, home) {
-		ctx.Provide("checkpoints", &Checkpoints{session: strings.TrimSuffix(filepath.Base(s.Path()), ".jsonl")})
+		c := &Checkpoints{session: strings.TrimSuffix(filepath.Base(s.Path()), ".jsonl")}
+		if mode == "project" {
+			c.home = home
+		}
+		ctx.Provide("checkpoints", c)
 	}
 	ctx.Effect(func() {
 		if err := s.Close(); err != nil {
