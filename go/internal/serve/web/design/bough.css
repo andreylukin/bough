@@ -206,7 +206,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:var(--fs-base)/1.5 v
 .turn-note{color:var(--text-3)}
 .side-fresh{display:flex;align-items:center;gap:8px;height:28px;margin:0;padding:0 12px;font-size:12px;color:var(--text-3)}
 /* Hover, selected and focus each look different: a tint, a tint with a marker, a ring. */
-.row:hover{background:var(--hover)}
+@media (hover:hover){.row:hover{background:var(--hover)}}
 .row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .row-on,.row-on:hover{background:var(--sel);box-shadow:inset 2px 0 0 var(--accent)}
 .turn-more{color:var(--text-3)}
@@ -2283,3 +2283,11 @@ a.rt-link{text-decoration:none}
 .error-note-details summary{cursor:pointer}
 .error-note-details pre{margin:var(--s-2) 0 0;white-space:pre-wrap;overflow-wrap:anywhere;text-align:start}
 /* /WEB8 */
+/* WEB9: selected reads apart from hover (10% text mix, opaque, against
+   hover's 6%): text-3 on sel 4.58:1, line-strong on sel 2.8:1, so a selected
+   control's state rides on its fill and text-1, not its border. Header chips
+   get a 24px hit area at the same visual height; the title keeps 12ch. */
+:root{--sel:color-mix(in srgb,var(--text-1) 10%,var(--surface))}
+.runtime-strip>.rt-jobs>summary,.runtime-strip>.rt-link,.runtime-strip>.rt-tip{padding-block:4px;margin-block:-4px}
+.head-main h1{min-width:min(12ch,100%)}
+/* /WEB9 */

@@ -1,5 +1,6 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { clampToViewport } from "./popover";
 import { Markdown, duration, execNote, lineCount, plainTitle } from "./render";
 import type { Line, Row } from "./types";
 import { jobSummaryLine, jobTitle, jobsFromLines, parseLegacyJob, useReviewed, workCounts, workSummaryText, type WorkCounts, type WorkKind, type WorkLife, type Worker } from "./work";
@@ -380,6 +381,7 @@ export function WorkDialog({ workers, sheet, top, right, childState, onRetryChil
 
   // Focus lands on the heading; Escape closes; the page behind is inert.
   useLayoutEffect(() => { head.current?.focus(); }, []);
+  useLayoutEffect(() => { if (!sheet) clampToViewport(ref.current); }, [sheet, top, right]);
   // A layout effect: the page is un-inerted in the same commit that closes
   // the dialog, so focus can move to the transcript right after.
   useLayoutEffect(() => {
