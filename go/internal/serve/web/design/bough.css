@@ -2337,3 +2337,15 @@ a.rt-link{text-decoration:none}
    token now read the token; off-scale values (11.5px, 7px, 999px...) stay. */
 :root{--z-menu:20;--z-tip:30;--z-pop:40;--z-toast:50;--z-modal:60}
 /* /WEB14 */
+/* R2-H: a phone composer keeps a compact model and effort control;
+   the lock badge gives up its words first. */
+@media (max-width:720px){
+  .composer-tools{flex-wrap:nowrap}
+  .composer-tools .controls{display:flex;min-width:0}
+  .composer-tools .ctl-run{min-width:0}
+  .composer-tools .ctl-run .sel{min-width:0}
+  .composer-tools .ctl-run .sel-btn{max-width:112px}
+  .composer-tools .ctl-run>.sel:last-of-type>.sel-btn{max-width:84px}
+  .composer-tools .mode-badge{flex-shrink:0;font-size:0;gap:0;width:28px;justify-content:center;padding:0}
+}
+/* /R2-H */

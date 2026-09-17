@@ -33,7 +33,7 @@ function Turns({ lines }: { lines: Line[] }) {
 function Dialog({ childState = "ok", paused, sheet = false }: { childState?: ChildState; paused?: boolean; sheet?: boolean }) {
   const ctx = useWork();
   return (
-    <WorkDialog workers={ctx?.workers ?? []} sheet={sheet} top={56} childState={childState} onRetryChildren={noop} paused={paused}
+    <WorkDialog workers={ctx?.workers ?? []} sheet={sheet} childState={childState} onRetryChildren={noop} paused={paused}
                 parent={ctx?.session ?? ""} onClose={noop} onView={noop} onOpenAgent={noop} />
   );
 }

@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVisible, visible } from "./dialog";
+import { anchorPlace } from "./popover";
 
 /** One choosable value. Options sharing a `group` sit under one heading. */
 export interface Option { value: string; label: string; detail?: string; group?: string; /** What the closed button shows, when shorter than the label. */ short?: string }
@@ -109,13 +110,11 @@ export function Select({ value, options: given, onChange, label, placeholder = "
       const w = pop.current.offsetWidth;
       const h = pop.current.scrollHeight;
       // Against what is visible: a keyboard both shrinks and pans the page.
-      const v = visible();
-      const below = v.top + v.height - b.bottom - 12, above = b.top - v.top - 12;
-      const up = h > below && above > below;
-      let left = align === "end" ? b.right - w : b.left;
-      left = Math.max(8, Math.min(left, innerWidth - 8 - w));
-      setPos({ position: "fixed", minWidth, left, right: "auto", top: up ? Math.max(v.top + 8, b.top - 4 - Math.min(h, above)) : b.bottom + 4,
-               maxHeight: up ? above : below });
+      // Sideways, within the pane it sits in: an end-aligned composer picker
+      // opened leftward over the sidebar.
+      const v = visible(), pane = btn.current.closest(".thread")?.getBoundingClientRect();
+      const p = anchorPlace(b, w, h, { left: Math.max(0, pane?.left ?? 0), right: Math.min(innerWidth, pane?.right ?? innerWidth), top: v.top, bottom: v.top + v.height }, align);
+      setPos({ position: "fixed", minWidth, left: p.left, right: "auto", top: Math.max(v.top + 8, p.top), maxHeight: p.maxHeight });
   }, [align]);
   useVisible(open, place);
   useLayoutEffect(() => {

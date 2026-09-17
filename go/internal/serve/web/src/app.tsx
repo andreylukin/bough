@@ -3247,7 +3247,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const rove = (all: HTMLElement[], on: HTMLElement) => {
     rovingAt.current = on;
     for (const s of all) {
-      s.tabIndex = s === on ? 0 : -1;
+      // A "Worked for" fold is a toggle of its own, always one Tab away; ↑/↓ still pass through it.
+      s.tabIndex = s === on || s.parentElement!.classList.contains("work-seg") ? 0 : -1;
       for (const b of s.querySelectorAll<HTMLElement>("button,a[href]")) {
         if (s === on) b.removeAttribute("tabindex"); else b.tabIndex = -1;
       }
@@ -3337,8 +3338,6 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   // Visible whenever there is work, and while background agents are still being looked up.
   const showWork = counts.total > 0 || kids.state === "loading" || kids.state === "error";
   const [workOpen, setWorkOpen] = useState(false);
-  const [workTop, setWorkTop] = useState<number>();
-  const [workRight, setWorkRight] = useState<number>();
   const workBtn = useRef<HTMLButtonElement>(null);
   const headRef = useRef<HTMLHeadingElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -3352,12 +3351,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     return () => ro.disconnect();
   }, []);
   const sheet = useMedia("(max-width:480px)");
-  const openWork = () => {
-    const b = workBtn.current?.getBoundingClientRect(), t = threadRef.current?.getBoundingClientRect();
-    if (b && t) { setWorkTop(b.bottom - t.top + 4); // Under the button's right edge, but never past the pane's left (the popover is min(760px, pane - 32px) wide).
-      setWorkRight(Math.max(16, Math.min(t.right - b.right, t.width - 16 - Math.min(760, t.width - 32)))); }
-    setWorkOpen(true);
-  };
+  const openWork = () => setWorkOpen(true);
   const closeWork = useCallback((refocus: boolean) => {
     setWorkOpen(false);
     if (refocus) requestAnimationFrame(() => workBtn.current?.focus());
@@ -3733,6 +3727,13 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           {running && turns[turns.length - 1]?.prompt?.at && !turns[turns.length - 1]?.done && <RunClock since={turns[turns.length - 1].prompt!.at} />}
           {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
         </div>
+        <RuntimeStrip cat={catalogue.cat} row={row} lines={lines} paused={paused} onRetry={onRetry} onContext={onContext} loading={loading}
+          work={showWork && (
+            <WorkButton btnRef={workBtn} counts={counts} loading={kids.state === "loading"} unavailable={kids.state === "error"}
+                        paused={paused !== undefined} narrow={paneNarrow || sheet} expanded={workOpen}
+                        onClick={() => (workOpen ? closeWork(true) : openWork())} />
+          )} />
+        {/* After the strip, so Tab follows the visual order: Work, Context, Cost, then Settings. */}
         {/* The model and effort pickers live in the composer toolbar; a phone's are under Settings. */}
         <div className="head-side">
           <div className="head-more" ref={moreRef}>
@@ -3774,12 +3775,6 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
             )}
           </div>
         </div>
-        <RuntimeStrip cat={catalogue.cat} row={row} lines={lines} paused={paused} onRetry={onRetry} onContext={onContext} loading={loading}
-          work={showWork && (
-            <WorkButton btnRef={workBtn} counts={counts} loading={kids.state === "loading"} unavailable={kids.state === "error"}
-                        paused={paused !== undefined} narrow={paneNarrow || sheet} expanded={workOpen}
-                        onClick={() => (workOpen ? closeWork(true) : openWork())} />
-          )} />
       </header>
       {orbView === "why" && row.orb?.status === "failed" && <OrbFailure key={row.id} id={row.id} project={row.orb.project} onRebuild={row.project ? rebuild : undefined} rebuildErr={rebuildErr} />}
       {orbView === "build" && row.orb && <OrbBuildLog key={row.id} id={row.id} project={row.orb.project} onRebuild={row.project ? rebuild : undefined} rebuildErr={rebuildErr} />}
@@ -4055,7 +4050,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
         </div>
       </div>
       {workOpen && (
-        <WorkDialog workers={workers} sheet={sheet} top={workTop} right={workRight} childState={kids.state} onRetryChildren={kids.retry}
+        <WorkDialog workers={workers} sheet={sheet} anchor={workBtn} childState={kids.state} onRetryChildren={kids.retry}
                     paused={paused !== undefined} parent={row.id} onClose={closeWork} onView={viewInTranscript} onOpenAgent={openAgent} />
       )}
       {/* Transitions after the first load, batched: never a clock ticking. */}
