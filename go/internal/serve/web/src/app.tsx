@@ -5,6 +5,7 @@ import type { Line, Project, Row } from "./types";
 import { STATUS, StatusMark, Working, hasFailure, hasQuestion, sessionSignal, statusWord } from "./status";
 import { ProjectsView } from "./projects";
 import { ModeChip, ModePicker, type ModeValue } from "./mode";
+import { confirmStopOrb, orbUp } from "./orb";
 import { Select, type Option } from "./select";
 import { DialogHost, askChoice, askConfirm, askText, showShortcuts } from "./dialog";
 import { focusComposerKey, isMac, newSessionKey, overviewKeys, sheetKey, switchKey, treeKey } from "./keys";
@@ -4115,7 +4116,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
         </div>
         <RuntimeStrip cat={catalogue.cat} row={row} lines={lines} paused={paused} onRetry={onRetry} onContext={onContext} loading={loading} failed={failedLoad}
           actions={<>
-            {row.orb?.status === "running" && onStopOrb && <button className="btn head-ack head-stop" onClick={onStopOrb}>Stop orb</button>}
+            {orbUp(row.orb) && onStopOrb && <button className="btn head-ack head-stop" onClick={onStopOrb}>Stop orb</button>}
             {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
           </>}
           work={showWork && (
@@ -5172,7 +5173,7 @@ export default function App() {
           onAssign={(p) => act(() => api.assign(row.id, p), "move the session")}
           onContext={() => setSub("context")}
           onAck={() => act(() => api.ack(row.id), "mark it seen")}
-          onStopOrb={() => act(() => api.stopOrb(row.id), "stop the orb")}
+          onStopOrb={async () => { if (await confirmStopOrb(row.jobs)) act(() => api.stopOrb(row.id), "stop the orb"); }}
           onNewProject={() => { setPalQuery("New project"); setPalette(true); }}
           onStartProject={home ? (project, draft) => act(async () => {
             // The draft moves, unsent: the new session's composer holds it.

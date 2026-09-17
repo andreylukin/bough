@@ -11,6 +11,7 @@ package serve
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/andreylukin/bough/plugins/history"
@@ -189,6 +190,18 @@ func Transcript(entries []history.Entry, sinceSeq int64, limit int) []Line {
 					cmds = map[string]string{}
 				}
 				cmds[fmt.Sprint(e.Data["id"])] = c
+			}
+			// A job Stop orb killed queues no notice (no wake-up turn):
+			// this entry is its only outcome, so it becomes the note.
+			if e.Data["event"] == "finished" && e.Data["stopped"] == true {
+				c := str(e.Data["cmd"])
+				first, rest, cut := strings.Cut(c, "\n")
+				if first = strings.TrimSpace(first); cut && strings.TrimSpace(rest) != "" {
+					first += " …"
+				}
+				out = append(out, Line{Seq: e.Seq, At: e.At, Kind: "job",
+					Text: fmt.Sprintf("job %v [stopped with the orb] %s", e.Data["id"], first),
+					Data: map[string]any{"cmd": c}})
 			}
 			continue
 		}

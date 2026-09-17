@@ -21,7 +21,7 @@ import (
 // CLI shapes used (from `--help` on 1.1.0):
 //
 //	container build -t TAG -f FILE --progress plain DIR
-//	container run -d --name N -v SRC:DST[:ro] --mount type=volume,source=V,target=DST[,readonly] -w DIR -e K=V -c CPUS -m MEM IMAGE sleep infinity
+//	container run -d --init --name N -v SRC:DST[:ro] --mount type=volume,source=V,target=DST[,readonly] -w DIR -e K=V -c CPUS -m MEM IMAGE sleep infinity
 //	container start N | stop N | delete --force N | inspect N
 //	container exec [-i] [-w DIR] [-e K=V] N ARGV...
 //	container image inspect TAG   (exit status = exists)
@@ -206,7 +206,9 @@ func (a *Apple) Start(ctx context.Context, spec RunSpec) error {
 }
 
 func runArgs(spec RunSpec) []string {
-	args := []string{"run", "-d", "--name", spec.Name}
+	// --init: an init PID 1 forwards SIGTERM, so stop takes ~0.1 s
+	// instead of waiting out `sleep infinity` (which ignores it) for 5 s.
+	args := []string{"run", "-d", "--init", "--name", spec.Name}
 	for _, m := range spec.Mounts {
 		if m.Volume {
 			v := "type=volume,source=" + m.Source + ",target=" + m.Target

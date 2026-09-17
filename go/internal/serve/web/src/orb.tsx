@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { OrbDetail, OrbFile, OrbStatus, Project, Status } from "./types";
+import type { Job, OrbDetail, OrbFile, OrbStatus, Project, Status } from "./types";
+import { askConfirm } from "./dialog";
 import { sessionTitle } from "./render";
 import { CopyButton, Pending } from "./loading";
 import { STATUS, StatusMark } from "./status";
@@ -21,6 +22,23 @@ function Mark({ status, word, detail }: { status: Status; word: string; detail?:
       {word}{detail && <span className="orb-why"> · <Prose text={detail} /></span>}
     </span>
   );
+}
+
+/** Stop is offered while the container runs; a failed setup can leave it up. */
+export const orbUp = (o?: { status: OrbStatus; up?: boolean }) => !!o && (o.up || o.status === "running");
+
+/** The confirm Stop orb needs, or null: only running jobs make it more than a pause. */
+export function stopOrbQuestion(jobs?: Job[]): { title: string; body: string } | null {
+  if (!jobs?.length) return null;
+  const n = jobs.length;
+  const names = jobs.map((j) => j.cmd.split("\n")[0].trim()).join(", ");
+  return { title: "Stop the orb?", body: `Its ${n} running ${n === 1 ? "job stops" : "jobs stop"} too: ${names}. The container and worktrees stay; the next command starts it again.` };
+}
+
+/** Asks only when jobs would die; resolves true to go ahead. */
+export async function confirmStopOrb(jobs?: Job[]): Promise<boolean> {
+  const q = stopOrbQuestion(jobs);
+  return !q || askConfirm(q.title, q.body, { action: "Stop orb", danger: true });
 }
 
 /** An orb's state in the session vocabulary, so its rows read like every other list. */
@@ -153,7 +171,7 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
             </span>
             <span className="orb-st" title={o.error}><StatusMark status={STATE[o.status]} /></span>
             {/* Every row keeps the action slot, so the columns line up whether or not it can stop. */}
-            <span className="orb-act">{o.status === "running" && <button className="btn btn-sm" onClick={() => onStopOrb(o.session)}>Stop orb</button>}</span>
+            <span className="orb-act">{orbUp(o) && <button className="btn btn-sm" onClick={() => onStopOrb(o.session)}>Stop orb</button>}</span>
           </div>
           ))}
         </div>}

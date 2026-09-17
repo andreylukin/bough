@@ -38,8 +38,13 @@ type OrbSummary struct {
 	Error string `json:"error,omitempty"` // definition parse error
 }
 
-// OrbState is a session's state.json as the wire sees it.
-type OrbState = orb.State
+// OrbState is a session's state.json as the wire sees it. Up says the
+// container is running whatever the status: a failed setup (resume.sh
+// exited non-zero) leaves it up, and Stop must still be offered.
+type OrbState struct {
+	orb.State
+	Up bool `json:"up,omitempty"`
+}
 
 // OrbRuntime says whether the engine can be used right now.
 type OrbRuntime struct {
@@ -103,31 +108,53 @@ func sessionMode(entries []history.Entry) (mode, slug string) {
 // "running" orb whose owner is gone, or whose container serve stopped
 // since the child last wrote, is stopped.
 func (a *API) orbState(session string) OrbState {
-	st, err := orb.ReadState(a.sup.Home(), session)
-	if err != nil || st.Session == "" {
+	s, err := orb.ReadState(a.sup.Home(), session)
+	if err != nil || s.Session == "" {
 		return OrbState{}
 	}
-	if st.Status != orb.StatusRunning && st.Status != orb.StatusStarting {
+	st := OrbState{State: s}
+	switch st.Status {
+	case orb.StatusRunning:
+		st.Up = true
+	case orb.StatusFailed:
+		// Only a failed orb asks the runtime: the list polls every row.
+		st.Up = a.containerUp(session)
+		return st
+	case orb.StatusStarting:
+		st.Up = a.containerUp(session)
+	default:
 		return st
 	}
-	if !a.ownerAlive(session, st) {
+	if !a.ownerAlive(session, st.State) {
 		st.Status = orb.StatusStopped
+		st.Up = st.Up && a.containerUp(session)
 		return st
 	}
 	a.sup.mu.Lock()
 	at, stopped := a.sup.stoppedAt[session]
 	a.sup.mu.Unlock()
 	if stopped && !st.UpdatedAt.After(at) {
-		st.Status = orb.StatusStopped
+		st.Status, st.Up = orb.StatusStopped, false
 	}
 	return st
+}
+
+// containerUp asks the runtime whether a session's container runs.
+func (a *API) containerUp(session string) bool {
+	if a.sup.Runtime() == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), runtimeTimeout)
+	defer cancel()
+	cs, err := a.sup.Runtime().Inspect(ctx, container.OrbName(session))
+	return err == nil && cs == container.StateRunning
 }
 
 // ownerAlive decides whether state.json's PID still owns the orb. The
 // supervisor's own child table wins when it knows the session, because
 // a bare kill(pid, 0) cannot tell a reused pid from the real owner; a
 // pid serve did not spawn only counts if it wrote after serve started.
-func (a *API) ownerAlive(session string, st OrbState) bool {
+func (a *API) ownerAlive(session string, st orb.State) bool {
 	if pid := a.sup.childPID(session); pid != 0 {
 		return pid == st.PID
 	}
@@ -564,14 +591,14 @@ func (a *API) sessionOrb(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), runtimeTimeout)
 		defer cancel()
 		if cs, err := a.sup.Runtime().Inspect(ctx, container.OrbName(id)); err == nil && cs != container.StateRunning {
-			st.Status = orb.StatusStopped
+			st.Status, st.Up = orb.StatusStopped, false
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"orb": st})
 }
 
-// stopOrb stops the container but writes no state: the child is the
-// file's only writer, and its next exec restarts the container.
+// stopOrb stops the container and marks state.json stopped; the child's
+// next exec restarts the container and writes running again.
 func (a *API) stopOrb(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if _, ok := a.info(id); !ok {
@@ -580,13 +607,10 @@ func (a *API) stopOrb(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	if err := a.sup.Runtime().Stop(ctx, container.OrbName(id)); err != nil {
+	if err := a.sup.stopOrb(ctx, id); err != nil {
 		writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: stop orb %q: %w", id, err))
 		return
 	}
-	a.sup.mu.Lock()
-	a.sup.stoppedAt[id] = time.Now()
-	a.sup.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

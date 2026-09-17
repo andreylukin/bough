@@ -60,6 +60,7 @@ type job struct {
 	spillAt string   // its path; "-" when it could not be made
 	matched bool     // the until pattern already fired
 	done    bool
+	stopped bool // killed by Stop orb: not a failure, not news
 	exit    int
 	err     string
 	ended   time.Time
@@ -139,6 +140,8 @@ func (j *job) status() string {
 	switch {
 	case !j.done:
 		return "running"
+	case j.stopped:
+		return "stopped with the orb"
 	case j.err != "":
 		return "failed"
 	default:
@@ -149,7 +152,7 @@ func (j *job) status() string {
 // line is the one-line summary used by tools.jobs and by the notices.
 func (j *job) line() string {
 	s := fmt.Sprintf("job %d [%s] %s (%s)", j.id, j.status(), firstLine(j.cmd), j.elapsed())
-	if j.err != "" {
+	if j.err != "" && !j.stopped {
 		s += ": " + j.err
 	}
 	return s
@@ -434,10 +437,14 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 			if ee, ok := err.(*exec.ExitError); ok {
 				b.exit = ee.ExitCode()
 			}
+			b.stopped = project.stoppedSince(b.started)
 		}
-		line, out, exit := b.line(), b.output(), b.exit
+		line, out, exit, stopped := b.line(), b.output(), b.exit, b.stopped
 		b.mu.Unlock()
 		j.recordJob(b, "finished", exit)
+		if stopped {
+			return // the user stopped the orb: waking a paid turn to say so helps no one
+		}
 		j.notify(b.owner, line+"\n"+tailLines(out, 40))
 	}()
 	return b, nil
@@ -457,6 +464,9 @@ func (j *Jobs) recordJob(b *job, event string, exit int) {
 	}
 	if event == "finished" {
 		data["exit"] = exit
+		if b.stopped {
+			data["stopped"] = true
+		}
 	}
 	j.record("job", data)
 }

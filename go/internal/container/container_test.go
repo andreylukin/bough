@@ -117,7 +117,7 @@ func TestAppleArgv(t *testing.T) {
 	ctx := context.Background()
 	got := runArgs(RunSpec{Name: "n", Image: "img", Workdir: "/w", Env: []string{"A=1"}, CPUs: 2, Memory: "8G",
 		Mounts: []Mount{{Source: "/h", Target: "/h"}, {Source: "/r", Target: "/r", ReadOnly: true}, {Source: "vol", Target: "/c", Volume: true}}})
-	want := []string{"run", "-d", "--name", "n", "-v", "/h:/h", "-v", "/r:/r:ro", "--mount", "type=volume,source=vol,target=/c",
+	want := []string{"run", "-d", "--init", "--name", "n", "-v", "/h:/h", "-v", "/r:/r:ro", "--mount", "type=volume,source=vol,target=/c",
 		"-w", "/w", "-e", "A=1", "-c", "2", "-m", "8G", "img", "sleep", "infinity"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("run args\n%v\n%v", got, want)
@@ -147,7 +147,7 @@ func TestAppleArgv(t *testing.T) {
 	if err := a.Remove(ctx, "n"); err != nil {
 		t.Fatal(err)
 	}
-	if l := readLines(t, rec); len(l) != 3 || l[0] != "inspect n" || !strings.HasPrefix(l[1], "run -d --name n") || l[2] != "inspect n" {
+	if l := readLines(t, rec); len(l) != 3 || l[0] != "inspect n" || !strings.HasPrefix(l[1], "run -d --init --name n") || l[2] != "inspect n" {
 		t.Fatalf("calls %q", l)
 	}
 

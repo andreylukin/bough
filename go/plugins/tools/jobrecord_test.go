@@ -1,8 +1,10 @@
 package tools
 
 import (
+	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type fakeRecorder struct {
@@ -75,4 +77,35 @@ func TestJobWithoutRecorder(t *testing.T) {
 		t.Fatalf("bash: %v", err)
 	}
 	waitFor(t, "the notice", func() bool { return len(s.jobs.Take()) == 1 })
+}
+
+// stoppedOrb says every job ended because its orb was stopped.
+type stoppedOrb struct{ fakeOrb }
+
+func (o *stoppedOrb) StoppedSince(time.Time) bool { return true }
+
+// A job killed by Stop orb is not news: it records stopped, queues no
+// notice (so no paid wake-up turn) and never reads as failed.
+func TestJobKilledByOrbStopWakesNothing(t *testing.T) {
+	t.Parallel()
+	s := newTestStats(t)
+	rec := &fakeRecorder{}
+	s.jobs.record = rec.record
+	o := &stoppedOrb{fakeOrb{root: t.TempDir()}}
+	s.jobs.project = &projectMode{slug: "demo", orb: func() (orbExec, error) { return o, nil }}
+	if _, err := s.bash("exit 137", 60); err != nil {
+		t.Fatalf("bash: %v", err)
+	}
+	waitFor(t, "the finished entry", func() bool { return len(rec.snapshot()) == 2 })
+	if got := rec.snapshot()[1]; got["stopped"] != true {
+		t.Fatalf("finished entry = %v, want stopped", got)
+	}
+	select {
+	case <-s.jobs.Wake():
+		t.Fatalf("a stopped job woke the agent: %q", s.jobs.Take())
+	case <-time.After(300 * time.Millisecond):
+	}
+	if out, _ := s.jobs.jobs(); !strings.Contains(out, "[stopped with the orb]") {
+		t.Fatalf("jobs = %q", out)
+	}
 }

@@ -70,7 +70,7 @@ export function parseLegacyJob(text: string): { id?: number; life: WorkLife; exi
   if (!m) return null;
   const status = m[2];
   const ex = /^exited (-?\d+)$/.exec(status);
-  const life: WorkLife = ex ? (+ex[1] === 0 ? "finished" : "failed") : status === "failed" ? "failed" : status === "running" ? "running" : "unknown";
+  const life: WorkLife = ex ? (+ex[1] === 0 ? "finished" : "failed") : status === "failed" ? "failed" : status === "stopped with the orb" ? "stopped" : status === "running" ? "running" : "unknown";
   const ms = m[4] ? parseDuration(m[4]) : null;
   return { id: +m[1], life, ...(ex ? { exit: +ex[1] } : {}), cmd: m[3], ...(ms != null && ms > 0 ? { ms } : {}), output };
 }
@@ -139,7 +139,8 @@ export function jobsFromLines(lines: Line[], session: string, live: boolean, run
         w.seq = Math.max(w.seq, l.seq);
         if (typeof d.exit === "number") {
           w.exit = d.exit;
-          w.life = d.exit === 0 ? "finished" : "failed";
+          // Killed by Stop orb: the user's doing, not the job's failure.
+          w.life = d.stopped === true ? "stopped" : d.exit === 0 ? "finished" : "failed";
           w.exitNote = undefined;
         } else if (w.exit === undefined && w.life !== "failed") {
           w.life = "unknown";
