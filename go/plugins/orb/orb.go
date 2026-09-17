@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -281,7 +282,8 @@ func say(ctx *kernel.Context, uiMode, text string) {
 // failureReport is an orb failure a person can act on: what failed, the
 // log lines that say why (already in err), and the one fix that applies.
 func failureReport(slug, phase string, err error) string {
-	msg := strings.TrimPrefix(err.Error(), "orb: ")
+	// "orb: open <session>: orb: image …" says orb and open twice.
+	msg := openPrefix.ReplaceAllString(err.Error(), "")
 	var fix string
 	switch phase {
 	case iorb.PhaseBuild:
@@ -293,6 +295,8 @@ func failureReport(slug, phase string, err error) string {
 	}
 	return fmt.Sprintf("orb for project %s failed%s: %s\n%s", slug, phaseWord(phase), msg, fix)
 }
+
+var openPrefix = regexp.MustCompile(`^(orb: )?(open \S+: )?(orb: )?`)
 
 func phaseWord(phase string) string {
 	switch phase {
