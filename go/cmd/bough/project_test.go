@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,6 +13,7 @@ import (
 func TestProjectCommand(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	os.MkdirAll(filepath.Join(home, "repos", "web"), 0o755)
 	run := func(stdin string, args ...string) (string, error) {
 		var out bytes.Buffer
 		err := project(&out, strings.NewReader(stdin), args)
@@ -19,6 +22,10 @@ func TestProjectCommand(t *testing.T) {
 
 	if _, err := run("", "show", "web"); err == nil {
 		t.Error("show of a missing project succeeded")
+	}
+	// A5: a refused create leaves no skeleton behind to trip the next one.
+	if _, err := run("", "create", "web", "~/repos/nope"); err == nil {
+		t.Error("create with a missing repo succeeded")
 	}
 	if _, err := run("", "create", "web", "~/repos/web"); err != nil {
 		t.Fatal(err)
@@ -80,6 +87,16 @@ func TestProjectCommand(t *testing.T) {
 	}
 	if p, _ := projectdef.Load(home, "web"); len(p.Def.Secrets) != 0 {
 		t.Errorf("secret not removed: %+v", p.Def.Secrets)
+	}
+	// A5: host problems are refused at write time, in plain words.
+	if _, err := run("", "add-repo", "web", "~/repos/missing"); err == nil || err.Error() != "project.yml: repos[1].path: ~/repos/missing does not exist" {
+		t.Errorf("missing repo path: %v", err)
+	}
+	if _, err := run("", "set", "web", "memory", "8 gigs"); err == nil || !strings.Contains(err.Error(), `memory: "8 gigs" is not a size`) {
+		t.Errorf("bad memory: %v", err)
+	}
+	if _, err := run("", "add-identity", "web", ".aws"); err == nil || !strings.Contains(err.Error(), "identity: ~/.aws does not exist") {
+		t.Errorf("missing identity dir: %v", err)
 	}
 	if p, _ := projectdef.Load(home, "web"); len(p.Def.Repos) != 1 {
 		t.Errorf("after refused edits repos = %+v", p.Def.Repos)

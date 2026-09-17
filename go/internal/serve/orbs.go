@@ -365,6 +365,11 @@ func (a *API) putOrbFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := projectdef.WriteFile(a.sup.Home(), p.Slug, name, body.Text); err != nil {
+		// A validation list is for the person at the editor; send it bare.
+		if inv := (*projectdef.Invalid)(nil); errors.As(err, &inv) {
+			writeErr(w, http.StatusBadRequest, inv)
+			return
+		}
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: save %s/%s: %w", p.Slug, name, err))
 		return
 	}

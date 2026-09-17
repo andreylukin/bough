@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -95,13 +96,18 @@ func project(out io.Writer, in io.Reader, args []string) error {
 			return err
 		}
 		// The skeleton's example repo is a placeholder; the given repos replace it.
-		return mutate(out, home, args[1], func(d *projectdef.Def) error {
+		err := mutate(out, home, args[1], func(d *projectdef.Def) error {
 			d.Repos = nil
 			for _, r := range args[2:] {
 				d.Repos = append(d.Repos, repoArg(r))
 			}
 			return nil
 		})
+		if err != nil {
+			// A refused create leaves nothing behind: the slug was just made here.
+			os.RemoveAll(filepath.Join(projectdef.Root(home), args[1]))
+		}
+		return err
 	case "add-repo":
 		fs := flag.NewFlagSet("add-repo", flag.ContinueOnError)
 		branch := fs.String("branch", "", "base branch")

@@ -1115,6 +1115,9 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .orb-tabs .btn{height:32px;padding-inline:10px}
 .orb-detach{margin-inline-start:auto}
 .orb-editor{min-height:16rem;width:100%;resize:vertical;background:var(--raised);font:var(--fs-md)/1.6 var(--mono);padding:10px 12px;box-sizing:border-box}
+/* ORB-A5 */
+.orb-save-err{white-space:pre-line;font-family:var(--mono);font-size:var(--fs-sm)}
+/* /ORB-A5 */
 .orb-log{max-height:24rem;overflow:auto;white-space:pre}
 @media (max-width:720px){
   .orb-tabs .btn{height:44px}

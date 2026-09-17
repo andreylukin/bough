@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -147,6 +148,11 @@ func TestPutOrbFile(t *testing.T) {
 	base := "/api/projects/" + id + "/orb/files/"
 	if code, _ := f.do(t, "PUT", base+"project.yml", `{"text":"repos: [\n"}`); code != http.StatusBadRequest {
 		t.Errorf("bad yaml = %d, want 400", code)
+	}
+	// A5: the skeleton's placeholder repo is refused in words the editor shows as they are.
+	if code, body := f.do(t, "PUT", base+"project.yml", `{"text":"repos:\n  - path: ~/repos/example\nmemory: lots\n"}`); code != http.StatusBadRequest ||
+		!strings.HasPrefix(fmt.Sprint(body["error"]), "project.yml has 2 problems:\n  repos[0].path: ~/repos/example is the template placeholder") {
+		t.Errorf("host check = %d %v", code, body)
 	}
 	if code, _ := f.do(t, "PUT", base+"evil.sh", `{"text":"x"}`); code != http.StatusBadRequest {
 		t.Errorf("bad name = %d, want 400", code)
