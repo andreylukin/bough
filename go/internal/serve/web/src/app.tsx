@@ -1223,6 +1223,27 @@ export function hashToReplace(current: string, want: string, sub: string | null,
   return want;
 }
 
+/** R4-C: a failed turn says what broke calmly, with a way forward: Retry resends the prompt; Switch model is the primary exit. */
+const RetryTurn = createContext<(() => void) | null>(null);
+function ErrorCard({ text }: { text: string }) {
+  const retry = useContext(RetryTurn);
+  const [first, ...rest] = text.trim().split("\n");
+  return (
+    <div className="err err-card" role="alert">
+      <p className="err-head"><span className="err-dot" aria-hidden="true" />{first}</p>
+      {rest.length > 0 && <div className="err-body">{rest.join("\n")}</div>}
+      <div className="err-actions">
+        <button type="button" className="btn" onClick={() => retry?.()}>Retry</button>
+        <button type="button" className="btn btn-primary err-action" onClick={() => {
+          const pick = [...document.querySelectorAll<HTMLButtonElement>('.composer-tools button[aria-label^="Next turn model"]')].find((b) => b.offsetParent);
+          pick?.scrollIntoView({ block: "nearest" });
+          pick?.click();
+        }}>Switch model</button>
+      </div>
+    </div>
+  );
+}
+
 export function Entry({ line, codes, nested, until }: { line: Line; codes: string[]; nested?: boolean; /** When the next entry landed: a thinking block's end. */ until?: string }) {
   const k = line.kind;
   if (k === "assistant" || k === "sub:assistant") {
@@ -1323,17 +1344,8 @@ export function Entry({ line, codes, nested, until }: { line: Line; codes: strin
     );
   }
   if (k === "error" || k === "sub:error") {
-    if (!authError(line.text)) return <div className="err">{line.text}</div>;
-    // A rejected key fails every turn on that provider: the way out is another model.
-    return (
-      <div className="err err-auth">{line.text}
-        <button type="button" className="btn err-action" onClick={() => {
-          const pick = [...document.querySelectorAll<HTMLButtonElement>('.composer-tools button[aria-label^="Next turn model"]')].find((b) => b.offsetParent);
-          pick?.scrollIntoView({ block: "nearest" });
-          pick?.click();
-        }}>Switch model</button>
-      </div>
-    );
+    if (k === "sub:error") return <div className="err">{line.text}</div>;
+    return <ErrorCard text={line.text} />;
   }
   if (k === "ask") return null; // the live ask renders as its own card below
   if (k === "ask/answer" && line.data?.secret) return <div className="meta-line">secret stored</div>;
@@ -2700,6 +2712,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
           </div>
         </div>
       )}
+      <RetryTurn.Provider value={turn.prompt && editPrompt?.retry ? () => editPrompt.retry?.(turn.prompt!.text) : null}>
       <TurnSeq.Provider value={turn.prompt?.seq}>
       <div className="turn-body">
         {segs.map((sg) => {
@@ -2718,11 +2731,19 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
           );
         })}
         {tail}
+        {/* R4-C: a stopped turn marks the cut right where its prose ends, not only in the footer. */}
+        {(turn.stopped || turn.done?.kind === "cancelled") && [...turn.body].reverse().find((l) => !isHookLine(l) && l.kind !== "cancelled" && l.kind !== "done" && l.kind !== "usage")?.kind === "assistant" && (
+          <p className="turn-interrupted">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9 9v6M15 9v6" /></svg>
+            Interrupted
+          </p>
+        )}
         {/* No stretch of work to carry it (the turn opened on a reply, or has said nothing yet). */}
         {working === WAITING_MODEL && !runningSeg && live ? <WaitingModel /> : working !== undefined && !runningSeg && live && <Working label={working}>{turn.prompt?.at && <Elapsed since={turn.prompt.at} />}</Working>}
         <TurnHooks lines={hooks} />
       </div>
       </TurnSeq.Provider>
+      </RetryTurn.Provider>
       {turn.done && (() => {
         // The turn's own workers: what ran inside its span of entries.
         const seqs = turn.body.map((l) => l.seq);
@@ -3145,7 +3166,7 @@ function sendError(e?: string) {
 // tail does while you type.
 const TurnViewMemo = memo(TurnView);
 /** Puts a sent prompt back in the composer; busy while a draft is there, so it never glues two prompts together. */
-const EditPrompt = createContext<{ busy: boolean; edit: (t: string) => void } | null>(null);
+const EditPrompt = createContext<{ busy: boolean; edit: (t: string) => void; /** R4-C: resend a prompt through the composer's send path. */ retry?: (t: string) => void } | null>(null);
 
 /**
  * The image build a session waits on, live: polls the build log once a
@@ -3293,7 +3314,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     try { draft.trim() ? localStorage.setItem(askKey, draftAsk) : localStorage.removeItem(askKey); } catch { /* storage off */ }
   }, [draft, draftAsk, askKey]);
   const blank = !draft.trim();
-  const editPrompt = useMemo(() => ({ busy: !blank, edit: (t: string) => { setDraft(t); setDraftAsk(""); composer.current?.focus(); } }), [blank]);
+  const deliverRef = useRef<(t: string) => void>(() => {});
+  const editPrompt = useMemo(() => ({ busy: !blank, edit: (t: string) => { setDraft(t); setDraftAsk(""); composer.current?.focus(); }, retry: (t: string) => deliverRef.current(t) }), [blank]);
   useEffect(() => { if (blank) setDraftAsk(row.ask?.id ?? ""); }, [blank, row.ask?.id]);
   const askChanged = !blank && draftAsk !== (row.ask?.id ?? "");
   const [trigger, setTrigger] = useState<Trigger | null>(null);
@@ -3799,6 +3821,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     .replace(/\[(Image|File) #(\d+)\]/g, (m, k, i) => (images.current[i - 1] ? `[${k} #${i}: ${images.current[i - 1]}]` : m))
     .replace(/\[Pasted text #(\d+) \+\d+ lines\]/g, (m, i) => pastes.current[i - 1] ?? m);
 
+  deliverRef.current = (t: string) => { void deliver(t, false); };
   const send = async () => {
     const t = draft.trim();
     // Enter reaches here even while the Send button is disabled.

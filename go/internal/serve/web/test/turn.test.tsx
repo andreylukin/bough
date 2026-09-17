@@ -291,3 +291,30 @@ test("a turn that ended on an error states Failed once, in the error", () => {
   expect(html).not.toContain(">Failed<");
   expect(html).not.toContain(">Done<");
 });
+
+// R4-C: the cut is marked where the prose stops, not only in the footer.
+test("a cancelled turn with partial text marks Interrupted right after the prose", () => {
+  const lines: Line[] = [
+    { seq: 1, at: at(0), kind: "input", text: "Explain the loop." },
+    { seq: 2, at: at(5), kind: "assistant", text: "The loop reads input and streams", data: { partial: true } },
+    { seq: 3, at: at(5), kind: "cancelled", text: "" },
+    { seq: 4, at: at(5), kind: "done", text: "" },
+  ] as Line[];
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns(lines)[0]} />);
+  const mark = html.indexOf("turn-interrupted");
+  expect(mark).toBeGreaterThan(html.indexOf("The loop reads input"));
+  expect(mark).toBeLessThan(html.indexOf("turn-foot"));
+});
+
+test("a failed turn's error is a calm card with Retry and Switch model", () => {
+  const lines: Line[] = [
+    { seq: 1, at: at(0), kind: "input", text: "hi" },
+    { seq: 2, at: at(1), kind: "error", text: "The model returned an empty reply." },
+    { seq: 3, at: at(1), kind: "done", text: "" },
+  ] as Line[];
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns(lines)[0]} />);
+  expect(html).toContain(">Retry</button>");
+  const auth = renderToStaticMarkup(<TurnView turn={groupTurns([lines[0], { ...lines[1], text: "401 Unauthorized: invalid x-api-key" }, lines[2]] as Line[])[0]} />);
+  expect(auth).toContain(">Retry</button>");
+  expect(auth).toContain("Switch model");
+});
