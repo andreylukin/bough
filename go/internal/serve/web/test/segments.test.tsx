@@ -118,3 +118,23 @@ test("a running turn's work row says Working and its current step, once", () => 
   expect(html).toContain("Ran go test ./...");
   expect(html).not.toContain('class="working"');
 });
+
+test("a turn that ends on an error after its work shows the error card outside the folded work, not as a failed action", () => {
+  const view = bash("cat a.go");
+  const read = bash("cat b.go");
+  const ended: Line[] = [lines[0],
+    { seq: 2, at: at(1), kind: "assistant", text: "```js\n" + view + "\n" + read + "\n```" },
+    { seq: 3, at: at(1), kind: "code", text: view },
+    { seq: 4, at: at(2), kind: "result", text: "a", data: { code: view, exit: 0 } },
+    { seq: 5, at: at(2), kind: "code", text: read },
+    { seq: 6, at: at(3), kind: "result", text: "b", data: { code: read, exit: 0 } },
+    { seq: 7, at: at(4), kind: "error", text: "the model returned an empty reply twice (provider hiccup)" },
+    { seq: 8, at: at(4), kind: "done", text: "", data: {} }];
+  const segs = segsOf(ended);
+  expect(segs.map((s) => s.kind)).toEqual(["work", "notice"]);
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns(ended)[0]} />);
+  expect(html).not.toContain("1 failed");
+  const seg = html.indexOf('class="work-seg-body"'), card = html.indexOf("err-card");
+  expect(card).toBeGreaterThan(-1);
+  expect(seg === -1 || html.slice(seg, card).includes("</details>")).toBe(true);
+});
