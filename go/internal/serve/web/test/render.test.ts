@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { programRan, splitBareProgram, stripRunFences, tableOverflows } from "../src/render";
+import { groupTurns, programRan, splitBareProgram, stripRunFences, tableOverflows } from "../src/render";
 
 const fence = (body: string) => "```js\n" + body + "\n```";
 
@@ -117,4 +117,16 @@ test("a table a few pixels too wide gets no swipe hint", () => {
   expect(tableOverflows(379, 375)).toBe(false);
   expect(tableOverflows(383, 375)).toBe(false);
   expect(tableOverflows(384, 375)).toBe(true);
+});
+
+test("an origin record before a web prompt opens no turn of its own", () => {
+  const at = "2026-09-17T07:05:52Z";
+  const turns = groupTurns([
+    { seq: 1, at, kind: "input", text: "one" },
+    { seq: 2, at, kind: "done", text: "" },
+    { seq: 3, at, kind: "origin", text: "origin", data: { origin: "web" } },
+    { seq: 4, at, kind: "input", text: "two" },
+  ] as any);
+  expect(turns.map((t) => t.prompt?.text ?? null)).toEqual(["one", "two"]);
+  expect(turns[1].body).toEqual([]);
 });
