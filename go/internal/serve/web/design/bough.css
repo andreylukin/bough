@@ -2479,3 +2479,28 @@ pre.edit-rows,.block pre.edit-rows{text-indent:0;margin:2px 0 var(--s-2);padding
   .thread-head:not(.page-head):has(>.runtime-strip>.rt-metrics:empty)>.runtime-strip{grid-column:3;grid-row:1;align-self:center}
 }
 /* /R3-G */
+/* R3-I: welcome nav and skip target on a phone; the phone composer
+   names its model and leaves effort to Settings; a 401 card's action. */
+.welcome-nav{display:none}
+.err-auth{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-2) var(--s-3)}
+.err-auth>.err-action{margin-inline-start:auto;flex-shrink:0}
+@media (max-width:720px){
+  .welcome-nav{display:flex;align-items:center;gap:var(--s-2);position:sticky;top:0;z-index:2;height:56px;padding:0 var(--s-2);background:var(--bg);border-bottom:1px solid var(--line)}
+  .welcome-nav>.back{width:44px;height:44px}
+  .welcome-nav-title{flex:1;font-weight:600;color:var(--text-1)}
+  .welcome-nav-skip,.welcome-skip{display:inline-flex;align-items:center;justify-content:center;min-height:44px;min-width:44px;padding:0 var(--s-3);font-size:var(--fs-md);color:var(--text-2)}
+  .composer-tools .ctl-run>.sel:last-of-type{display:none}
+  .composer-tools .ctl-run>.sel:first-of-type{flex-shrink:0}
+  .composer-tools .ctl-run>.sel:first-of-type>.sel-btn{max-width:128px;padding-inline:var(--s-2)}
+  .err-auth>.err-action{min-height:44px}
+}
+/* A phone's toolbar is too narrow for "Skills" and a model name both: Skills becomes its slash. */
+@media (max-width:480px){
+  .composer-tools .skills-btn{font-size:0;width:28px;padding:0;justify-content:center}
+  .composer-tools{gap:0}
+  .composer-tools .controls{flex-shrink:0}
+  .composer-tools .ctl-run>.sel:first-of-type>.sel-btn{max-width:96px;padding-inline:3px}
+  .composer-tools .mode-badge{width:24px}
+  .composer-tools .skills-btn::before{content:"/";font:500 var(--fs-md) var(--mono);color:var(--text-2)}
+}
+/* /R3-I */

@@ -27,3 +27,18 @@ test("Esc no longer leaves the session from the app shell", () => {
   const src = readFileSync(join(import.meta.dir, "../src/app.tsx"), "utf8");
   expect(src).not.toContain("Esc leaves a session");
 });
+
+// R3-I: a provider 401 offers a way out of the model that cannot answer.
+test("a provider auth error offers Switch model; other errors do not", async () => {
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { Entry, authError } = await import("../src/app");
+  expect(authError("llm-anthropic: 401 Unauthorized: invalid x-api-key")).toBe(true);
+  expect(authError("authentication_error: invalid api key")).toBe(true);
+  expect(authError("context deadline exceeded")).toBe(false);
+  expect(authError("block 2: SyntaxError at line 401")).toBe(false);
+  expect(authError("git push: Authentication failed for github.com")).toBe(false);
+  const bad = renderToStaticMarkup(<Entry line={l(3, "error", "anthropic: 401 invalid x-api-key")} codes={[]} />);
+  expect(bad).toContain("Switch model");
+  const other = renderToStaticMarkup(<Entry line={l(3, "error", "network down")} codes={[]} />);
+  expect(other).not.toContain("Switch model");
+});

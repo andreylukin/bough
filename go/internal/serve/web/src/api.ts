@@ -25,6 +25,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 const post = (path: string, body?: unknown) =>
   req<{ ok: true }>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
 
+export type KeyState = "ok" | "rejected" | "unset" | "unknown";
 export interface SetupProvider { name: string; env: string; set: boolean }
 /** checkout is the git checkout a session started in path may write; absent means read-only. */
 export interface SetupFolder { path: string; exists: boolean; checkout?: string }
@@ -55,6 +56,8 @@ export const api = {
 
   /** First-run state: which providers have a key, and whether a folder (default: where serve started) is a writable checkout. */
   setup: (cwd?: string) => req<Setup>(`/api/setup${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`),
+  /** Ask the provider whether its key is accepted: a key that is only present used to read as working. */
+  checkKey: (provider: string) => req<{ state: KeyState; detail?: string }>(`/api/setup/check?provider=${encodeURIComponent(provider)}`),
   /** Record a provider key in ~/.bough/env; sessions started afterwards use it. */
   setKey: (provider: string, key: string) =>
     req<{ providers: SetupProvider[] }>("/api/setup/key", { method: "POST", body: JSON.stringify({ provider, key }) }).then((r) => r.providers),

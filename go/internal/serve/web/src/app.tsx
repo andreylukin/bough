@@ -1208,6 +1208,21 @@ function splitGuessed(text: string): string[] {
   return parts;
 }
 
+/** A provider refusing the key (401/403), which no retry of the same model fixes. */
+export function authError(text: string): boolean {
+  return /\b(HTTP|status) 40[13]\b|\b40[13] (unauthori[sz]ed|forbidden)\b|authentication_error|invalid[ _-]?(x-)?api[ _-]?key/i.test(text);
+}
+
+/**
+ * The hash the router writes back, or null to leave it. Its first run sees
+ * the state from before the hash was read ("#/"), and a link's ?turn= was
+ * lost to it; a sub-page's query (?turn=, ?file=) is the page's own.
+ */
+export function hashToReplace(current: string, want: string, sub: string | null, first: boolean): string | null {
+  if (first || current === want || (sub && current.startsWith(want + "?"))) return null;
+  return want;
+}
+
 export function Entry({ line, codes, nested, until }: { line: Line; codes: string[]; nested?: boolean; /** When the next entry landed: a thinking block's end. */ until?: string }) {
   const k = line.kind;
   if (k === "assistant" || k === "sub:assistant") {
@@ -1307,7 +1322,19 @@ export function Entry({ line, codes, nested, until }: { line: Line; codes: strin
       </details>
     );
   }
-  if (k === "error" || k === "sub:error") return <div className="err">{line.text}</div>;
+  if (k === "error" || k === "sub:error") {
+    if (!authError(line.text)) return <div className="err">{line.text}</div>;
+    // A rejected key fails every turn on that provider: the way out is another model.
+    return (
+      <div className="err err-auth">{line.text}
+        <button type="button" className="btn err-action" onClick={() => {
+          const pick = [...document.querySelectorAll<HTMLButtonElement>('.composer-tools button[aria-label^="Next turn model"]')].find((b) => b.offsetParent);
+          pick?.scrollIntoView({ block: "nearest" });
+          pick?.click();
+        }}>Switch model</button>
+      </div>
+    );
+  }
   if (k === "ask") return null; // the live ask renders as its own card below
   if (k === "ask/answer" && line.data?.secret) return <div className="meta-line">secret stored</div>;
   // The answer also comes back as the ask's Result row: labelled, not a second bare copy.
@@ -4522,6 +4549,7 @@ export default function App() {
     };
   }, []);
 
+  const routed = useRef(false);
   // Writing it back is replaceState, not push: every keystroke in the
   // sidebar filter would otherwise become a history entry to walk back
   // through. Opening a conversation pushes (see openSession).
@@ -4532,10 +4560,10 @@ export default function App() {
       : view === "wiki" ? `#/${wikiHash(wikiRoute)}`
       : selected ? `#/s/${selected}${sub ? `/${sub}` : ""}`
       : "#/";
-    // A sub-page's query (?turn=, ?file=) is the page's own: kept.
-    if (window.location.hash !== want && !(sub && window.location.hash.startsWith(want + "?"))) {
-      window.history.replaceState(null, "", want);
-    }
+    const first = !routed.current;
+    routed.current = true;
+    const next = hashToReplace(window.location.hash, want, sub, first);
+    if (next !== null) window.history.replaceState(null, "", next);
   }, [view, selected, sub, wikiRoute, lost]);
 
   // Moving around the wiki pushes, like opening a conversation: Back
@@ -4926,7 +4954,7 @@ export default function App() {
         <PendingThread sending={pending[selected]} />
       ) : (
         <div className={"thread" + (selected ? " empty" : "")}>
-          {!selected ? (showWelcome ? <Welcome onStart={(cwd, p) => start(cwd, p)} onSkip={() => setWelcome("off")} /> : <>
+          {!selected ? (showWelcome ? <Welcome onStart={(cwd, p) => start(cwd, p)} onSkip={() => { setWelcome("off"); if (narrow) goList(); }} onBack={narrow ? () => { setWelcome("off"); goList(); } : undefined} /> : <>
             {home && (
               <div className="controls mode-start">
                 <ModePicker projects={projects} value={newMode} onChange={setNewMode} />
