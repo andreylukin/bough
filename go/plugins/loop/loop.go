@@ -428,7 +428,8 @@ func invented(tag string) bool {
 
 // stripFakeBlocks replaces every output-looking fenced block
 // (```output, ```text, bare ```...) in an assistant reply with
-// removedBlock: those are model-guessed results, and left in the
+// removedBlock unless its body quotes a result in ran (output a block
+// really produced this turn): the rest are model-guessed results, and left in the
 // transcript they render like real runtime output. Language-tagged
 // fences are kept: they are code being shown, not results.
 // stripFakeSystem removes system messages the model invented. Seen in
@@ -547,15 +548,38 @@ func Finish(reply string) (text string, stopped bool, dropped int) {
 // that invents a system message must not be able to hand it upward.
 func StripFabrications(text string) string { return stripFakeSystem(text) }
 
-func stripFakeBlocks(reply string) string {
+func stripFakeBlocks(reply string, ran ...string) string {
 	reply = stripFakeSystem(reply)
 	return anyBlock.ReplaceAllStringFunc(reply, func(m string) string {
 		tag := anyBlock.FindStringSubmatch(m)[1]
-		if tag == "js" || tag == "stop" || !invented(tag) {
+		if tag == "js" || tag == "stop" || !invented(tag) || quotesRun(m, ran) {
 			return m
 		}
 		return removedBlock
 	})
+}
+
+// quotesRun reports whether a fence's body is output a block really
+// produced this turn (every non-blank line appears in one result), so
+// the fence is the model quoting it, not guessing.
+func quotesRun(fence string, ran []string) bool {
+	body := fence[strings.Index(fence, "\n")+1 : len(fence)-3]
+	if strings.TrimSpace(body) == "" {
+		return false
+	}
+	for _, out := range ran {
+		all := true
+		for _, line := range strings.Split(body, "\n") {
+			if l := strings.TrimSpace(line); l != "" && !strings.Contains(out, l) {
+				all = false
+				break
+			}
+		}
+		if all {
+			return true
+		}
+	}
+	return false
 }
 
 // DefaultProject is the built-in history -> model-messages projection:
@@ -1667,6 +1691,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	}
 	retried := false
 	nudges := 0         // push-backs spent asking for a stop block
+	var ran []string    // this turn's block outputs: a fence quoting one is real
 	lastFailed := false // the previous block errored: a stop on it is unverified
 	for step := 0; step < maxSteps; step++ {
 		if r.maxCost > 0 && r.usage != nil && r.usage() >= r.maxCost {
@@ -1720,7 +1745,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			return err
 		}
 		retried = false
-		reply = stripFakeBlocks(reply)
+		reply = stripFakeBlocks(reply, ran...)
 		// A stop block ends the turn: its body (plus any prose before
 		// it) IS the answer, and nothing after it runs.
 		stopped := false
@@ -1884,6 +1909,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 				}
 			}
 			r.hist.Append("result", result)
+			ran = append(ran, out)
 			if runErr != nil {
 				lastFailed = true
 				emit("error", out)
@@ -1909,7 +1935,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 		finish("", r.doneData())
 		return err
 	}
-	reply = strings.TrimSpace(jsBlock.ReplaceAllString(stripFakeBlocks(reply), ""))
+	reply = strings.TrimSpace(jsBlock.ReplaceAllString(stripFakeBlocks(reply, ran...), ""))
 	note("assistant", reply, r.provenance())
 	finish("", r.doneData())
 	r.fire(ctx, "stop", map[string]any{"input": input, "reply": reply}, emit)

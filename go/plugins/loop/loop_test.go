@@ -917,3 +917,26 @@ func TestAssistantEntryOmitsUnknownProvenance(t *testing.T) {
 		}
 	}
 }
+
+// A fence that quotes output a block really produced this turn is the
+// answer, not a guess: it stays. A fence matching no result still goes.
+func TestStripFakeBlocksKeepsRealOutput(t *testing.T) {
+	llm := &seqLLM{replies: []string{
+		"```js\nconsole.log(1)\n```",
+		"It printed:\n```text\nCODE!\n```\nand guessed:\n```text\n42\n```",
+	}}
+	hist := &memHistory{}
+	r := &runner{llm: llm, code: &stubCode{}, hist: hist, secs: &Sections{}}
+	var kinds, texts []string
+	_ = r.Run(context.Background(), "go", collect(&kinds, &texts))
+	var last string
+	for _, e := range hist.Entries() {
+		if e.Kind == "assistant" {
+			last = e.Data["text"].(string)
+		}
+	}
+	want := "It printed:\n```text\nCODE!\n```\nand guessed:\n" + removedBlock
+	if last != want {
+		t.Fatalf("assistant text = %q, want %q", last, want)
+	}
+}
