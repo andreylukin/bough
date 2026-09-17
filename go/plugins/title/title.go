@@ -5,13 +5,12 @@
 // sentences.
 //
 // Every finished turn (done, cancelled or failed) appends a
-// "turn-summary" entry {text, turn}. The first one also gives a new
-// session a provisional name from its first line. The real name — a
-// "title" entry {text, summary, turn, final: true} written from the whole
-// log — comes when the session goes quiet past its model's prompt-cache
-// window (the person has walked away; nothing is being saved by waiting)
-// or when the session shuts down with turns logged since the last
-// naming. Readers take the last title entry. Neither kind is ever
+// "turn-summary" entry {text, turn}. The name — a "title" entry {text,
+// summary, turn, final: true} — is written once, right after the first
+// logged turn; until then readers show the opening prompt. If that call
+// fails, the next turn, the quiet timer or shutdown tries again; once a
+// final name exists nothing renames the session. Readers take the last
+// title entry. Neither kind is ever
 // projected into model context.
 //
 // This is the other half of the llm-small row (see llm.Small): the
@@ -79,7 +78,13 @@ func Clean(s string) string {
 	s = oneLine(s)
 	s = strings.Trim(s, ` "'*.`)
 	if r := []rune(s); len(r) > 60 {
-		s = strings.TrimSpace(string(r[:60])) + "…" // runes: a byte cut splits one
+		// Cut at a word, no ellipsis: the name is stored, and the UI
+		// truncates for its own width.
+		s = string(r[:60]) // runes: a byte cut splits one
+		if i := strings.LastIndexByte(s, ' '); i > 0 && !unicode.IsSpace(r[60]) {
+			s = s[:i]
+		}
+		s = strings.Trim(s, ` "'*.,;:-`)
 	}
 	return s
 }
@@ -141,10 +146,6 @@ func (t *Titler) logTurns(ctx context.Context) {
 	entries := t.hist.Entries()
 	ts := Turns(entries)
 	lines, logged := turnLog(entries)
-	named := false
-	for _, e := range entries {
-		named = named || e.Kind == "title"
-	}
 	for _, n := range pending(ts, logged) {
 		reply, err := call(ctx, t.llm, TurnPrompt, TurnInput(lines, ts[n-1]))
 		if err != nil {
@@ -156,23 +157,16 @@ func (t *Titler) logTurns(ctx context.Context) {
 		}
 		t.hist.Append("turn-summary", map[string]any{"text": line, "turn": n})
 		lines = append(lines, fmt.Sprintf("%d. %s", n, line))
-		if n == 1 && !named {
-			// A new session is never untitled while it waits for its name.
-			if name := provisional(line); name != "" {
-				t.hist.Append("title", map[string]any{"text": name, "turn": 1})
-				t.emit("title", name)
-				named = true
-			}
-		}
 	}
 }
 
-// finalName names the session from its whole log, when turns were
-// logged since the last final naming. Caller holds work.
+// finalName names the session from its log, once: a session that already
+// has a final name keeps it (later turns never rename it). Caller holds
+// work.
 func (t *Titler) finalName(ctx context.Context) {
 	entries := t.hist.Entries()
 	lines, logged := turnLog(entries)
-	if logged == 0 || logged <= lastFinal(entries) {
+	if logged == 0 || lastFinal(entries) > 0 {
 		return
 	}
 	reply, err := call(ctx, t.llm, FinalPrompt, "Running log:\n"+strings.Join(lines, "\n"))
@@ -196,6 +190,7 @@ func (t *Titler) finalName(ctx context.Context) {
 func (t *Titler) turnDone() {
 	t.work.Lock()
 	t.logTurns(t.ctx)
+	t.finalName(t.ctx)
 	t.work.Unlock()
 	t.tmu.Lock()
 	defer t.tmu.Unlock()
