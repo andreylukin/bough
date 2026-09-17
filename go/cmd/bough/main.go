@@ -374,6 +374,7 @@ func main() {
 	resumePath, needPicker := resolveSession(contFlag, resumeFlag, resumeID, mode)
 	if resumePath != "" {
 		sets = append(sets, "history.file="+resumePath)
+		sets = append(sets, resumedModelSets(resumePath)...)
 	}
 
 	rows, err := src.load()

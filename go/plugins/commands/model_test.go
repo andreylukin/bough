@@ -354,3 +354,21 @@ func TestModelSmallWithoutARow(t *testing.T) {
 		t.Fatal("a swap with no small row should fail")
 	}
 }
+
+// A swap is recorded in the session's history, so a resumed child (the
+// web's Esc restarts it) comes back on the chosen model, not bough.yml's.
+func TestModelSwapRecordsSetsInHistory(t *testing.T) {
+	ctx, r := mountModelTree(t)
+	var kinds []string
+	var got []any
+	ctx.Provide("history-record", func(kind string, data map[string]any) {
+		kinds = append(kinds, kind)
+		got, _ = data["sets"].([]any)
+	})
+	if _, err := r.Run("model", "llm-stub2 m2"); err != nil {
+		t.Fatal(err)
+	}
+	if len(kinds) != 1 || kinds[0] != "model" || len(got) != 2 || got[0] != "llm.plugin=llm-stub2" || got[1] != "llm.model=m2" {
+		t.Fatalf("recorded %v %v", kinds, got)
+	}
+}
