@@ -233,6 +233,12 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if reg, err := kernel.Get[*commands.Registry](ctx, "commands"); err == nil {
 		registerOrbCommand(ctx, reg, o, home)
 	}
+	// Resolved secrets never reach history: every entry goes through the
+	// orb's redactor (a no-op under `redact: false`).
+	if r, ok := h.(interface{ SetRedact(func(string) string) }); ok {
+		r.SetRedact(o.Redact)
+		ctx.Effect(func() { r.SetRedact(nil) })
+	}
 	ctx.Provide("orb", o)
 	ctx.Provide("orb-state", o)
 	// Stop, never Remove: a resumed session reuses its worktrees and

@@ -405,8 +405,10 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 	j.list = append(j.list, b)
 	j.mu.Unlock()
 
-	c.Stdout = &jobWriter{j: j, b: b}
-	c.Stderr = c.Stdout
+	// Secrets are redacted before the job buffer (and its until match)
+	// sees the bytes; the writer holds back a split value until Wait.
+	out := project.redactor().Writer(&jobWriter{j: j, b: b})
+	c.Stdout, c.Stderr = out, out
 	if err := c.Start(); err != nil {
 		cancel()
 		os.Remove(script)
@@ -420,6 +422,7 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 	go func() {
 		defer j.running.Done()
 		err := c.Wait()
+		out.Close()
 		cancel()
 		os.Remove(script)
 		b.mu.Lock()

@@ -122,6 +122,22 @@ func (p *projectMode) command(ctx context.Context, script string) (*exec.Cmd, er
 	return o.Command(ctx, "sh", script), nil
 }
 
+// redactor is the orb's secret redactor; nil (pass through) on the host
+// or for an orb that does not redact.
+func (p *projectMode) redactor() *iorb.Redactor {
+	if p == nil {
+		return nil
+	}
+	o, err := p.orb()
+	if err != nil {
+		return nil
+	}
+	if r, ok := o.(interface{ Redactor() *iorb.Redactor }); ok {
+		return r.Redactor()
+	}
+	return nil
+}
+
 // stoppedSince reports whether the orb was stopped under a job started at
 // t; the host (nil) and an orb that cannot tell never were.
 func (p *projectMode) stoppedSince(t time.Time) bool {
@@ -475,6 +491,9 @@ func (s *Stats) bash(cmd string, opts ...any) (string, error) {
 	c.Cancel = project.cancel(c)
 	c.WaitDelay = 2 * time.Second
 	out, err := c.CombinedOutput()
+	if r := project.redactor(); r != nil {
+		out = []byte(r.String(string(out)))
+	}
 	// ErrWaitDelay means sh exited 0 but a backgrounded child (`cmd &`)
 	// still holds the output pipe: the command succeeded, the child
 	// keeps running, and what was written so far is the output.

@@ -276,11 +276,19 @@ func (o *Orb) execEnv(proxyURL, token string) []string {
 // applies to the next command. An unresolved ref is left out and reported
 // once per name.
 func (o *Orb) secretEnv() []string {
+	env, _ := o.secretValues()
+	return env
+}
+
+// secretValues is secretEnv plus the redactor over the same values: nil
+// when project.yml says `redact: false` or nothing is long enough.
+func (o *Orb) secretValues() ([]string, *Redactor) {
 	def := o.project.Def
 	if p, err := projectdef.Load(o.home, o.project.Slug); err == nil {
 		def = p.Def
 	}
 	var env []string
+	vals := map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(def.Secrets)) {
 		val, err := secrets.Resolve(def.Secrets[name])
 		if err != nil {
@@ -290,9 +298,23 @@ func (o *Orb) secretEnv() []string {
 			continue
 		}
 		env = append(env, name+"="+val)
+		vals[name] = val
 	}
-	return env
+	if def.Redact != nil && !*def.Redact {
+		return env, nil
+	}
+	return env, NewRedactor(vals)
 }
+
+// Redactor is the project's current secret redactor (nil = pass through).
+func (o *Orb) Redactor() *Redactor {
+	_, r := o.secretValues()
+	return r
+}
+
+// Redact replaces resolved secret values in s: tool output and history
+// entries go through it before the model or disk sees them.
+func (o *Orb) Redact(s string) string { return o.Redactor().String(s) }
 
 func (o *Orb) proxyURLLocked() string {
 	if o.proxy == nil {
@@ -356,22 +378,24 @@ func (o *Orb) runResume(ctx context.Context, script string) error {
 	}
 	defer f.Close()
 	text, _ := os.ReadFile(script)
-	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: o.state.Primary, Env: o.execEnv(o.proxyURLLocked(), o.token), Secrets: o.secretEnv()}, container.ScriptArgv(text, script)...)
+	env, red := o.secretValues()
+	cmd := o.rt.Command(ctx, o.spec.Name, container.ExecOptions{Workdir: o.state.Primary, Env: o.execEnv(o.proxyURLLocked(), o.token), Secrets: env}, container.ScriptArgv(text, script)...)
 	// This run's output only, for the error: resume.log appends every start.
-	var out tailBuffer
-	w := io.MultiWriter(f, &out)
-	cmd.Stdout, cmd.Stderr = w, w
+	var tail tailBuffer
+	out := red.Writer(io.MultiWriter(f, &tail))
+	cmd.Stdout, cmd.Stderr = out, out
 	// Timestamps let session starts be measured without parsing output.
 	start := time.Now()
 	fmt.Fprintf(f, "== resume.sh start %s\n", start.UTC().Format(time.RFC3339))
 	err = cmd.Run()
+	out.Close()
 	status := "ok"
 	if err != nil {
 		status = err.Error()
 	}
 	fmt.Fprintf(f, "== resume.sh end %s duration %s: %s\n", time.Now().UTC().Format(time.RFC3339), time.Since(start).Round(time.Millisecond), status)
 	if err != nil {
-		return withLogLines(err, out.String(), f.Name())
+		return withLogLines(err, tail.String(), f.Name())
 	}
 	return nil
 }
