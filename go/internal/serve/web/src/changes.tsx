@@ -322,7 +322,7 @@ const countBadge = (f: Change & { patch?: boolean }) =>
   f.patch === false ? <span className="rt-label">No diff</span>
     : f.new ? <><span className="chg-badge">new</span>{f.add > 0 && <span className="rt-add">+{f.add}</span>}</>
     : f.add < 0 ? <span className="chg-badge">binary</span>
-    : <><span className="rt-add">+{f.add}</span> <span className="rt-del">−{f.del}</span></>;
+    : <><span className="rt-add">+{f.add}</span> <span className={"rt-del" + (f.del ? "" : " rt-zero")}>−{f.del}</span></>;
 
 /** Every file as a card; a card fetches its patch the first time it opens. */
 function FileCards({ row, files, scope, at, open, turn }: {
@@ -335,7 +335,7 @@ function FileCards({ row, files, scope, at, open, turn }: {
     <>
       <div className="chg-summary">
         <p className="rt-label">Showing <span className="num">{files.length}</span> changed {files.length === 1 ? "file" : "files"} with{" "}
-          <span className="rt-add num">+{s.add}</span> additions and <span className="rt-del num">−{s.del}</span> deletions</p>
+          <span className="rt-add num">+{s.add}</span> additions and <span className={"rt-del num" + (s.del ? "" : " rt-zero")}>−{s.del}</span> deletions</p>
         {files.length > 8 && (
           <input className="chg-filter" type="search" placeholder="Filter paths" aria-label="Filter changed files"
                  value={q} onChange={(e) => setQ(e.target.value)} />
@@ -423,13 +423,13 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
           const c = countOf(read(s));
           return (
             <button key={s} type="button" role="tab" aria-selected={scope === s} className="chg-scope" onClick={() => onScope(s)}>
-              {scopeName(s)}: <span className="num">{c.text}{c.add !== undefined && <> · <span className="rt-add">+{c.add}</span> <span className="rt-del">−{c.del}</span></>}</span>
+              {scopeName(s)}: <span className="num">{c.text}{c.add !== undefined && <> · <span className="rt-add">+{c.add}</span> <span className={"rt-del" + (c.del ? "" : " rt-zero")}>−{c.del}</span></>}</span>
             </button>
           );
         })}
       </div>
       <p className="rt-label chg-where">
-        <span className="mono" title={row.cwd}>{row.cwd}</span>
+        <span className="mono" title={row.cwd}>{changedPath(row.cwd)}</span>
         {r.repo && row.branch && <>{" · "}<span className="mono">{row.branch}</span></>}
         {scope === "tree" && " · everything uncommitted, including edits made outside this session"}
         {r.at ? ` · updated ${ago(r.at)}` : ""}
@@ -463,7 +463,7 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
                   {f.patch === false ? <span className="rt-label">No diff</span>
                     : f.new ? <span className="rt-add">new{f.add > 0 ? ` · +${f.add}` : ""}</span>
                     : f.add < 0 ? <span className="rt-label">binary</span>
-                    : <><span className="rt-add">+{f.add}</span> <span className="rt-del">−{f.del}</span></>}
+                    : <><span className="rt-add">+{f.add}</span> <span className={"rt-del" + (f.del ? "" : " rt-zero")}>−{f.del}</span></>}
                 </span>
               </button>
             </li>

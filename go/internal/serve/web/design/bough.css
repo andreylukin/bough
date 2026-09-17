@@ -2416,3 +2416,21 @@ pre.edit-rows,.block pre.edit-rows{text-indent:0;margin:2px 0 var(--s-2);padding
 @media (max-width:720px){.hk-main>.hk-dec::before{content:none}}
 .empty-state p{max-width:60ch}
 /* /R2-J */
+/* R3-J: visual polish. Disabled Send goes neutral, not a dimmed accent;
+   the user's prompt is a raised bubble so it reads apart from the answer;
+   New session matches .btn; hovers ease in and share one overlay. */
+.composer .btn-primary:disabled{opacity:1;color:var(--text-3);background:var(--surface);border-color:var(--line)}
+.prompt{grid-template-columns:minmax(0,1fr) auto}
+.prompt-mark{display:none}
+.prompt-acts{grid-column:1}
+.prompt-bubble{justify-self:start;background:var(--raised);border-radius:12px;padding:8px 12px;max-width:min(85%,672px)}
+.side-new-label{height:32px;border-radius:var(--r-sm);font:500 var(--fs-md)/1 var(--sans);padding:0 12px}
+.sel-btn,button.more,.side-nav-item,.composer{transition:background-color .12s cubic-bezier(.2,.8,.2,1),border-color .12s cubic-bezier(.2,.8,.2,1),color .12s cubic-bezier(.2,.8,.2,1),outline-color .12s cubic-bezier(.2,.8,.2,1)}
+.side-nav-item:hover,.side-icon:hover,.back:hover,button.more:hover{background:var(--hover)}
+.sel-btn:hover{background-image:linear-gradient(var(--hover),var(--hover))}
+@media (prefers-reduced-motion:reduce){.sel-btn,button.more,.side-nav-item,.composer{transition:none}}
+/* Projects: the empty state sits above the list, not centred in the page; a page subtitle sits by its title. */
+.proj-body>.empty-state{margin:0 auto}
+.page-head .head-main h1{min-width:0}
+.rt-del.rt-zero{color:var(--text-3)}
+/* /R3-J */
