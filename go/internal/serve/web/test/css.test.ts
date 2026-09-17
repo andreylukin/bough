@@ -86,3 +86,8 @@ test("MB-STREAM: the block exists and the breathing dot fades without scaling", 
   expect(css).not.toContain("typing-dots");
   expect(css.match(/\.turn-sending \.prompt-text\{/g)?.length).toBe(1);
 });
+
+test("MB-WORK: the narrow popover keeps the glyph column, so a failed glyph never sits on its title", () => {
+  const work = css.match(/\/\* MB-WORK:[\s\S]*?\/\* \/MB-WORK \*\//)![0];
+  expect(work).toMatch(/@container \(max-width:520px\)\{[^@]*\.work-popover \.work-row\{grid-template-columns:16px minmax\(0,1fr\) auto\}/);
+});
