@@ -365,9 +365,12 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
             {projects.length} configured {projects.length === 1 ? "project" : "projects"} · {detected} detected {detected === 1 ? "repo" : "repos"}
           </span>
         </div>
-        <div className="head-side">
-          <button className="btn btn-primary" onClick={() => { void createProject(); }}>New project…</button>
-        </div>
+        {/* With no projects the empty state carries the one New project button. */}
+        {(projects.length > 0 || needle) && (
+          <div className="head-side">
+            <button className="btn btn-primary" onClick={() => { void createProject(); }}>New project…</button>
+          </div>
+        )}
       </header>
 
       <div className="scroll proj-body">
