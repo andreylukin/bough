@@ -121,3 +121,11 @@ test("R3-D: an errored session never reads Working or Sending for a send it did 
   expect(html).not.toMatch(/thread-head[\s\S]*>(Sending|Working)</);
   expect(html).not.toContain("Waiting for model");
 });
+
+test("while the turn waits for the model, the composer offers to steer, not a new task", () => {
+  const html = renderToStaticMarkup(<Thread row={row} lines={[]} sending={[{ ...sent[0], accepted: true }]} onSend={async () => null} onAnswer={async () => null}
+    onInterrupt={() => {}} onArchive={() => {}} onRename={async () => {}} onModel={() => {}} onEffort={() => {}} onAssign={() => {}}
+    onBack={() => {}} onContext={() => {}} onAck={() => {}} projects={[]} busy={false} jump={null} />);
+  expect(html).toMatch(/composer-hint[^>]*>Waiting ·/);
+  expect(html).toContain('placeholder="Steer the running turn…"');
+});
