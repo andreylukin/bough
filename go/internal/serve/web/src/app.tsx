@@ -1,6 +1,6 @@
 import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api, subscribe, type Scope, type TurnLine } from "./api";
+import { api, subscribe, type Change, type Scope, type TurnLine } from "./api";
 import type { Line, Project, Row } from "./types";
 import { STATUS, StatusMark, Working, hasFailure, hasQuestion, sessionSignal, statusWord } from "./status";
 import { ProjectsView } from "./projects";
@@ -10,7 +10,7 @@ import { DialogHost, askChoice, askConfirm, askText, showShortcuts } from "./dia
 import { focusComposerKey, isMac, newSessionKey, overviewKeys, sheetKey, switchKey, treeKey } from "./keys";
 import { Welcome, welcomeDismissed } from "./welcome";
 import { clampToViewport } from "./popover";
-import { Markdown, programRan, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
+import { Markdown, programRan, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, cleanError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
 import { agentWakeNotes, agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
@@ -1518,16 +1518,23 @@ interface CallFacts { verb: string; gist: string; cmd: string; exit?: number; ms
  * index.ts" with the lines changed, then how many reads and commands.
  * Null when the programs used none of those tools.
  */
-export function runSummary(codes: string[], facts: CallFacts[]): { label: string; add: number; del: number; rest: string } | null {
-  const all = codes.join("\n");
-  const count = (name: string) => [...all.matchAll(new RegExp(`tools\\.${name}\\s*\\(`, "g"))].length;
-  const edited = [...new Set([...all.matchAll(/tools\.(?:patch|write)\s*\(\s*(["'`])([^"'`]+)\1/g)].map((m) => m[2].split("/").pop()!))];
-  const reads = count("view"), runs = count("bash"), edits = count("patch") + count("write");
-  if (!reads && !runs && !edits) return null;
+export function runSummary(codes: string[], facts: CallFacts[], turnEdits?: Change[] | null, /** The calls that did not fail; all of them when omitted. */ okCodes = codes): { label: string; add: number; del: number; rest: string } | null {
+  const all = codes.join("\n"), ok = okCodes.join("\n");
+  const count = (name: string, text = all) => [...text.matchAll(new RegExp(`tools\\.${name}\\s*\\(`, "g"))].length;
+  // A failed call's edits are not counted as done.
+  const edited = [...new Set([...ok.matchAll(/tools\.(?:patch|write)\s*\(\s*(["'`])([^"'`]+)\1/g)].map((m) => m[2].split("/").pop()!))];
+  const reads = count("view"), runs = count("bash"), edits = count("patch", ok) + count("write", ok);
+  if (!reads && !runs && !edits && !turnEdits?.length) return null;
   // Counted from the calls, so a write nobody printed counts too (all additions).
   let add = 0, del = 0;
-  for (const f of callEdits(all)) { add += f.add; del += f.del; }
+  for (const f of callEdits(ok)) { add += f.add; del += f.del; }
   const rest = [reads ? `read ${reads} ${reads === 1 ? "file" : "files"}` : "", runs ? `ran ${runs} ${runs === 1 ? "command" : "commands"}` : ""].filter(Boolean);
+  if (turnEdits?.length) {
+    // The checkpoint diff is what the header and footer read: shell edits count too.
+    const names = turnEdits.map((f) => f.path.split("/").pop()!);
+    add = turnEdits.reduce((n, f) => n + Math.max(0, f.add), 0); del = turnEdits.reduce((n, f) => n + Math.max(0, f.del), 0);
+    return { label: `Edited ${names.length <= 2 ? names.join(", ") : `${names.length} files`}`, add, del, rest: rest.join(" · ") };
+  }
   if (!edits) return { label: rest.join(" · ").replace(/^./, (c) => c.toUpperCase()), add: 0, del: 0, rest: "" };
   const names = edited.length && edited.length <= 2 ? edited.join(", ") : `${edited.length || edits} files`;
   return { label: `Edited ${names}`, add, del, rest: rest.join(" · ") };
@@ -1677,13 +1684,16 @@ function CopyText({ text, label }: { text: string; label: string }) {
  * A run of tool calls as one row: how many, the last thing it did, and
  * whether any failed. Opened, each call is its own block again.
  */
-export function ToolRun({ lines, codes, live, stopped, failSeq, spawned }: { lines: Line[]; codes: string[]; live?: boolean; stopped?: boolean; /** The subagent card that follows the run, when it has a result. */ spawned?: Worker; /** The result seq of the failure the turn ended on: it opens itself. */ failSeq?: number }) {
+export function ToolRun({ lines, codes, live, stopped, failSeq, spawned, turnEdits }: { lines: Line[]; codes: string[]; live?: boolean; stopped?: boolean;
+  /** The turn's checkpoint diff, when this is its one group: the counts the header and footer show, shell edits included. */ turnEdits?: Change[] | null; /** The subagent card that follows the run, when it has a result. */ spawned?: Worker; /** The result seq of the failure the turn ended on: it opens itself. */ failSeq?: number }) {
   // Pair each call with the result recorded for it: one row per thing
   // done, not a "Ran" row and a "Result" row saying half each. A result
   // names its call in data.code, so notes in between never split the
   // pair; one without that record pairs only with the call right above.
   const rows: React.ReactNode[] = [];
   const facts: CallFacts[] = [];
+  /** Calls that did not fail: a failed edit is not counted as done. */
+  const okCodes: string[] = [];
   const used = new Set<number>();
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
@@ -1696,7 +1706,9 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned }: { lin
         const code = str(r.data?.code);
         if (code ? code.trim() === l.text.trim() : j === i + 1) { result = r; used.add(j); break; }
       }
-      facts.push(callFacts(l, result));
+      const f = callFacts(l, result);
+      facts.push(f);
+      if (!f.failed) okCodes.push(l.text);
       rows.push(<ToolCall key={l.seq} code={l} result={result} live={live} stopped={stopped} current={failSeq !== undefined && result?.seq === failSeq} spawned={spawned} />);
     } else if (l.kind === "job") {
       // Consecutive job rows share one head.
@@ -1736,7 +1748,7 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned }: { lin
   const known = verbs.every((v) => KNOWN_VERBS.has(v));
   // Mixed work is named from counts, edits first; never after its first command.
   const mixed = !known || verbs.length > 2;
-  const summary = mixed ? runSummary(lines.filter((l) => l.kind === "code").map((l) => l.text), facts) : null;
+  const summary = mixed ? runSummary(lines.filter((l) => l.kind === "code").map((l) => l.text), facts, turnEdits, okCodes) : null;
   const label = summary ? summary.label : mixed ? "Tool group" : verbs.map((v, i) => (i ? v.toLowerCase() : v)).join(" and ");
   const targets = [...new Set(facts.map((f) => f.gist).filter(Boolean))];
   const fileish = verbs.every((v) => v === "Wrote" || v === "Patched" || v === "Read");
@@ -1746,6 +1758,7 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned }: { lin
   const target = first ? (fileish ? first.split("/").pop()! : first) : "";
   const more = targets.length - 1;
   return (
+    <div className={"toolrun-wrap" + (failed > 0 ? " toolrun-has-failed" : "")}>
     <details className="block thin toolrun" ref={box} open={holdsFail || undefined} data-open-key={"tools:" + lines[0].seq}>
       <summary role="button" {...handlers}>
         <span className="block-label">{label}</span>{" "}
@@ -1757,12 +1770,14 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned }: { lin
           {target && <span className="mono block-detail" title={targets[0]}>{target}</span>}{" "}
           {more > 0 && <span className="num tool-more">{more} more {fileish ? (more === 1 ? "file" : "files") : ""}</span>}{" "}
         </>}
-        <span className="num tool-meta">{calls} calls{timed ? ` · ${duration(totalMs)}` : ""}</span>{" "}
-        {failed > 0 && <button type="button" className="link num toolrun-failed" aria-label={`${failed} failed`} onClick={openFailed}>{failed} failed</button>}
+        <span className="num tool-meta">{calls} calls{timed ? ` · ${totalMs < 1000 ? "<1s" : duration(totalMs)}` : ""}</span>
       </summary>
       {pop}
       <div className="toolrun-body">{rows}</div>
     </details>
+    {/* R3-F: the button that opens the failure sits beside the summary, not inside it, pinned to the row's end so it never wraps alone. */}
+    {failed > 0 && <button type="button" className="link num toolrun-failed" onClick={openFailed}>{failed} failed</button>}
+    </div>
   );
 }
 
@@ -1789,8 +1804,9 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
   const exit = typeof result?.data?.exit === "number" ? (result.data.exit as number) : undefined;
   const ms = typeof result?.data?.ms === "number" ? (result.data.ms as number) : undefined;
   // A block that threw failed, whatever exit its bash calls had.
-  const thrown = thrownError(result);
-  const failed = (exit !== undefined && exit !== 0) || Boolean(thrown);
+  const rawThrown = thrownError(result);
+  const failed = (exit !== undefined && exit !== 0) || Boolean(rawThrown);
+  const thrown = rawThrown && cleanError(rawThrown);
   // A question nobody answered is an outcome, not an exception to parse.
   const timedOut = /ask: no answer after (\S+)/.exec(out);
   // A single call's line already says everything the hover list would,
@@ -1807,7 +1823,8 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
   // The recorded exit and time, success or not: "exit 0" is evidence too.
   const empty = Boolean(result) && !out.trim();
   // "exit N" is a bash exit; a block that threw says what it threw instead.
-  const meta = [continues ? `Continues as Job ${continues}` : "", failed ? "Failed" : "", exit !== undefined && !thrown ? `exit ${exit}` : "", empty ? "No output" : "", ms !== undefined ? (ms < 1000 ? "<1s" : duration(ms)) : ""];
+  // R3-F: a failed call says so once, quietly, at the end of the row: never in the meta as well.
+  const meta = [continues ? `Continues as Job ${continues}` : "", exit !== undefined && !thrown ? `exit ${exit}` : "", empty ? "No output" : "", ms !== undefined ? (ms < 1000 ? "<1s" : duration(ms)) : ""];
   const what = call.lang === "bash" ? "Command" : call.lang === "javascript" ? "Program" : "Content";
   // No result: still running, cut off by a stop, or never recorded. Each says which.
   const card = !result && spawned && /tools\.spawn(All)?\(/.test(code.text) ? spawned : undefined;
@@ -1817,21 +1834,22 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
   const [opened, setOpened] = useState(Boolean(current));
   const phone = useMedia("(max-width:720px)");
   // The last lines of a failure are where the diagnosis is.
-  const diag = failed ? out.split("\n").filter((l) => l.trim()).slice(-10) : [];
+  const diag = failed ? cleanError(out).split("\n").filter((l) => l.trim()).slice(-10) : [];
   const cmdText = call.lang === "bash" ? call.body : call.raw;
   return (
     <>
     <details className={"block thin toolcall" + (failed ? " block-failed" : "")} data-seq={result?.seq} open={current || undefined} onToggle={(e) => setOpened(e.currentTarget.open)}>
       <summary role="button" {...handlers}>
-        <span className="block-label">{timedOut ? "Question timed out" : label ?? (edits.length ? "Edited" : call.verb)}</span>
+        <span className="block-label">{timedOut ? "Question timed out" : label ?? (edits.length ? (failed ? "Edit failed" : "Edited") : call.verb)}</span>
         {!label && edits.length > 0 && !timedOut ? <>
           <span className="mono block-detail edit-detail" title={edits.map((f) => f.path).join("\n")}>{edits.length === 1 ? edits[0].path.split("/").pop() : `${edits.length} files`}</span>
-          <span className="num edit-counts">{editAdd > 0 && <span className="rt-add">+{editAdd}</span>}{editDel > 0 && <span className="rt-del">−{editDel}</span>}</span>
+          {!failed && <span className="num edit-counts">{editAdd > 0 && <span className="rt-add">+{editAdd}</span>}{editDel > 0 && <span className="rt-del">−{editDel}</span>}</span>}
         </> : !label && <span className="mono block-detail" title={call.gist}>{timedOut ? timedOut[1] : phone ? tailPath(gistOf(call.gist)) : gistOf(call.gist)}</span>}
-        {thrown && <span className="mono tool-thrown" title={thrown}>{firstLine(thrown)}</span>}
+        {thrown && <span className="tool-thrown" title={thrown}>{firstLine(thrown)}</span>}
         {meta.some(Boolean) && (
-          <span className={"num tool-meta" + (failed ? " tool-meta-failed" : "")}>{meta.filter(Boolean).join(" · ")}</span>
+          <span className="num tool-meta">{meta.filter(Boolean).join(" · ")}</span>
         )}
+        {failed && !(edits.length && !label) && <span className="tool-state tool-state-failed">failed</span>}
         {missing === "running" && (
           <span className="num tool-meta tool-running">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -1975,8 +1993,8 @@ export function TurnHooks({ lines, load, save }: { lines: Line[]; load?: Load; s
  * changed. A bare "Finished" told a programmer none of that. Nothing is
  * estimated — a provider that recorded no usage shows only the outcome.
  */
-function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, extra }: {
-  turn: Turn; /** The result the turn's failure came from, when recorded. */ fail?: Line;
+function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, extra, edits }: {
+  turn: Turn; /** The turn's checkpoint diff, once read. */ edits?: Change[] | null; /** The result the turn's failure came from, when recorded. */ fail?: Line;
   /** The longest recorded run of the turn's jobs and subagents, so wall time never reads shorter than its work. */ longest?: number;
   failedWork?: number; unknownSubs?: number;
   /** The turn's own controls (Expand all), before the usage on the right. */ extra?: React.ReactNode;
@@ -2038,13 +2056,14 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
           <span aria-hidden="true">·</span>
           <button type="button" className="link turn-fail-jump" onClick={show}>Jump to command</button>
         </span>
-      ) : (
-        <span className={"turn-outcome" + (failed || failedWork || errored ? " turn-failed" : "")}>
-          {turn.stopped || done.kind === "cancelled" ? statusWord("stopped") : errored ? statusWord("error") : failed ? `${statusWord("done")} with a failed command · exit ${exit}` : statusWord("done") + (failedWork ? ` · ${failedWork} failed` : "")}
+      ) : errored && !(turn.stopped || done.kind === "cancelled") ? null : (
+        // R3-F: a turn that ended on an error says so in the error itself, not again under it.
+        <span className={"turn-outcome" + (failed || failedWork ? " turn-failed" : "")}>
+          {turn.stopped || done.kind === "cancelled" ? statusWord("stopped") : failed ? `${statusWord("done")} with a failed command · exit ${exit}` : statusWord("done") + (failedWork ? ` · ${failedWork} failed` : "")}
         </span>
       )}
       {facts.map((f) => <span key={f} className="num">{f}</span>)}
-      {files.length > 0 && <TurnFiles files={files} turn={turn} />}
+      {files.length > 0 && <TurnFiles files={files} turn={turn} edits={edits} />}
       {extra}
       <span className="turn-foot-right">
         {u?.cost !== undefined ? <span className="num" title={tokens}>{money(u.cost)}</span> : tokens && <span className="num">{tokens}</span>}
@@ -2073,17 +2092,19 @@ const SessionChanges = createContext<ReturnType<typeof useChanges> | null>(null)
  * on this turn's own edits. The counts are the turn's calls (a write is
  * all additions), the review's are its checkpoints.
  */
-export function TurnFiles({ files, turn }: { files: string[]; turn: Turn }) {
+export function TurnFiles({ files, turn, edits: diff }: { files: string[]; turn: Turn; /** The turn's checkpoint diff: the same counts as the header, shell edits included. */ edits?: Change[] | null }) {
   const id = useWork()?.session ?? "";
-  const edits = useMemo(() => callEdits(turn.body.filter((l) => l.kind === "code").map((l) => l.text).join("\n")), [turn.body]);
-  const add = edits.reduce((n, f) => n + f.add, 0), del = edits.reduce((n, f) => n + f.del, 0);
+  const calls = useMemo(() => callEdits(turn.body.filter((l) => l.kind === "code").map((l) => l.text).join("\n")), [turn.body]);
+  const edits = diff?.length ? diff : calls;
+  const add = edits.reduce((n, f) => n + Math.max(0, f.add), 0), del = edits.reduce((n, f) => n + Math.max(0, f.del), 0);
   const text = <>
     {files.length} {files.length === 1 ? "file" : "files"}
     {add > 0 && <span className="num rt-add">+{add}</span>}
     {del > 0 && <span className="num rt-del">−{del}</span>}
   </>;
   if (!id || !turn.prompt) return <span className="turn-files">{text}</span>;
-  return <a className="turn-files" href={`#/s/${id}/changes?turn=${turn.prompt.seq}`} title={files.join("\n")}>{text}</a>;
+  const href = `#/s/${id}/changes?turn=${turn.prompt.seq}`;
+  return <button type="button" className="link turn-files" data-href={href} title={files.join("\n")} onClick={() => { location.hash = href.slice(1); }}>{text}</button>;
 }
 
 /**
@@ -2476,6 +2497,15 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
     : bad(lastResult) ? lastResult : undefined;
   const [full, setFull] = useState(false);
   const [opened, setOpened] = useState<number | null>(null);
+  // R3-F: the turn's checkpoint diff, read once it is done, so its group and footer count what the header counts.
+  const [turnEdits, setTurnEdits] = useState<Change[] | null>(null);
+  const hasFiles = Array.isArray(turn.done?.data?.files) && (turn.done!.data!.files as string[]).length > 0;
+  useEffect(() => {
+    if (!hasFiles || !ctx?.session || !turn.prompt) return;
+    let live = true;
+    api.edits(ctx.session, turn.prompt.seq).then((r) => { if (live) setTurnEdits(r.files); }, () => {});
+    return () => { live = false; };
+  }, [hasFiles, ctx?.session, turn.prompt?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
   const long = said.length > 420 || said.split("\n").length > 4;
   // Each attachment is named once: as a chip where the prompt mentions
   // it (/exa, @go/serve.go), else in a strip below. Its contents open
@@ -2528,7 +2558,9 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
       // A spawn's result is its card below: the program reads as that card's state.
       const next = list[i + 1];
       const spawned = next?.kind === "sub" ? subagentsFromTurn(turn, "", live).find((w) => w.subrunSeq === next.seq && w.result) : undefined;
-      return <ToolRun key={"tools" + it.seq} lines={it.lines} codes={codes} live={live} spawned={spawned} stopped={turn.stopped || turn.done?.kind === "cancelled" || cut} failSeq={fail?.seq} />;
+      // Only the turn's one group can own its whole diff.
+      const sole = items.filter((x) => x.kind === "tools").length === 1;
+      return <ToolRun key={"tools" + it.seq} lines={it.lines} codes={codes} live={live} spawned={spawned} turnEdits={sole ? turnEdits : undefined} stopped={turn.stopped || turn.done?.kind === "cancelled" || cut} failSeq={fail?.seq} />;
     }
     if (it.line.kind.startsWith("todo/")) {
       // Consecutive todo records fold into one row, rendered at the first.
@@ -2630,7 +2662,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
         const seqs = turn.body.map((l) => l.seq);
         const lo = Math.min(...seqs), hi = Math.max(...seqs);
         const mine = (ctx?.workers ?? []).filter((w) => (w.subrunSeq ?? w.seq) >= lo && (w.subrunSeq ?? w.seq) <= hi);
-        return <TurnFooter turn={turn} fail={fail} longest={Math.max(0, ...mine.map((w) => w.ms ?? 0))}
+        return <TurnFooter turn={turn} fail={fail} edits={turnEdits} longest={Math.max(0, ...mine.map((w) => w.ms ?? 0))}
                            failedWork={mine.filter((w) => w.life === "failed").length}
                            unknownSubs={mine.filter((w) => w.kind !== "job" && w.life === "unknown").length}
                            extra={folds >= 2 && (
@@ -3304,7 +3336,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     rovingAt.current = on;
     for (const s of all) {
       // A "Worked for" fold is a toggle of its own, always one Tab away; ↑/↓ still pass through it.
-      s.tabIndex = s === on || s.parentElement!.classList.contains("work-seg") ? 0 : -1;
+      // R3-F: a tool group's summary is also its own Tab stop, so the calls inside are reachable without ↑/↓.
+      s.tabIndex = s === on || s.parentElement!.classList.contains("work-seg") || s.parentElement!.classList.contains("toolrun") ? 0 : -1;
       for (const b of s.querySelectorAll<HTMLElement>("button,a[href]")) {
         if (s === on) b.removeAttribute("tabindex"); else b.tabIndex = -1;
       }

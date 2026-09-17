@@ -2426,6 +2426,37 @@ pre.edit-rows,.block pre.edit-rows{text-indent:0;margin:2px 0 var(--s-2);padding
 @media (max-width:720px){.hk-main>.hk-dec::before{content:none}}
 .empty-state p{max-width:60ch}
 /* /R2-J */
+/* R3-F: tool rows. A failed call says "failed" once, quietly, at the row's
+   end; its error is a muted one-line detail. Work rows sit a step back from
+   the prose, counts in the accent. The group's "N failed" button sits beside
+   its summary (never inside it), pinned to the row's end so a phone never
+   wraps it onto a line of its own. The footer's files link is a button. */
+.block.thin.toolcall>summary .block-label,.block.thin.toolcall>summary .block-detail{color:var(--text-2);opacity:.85}
+.block.thin.toolcall>summary:hover .block-label,.block.thin.toolcall>summary:hover .block-detail{opacity:1}
+.block.thin.toolrun>summary .tool-meta,.block.thin.toolrun>summary .tool-more{color:color-mix(in srgb,var(--accent) 70%,var(--text-3))}
+.block.thin>summary .tool-thrown{font-family:inherit;color:var(--text-3);font-size:var(--fs-sm);flex:0 1 auto;min-width:0;max-width:48ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tool-state{margin-left:auto;flex-shrink:0;font-size:var(--fs-sm);font-style:italic;color:var(--text-3);white-space:nowrap}
+.tool-state-failed{color:color-mix(in srgb,var(--red) 75%,var(--text-3))}
+.fail-diag{border-left-color:color-mix(in srgb,var(--red) 55%,var(--line))}
+.fail-diag pre:not(.fail-cmd){font-size:var(--fs-sm);line-height:18px;color:var(--text-3);max-height:calc(18px * 6);overflow:auto}
+.toolrun-wrap{position:relative;display:flex;flex-direction:column;min-width:0}
+.toolrun-has-failed>.block.thin.toolrun>summary{padding-inline-end:84px}
+.toolrun-wrap>button.toolrun-failed{position:absolute;top:0;right:4px;margin:0;height:32px;display:inline-flex;align-items:center;font-size:var(--fs-sm);font-style:italic;color:color-mix(in srgb,var(--red) 75%,var(--text-3));white-space:nowrap}
+.toolrun-wrap>button.toolrun-failed:hover{text-decoration:underline}
+.turn-foot>button.turn-files{display:inline-flex;gap:6px;align-items:baseline;color:var(--text-2);text-decoration:none;font:inherit;padding:0;background:none;border:0;cursor:pointer}
+.turn-foot>button.turn-files::after{content:"\203a"}
+.turn-foot>button.turn-files:hover{color:var(--text-1)}
+@media (max-width:720px){
+  .toolrun-wrap>button.toolrun-failed{height:44px;top:6px}
+  .block.thin.toolrun>summary:has(.tool-more)::after{content:"";order:1;flex-basis:100%;height:0}
+  .block.thin.toolrun>summary .tool-more{order:2;padding-inline-start:16px}
+  .block.thin.toolrun>summary .tool-more::before{content:none}
+  .block.thin.toolrun>summary .tool-more~.tool-meta{flex-basis:auto;padding-inline-start:0}
+  .block.thin.toolrun>summary .tool-more~.tool-meta::before{content:"· "}
+  .block.thin.toolcall>summary .tool-state{order:2}
+  .turn-foot>button.turn-files{min-height:44px;align-items:center}
+}
+/* /R3-F */
 </style>
 </head>
 <body>

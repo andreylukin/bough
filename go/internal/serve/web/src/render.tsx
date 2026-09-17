@@ -618,6 +618,11 @@ export function thrownError(l?: Line): string | undefined {
   return /(?:^|\n)error: ([^\n]*)$/.exec(text)?.[1];
 }
 
+/** An error as a person reads it: no runtime's "GoError:" and no temp script path. */
+export function cleanError(text: string): string {
+  return text.replace(/\bGoError:\s*/g, "").replace(/(?:\/private)?\/(?:var\/folders|tmp)\/\S*?bough-[\w-]+\.(?:sh|js):\s*/g, "");
+}
+
 /** "[agent <title> · <id> finished] <reply>": the note a background agent leaves when it ends. */
 export const isAgentNotice = (l: Line) => l.kind === "job" && /^\[agent [^\]]* (?:finished|failed|stopped)\]/.test(l.text ?? "");
 
