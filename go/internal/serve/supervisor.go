@@ -161,6 +161,7 @@ type child struct {
 	// then cancels nothing: a booting child dies of it, a booted one
 	// exits without the turn ever starting.
 	unread, held bool
+	holdGen      int // which hold a hold-limit timer belongs to
 	// inTurn: the child took an input and has not ended that turn. A
 	// line sent then is a steer that lands only at the next boundary,
 	// so an interrupt must go straight through, not wait for it.
@@ -946,12 +947,20 @@ func (s *Supervisor) Interrupt(id string) error {
 	}
 	s.mu.Lock()
 	if ch.unread && !ch.inTurn {
-		ch.held = true
+		if !ch.held {
+			ch.held = true
+			ch.holdGen++
+		}
+		gen := ch.holdGen
 		s.mu.Unlock()
 		time.AfterFunc(holdLimit, func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
-			s.releaseLocked(ch)
+			// A stale timer from an earlier, already-released hold must
+			// not fire this one before its prompt is taken.
+			if ch.holdGen == gen {
+				s.releaseLocked(ch)
+			}
 		})
 		return nil
 	}
