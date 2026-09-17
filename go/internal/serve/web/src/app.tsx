@@ -8,7 +8,7 @@ import { ModeChip, ModePicker, type ModeValue } from "./mode";
 import { Select, type Option } from "./select";
 import { DialogHost, askChoice, askConfirm, askText } from "./dialog";
 import { Welcome, welcomeDismissed } from "./welcome";
-import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount, changedPath } from "./render";
+import { Markdown, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount, changedPath } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
 import { agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
@@ -17,7 +17,7 @@ import { SkillPicker } from "./skills";
 import { Mentions, triggerAt, type Trigger } from "./mention";
 import { FireInspection, HooksPage, type Fire, type Load, type Save } from "./hooks";
 import { ContextPage } from "./context";
-import { ChangesBody, ChangesPage, countOf, useChanges } from "./changes";
+import { ChangesBody, ChangesPage, EditDiff, countOf, outputParts, useChanges } from "./changes";
 import { Palette, isTypingTarget, useFullText, usePaletteKey, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
 import { Elapsed, Pending, elapsed } from "./loading";
@@ -1089,6 +1089,19 @@ function resultLang(line: Line): string {
 export function JobBlock({ line }: { line: Line }) {
   const ctx = useWork();
   const id = jobIdOf(line);
+  // A background agent's finish note: a notice row, its report one click in.
+  if (id === undefined && isAgentNotice(line)) {
+    const m = /^\[agent (.*?)(?: · [0-9a-f-]+)? (finished|failed|stopped)\]\s*([\s\S]*)$/.exec(line.text)!;
+    return (
+      <details className="block thin agent-notice" role="note">
+        <summary>
+          <span className="block-label">Background agent {m[2]}</span>
+          <span className="block-detail" title={m[1]}>{m[1]}</span>
+        </summary>
+        {m[3].trim() && <div className="block-body"><Markdown text={m[3].trim()} /></div>}
+      </details>
+    );
+  }
   // A notice that is not an outcome ("matched … while running") stays a quiet line.
   if (id === undefined) {
     const [head = "", ...rest] = (line.text || "").split("\n");
@@ -1479,14 +1492,33 @@ function gistOf(text: string): string {
 }
 
 /** One call's recorded facts, for its thin line and the hover list. */
-interface CallFacts { verb: string; gist: string; cmd: string; exit?: number; ms?: number; failed: boolean; preview?: string }
+interface CallFacts { verb: string; gist: string; cmd: string; exit?: number; ms?: number; failed: boolean; preview?: string; edits?: ReturnType<typeof outputParts> }
+
+/**
+ * A mixed run named by what it did, edits first: "Edited math.ts,
+ * index.ts" with the lines changed, then how many reads and commands.
+ * Null when the programs used none of those tools.
+ */
+export function runSummary(codes: string[], facts: CallFacts[]): { label: string; add: number; del: number; rest: string } | null {
+  const all = codes.join("\n");
+  const count = (name: string) => [...all.matchAll(new RegExp(`tools\\.${name}\\s*\\(`, "g"))].length;
+  const edited = [...new Set([...all.matchAll(/tools\.(?:patch|write)\s*\(\s*(["'`])([^"'`]+)\1/g)].map((m) => m[2].split("/").pop()!))];
+  const reads = count("view"), runs = count("bash"), edits = count("patch") + count("write");
+  if (!reads && !runs && !edits) return null;
+  let add = 0, del = 0;
+  for (const f of facts) for (const p of f.edits ?? []) if (p.kind === "edit") { add += p.add; del += p.del; }
+  const rest = [reads ? `read ${reads} ${reads === 1 ? "file" : "files"}` : "", runs ? `ran ${runs} ${runs === 1 ? "command" : "commands"}` : ""].filter(Boolean);
+  if (!edits) return { label: rest.join(" · ").replace(/^./, (c) => c.toUpperCase()), add: 0, del: 0, rest: "" };
+  const names = edited.length && edited.length <= 2 ? edited.join(", ") : `${edited.length || edits} files`;
+  return { label: `Edited ${names}`, add, del, rest: rest.join(" · ") };
+}
 
 function callFacts(code: Line, result?: Line): CallFacts {
   const call = parseCall(code.text);
   const out = result ? resultBody(result) : "";
   const exit = typeof result?.data?.exit === "number" ? (result.data.exit as number) : undefined;
   const ms = typeof result?.data?.ms === "number" ? (result.data.ms as number) : undefined;
-  return { verb: call.verb, gist: gistOf(call.gist), cmd: gistOf(call.target || call.gist), exit, ms, failed: (exit !== undefined && exit !== 0) || /^error\b/i.test(out) };
+  return { verb: call.verb, gist: gistOf(call.gist), cmd: gistOf(call.target || call.gist), exit, ms, failed: (exit !== undefined && exit !== 0) || Boolean(thrownError(result)), edits: outputParts(out) };
 }
 
 const canHover = () => typeof window !== "undefined" && window.matchMedia?.("(hover: hover)").matches;
@@ -1671,7 +1703,10 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned }: { lin
   // Only the failure count is red: one failed child does not make the work a failure.
   const verbs = [...new Set(facts.map((f) => f.verb))];
   const known = verbs.every((v) => KNOWN_VERBS.has(v));
-  const label = !known || verbs.length > 2 ? "Tool group" : verbs.map((v, i) => (i ? v.toLowerCase() : v)).join(" and ");
+  // Mixed work is named from counts, edits first; never after its first command.
+  const mixed = !known || verbs.length > 2;
+  const summary = mixed ? runSummary(lines.filter((l) => l.kind === "code").map((l) => l.text), facts) : null;
+  const label = summary ? summary.label : mixed ? "Tool group" : verbs.map((v, i) => (i ? v.toLowerCase() : v)).join(" and ");
   const targets = [...new Set(facts.map((f) => f.gist).filter(Boolean))];
   const fileish = verbs.every((v) => v === "Wrote" || v === "Patched" || v === "Read");
   // A path keeps its filename: the leading directories are what gets cut.
@@ -1683,8 +1718,14 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned }: { lin
     <details className="block thin toolrun" ref={box} open={holdsFail || undefined} data-open-key={"tools:" + lines[0].seq}>
       <summary role="button" {...handlers}>
         <span className="block-label">{label}</span>{" "}
-        {target && <span className="mono block-detail" title={targets[0]}>{target}</span>}{" "}
-        {more > 0 && <span className="num tool-more">{more} more {fileish ? (more === 1 ? "file" : "files") : ""}</span>}{" "}
+        {summary ? <>
+          {summary.add > 0 && <span className="num rt-add">+{summary.add}</span>}{" "}
+          {summary.del > 0 && <span className="num rt-del">−{summary.del}</span>}{" "}
+          {summary.rest && <span className="num tool-more">{summary.rest}</span>}{" "}
+        </> : <>
+          {target && <span className="mono block-detail" title={targets[0]}>{target}</span>}{" "}
+          {more > 0 && <span className="num tool-more">{more} more {fileish ? (more === 1 ? "file" : "files") : ""}</span>}{" "}
+        </>}
         <span className="num tool-meta">{calls} calls{timed ? ` · ${duration(totalMs)}` : ""}</span>{" "}
         {failed > 0 && <button type="button" className="link num toolrun-failed" aria-label={`${failed} failed`} onClick={openFailed}>{failed} failed</button>}
       </summary>
@@ -1711,7 +1752,9 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
   // and how long it ran. Older results carry neither and show neither.
   const exit = typeof result?.data?.exit === "number" ? (result.data.exit as number) : undefined;
   const ms = typeof result?.data?.ms === "number" ? (result.data.ms as number) : undefined;
-  const failed = (exit !== undefined && exit !== 0) || /^error\b/i.test(out);
+  // A block that threw failed, whatever exit its bash calls had.
+  const thrown = thrownError(result);
+  const failed = (exit !== undefined && exit !== 0) || Boolean(thrown);
   // A question nobody answered is an outcome, not an exception to parse.
   const timedOut = /ask: no answer after (\S+)/.exec(out);
   // A single call's line already says everything the hover list would,
@@ -1727,7 +1770,8 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
   }]);
   // The recorded exit and time, success or not: "exit 0" is evidence too.
   const empty = Boolean(result) && !out.trim();
-  const meta = [continues ? `Continues as Job ${continues}` : "", failed ? "Failed" : "", exit !== undefined ? `exit ${exit}` : "", empty ? "No output" : "", ms !== undefined ? (ms < 1000 ? "<1s" : duration(ms)) : ""];
+  // "exit N" is a bash exit; a block that threw says what it threw instead.
+  const meta = [continues ? `Continues as Job ${continues}` : "", failed ? "Failed" : "", exit !== undefined && !thrown ? `exit ${exit}` : "", empty ? "No output" : "", ms !== undefined ? (ms < 1000 ? "<1s" : duration(ms)) : ""];
   const what = call.lang === "bash" ? "Command" : call.lang === "javascript" ? "Program" : "Content";
   // No result: still running, cut off by a stop, or never recorded. Each says which.
   const card = !result && spawned && /tools\.spawn(All)?\(/.test(code.text) ? spawned : undefined;
@@ -1743,6 +1787,7 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
       <summary role="button" {...handlers}>
         <span className="block-label">{timedOut ? "Question timed out" : label ?? call.verb}</span>
         {!label && <span className="mono block-detail" title={call.gist}>{timedOut ? timedOut[1] : phone ? tailPath(gistOf(call.gist)) : gistOf(call.gist)}</span>}
+        {thrown && <span className="mono tool-thrown" title={thrown}>{firstLine(thrown)}</span>}
         {meta.some(Boolean) && (
           <span className={"num tool-meta" + (failed ? " tool-meta-failed" : "")}>{meta.filter(Boolean).join(" · ")}</span>
         )}
@@ -1775,7 +1820,13 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
         )}
         {/* Output keeps its columns: a docker ps or a table wrapped at the
             block's edge scatters every row across three lines. */}
-        {result && !empty && (!failed || full || !diag.length) && <div className="tool-output"><Code text={out} lang={resultLang(result)} /></div>}
+        {result && !empty && (!failed || full || !diag.length) && (() => {
+          // Edits the tools printed read as diffs; everything else keeps its columns.
+          const parts = outputParts(out);
+          if (!parts.some((p) => p.kind === "edit")) return <div className="tool-output"><Code text={out} lang={resultLang(result)} /></div>;
+          return <div className="tool-output">{parts.map((p, i) => p.kind === "edit" ? <EditDiff key={i} part={p} />
+            : p.text.trim() ? <Code key={i} text={p.text.replace(/^\n+|\n+$/g, "")} lang={resultLang(result)} /> : null)}</div>;
+        })()}
         {result && failed && diag.length > 0 ? null : result ? (
           <details className="block-inner">
             <summary><span className="block-label">{what}</span></summary>

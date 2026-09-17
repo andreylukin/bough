@@ -347,6 +347,8 @@ export function groupTools(items: Item[], codes: string[]): Item[] {
     run = [];
   };
   for (const it of items) {
+    // A background agent's finish note is not part of the work around it.
+    if (it.kind === "line" && isAgentNotice(it.line)) { flush(); out.push(it); continue; }
     if (it.kind === "line" && TOOL.has(it.line.kind)) { run.push(it.line); continue; }
     // Reasoning between calls is part of the same stretch of work: a
     // "Thinking" row before every call split every run into singles.
@@ -508,6 +510,8 @@ export type Segment =
   /** early: the reply's words came with its own program, so they follow the work it started. */
   | { kind: "reply"; item: Item; early?: boolean }
   | { kind: "pinned"; item: Item }
+  /** A background agent's finish notice that landed inside a turn: its own row, not that turn's work. */
+  | { kind: "notice"; item: Item }
   | { kind: "work"; seq: number; items: Item[]; seqs: number[];
       /** Rows as rendered: consecutive todo or job records share one. */
       rows: number;
@@ -529,6 +533,22 @@ export function isReply(l: Line, codes: string[]): boolean {
   if (l.kind !== "assistant") return false;
   return !blank(splitBareProgram(stripRunFences(l.text.replace(NOTE_RE, ""), codes))[0]);
 }
+
+/**
+ * The error a block threw, when it threw: the recorded field, or for older
+ * results the loop's "error: " line ending the output. A program that ran
+ * bash with exit 0 and then threw still failed.
+ */
+export function thrownError(l?: Line): string | undefined {
+  if (!l || l.kind !== "result") return undefined;
+  if (typeof l.data?.error === "string" && l.data.error) return l.data.error;
+  const text = l.text.replace(/(?:\s*\[[^\]\n]*\])+\s*$/, "").trimEnd(); // the loop's trailing notes
+  if (/^error\b/i.test(text)) return text.replace(/^error:?\s*/i, "");
+  return /(?:^|\n)error: ([^\n]*)$/.exec(text)?.[1];
+}
+
+/** "[agent <title> · <id> finished] <reply>": the note a background agent leaves when it ends. */
+export const isAgentNotice = (l: Line) => l.kind === "job" && /^\[agent [^\]]* (?:finished|failed|stopped)\]/.test(l.text ?? "");
 
 const jobFailed = (l: Line) => {
   const d = l.data ?? {};
@@ -563,7 +583,7 @@ export function splitWork(items: Item[], codes: string[], live: boolean): Segmen
       for (const l of ls) {
         lines.push(l);
         if (l.kind === "code") { actions++; const c = codeLabel(l.text); step = [presentTense(c.label), c.detail].filter(Boolean).join(" "); }
-        else if (l.kind === "result") { if ((typeof l.data?.exit === "number" && l.data.exit !== 0)) failed++; }
+        else if (l.kind === "result") { if ((typeof l.data?.exit === "number" && l.data.exit !== 0) || thrownError(l)) failed++; }
         else if (l.kind === "job") {
           const id = typeof l.data?.id === "number" ? String(l.data.id) : /^job (\d+) /.exec(l.text)?.[1];
           if (!id || !jobs.has(id)) actions++;
@@ -602,6 +622,7 @@ export function splitWork(items: Item[], codes: string[], live: boolean): Segmen
       continue;
     }
     if (live && it.kind === "sub" && it.agents.some((a) => !a.status)) { flush(); out.push({ kind: "pinned", item: it }); continue; }
+    if (it.kind === "line" && isAgentNotice(it.line)) { flush(); out.push({ kind: "notice", item: it }); continue; }
     cur.push(it);
   }
   flush();

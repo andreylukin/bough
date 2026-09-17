@@ -126,3 +126,22 @@ func TestCodemodeRuntimeLoopPanickingTool(t *testing.T) {
 		t.Fatalf("model fed %q", result)
 	}
 }
+
+// A block that printed and then threw records the thrown error as data,
+// so the UI can call it failed without reading the output's last line.
+func TestCodemodeRuntimeResultRecordsThrownError(t *testing.T) {
+	cm := codemode.New(2 * time.Second)
+	l := &recordLLM{reply: "go\n```js\nconsole.log(\"PARTIAL\"); throw new Error(\"late\")\n```"}
+	r := buildRunner(t, l, cm, nil, nil)
+	r.maxSteps = 1
+	_ = r.Run(context.Background(), "go", func(string, string) {})
+	var got any
+	for _, e := range r.hist.Entries() {
+		if e.Kind == "result" {
+			got = e.Data["error"]
+		}
+	}
+	if s, _ := got.(string); !strings.Contains(s, "Error: late") {
+		t.Fatalf("result error = %#v, want the thrown error", got)
+	}
+}
