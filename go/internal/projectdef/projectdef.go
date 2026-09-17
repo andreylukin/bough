@@ -81,6 +81,14 @@ func ValidSlug(s string) error {
 // typo ("repo:" for "repos:") fails loudly instead of building nothing.
 func Parse(b []byte) (Def, error) {
 	var d Def
+	var probe struct {
+		CPUs any `yaml:"cpus"`
+	}
+	if yaml.Unmarshal(b, &probe) == nil && probe.CPUs != nil {
+		if _, ok := probe.CPUs.(int); !ok {
+			return Def{}, fmt.Errorf("projectdef: %s: cpus: %v is not a whole number", FileYAML, probe.CPUs)
+		}
+	}
 	dec := yaml.NewDecoder(strings.NewReader(string(b)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&d); err != nil {
@@ -125,6 +133,62 @@ func Parse(b []byte) (Def, error) {
 		}
 	}
 	return d, nil
+}
+
+// memoryRE is a size the container runtime's -m flag takes: a whole
+// number with an optional K/M/G/T unit (and B), like 8G or 512MB.
+var memoryRE = regexp.MustCompile(`^[1-9][0-9]*[KkMmGgTt]?[Bb]?$`)
+
+// Placeholder is the example repo path in a new project's skeleton.
+const Placeholder = "~/repos/example"
+
+// Invalid lists what is wrong with a project.yml, in words for a person:
+// the CLI and the web editor show Error() as it stands.
+type Invalid struct{ Problems []string }
+
+func (e *Invalid) Error() string {
+	if len(e.Problems) == 1 {
+		return FileYAML + ": " + e.Problems[0]
+	}
+	return fmt.Sprintf("%s has %d problems:\n  %s", FileYAML, len(e.Problems), strings.Join(e.Problems, "\n  "))
+}
+
+// CheckHost checks d against this machine: local repo paths are
+// directories (and not the skeleton's placeholder), memory is a size,
+// and identity dirs exist under home. Only writes run it; Load does not,
+// so a definition made elsewhere still lists.
+func CheckHost(home string, d Def) error {
+	var probs []string
+	for i, r := range d.Repos {
+		if r.Path == "" {
+			continue
+		}
+		if r.Path == Placeholder {
+			probs = append(probs, fmt.Sprintf("repos[%d].path: %s is the template placeholder; set it to your checkout (a local path) or use remote:", i, r.Path))
+			continue
+		}
+		if st, err := os.Stat(ExpandPath(home, r.Path)); err != nil {
+			probs = append(probs, fmt.Sprintf("repos[%d].path: %s does not exist", i, r.Path))
+		} else if !st.IsDir() {
+			probs = append(probs, fmt.Sprintf("repos[%d].path: %s is not a directory", i, r.Path))
+		}
+	}
+	if d.Memory != "" && !memoryRE.MatchString(d.Memory) {
+		probs = append(probs, fmt.Sprintf("memory: %q is not a size (want a number with K, M, G or T, like 8G)", d.Memory))
+	}
+	for _, e := range d.Identity {
+		dir, _ := IdentityDir(e)
+		if dir == "" {
+			continue
+		}
+		if st, err := os.Stat(filepath.Join(home, dir)); err != nil || !st.IsDir() {
+			probs = append(probs, fmt.Sprintf("identity: ~/%s does not exist on this machine (log in to that CLI first, or remove it)", dir))
+		}
+	}
+	if len(probs) > 0 {
+		return &Invalid{Problems: probs}
+	}
+	return nil
 }
 
 var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -214,7 +278,15 @@ func SetSecret(home, slug, name, ref string) error {
 	if err != nil {
 		return fmt.Errorf("projectdef: set secret %s: %w", name, err)
 	}
-	return WriteFile(home, slug, FileYAML, string(b))
+	// A secret ref is not a host edit: skip CheckHost so a fresh skeleton
+	// (placeholder repo) or a vanished repo does not block storing it.
+	if _, err := Parse(b); err != nil {
+		return err
+	}
+	if err := atomicWrite(filepath.Join(Root(home), slug, FileYAML), b, 0o644); err != nil {
+		return fmt.Errorf("projectdef: set secret %s: %w", name, err)
+	}
+	return nil
 }
 
 // RepoName is the worktree directory name: Name, else the basename of the
@@ -291,9 +363,9 @@ func List(home string) ([]Project, error) {
 	return out, errors.Join(errs...)
 }
 
-const skeletonYAML = `# bough project definition. Lives outside every repo; never committed.
+var skeletonYAML = `# bough project definition. Lives outside every repo; never committed.
 repos:
-  - path: ~/repos/example   # or remote: git@github.com:you/example.git
+  - path: ` + Placeholder + `   # or remote: git@github.com:you/example.git
     branch: main
 checks:
   fast: ""
@@ -356,7 +428,11 @@ func WriteFile(home, slug, name, text string) error {
 	}
 	path := filepath.Join(dir, name)
 	if name == FileYAML {
-		if _, err := Parse([]byte(text)); err != nil {
+		d, err := Parse([]byte(text))
+		if err != nil {
+			return err
+		}
+		if err := CheckHost(home, d); err != nil {
 			return err
 		}
 	} else if text == "" {

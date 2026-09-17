@@ -75,3 +75,12 @@ test("no phone rule hides the mode chip", () => {
     expect(m[1]).not.toMatch(/mode-chip[^{]*\{[^}]*display:\s*none/);
   }
 });
+
+test("ORB-A5: a multi-problem save error keeps one problem per line beside the editor", () => {
+  const src = readFileSync(join(import.meta.dir, "../src/orb.tsx"), "utf8");
+  expect(src).toMatch(/className="err orb-save-err"/);
+  for (const f of ["../dist/index.html", "../design/bough.css"]) {
+    const css = readFileSync(join(import.meta.dir, f), "utf8");
+    expect(css).toMatch(/\/\* ORB-A5 \*\/[\s\S]*\.orb-save-err\{[^}]*white-space:pre-line[\s\S]*\/\* \/ORB-A5 \*\//);
+  }
+});

@@ -1,6 +1,7 @@
 package orb
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,7 +21,8 @@ func TestProjectOrbOpenFailureKeepsSessionUp(t *testing.T) {
 	if _, err := projectdef.Create(home, "broken"); err != nil {
 		t.Fatal(err)
 	}
-	if err := projectdef.WriteFile(home, "broken", projectdef.FileYAML, "repos:\n  - path: "+filepath.Join(home, "no-such-repo")+"\n"); err != nil {
+	// Written behind WriteFile's back: the repo went away after the save.
+	if err := os.WriteFile(filepath.Join(projectdef.Root(home), "broken", projectdef.FileYAML), []byte("repos:\n  - path: "+filepath.Join(home, "no-such-repo")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	userHome = func() (string, error) { return home, nil }

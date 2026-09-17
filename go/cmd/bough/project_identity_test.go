@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,12 +13,15 @@ import (
 func TestProjectIdentityCommands(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	os.MkdirAll(filepath.Join(home, "repos", "ci"), 0o755)
 	run := func(args ...string) error {
 		return project(&bytes.Buffer{}, strings.NewReader(""), args)
 	}
 	if err := run("create", "ci", "~/repos/ci"); err != nil {
 		t.Fatal(err)
 	}
+	os.MkdirAll(filepath.Join(home, ".circleci"), 0o755)
+	os.MkdirAll(filepath.Join(home, ".config", "foo"), 0o755)
 	for _, dir := range []string{"~/.circleci", ".circleci", ".config/foo"} {
 		if err := run("add-identity", "ci", dir); err != nil {
 			t.Fatalf("add-identity %s: %v", dir, err)

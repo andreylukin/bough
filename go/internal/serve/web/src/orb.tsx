@@ -134,7 +134,7 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
       <textarea className="field mono orb-editor" aria-label={tab} spellCheck={false} value={text}
                 placeholder={tab === "project.yml" ? "" : "Empty: saving removes the file"}
                 onChange={(e) => setDrafts((d) => ({ ...d, [tab]: e.target.value }))} />
-      {saveErr && <p className="err" role="alert">{saveErr}</p>}
+      {saveErr && <p className="err orb-save-err" role="alert">{saveErr}</p>}
       <div className="orb-tabs">
         <button className="btn btn-primary" disabled={building || !detail.runtime.available} onClick={onBuild}
                 title={detail.runtime.available ? undefined : "Start the container runtime first"}>{building ? "Building…" : "Build image"}</button>

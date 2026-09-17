@@ -182,6 +182,7 @@ func TestImageHash(t *testing.T) {
 	if err := SetSecret(home, "h", "DEVPI_URL", "keychain:bough/h/DEVPI_URL"); err != nil {
 		t.Fatal(err)
 	}
+	os.MkdirAll(filepath.Join(home, ".circleci"), 0o755)
 	for _, extra := range []string{
 		"checks: {fast: make}\n", "env: {A: b}\n", "identity: [.circleci]\n",
 		"cpus: 4\n", "memory: 8G\n", "caches: [/root/.cache/uv]\n", "lsp: [.]\n",
@@ -319,7 +320,7 @@ func TestSetSecret(t *testing.T) {
 	if _, err := Create(home, "s"); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteFile(home, "s", FileYAML, "repos:\n  - path: /x\nenv: {DEVPI_URL: https://user:pw@devpi}\n"); err != nil {
+	if err := WriteFile(home, "s", FileYAML, "repos:\n  - path: "+home+"\nenv: {DEVPI_URL: https://user:pw@devpi}\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := SetSecret(home, "s", "DEVPI_URL", "keychain:bough/s/DEVPI_URL"); err != nil {
@@ -340,5 +341,60 @@ func TestSetSecret(t *testing.T) {
 	}
 	if err := SetSecret(home, "missing", "X", "keychain:y"); err == nil {
 		t.Fatal("missing project")
+	}
+}
+
+// A5: project.yml is checked against the host when it is written, so a
+// typo'd path or size fails at save instead of at the next session start.
+func TestWriteChecksHost(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if _, err := Create(home, "v"); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(home, "repos", "real"), 0o755)
+	os.MkdirAll(filepath.Join(home, ".circleci"), 0o755)
+	ok := "repos:\n  - path: ~/repos/real\nmemory: 8G\ncpus: 2\nidentity: [gh, .circleci]\n"
+	if err := WriteFile(home, "v", FileYAML, ok); err != nil {
+		t.Fatalf("valid yml refused: %v", err)
+	}
+	cases := []struct{ name, yml, want string }{
+		{"placeholder", "repos:\n  - path: ~/repos/example\n", "repos[0].path: ~/repos/example is the template placeholder"},
+		{"missing repo", "repos:\n  - path: ~/repos/nope\n", "repos[0].path: ~/repos/nope does not exist"},
+		{"repo is file", "repos:\n  - path: ~/.bough/projects/v/project.yml\n", "is not a directory"},
+		{"memory", "repos:\n  - path: ~/repos/real\nmemory: lots\n", `memory: "lots" is not a size`},
+		{"cpus", "repos:\n  - path: ~/repos/real\ncpus: two\n", "cpus"},
+		{"identity dir", "repos:\n  - path: ~/repos/real\nidentity: [.aws]\n", "identity: ~/.aws does not exist"},
+	}
+	for _, c := range cases {
+		err := WriteFile(home, "v", FileYAML, c.yml)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err %v, want %q", c.name, err, c.want)
+		}
+	}
+	// Every problem is reported at once, without Go's error-chain prefixes.
+	err := WriteFile(home, "v", FileYAML, "repos:\n  - path: ~/repos/nope\nmemory: 8 gigs\nidentity: [.aws]\n")
+	if err == nil || strings.Count(err.Error(), "\n") != 3 || strings.Contains(err.Error(), "projectdef:") {
+		t.Errorf("combined err = %v", err)
+	}
+	if got, _ := ReadFile(home, "v", FileYAML); got != ok {
+		t.Errorf("refused write reached disk: %q", got)
+	}
+	// Remote repos are not checked on the host.
+	if err := WriteFile(home, "v", FileYAML, "repos:\n  - remote: git@h:a/x.git\nmemory: 512M\n"); err != nil {
+		t.Errorf("remote: %v", err)
+	}
+}
+
+// A5: storing a secret ref is not a host edit; it must work on a fresh
+// skeleton whose repo is still the placeholder.
+func TestSetSecretSkipsHostCheck(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if _, err := Create(home, "fresh"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetSecret(home, "fresh", "TOKEN", "keychain:bough/fresh/TOKEN"); err != nil {
+		t.Fatalf("SetSecret on skeleton: %v", err)
 	}
 }

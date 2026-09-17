@@ -22,7 +22,7 @@ func secretEnv(t *testing.T) (home string, stored map[string]string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "project.yml"), []byte("repos:\n  - path: /x\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "project.yml"), []byte("repos:\n  - path: "+home+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	stored = map[string]string{}
