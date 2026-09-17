@@ -160,3 +160,13 @@ test("while the turn waits for the model, the composer offers to steer, not a ne
   expect(html).toMatch(/composer-hint[^>]*>Waiting for model… ·/);
   expect(html).toContain('placeholder="Steer the running turn…"');
 });
+
+test("R4-D: the header says the same word as the transcript while a turn runs: Working, not Running", () => {
+  const at = "2026-01-02T10:00:00Z";
+  const html = renderToStaticMarkup(<Thread row={{ ...row, status: "running" } as Row} lines={[{ seq: 1, at, kind: "input", text: "fix the tests" }] as any} onSend={async () => null} onAnswer={async () => null}
+    onInterrupt={() => {}} onArchive={() => {}} onRename={async () => {}} onModel={() => {}} onEffort={() => {}} onAssign={() => {}}
+    onBack={() => {}} onContext={() => {}} onAck={() => {}} projects={[]} busy={false} jump={null} />);
+  const head = html.slice(html.indexOf("<header"), html.indexOf("</header>")).replace(/<span class="visually-hidden"[^>]*>[^<]*<\/span>/g, "");
+  expect(head).toContain("Working");
+  expect(head).not.toMatch(/>Running</);
+});

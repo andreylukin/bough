@@ -3981,7 +3981,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
             </span>
           )}
           {/* Until the transcript is read the header names no status: "Done" became "Done · 11 failed" a moment later. */}
-          {loading ? null : (status === "Sending" || (status === "Waiting" && !running)) ? (
+          {loading ? null : (status === "Sending" || status === "Waiting" || row.status === "running") ? (
+            // R4-D: while a turn runs the header says the transcript's word, Working, not the list's Running.
             // R2-B: a send on its way is work, never the last turn's Done.
             <span className="status head-live"><StatusMark status="running" bare />{status === "Sending" ? "Sending" : "Working"}</span>
           ) : row.trouble && row.trouble !== "tests failed" ? (
