@@ -278,7 +278,15 @@ func SetSecret(home, slug, name, ref string) error {
 	if err != nil {
 		return fmt.Errorf("projectdef: set secret %s: %w", name, err)
 	}
-	return WriteFile(home, slug, FileYAML, string(b))
+	// A secret ref is not a host edit: skip CheckHost so a fresh skeleton
+	// (placeholder repo) or a vanished repo does not block storing it.
+	if _, err := Parse(b); err != nil {
+		return err
+	}
+	if err := atomicWrite(filepath.Join(Root(home), slug, FileYAML), b, 0o644); err != nil {
+		return fmt.Errorf("projectdef: set secret %s: %w", name, err)
+	}
+	return nil
 }
 
 // RepoName is the worktree directory name: Name, else the basename of the

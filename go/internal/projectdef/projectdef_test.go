@@ -385,3 +385,16 @@ func TestWriteChecksHost(t *testing.T) {
 		t.Errorf("remote: %v", err)
 	}
 }
+
+// A5: storing a secret ref is not a host edit; it must work on a fresh
+// skeleton whose repo is still the placeholder.
+func TestSetSecretSkipsHostCheck(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if _, err := Create(home, "fresh"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetSecret(home, "fresh", "TOKEN", "keychain:bough/fresh/TOKEN"); err != nil {
+		t.Fatalf("SetSecret on skeleton: %v", err)
+	}
+}
