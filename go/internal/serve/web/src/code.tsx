@@ -184,16 +184,19 @@ function agents(raw: string): string {
   return n ? `${n} ${n === 1 ? "agent" : "agents"}` : "";
 }
 
+/** Highlighted HTML (escaped), or null when the language is unknown. Aliases ("ts", "sh") count. */
+export function highlight(text: string, lang: string): string | null {
+  if (!lang || !hljs.getLanguage(lang)) return null;
+  try {
+    return hljs.highlight(text, { language: lang, ignoreIllegals: true }).value;
+  } catch {
+    return null;
+  }
+}
+
 /** Highlighted source. Falls back to plain text when the language is unknown. */
 export function Code({ text, lang }: { text: string; lang: string }) {
-  const html = useMemo(() => {
-    if (!lang || !hljs.getLanguage(lang)) return null;
-    try {
-      return hljs.highlight(text, { language: lang, ignoreIllegals: true }).value;
-    } catch {
-      return null;
-    }
-  }, [text, lang]);
+  const html = useMemo(() => highlight(text, lang), [text, lang]);
   if (html === null) return <pre className="mono hl">{text}</pre>;
   return <pre className="mono hl" dangerouslySetInnerHTML={{ __html: html }} />;
 }

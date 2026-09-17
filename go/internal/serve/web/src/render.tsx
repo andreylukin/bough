@@ -2,6 +2,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { useEffect, useRef } from "react";
 import type { Line } from "./types";
+import { highlight } from "./code";
 
 /**
  * Assistant replies are markdown. Rendering them as plain text — which
@@ -11,10 +12,11 @@ import type { Line } from "./types";
  * The text comes from a model, via a local agent, and can contain
  * anything including HTML, so it is sanitized rather than trusted.
  */
-export function Markdown({ text }: { text: string }) {
+export function Markdown({ text, live }: { text: string; /** Still streaming: hold back half-written syntax, skip highlighting. */ live?: boolean }) {
   // A wide table scrolls in its own box; a fade on the right says there is more.
   // Trimmed: a trailing newline is a break point that parts inline chips after it from the last word.
-  const html = DOMPurify.sanitize(marked.parse(text, { async: false }) as string).trim()
+  const clean = DOMPurify.sanitize(marked.parse(live ? holdPartial(text) : text, { async: false }) as string).trim();
+  const html = (live ? clean : highlightFences(clean))
     .replace(/<table>/g, '<div class="md-table"><div class="md-table-scroll" tabindex="0" role="region" aria-label="Table, scrolls sideways"><table>')
     .replace(/<\/table>/g, "</table></div></div>")
     // An empty fence is a recorded fact, not a grey box that looks like loading.
@@ -52,6 +54,34 @@ export function Markdown({ text }: { text: string }) {
     return () => { ro.disconnect(); boxes.forEach((b) => b.removeEventListener("scroll", on)); copies.forEach((c) => c.remove()); };
   }, [html]);
   return <div className="md" ref={ref} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/**
+ * A streamed reply cut mid-token: "It exports `sub(a" rendered a raw
+ * backtick until the closing one arrived. A trailing unclosed inline
+ * backtick or link bracket on the last line is held back until it closes
+ * or the stream ends. Inside an open fence nothing is held: that is code.
+ */
+export function holdPartial(text: string): string {
+  const fences = (text.match(/^\s*```/gm) ?? []).length;
+  if (fences % 2) return text;
+  const start = text.lastIndexOf("\n") + 1;
+  const last = text.slice(start);
+  const ticks = [...last.matchAll(/`+/g)];
+  let cut = ticks.length % 2 ? start + ticks[ticks.length - 1].index : text.length;
+  const open = last.lastIndexOf("[");
+  if (open >= 0 && !last.slice(open).includes("]")) cut = Math.min(cut, start + open);
+  return text.slice(0, cut);
+}
+
+const unescape = (s: string) => s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+
+/** A finished fence in a known language gets the same token colours as a tool call's code. */
+export function highlightFences(html: string): string {
+  return html.replace(/<pre><code class="language-([\w+-]+)">([\s\S]*?)<\/code><\/pre>/g, (whole, lang: string, body: string) => {
+    const out = highlight(unescape(body), lang);
+    return out === null ? whole : `<pre><code class="language-${lang} hljs">${out}</code></pre>`;
+  });
 }
 
 /**
