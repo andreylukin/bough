@@ -112,7 +112,7 @@ test("a mixed fold is named by its edits, never by its first command", () => {
 
 test("an edit's output renders as a diff with add and del lines", () => {
   const html = renderToStaticMarkup(<ToolCall code={edits[2]} result={edits[3]} />);
-  expect(html).toContain("edit-diff");
+  expect(html).toContain("edit-file");
   expect(html).toContain("dl-add");
   expect(html).toContain("dl-del");
   expect(html).toContain("[lsp] no errors");
@@ -183,4 +183,30 @@ test("a wake-up from a job and an agent shows both", () => {
   const html = renderToStaticMarkup(<TurnView turn={groupTurns([{ seq: 1, at: at(0), kind: "input", text: wake }])[0]} />);
   expect(html).toContain("A background agent finished");
   expect(html).toContain("A background job finished");
+});
+
+// R2-G: a program that edits reads "Edited N files +a −d", writes included, with one row per file.
+test("an editing program is headed by every file it changed", () => {
+  const c = 'console.log(tools.patch("src/math.js", "a", "a\\nb"))\ntools.write("src/main.js", "x\\ny\\n")\nconsole.log(tools.bash("node src/main.js"))';
+  const html = renderToStaticMarkup(<ToolCall code={{ seq: 1, at: at(0), kind: "code", text: c }}
+    result={{ seq: 2, at: at(1), kind: "result", text: "patched src/math.js (+1 lines)\n\n a\n+b\n5", data: { exit: 0, ms: 5 } }} />);
+  expect(html).toContain("Edited</span>");
+  expect(html).toContain("2 files");
+  expect(html).toContain("+3</span>");
+  expect((html.match(/class="edit-file"/g) ?? []).length).toBe(2);
+  expect(html).not.toContain("patched src/math.js");
+  expect(html).toContain("5");
+});
+
+test("a turn's files chip opens Changes on that turn", async () => {
+  const { TurnFiles } = await import("../src/app");
+  const { WorkContext } = await import("../src/work-ui");
+  const turn = groupTurns([
+    { seq: 7, at: at(0), kind: "input", text: "go" },
+    { seq: 8, at: at(1), kind: "code", text: 'tools.write("a.js", "1\\n2\\n")' },
+    { seq: 9, at: at(2), kind: "done", text: "", data: { exit: 0, files: ["a.js"] } },
+  ])[0];
+  const html = renderToStaticMarkup(<WorkContext.Provider value={{ session: "s1" } as never}><TurnFiles files={["a.js"]} turn={turn} /></WorkContext.Provider>);
+  expect(html).toContain('href="#/s/s1/changes?turn=7"');
+  expect(html).toContain("+2</span>");
 });

@@ -3,6 +3,7 @@ import { api, type Change, type Scope } from "./api";
 import { Back } from "./app";
 import { changedPath, sessionTitle } from "./render";
 import { CopyCommand } from "./work-ui";
+import { toolCalls } from "./code";
 import { Pending } from "./loading";
 import type { Row } from "./types";
 
@@ -16,23 +17,28 @@ interface Read { files: (Change & { patch?: boolean })[] | null; repo: boolean; 
 const empty: Read = { files: null, repo: true, failed: false };
 
 /** Both scopes, re-read when the transcript grows; the tree on a timer too, since a hand edit leaves no entry. */
-export function useChanges(id: string, tick: number) {
+export function useChanges(id: string, tick: number, /** The input seq of one turn, to read its edits too. */ turnSeq?: number) {
   const [session, setSession] = useState<Read>(empty);
   const [tree, setTree] = useState<Read>(empty);
+  const [turn, setTurn] = useState<Read>(empty);
   const [nonce, setNonce] = useState(0);
   useEffect(() => {
     if (!id) return; // not yet known: nothing to read
     let live = true;
     api.edits(id).then((r) => { if (live) setSession({ files: r.files, repo: r.repo, failed: false, at: Date.now() }); })
       .catch(() => { if (live) setSession((s) => ({ ...s, failed: true })); });
+    if (turnSeq !== undefined) {
+      api.edits(id, turnSeq).then((r) => { if (live) setTurn({ files: r.files, repo: r.repo, failed: false, at: Date.now() }); })
+        .catch(() => { if (live) setTurn((s) => ({ ...s, failed: true })); });
+    }
     const read = () => api.changes(id)
       .then((r) => { if (live) setTree({ files: r.files, repo: r.repo, failed: false, at: Date.now() }); })
       .catch(() => { if (live) setTree((s) => ({ ...s, failed: true })); });
     read();
     const t = setInterval(read, 10_000);
     return () => { live = false; clearInterval(t); };
-  }, [id, tick, nonce]);
-  return { session, tree, retry: () => setNonce((n) => n + 1) };
+  }, [id, tick, nonce, turnSeq]);
+  return { session, tree, turn: turnSeq === undefined ? undefined : turn, turnSeq, retry: () => setNonce((n) => n + 1) };
 }
 
 // A count below zero is unknown (binary, or no patch): it adds nothing.
@@ -58,7 +64,13 @@ export function countOf(r: Read): { text: string; add?: number; del?: number; qu
   return s.add || s.del ? { text, ...s, quiet: false } : { text, quiet: false };
 }
 
-export const scopeName = (s: Scope) => (s === "session" ? "Session edits" : "Working tree");
+export const scopeName = (s: Scope) => (s === "session" ? "Session edits" : s === "turn" ? "This turn" : "Working tree");
+
+/** The ?turn=<seq> of a #/s/<id>/changes?turn=… link, if any. */
+export function hashTurn(): number | undefined {
+  const m = /[?&]turn=(\d+)/.exec(typeof window === "undefined" ? "" : window.location.hash);
+  return m ? +m[1] : undefined;
+}
 
 /** The ?file=<path> of a #/s/<id>/changes?file=… link, if any. */
 export function hashFile(): string | null {
@@ -96,6 +108,167 @@ export function DiffBody({ text }: { text: string }) {
         <span className="dl-t">{l.text + "\n"}</span>
       </span>
     ))}</pre>
+  );
+}
+
+/** One run of a patch: where it starts in the old and new file (unknown for a patch read from its call), and its lines. */
+export interface Hunk { old?: number; new?: number; lines: { kind: "add" | "del" | "ctx"; text: string }[] }
+
+/** A unified patch's hunks, as git prints them. */
+export function parseHunks(text: string): Hunk[] {
+  const out: Hunk[] = [];
+  for (const l of text.replace(/\n$/, "").split("\n")) {
+    const h = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(l);
+    if (h) { out.push({ old: +h[1], new: +h[2], lines: [] }); continue; }
+    const cur = out[out.length - 1];
+    if (!cur || l.startsWith("\\")) continue;
+    cur.lines.push({ kind: l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : "ctx", text: l });
+  }
+  return out;
+}
+
+/** A line diff of two texts (longest common subsequence), as one hunk. */
+function lineHunk(a: string[], b: string[], old?: number, nw?: number): Hunk {
+  const lines: Hunk["lines"] = [];
+  // Past a few hundred lines the table is too big to be worth it: all out, all in.
+  if (a.length * b.length > 250_000) {
+    return { old, new: nw, lines: [...a.map((t) => ({ kind: "del" as const, text: "-" + t })), ...b.map((t) => ({ kind: "add" as const, text: "+" + t }))] };
+  }
+  const lcs = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) {
+    lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+  }
+  for (let i = 0, j = 0; i < a.length || j < b.length;) {
+    if (i < a.length && j < b.length && a[i] === b[j]) { lines.push({ kind: "ctx", text: " " + a[i] }); i++; j++; }
+    else if (i < a.length && (j === b.length || lcs[i + 1][j] >= lcs[i][j + 1])) lines.push({ kind: "del", text: "-" + a[i++] });
+    else lines.push({ kind: "add", text: "+" + b[j++] });
+  }
+  return { old, new: nw, lines };
+}
+
+const splitLines = (t: string) => (t === "" ? [] : t.replace(/\n$/, "").split("\n"));
+
+/** One file a program changed: its path, how many lines, and the diff to show. */
+export interface FileChange { path: string; add: number; del: number; hunks: Hunk[] }
+
+/**
+ * The files a program patched or wrote, read from its own calls: one
+ * entry per path, in the order first touched. A write is all additions
+ * (numbered from 1); a patch is its old text against its new, where in
+ * the file it sits unknown until the checkpoint diff says.
+ */
+export function callEdits(code: string): FileChange[] {
+  const by = new Map<string, FileChange>();
+  for (const c of toolCalls(code)) {
+    const [path, x, y] = c.args;
+    if (!path || (c.name !== "write" && c.name !== "patch")) continue;
+    if (c.name === "patch" && (x === undefined || y === undefined)) continue;
+    const h = c.name === "write" ? lineHunk([], splitLines(x ?? ""), 0, 1) : lineHunk(splitLines(x), splitLines(y));
+    const f = by.get(path) ?? { path, add: 0, del: 0, hunks: [] };
+    f.add += h.lines.filter((l) => l.kind === "add").length;
+    f.del += h.lines.filter((l) => l.kind === "del").length;
+    f.hunks.push(h);
+    by.set(path, f);
+  }
+  return [...by.values()];
+}
+
+const CONTEXT = 2;
+const blank = (l: { text: string }) => l.text.slice(1).trim() === "";
+
+/**
+ * Hunks as rows to draw: an added or removed block that opens on a blank
+ * line slides to start on code when the diff allows it, context is cut to
+ * two lines around each change (a cut is a "hunk" row), a blank context
+ * line at either edge goes, and old and new numbers follow the lines.
+ */
+export function diffRows(hunks: Hunk[]): DiffLine[] {
+  const rows: DiffLine[] = [];
+  for (const h of hunks) {
+    const ls = h.lines.map((l) => ({ ...l }));
+    // Slide: [ctx X][+blank … +X] reads the same as [+X +blank …][ctx X].
+    for (let i = 1; i < ls.length; i++) {
+      const k = ls[i].kind;
+      if (k === "ctx" || ls[i - 1].kind === k || !blank(ls[i])) continue;
+      let j = i;
+      while (j + 1 < ls.length && ls[j + 1].kind === k) j++;
+      let start = i, end = j;
+      while (start > 0 && ls[start - 1].kind === "ctx" && !blank(ls[start - 1]) && ls[start - 1].text.slice(1) === ls[end].text.slice(1) && blank(ls[start])) {
+        ls[start - 1] = { kind: k, text: ls[end].text };
+        ls[end] = { kind: "ctx", text: " " + ls[end].text.slice(1) };
+        start--; end--;
+      }
+    }
+    // Numbers for every line, when the hunk says where it starts.
+    let o = h.old ?? 0, n = h.new ?? 0;
+    const numbered = ls.map((l): DiffLine => {
+      const d: DiffLine = { kind: l.kind, text: l.text };
+      if (l.kind !== "add" && h.old !== undefined) d.old = o++;
+      if (l.kind !== "del" && h.new !== undefined) d.new = n++;
+      return d;
+    });
+    const changed = numbered.map((l, i) => (l.kind === "ctx" ? -1 : i)).filter((i) => i >= 0);
+    const keep = numbered.map((l, i) => l.kind !== "ctx" || changed.some((c) => Math.abs(c - i) <= CONTEXT));
+    // A blank context line at the edge of a kept run says nothing.
+    for (let i = 0; i < numbered.length; i++) {
+      if (!keep[i] || numbered[i].kind !== "ctx" || !blank(numbered[i])) continue;
+      const edge = i === 0 || !keep[i - 1] || i === numbered.length - 1 || !keep[i + 1];
+      if (edge) { keep[i] = false; i = -1; }
+    }
+    let cut = rows.length > 0;
+    numbered.forEach((l, i) => {
+      if (!keep[i]) { cut = true; return; }
+      if (cut && rows.length) rows.push({ kind: "hunk", text: "⋯" });
+      cut = false;
+      rows.push(l);
+    });
+  }
+  return rows;
+}
+
+/** A file's diff, drawn: old and new gutters, tinted added and removed lines. */
+export function DiffRows({ rows }: { rows: DiffLine[] }) {
+  return (
+    <pre className="mono dl-body edit-rows">{rows.map((l, i) => (
+      <span key={i} className={"dl" + lineClass[l.kind]}>
+        <span className="num dl-n" aria-hidden>{l.old ?? ""}</span>
+        <span className="num dl-n" aria-hidden>{l.new ?? ""}</span>
+        <span className="dl-t">{(l.kind === "hunk" ? l.text : l.text.slice(1)) + "\n"}</span>
+      </span>
+    ))}</pre>
+  );
+}
+
+/**
+ * One file a call changed, as an expandable row. Opened, it asks for the
+ * turn's checkpoint diff of that file, which knows the line numbers; the
+ * patch read from the call stands in until then, or when there is none.
+ * The checkpoint diff is the whole turn's, so two edits to one file in a
+ * turn show together.
+ */
+export function FileEdit({ edit, session, turn }: { edit: FileChange; session?: string; turn?: number }) {
+  const [open, setOpen] = useState(true);
+  const [real, setReal] = useState<Hunk[] | null>(null);
+  useEffect(() => {
+    if (!open || !session || turn === undefined || real) return;
+    let live = true;
+    api.diff(session, edit.path, "turn", turn).then((t) => { if (live && t.trim()) setReal(parseHunks(t)); }, () => {});
+    return () => { live = false; };
+  }, [open, session, turn, edit.path]); // eslint-disable-line react-hooks/exhaustive-deps
+  const cut = edit.path.lastIndexOf("/");
+  // The checkpoint diff, once read, is the count too: a write over a file is not all new.
+  const rows = diffRows(real ?? edit.hunks);
+  const add = real ? rows.filter((l) => l.kind === "add").length : edit.add;
+  const del = real ? rows.filter((l) => l.kind === "del").length : edit.del;
+  return (
+    <details className="edit-file" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary title={edit.path}>
+        <span className="mono edit-file-path">{cut >= 0 && <span className="edit-file-dir">{edit.path.slice(0, cut + 1)}</span>}{edit.path.slice(cut + 1)}</span>
+        {add > 0 && <span className="num rt-add">+{add}</span>}
+        {del > 0 && <span className="num rt-del">−{del}</span>}
+      </summary>
+      <DiffRows rows={rows} />
+    </details>
   );
 }
 
@@ -152,8 +325,8 @@ const countBadge = (f: Change & { patch?: boolean }) =>
     : <><span className="rt-add">+{f.add}</span> <span className="rt-del">−{f.del}</span></>;
 
 /** Every file as a card; a card fetches its patch the first time it opens. */
-function FileCards({ row, files, scope, at, open }: {
-  row: Row; files: (Change & { patch?: boolean })[]; scope: Scope; at?: number; open: string | null;
+function FileCards({ row, files, scope, at, open, turn }: {
+  row: Row; files: (Change & { patch?: boolean })[]; scope: Scope; at?: number; open: string | null; turn?: number;
 }) {
   const [q, setQ] = useState("");
   const s = sum(files);
@@ -170,14 +343,14 @@ function FileCards({ row, files, scope, at, open }: {
       </div>
       {q && !shown.length && <p className="rt-label">No changed file matches “{q}”</p>}
       <div className="chg-cards">
-        {shown.map((f) => <FileCard key={scope + f.path} row={row} file={f} scope={scope} at={at}
+        {shown.map((f) => <FileCard key={scope + f.path} row={row} file={f} scope={scope} at={at} turn={turn}
                                     first={open === f.path || (files.length === 1 && !open)} />)}
       </div>
     </>
   );
 }
 
-function FileCard({ row, file, scope, at, first }: { row: Row; file: Change & { patch?: boolean }; scope: Scope; at?: number; first: boolean }) {
+function FileCard({ row, file, scope, at, first, turn }: { row: Row; file: Change & { patch?: boolean }; scope: Scope; at?: number; first: boolean; turn?: number }) {
   const [open, setOpen] = useState(first);
   const [diff, setDiff] = useState<{ text: string | null; failed?: boolean }>({ text: null });
   const [nonce, setNonce] = useState(0);
@@ -190,10 +363,10 @@ function FileCard({ row, file, scope, at, first }: { row: Row; file: Change & { 
     if (!open || !canDiff) return;
     let live = true;
     setDiff((d) => (d.text === null ? { text: null } : d));
-    api.diff(row.id, file.path, scope).then((text) => { if (live) setDiff({ text }); },
+    api.diff(row.id, file.path, scope, turn).then((text) => { if (live) setDiff({ text }); },
       () => { if (live) setDiff({ text: null, failed: true }); });
     return () => { live = false; };
-  }, [open, row.id, file.path, scope, at, nonce, canDiff]);
+  }, [open, row.id, file.path, scope, at, nonce, canDiff, turn]);
   return (
     <details ref={ref} className="chg-card" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
       <summary className="chg-card-head" title={file.path}>
@@ -223,7 +396,8 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
   /** The full page: every file as a card with its own lazy diff. */
   cards?: boolean;
 }) {
-  const r = scope === "session" ? data.session : data.tree;
+  const read = (s: Scope) => (s === "session" ? data.session : s === "turn" ? data.turn ?? empty : data.tree);
+  const r = read(scope);
   const [pick, setPick] = useState<string | null>(hashFile);
   const [diff, setDiff] = useState<{ path: string; text: string | null; failed?: boolean } | null>(null);
   const files = r.files ?? [];
@@ -236,7 +410,7 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
     if (cards || !path || file?.patch === false) { setDiff(null); return; }
     let live = true;
     setDiff({ path, text: null });
-    api.diff(row.id, path, scope).then((text) => { if (live) setDiff({ path, text }); },
+    api.diff(row.id, path, scope, data.turnSeq).then((text) => { if (live) setDiff({ path, text }); },
       () => { if (live) setDiff({ path, text: null, failed: true }); });
     return () => { live = false; };
     // A re-read of the same file set re-fetches its patch too.
@@ -245,8 +419,8 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
   return (
     <div className="chg">
       <div className="chg-scopes" role="tablist" aria-label="Changes scope">
-        {(["session", "tree"] as Scope[]).map((s) => {
-          const c = countOf(s === "session" ? data.session : data.tree);
+        {((data.turn ? ["turn", "session", "tree"] : ["session", "tree"]) as Scope[]).map((s) => {
+          const c = countOf(read(s));
           return (
             <button key={s} type="button" role="tab" aria-selected={scope === s} className="chg-scope" onClick={() => onScope(s)}>
               {scopeName(s)}: <span className="num">{c.text}{c.add !== undefined && <> · <span className="rt-add">+{c.add}</span> <span className="rt-del">−{c.del}</span></>}</span>
@@ -266,13 +440,13 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
       )}
       {r.files !== null && !r.repo && <p className="rt-label">This folder is not a Git repository, so there are no changes to show.</p>}
       {r.files !== null && r.repo && !files.length && (
-        <p className="rt-label">{scope === "session" ? "This session has not changed any files" : "No uncommitted changes"}</p>
+        <p className="rt-label">{scope === "session" ? "This session has not changed any files" : scope === "turn" ? "This turn did not change any files" : "No uncommitted changes"}</p>
       )}
-      {scope === "session" && files.some((f) => f.patch === false) && (
+      {scope !== "tree" && files.some((f) => f.patch === false) && (
         <p className="rt-label chg-nodiff">{NO_DIFF}{" "}
           <button type="button" className="rt-link" onClick={() => onScope("tree")}>See Working tree</button></p>
       )}
-      {cards && files.length > 0 && <FileCards row={row} files={files} scope={scope} at={r.at} open={pick} />}
+      {cards && files.length > 0 && <FileCards row={row} files={files} scope={scope} at={r.at} open={pick} turn={data.turnSeq} />}
       {!cards && files.length > (only ? 1 : 0) && (
         <ul className="chg-files">
           {files.map((f) => (
@@ -316,10 +490,17 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
 
 /** The full-width review: #/s/<id>/changes. */
 export function ChangesPage({ row, tick, onBack }: { row: Row; tick: number; onBack: () => void }) {
-  const data = useChanges(row.id, tick);
-  const [scope, setScope] = useState<Scope>("session");
+  // A turn's footer links here with ?turn=<seq>: that turn's edits open first.
+  const [turn, setTurn] = useState(hashTurn);
+  useEffect(() => {
+    const read = () => setTurn(hashTurn());
+    window.addEventListener("hashchange", read);
+    return () => window.removeEventListener("hashchange", read);
+  }, []);
+  const data = useChanges(row.id, tick, turn);
+  const [scope, setScope] = useState<Scope>(turn === undefined ? "session" : "turn");
   // Another session opens on its own edits, not the last one's tab.
-  useEffect(() => { setScope("session"); }, [row.id]);
+  useEffect(() => { setScope(turn === undefined ? "session" : "turn"); }, [row.id, turn]);
   return (
     <div className="thread">
       <header className="thread-head page-head">

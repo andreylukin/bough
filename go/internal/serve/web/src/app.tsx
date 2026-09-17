@@ -10,7 +10,7 @@ import { DialogHost, askChoice, askConfirm, askText, showShortcuts } from "./dia
 import { overviewKeys, sheetKey, treeKey } from "./keys";
 import { Welcome, welcomeDismissed } from "./welcome";
 import { clampToViewport } from "./popover";
-import { Markdown, programRan, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount, changedPath } from "./render";
+import { Markdown, programRan, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
 import { agentWakeNotes, agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
@@ -19,7 +19,7 @@ import { SkillPicker } from "./skills";
 import { Mentions, triggerAt, type Trigger } from "./mention";
 import { FireInspection, HooksPage, type Fire, type Load, type Save } from "./hooks";
 import { ContextPage } from "./context";
-import { ChangesBody, ChangesPage, EditDiff, countOf, outputParts, useChanges } from "./changes";
+import { ChangesBody, ChangesPage, EditDiff, FileEdit, callEdits, countOf, outputParts, useChanges } from "./changes";
 import { Palette, idTail, isTypingTarget, useFullText, usePaletteKey, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
 import { Elapsed, ErrorNote, Pending, elapsed } from "./loading";
@@ -1506,7 +1506,7 @@ function gistOf(text: string): string {
 }
 
 /** One call's recorded facts, for its thin line and the hover list. */
-interface CallFacts { verb: string; gist: string; cmd: string; exit?: number; ms?: number; failed: boolean; preview?: string; edits?: ReturnType<typeof outputParts> }
+interface CallFacts { verb: string; gist: string; cmd: string; exit?: number; ms?: number; failed: boolean; preview?: string }
 
 /**
  * A mixed run named by what it did, edits first: "Edited math.ts,
@@ -1519,8 +1519,9 @@ export function runSummary(codes: string[], facts: CallFacts[]): { label: string
   const edited = [...new Set([...all.matchAll(/tools\.(?:patch|write)\s*\(\s*(["'`])([^"'`]+)\1/g)].map((m) => m[2].split("/").pop()!))];
   const reads = count("view"), runs = count("bash"), edits = count("patch") + count("write");
   if (!reads && !runs && !edits) return null;
+  // Counted from the calls, so a write nobody printed counts too (all additions).
   let add = 0, del = 0;
-  for (const f of facts) for (const p of f.edits ?? []) if (p.kind === "edit") { add += p.add; del += p.del; }
+  for (const f of callEdits(all)) { add += f.add; del += f.del; }
   const rest = [reads ? `read ${reads} ${reads === 1 ? "file" : "files"}` : "", runs ? `ran ${runs} ${runs === 1 ? "command" : "commands"}` : ""].filter(Boolean);
   if (!edits) return { label: rest.join(" · ").replace(/^./, (c) => c.toUpperCase()), add: 0, del: 0, rest: "" };
   const names = edited.length && edited.length <= 2 ? edited.join(", ") : `${edited.length || edits} files`;
@@ -1529,10 +1530,9 @@ export function runSummary(codes: string[], facts: CallFacts[]): { label: string
 
 function callFacts(code: Line, result?: Line): CallFacts {
   const call = parseCall(code.text);
-  const out = result ? resultBody(result) : "";
   const exit = typeof result?.data?.exit === "number" ? (result.data.exit as number) : undefined;
   const ms = typeof result?.data?.ms === "number" ? (result.data.ms as number) : undefined;
-  return { verb: call.verb, gist: gistOf(call.gist), cmd: gistOf(call.target || call.gist), exit, ms, failed: (exit !== undefined && exit !== 0) || Boolean(thrownError(result)), edits: outputParts(out) };
+  return { verb: call.verb, gist: gistOf(call.gist), cmd: gistOf(call.target || call.gist), exit, ms, failed: (exit !== undefined && exit !== 0) || Boolean(thrownError(result)) };
 }
 
 /** Fired when a turn starts or output streams in; open output cards close. */
@@ -1768,6 +1768,11 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned }: { lin
  */
 export function ToolCall({ code, result, live, stopped, current, spawned }: { code: Line; result?: Line; /** Its turn is still running. */ live?: boolean; stopped?: boolean; /** The failure its turn ended on: open, with the diagnosis. */ current?: boolean; /** The subagent card it started, when that has a result. */ spawned?: Worker }) {
   const call = useMemo(() => parseCall(code.text), [code.text]);
+  // The files it patched or wrote, one row each, read from the call itself.
+  const edits = useMemo(() => callEdits(code.text), [code.text]);
+  const editAdd = edits.reduce((n, f) => n + f.add, 0), editDel = edits.reduce((n, f) => n + f.del, 0);
+  const turnSeq = useContext(TurnSeq);
+  const session = useWork()?.session;
   // The loop's "blocks not run" marker rides on the output; it is a notice, shown under the row.
   const { text: out, note } = splitExecNote(result ? resultBody(result) : "");
   // A job call reads as what it did; a wait that returned says it waited.
@@ -1803,16 +1808,21 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
   const card = !result && spawned && /tools\.spawn(All)?\(/.test(code.text) ? spawned : undefined;
   const missing = result || card ? null : live ? "running" : stopped ? "Interrupted · result not recorded" : "Result not recorded";
   const [full, setFull] = useState(false);
+  // File rows fetch their numbered diffs only once the call is opened.
+  const [opened, setOpened] = useState(Boolean(current));
   const phone = useMedia("(max-width:720px)");
   // The last lines of a failure are where the diagnosis is.
   const diag = failed ? out.split("\n").filter((l) => l.trim()).slice(-10) : [];
   const cmdText = call.lang === "bash" ? call.body : call.raw;
   return (
     <>
-    <details className={"block thin toolcall" + (failed ? " block-failed" : "")} data-seq={result?.seq} open={current || undefined}>
+    <details className={"block thin toolcall" + (failed ? " block-failed" : "")} data-seq={result?.seq} open={current || undefined} onToggle={(e) => setOpened(e.currentTarget.open)}>
       <summary role="button" {...handlers}>
-        <span className="block-label">{timedOut ? "Question timed out" : label ?? call.verb}</span>
-        {!label && <span className="mono block-detail" title={call.gist}>{timedOut ? timedOut[1] : phone ? tailPath(gistOf(call.gist)) : gistOf(call.gist)}</span>}
+        <span className="block-label">{timedOut ? "Question timed out" : label ?? (edits.length ? "Edited" : call.verb)}</span>
+        {!label && edits.length > 0 && !timedOut ? <>
+          <span className="mono block-detail edit-detail" title={edits.map((f) => f.path).join("\n")}>{edits.length === 1 ? edits[0].path.split("/").pop() : `${edits.length} files`}</span>
+          <span className="num edit-counts">{editAdd > 0 && <span className="rt-add">+{editAdd}</span>}{editDel > 0 && <span className="rt-del">−{editDel}</span>}</span>
+        </> : !label && <span className="mono block-detail" title={call.gist}>{timedOut ? timedOut[1] : phone ? tailPath(gistOf(call.gist)) : gistOf(call.gist)}</span>}
         {thrown && <span className="mono tool-thrown" title={thrown}>{firstLine(thrown)}</span>}
         {meta.some(Boolean) && (
           <span className={"num tool-meta" + (failed ? " tool-meta-failed" : "")}>{meta.filter(Boolean).join(" · ")}</span>
@@ -1846,10 +1856,17 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
         )}
         {/* Output keeps its columns: a docker ps or a table wrapped at the
             block's edge scatters every row across three lines. */}
+        {result && edits.length > 0 && (
+          <div className="edit-files">{edits.map((f) => <FileEdit key={f.path} edit={f} session={opened ? session : undefined} turn={turnSeq} />)}</div>
+        )}
         {result && !empty && (!failed || full || !diag.length) && (() => {
           // Edits the tools printed read as diffs; everything else keeps its columns.
-          const parts = outputParts(out);
-          if (!parts.some((p) => p.kind === "edit")) return <div className="tool-output"><Code text={out} lang={resultLang(result)} /></div>;
+          // An edit already a file row above is not said twice.
+          const parts = outputParts(out).filter((p) => p.kind !== "edit" || !edits.some((f) => f.path === p.path));
+          if (!parts.some((p) => p.kind === "edit")) {
+            const text = parts.map((p) => (p.kind === "text" ? p.text : "")).join("\n").replace(/^\n+|\n+$/g, "");
+            return text.trim() ? <div className="tool-output"><Code text={edits.length ? text : out} lang={resultLang(result)} /></div> : null;
+          }
           return <div className="tool-output">{parts.map((p, i) => p.kind === "edit" ? <EditDiff key={i} part={p} />
             : p.text.trim() ? <Code key={i} text={p.text.replace(/^\n+|\n+$/g, "")} lang={resultLang(result)} /> : null)}</div>;
         })()}
@@ -1960,7 +1977,6 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
   /** The turn's own controls (Expand all), before the usage on the right. */ extra?: React.ReactNode;
 }) {
   const done = turn.done!;
-  const cwd = str(done.data?.cwd);
   const u = usageOf(done);
   const files = Array.isArray(done.data?.files) ? (done.data!.files as string[]) : [];
   const exit = typeof done.data?.exit === "number" ? done.data.exit : fail?.data?.exit;
@@ -2023,7 +2039,7 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
         </span>
       )}
       {facts.map((f) => <span key={f} className="num">{f}</span>)}
-      {files.length > 0 && <TurnFiles files={files} cwd={cwd} />}
+      {files.length > 0 && <TurnFiles files={files} turn={turn} />}
       {extra}
       <span className="turn-foot-right">
         {u?.cost !== undefined ? <span className="num" title={tokens}>{money(u.cost)}</span> : tokens && <span className="num">{tokens}</span>}
@@ -2039,41 +2055,30 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
   );
 }
 
-/**
- * "3 files +34 −10": the turn's changed files, each linking into the
- * review. Counts come from the session's edits by path (session scope:
- * there is no per-turn diff yet), so they can include other turns' lines.
- */
+
+/** The input seq of the turn being drawn: a turn's edits are diffed from its own checkpoint. */
+const TurnSeq = createContext<number | undefined>(undefined);
+
 /** The thread's one read of its edits and working tree, shared by the header chip and every turn's files. */
 const unread = { files: null, repo: true, failed: false };
 const SessionChanges = createContext<ReturnType<typeof useChanges> | null>(null);
 
-function TurnFiles({ files, cwd }: { files: string[]; cwd: string }) {
-  const ctx = useWork();
-  const id = ctx?.session ?? "";
-  const edits = useContext(SessionChanges)?.session.files ?? [];
-  const rel = (f: string) => changedPath(f, cwd);
-  const find = (f: string) => edits.find((e) => e.path === rel(f) || f.endsWith("/" + e.path) || e.path === f);
-  const counts = files.map(find);
-  const add = counts.reduce((n, c) => n + Math.max(0, c?.add ?? 0), 0);
-  const del = counts.reduce((n, c) => n + Math.max(0, c?.del ?? 0), 0);
-  const href = (f?: string) => `#/s/${id}/changes` + (f ? `?file=${encodeURIComponent(rel(f))}` : "");
-  return (
-    <details className="turn-files">
-      <summary title="Line counts are session edits">
-        {files.length} {files.length === 1 ? "file" : "files"}
-        {(add > 0 || del > 0) && <><span className="num rt-add">+{add}</span><span className="num rt-del">−{del}</span></>}
-      </summary>
-      <ul>
-        {files.map((f, i) => (
-          <li key={f} className="mono" title={f}>
-            {id ? <a href={href(f)}><span>{rel(f)}</span>{counts[i] && <span className="num"><span className="rt-add">+{Math.max(0, counts[i]!.add)}</span> <span className="rt-del">−{Math.max(0, counts[i]!.del)}</span></span>}</a> : rel(f)}
-          </li>
-        ))}
-      </ul>
-      {id && <a className="link turn-files-review" href={href()}>Review changes (session)</a>}
-    </details>
-  );
+/**
+ * "3 files +7 −2": the turn's changed files, opening the Changes review
+ * on this turn's own edits. The counts are the turn's calls (a write is
+ * all additions), the review's are its checkpoints.
+ */
+export function TurnFiles({ files, turn }: { files: string[]; turn: Turn }) {
+  const id = useWork()?.session ?? "";
+  const edits = useMemo(() => callEdits(turn.body.filter((l) => l.kind === "code").map((l) => l.text).join("\n")), [turn.body]);
+  const add = edits.reduce((n, f) => n + f.add, 0), del = edits.reduce((n, f) => n + f.del, 0);
+  const text = <>
+    {files.length} {files.length === 1 ? "file" : "files"}
+    {add > 0 && <span className="num rt-add">+{add}</span>}
+    {del > 0 && <span className="num rt-del">−{del}</span>}
+  </>;
+  if (!id || !turn.prompt) return <span className="turn-files">{text}</span>;
+  return <a className="turn-files" href={`#/s/${id}/changes?turn=${turn.prompt.seq}`} title={files.join("\n")}>{text}</a>;
 }
 
 /**
@@ -2216,7 +2221,7 @@ function usePopovers(root: React.RefObject<HTMLElement | null>) {
  * goes to the full page, #/s/<id>/changes.
  */
 function ChangesChip({ row }: { row: Row }) {
-  const data = useContext(SessionChanges) ?? { session: unread, tree: unread, retry: () => {} };
+  const data = useContext(SessionChanges) ?? { session: unread, tree: unread, turn: undefined, turnSeq: undefined, retry: () => {} };
   const phone = useMedia("(max-width:720px)");
   const [scope, setScope] = useState<Scope>("session");
   // The chip is the one place that names a missing repository; the body's tabs show a dash.
@@ -2592,6 +2597,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
           </div>
         </div>
       )}
+      <TurnSeq.Provider value={turn.prompt?.seq}>
       <div className="turn-body">
         {segs.map((sg) => {
           if (sg.kind !== "work") return <Fragment key={"i" + sg.item.seq}>{renderItem(sg.item, 0, [sg.item])}</Fragment>;
@@ -2613,6 +2619,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
         {working === WAITING_MODEL && !runningSeg && live ? <WaitingModel /> : working !== undefined && !runningSeg && live && <Working label={working}>{turn.prompt?.at && <Elapsed since={turn.prompt.at} />}</Working>}
         <TurnHooks lines={hooks} />
       </div>
+      </TurnSeq.Provider>
       {turn.done && (() => {
         // The turn's own workers: what ran inside its span of entries.
         const seqs = turn.body.map((l) => l.seq);
@@ -4426,7 +4433,8 @@ export default function App() {
       : view === "wiki" ? `#/${wikiHash(wikiRoute)}`
       : selected ? `#/s/${selected}${sub ? `/${sub}` : ""}`
       : "#/";
-    if (window.location.hash !== want) {
+    // A sub-page's query (?turn=, ?file=) is the page's own: kept.
+    if (window.location.hash !== want && !(sub && window.location.hash.startsWith(want + "?"))) {
       window.history.replaceState(null, "", want);
     }
   }, [view, selected, sub, wikiRoute, lost]);

@@ -31,8 +31,8 @@ export interface SetupFolder { path: string; exists: boolean; checkout?: string 
 export interface Setup { providers: SetupProvider[]; envFile: string; home: string; folder: SetupFolder }
 export interface Change { path: string; add: number; del: number; new?: boolean }
 export interface Edit extends Change { patch: boolean }
-/** Session edits (what its turns changed) or the working tree (everything uncommitted). */
-export type Scope = "session" | "tree";
+/** Session edits (what its turns changed), one turn's edits, or the working tree (everything uncommitted). */
+export type Scope = "session" | "turn" | "tree";
 /** One line of a session's running log, written by the small model per turn. */
 export interface TurnLine { turn: number; text: string; at: string; test?: { cmd: string; exit: number } }
 
@@ -42,9 +42,9 @@ export const api = {
   /** What is uncommitted in the session's working tree, live from git. */
   changes: (id: string) => req<{ repo: boolean; files: Change[] }>(`/api/sessions/${id}/changes`),
   /** One file's unified diff against HEAD, 3 lines of context. */
-  diff: (id: string, path: string, scope: Scope = "tree") => req<{ diff: string }>(`/api/sessions/${id}/diff?path=${encodeURIComponent(path)}${scope === "session" ? "&scope=session" : ""}`).then((r) => r.diff),
+  diff: (id: string, path: string, scope: Scope = "tree", turn?: number) => req<{ diff: string }>(`/api/sessions/${id}/diff?path=${encodeURIComponent(path)}${scope === "tree" ? "" : "&scope=" + scope}${scope === "turn" ? "&turn=" + turn : ""}`).then((r) => r.diff),
   /** The files this session's turns changed, measured from its first checkpoint; patch false when none was recorded. */
-  edits: (id: string) => req<{ repo: boolean; files: Edit[] }>(`/api/sessions/${id}/edits`),
+  edits: (id: string, turn?: number) => req<{ repo: boolean; files: Edit[] }>(`/api/sessions/${id}/edits${turn === undefined ? "" : "?turn=" + turn}`),
   /** Ask the session to stop one of its background jobs. */
   killJob: (id: string, job: number) => post(`/api/sessions/${id}/jobs/${job}/kill`),
   /** Mark what a session has recorded so far as seen, taking it out of Needs you. */
