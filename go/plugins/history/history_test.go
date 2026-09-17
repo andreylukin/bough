@@ -593,8 +593,36 @@ func TestConcurrentWriterIsReported(t *testing.T) {
 	}
 }
 
-// A new file's meta records the launcher's mode; only a project
-// session gets checkpoints; an old meta with no mode lists as local.
+// A local session writes inside the git checkout it starts in, so its
+// turns need checkpoints as much as a project session's do: without one
+// the web's Session edits could name a file but not its lines.
+func TestSnapshotsTurns(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	repo := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plain := t.TempDir()
+	for _, c := range []struct {
+		mode, cwd string
+		want      bool
+	}{
+		{"project", plain, true},
+		{"local", repo, true},
+		{"local", filepath.Join(repo, ".git"), true},
+		{"local", plain, false},
+		{"local", home, false},
+	} {
+		if got := snapshotsTurns(c.mode, c.cwd, home); got != c.want {
+			t.Errorf("snapshotsTurns(%q, %q) = %v, want %v", c.mode, c.cwd, got, c.want)
+		}
+	}
+}
+
+// A new file's meta records the launcher's mode; a project session and
+// a local one inside a checkout (this test's cwd) get checkpoints; an
+// old meta with no mode lists as local.
 func TestMetaModeAndCheckpoints(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -603,8 +631,8 @@ func TestMetaModeAndCheckpoints(t *testing.T) {
 	if err := (plugin{}).Apply(local, map[string]any{"file": filepath.Join(dir, "local.jsonl")}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := kernel.Get[*Checkpoints](local, "checkpoints"); err == nil {
-		t.Error("local session provides checkpoints")
+	if _, err := kernel.Get[*Checkpoints](local, "checkpoints"); err != nil {
+		t.Errorf("local session in a checkout lacks checkpoints: %v", err)
 	}
 	local.Unmount()
 
