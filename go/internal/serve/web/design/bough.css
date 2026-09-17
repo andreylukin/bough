@@ -2236,3 +2236,9 @@ a.rt-link{text-decoration:none}
 .pal,.head-pop,.rt-jobs[open]>.rt-diff,.work-popover{animation:pop-in var(--dur-fast) var(--ease-out)}
 @keyframes pulse-dot{0%,100%{opacity:.35;scale:.76}50%{opacity:1;scale:1}}
 /* /WEB0 */
+/* WEB4: a sent prompt is half-strength until recorded; a breathing dot
+   holds its place until the model's first output. */
+.turn-sending .prompt-text{opacity:.5}
+.waiting-dot{display:flex;align-items:center;height:16px;margin:2px 0 0;padding-inline-start:6px}
+.waiting-dot i{width:8px;height:8px;border-radius:50%;background:var(--text-2);animation:pulse-dot 1.2s ease-in-out infinite}
+/* /WEB4 */

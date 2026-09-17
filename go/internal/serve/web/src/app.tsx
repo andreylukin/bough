@@ -2822,6 +2822,48 @@ type Pending = { id: string; text: string; after: number; steer?: boolean };
 
 /** Rows a Stop swallowed: unsent when Stop was pressed, and a done or
  * cancel was recorded after them with no input of theirs. */
+/** The composer's status word: a send not yet recorded, a turn with no
+ *  output yet, then output arriving. Derived from the same render as the
+ *  transcript, so the word never runs ahead of what is shown. */
+export function composerStatus({ sending, running, streamed, activity }: { sending: boolean; running: boolean; streamed: boolean; activity: string }): "" | "Sending" | "Waiting" | "Streaming" {
+  if (sending) return "Sending";
+  if (!running) return "";
+  return streamed || activity ? "Streaming" : "Waiting";
+}
+
+/** Shown until the model's first output: a breathing dot, nothing to read. */
+function WaitingDot() {
+  return <div className="waiting-dot" aria-hidden="true"><i /></div>;
+}
+
+function SendingPrompt({ p, accepted = false, clamp = true, onClip, clipped, onToggle }: { p: Pending; /** The turn it started is running: no longer on its way. */ accepted?: boolean; clamp?: boolean; onClip?: (el: HTMLParagraphElement) => void; clipped?: boolean; onToggle?: () => void }) {
+  return (
+    <section className={"turn" + (accepted ? "" : " turn-sending")}>
+      <div className="prompt">
+        <span className="mono prompt-mark">&gt;</span>
+        <div className="prompt-text">
+          <p className={clamp ? "prompt-clamp" : ""} ref={(el) => { if (el) onClip?.(el); }}>{p.text}</p>
+          {clipped && <button className="link" onClick={onToggle}>{clamp ? "Show full prompt" : "Show less"}</button>}
+        </div>
+        {!accepted && <span className="num prompt-time turn-sending-state" role="status">{p.steer ? "Steer pending…" : "Sending…"}</span>}
+      </div>
+    </section>
+  );
+}
+
+/** A session just started with a prompt, before its row is in the list:
+ *  the prompt in place, not a "Loading session…" swap. */
+export function PendingThread({ sending }: { sending: Pending[] }) {
+  return (
+    <div className="thread">
+      <div className="scroll transcript" role="region" aria-label="Transcript">
+        {sending.map((p) => <SendingPrompt key={p.id} p={p} />)}
+        <WaitingDot />
+      </div>
+    </div>
+  );
+}
+
 export function swallowedByStop(unlanded: Pending[], stopped: Set<string>, lines: Line[]): Pending[] {
   return unlanded.filter((p) => stopped.has(p.id)
     && lines.some((l) => (l.kind === "done" || l.kind === "cancelled") && l.seq > p.after)
@@ -3367,6 +3409,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
     // Each request is its own row; a retry that fails again replaces its own.
     if (error) setFailures((q) => [...q.filter((f) => f.id !== id), { id, at: Date.now(), text: t, answer, ask, error }]);
   };
+  const status = composerStatus({ sending: !running && unlanded.some((p) => !p.steer), running, streamed: stream.length > 0, activity });
   // Stop is asked once; the button says so until the ask is answered.
   const [stopping, setStopping] = useState<"" | "stopping" | "failed">("");
   useEffect(() => { if (!running) setStopping(""); }, [running]);
@@ -3617,7 +3660,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
           </p>
         )}
         {loading && !loadError && slow && <p className="meta-line transcript-state" role="status">Loading transcript…</p>}
-        {!loading && turns.length === 0 && !running && !row.ask && (
+        {!loading && turns.length === 0 && !running && !row.ask && !unlanded.length && (
           <p className="meta-line transcript-state">No recorded turns yet. Type a prompt below to start.</p>
         )}
         {turns.map((t, i) => (
@@ -3633,23 +3676,11 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
               ? (stream.length && stream[stream.length - 1].kind === "thinking" ? "Thinking" : activity || "Working") : undefined} />
         ))}
         {unlanded.map((p) => (
-          <section key={p.id} className="turn turn-sending">
-            <div className="prompt">
-              <span className="mono prompt-mark">&gt;</span>
-              <div className="prompt-text">
-                <p className={fullPending === p.id ? "" : "prompt-clamp"} ref={(el) => {
-                  if (el && !clipped[p.id] && el.scrollHeight > el.clientHeight + 1) setClipped((m) => ({ ...m, [p.id]: true }));
-                }}>{p.text}</p>
-                {clipped[p.id] && (
-                  <button className="link" onClick={() => setFullPending((v) => (v === p.id ? "" : p.id))}>
-                    {fullPending === p.id ? "Show less" : "Show full prompt"}
-                  </button>
-                )}
-              </div>
-              <span className="num prompt-time turn-sending-state" role="status">{p.steer ? "Steer pending…" : "Sending…"}</span>
-            </div>
-          </section>
+          <SendingPrompt key={p.id} p={p} accepted={running && !p.steer} clamp={fullPending !== p.id} clipped={clipped[p.id]}
+            onClip={(el) => { if (!clipped[p.id] && el.scrollHeight > el.clientHeight + 1) setClipped((m) => ({ ...m, [p.id]: true })); }}
+            onToggle={() => setFullPending((v) => (v === p.id ? "" : p.id))} />
         ))}
+        {!running && unlanded.some((p) => !p.steer) && <WaitingDot />}
         {running && (turns.length === 0 || turns[turns.length - 1].done) && !row.ask && (
           <div className="turn"><div className="turn-body"><StreamView runs={stream} /><Working label={activity || "Working"} /></div></div>
         )}
@@ -3880,7 +3911,7 @@ export function Thread({ row, lines, loading = false, loadError, paused, onRetry
           )}
           {!pickerOpen && (
             <span className="hint composer-hint">
-              {running && !draftAsk ? `Enter steer · ${modKey()}Enter queue · Shift+Enter newline` : "Enter send · Shift+Enter newline"} · / commands · @ files
+              {status && `${status} · `}{running && !draftAsk ? `Enter steer · ${modKey()}Enter queue · Shift+Enter newline` : "Enter send · Shift+Enter newline"} · / commands · @ files
             </span>
           )}
         </div>
@@ -4346,6 +4377,8 @@ export default function App() {
   // something that would fail.
   const start = (cwd: string, prompt: string, mode?: ModeValue) => act(async () => {
     const created = await api.create(cwd, prompt, mode?.mode, mode?.project);
+    // The prompt shows where it will land while the new row is fetched.
+    if (prompt.trim()) setPending((m) => ({ ...m, [created.id]: [{ id: created.id, text: prompt, after: 0 }] }));
     openSession(created.id);
   }, "start a session");
   // New starts where the open session works, and the new session's header
@@ -4547,6 +4580,8 @@ export default function App() {
             } catch { /* storage off */ }
             openSession(created.id);
           }, "start a project session") : undefined} />
+      ) : selected && pending[selected]?.length && !missing && !loadFail ? (
+        <PendingThread sending={pending[selected]} />
       ) : (
         <div className={"thread" + (selected ? " empty" : "")}>
           {!selected ? (showWelcome ? <Welcome onStart={(cwd, p) => start(cwd, p)} onSkip={() => setWelcome("off")} /> : <>
