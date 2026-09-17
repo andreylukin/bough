@@ -226,12 +226,36 @@ func Sum(path string) string {
 // no-ops outside a git repo — one verbose note, never an error.
 type Checkpoints struct {
 	session string
+	// home, set for a project session, is where it must not checkpoint:
+	// its child starts in $HOME and reaches the primary worktree only
+	// once the orb opens. One whose orb failed stays in $HOME, which may
+	// be a checkout (dotfiles) that is not the session's to snapshot.
+	home string
+}
+
+// dir is the process cwd checkpoints work in, or an error when it is
+// the home a project session must not checkpoint.
+func (c *Checkpoints) dir() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil || c.home == "" {
+		return cwd, err
+	}
+	resolve := func(p string) string {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return r
+		}
+		return filepath.Clean(p)
+	}
+	if resolve(cwd) == resolve(c.home) {
+		return "", fmt.Errorf("history: project session still in %s (orb not open)", cwd)
+	}
+	return cwd, nil
 }
 
 // Snapshot snapshots the working tree around the process cwd; "" when
 // there is none to take.
 func (c *Checkpoints) Snapshot() string {
-	cwd, err := os.Getwd()
+	cwd, err := c.dir()
 	if err != nil {
 		return ""
 	}
@@ -245,7 +269,7 @@ func (c *Checkpoints) Snapshot() string {
 
 // Pin names tree as turn seq's checkpoint.
 func (c *Checkpoints) Pin(seq int64, tree string) {
-	cwd, err := os.Getwd()
+	cwd, err := c.dir()
 	if err != nil {
 		return
 	}
@@ -308,7 +332,7 @@ func (c *Checkpoints) Changed(before string) []string {
 	if before == "" {
 		return nil
 	}
-	cwd, err := os.Getwd()
+	cwd, err := c.dir()
 	if err != nil {
 		return nil
 	}

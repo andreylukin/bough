@@ -4975,7 +4975,9 @@ export default function App() {
   // at that folder, and typing a prompt there starts the session. A click
   // alone used to leave an empty session behind every time.
   const [palCwd, setPalCwd] = useState("");
-  const newSession = () => { setPalCwd(row?.cwd ?? ""); setPalMode("new"); setPalette(true); };
+  // A project session's cwd is its orb worktree: never a folder to start a host session in.
+  const rowDir = row?.orb ? home : row?.cwd;
+  const newSession = () => { setPalCwd(rowDir ?? ""); setPalMode("new"); setPalette(true); };
   // "auto" shows the welcome while the server has no sessions; "on" is the
   // palette asking for it again; "off" is skipped or already used.
   const [welcome, setWelcome] = useState<"auto" | "on" | "off">(() => (welcomeDismissed() ? "off" : "auto"));
@@ -4992,23 +4994,23 @@ export default function App() {
     if (lines[i].kind === "result" && typeof x === "number" && x !== 0) { latestFail = lines[i].seq; break; }
   }
   const commands: Command[] = [
-    ...(home && row?.cwd && row.cwd !== home ? [{
-      id: "new:cwd", group: "Start", label: `New session in ${folderName(row.cwd)}`, suggest: true,
-      hint: "Folder: " + shortPath(row.cwd, home),
-      run: () => start(row.cwd, ""),
+    ...(home && rowDir && rowDir !== home ? [{
+      id: "new:cwd", group: "Start", label: `New session in ${folderName(rowDir)}`, suggest: true,
+      hint: "Folder: " + shortPath(rowDir, home),
+      run: () => start(rowDir, ""),
     }] : []),
-    ...(home && startDir?.checkout && startDir.path !== home && startDir.path !== row?.cwd ? [{
-      id: "new:start", group: "Start", label: `New session in ${folderName(startDir.path)}`, suggest: !row?.cwd || row.cwd === home,
+    ...(home && startDir?.checkout && startDir.path !== home && startDir.path !== rowDir ? [{
+      id: "new:start", group: "Start", label: `New session in ${folderName(startDir.path)}`, suggest: !rowDir || rowDir === home,
       hint: "Folder: " + shortPath(startDir.path, home) + " · can edit",
       run: () => start(startDir.path, ""),
     }] : []),
     ...(home ? [{
-      id: "new:here", group: "Start", label: "New session in home", suggest: (!row?.cwd || row.cwd === home) && !startDir?.checkout,
+      id: "new:here", group: "Start", label: "New session in home", suggest: (!rowDir || rowDir === home) && !startDir?.checkout,
       hint: "Folder: " + shortPath(home, home),
       run: () => start(home, ""),
     }] : []),
     // Every folder sessions ran in, so New is never only home.
-    ...(home ? startFolders(rows, home).filter((p) => p !== row?.cwd && p !== startDir?.path).map((p) => ({
+    ...(home ? startFolders(rows, home).filter((p) => p !== rowDir && p !== startDir?.path).map((p) => ({
       id: `new:dir:${p}`, group: "Start", label: `New session in ${folderName(p)}`,
       hint: "Folder: " + shortPath(p, home), run: () => start(p, ""),
     })) : []),
@@ -5020,7 +5022,7 @@ export default function App() {
     ...(home ? [{
       id: "new:folder", group: "Start", label: "New session in a folder…", hint: "a git checkout can be edited",
       run: async () => {
-        const p = await askText("Start in folder", { initial: shortPath(row?.cwd ?? home, home), placeholder: "~/code/your-repo", action: "Start" });
+        const p = await askText("Start in folder", { initial: shortPath(rowDir ?? home, home), placeholder: "~/code/your-repo", action: "Start" });
         if (p?.trim()) start(p.trim().replace(/^~(?=\/|$)/, home), "");
       },
     }] : []),
