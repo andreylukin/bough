@@ -2708,18 +2708,21 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
           // Only while the thread says the turn is working: a turn waiting on your answer is not.
           const running = live && working !== undefined && sg === runningSeg;
           if (!running && sg.rows < 2) return rows;
-          const step = working && working !== "Working" && working !== WAITING_MODEL ? working : sg.step;
+          // R4-D: once the last call's result landed its row is done; a lagging activity label must not say it still runs.
+          const tip = sg.items.at(-1);
+          const settled = tip?.kind === "tools" ? tip.lines.at(-1)?.kind === "result" : tip?.kind === "line" && tip.line.kind === "result";
+          const step = working && working !== "Working" && working !== WAITING_MODEL && working !== "Thinking" && !settled ? working : sg.step;
           return (
             <WorkSegmentRow key={"seg" + sg.seq} seg={sg} session={ctx?.session ?? ""} all={allSegs}
                             defaultOpen={Boolean(fail && sg.last && (sg.seqs.includes(fail.seq) || sg.failed > 0))}
-                            running={running} since={turn.prompt?.at ?? sg.from} step={step}>
+                            running={running} since={turn.prompt?.at} step={step}>
               {rows}
             </WorkSegmentRow>
           );
         })}
         {tail}
         {/* No stretch of work to carry it (the turn opened on a reply, or has said nothing yet). */}
-        {working === WAITING_MODEL && !runningSeg && live ? <WaitingModel /> : working !== undefined && !runningSeg && live && <Working label={working}>{turn.prompt?.at && <Elapsed since={turn.prompt.at} />}</Working>}
+        {working === WAITING_MODEL && !runningSeg && live ? <WaitingModel /> : working !== undefined && !runningSeg && live && <Working label={working === "Thinking" ? working : "Working"}>{turn.prompt?.at && <Elapsed since={turn.prompt.at} />}</Working>}
         <TurnHooks lines={hooks} />
       </div>
       </TurnSeq.Provider>
@@ -3056,11 +3059,12 @@ type Pending = { id: string; text: string; after: number; steer?: boolean; seen?
 /** The composer's status word: a send not yet recorded, a turn with no
  *  output yet, then output arriving. Derived from the same render as the
  *  transcript, so the word never runs ahead of what is shown. */
-export function composerStatus({ sending, accepted = false, running, streamed, activity, stopping = false }: { sending: boolean; /** The send was taken, the turn not yet started. */ accepted?: boolean; running: boolean; streamed: boolean; activity: string; /** Stop was asked and the server has not recorded it yet. */ stopping?: boolean }): "" | "Sending" | "Waiting" | "Streaming" | "Stopping" {
+export function composerStatus({ sending, accepted = false, running, streamed, activity, stopping = false }: { sending: boolean; /** The send was taken, the turn not yet started. */ accepted?: boolean; running: boolean; streamed: boolean; activity: string; /** Stop was asked and the server has not recorded it yet. */ stopping?: boolean }): "" | "Sending" | "Waiting" | "Working" | "Stopping" {
   if (stopping && (sending || running)) return "Stopping";
   if (sending) return accepted ? "Waiting" : "Sending";
   if (!running) return "";
-  return streamed || activity ? "Streaming" : "Waiting";
+  // R4-D: one word per phase; what it is doing is detail, never a second status word.
+  return streamed || activity ? "Working" : "Waiting";
 }
 
 /** Shown until the model's first output: a breathing dot, nothing to read. */
@@ -3668,7 +3672,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const tailTurn = turns[turns.length - 1];
   const openTail = Boolean(tailTurn && !tailTurn.done && !(tailTurn.prompt === null && tailTurn.body.every((l) => isQuiet(l.kind)) && unlanded.some((p) => !p.steer)));
   const liveBodyFn = running && !openTail && !row.ask
-    ? () => <div className="turn-body"><StreamView runs={stream} />{status === "Waiting" ? <WaitingModel /> : <Working label={activity || "Working"} />}</div> : null;
+    ? () => <div className="turn-body"><StreamView runs={stream} />{status === "Waiting" ? <WaitingModel /> : <Working>{activity || undefined}</Working>}</div> : null;
   const liveHost = liveBodyFn ? unlanded.filter((p) => !p.steer).at(-1) : undefined;
   useEffect(() => { window.dispatchEvent(new Event(TRANSCRIPT_GREW)); }, [stream, lines.length, sending.length]);
   const landedIds = sending.filter((p) => !unlanded.includes(p)).map((p) => p.id).join(" ");
@@ -4235,7 +4239,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           )}
           {!pickerOpen && (
             <span className="hint composer-hint">
-              {status && <>{status}{status === "Streaming" && <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>} · </>}{running && !draftAsk ? `Enter steer · ${modKey()}Enter queue · Shift+Enter newline` : "Enter send · Shift+Enter newline"} · / commands · @ files
+              {status && <>{status === "Waiting" ? WAITING_MODEL : status}{status === "Working" && <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>} · </>}{running && !draftAsk ? `Enter steer · ${modKey()}Enter queue · Shift+Enter newline` : "Enter send · Shift+Enter newline"} · / commands · @ files
             </span>
           )}
         </div>

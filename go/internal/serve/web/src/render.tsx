@@ -116,6 +116,8 @@ export function scriptHead(script: string): string {
 /** The live row says what is happening now: "Running go test", not "Ran". */
 const PRESENT: Record<string, string> = { Ran: "Running", Wrote: "Writing", Patched: "Patching", Read: "Reading", "Spawned subagents": "Spawning subagents", "Spawned a subagent": "Spawning a subagent", "Asked you": "Asking you" };
 const presentTense = (label: string) => PRESENT[label] ?? label;
+/** R4-D: once its result lands the step reads done: "Running ls" becomes "Ran ls". */
+const pastTense = (step: string) => { for (const [done, now] of Object.entries(PRESENT)) if (step === now || step.startsWith(now + " ")) return done + step.slice(now.length); return step; };
 
 export function codeLabel(code: string): { label: string; detail: string } {
   const first = (re: RegExp) => code.match(re)?.[1]?.trim() ?? "";
@@ -185,14 +187,19 @@ export function usageOf(done: Line | null): Usage | null {
 export function sessionUsage(lines: Line[]): Usage | null {
   let seen = false, priced = false;
   let tokensIn = 0, tokensOut = 0, cost = 0, lastIn = 0;
+  let cut = false;
   for (const l of lines) {
-    if (l.kind !== "done") continue;
+    // R4-D: a cancelled turn's figure is partial; it may raise the context reading, never lower it.
+    if (l.kind === "cancelled") { cut = true; continue; }
+    if (l.kind !== "done") { if (l.kind === "input") cut = false; continue; }
     const u = usageOf(l);
+    const partial = cut || l.data?.kind === "cancelled";
+    cut = false;
     if (!u) continue;
     seen = true;
     tokensIn += u.in;
     tokensOut += u.out;
-    lastIn = u.lastIn;
+    if (!partial || u.lastIn > lastIn) lastIn = u.lastIn;
     if (u.cost !== undefined) { priced = true; cost += u.cost; }
   }
   return seen ? { in: tokensIn, out: tokensOut, cost: priced ? cost : undefined, lastIn } : null;
@@ -661,7 +668,7 @@ export function splitWork(items: Item[], codes: string[], live: boolean): Segmen
       for (const l of ls) {
         lines.push(l);
         if (l.kind === "code") { actions++; const c = codeLabel(l.text); step = [presentTense(c.label), c.detail].filter(Boolean).join(" "); }
-        else if (l.kind === "result") { if ((typeof l.data?.exit === "number" && l.data.exit !== 0) || thrownError(l)) failed++; }
+        else if (l.kind === "result") { step = pastTense(step); if ((typeof l.data?.exit === "number" && l.data.exit !== 0) || thrownError(l)) failed++; }
         else if (l.kind === "job") {
           const id = typeof l.data?.id === "number" ? String(l.data.id) : /^job (\d+) /.exec(l.text)?.[1];
           if (!id || !jobs.has(id)) actions++;

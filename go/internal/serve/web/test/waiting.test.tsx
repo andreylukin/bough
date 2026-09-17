@@ -9,7 +9,7 @@ const sent = [{ id: "p1", text: "fix the tests", after: 0 }];
 test("the composer status names the phase: Sending, then Waiting, then Streaming", () => {
   expect(composerStatus({ sending: true, running: false, streamed: false, activity: "" })).toBe("Sending");
   expect(composerStatus({ sending: false, running: true, streamed: false, activity: "" })).toBe("Waiting");
-  expect(composerStatus({ sending: false, running: true, streamed: true, activity: "" })).toBe("Streaming");
+  expect(composerStatus({ sending: false, running: true, streamed: true, activity: "" })).toBe("Working");
   expect(composerStatus({ sending: false, running: false, streamed: false, activity: "" })).toBe("");
 });
 
@@ -36,7 +36,7 @@ test("once the turn runs, the sent prompt is solid and the hint says Waiting", (
   expect(html).toContain("fix the tests");
   expect(html).not.toContain("turn-sending");
   expect(html).not.toContain("Sending…");
-  expect(html).toMatch(/composer-hint[^>]*>Waiting ·/);
+  expect(html).toMatch(/composer-hint[^>]*>Waiting for model…/);
 });
 
 test("resending a stopped turn's prompt shows Sending, then lands on the new input", () => {
@@ -72,7 +72,7 @@ test("R2-B: while a send is pending the header never says Done", () => {
 test("R2-B: the status goes Sending, then Waiting once accepted, then Streaming", () => {
   expect(composerStatus({ sending: true, accepted: false, running: false, streamed: false, activity: "" })).toBe("Sending");
   expect(composerStatus({ sending: true, accepted: true, running: false, streamed: false, activity: "" })).toBe("Waiting");
-  expect(composerStatus({ sending: false, running: true, streamed: true, activity: "" })).toBe("Streaming");
+  expect(composerStatus({ sending: false, running: true, streamed: true, activity: "" })).toBe("Working");
   const accepted = renderToStaticMarkup(<Thread row={{ ...row, status: "done" } as Row} lines={[]} sending={[{ ...sent[0], accepted: true }]} {...props} />);
   expect(accepted).toContain("Waiting for model…");
   expect(accepted).toContain("breath-dot");
@@ -120,4 +120,35 @@ test("R3-D: an errored session never reads Working or Sending for a send it did 
   const html = renderToStaticMarkup(<Thread row={{ ...row, status: "error" } as Row} lines={[]} sending={cmd as any} {...threadProps} />);
   expect(html).not.toMatch(/thread-head[\s\S]*>(Sending|Working)</);
   expect(html).not.toContain("Waiting for model");
+});
+
+test("R4-D: one word per phase — Waiting before output, then Working, never Streaming", () => {
+  expect(composerStatus({ sending: false, running: true, streamed: true, activity: "" })).toBe("Working");
+  expect(composerStatus({ sending: false, running: true, streamed: false, activity: "Running ls" })).toBe("Working");
+});
+
+test("R4-D: elapsed since equals the prompt time across two steps", async () => {
+  const { TurnView } = await import("../src/app");
+  const { groupTurns } = await import("../src/render");
+  const at = (s: number) => new Date(Date.parse("2026-01-02T10:00:00Z") + s * 1000).toISOString();
+  const c = 'tools.bash("ls")', d = 'tools.bash("pwd")';
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns([
+    { seq: 2, at: at(1), kind: "code", text: c },
+    { seq: 3, at: at(2), kind: "result", text: "ok", data: { code: c, exit: 0 } },
+    { seq: 4, at: at(30), kind: "code", text: d },
+  ] as never)[0]} working="Working" />);
+  // No prompt recorded: no clock re-anchored at a step's own start.
+  expect(html).not.toContain("work-seg-time");
+});
+
+test("R4-D: context does not decrease on a cancelled done without usage", async () => {
+  const { sessionUsage } = await import("../src/render");
+  const lines = [
+    { seq: 1, at: "", kind: "done", text: "", data: { usage: { in: 90000, out: 10, last_in: 42000 } } },
+    { seq: 2, at: "", kind: "cancelled", text: "" },
+    { seq: 3, at: "", kind: "done", text: "", data: { usage: { in: 571, out: 0, last_in: 571 } } },
+    { seq: 4, at: "", kind: "cancelled", text: "", data: { usage: { in: 300, out: 0, last_in: 300 } } },
+    { seq: 5, at: "", kind: "done", text: "" },
+  ];
+  expect(sessionUsage(lines as never)?.lastIn).toBe(42000);
 });
