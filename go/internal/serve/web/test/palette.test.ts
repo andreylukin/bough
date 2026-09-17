@@ -89,3 +89,26 @@ test("the syntax hint names a real project or none", () => {
   expect(syntaxProject([])).toBe(null);
   expect(syntaxProject([{ id: "a", repo: "/Users/x/repos/tern", lastAt: "2026-09-10T00:00:00Z" } as never])).toBe("tern");
 });
+
+import { commandQuery, listable } from "../src/palette";
+
+// R4-H: 12 live empty sessions sat in the sidebar but ⌘P showed "1 shown".
+test("the switcher backfills up to 12 from every listed session with nothing visited", () => {
+  const rows = Array.from({ length: 14 }, (_, i) => r("s" + i, `2026-09-17T00:${String(i).padStart(2, "0")}:00Z`, "/r", i < 12 ? { empty: true, live: true } : {}));
+  const got = recentSessions(rows, null, [], 12).map((x: { id: string }) => x.id);
+  expect(got.length).toBe(12);
+  expect(got[0]).toBe("s13");
+});
+
+// R4-H: ⌘K listed a background agent that ⌘P and the sidebar hide.
+test("child sessions are excluded like the sidebar excludes them", () => {
+  const rows = [r("p", "2026-09-10T00:00:00Z"), r("k", "2026-09-12T00:00:00Z", "/r", { spawnedBy: "p" }), r("orphan", "2026-09-11T00:00:00Z", "/r", { spawnedBy: "gone" })];
+  expect(recentSessions(rows, null, [], 12).map((x: { id: string }) => x.id)).toEqual(["orphan", "p"]);
+  expect(listable(rows).map((x) => x.id)).toEqual(["p", "orphan"]);
+});
+
+test("a leading > filters to commands only", () => {
+  expect(commandQuery("> theme")).toEqual({ only: true, text: "theme" });
+  expect(commandQuery(">")).toEqual({ only: true, text: "" });
+  expect(commandQuery("tide")).toEqual({ only: false, text: "tide" });
+});

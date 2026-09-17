@@ -4817,6 +4817,13 @@ export default function App() {
       run: () => requestAnimationFrame(() => document.getElementById("composer")?.focus()) },
     { id: "go:side", group: "Navigation", label: "Toggle sidebar", hint: `${modKey()}B`,
       run: () => window.dispatchEvent(new Event("bough:toggle-side")) },
+    // The composer's own model picker, opened: one place sets the next turn's model.
+    ...(view === "sessions" ? [{ id: "go:model", group: "Navigation", label: "Switch model…", hint: "next turn",
+      run: () => requestAnimationFrame(() => {
+        const pick = [...document.querySelectorAll<HTMLButtonElement>('.composer-tools button[aria-label^="Next turn model"]')].find((b) => b.offsetParent);
+        pick?.scrollIntoView({ block: "nearest" });
+        pick?.click();
+      }) }] : []),
     { id: "wiki:review", group: "Wiki", label: "Review flagged claims",
       hint: wikiFlags ? `${wikiFlags} flagged` : undefined, run: () => goWiki({ at: "review" }) },
     { id: "wiki:activity", group: "Wiki", label: "Wiki activity", run: () => goWiki({ at: "activity" }) },
