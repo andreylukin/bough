@@ -1,5 +1,5 @@
 // The one place that knows the wire. Everything else takes typed values.
-import type { Ask, Event, Line, OrbBuild, OrbDetail, OrbFile, OrbState, OrbSummary, Project, Row, SessionMode } from "./types";
+import type { Ask, Event, Line, OrbBuild, OrbDetail, OrbFile, OrbRemovePlan, OrbState, OrbSummary, Project, Row, SessionMode } from "./types";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -139,6 +139,8 @@ export const api = {
   sessionBuildLog: (id: string, offset: number) =>
     req<{ text: string; offset: number; state: string; status: string; startedAt?: string; endedAt?: string }>(`/api/sessions/${id}/orb/build/log?offset=${offset}`),
   stopOrb: (id: string) => post(`/api/sessions/${id}/orb/stop`),
+  orbRemovePlan: (id: string) => req<{ plan: OrbRemovePlan; live: boolean }>(`/api/sessions/${id}/orb/remove`),
+  removeOrb: (id: string) => req<{ ok: true; plan: OrbRemovePlan }>(`/api/sessions/${id}/orb`, { method: "DELETE" }),
   unarchive: (id: string) => post(`/api/sessions/${id}/unarchive`),
 };
 

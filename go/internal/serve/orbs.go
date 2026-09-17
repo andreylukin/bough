@@ -86,6 +86,8 @@ func (a *API) routeOrbs() {
 	a.mux.HandleFunc("GET /api/sessions/{id}/orb/log", a.sessionOrbLog)
 	a.mux.HandleFunc("GET /api/sessions/{id}/orb/build/log", a.sessionBuildLog)
 	a.mux.HandleFunc("POST /api/sessions/{id}/orb/stop", a.stopOrb)
+	a.mux.HandleFunc("GET /api/sessions/{id}/orb/remove", a.removeOrbPlan)
+	a.mux.HandleFunc("DELETE /api/sessions/{id}/orb", a.removeOrb)
 }
 
 // sessionMode reads the mode off the first meta entry. No meta, or a
@@ -657,4 +659,50 @@ func (a *API) createProjectSession(w http.ResponseWriter, prompt, label string) 
 		return
 	}
 	a.writeRow(w, http.StatusCreated, id)
+}
+
+// removeOrbPlan is what Remove orb would delete and keep, for its confirm.
+func (a *API) removeOrbPlan(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	plan, err := orb.PlanRemove(ctx, a.sup.Runtime(), a.sup.Home(), id, r.URL.Query().Get("branches") == "1")
+	if err != nil {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: remove orb %q: %w", id, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"plan": plan, "live": a.sup.childPID(id) != 0})
+}
+
+// removeOrb deletes a session's container, worktrees and orb dir, and with
+// ?branches=1 its merged or pushed branches. serve's own child is ended
+// first so it cannot recreate the orb; another live owner is refused.
+func (a *API) removeOrb(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	st, err := orb.ReadState(a.sup.Home(), id)
+	if err != nil || st.Session == "" {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: remove orb %q: no orb", id))
+		return
+	}
+	if a.sup.childPID(id) != 0 {
+		if err := a.sup.Kill(id); err != nil {
+			writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: remove orb %q: %w", id, err))
+			return
+		}
+	} else if a.ownerAlive(id, st) {
+		writeErr(w, http.StatusConflict, fmt.Errorf("serve: api: remove orb %q: its session runs in another bough (pid %d); quit it first", id, st.PID))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	plan, err := orb.PlanRemove(ctx, a.sup.Runtime(), a.sup.Home(), id, r.URL.Query().Get("branches") == "1")
+	if err != nil {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: remove orb %q: %w", id, err))
+		return
+	}
+	if err := orb.RemovePlanned(ctx, a.sup.Runtime(), a.sup.Home(), plan); err != nil {
+		writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: remove orb %q: %w", id, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "plan": plan})
 }
