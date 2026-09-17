@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -178,7 +179,17 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			// setup.sh made the session unreachable. The session stays up
 			// without an orb (tools.bash refuses: "project orb not ready"),
 			// says why, and the next start retries the build.
-			fmt.Fprintf(os.Stderr, "bough: orb: %s: %v\n", slug, err)
+			st, _ := iorb.ReadState(home, session)
+			report := failureReport(slug, iorb.FailedAt(st), err)
+			uiMode := uiModeOf(ctx)
+			if headlessRun(ctx) {
+				// A person or script ran this one turn: running it without
+				// the orb would answer from nowhere, and exit 0 or a model
+				// error hid the cause. serve's children (origin web) stay
+				// up so the web can show the failure.
+				return fmt.Errorf("%s", report)
+			}
+			say(ctx, uiMode, report)
 			if s, serr := kernel.Get[sections](ctx, "prompt-sections"); serr == nil {
 				s.Set("orb", failedPromptSection(slug, err))
 				ctx.Effect(func() { s.Set("orb", "") })
@@ -188,7 +199,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	}
 	st := o.State()
 	if st.ProxyAuth == iorb.ProxyAuthLegacy && !reused {
-		fmt.Fprintf(os.Stderr, "bough: orb: %s: %s\n", slug, iorb.LegacyProxyNotice)
+		say(ctx, uiModeOf(ctx), fmt.Sprintf("orb: %s: %s", slug, iorb.LegacyProxyNotice))
 	}
 	// Checkpoints and relative paths use the process cwd: it must be the
 	// primary worktree, which is also the container's workdir.
@@ -204,7 +215,16 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	dockerfile, _ := projectdef.ReadFile(home, slug, projectdef.FileDockerfile)
 	missing := missingEnv(resume, p.Def.Checks, p.Def, setup+"\n"+dockerfile)
 	if len(missing) > 0 && !reused {
-		fmt.Fprintf(os.Stderr, "bough: orb: %s: unset env %s (resume.sh/checks)\n", slug, strings.Join(missing, ", "))
+		say(ctx, uiModeOf(ctx), fmt.Sprintf("orb: %s: unset env %s (resume.sh/checks)", slug, strings.Join(missing, ", ")))
+	}
+	if st.Status == iorb.StatusFailed && !reused {
+		report := failureReport(slug, iorb.FailedAt(st), fmt.Errorf("%s", st.Error))
+		if headlessRun(ctx) {
+			// Same as a failed open: no turn runs against a broken orb.
+			stopOrb(o)
+			return fmt.Errorf("%s", report)
+		}
+		say(ctx, uiModeOf(ctx), report)
 	}
 	if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
 		s.Set("orb", promptSection(o.Root(), st, p.Def, missing))
@@ -304,6 +324,62 @@ func stopOrb(o *iorb.Orb) {
 	if err := o.Stop(sctx); err != nil {
 		fmt.Fprintf(os.Stderr, "bough: orb: stop: %v\n", err)
 	}
+}
+
+// headlessRun is a person or script running one turn; serve's children
+// (origin web) are headless too but stay up to show the failure.
+func headlessRun(ctx *kernel.Context) bool {
+	origin, _ := kernel.Get[string](ctx, "origin")
+	return uiModeOf(ctx) == "headless" && origin != "web"
+}
+
+func uiModeOf(ctx *kernel.Context) string {
+	m, _ := kernel.Get[string](ctx, "ui-mode")
+	return m
+}
+
+// say reports an orb problem where the person looks: under the tui a raw
+// stderr write paints over the alt screen, so it becomes the "orb-notice"
+// the ui shows as a warning row; elsewhere one stderr line per line.
+func say(ctx *kernel.Context, uiMode, text string) {
+	if uiMode != "tui" {
+		fmt.Fprintf(os.Stderr, "bough: %s\n", text)
+		return
+	}
+	prev, _ := kernel.Get[string](ctx, "orb-notice")
+	if strings.Contains(prev, text) {
+		return
+	}
+	ctx.Provide("orb-notice", strings.TrimSpace(prev+"\n"+text))
+}
+
+// failureReport is an orb failure a person can act on: what failed, the
+// log lines that say why (already in err), and the one fix that applies.
+func failureReport(slug, phase string, err error) string {
+	// "orb: open <session>: orb: image …" says orb and open twice.
+	msg := openPrefix.ReplaceAllString(err.Error(), "")
+	var fix string
+	switch phase {
+	case iorb.PhaseBuild:
+		fix = fmt.Sprintf("Fix the image recipe: `bough project show %s setup.sh` (or Dockerfile), `bough project write %s setup.sh < fixed.sh`; the next session rebuilds. Web: Projects → %s → Orb → Rebuild.", slug, slug, slug)
+	case iorb.PhaseSetup:
+		fix = fmt.Sprintf("The container runs, but resume.sh failed: `bough project show %s resume.sh`, `bough project write %s resume.sh < fixed.sh`; it reruns when the orb restarts. Web: Projects → %s → Orb.", slug, slug, slug)
+	default:
+		fix = fmt.Sprintf("Check the project's repos and the container runtime: `bough project show %s`. Web: Projects → %s → Orb.", slug, slug)
+	}
+	return fmt.Sprintf("orb for project %s failed%s: %s\n%s", slug, phaseWord(phase), msg, fix)
+}
+
+var openPrefix = regexp.MustCompile(`^(orb: )?(open \S+: )?(orb: )?`)
+
+func phaseWord(phase string) string {
+	switch phase {
+	case iorb.PhaseBuild:
+		return " to build its image"
+	case iorb.PhaseSetup:
+		return " setup (resume.sh)"
+	}
+	return " to start"
 }
 
 // failedPromptSection tells the model its project container did not start,

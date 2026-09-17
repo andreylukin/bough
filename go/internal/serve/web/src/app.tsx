@@ -5,7 +5,7 @@ import type { Line, Project, Row } from "./types";
 import { STATUS, StatusMark, Working, hasFailure, hasQuestion, sessionSignal, statusWord } from "./status";
 import { ProjectsView } from "./projects";
 import { ModeChip, ModePicker, type ModeValue } from "./mode";
-import { confirmStopOrb, orbUp } from "./orb";
+import { OrbFailureBody, confirmFailedBuild, confirmStopOrb, orbUp, type OrbFailureLog } from "./orb";
 import { Select, type Option } from "./select";
 import { DialogHost, askChoice, askConfirm, askText, showShortcuts } from "./dialog";
 import { focusComposerKey, isMac, newSessionKey, overviewKeys, sheetKey, switchKey, treeKey } from "./keys";
@@ -3386,34 +3386,28 @@ function OrbBuildLog({ id, project, onRebuild, rebuildErr }: { id: string; proje
  * open. The error and the tail of resume.log load when you open it, and
  * again on Refresh, so a fixed definition can be checked from here.
  */
-function OrbFailure({ id, project, onRebuild, rebuildErr }: { id: string; project: string; onRebuild?: () => Promise<void>; rebuildErr?: string }) {
-  const [log, setLog] = useState<{ error: string; text: string } | null>(null);
+function OrbFailure({ id, project, name, onRebuild, onRetry, rebuildErr }: { id: string; project?: string; name: string; onRebuild?: () => Promise<void>; onRetry?: () => Promise<void>; rebuildErr?: string }) {
+  const [log, setLog] = useState<OrbFailureLog | null>(null);
   const [err, setErr] = useState("");
+  const [retried, setRetried] = useState(false);
+  const [retryErr, setRetryErr] = useState("");
   const load = () => {
     setErr("");
-    api.sessionOrbLog(id).then((l) => setLog({ error: l.error, text: l.text }), (e) => setErr((e as Error).message));
+    api.sessionOrbLog(id).then((l) => setLog(l), (e) => setErr((e as Error).message));
   };
   useEffect(load, [id]); // eslint-disable-line react-hooks/exhaustive-deps
-  const tail = log?.text ? log.text.split("\n").slice(-120).join("\n") : "";
-  // The error is the log's last lines: open at the bottom, not at its first download line.
-  const pre = useRef<HTMLPreElement>(null);
-  useLayoutEffect(() => { if (pre.current) pre.current.scrollTop = pre.current.scrollHeight; }, [tail]);
   // A sibling of the header, not a child: the header is a fixed-height grid,
   // and inside it the log wrapped into a 200px-wide, 6000px-tall sliver.
   return (
-    <div className="block orb-failure" role="region" aria-label={`${project} setup failure`}>
+    <div className="block orb-failure" role="region" aria-label={`${name} setup failure`}>
       {err ? <p className="send-failed-text" role="alert">Couldn’t load the log: {err}</p>
         : !log ? <p className="meta-line">Loading…</p>
-        : <>
-            <p className="meta-line">{log.error || "The orb failed without an error message."}</p>
-            {tail ? <pre className="mono" ref={pre}>{tail}</pre> : <p className="meta-line">resume.log is empty.</p>}
-            <p className="meta-line">Fix the definition with <code>bough project show {project}</code> / <code>bough project write {project} &lt;file&gt;</code>; the next session start retries.</p>
-          </>}
+        : <OrbFailureBody log={log} projectId={project} name={name} onRebuild={onRebuild}
+            onRetry={onRetry && (async () => { try { await onRetry(); setRetried(true); } catch (e) { if ((e as Error).message !== "cancelled") setRetryErr((e as Error).message); } })} />}
+      {retried && <p className="meta-line" role="status">Stopped. The orb restarts and reruns resume.sh on the session’s next command.</p>}
+      {retryErr && <p className="send-failed-text" role="alert">Couldn’t stop the orb: {retryErr}</p>}
       {rebuildErr && <p className="send-failed-text" role="alert">Couldn’t start a rebuild: {rebuildErr}</p>}
-      <span className="orb-actions">
-        <button className="link" onClick={load}>Refresh</button>
-        {onRebuild && <button className="link" onClick={onRebuild}>Rebuild image</button>}
-      </span>
+      <button className="link" onClick={load}>Refresh</button>
     </div>
   );
 }
@@ -4167,7 +4161,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           </div>
         </div>
       </header>
-      {orbView === "why" && row.orb?.status === "failed" && <OrbFailure key={row.id} id={row.id} project={row.orb.project} onRebuild={row.project ? rebuild : undefined} rebuildErr={rebuildErr} />}
+      {orbView === "why" && row.orb?.status === "failed" && <OrbFailure key={row.id} id={row.id} project={row.project} name={projects.find((p) => p.id === row.project)?.name ?? row.orb.project} onRebuild={row.project ? rebuild : undefined} onRetry={onStopOrb ? async () => { if (!(await confirmStopOrb(row.jobs))) throw new Error("cancelled"); await api.stopOrb(row.id); } : undefined} rebuildErr={rebuildErr} />}
       {orbView === "build" && row.orb && <OrbBuildLog key={row.id} id={row.id} project={row.orb.project} onRebuild={row.project ? rebuild : undefined} rebuildErr={rebuildErr} />}
 
       <div className="scroll transcript" ref={scroller} onScroll={onScroll} onKeyDown={latestKey}
@@ -5175,7 +5169,7 @@ export default function App() {
           onAck={() => act(() => api.ack(row.id), "mark it seen")}
           onStopOrb={async () => { if (await confirmStopOrb(row.jobs)) act(() => api.stopOrb(row.id), "stop the orb"); }}
           onNewProject={() => { setPalQuery("New project"); setPalette(true); }}
-          onStartProject={home ? (project, draft) => act(async () => {
+          onStartProject={home ? async (project, draft) => { if (await confirmFailedBuild(projects.find((p) => p.id === project))) act(async () => {
             // The draft moves, unsent: the new session's composer holds it.
             const created = await api.create(home, "", "project", project);
             try {
@@ -5184,7 +5178,7 @@ export default function App() {
               localStorage.removeItem("bough:draft-atts:" + row.id);
             } catch { /* storage off */ }
             openSession(created.id);
-          }, "start a project session") : undefined} />
+          }, "start a project session"); } : undefined} />
       ) : selected && pending[selected]?.length && !missing && !loadFail ? (
         <PendingThread sending={pending[selected]} />
       ) : (
@@ -5192,7 +5186,7 @@ export default function App() {
           {!selected ? (showWelcome ? <Welcome onStart={(cwd, p) => start(cwd, p)} onSkip={() => { setWelcome("off"); if (narrow) goList(); }} onBack={narrow ? () => { setWelcome("off"); goList(); } : undefined} /> : <>
             <ControlOverview actions={home ? <>
                 <ModePicker projects={projects} value={newMode} onChange={setNewMode} />
-                <button className="btn ov-new" onClick={() => { void start(newMode.mode === "local" && startDir?.checkout ? startDir.path : home, "", newMode); }}>New session</button>
+                <button className="btn ov-new" onClick={async () => { if (newMode.mode === "project" && !(await confirmFailedBuild(projects.find((p) => p.id === newMode.project)))) return; void start(newMode.mode === "local" && startDir?.checkout ? startDir.path : home, "", newMode); }}>New session</button>
               </> : undefined} rows={rows} onOpenFailure={(id, seq) => { openSession(id); if (seq) setJump({ id, turn: 0, seq, at: Date.now() }); }} onReveal={(id) => { setPane("list"); setQuery(""); setReveal({ id, at: Date.now() }); }} loadedAt={loadedAt} loadErr={loadErr} onRetry={() => void refresh()} />
           </>) : (
             // A link to a session the list does not hold: looked up on its

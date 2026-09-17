@@ -15,15 +15,17 @@ import (
 // Fake is an in-memory Runtime for other areas' tests. Command runs argv
 // on the HOST in opt.Workdir so exec tests are real.
 type Fake struct {
-	mu         sync.Mutex
-	Calls      []string
-	FailBuild  error
-	FailRemove error
-	images     map[string]bool
-	containers map[string]State
-	cimages    map[string]string // container -> image
-	volumes    map[string]bool
-	LastCommit CommitSpec
+	mu        sync.Mutex
+	Calls     []string
+	FailBuild error
+	// FailBuildLog is written to the build log before FailBuild returns.
+	FailBuildLog string
+	FailRemove   error
+	images       map[string]bool
+	containers   map[string]State
+	cimages      map[string]string // container -> image
+	volumes      map[string]bool
+	LastCommit   CommitSpec
 }
 
 func NewFake() *Fake {
@@ -50,6 +52,9 @@ func (f *Fake) Build(_ context.Context, spec BuildSpec, log io.Writer) error {
 		fmt.Fprintf(log, "fake build %s\n", spec.Tag)
 	}
 	if f.FailBuild != nil {
+		if log != nil {
+			io.WriteString(log, f.FailBuildLog)
+		}
 		return f.FailBuild
 	}
 	f.images[spec.Tag] = true
@@ -65,6 +70,9 @@ func (f *Fake) Commit(_ context.Context, spec CommitSpec, log io.Writer) error {
 		fmt.Fprintf(log, "fake commit %s\n", spec.Tag)
 	}
 	if f.FailBuild != nil {
+		if log != nil {
+			io.WriteString(log, f.FailBuildLog)
+		}
 		return f.FailBuild
 	}
 	f.images[spec.Tag] = true

@@ -5,6 +5,7 @@ import { clampToViewport } from "./popover";
 import { STATUS } from "./status";
 import { Select } from "./select";
 import { SetupFailed, orbWord } from "./status";
+import { failedBuild } from "./orb";
 
 export interface ModeValue { mode: SessionMode; project?: string }
 
@@ -25,9 +26,12 @@ export function ModePicker({ projects, value, onChange }: {
               onClick={() => onChange({ mode: "local" })}>Local</button>
       {withOrb.length > 0
         ? <Select label="Project" value={local ? "" : value.project ?? ""} align="start" placeholder="In a project…"
-                  options={withOrb.map((p) => ({ value: p.id, label: p.name }))}
+                  options={withOrb.map((p) => ({ value: p.id, label: p.name, detail: failedBuild(p) ? "Build failed" : undefined }))}
                   onChange={(id) => onChange(id ? { mode: "project", project: id } : { mode: "local" })} />
         : <button type="button" className="seg-item" disabled title="No project has an orb yet">Project</button>}
+      {!local && failedBuild(withOrb.find((p) => p.id === value.project)) && (
+        <span className="mode-warn" role="note">Last image build failed</span>
+      )}
     </div>
   );
 }

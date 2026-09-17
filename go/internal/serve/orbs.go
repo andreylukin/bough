@@ -523,14 +523,20 @@ func (a *API) sessionOrbLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := a.orbState(id)
+	// A failed build never reached resume.sh: its log is the project's build.log.
+	name, path := "resume.log", filepath.Join(orb.Dir(a.sup.Home(), id), "resume.log")
+	failedAt := orb.FailedAt(st.State)
+	if failedAt == orb.PhaseBuild && st.Project != "" {
+		name, path = "build.log", orb.ImageLogPath(a.sup.Home(), st.Project)
+	}
 	text := ""
-	if b, err := os.ReadFile(filepath.Join(orb.Dir(a.sup.Home(), id), "resume.log")); err == nil {
+	if b, err := os.ReadFile(path); err == nil {
 		if len(b) > maxLogChunk {
 			b = b[len(b)-maxLogChunk:]
 		}
 		text = string(b)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": st.Status, "error": st.Error, "image": st.Image, "text": text})
+	writeJSON(w, http.StatusOK, map[string]any{"status": st.Status, "error": st.Error, "phase": failedAt, "image": st.Image, "log": name, "text": text})
 }
 
 // sessionBuildLog streams the image build a session is waiting on: the

@@ -260,6 +260,11 @@ func buildCfg(ctx *kernel.Context, rowCfg map[string]any) (*uiCfg, error) {
 	if n, err := kernel.Get[string](ctx, "notice"); err == nil {
 		cfg.notice = n
 	}
+	// A project orb that failed or needs attention: the orb row says it
+	// here instead of on stderr, which the alt screen would paint over.
+	if n, err := kernel.Get[string](ctx, "orb-notice"); err == nil && n != "" {
+		cfg.notice = strings.TrimSpace(cfg.notice + "\n" + n)
+	}
 	// The web row moved pages off its configured port (a stale or
 	// foreign server holds it): say where they are.
 	if w, err := kernel.Get[interface{ Notice() string }](ctx, "web"); err == nil && w.Notice() != "" {

@@ -15,6 +15,29 @@ import (
 
 type Status string
 
+// What a failed orb failed at, so a ui offers the fix that applies:
+// rebuild the image, edit resume.sh, or fix the definition/runtime.
+const (
+	// PhaseBuild ("build"): the image build (setup.sh / Dockerfile)
+	PhaseSetup = "setup" // resume.sh in the running container
+	PhaseStart = "start" // runtime, repos, worktrees or the container start
+)
+
+// FailedAt is what a failed orb failed at: PhaseBuild, PhaseSetup or
+// PhaseStart, derived from the step it stopped in. "" unless failed.
+func FailedAt(s State) string {
+	if s.Status != StatusFailed {
+		return ""
+	}
+	switch s.Phase {
+	case PhaseBuild:
+		return PhaseBuild
+	case PhaseResume:
+		return PhaseSetup
+	}
+	return PhaseStart
+}
+
 const (
 	StatusNone     Status = ""         // local session
 	StatusBuilding Status = "building" // image build in progress

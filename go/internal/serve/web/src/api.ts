@@ -134,7 +134,7 @@ export const api = {
     req<{ text: string; offset: number; state: OrbBuild["state"] }>(`/api/projects/${id}/orb/build/log?offset=${offset}`),
   sessionOrb: (id: string) => req<{ orb: OrbState | null }>(`/api/sessions/${id}/orb`).then((r) => r.orb),
   /** Why a session's orb failed: its error and the tail of resume.log. */
-  sessionOrbLog: (id: string) => req<{ status: string; error: string; image: string; text: string }>(`/api/sessions/${id}/orb/log`),
+  sessionOrbLog: (id: string) => req<{ status: string; error: string; phase?: string; log?: string; image: string; text: string }>(`/api/sessions/${id}/orb/log`),
   /** The image build a session waits on, from offset: poll while its orb is building. */
   sessionBuildLog: (id: string, offset: number) =>
     req<{ text: string; offset: number; state: string; status: string; startedAt?: string; endedAt?: string }>(`/api/sessions/${id}/orb/build/log?offset=${offset}`),

@@ -231,6 +231,16 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .orb-failure pre{max-height:320px;overflow:auto;white-space:pre;border-top:0;padding:8px 10px}
 .orb-failure .link{align-self:flex-start}
 .orb-failure .orb-actions{display:flex;gap:16px}
+/* ORB-A3 */
+.orb-failure-title{margin:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--s-2);font-size:var(--fs-md);color:var(--red)}
+.orb-failure-title .meta-line{color:var(--text-2);overflow-wrap:anywhere}
+.orb-failure pre.orb-failure-lines{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text-1);background:var(--red-soft);border:1px solid var(--red-line);border-radius:var(--r-sm)}
+.orb-failure-log>summary{cursor:pointer;color:var(--text-3);font-size:var(--fs-sm)}
+.orb-failure-log>pre{margin:var(--s-1) 0 0}
+.orb-failure .orb-actions{flex-wrap:wrap;align-items:center}
+.orb-failure .orb-actions .link{text-decoration:underline}
+.mode-warn{align-self:center;font-size:var(--fs-sm);color:var(--amber);white-space:nowrap}
+/* /ORB-A3 */
 .link{background:none;border:0;padding:0;color:var(--text-3);font:var(--fs-sm) var(--sans);cursor:pointer}
 .link:hover{color:var(--text-1)}
 
