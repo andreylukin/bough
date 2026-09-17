@@ -45,7 +45,7 @@ func sessionsReg(t *testing.T) *commands.Registry {
 func writeJSONL(t *testing.T, dir, id, cwd, prompt string, mtime time.Time) string {
 	t.Helper()
 	p := filepath.Join(dir, id+".jsonl")
-	body := jsonLine(t, map[string]any{"seq": 1, "kind": "meta", "data": map[string]any{"cwd": cwd}}) + "\n" +
+	body := jsonLine(t, map[string]any{"seq": 1, "kind": "meta", "data": map[string]any{"cwd": cwd, "origin": "tui"}}) + "\n" +
 		jsonLine(t, map[string]any{"seq": 2, "kind": "input", "data": map[string]any{"text": prompt}}) + "\n" +
 		jsonLine(t, map[string]any{"seq": 3, "kind": "assistant", "data": map[string]any{"text": "answer for " + id}}) + "\n"
 	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
