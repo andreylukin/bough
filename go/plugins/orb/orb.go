@@ -200,6 +200,12 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		s.Set("orb", promptSection(o.Root(), st, p.Def, missing))
 		ctx.Effect(func() { s.Set("orb", "") })
 	}
+	// Resolved secrets never reach history: every entry goes through the
+	// orb's redactor (a no-op under `redact: false`).
+	if r, ok := h.(interface{ SetRedact(func(string) string) }); ok {
+		r.SetRedact(o.Redact)
+		ctx.Effect(func() { r.SetRedact(nil) })
+	}
 	ctx.Provide("orb", o)
 	ctx.Provide("orb-state", o)
 	// Stop, never Remove: a resumed session reuses its worktrees and

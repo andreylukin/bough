@@ -79,6 +79,9 @@ For each credential the repo expects (Makefile `ensure-*` targets,
   keychain and adds the ref to project.yml. You never see the value.
 - If the user already has a keychain item:
   `bough project set <slug> secrets.NAME keychain:<service>`.
+- Secret values (8+ chars) show as `[redacted:NAME]` in command output,
+  history and resume.log. `redact: false` in project.yml turns that off
+  only if the user asks.
 
 ## 5b. Host identity
 

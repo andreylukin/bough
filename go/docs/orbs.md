@@ -197,6 +197,7 @@ type Def struct {
 	Caches  []string          `yaml:"caches,omitempty"`  // guest dirs bound to ~/.bough/cache/<slug>/<sha>, e.g. /root/.cache/go-build
 	Env     map[string]string `yaml:"env,omitempty"`
 	Secrets map[string]string `yaml:"secrets,omitempty"` // env name -> keychain:<service>; refs only
+	Redact  *bool             `yaml:"redact,omitempty"`  // nil = on; false opts out of secret redaction
 	CPUs    int               `yaml:"cpus,omitempty"`
 	Memory  string            `yaml:"memory,omitempty"`
 }
@@ -348,6 +349,13 @@ are re-read from `projectdef.Load` on every exec (falling back to the
 Def captured at Open), so a secret added mid-session applies to the next
 command. An unresolved ref is left out, with one stderr line per name per
 orb. Secrets never go into the run env, which inspect shows.
+
+Redaction (`internal/orb/redact.go`): resolved values of 8+ bytes become
+`[redacted:NAME]` in tools.bash output (foreground result, error text and
+background job output, streamed with a held-back tail so a value split
+across chunks is still caught), in every history entry (the orb row sets
+`Store.SetRedact`), and in resume.log. `redact: false` in project.yml turns
+it off. The command text the model wrote is recorded as written.
 
 ### 1d. Identity, tools and egress
 

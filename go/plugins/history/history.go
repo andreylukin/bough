@@ -61,8 +61,9 @@ type Store struct {
 	// is the first error of that streak until TakeErr hands it over.
 	failing bool
 	failErr error
-	onErr   func(error) // SetErrorSink; nil = keep it for TakeErr
-	shared  bool        // another writer's entries were seen (warned once)
+	onErr   func(error)         // SetErrorSink; nil = keep it for TakeErr
+	shared  bool                // another writer's entries were seen (warned once)
+	redact  func(string) string // SetRedact; nil = entries are kept as given
 }
 
 // ConcurrentWriter is reported (to the SetErrorSink, else stderr) the
@@ -84,6 +85,54 @@ func (s *Store) SetErrorSink(f func(error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onErr = f
+}
+
+// SetRedact installs a rewrite applied to every string of an entry's data
+// before Append keeps or writes it (a project orb's secret redaction).
+func (s *Store) SetRedact(f func(string) string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.redact = f
+}
+
+// redactValue copies v with f applied to each string, so the caller's
+// map is never rewritten.
+func redactValue(v any, f func(string) string) any {
+	switch x := v.(type) {
+	case string:
+		return f(x)
+	case map[string]any:
+		m := make(map[string]any, len(x))
+		for k, e := range x {
+			m[k] = redactValue(e, f)
+		}
+		return m
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = redactValue(e, f)
+		}
+		return out
+	case []string:
+		out := make([]string, len(x))
+		for i, e := range x {
+			out[i] = f(e)
+		}
+		return out
+	case nil, bool, int, int64, float64, time.Time:
+		return v
+	}
+	// Any other shape (a typed struct, []map[string]any) goes through
+	// its JSON form, which is what reaches disk anyway.
+	b, err := json.Marshal(v)
+	if err != nil {
+		return v
+	}
+	var generic any
+	if json.Unmarshal(b, &generic) != nil {
+		return v
+	}
+	return redactValue(generic, f)
 }
 
 // Open creates (or truncates) the JSONL file at path, creating parent
@@ -518,6 +567,9 @@ func (s *Store) Append(kind string, data map[string]any) Entry {
 	unlock := lockFile(s.f)
 	defer unlock()
 	s.catchUp()
+	if s.redact != nil && data != nil {
+		data = redactValue(data, s.redact).(map[string]any)
+	}
 	e := Entry{Seq: s.seq + 1, At: time.Now(), Kind: kind, Data: data, Parent: s.last}
 	s.seq++
 	s.last = e.Seq

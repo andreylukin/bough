@@ -42,6 +42,9 @@ type Def struct {
 	// Secrets maps an env name to a ref (keychain:<service>); values never
 	// live in this file.
 	Secrets map[string]string `yaml:"secrets,omitempty"`
+	// Redact replaces resolved secret values (8+ chars) in tool output,
+	// history and resume.log; nil = on, `redact: false` opts out.
+	Redact *bool `yaml:"redact,omitempty"`
 	// Identity opts the container into the user's host identity; nothing
 	// is lent by default. "<dir>" mounts $HOME/<dir> read-only at
 	// /root/<dir>, "<dir>:rw" read-write, and "gh" passes GH_TOKEN.
