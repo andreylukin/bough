@@ -2301,6 +2301,14 @@ a.rt-link{text-decoration:none}
 .runtime-strip>.rt-jobs>summary,.runtime-strip>.rt-link,.runtime-strip>.rt-tip{padding-block:4px;margin-block:-4px}
 .head-main h1{min-width:min(12ch,100%)}
 /* /WEB9 */
+/* WEB11: prompts and answers carry Copy (and Edit into composer) on hover
+   or keyboard focus; an answer shows its time there too */
+.msg-acts{display:flex;align-items:center;gap:8px;min-height:24px;font-size:12px;color:var(--text-3);opacity:0;transition:opacity .12s}
+.prompt:hover .msg-acts,.say:hover>.msg-acts,.msg-acts:focus-within{opacity:1}
+.msg-acts .copy-btn{opacity:1}
+.prompt-acts{grid-column:2}
+.say>.msg-acts{margin-top:-4px}
+/* /WEB11 */
 </style>
 </head>
 <body>
