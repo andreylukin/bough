@@ -736,5 +736,8 @@ export function workHeadline(s: { actions: number; thinkingOnly: boolean; from: 
   // Under a second is not a fact worth a slot ("Worked for 0s").
   const took = ms >= 1000 ? ` for ${duration(ms)}` : "";
   if (s.thinkingOnly) return "Thought" + took;
-  return "Worked" + took + (s.actions ? ` · ${s.actions} ${s.actions === 1 ? "action" : "actions"}` : "");
+  // MB-TR: never a bare "Worked": no duration leaves the count alone.
+  const count = s.actions ? `${s.actions} ${s.actions === 1 ? "action" : "actions"}` : "";
+  if (!took) return count || "Worked briefly";
+  return "Worked" + took + (count ? " · " + count : "");
 }

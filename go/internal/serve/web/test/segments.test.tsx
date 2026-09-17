@@ -54,7 +54,7 @@ test("work between replies splits into segments with actions, failures and durat
 test("thinking alone reads Thought for, until the reply it led to; one action is singular", () => {
   const segs = segsOf([lines[0], lines[1], { ...lines[5], at: at(8) }, lines[12]]);
   expect(workHeadline(segs[0] as never)).toBe("Thought for 7s");
-  expect(workHeadline({ actions: 1, thinkingOnly: false, from: at(0), to: at(0.2) })).toBe("Worked · 1 action");
+  expect(workHeadline({ actions: 1, thinkingOnly: false, from: at(0), to: at(0.2) })).toBe("1 action");
 });
 
 test("a live turn's last segment carries the current step; running subagents stay out of it", () => {

@@ -1045,7 +1045,7 @@ export function CodeBlock({ line }: { line: Line }) {
           // The program bough actually ran, one layer further in. The
           // block above is the readable version of it, not a substitute.
           <details className="block-inner">
-            <summary><span className="block-label">The call</span></summary>
+            <summary><span className="block-label">Program</span></summary>
             <Code text={call.raw} lang="javascript" />
           </details>
         )}
@@ -1315,7 +1315,7 @@ export function Entry({ line, codes, nested, until }: { line: Line; codes: strin
   }
   if (k === "input") {
     // R3-C: a steer the running turn took, inside that turn.
-    return <p className="steer-note"><span className="mono prompt-mark" aria-hidden="true">&gt;</span><span className="steer-word">Steer</span>{line.text}</p>;
+    return <p className="steer-note"><span className="steer-word">Steer</span>{line.text}</p>;
   }
   if (k === "model-switch") {
     // A /model switch records the command and the loop's echo: one line, the record inside.
@@ -1771,6 +1771,20 @@ function resultBody(l: Line): string {
 /** Verbs parseCall classifies; anything else is a group without an invented name. */
 const KNOWN_VERBS = new Set(["Ran", "Wrote", "Patched", "Read", "Delegate", "Asked you", "Test", "Search", "Build", "Fetch", "Vet"]);
 
+/** MB-TR: a failure's one red glyph, a 12px ×-circle. */
+function FailMark() {
+  return (
+    <svg className="fail-mark" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" /><path d="m9 9 6 6M15 9l-6 6" />
+    </svg>
+  );
+}
+
+/** MB-TR: a stop is neither error nor warning: a small neutral square. */
+export function StopMark() {
+  return <span className="stop-mark" aria-hidden="true" />;
+}
+
 function WarnMark() {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1890,7 +1904,7 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned, turnEdi
       <div className="toolrun-body">{rows}</div>
     </details>
     {/* R3-F: the button that opens the failure sits beside the summary, not inside it, pinned to the row's end so it never wraps alone. */}
-    {failed > 0 && <button type="button" className="link num toolrun-failed" onClick={openFailed}>{failed} failed</button>}
+    {failed > 0 && <button type="button" className="link num toolrun-failed" onClick={openFailed}><FailMark />{failed} failed</button>}
     </div>
   );
 }
@@ -1938,11 +1952,13 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
   const empty = Boolean(result) && !out.trim();
   // "exit N" is a bash exit; a block that threw says what it threw instead.
   // R3-F: a failed call says so once, quietly, at the end of the row: never in the meta as well.
-  const meta = [continues ? `Continues as Job ${continues}` : "", exit !== undefined && !thrown ? `exit ${exit}` : "", empty ? "No output" : "", ms !== undefined ? (ms < 1000 ? "<1s" : duration(ms)) : ""];
+  const meta = [continues ? `Continues as Job ${continues}` : "", empty ? "No output" : "", ms !== undefined ? (ms < 1000 ? "<1s" : duration(ms)) : ""];
   const what = call.lang === "bash" ? "Command" : call.lang === "javascript" ? "Program" : "Content";
   // No result: still running, cut off by a stop, or never recorded. Each says which.
   const card = !result && spawned && /tools\.spawn(All)?\(/.test(code.text) ? spawned : undefined;
-  const missing = result || card ? null : live ? "running" : stopped ? "Interrupted · result not recorded" : "Result not recorded";
+  const missing = result || card ? null : live ? "running" : stopped ? "Interrupted" : "Result not recorded";
+  // MB-TR: "exit 0" is noise; a non-zero exit is the one red fact in the meta.
+  const exitBad = exit !== undefined && exit !== 0 && !thrown;
   const [full, setFull] = useState(false);
   // File rows fetch their numbered diffs only once the call is opened.
   const [opened, setOpened] = useState(Boolean(current));
@@ -1961,10 +1977,10 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
           {!failed && <span className="num edit-counts">{editAdd > 0 && <span className="rt-add">+{editAdd}</span>}{editDel > 0 && <span className="rt-del">−{editDel}</span>}</span>}
         </> : !label && <span className="mono block-detail" title={call.gist}>{timedOut ? timedOut[1] : phone ? tailPath(gistOf(call.gist)) : gistOf(call.gist)}</span>}
         {thrown && <span className="tool-thrown" title={thrown}>{firstLine(thrown)}</span>}
-        {meta.some(Boolean) && (
-          <span className="num tool-meta">{meta.filter(Boolean).join(" · ")}</span>
+        {failed && <FailMark />}
+        {(exitBad || meta.some(Boolean)) && (
+          <span className="num tool-meta">{exitBad && <span className="tool-meta-failed">exit {exit}</span>}{exitBad && meta.some(Boolean) ? " · " : ""}{meta.filter(Boolean).join(" · ")}</span>
         )}
-        {failed && !(edits.length && !label) && <span className="tool-state tool-state-failed">failed</span>}
         {missing === "running" && (
           <span className="num tool-meta tool-running">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -1973,17 +1989,20 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
           </span>
         )}
         {card && <WorkState w={card} />}
-        {missing && missing !== "running" && <span className="tool-unrecorded"><WarnMark />{missing}</span>}
+        {missing && missing !== "running" && <span className={"tool-unrecorded" + (stopped ? " tool-stopped" : "")}>{stopped ? <StopMark /> : <WarnMark />}{missing}</span>}
         {!empty && <CopyButton text={out || call.body || call.raw} what={result ? "output" : call.verb.toLowerCase() + " block"} />}
       </summary>
       {pop}
       <div className="block-body">
         {/* Output first; the call that made it is one disclosure, once. */}
+        {result && !empty && <span className="body-copy"><CopyButton text={out} what="output" /></span>}
+        {stopped && !result && !card && <p className="tool-noresult">No result was recorded.</p>}
         {!result && call.body && <Code text={call.body} lang={call.lang} />}
         {failed && diag.length > 0 && (
           <div className="fail-diag">
+            <div className="fail-head"><span className="fail-lead">Failed</span> <span className="fail-first">{diag.find((l) => /^\s*(error|Error|FAIL|panic)/.test(l)) ?? diag.at(-1)}</span></div>
             <pre className="mono fail-cmd">{cmdText}</pre>
-            <pre className="mono">{diag.join("\n")}</pre>
+            <pre className="mono fail-out">{diag.map((l, i) => <span key={i} className={/^\s*(error:|Error)/.test(l) ? "fail-line fail-line-err" : "fail-line"}>{l}</span>)}</pre>
             <div className="fail-actions">
               <CopyText text={cmdText} label="Copy command" />
               {diag.length < out.split("\n").length && (
@@ -2017,7 +2036,7 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
           </details>
         ) : call.body !== call.raw && (
           <details className="block-inner">
-            <summary><span className="block-label">The call</span></summary>
+            <summary><span className="block-label">Program</span></summary>
             <Code text={call.raw} lang="javascript" />
           </details>
         )}
@@ -2175,7 +2194,8 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
         </span>
       ) : errored && !(turn.stopped || done.kind === "cancelled") ? null : (
         // R3-F: a turn that ended on an error says so in the error itself, not again under it.
-        <span className={"turn-outcome" + (failed || failedWork ? " turn-failed" : "")}>
+        <span className={"turn-outcome" + (failed || failedWork ? " turn-failed" : "") + (turn.stopped || done.kind === "cancelled" ? " turn-stopped" : "")}>
+          {(turn.stopped || done.kind === "cancelled") && <StopMark />}
           {turn.stopped || done.kind === "cancelled" ? statusWord("stopped") : failed ? `${statusWord("done")} with a failed command · exit ${exit}` : statusWord("done") + (failedWork ? ` · ${failedWork} failed` : "")}
         </span>
       )}
@@ -2557,6 +2577,15 @@ const segOpen = new Map<string, boolean>();
  * the rows it folded. It is a native details element, so a jump that opens
  * every details around its target opens this one too.
  */
+/** MB-TR: "+12 −3" on a folded segment, from the edits its own calls made; a zero side is left out. */
+function WorkEdits({ seg }: { seg: Extract<Segment, { kind: "work" }> }) {
+  const code = seg.items.flatMap((it) => it.kind === "tools" ? it.lines : it.kind === "line" ? [it.line] : []).filter((l) => l.kind === "code").map((l) => l.text).join("\n");
+  const edits = useMemo(() => callEdits(code), [code]);
+  const add = edits.reduce((n, f) => n + f.add, 0), del = edits.reduce((n, f) => n + f.del, 0);
+  if (!add && !del) return null;
+  return <span className="num work-seg-edits">{add > 0 && <span className="rt-add">+{add}</span>}{del > 0 && <span className="rt-del">−{del}</span>}</span>;
+}
+
 function WorkSegmentRow({ seg, session, defaultOpen, running, since, step, all, children }: {
   seg: Extract<Segment, { kind: "work" }>; session: string; defaultOpen: boolean;
   /** The last segment of a live turn: a spinner, the turn's timer and the current step. */
@@ -2583,7 +2612,8 @@ function WorkSegmentRow({ seg, session, defaultOpen, running, since, step, all, 
         <span className="block-label">{running ? "Working" : workHeadline(seg)}</span>
         {running && since && <span className="num work-seg-time"><Elapsed since={since} /></span>}
         {running && step && <span className="mono block-detail work-seg-step" title={step}>{step}</span>}
-        {seg.failed > 0 && <span className="num toolrun-failed">{seg.failed} failed</span>}
+        {!running && <WorkEdits seg={seg} />}
+        {seg.failed > 0 && <span className="num toolrun-failed"><FailMark />{seg.failed} failed</span>}
       </summary>
       <div className="work-seg-body">{children}</div>
     </details>
@@ -2797,7 +2827,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
         {/* R4-C: a stopped turn marks the cut right where its prose ends, not only in the footer. */}
         {(turn.stopped || turn.done?.kind === "cancelled") && [...turn.body].reverse().find((l) => !isHookLine(l) && l.kind !== "cancelled" && l.kind !== "done" && l.kind !== "usage")?.kind === "assistant" && (
           <p className="turn-interrupted">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9 9v6M15 9v6" /></svg>
+            <StopMark />
             Interrupted
           </p>
         )}
@@ -2825,7 +2855,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
       {cut && (
         <div className="turn-foot">
           {/* R3-C: one stop word and one duration phrase, as a stopped turn's footer has. */}
-          <span className="turn-outcome">{statusWord("stopped")}</span>
+          <span className="turn-outcome turn-stopped"><StopMark />{statusWord("stopped")}</span>
           {turn.prompt?.at && (() => {
             const end = turn.body[turn.body.length - 1]?.at ?? turn.prompt.at;
             const ms = Date.parse(end) - Date.parse(turn.prompt.at);

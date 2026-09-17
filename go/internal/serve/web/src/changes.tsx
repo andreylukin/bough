@@ -305,13 +305,16 @@ export function outputParts(text: string): OutputPart[] {
 export function EditDiff({ part }: { part: Extract<OutputPart, { kind: "edit" }> }) {
   return (
     <div className="edit-diff">
-      <div className="edit-diff-head"><span className="mono">{part.path}</span>{" "}
+      <div className="edit-diff-head"><span className="mono edit-diff-path">{part.path.includes("/") && <span className="edit-diff-dir">{part.path.slice(0, part.path.lastIndexOf("/") + 1)}</span>}{part.path.split("/").pop()}</span>{" "}
         {part.add > 0 && <span className="num rt-add">+{part.add}</span>}{" "}
         {part.del > 0 && <span className="num rt-del">−{part.del}</span>}</div>
       {part.lines.length > 0 && (
         <pre className="mono dl-body edit-diff-body">{part.lines.map((l, i) => {
           const kind = l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : l === "…" ? "hunk" : "ctx";
-          return <span key={i} className={"dl" + lineClass[kind]}><span className="dl-t">{l + "\n"}</span></span>;
+          // MB-TR: the tool prints no numbers, so the sign takes the gutter; "…" is a strip that names what it skips.
+          if (kind === "hunk") return <span key={i} className={"dl" + lineClass[kind]}><span className="dl-t">{"Unchanged lines\n"}</span></span>;
+          const sign = kind === "add" ? "+" : kind === "del" ? "−" : "";
+          return <span key={i} className={"dl" + lineClass[kind]}><span className="dl-s" aria-hidden="true">{sign}</span><span className="dl-t">{(kind === "ctx" ? l : l.slice(1)) + "\n"}</span></span>;
         })}</pre>
       )}
     </div>

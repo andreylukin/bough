@@ -36,7 +36,8 @@ test("recorded thinking reads Thought for Ns", () => {
 
 test("a turn cut off by a later one stops its open rows and says Interrupted", () => {
   const html = renderToStaticMarkup(<TurnView turn={groupTurns(live)[0]} superseded />);
-  expect(html).toContain("Interrupted · result not recorded");
+  expect(html).toContain("Interrupted");
+  expect(html).toContain("No result was recorded.");
   expect(html).toContain("turn-foot");
   expect(renderToStaticMarkup(<TurnView turn={groupTurns(live)[0]} />)).not.toContain("result not recorded");
 });
