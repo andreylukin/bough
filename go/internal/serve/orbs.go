@@ -62,6 +62,9 @@ type OrbDetail struct {
 	Build   orb.Build         `json:"build"`
 	Orbs    []OrbState        `json:"orbs"`
 	Runtime OrbRuntime        `json:"runtime"`
+	// Preflight is what a session start needs, checked now. A broken
+	// definition checks only the runtime; the image row says why.
+	Preflight []orb.PreflightCheck `json:"preflight"`
 }
 
 // projectRow is a label plus its orb, present only when a slug is set.
@@ -365,6 +368,11 @@ func (a *API) orbDetail(w http.ResponseWriter, r *http.Request) {
 	} else {
 		d.Runtime.Available = true
 	}
+	def, err := projectdef.Load(home, p.Slug)
+	if err != nil {
+		def = projectdef.Project{Slug: p.Slug}
+	}
+	d.Preflight = orb.Preflight(r.Context(), home, rt, def)
 	writeJSON(w, http.StatusOK, d)
 }
 

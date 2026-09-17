@@ -471,3 +471,19 @@ func TestRemoveOrb(t *testing.T) {
 		t.Errorf("live orb removed: %v", err)
 	}
 }
+
+// B4: the orb detail carries the preflight, runtime first.
+func TestOrbDetailPreflight(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	id := mkProject(t, f, "pf")
+	f.do(t, "POST", "/api/projects/"+id+"/orb", `{}`)
+	_, d := f.do(t, "GET", "/api/projects/"+id+"/orb", "")
+	pf, _ := d["preflight"].([]any)
+	if len(pf) == 0 {
+		t.Fatalf("no preflight in %v", d)
+	}
+	if c, _ := pf[0].(map[string]any); c["kind"] != "runtime" || c["status"] != "ok" {
+		t.Errorf("first check = %v", c)
+	}
+}

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import type { Job, OrbDetail, OrbRemovePlan, OrbFile, OrbStatus, Project, Status } from "./types";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { Job, OrbDetail, PreflightCheck, OrbRemovePlan, OrbFile, OrbStatus, Project, Status } from "./types";
 import { askChoice, askConfirm } from "./dialog";
 import { sessionTitle } from "./render";
 import { CopyButton, Pending } from "./loading";
@@ -14,13 +14,37 @@ function Prose({ text }: { text: string }) {
 }
 
 /** A state mark with its word, and the reason after it when there is one. */
-function Mark({ status, word, detail }: { status: Status; word: string; detail?: string }) {
+function Mark({ status, word, detail }: { status: Status; word: ReactNode; detail?: string }) {
   return (
     <span className="orb-mark" style={{ color: STATUS[status].tone }}>
       <svg className="state-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{STATUS[status].glyph}</svg>
       {word}{detail && <span className="orb-why"> · <Prose text={detail} /></span>}
     </span>
+  );
+}
+
+const CHECK_TONE: Record<PreflightCheck["status"], Status> = { ok: "done", warn: "needs-you", fail: "error" };
+const CHECK_KIND: Record<PreflightCheck["kind"], string> = { runtime: "Runtime", clone: "Clone", gh: "", secret: "Secret" };
+
+/** The preflight: runtime up, each repo clones, the gh token, each secret resolves. */
+function Preflight({ checks }: { checks: PreflightCheck[] }) {
+  const failing = checks.filter((c) => c.status === "fail").length;
+  return (
+    <>
+      <dt>Preflight</dt>
+      <dd>
+        <ul className="orb-preflight">
+          {checks.map((c) => (
+            <li key={c.kind + c.name}>
+              <Mark status={CHECK_TONE[c.status]} detail={c.detail}
+                    word={<>{CHECK_KIND[c.kind] ? <>{CHECK_KIND[c.kind]} <span className="mono">{c.name}</span></> : c.name}</>} />
+            </li>
+          ))}
+        </ul>
+        {failing > 0 && <span className="orb-hint">{failing} failing · a new session will likely fail to start</span>}
+      </dd>
+    </>
   );
 }
 
@@ -155,13 +179,15 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
     <div className="proj-orb">
       {about}
       <dl className="orb-kv">
-        <dt>Runtime</dt>
-        <dd>
-          <span className="mono">{detail.runtime.name || "unknown"}</span>
-          {detail.runtime.available
-            ? <Mark status="done" word="Available" />
-            : <Mark status="error" word="Unavailable" detail={detail.runtime.error} />}
-        </dd>
+        {!detail.preflight?.length && <>
+          <dt>Runtime</dt>
+          <dd>
+            <span className="mono">{detail.runtime.name || "unknown"}</span>
+            {detail.runtime.available
+              ? <Mark status="done" word="Available" />
+              : <Mark status="error" word="Unavailable" detail={detail.runtime.error} />}
+          </dd>
+        </>}
         <dt>Image</dt>
         <dd>
           <span className="mono">{detail.orb.image || "none"}</span>
@@ -172,6 +198,7 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
             : detail.build.state === "failed" ? <Mark status="error" word="Build failed" detail={detail.build.error} />
             : <Mark status="idle" word="Not built" />}
         </dd>
+        {!!detail.preflight?.length && <Preflight checks={detail.preflight} />}
       </dl>
 
       <div className="orb-tabs" role="tablist" aria-label="Definition files">

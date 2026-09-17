@@ -22,6 +22,7 @@ import (
 
 const projectUsage = `usage: bough project <command>
   list                                  every project and its repos
+  status <slug>                         preflight: runtime up, repos clone, gh token, secrets resolve
   show <slug> [file]                    print project.yml, Dockerfile, setup.sh, resume.sh (or one)
   create <slug> <repo>...               new project; a repo is a local path (~ ok) or a git remote
   add-repo <slug> <repo> [--branch B] [--name N]
@@ -162,6 +163,11 @@ func project(out io.Writer, in io.Reader, args []string) error {
 			return err
 		}
 		return mutate(out, home, args[1], func(d *projectdef.Def) error { return setKey(d, args[2], args[3]) })
+	case "status":
+		if err := need(1); err != nil {
+			return err
+		}
+		return projectStatus(out, home, args[1])
 	case "rm":
 		return projectRm(out, in, home, args[1:])
 	case "prune":
