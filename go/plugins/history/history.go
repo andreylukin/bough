@@ -254,15 +254,15 @@ func metaMode(data map[string]any) (mode, project string) {
 	return mode, project
 }
 
-// sessionMode is the launcher's "session-mode" service, local when
-// absent: an old config tree or a bare test context must behave as the
-// safe default, never as a writable project session.
 // snapshotsTurns is whether a session in mode started in cwd can change
 // files, so its turns take checkpoints.
 func snapshotsTurns(mode, cwd, home string) bool {
 	return mode == "project" || (cwd != "" && orb.CheckoutRoot(cwd, home) != "")
 }
 
+// sessionMode is the launcher's "session-mode" service, local when
+// absent: an old config tree or a bare test context must behave as the
+// safe default, never as a writable project session.
 func sessionMode(ctx *kernel.Context) (mode, project string) {
 	mode, _ = kernel.Get[string](ctx, "session-mode")
 	if mode != "project" {
