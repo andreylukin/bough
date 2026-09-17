@@ -81,7 +81,8 @@ func forCwd(infos []history.SessionInfo, dir string) []history.SessionInfo {
 	return out
 }
 
-// printSessions renders the session table: id, local time, entry
+// printSessions renders the session table: id, local time, mode
+// (local or project:<slug>), entry
 // count, first-input title truncated to ~60 columns, and with withCwd
 // the recorded working directory ("?" for files predating it).
 func printSessions(w io.Writer, infos []history.SessionInfo, withCwd bool) {
@@ -91,8 +92,12 @@ func printSessions(w io.Writer, infos []history.SessionInfo, withCwd bool) {
 		if r := []rune(title); len(r) > 60 {
 			title = string(r[:59]) + "…"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%d entries\t%s",
-			in.ID, in.ModTime.Local().Format("2006-01-02 15:04"), in.Entries, title)
+		mode := "local"
+		if in.Mode == "project" {
+			mode = "project:" + in.Project
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d entries\t%s",
+			in.ID, in.ModTime.Local().Format("2006-01-02 15:04"), mode, in.Entries, title)
 		if withCwd {
 			d := in.Cwd
 			if d == "" {

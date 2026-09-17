@@ -7,12 +7,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/andreylukin/bough/internal/container"
 	"github.com/andreylukin/bough/internal/projectdef"
 )
 
 func TestProjectCommand(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	old := projectRuntime
+	projectRuntime = func() container.Runtime { return container.NewFake() }
+	t.Cleanup(func() { projectRuntime = old })
 	os.MkdirAll(filepath.Join(home, "repos", "web"), 0o755)
 	run := func(stdin string, args ...string) (string, error) {
 		var out bytes.Buffer
@@ -56,7 +60,7 @@ func TestProjectCommand(t *testing.T) {
 	if s, _ := projectdef.ReadFile(home, "web", "resume.sh"); s != "git fetch\n" {
 		t.Errorf("resume.sh = %q", s)
 	}
-	if out, _ := run("", "list"); out != "web\tweb, api\n" {
+	if out, _ := run("", "list"); !strings.Contains(out, "web   web, api  not built  -") {
 		t.Errorf("list = %q", out)
 	}
 

@@ -1027,9 +1027,7 @@ func (s *Supervisor) stopKilledOrb(id string) {
 // marked stopped first, so the child can tell a job this kills from a job
 // that failed (and not wake a turn for it); a failed stop puts it back.
 func (s *Supervisor) stopOrb(ctx context.Context, id string) error {
-	prev, _ := orb.MarkStopped(s.Home(), id)
-	if err := s.rt.Stop(ctx, container.OrbName(id)); err != nil {
-		_ = orb.Restore(s.Home(), prev)
+	if err := orb.StopContainer(ctx, s.rt, s.Home(), id); err != nil {
 		return err
 	}
 	s.mu.Lock()

@@ -526,11 +526,8 @@ func (a *API) sessionOrbLog(w http.ResponseWriter, r *http.Request) {
 	}
 	st := a.orbState(id)
 	// A failed build never reached resume.sh: its log is the project's build.log.
-	name, path := "resume.log", filepath.Join(orb.Dir(a.sup.Home(), id), "resume.log")
+	name, path := orb.LogFor(a.sup.Home(), st.State)
 	failedAt := orb.FailedAt(st.State)
-	if failedAt == orb.PhaseBuild && st.Project != "" {
-		name, path = "build.log", orb.ImageLogPath(a.sup.Home(), st.Project)
-	}
 	text := ""
 	if b, err := os.ReadFile(path); err == nil {
 		if len(b) > maxLogChunk {
