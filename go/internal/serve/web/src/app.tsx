@@ -2092,7 +2092,7 @@ export function TurnFiles({ files, turn }: { files: string[]; turn: Turn }) {
  * actually answering. The window is only named when the session records
  * its model; a default model is not guessed at.
  */
-function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, loading, cat }: { row: Row; lines: Line[]; paused?: number; onRetry?: () => void; onContext?: () => void; /** The Work button, after the metrics. */ work?: React.ReactNode; loading?: boolean; /** The thread's model catalogue, read once for the strip and the pickers. */ cat: Catalogue | null }) {
+function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, loading, cat }: { row: Row; lines: Line[]; paused?: number; onRetry?: () => void; onContext?: () => void; /** The Work button, after the metrics. */ work?: React.ReactNode; /** Header actions (Stop orb, Mark seen), after Work. */ actions?: React.ReactNode; loading?: boolean; /** The thread's model catalogue, read once for the strip and the pickers. */ cat: Catalogue | null }) {
   const limits = useMemo(() => {
     const m: Record<string, number> = {};
     for (const p of cat?.providers ?? []) for (const x of p.models ?? []) if (x.context) m[x.id] = x.context;
@@ -2113,17 +2113,23 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, loading, c
   const pct = u && limit ? Math.min(100, Math.round((u.lastIn / limit) * 100)) : undefined;
   const strip = useRef<HTMLDivElement>(null);
   usePopovers(strip);
-  // On a one-row header the lowest chips fold into "…", cache first, until
-  // the title keeps its room. A new pane width starts over from none.
+  // R3-G: the metrics fold into one "…", cache first, then tests, edits,
+  // cost and context, until the title group (status and all) and the strip
+  // each fit their room. A phone folds them all. A new pane width starts over.
   const [fold, setFold] = useState(0);
+  const recheck = useRef<() => void>(() => {});
+  // A fold that frees no width fires no resize, so each fold checks again.
+  useEffect(() => { const id = requestAnimationFrame(() => recheck.current()); return () => cancelAnimationFrame(id); }, [fold]);
   useEffect(() => {
     const el = strip.current, head = el?.parentElement, main = head?.querySelector<HTMLElement>(".head-main");
     if (!el || !head || !main || typeof ResizeObserver === "undefined") return;
     const check = () => {
-      if (getComputedStyle(el).flexWrap !== "nowrap") return setFold(0);
+      if (window.matchMedia?.("(max-width:720px)").matches) return setFold(5);
       const h1 = main.querySelector("h1");
-      if (main.clientWidth < Math.min(main.scrollWidth, 240) || (h1 && h1.scrollWidth > h1.clientWidth)) setFold((f) => Math.min(f + 1, 3));
+      const over = main.scrollWidth > main.clientWidth + 1 || el.scrollWidth > el.clientWidth + 1 || (h1 && h1.clientWidth < Math.min(h1.scrollWidth, 160));
+      if (over) setFold((f) => Math.min(f + 1, 5));
     };
+    recheck.current = check;
     let w = head.clientWidth;
     const ro = new ResizeObserver(() => {
       if (head.clientWidth !== w) { w = head.clientWidth; setFold(0); }
@@ -2135,57 +2141,63 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, loading, c
   const cache = row.cache && <CacheChip key="cache" cache={row.cache} model={row.model} />;
   const tests = <TestsChip key="tests" lines={lines} running={row.status === "running"} />;
   const edits = <ChangesChip key="edits" row={row} />;
-  const folded = [fold >= 3 && edits, fold >= 2 && tests, fold >= 1 && cache].filter(Boolean);
-  // Work first: it is never folded. Cache, changes and tests stand on their
-  // own: a session with no usage recorded can still have a server running.
+  // Cache, changes and tests stand on their own: a session with no usage
+  // recorded can still have a server running.
+  const context = (() => {
+    // The reading is the way into Context; there is no second button for
+    // it, and it stays when nothing was reported so the way in does too.
+    const tip = !u ? "No input tokens have been reported for this session"
+      : limit ? `${u.lastIn.toLocaleString()} of ${limit.toLocaleString()} tokens, read by ${row.model}`
+      : !row.model ? "No model is recorded for this session, so headroom is not known"
+      : switched ? "The model changed after this input was read; headroom shows once the new model answers"
+      : `${row.model} has no context window in the catalogue`;
+    // Until the transcript arrives there is nothing to report yet; after,
+    // a session that never reports shows one quiet dash, not a label.
+    if (loading && !u) return <span key="context" className="rt rt-loading" aria-label="Loading usage"><span className="rt-label">Context</span><span className="rt-skel" /></span>;
+    // No value, no chip: the Context view (palette, settings sheet) still names why.
+    if (!u) return null;
+    const body = <>
+      <span className="rt-label">Context</span>
+      <span className={"num rt-value" + (u ? "" : " rt-stale")}>{!u ? "—" :`${tokenCount(u.lastIn)}${limit ? ` · ${tokenCount(Math.max(0, limit - u.lastIn))} left` : ""}`}</span>
+      {pct !== undefined && (
+        <span className="rt-bar" role="meter" aria-label="Context used" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+          <span className={pct >= 80 ? "rt-hot" : undefined} style={{ width: `${pct}%` }} />
+        </span>
+      )}
+    </>;
+    return onContext
+      ? <button key="context" type="button" className="rt rt-link" title={`${tip} · open Context`} aria-label={`Context: ${tip}`} onClick={onContext}>{body}</button>
+      : <Tip key="context" tip={tip}>{body}</Tip>;
+  })();
+  const cost = u?.cost !== undefined && (
+    <Tip key="cost" tip={`Session cost ${money(u.cost)} · ${u.in.toLocaleString()} tokens in · ${u.out.toLocaleString()} out`}>
+      <span className="rt-label">Cost</span><span className="num rt-value">{money(u.cost)}</span>
+    </Tip>
+  );
+  const folded = [fold >= 5 && context, fold >= 4 && cost, fold >= 3 && edits, fold >= 2 && tests, fold >= 1 && cache].filter(Boolean);
+  // Two groups on the right: the metrics (folding behind one "…"), then the
+  // actions, which never fold.
   return (
     <div className="runtime-strip" ref={strip}>
-      {work}
       {paused !== undefined && (
         <span className="rt-paused" role="status">
           Updates paused · last synced {clock(new Date(paused).toISOString())} · <button className="link" onClick={onRetry}>Retry</button>
         </span>
       )}
-      {(() => {
-        // The reading is the way into Context; there is no second button for
-        // it, and it stays when nothing was reported so the way in does too.
-        const tip = !u ? "No input tokens have been reported for this session"
-          : limit ? `${u.lastIn.toLocaleString()} of ${limit.toLocaleString()} tokens, read by ${row.model}`
-          : !row.model ? "No model is recorded for this session, so headroom is not known"
-          : switched ? "The model changed after this input was read; headroom shows once the new model answers"
-          : `${row.model} has no context window in the catalogue`;
-        // Until the transcript arrives there is nothing to report yet; after,
-        // a session that never reports shows one quiet dash, not a label.
-        if (loading && !u) return <span className="rt rt-loading" aria-label="Loading usage"><span className="rt-label">Context</span><span className="rt-skel" /></span>;
-        // No value, no chip: the Context view (palette, settings sheet) still names why.
-        if (!u) return null;
-        const body = <>
-          <span className="rt-label">Context</span>
-          <span className={"num rt-value" + (u ? "" : " rt-stale")}>{!u ? "—" :`${tokenCount(u.lastIn)}${limit ? ` · ${tokenCount(Math.max(0, limit - u.lastIn))} left` : ""}`}</span>
-          {pct !== undefined && (
-            <span className="rt-bar" role="meter" aria-label="Context used" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-              <span className={pct >= 80 ? "rt-hot" : undefined} style={{ width: `${pct}%` }} />
-            </span>
-          )}
-        </>;
-        return onContext
-          ? <button type="button" className="rt rt-link" title={`${tip} · open Context`} aria-label={`Context: ${tip}`} onClick={onContext}>{body}</button>
-          : <Tip tip={tip}>{body}</Tip>;
-      })()}
-      {u?.cost !== undefined && (
-        <Tip tip={`Session cost ${money(u.cost)} · ${u.in.toLocaleString()} tokens in · ${u.out.toLocaleString()} out`}>
-          <span className="rt-label">Cost</span><span className="num rt-value">{money(u.cost)}</span>
-        </Tip>
-      )}
-      {fold < 3 && edits}
-      {fold < 2 && tests}
-      {fold < 1 && cache}
-      {folded.length > 0 && (
-        <details className="rt rt-jobs rt-more">
-          <summary aria-label="More session details">…</summary>
-          <div className="rt-pop">{folded}</div>
-        </details>
-      )}
+      <div className="rt-metrics">
+        {fold < 5 && context}
+        {fold < 4 && cost}
+        {fold < 3 && edits}
+        {fold < 2 && tests}
+        {fold < 1 && cache}
+        {folded.length > 0 && (
+          <details className="rt rt-jobs rt-more">
+            <summary aria-label="More session details">…</summary>
+            <div className="rt-pop">{folded}</div>
+          </details>
+        )}
+      </div>
+      {(work || actions) && <div className="rt-actions">{work}{actions}</div>}
     </div>
   );
 }
@@ -3779,7 +3791,6 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
               ? <span className="status head-trouble"><StatusMark status="error" bare />{statusWord("done")} · {counts.failed} failed</span>
               : <StatusMark status={row.status} />}
           <ModeChip row={row} name={projects.find((p) => p.id === row.orb?.project)?.name} />
-          {row.orb?.status === "running" && onStopOrb && <button className="btn head-ack" onClick={onStopOrb}>Stop orb</button>}
           {/* A short link beside the chip: a full button pushed the title row
               past its 32px and covered the strip below. */}
           {row.orb?.status === "failed" && (
@@ -3796,9 +3807,12 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           )}
           {/* A test failure is the Tests chip's to say, once. */}
           {running && turns[turns.length - 1]?.prompt?.at && !turns[turns.length - 1]?.done && <RunClock since={turns[turns.length - 1].prompt!.at} />}
-          {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
         </div>
         <RuntimeStrip cat={catalogue.cat} row={row} lines={lines} paused={paused} onRetry={onRetry} onContext={onContext} loading={loading}
+          actions={<>
+            {row.orb?.status === "running" && onStopOrb && <button className="btn head-ack" onClick={onStopOrb}>Stop orb</button>}
+            {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
+          </>}
           work={showWork && (
             <WorkButton btnRef={workBtn} counts={counts} loading={kids.state === "loading"} unavailable={kids.state === "error"}
                         paused={paused !== undefined} narrow={paneNarrow || sheet} expanded={workOpen}

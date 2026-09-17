@@ -35,3 +35,12 @@ test("R2-J: spacing — turn-foot gap, hooks columns, no stray phone dot, wiki e
   expect(r2j).toMatch(/\.hk-main>\.hk-dec::before\{content:none\}/);
   expect(r2j).toMatch(/\.empty-state p\{max-width:60ch\}/);
 });
+
+const r3g = [...css.matchAll(/\/\* R3-G[^*]*\*\/([\s\S]*?)\/\* \/R3-G \*\//g)].map((m) => m[1]).join("\n");
+
+test("R3-G: header groups use flex gaps, Mark seen matches 32px icon buttons, meters show a 2px floor", () => {
+  expect(r3g).toMatch(/\.rt-bar>span\{min-width:2px\}/);
+  expect(r3g).toMatch(/\.thread-head \.head-ack\{[^}]*height:32px[^}]*min-height:32px/);
+  expect(r3g).toMatch(/\.rt-metrics\{[^}]*display:flex[^}]*flex-wrap:nowrap/);
+  expect(r3g).not.toMatch(/position:absolute/);
+});
