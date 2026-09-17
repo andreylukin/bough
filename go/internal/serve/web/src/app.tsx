@@ -4286,6 +4286,21 @@ export default function App() {
   const [jump, setJump] = useState<{ id: string; turn: number; at: number; seq?: number; q?: string } | null>(null);
   useEffect(() => { if (selected) setLastId(selected); }, [selected]);
 
+  // Esc closes the Context and Changes pages, unless something nearer owns it.
+  // It never leaves the session: in the composer it stops a running turn.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || palette || view !== "sessions" || !selected || !sub) return;
+      const a = document.activeElement as HTMLElement | null;
+      if (a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT" || a.isContentEditable)) return;
+      if (document.querySelector(".dlg-scrim, .sel-pop, .skills-pop, .mention")) return;
+      e.preventDefault();
+      setSub(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [palette, view, selected, sub]);
+
   // F6 / Shift+F6 cycle the regions: sidebar, header, transcript, composer.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
