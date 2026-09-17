@@ -259,6 +259,12 @@ func registerOrbCommand(ctx *kernel.Context, reg *commands.Registry, o *iorb.Orb
 		}
 		return nil
 	}
+	var prev *commands.CommandInfo
+	for _, c := range reg.List() {
+		if c.Name == "orb" {
+			prev = &c
+		}
+	}
 	reg.Unregister("orb")
 	info := commands.CommandInfo{Name: "orb", Usage: "status|logs|stop|<slug>", Summary: "this session's orb: status, logs, stop; /orb <slug> sets a project up"}
 	if err := reg.Register(info, orbCommand(o, home, jobs)); err != nil {
@@ -267,8 +273,10 @@ func registerOrbCommand(ctx *kernel.Context, reg *commands.Registry, o *iorb.Orb
 	}
 	ctx.Effect(func() {
 		reg.Unregister("orb")
-		skill := commands.CommandInfo{Name: "orb", Usage: "[args]", Kind: "skill", Summary: "skill: set up or repair a project definition"}
-		reg.Register(skill, func(args string) (string, error) {
+		if prev == nil {
+			return
+		}
+		reg.Register(*prev, func(args string) (string, error) {
 			return "", commands.SubmitAction(strings.TrimSpace("/orb " + args))
 		})
 	})
