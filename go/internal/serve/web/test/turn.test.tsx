@@ -80,7 +80,7 @@ test("a program that threw reads failed with its error, not exit 0", () => {
   const html = renderToStaticMarkup(<ToolCall code={{ seq: 1, at: at(0), kind: "code", text: c }}
     result={{ seq: 2, at: at(1), kind: "result", text: ".\nsrc\nerror: GoError: open package.json: no such file or directory\n\n[the 1 code block(s) after this one in your reply were not run: this block failed.]", data: { code: c, exit: 0, ms: 10 } }} />);
   expect(html).toContain("block-failed");
-  expect(html).toContain("GoError: open package.json");
+  expect(html).toContain("open package.json");
   expect(html).not.toContain("exit 0");
 });
 
@@ -150,8 +150,7 @@ test("a turn that ended on an error says Failed, not Done", () => {
     { seq: 2, at: at(1), kind: "error", text: "401 Unauthorized" },
     { seq: 3, at: at(2), kind: "done", text: "", data: {} }];
   const html = renderToStaticMarkup(<TurnView turn={groupTurns(ls)[0]} />);
-  expect(html).toContain("turn-failed");
-  expect(html).toContain(">Failed<");
+  expect(html).toContain("401 Unauthorized");
   expect(html).not.toContain(">Done<");
 });
 
@@ -160,7 +159,7 @@ test("a failed retry says Failed; a retry that recovered says Done", () => {
     { seq: 2, at: at(1), kind: "error", text: "429" },
     { seq: 3, at: at(2), kind: "system", text: "provider hiccup — retrying in 2s, attempt 2 of 3" }];
   const failed = [...base, { seq: 4, at: at(3), kind: "error", text: "429" }, { seq: 5, at: at(4), kind: "done", text: "", data: {} }];
-  expect(renderToStaticMarkup(<TurnView turn={groupTurns(failed)[0]} />)).toContain(">Failed<");
+  expect(renderToStaticMarkup(<TurnView turn={groupTurns(failed)[0]} />)).not.toContain(">Done<");
   const ok = [...base, { seq: 4, at: at(3), kind: "assistant", text: "Fixed." }, { seq: 5, at: at(4), kind: "done", text: "", data: {} }];
   expect(renderToStaticMarkup(<TurnView turn={groupTurns(ok)[0]} />)).toContain(">Done<");
 });
@@ -232,4 +231,63 @@ test("R3-C: a cut-off turn uses the same stop word and duration as a stopped one
   expect(html).toContain("Stopped");
   expect(html).toContain("Worked for 1s");
   expect(html).not.toContain("Turn: ");
+});
+
+// R3-F: honest failed rows, matching counts, keyboard reach.
+const failCode = 'console.log(tools.write("b.txt", "a\\nb\\nc"))\nconsole.log(tools.bash("printf x >> a.txt"))';
+const failResult: Line = { seq: 2, at: at(1), kind: "result", text: "wrote b.txt\nerror: GoError: bash: printf x: exit status 2 \u2014 /var/folders/55/mh/T/bough-bash-2729125139.sh: line 1: printf: --: invalid option",
+  data: { code: failCode, exit: 2, ms: 15, error: "GoError: bash: printf x: exit status 2 \u2014 /var/folders/55/mh/T/bough-bash-2729125139.sh: line 1: printf: --: invalid option" } };
+
+test("a failed edit says Edit failed, with no success verb or +N", () => {
+  const html = renderToStaticMarkup(<ToolCall code={{ seq: 1, at: at(0), kind: "code", text: failCode }} result={failResult} />);
+  expect(html).toContain("Edit failed</span>");
+  expect(html).not.toContain("Edited</span>");
+  expect(/<summary[\s\S]*?<\/summary>/.exec(html)![0]).not.toContain("rt-add");
+  expect(html).not.toContain("GoError");
+  expect(html).not.toContain("/var/folders");
+  expect(html).toContain("printf: --: invalid option");
+});
+
+test("a group counts no failed edit, times under a second as <1s, and keeps its buttons out of summary", () => {
+  const ls: Line[] = [
+    { seq: 1, at: at(0), kind: "code", text: failCode }, failResult,
+    { seq: 3, at: at(2), kind: "code", text: 'console.log(tools.bash("ls"))' },
+    { seq: 4, at: at(3), kind: "result", text: "a", data: { exit: 0, ms: 5 } },
+    { seq: 5, at: at(4), kind: "code", text: 'console.log(tools.bash("pwd"))' },
+    { seq: 6, at: at(5), kind: "result", text: "/", data: { exit: 0, ms: 5 } },
+  ];
+  const html = renderToStaticMarkup(<ToolRun lines={ls} codes={[]} />);
+  const summary = /<summary[\s\S]*?<\/summary>/.exec(html)![0];
+  expect(summary).not.toContain("Edited b.txt");
+  expect(summary).not.toContain("rt-add");
+  expect(summary).toContain("&lt;1s");
+  expect(summary).not.toContain(" 0s");
+  expect(summary).not.toContain("<button");
+  expect(html).toContain("1 failed");
+});
+
+test("a group's and a turn's edit counts come from the checkpoint diff when given", async () => {
+  const { TurnFiles } = await import("../src/app");
+  const { WorkContext } = await import("../src/work-ui");
+  const diff = [{ path: "b.txt", add: 3, del: 0 }, { path: "a.txt", add: 3, del: 0 }];
+  const html = renderToStaticMarkup(<ToolRun lines={edits} codes={[]} turnEdits={diff} />);
+  expect(html).toContain("+6</span>");
+  const turn = groupTurns([
+    { seq: 7, at: at(0), kind: "input", text: "go" },
+    { seq: 8, at: at(1), kind: "code", text: 'tools.write("b.txt", "1\\n2\\n3\\n")' },
+    { seq: 9, at: at(2), kind: "done", text: "", data: { exit: 0, files: ["a.txt", "b.txt"] } },
+  ])[0];
+  const foot = renderToStaticMarkup(<WorkContext.Provider value={{ session: "s1" } as never}><TurnFiles files={["a.txt", "b.txt"]} turn={turn} edits={diff} /></WorkContext.Provider>);
+  expect(foot).toContain("+6</span>");
+  expect(foot).toContain("<button");
+  expect(foot).not.toContain("<a ");
+});
+
+test("a turn that ended on an error states Failed once, in the error", () => {
+  const ls: Line[] = [...live.slice(0, 1),
+    { seq: 2, at: at(1), kind: "error", text: "401 Unauthorized" },
+    { seq: 3, at: at(2), kind: "done", text: "", data: {} }];
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns(ls)[0]} />);
+  expect(html).not.toContain(">Failed<");
+  expect(html).not.toContain(">Done<");
 });
