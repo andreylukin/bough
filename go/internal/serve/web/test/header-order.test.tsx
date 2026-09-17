@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Thread } from "../src/app";
+import { ChangesChip, SessionChanges, Thread } from "../src/app";
 import type { Line, Row } from "../src/types";
 
 const row = { id: "s1", cwd: "/tmp/x", status: "done", title: "Header", usage: { in: 10, out: 5, lastIn: 10, cost: 0.03 } } as unknown as Row;
@@ -36,4 +36,17 @@ test("R3-G: Mark seen sits with the actions after the metrics, not in the title 
   expect(actions).toBeGreaterThan(metrics);
   expect(ack).toBeGreaterThan(actions);
   expect(settings).toBeGreaterThan(ack);
+});
+
+// R4-F: an empty session reads "No edits", not "Session edits None".
+test("R4-F: a session with no edits says No edits", () => {
+  const none = { files: [], repo: true, failed: false };
+  const html = renderToStaticMarkup(
+    <SessionChanges.Provider value={{ session: none, tree: none, turn: undefined, retry: () => {} } as never}>
+      <ChangesChip row={row} />
+    </SessionChanges.Provider>);
+  const chip = html.slice(0, html.indexOf("</summary>"));
+  expect(chip).toContain(">No edits<");
+  expect(chip).not.toContain(">None<");
+  expect(chip).not.toContain(">Session edits<");
 });

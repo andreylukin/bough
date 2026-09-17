@@ -2189,7 +2189,7 @@ const TurnSeq = createContext<number | undefined>(undefined);
 
 /** The thread's one read of its edits and working tree, shared by the header chip and every turn's files. */
 const unread = { files: null, repo: true, failed: false };
-const SessionChanges = createContext<ReturnType<typeof useChanges> | null>(null);
+export const SessionChanges = createContext<ReturnType<typeof useChanges> | null>(null);
 
 /**
  * "3 files +7 −2": the turn's changed files, opening the Changes review
@@ -2238,8 +2238,8 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, l
   const pct = u && limit ? Math.min(100, Math.round((u.lastIn / limit) * 100)) : undefined;
   const strip = useRef<HTMLDivElement>(null);
   usePopovers(strip);
-  // R3-G: the metrics fold into one "…", cache first, then tests, edits,
-  // cost and context, until the title group (status and all) and the strip
+  // R3-G: the metrics fold into one "…", cache first, then tests, cost,
+  // edits and context, until the title group (status and all) and the strip
   // each fit their room. A phone folds them all. A new pane width starts over.
   const [fold, setFold] = useState(0);
   const recheck = useRef<() => void>(() => {});
@@ -2251,7 +2251,13 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, l
     const check = () => {
       if (window.matchMedia?.("(max-width:720px)").matches) return setFold(5);
       const h1 = main.querySelector("h1");
-      const over = main.scrollWidth > main.clientWidth + 1 || el.scrollWidth > el.clientWidth + 1 || (h1 && h1.clientWidth < Math.min(h1.scrollWidth, 160));
+      // R4-F: the metrics row does not wrap, so it can run under the actions
+      // without the strip itself overflowing; that counts as over too.
+      const metrics = el.querySelector<HTMLElement>(".rt-metrics"), acts = el.querySelector<HTMLElement>(".rt-actions");
+      const last = metrics?.lastElementChild?.getBoundingClientRect();
+      const collide = !!(metrics && (metrics.scrollWidth > metrics.clientWidth + 1 ||
+        (last && acts && acts.offsetTop === metrics.offsetTop && last.right > acts.getBoundingClientRect().left)));
+      const over = collide || main.scrollWidth > main.clientWidth + 1 || el.scrollWidth > el.clientWidth + 1 || (h1 && h1.clientWidth < Math.min(h1.scrollWidth, 160));
       if (over) setFold((f) => Math.min(f + 1, 5));
     };
     recheck.current = check;
@@ -2261,6 +2267,7 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, l
       requestAnimationFrame(check);
     });
     ro.observe(head); ro.observe(main); ro.observe(el);
+    el.querySelectorAll(":scope>.rt-metrics,:scope>.rt-actions").forEach((n) => ro.observe(n));
     return () => ro.disconnect();
   }, []);
   const cache = row.cache && <CacheChip key="cache" cache={row.cache} model={row.model} />;
@@ -2299,7 +2306,7 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, l
       <span className="rt-label">Cost</span><span className="num rt-value">{money(u.cost)}</span>
     </Tip>
   );
-  const folded = [fold >= 5 && context, fold >= 4 && cost, fold >= 3 && edits, fold >= 2 && tests, fold >= 1 && cache].filter(Boolean);
+  const folded = [fold >= 5 && context, fold >= 4 && edits, fold >= 3 && cost, fold >= 2 && tests, fold >= 1 && cache].filter(Boolean);
   // Two groups on the right: the metrics (folding behind one "…"), then the
   // actions, which never fold.
   return (
@@ -2311,8 +2318,8 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, l
       )}
       <div className="rt-metrics">
         {fold < 5 && context}
-        {fold < 4 && cost}
-        {fold < 3 && edits}
+        {fold < 3 && cost}
+        {fold < 4 && edits}
         {fold < 2 && tests}
         {fold < 1 && cache}
         {folded.length > 0 && (
@@ -2362,7 +2369,7 @@ function usePopovers(root: React.RefObject<HTMLElement | null>) {
  * the working tree one tab away. A phone has no room for a popover and
  * goes to the full page, #/s/<id>/changes.
  */
-function ChangesChip({ row }: { row: Row }) {
+export function ChangesChip({ row }: { row: Row }) {
   const data = useContext(SessionChanges) ?? { session: unread, tree: unread, turn: undefined, turnSeq: undefined, retry: () => {} };
   const phone = useMedia("(max-width:720px)");
   const [scope, setScope] = useState<Scope>("session");
@@ -2371,14 +2378,16 @@ function ChangesChip({ row }: { row: Row }) {
   const c: ReturnType<typeof countOf> = noRepo(data.session) ?? countOf(data.session);
   const t: ReturnType<typeof countOf> = noRepo(data.tree) ?? countOf(data.tree);
   const href = `#/s/${row.id}/changes`;
-  const aria = `Session edits: ${c.text}${c.add !== undefined ? `, ${c.add} added, ${c.del} removed` : ""}. Working tree: ${t.text}${data.session.failed || data.tree.failed ? ", stale" : ""}`;
-  const body = <>
+  // R4-F: nothing to count reads as one phrase, not "Session edits None".
+  const none = c.text === "None";
+  const aria = none ? `No edits. Working tree: ${t.text}` : `Session edits: ${c.text}${c.add !== undefined ? `, ${c.add} added, ${c.del} removed` : ""}. Working tree: ${t.text}${data.session.failed || data.tree.failed ? ", stale" : ""}`;
+  const body = none ? <span className="rt-label">No edits</span> : <>
     <span className="rt-label">Session edits</span>
     <span className={"num rt-value" + (c.quiet ? " rt-stale" : "")}>{c.text}{c.add !== undefined && <> <span className="rt-add">+{c.add}</span> <span className={"rt-del" + (c.del ? "" : " rt-zero")}>−{c.del}</span></>}</span>
   </>;
   // A failed read is no value: no chip, rather than "Unavailable".
   if (data.session.files === null && data.session.failed) return null;
-  if (phone && c.text === "None") return <span className="rt" aria-label={aria}>{body}</span>;
+  if (phone && none) return <span className="rt" aria-label={aria}>{body}</span>;
   if (phone) return <a className="rt rt-link" href={href} aria-label={aria}>{body}</a>;
   return (
     <details className="rt rt-jobs">
