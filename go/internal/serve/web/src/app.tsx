@@ -3810,6 +3810,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const [stopping, setStopping] = useState<"" | "stopping" | "failed">("");
   // R3-D: the server's error status wins over a send it never started.
   const status = row.status === "error" ? "" : composerStatus({ sending: !running && unlanded.some((p) => !p.steer), accepted: unlanded.some((p) => !p.steer && p.accepted), running, streamed: stream.length > 0, activity, stopping: stopping === "stopping" });
+  // MB-STREAM: a status row (Waiting, Working) that appears between sends is followed like new output.
+  useLayoutEffect(() => { if (atBottom.current) end.current?.scrollIntoView({ block: "end" }); }, [status]);
   const failedLoad = loading && Boolean(loadError);
   useEffect(() => { if (!live) setStopping(""); }, [live]);
   useEffect(() => {
