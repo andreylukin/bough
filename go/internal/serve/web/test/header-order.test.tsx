@@ -50,3 +50,23 @@ test("R4-F: a session with no edits says No edits", () => {
   expect(chip).not.toContain(">None<");
   expect(chip).not.toContain(">Session edits<");
 });
+
+// MB-HDR: the header is one inline-property style block; secondary actions share one height and ⚙ is a ghost.
+test("MB-HDR: header CSS block sets one action height, a ghost settings button and a borderless overflow popover", () => {
+  const css = require("node:fs").readFileSync(new URL("../dist/index.html", import.meta.url), "utf8") as string;
+  const block = css.slice(css.indexOf("/* MB-HDR"), css.indexOf("/* /MB-HDR */"));
+  expect(block.length).toBeGreaterThan(0);
+  expect(block).toMatch(/\.work-summary,\.thread-head \.head-ack\{height:32px;min-height:32px/);
+  expect(block).toMatch(/\.thread-head \.more\{[^}]*border:0/);
+  expect(block).toMatch(/\.rt-more>\.rt-pop,\.rt-pop\.rt-diff\{border:0/);
+});
+
+test("MB-HDR: Edits is the short visible label, the aria label keeps Session edits", () => {
+  const edits = { files: [{ path: "a", add: 1, del: 0 }], repo: true, failed: false };
+  const html = renderToStaticMarkup(
+    <SessionChanges.Provider value={{ session: edits, tree: edits, turn: undefined, retry: () => {} } as never}>
+      <ChangesChip row={row} />
+    </SessionChanges.Provider>);
+  expect(html).toContain(">Edits<");
+  expect(html).toContain("Session edits:");
+});
