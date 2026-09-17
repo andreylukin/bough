@@ -2321,6 +2321,21 @@ a.rt-link{text-decoration:none}
 .say>.msg-acts{margin-top:-4px}
 @media (hover:none){.msg-acts{opacity:1}}
 /* /WEB11 */
+
+/* WEB12: narrow widths. The sidebar's New session label keeps one line; at
+   tablet widths the Hooks table's Hook column gives way so the outcome and
+   its count fit; on phones the session title takes the first line and the
+   status wraps under it; an orb chip before a row's age keeps a gap. */
+.side-new-label{white-space:nowrap;flex-shrink:0}
+.row-when .mode-chip{margin-inline-end:6px}
+@media (min-width:721px) and (max-width:1023px){
+  .hk-main{grid-template-columns:9ch minmax(0,.6fr) minmax(0,1fr) 17ch 24px}
+}
+@media (max-width:480px){
+  .thread-head .head-main{flex-wrap:wrap;column-gap:10px}
+  .thread-head .head-main h1{flex:1 1 100%}
+}
+/* /WEB12 */
 </style>
 </head>
 <body>

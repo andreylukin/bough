@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useModal } from "./dialog";
 import type { Row } from "./types";
+import { ago } from "./app";
 import { hasOwnTitle, plainTitle, sessionTitle, titleKey } from "./render";
 import { shownStatus, statusWord } from "./status";
 import { isMac, paletteKeyOpens } from "./keys";
@@ -272,7 +273,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     const detailFor = (r: Row, title: string) => {
       const h = foundBy.get(r.id);
       const line = evidence(h, title, needle);
-      return [[r.branch || h?.branch, r.lastAt ? agoShort(r.lastAt) : ""].filter(Boolean).join(" · "), line]
+      return [[r.branch || h?.branch, r.lastAt ? `${ago(r.lastAt)} ago` : ""].filter(Boolean).join(" · "), line]
         .filter(Boolean).join("\n") || undefined;
     };
     // One relevance order across commands and titles, so a weak match
@@ -320,7 +321,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
       all.push({
         id: "s:" + h.id,
         label,
-        hint: [h.repo?.split("/").pop(), h.id.slice(-6)].filter(Boolean).join(" · "),
+        hint: [h.repo?.split("/").pop(), idTail(h.id)].filter(Boolean).join(" · "),
         group: "Found in the conversation",
         detail: [h.branch, evidence(h, label, needle)].filter(Boolean).join("\n") || undefined,
         run: () => onOpenSession(h.id, h.lines[0]?.seq, q.trim()),
@@ -429,13 +430,11 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
 /** A session's meta, one shape everywhere in the palette: repo · Status · age, and the id tail when the name alone does not tell it apart. */
 function meta(r: Row, repo: string | undefined, withId: boolean): string {
   const status = r.testsFailed ? "Tests failed" : statusWord(shownStatus(r));
-  return [repo?.split("/").pop(), status, r.lastAt ? agoShort(r.lastAt) : "", withId ? r.id.slice(-6) : ""].filter(Boolean).join(" · ");
+  return [repo?.split("/").pop(), status, r.lastAt ? `${ago(r.lastAt)} ago` : "", withId ? idTail(r.id) : ""].filter(Boolean).join(" · ");
 }
 
-function agoShort(iso: string): string {
-  const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
-  return m < 60 ? `${m}m ago` : m < 2880 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`;
-}
+/** The last six of an id, without a leading "-" from a legacy "<time>-<pid>" id. */
+export const idTail = (id: string) => id.slice(-6).replace(/^-/, "");
 
 /** One matching line, short enough to sit on a row, cut around the match. */
 function trimLine(text: string, needle = ""): string {
