@@ -28,7 +28,7 @@ export type View = "sessions" | "projects" | "hooks" | "wiki";
 
 const POLL_MS = 4000; // sessions we are not streaming still change status
 
-const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 /** Local time of day for today; an older moment carries its date, so it never reads as later today. */
 export const when = (iso: string, now = new Date()) => {
   const d = new Date(iso);
@@ -1257,7 +1257,20 @@ function ErrorCard({ text }: { text: string }) {
   );
 }
 
+/** The finished turn's answer whose actions sit on the turn's footer line, not under the prose. */
+const FootAnswer = createContext<number | undefined>(undefined);
+const answerBody = (text: string, codes: string[]) => splitBareProgram(stripRunFences(splitExecNote(text).text, codes))[0];
+function AnswerActs({ line, body }: { line: Line; body: string }) {
+  return (
+    <div className="msg-acts">
+      <span className="num say-time" title={new Date(line.at).toLocaleString()}>{when(line.at)}</span>
+      <CopyButton text={body} what="answer as Markdown" />
+    </div>
+  );
+}
+
 export function Entry({ line, codes, nested, until }: { line: Line; codes: string[]; nested?: boolean; /** When the next entry landed: a thinking block's end. */ until?: string }) {
+  const footSeq = useContext(FootAnswer);
   const k = line.kind;
   if (k === "assistant" || k === "sub:assistant") {
     // The loop's "blocks dropped" marker is a notice about the reply, not part of it.
@@ -1281,12 +1294,7 @@ export function Entry({ line, codes, nested, until }: { line: Line; codes: strin
             {!blank(part) && <Markdown text={part} />}
           </Fragment>
         ))}
-        {!nested && k === "assistant" && !blank(body) && (
-          <div className="msg-acts">
-            <CopyButton text={body} what="answer as Markdown" />
-            <span className="num say-time" title={new Date(line.at).toLocaleString()}>{when(line.at)}</span>
-          </div>
-        )}
+        {!nested && k === "assistant" && !blank(body) && line.seq !== footSeq && <AnswerActs line={line} body={body} />}
         {program && (
           // A program that lost its fence never ran: it is code, not prose.
           <details className="block thin">
@@ -2110,11 +2118,12 @@ export function TurnHooks({ lines, load, save }: { lines: Line[]; load?: Load; s
  * changed. A bare "Finished" told a programmer none of that. Nothing is
  * estimated — a provider that recorded no usage shows only the outcome.
  */
-function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, extra, edits }: {
+function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, extra, edits, acts }: {
   turn: Turn; /** The turn's checkpoint diff, once read. */ edits?: Change[] | null; /** The result the turn's failure came from, when recorded. */ fail?: Line;
   /** The longest recorded run of the turn's jobs and subagents, so wall time never reads shorter than its work. */ longest?: number;
   failedWork?: number; unknownSubs?: number;
   /** The turn's own controls (Expand all), before the usage on the right. */ extra?: React.ReactNode;
+  /** The answer's Copy and time, last on the line. */ acts?: React.ReactNode;
 }) {
   const done = turn.done!;
   const u = usageOf(done);
@@ -2175,7 +2184,7 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
         </span>
       ) : errored && !(turn.stopped || done.kind === "cancelled") ? null : (
         // R3-F: a turn that ended on an error says so in the error itself, not again under it.
-        <span className={"turn-outcome" + (failed || failedWork ? " turn-failed" : "")}>
+        <span className={"turn-outcome" + (turn.stopped || done.kind === "cancelled" ? " turn-stopped" : failed || failedWork ? " turn-failed" : "")}>
           {turn.stopped || done.kind === "cancelled" ? statusWord("stopped") : failed ? `${statusWord("done")} with a failed command · exit ${exit}` : statusWord("done") + (failedWork ? ` · ${failedWork} failed` : "")}
         </span>
       )}
@@ -2192,6 +2201,7 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
           {failOut.length > 0 && <pre className="mono">{failOut.join("\n")}</pre>}
         </div>
       )}
+      {acts}
     </div>
   );
 }
@@ -2679,6 +2689,9 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
   // A slash command (/model) writes no done: it was never a turn to cut off.
   const commandOnly = !turn.prompt && turn.body.every((l) => l.kind === "command" || l.kind === "system");
   const cut = !turn.done && !commandOnly && Boolean(superseded || (ctx && !ctx.live));
+  // An ended turn's answer keeps its actions on the footer line, so no blank band sits under the prose.
+  const answer = turn.done || cut ? [...turn.body].reverse().find((l) => l.kind === "assistant" && !blank(answerBody(l.text, codes))) : undefined;
+  const answerActs = answer && <AnswerActs line={answer} body={answerBody(answer.text, codes)} />;
   const live = !turn.done && !turn.stopped && !cut;
   const segs = useMemo(() => splitWork(items, codes, live && (ctx?.live ?? true)),
     // codes is derived from items' turn.body.
@@ -2739,7 +2752,6 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
       )}
       {turn.prompt && !wakeJobs && !wakeAgents && (
         <div className="prompt">
-          <span className="mono prompt-mark">&gt;</span>
           <div className="prompt-text prompt-bubble">
             {/* A long brief (pasted logs, a spec) is evidence, not the
                 thing to navigate by: four lines, and one click for the rest. */}
@@ -2763,16 +2775,18 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
               <pre className={"prompt-att" + (atts[opened].isFile ? " prompt-att-file" : "")}>{atts[opened].body}</pre>
             )}
           </div>
-          <span className="num prompt-time" title={new Date(turn.prompt.at).toLocaleString()}>{when(turn.prompt.at)}</span>
           <div className="msg-acts prompt-acts">
+            <span className="num prompt-time" title={new Date(turn.prompt.at).toLocaleString()}>{when(turn.prompt.at)}</span>
             <CopyButton text={raw} what="prompt" />
-            <button type="button" className="link" disabled={!editPrompt || editPrompt.busy}
-                    title={editPrompt?.busy ? "Send or clear the current draft first" : undefined}
-                    onClick={() => editPrompt?.edit(raw)}>Edit into composer</button>
+            <button type="button" className="copy-btn prompt-edit" disabled={!editPrompt || editPrompt.busy}
+                    aria-label="Edit into composer"
+                    title={editPrompt?.busy ? "Send or clear the current draft first" : "Edit into composer"}
+                    onClick={() => editPrompt?.edit(raw)}><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L18.5 9.5a2.83 2.83 0 0 0-4-4L4 16v4z" /><path d="M13.5 6.5l4 4" /></svg></button>
           </div>
         </div>
       )}
       <RetryTurn.Provider value={turn.prompt && editPrompt?.retry ? () => editPrompt.retry?.(turn.prompt!.text) : null}>
+      <FootAnswer.Provider value={answer?.seq}>
       <TurnSeq.Provider value={turn.prompt?.seq}>
       <div className="turn-body">
         {segs.map((sg) => {
@@ -2806,6 +2820,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
         <TurnHooks lines={hooks} />
       </div>
       </TurnSeq.Provider>
+      </FootAnswer.Provider>
       </RetryTurn.Provider>
       {turn.done && (() => {
         // The turn's own workers: what ran inside its span of entries.
@@ -2815,6 +2830,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
         return <TurnFooter turn={turn} fail={fail} edits={turnEdits} longest={Math.max(0, ...mine.map((w) => w.ms ?? 0))}
                            failedWork={mine.filter((w) => w.life === "failed").length}
                            unknownSubs={mine.filter((w) => w.kind !== "job" && w.life === "unknown").length}
+                           acts={answerActs}
                            extra={folds >= 2 && (
                              <button type="button" className="link turn-seg-all" onClick={() => setAllSegs({ open: !allSegs?.open, at: Date.now() })}>
                                {allSegs?.open ? "Collapse all" : "Expand all"}
@@ -2825,12 +2841,13 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
       {cut && (
         <div className="turn-foot">
           {/* R3-C: one stop word and one duration phrase, as a stopped turn's footer has. */}
-          <span className="turn-outcome">{statusWord("stopped")}</span>
+          <span className="turn-outcome turn-stopped">{statusWord("stopped")}</span>
           {turn.prompt?.at && (() => {
             const end = turn.body[turn.body.length - 1]?.at ?? turn.prompt.at;
             const ms = Date.parse(end) - Date.parse(turn.prompt.at);
             return ms >= 1000 && <span className="num">Worked for {duration(ms)}</span>;
           })()}
+          {answerActs}
         </div>
       )}
     </section>
@@ -3165,15 +3182,16 @@ function SendingPrompt({ p, accepted = false, clamp = true, onClip, clipped, onT
   return (
     <section className={"turn" + (accepted ? "" : " turn-sending")}>
       <div className="prompt">
-        <span className="mono prompt-mark">&gt;</span>
         <div className="prompt-text prompt-bubble">
           <p className={clamp ? "prompt-clamp" : ""} ref={(el) => { if (el) onClip?.(el); }}>{p.text}</p>
           {clipped && <button className="link" onClick={onToggle}>{clamp ? "Show full prompt" : "Show less"}</button>}
         </div>
-        {!accepted && !p.accepted ? <span className="num prompt-time turn-sending-state" role="status">{p.steer ? "Steer pending…" : "Sending…"}</span>
-          : p.at && <span className="num prompt-time" title={new Date(p.at).toLocaleString()}>{when(p.at)}</span>}
         {/* The recorded prompt's action row keeps its height here, so the body does not drop when it lands. */}
-        <div className="msg-acts prompt-acts"><CopyButton text={p.text} what="prompt" /></div>
+        <div className="msg-acts prompt-acts">
+          {!accepted && !p.accepted ? <span className="num prompt-time turn-sending-state" role="status">{p.steer ? "Steer pending…" : "Sending…"}</span>
+            : p.at && <span className="num prompt-time" title={new Date(p.at).toLocaleString()}>{when(p.at)}</span>}
+          <CopyButton text={p.text} what="prompt" />
+        </div>
       </div>
       {children}
     </section>

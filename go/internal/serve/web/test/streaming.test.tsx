@@ -66,7 +66,7 @@ test("R2-E: the running and finished prompt rows share one structure, so nothing
     const prompt = t.match(/<div class="prompt">.*?<\/div><\/div>/)?.[0] ?? "";
     return { sections, time: /class="num prompt-time"[^>]*>[^<]+</.test(t), mark: prompt.includes("prompt-mark"), acts: t.includes("msg-acts prompt-acts") };
   };
-  expect(shape(running)).toEqual({ sections: 1, time: true, mark: true, acts: true });
+  expect(shape(running)).toEqual({ sections: 1, time: true, mark: false, acts: true });
   expect(shape(running)).toEqual(shape(done));
 });
 
