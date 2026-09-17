@@ -144,6 +144,11 @@ func fakeSlowSigChild() {
 				say(map[string]any{"kind": "cancelled"})
 				say(map[string]any{"kind": "done"})
 				os.Exit(130)
+			case <-lines: // a steer lands only at the next boundary, none yet
+				<-sig
+				say(map[string]any{"kind": "cancelled"})
+				say(map[string]any{"kind": "done"})
+				os.Exit(130)
 			case <-time.After(2 * time.Second):
 				say(map[string]any{"kind": "assistant", "text": "echo " + line})
 				say(map[string]any{"kind": "done"})
@@ -572,6 +577,33 @@ func TestSupervisorInterruptBeforeReady(t *testing.T) {
 		if hasKind(f.sup.Recent(id), "assistant") {
 			t.Errorf("warm=%v: the interrupted turn still replied: %v", warm, kinds(f.sup.Recent(id)))
 		}
+	}
+}
+
+// A steer the running turn has not taken yet must not hold Esc back:
+// the turn is live, so the interrupt goes straight through.
+func TestSupervisorInterruptWithPendingSteer(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, envSlowSig+"=1")
+	id := "sess-steer"
+	f.seed(t, id)
+	if err := f.sup.Send(id, "tell a long story"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitFor(t, "the turn", func() bool { return hasKind(f.sup.Recent(id), "input") })
+	if err := f.sup.Send(id, "shorter please"); err != nil {
+		t.Fatalf("Send steer: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := f.sup.Interrupt(id); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for !hasKind(f.sup.Recent(id), "cancelled") {
+		if time.Now().After(deadline) {
+			t.Fatalf("Esc with a steer pending was held: %v", kinds(f.sup.Recent(id)))
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

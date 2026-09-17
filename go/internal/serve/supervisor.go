@@ -161,6 +161,10 @@ type child struct {
 	// then cancels nothing: a booting child dies of it, a booted one
 	// exits without the turn ever starting.
 	unread, held bool
+	// inTurn: the child took an input and has not ended that turn. A
+	// line sent then is a steer that lands only at the next boundary,
+	// so an interrupt must go straight through, not wait for it.
+	inTurn bool
 }
 
 // Supervisor is safe for concurrent use. One mutex guards the lease
@@ -712,6 +716,12 @@ func (s *Supervisor) emit(ch *child, kind, text string, extra map[string]any) {
 		ch.unread = false
 		s.releaseLocked(ch)
 	}
+	switch kind {
+	case "input":
+		ch.inTurn = true
+	case "done", "cancelled", "exit":
+		ch.inTurn = false
+	}
 	if ch.id == "" {
 		if kind == "meta" && ch.metaID == "" {
 			ch.metaID = metaSession(extra)
@@ -935,7 +945,7 @@ func (s *Supervisor) Interrupt(id string) error {
 		return nil
 	}
 	s.mu.Lock()
-	if ch.unread {
+	if ch.unread && !ch.inTurn {
 		ch.held = true
 		s.mu.Unlock()
 		time.AfterFunc(holdLimit, func() {
