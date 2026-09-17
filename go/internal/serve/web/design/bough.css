@@ -1117,6 +1117,9 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .mode-busy{color:var(--amber)}
 .mode-failed{color:var(--red)}
 .mode-stopped{color:var(--text-3)}
+/* ORB-A7 */
+.mode-up{color:var(--text-2)}
+/* /ORB-A7 */
 .row-meta .mode-chip{margin-inline-end:6px}
 .mode-start{flex-wrap:wrap;align-items:center;padding:16px 32px 0}
 .proj-orb{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;padding:12px 14px;margin-block:4px 8px;background:var(--surface);border-radius:var(--r-6)}

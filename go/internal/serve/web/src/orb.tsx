@@ -147,7 +147,7 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
   const logRef = useRef<HTMLPreElement>(null);
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [log]);
 
-  const about = <p className="proj-none orb-about">An orb is a container image for this project: its sessions run inside it and can change files, while local sessions only read.</p>;
+  const about = <p className="proj-none orb-about">An orb is a container image for this project: its sessions run inside it, with the project's repos checked out on a branch of their own.</p>;
   if (!project.slug) {
     return (
       <div className="proj-orb">
@@ -241,13 +241,13 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
           {detail.orbs.map((o) => (
           <div key={o.session} className="proj-row orb-row">
             <button className="proj-open" onClick={() => onOpen?.(o.session)}>
-              <span className="proj-title">{sessionTitle({ id: o.session, title: titles[o.session] })}</span>
+              <span className="proj-title">{sessionTitle({ id: o.session, title: titles[o.session] || o.title })}</span>
               {/* A fallback name is the same for every untitled session: the id tail tells them apart. */}
-              {!titles[o.session] && <span className="mono row-id">{idTail(o.session)}</span>}
+              {!(titles[o.session] || o.title) && <span className="mono row-id">{idTail(o.session)}</span>}
             </button>
             {/* The container name is for pasting into a terminal, not for reading. */}
             <span className="orb-ctr" title={o.container}>
-              {o.container && <CopyButton text={o.container} label={o.container.slice(0, 12)} className="link proj-act mono" />}
+              {o.container && <CopyButton text={o.container} label={idTail(o.container)} className="link proj-act mono" />}
             </span>
             <span className="orb-st" title={o.error}><StatusMark status={STATE[o.status]} /></span>
             {/* Every row keeps the action slot, so the columns line up whether or not it can stop. */}

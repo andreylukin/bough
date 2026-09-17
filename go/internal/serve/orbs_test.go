@@ -487,3 +487,33 @@ func TestOrbDetailPreflight(t *testing.T) {
 		t.Errorf("first check = %v", c)
 	}
 }
+
+// A7: the orb list names each session by its title even once archived
+// (the web only holds live rows), and the summary names the repos the
+// definition declares, so the page never reads "0 repos" for them.
+func TestOrbDetailTitlesAndRepos(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	id := mkProject(t, f, "tr")
+	f.do(t, "POST", "/api/projects/"+id+"/orb", `{}`)
+	seedModeSession(t, f, "gone", map[string]any{"cwd": "/w", "mode": "project", "project": "tr"})
+	if err := f.sup.SetTitle("gone", "Debug the server"); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := f.do(t, "POST", "/api/sessions/gone/archive", ""); code != http.StatusOK {
+		t.Fatalf("archive = %d %v", code, body)
+	}
+	writeState(t, f.home, orb.State{Session: "gone", Project: "tr", Status: orb.StatusStopped, UpdatedAt: time.Now()})
+	_, d := f.do(t, "GET", "/api/projects/"+id+"/orb", "")
+	os_, _ := d["orbs"].([]any)
+	if len(os_) != 1 {
+		t.Fatalf("orbs = %v", d["orbs"])
+	}
+	if o, _ := os_[0].(map[string]any); o["title"] != "Debug the server" {
+		t.Errorf("orb row title = %v", o["title"])
+	}
+	sum, _ := d["orb"].(map[string]any)
+	if rs, _ := sum["repos"].([]any); len(rs) == 0 {
+		t.Errorf("summary repos = %v", sum)
+	}
+}

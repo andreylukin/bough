@@ -5146,7 +5146,8 @@ export default function App() {
             return ids.filter((_, i) => out[i].status === "rejected");
           }}
           onDelete={(id) => act(() => api.deleteProject(id), "delete the project")}
-          orbOpen={orbOpen} onOrbOpen={setOrbOpen} onOrbChanged={() => refresh()} />
+          orbOpen={orbOpen} onOrbOpen={setOrbOpen} onOrbChanged={() => refresh()}
+          onNewSession={home ? async (p) => { if (await confirmFailedBuild(p)) void start(home, "", { mode: "project", project: p.id }); } : undefined} />
       ) : row && sub === "changes" ? (
         <ChangesPage row={row} tick={lines.length} onBack={() => setSub(null)} />
       ) : row && context ? (
