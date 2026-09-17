@@ -38,6 +38,10 @@ const (
 	// to read each line, as the real child does: an interrupt in either
 	// gap cancels nothing (or kills it) unless serve holds it back.
 	envSlowSig = "BOUGH_FAKE_SLOWSIG"
+	// envNoInput makes the slow-signal fake behave like the real
+	// headless child, which never prints an "input" line: the first
+	// sign a prompt became a turn is its streamed output.
+	envNoInput = "BOUGH_FAKE_NOINPUT"
 )
 
 func TestMain(m *testing.M) {
@@ -138,7 +142,11 @@ func fakeSlowSigChild() {
 				os.Exit(0) // not yet a turn: the prompt is dropped, nothing recorded
 			default:
 			}
-			say(map[string]any{"kind": "input", "text": line})
+			if os.Getenv(envNoInput) != "" {
+				say(map[string]any{"kind": "assistant-delta", "text": "once"})
+			} else {
+				say(map[string]any{"kind": "input", "text": line})
+			}
 			select {
 			case <-sig:
 				say(map[string]any{"kind": "cancelled"})
@@ -604,6 +612,30 @@ func TestSupervisorInterruptWithPendingSteer(t *testing.T) {
 			t.Fatalf("Esc with a steer pending was held: %v", kinds(f.sup.Recent(id)))
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// The real child reports a taken prompt only through its output. An
+// Esc once that output streams must go straight through, not wait out
+// the hold limit while the turn keeps running.
+func TestSupervisorInterruptMidTurnWithoutInputLine(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, envSlowSig+"=1", envNoInput+"=1")
+	id := "sess-noinput"
+	f.seed(t, id)
+	if err := f.sup.Send(id, "tell a long story"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	time.Sleep(time.Second) // boot, read the line, stream the first token
+	if err := f.sup.Interrupt(id); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	deadline := time.Now().Add(1500 * time.Millisecond)
+	for time.Now().Before(deadline) && !hasKind(f.sup.Recent(id), "cancelled") {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !hasKind(f.sup.Recent(id), "cancelled") {
+		t.Fatalf("interrupt mid-turn was held, not sent: %v", kinds(f.sup.Recent(id)))
 	}
 }
 

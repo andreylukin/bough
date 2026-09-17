@@ -714,9 +714,18 @@ func (s *Supervisor) pumpStderr(ch *child, r io.Reader) {
 func (s *Supervisor) emit(ch *child, kind, text string, extra map[string]any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if kind == "input" || kind == "steer" {
+	switch kind {
+	case "input", "steer":
 		ch.unread = false
 		s.releaseLocked(ch)
+	case "assistant-delta", "thinking-delta", "assistant", "thinking", "code", "result":
+		// The real headless child never prints "input": its first
+		// output is the sign the prompt became a turn.
+		if ch.unread {
+			ch.unread = false
+			s.releaseLocked(ch)
+		}
+		ch.inTurn = true
 	}
 	switch kind {
 	case "input":
