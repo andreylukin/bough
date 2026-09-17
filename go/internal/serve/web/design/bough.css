@@ -2577,3 +2577,64 @@ pre.edit-rows,.block pre.edit-rows{text-indent:0;margin:2px 0 var(--s-2);padding
 .transcript{row-gap:var(--s-2)}
 .turn+.turn{padding-top:var(--s-3)}
 /* /R4-J */
+/* MB-DL: design language tokens and base components (Linear/Vercel/v0/Railway refs, see design-language.md) */
+:root{
+  --ctl-sm:24px; --ctl:32px; --ctl-lg:36px;
+  --r-pill:999px; --r-6:var(--r-sm);
+  --line-ctl:#434a44;
+  --focus:color-mix(in srgb,var(--accent) 70%,transparent);
+  --accent-soft:color-mix(in srgb,var(--accent) 12%,transparent); --accent-line:color-mix(in srgb,var(--accent) 40%,transparent);
+  --amber-soft:color-mix(in srgb,var(--amber) 10%,transparent); --amber-line:color-mix(in srgb,var(--amber) 35%,transparent);
+  --red-soft:color-mix(in srgb,var(--red) 10%,transparent); --red-line:color-mix(in srgb,var(--red) 35%,transparent);
+  --shadow-pop:0 0 0 1px var(--line),0 4px 12px rgb(0 0 0/.24),0 12px 32px rgb(0 0 0/.32);
+  --shadow-modal:0 0 0 1px var(--line),0 8px 24px rgb(0 0 0/.36),0 24px 64px rgb(0 0 0/.48);
+  --dur-fast:100ms; --dur:160ms; --dur-slow:240ms;
+  --ease-out:cubic-bezier(.16,1,.3,1); --ease-in:cubic-bezier(.4,0,1,1); --ease-pop:var(--ease-out);
+}
+/* focus: one quieter ring, hugging the control */
+:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+/* kbd: filled chip, sans glyphs, no border */
+kbd,.keys-row kbd,.ov-empty-keys kbd,.mention-foot kbd{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 4px;
+  font:500 var(--fs-xs)/1 var(--sans);color:var(--text-2);background:var(--sel);border:0;border-radius:var(--r-xs);
+  box-shadow:inset 0 -1px 0 var(--line);vertical-align:middle}
+/* buttons: three tiers, one height, fill instead of bright outline */
+.btn{font:500 var(--fs-md)/1 var(--sans);color:var(--text-1);background:var(--raised);border-color:var(--line-ctl);border-radius:var(--r-sm)}
+.btn:hover:not(:disabled){background:var(--sel);border-color:var(--line-strong)}
+.btn-primary,.btn-primary:hover:not(:disabled){color:var(--bg);background:var(--accent);border-color:var(--accent)}
+.btn-ghost{color:var(--text-2);background:none;border-color:transparent}
+.btn-ghost:hover:not(:disabled){color:var(--text-1);background:var(--hover);border-color:transparent}
+.btn:active:not(:disabled){scale:.98}
+@media (min-width:721px) and (pointer:fine){.btn{height:var(--ctl)}.btn.btn-sm{height:var(--ctl-sm);min-height:0}.btn-lg{height:var(--ctl-lg)}}
+.side-new{background:var(--raised);border-color:var(--line-ctl)}
+.side-new:hover{background:var(--sel);border-color:var(--line-strong)}
+/* fields keep the 3:1 border; one control height */
+.welcome-field{height:var(--ctl)}
+.welcome-chip{min-height:var(--ctl);border-color:var(--line-ctl);border-radius:var(--r-sm)}
+.welcome-chip:hover:not(:disabled){border-color:var(--line-strong)}
+/* popovers and dialogs: hairline ring inside one elevation shadow, not a bright border */
+.head-pop,.sel-pop,.work-popover,.overflow-menu{border:0;border-radius:var(--r-md);box-shadow:var(--shadow-pop)}
+.pal{border:0;border-radius:var(--r-lg);box-shadow:var(--shadow-modal)}
+.dlg{border:0;border-radius:var(--r-lg);box-shadow:var(--shadow-modal)}
+.pal-scrim{background:rgb(0 0 0/.5)}
+.head-pop-item,.overflow-menu>button{min-height:var(--ctl);height:auto;border-radius:var(--r-sm)}
+.head-pop-item:hover{background:var(--sel)}
+/* one accent per state: highlighted rows are a neutral fill */
+.pal-item{border-radius:var(--r-sm)}
+.pal-on{background:var(--sel);box-shadow:none}
+.pal-on .pal-label{color:var(--text-1)}
+.pal-field:focus-visible{box-shadow:none}
+/* semantic colour on a word, long warnings become a tinted callout */
+.welcome-status.warn,.welcome-status.err{padding:var(--s-2) var(--s-3);border-radius:var(--r-sm);color:var(--text-1)}
+.welcome-status.warn{background:var(--amber-soft);box-shadow:inset 0 0 0 1px var(--amber-line)}
+.welcome-status.err{background:var(--red-soft);box-shadow:inset 0 0 0 1px var(--red-line)}
+/* shared base: chip/badge and callout primitives */
+.chip,.badge{display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 8px;border-radius:var(--r-pill);
+  font:500 var(--fs-sm)/1 var(--sans);color:var(--text-2);background:var(--raised);box-shadow:inset 0 0 0 1px var(--line);white-space:nowrap}
+.callout{padding:var(--s-2) var(--s-3);border-radius:var(--r-sm);font:var(--fs-md)/20px var(--sans);color:var(--text-1);background:var(--raised);box-shadow:inset 0 0 0 1px var(--line)}
+.callout.warn{background:var(--amber-soft);box-shadow:inset 0 0 0 1px var(--amber-line)}
+.callout.err{background:var(--red-soft);box-shadow:inset 0 0 0 1px var(--red-line)}
+@media (prefers-reduced-motion:reduce){.btn:active:not(:disabled){scale:none}}
+/* inset list focus uses the same quieter ring colour */
+.row:focus-visible,.side-new:focus-visible,.ws-head:focus-visible,.sec-fold:focus-visible,.turn-line:focus-visible,.ws-older:focus-visible,.sel-search:focus-visible,.hk-fold>summary.hk-main:focus-visible{outline-color:var(--focus)}
+@media (min-width:721px) and (pointer:fine){.welcome .btn,.welcome .btn-lg{height:var(--ctl)}}
+/* /MB-DL */
