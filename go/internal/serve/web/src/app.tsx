@@ -4718,7 +4718,7 @@ export default function App() {
   // at that folder, and typing a prompt there starts the session. A click
   // alone used to leave an empty session behind every time.
   const [palCwd, setPalCwd] = useState("");
-  const newSession = () => { setPalCwd(row?.cwd ?? ""); setPalette(true); };
+  const newSession = () => { setPalCwd(row?.cwd ?? ""); setPalMode("new"); setPalette(true); };
   // "auto" shows the welcome while the server has no sessions; "on" is the
   // palette asking for it again; "off" is skipped or already used.
   const [welcome, setWelcome] = useState<"auto" | "on" | "off">(() => (welcomeDismissed() ? "off" : "auto"));
