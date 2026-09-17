@@ -327,6 +327,24 @@ const countBadge = (f: Change & { patch?: boolean }) =>
     : f.add < 0 ? <span className="chg-badge">binary</span>
     : <><span className="rt-add">+{f.add}</span> <span className={"rt-del" + (f.del ? "" : " rt-zero")}>−{f.del}</span></>;
 
+/** Copy a path: an icon button whose glyph turns to a check for a moment. */
+function CopyIcon({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    if (!done) return;
+    const t = setTimeout(() => setDone(false), 1200);
+    return () => clearTimeout(t);
+  }, [done]);
+  return (
+    <button type="button" className="chg-copy" aria-label={done ? "Copied" : "Copy path"} title={done ? "Copied" : "Copy path"}
+            onClick={() => navigator.clipboard?.writeText(text).then(() => setDone(true), () => {})}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"
+           strokeLinejoin="round" aria-hidden="true">{done ? <path d="M4 12.5l5 5L20 6.5" />
+        : <><rect x="8.5" y="8.5" width="11" height="11" rx="2" /><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2" /></>}</svg>
+    </button>
+  );
+}
+
 /** Every file as a card; a card fetches its patch the first time it opens. */
 function FileCards({ row, files, scope, at, open, turn }: {
   row: Row; files: (Change & { patch?: boolean })[]; scope: Scope; at?: number; open: string | null; turn?: number;
@@ -337,8 +355,8 @@ function FileCards({ row, files, scope, at, open, turn }: {
   return (
     <>
       <div className="chg-summary">
-        <p className="rt-label">Showing <span className="num">{files.length}</span> changed {files.length === 1 ? "file" : "files"} with{" "}
-          <span className="rt-add num">+{s.add}</span> additions and <span className={"rt-del num" + (s.del ? "" : " rt-zero")}>−{s.del}</span> deletions</p>
+        <p className="chg-sum-line"><span className="num">{files.length} {files.length === 1 ? "file" : "files"} changed</span>
+          <span className={"num rt-add" + (s.add ? "" : " rt-zero")}>+{s.add}</span><span className={"num rt-del" + (s.del ? "" : " rt-zero")}>−{s.del}</span></p>
         {files.length > 8 && (
           <input className="chg-filter" type="search" placeholder="Filter paths" aria-label="Filter changed files"
                  value={q} onChange={(e) => setQ(e.target.value)} />
@@ -373,14 +391,22 @@ function FileCard({ row, file, scope, at, first, turn }: { row: Row; file: Chang
   return (
     <details ref={ref} className="chg-card" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
       <summary className="chg-card-head" title={file.path}>
+        <svg className="chg-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
+             strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
         <span className="chg-card-path mono">
-          {cut >= 0 && <span className="chg-card-dir">{shown.slice(0, cut + 1)}</span>}
           <b>{shown.slice(cut + 1)}</b>
+          {cut >= 0 && <span className="chg-card-dir">{shown.slice(0, cut)}</span>}
         </span>
-        <span className="num chg-card-count">{countBadge(file)}</span>
-        <span onClick={(e) => e.stopPropagation()}><CopyCommand text={file.path} label="Copy path" /></span>
+        {file.patch === false ? <span className="chg-card-count rt-label">No diff</span> : (<>
+          <span className="chg-pill"><span className={"chg-pill-dot" + (file.new ? " is-added" : "")} aria-hidden="true" />{file.new ? "Added" : file.add < 0 ? "Binary" : "Modified"}</span>
+          {file.add >= 0 && <span className="num chg-card-count">
+            <span className={"rt-add" + (file.add ? "" : " rt-zero")}>+{file.add}</span>
+            {!file.new && <span className={"rt-del" + (file.del ? "" : " rt-zero")}>−{file.del}</span>}
+          </span>}
+        </>)}
+        <span onClick={(e) => e.stopPropagation()}><CopyIcon text={file.path} /></span>
       </summary>
-      {open && (file.patch === false ? <p className="rt-label chg-card-note">{NO_DIFF} See Working tree.</p>
+      {open && (file.patch === false ? null
         : !canDiff ? <p className="rt-label chg-card-note">Binary file: no text diff to show</p>
         : diff.text != null ? <DiffBody text={diff.text} />
         : diff.failed ? <p className="chg-card-note"><InlineFail what="Couldn’t read the diff" onRetry={() => setNonce((n) => n + 1)} /></p>
@@ -421,9 +447,20 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
 
   return (
     <div className="chg">
-      <div className="chg-scopes" role="tablist" aria-label="Changes scope">
+      <div className={cards ? "chg-toolbar" : "chg-bar"}>
+      <div className={"chg-scopes" + (cards ? " seg" : "")} role="tablist" aria-label="Changes scope">
         {((data.turn ? ["turn", "session", "tree"] : ["session", "tree"]) as Scope[]).map((s) => {
           const c = countOf(read(s));
+          // The page: a segmented control with a count; an empty scope has nothing to show.
+          if (cards) {
+            const n = read(s).files?.length;
+            return (
+              <button key={s} type="button" role="tab" aria-selected={scope === s} className="chg-scope seg-item" onClick={() => onScope(s)}
+                      disabled={n === 0 && scope !== s}>
+                {scopeName(s)} <span className="num seg-count">{n ?? "…"}</span>
+              </button>
+            );
+          }
           return (
             <button key={s} type="button" role="tab" aria-selected={scope === s} className="chg-scope" onClick={() => onScope(s)}>
               {scopeName(s)}: <span className="num">{c.text}{c.add !== undefined && <> · <span className="rt-add">+{c.add}</span> <span className={"rt-del" + (c.del ? "" : " rt-zero")}>−{c.del}</span></>}</span>
@@ -437,6 +474,7 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
         {scope === "tree" && " · everything uncommitted, including edits made outside this session"}
         {r.at ? ` · updated ${ago(r.at)}` : ""}
       </p>
+      </div>
       {r.failed && (
         <p className="rt-label">{r.files === null ? "Couldn’t read the changes" : "Stale: the last refresh failed"}{" "}
           <button className="btn rt-stop" onClick={data.retry}>Retry</button></p>
@@ -445,7 +483,14 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
       {r.files !== null && r.repo && !files.length && (
         <p className="rt-label">{scope === "session" ? "This session has not changed any files" : scope === "turn" ? "This turn did not change any files" : "No uncommitted changes"}</p>
       )}
-      {scope !== "tree" && files.some((f) => f.patch === false) && (
+      {scope !== "tree" && files.some((f) => f.patch === false) && (cards ? (
+        <p className="chg-callout" role="note">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"
+               strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 11v5M12 8h.01" /></svg>
+          <span><b>No checkpoint for this session.</b> Line diffs aren’t available.{" "}
+            <button type="button" className="link chg-link" onClick={() => onScope("tree")}>See working tree</button></span>
+        </p>
+      ) :
         <p className="rt-label chg-nodiff">{NO_DIFF}{" "}
           <button type="button" className="rt-link" onClick={() => onScope("tree")}>See Working tree</button></p>
       )}

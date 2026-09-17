@@ -265,6 +265,9 @@ export function denumber(body: string): string {
 }
 
 /** A page's claims as one line of facts; zeros are not facts. "Cited" counts claims, not citation chips. */
+/** Every claim on a page, whatever its citation state. */
+export const claimTotal = (c: WikiCounts) => c.cited + c.inferred + c.uncited + c.unsupported + c.superseded;
+
 export function countsLine(c: WikiCounts): string {
   const parts = [
     c.cited && `${plural(c.cited, "cited claim")}`,
@@ -328,10 +331,10 @@ function CopyCommand({ text }: { text: string }) {
 // ——— Index ———————————————————————————————————————————————————————
 
 /** Copies the full wiki path; an icon that shows on hover or focus of the path. */
-function CopyPath({ text }: { text: string }) {
+function CopyPath({ text, label = "Copy full path" }: { text: string; label?: string }) {
   const [done, copy] = useCopied();
   return (
-    <button className="wk-x wk-copy" onClick={() => copy(text)} aria-label={done ? "Copied" : "Copy full path"} title={done ? "Copied" : "Copy full path"}>
+    <button className="wk-x wk-copy" onClick={() => copy(text)} aria-label={done ? "Copied" : label} title={done ? "Copied" : label}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         {done ? <path d="M5 12l5 5 9-10" /> : <><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a1 1 0 0 1 1-1h9" /></>}
       </svg>
@@ -404,15 +407,15 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, onIngest, ch
           <>
             {/* Health as one sentence; only flagged claims are red. */}
             <p className="wk-health">
-              <span className={"wk-dot" + (h.installed ? "" : " is-waiting")} aria-hidden="true">●</span>
+              <span className={"wk-dot" + (h.installed ? " is-on" : " is-waiting")} aria-hidden="true" />
               {h.installed ? `Scheduler every ${h.every ? duration(h.every) : "tick"}`
-                : <>Not scheduled · <code className="mono">bough wiki install</code></>}
-              {" · "}{h.ingesting ? "ingesting now" : `last ingest ${since(h.lastIngest)}`}
+                : <>Not scheduled <code className="mono">bough wiki install</code><CopyPath text="bough wiki install" label="Copy command" /></>}
+              {" · "}{h.ingesting ? "Ingesting now" : `Last ingest ${since(h.lastIngest)}`}
               {h.pending > 0 && <> · {plural(h.pending, "session")} waiting</>}
               {data.thin > 0 && <> · {check ? <button className="wk-link" onClick={runCheck}>{plural(data.thin, "page")} {data.thin === 1 ? "rests" : "rest"} on one citation</button>
                 : <>{plural(data.thin, "page")} {data.thin === 1 ? "rests" : "rest"} on one citation</>}</>}
-              {data.orphans > 0 && <> · {check ? <button className="wk-link" onClick={runCheck}>{plural(data.orphans, "page")} with no inbound links</button>
-                : <>{plural(data.orphans, "page")} with no inbound links</>}</>}
+              {data.orphans > 0 && <> · <span className="wk-dot is-attn" aria-hidden="true" />{check ? <button className="wk-link" onClick={runCheck} title="Pages with no inbound links">{plural(data.orphans, "orphan page")}</button>
+                : <span title="Pages with no inbound links">{plural(data.orphans, "orphan page")}</span>}</>}
               {flagged > 0 && <> · <button className="wk-link wk-link-bad" onClick={onReview}>Review {plural(flagged, "flagged claim")}</button></>}
             </p>
 
@@ -439,6 +442,7 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, onIngest, ch
                   <h2>{t.name || "Not in the index"}</h2>
                   <span className="num proj-count">{plural(t.pages.length, "page")}</span>
                 </div>
+                <div className="wk-list">
                 {t.pages.map((p) => (
                   <a key={p.path} className="wk-row" href={"#/" + wikiHash({ at: "page", path: p.path })}
                      onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); onOpen(p.path); }}>
@@ -450,10 +454,11 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, onIngest, ch
                       </span>
                       {p.summary && <span className="wk-sum">{p.summary}</span>}
                     </span>
-                    <span className="wk-counts num">{countsLine(p.counts)}</span>
+                    <span className="wk-counts num" title={countsLine(p.counts)}>{plural(claimTotal(p.counts), "claim")}{p.counts.inferred > 0 && <span className="wk-inferred"> · {p.counts.inferred} inferred</span>}</span>
                     <span className="wk-date num">{stamp(p.updated)}</span>
                   </a>
                 ))}
+                </div>
               </section>
             ))}
           </>
