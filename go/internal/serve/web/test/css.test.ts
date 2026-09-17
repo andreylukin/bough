@@ -91,3 +91,8 @@ test("MB-WORK: the narrow popover keeps the glyph column, so a failed glyph neve
   const work = css.match(/\/\* MB-WORK:[\s\S]*?\/\* \/MB-WORK \*\//)![0];
   expect(work).toMatch(/@container \(max-width:520px\)\{[^@]*\.work-popover \.work-row\{grid-template-columns:16px minmax\(0,1fr\) auto\}/);
 });
+
+test("MB-composer: a narrow desktop pane folds the mode badge to its icon so it never runs under Send", () => {
+  const comp = css.match(/\/\* MB-composer:[\s\S]*?\/\* \/MB-composer \*\//)![0];
+  expect(comp).toMatch(/@container \(max-width:600px\)\{[^@]*\.composer-tools \.mode-badge \.mode-word\{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset\(50%\)/);
+});
