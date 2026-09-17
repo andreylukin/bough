@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Back, ago } from "./app";
-import { duration, EmptyState, ErrorNote, Pending, useCopied } from "./loading";
+import { duration, EmptyState, Pending, useCopied } from "./loading";
 import { Markdown } from "./render";
 
 // The wiki wire types live here, like the hooks ones: this view is
@@ -297,12 +297,12 @@ function resolveLink(from: string, href: string): string {
   return parts.join("/");
 }
 
-function Crumbs({ onIndex, trail, title, slug }: { onIndex?: () => void; trail?: string[]; title: string; slug?: string }) {
+function Crumbs({ onIndex, trail, title, slug, muted }: { onIndex?: () => void; trail?: string[]; title: string; slug?: string; /** A missing page: the slug, quiet. */ muted?: boolean }) {
   return (
     <div className={"head-main wk-crumb" + (slug ? " wk-crumb-slugged" : "")}>
       {onIndex && <><button className="wk-crumb-link" onClick={onIndex}>Wiki</button><span className="wk-sep" aria-hidden="true">/</span></>}
       {(trail ?? []).map((t) => <span key={t} className="wk-crumb-link wk-crumb-static wk-crumb-trail">{t}<span className="wk-sep" aria-hidden="true">/</span></span>)}
-      <h1>{title}</h1>
+      <h1 className={muted ? "wk-crumb-missing" : undefined}>{title}</h1>
       {/* Phones read "Wiki / <title>" on one line, cut when long. */}
       {slug && <span className="wk-crumb-slug" aria-hidden="true">{title}</span>}
     </div>
@@ -665,7 +665,7 @@ export function WikiSourcePane({ source, error, onClose, onOpenSession, onOpenPa
   );
 }
 
-export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRetrySource, cite, source, sourceError, onCite, onCloseSource, onOpenPage, onIndex, onOpenSession, onSave, loadHistory, onBack }: {
+export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRetrySource, cite, source, sourceError, onCite, onCloseSource, onOpenPage, onIndex, onOpenSession, onSave, loadHistory, onBack, onSearch }: {
   /** Null while the page loads or when it failed: the header stays, only the body waits. */
   page: WikiPageData | null;
   /** The page being opened, for the header before its data arrives. */
@@ -686,6 +686,8 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
   onSave?: (body: string) => Promise<void>;
   loadHistory?: () => Promise<WikiCommit[]>;
   onBack?: () => void;
+  /** Opens the palette on the missing slug. */
+  onSearch?: (text: string) => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -732,14 +734,15 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
   const topic = page?.topic ?? (at.startsWith("topics/") ? at.split("/")[1] : "");
   const title = page ? humanTitle(page.title, page.path) : knownTitle ? humanTitle(knownTitle, at) : humanTitle("", at);
   const notFound = !page && pageMissing(pageError);
+  const missingSlug = at.split("/").pop()?.replace(/\.md$/, "");
   // A page written from a numbered view parses into nothing useful: show its text without the gutter instead.
   const numbered = page ? page.body.split("\n").filter((l) => /^\s*\d+\|/.test(l)).length >= 2 : false;
   return (
     <div className="thread">
       <header className="thread-head page-head">
         <Back onBack={onBack} label="Back to wiki index" />
-        <Crumbs onIndex={onIndex} trail={topic ? [topic] : []} title={notFound ? "Page not found" : title}
-                slug={at.split("/").pop()?.replace(/\.md$/, "")} />
+        <Crumbs onIndex={onIndex} trail={topic ? [topic] : []} title={notFound ? missingSlug || "Page not found" : title} muted={notFound}
+                slug={missingSlug} />
         {page && editing === null && (onSave || loadHistory) && (
           <div className="hk-acts wk-page-acts">
             {onSave && <button className="btn wk-wide" onClick={() => setEditing(page.body)}>Edit</button>}
@@ -765,9 +768,11 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
         <div className="scroll wk-doc" ref={doc}>
           {!page ? (
             notFound ? (
-              <ErrorNote title="Page not found" err={pageError} action={{ label: "Back to wiki", onClick: onIndex }}>
-                Nothing lives at <code className="mono">{at}</code>; a later ingest may have renamed or merged it.
-              </ErrorNote>
+              <EmptyState glyph="missing" title="This page doesn’t exist" primary={Boolean(onSearch)}
+                action={onSearch ? { label: "Search the wiki", onClick: () => onSearch(missingSlug ?? at) } : { label: "Back to wiki", onClick: onIndex }}
+                secondary={onSearch ? { label: "Back to wiki", onClick: onIndex } : undefined}>
+                Nothing lives at <code className="mono">{at}</code>. A later ingest may have renamed or merged it.
+              </EmptyState>
             ) : <Pending what="The page" err={pageError} onRetry={onRetry} lines={pageError ? 0 : 6} />
           ) : (<>
           {err && <p className="hk2-alert">{err}</p>}
@@ -1220,7 +1225,7 @@ export function WikiPage({ route, onRoute, onBack, onOpenSession, onSearch }: {
         : <Loading what="Activity" title="Activity" err={activity.err} onBack={onBack} onIndex={toIndex} onRetry={activity.retry} />;
     case "page":
       return (
-        <WikiPageView page={page.data}
+        <WikiPageView page={page.data} onSearch={onSearch}
                       path={route.path} knownTitle={knownTitles.get(route.path)}
                       pageError={page.err} onRetry={page.retry} onRetrySource={source.retry}
                       cite={cite ?? null} source={source.data} sourceError={source.err}

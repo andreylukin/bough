@@ -378,9 +378,9 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
           <input className="field" type="search" value={filter} placeholder="Filter sessions by title or repo"
                  aria-label="Filter sessions" onChange={(e) => setFilter(e.target.value)} />
         </div>
-        {needle && shown.length === 0 && <p className="proj-nomatch" role="status">No sessions match “{filter.trim()}”.</p>}
+        {needle && shown.length === 0 && <p className="proj-nomatch" role="status">No sessions match “{filter.trim()}” <button type="button" className="btn btn-ghost btn-sm" onClick={() => setFilter("")}>Clear filter</button></p>}
         {projects.length === 0 && !needle && (
-          <EmptyState title="No projects yet" action={{ label: "New project…", onClick: () => { void createProject(); } }}>
+          <EmptyState card title="No projects yet" action={{ label: "New project…", onClick: () => { void createProject(); } }}>
             {LEDE}
           </EmptyState>
         )}

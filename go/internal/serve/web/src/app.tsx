@@ -22,7 +22,7 @@ import { ContextPage } from "./context";
 import { ChangesBody, ChangesPage, EditDiff, FileEdit, callEdits, countOf, outputParts, useChanges } from "./changes";
 import { Palette, idTail, isTypingTarget, startFolders, useFullText, usePaletteKey, visit, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
-import { Elapsed, ErrorNote, Pending, elapsed } from "./loading";
+import { Elapsed, EmptyState, ErrorNote, InlineFail, Pending, RawDetails, Spinner, StateIcon, elapsed, humanError, providerError } from "./loading";
 
 export type View = "sessions" | "projects" | "hooks" | "wiki";
 
@@ -736,7 +736,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
                 </button>
               </li>
             )) : log ? (
-              <li className="turn-wait">Couldn’t load turns · <button className="link" onClick={() => setLogs((m) => { const { [r.id]: _, ...rest } = m; return rest; })}>Retry</button></li>
+              <li className="turn-wait"><InlineFail what="Couldn’t load turns" onRetry={() => setLogs((m) => { const { [r.id]: _, ...rest } = m; return rest; })} /></li>
             ) : <li className="turn-wait">Loading…</li>}
           </ol>
         )}
@@ -914,7 +914,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
           () => (showArchived ? setArchFolded((v) => !v) : (setArchFolded(false), archFromFilter.current = Boolean(q), onToggleArchived())),
           showArchived && archivedState === "ready" ? archived.length : null,
           archivedState === "loading" ? <div className="list-none"><Pending what="Archived" inline onRetry={onRetryArchived} /></div>
-          : archivedState === "failed" ? <p className="list-none">Couldn’t load archived · <button className="link" onClick={onRetryArchived}>Retry</button></p>
+          : archivedState === "failed" ? <p className="list-none"><InlineFail what="Couldn’t load archived" onRetry={onRetryArchived} /></p>
           : archived.length ? workspaces(byWorkspace(archived, projectNames), "archived") : <p className="list-none">{q ? "No archived matches." : "Nothing archived."}</p>)}
       </div>
       {nav}
@@ -1236,18 +1236,32 @@ export function hashToReplace(current: string, want: string, sub: string | null,
   return want;
 }
 
-/** R4-C: a failed turn says what broke calmly, with a way forward: Retry resends the prompt; Switch model is the primary exit. */
-const RetryTurn = createContext<(() => void) | null>(null);
+/** R4-C, MB-ERR: a failed turn says what broke in one short line, the provider's message under it, the raw text behind Show details. Retry and Switch model are both secondary. */
+const RetryTurn = createContext<(() => unknown) | null>(null);
 function ErrorCard({ text }: { text: string }) {
   const retry = useContext(RetryTurn);
-  const [first, ...rest] = text.trim().split("\n");
+  const editPrompt = useContext(EditPrompt);
+  const { title, body } = providerError(text);
+  const [retrying, setRetrying] = useState(false);
+  const retryBtn = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    // Only the latest card, only when nothing else holds focus and the composer is empty.
+    const el = retryBtn.current, cards = document.querySelectorAll(".err-card");
+    if (el && !editPrompt?.busy && cards[cards.length - 1]?.contains(el) && (document.activeElement === document.body || !document.activeElement)) el.focus({ preventScroll: true });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <div className="err err-card" role="alert">
-      <p className="err-head"><span className="err-dot" aria-hidden="true" />{first}</p>
-      {rest.length > 0 && <div className="err-body">{rest.join("\n")}</div>}
+    <div className="err err-card">
+      <StateIcon kind="alert" />
+      <p className="err-head" role="alert">{title}</p>
+      {body && <p className="err-msg">{body}</p>}
+      <RawDetails raw={text.trim()} className="err-raw" />
       <div className="err-actions">
-        <button type="button" className="btn" onClick={() => retry?.()}>Retry</button>
-        <button type="button" className="btn btn-primary err-action" onClick={() => {
+        <button type="button" ref={retryBtn} className="btn" disabled={retrying} aria-busy={retrying || undefined} onClick={async () => {
+          if (!retry) return;
+          setRetrying(true);
+          try { await retry(); } finally { setRetrying(false); }
+        }}>{retrying ? <><Spinner /> Retrying…</> : "Retry"}</button>
+        <button type="button" className="btn err-action" onClick={() => {
           const pick = [...document.querySelectorAll<HTMLButtonElement>('.composer-tools button[aria-label^="Next turn model"]')].find((b) => b.offsetParent);
           pick?.scrollIntoView({ block: "nearest" });
           pick?.click();
@@ -2230,7 +2244,7 @@ export function TurnFiles({ files, turn, edits: diff }: { files: string[]; turn:
  * actually answering. The window is only named when the session records
  * its model; a default model is not guessed at.
  */
-function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, loading, cat }: { row: Row; lines: Line[]; paused?: number; onRetry?: () => void; onContext?: () => void; /** The Work button, after the metrics. */ work?: React.ReactNode; /** Header actions (Stop orb, Mark seen), after Work. */ actions?: React.ReactNode; loading?: boolean; /** The thread's model catalogue, read once for the strip and the pickers. */ cat: Catalogue | null }) {
+function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, loading, failed, cat }: { row: Row; /** MB-ERR: the transcript failed to load, so no loading chrome. */ failed?: boolean; lines: Line[]; paused?: number; onRetry?: () => void; onContext?: () => void; /** The Work button, after the metrics. */ work?: React.ReactNode; /** Header actions (Stop orb, Mark seen), after Work. */ actions?: React.ReactNode; loading?: boolean; /** The thread's model catalogue, read once for the strip and the pickers. */ cat: Catalogue | null }) {
   const limits = useMemo(() => {
     const m: Record<string, number> = {};
     for (const p of cat?.providers ?? []) for (const x of p.models ?? []) if (x.context) m[x.id] = x.context;
@@ -2285,7 +2299,7 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, l
   }, []);
   const cache = row.cache && <CacheChip key="cache" cache={row.cache} model={row.model} />;
   const tests = <TestsChip key="tests" lines={lines} running={row.status === "running"} />;
-  const edits = <ChangesChip key="edits" row={row} />;
+  const edits = failed ? null : <ChangesChip key="edits" row={row} />;
   // Cache, changes and tests stand on their own: a session with no usage
   // recorded can still have a server running.
   const context = (() => {
@@ -2298,6 +2312,7 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, l
       : `${row.model} has no context window in the catalogue`;
     // Until the transcript arrives there is nothing to report yet; after,
     // a session that never reports shows one quiet dash, not a label.
+    if (failed) return null;
     if (loading && !u) return <span key="context" className="rt rt-loading" aria-label="Loading usage"><span className="rt-label">Context</span><span className="rt-skel" /></span>;
     // No value, no chip: the Context view (palette, settings sheet) still names why.
     if (!u) return null;
@@ -3805,6 +3820,15 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   // R3-D: the server's error status wins over a send it never started.
   const status = row.status === "error" ? "" : composerStatus({ sending: !running && unlanded.some((p) => !p.steer), accepted: unlanded.some((p) => !p.steer && p.accepted), running, streamed: stream.length > 0, activity, stopping: stopping === "stopping" });
   const failedLoad = loading && Boolean(loadError);
+  // MB-ERR: a toast sits above the composer, not over Send.
+  const composerWrap = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = composerWrap.current, root = document.documentElement;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => root.style.setProperty("--composer-h", `${el.offsetHeight + 16}px`));
+    ro.observe(el);
+    return () => { ro.disconnect(); root.style.removeProperty("--composer-h"); };
+  }, []);
   useEffect(() => { if (!live) setStopping(""); }, [live]);
   useEffect(() => {
     if (!restoreOnStop.current || running || loading) return;
@@ -4013,7 +4037,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           {/* A test failure is the Tests chip's to say, once. */}
           {running && turns[turns.length - 1]?.prompt?.at && !turns[turns.length - 1]?.done && <RunClock since={turns[turns.length - 1].prompt!.at} />}
         </div>
-        <RuntimeStrip cat={catalogue.cat} row={row} lines={lines} paused={paused} onRetry={onRetry} onContext={onContext} loading={loading}
+        <RuntimeStrip cat={catalogue.cat} row={row} lines={lines} paused={paused} onRetry={onRetry} onContext={onContext} loading={loading} failed={failedLoad}
           actions={<>
             {row.orb?.status === "running" && onStopOrb && <button className="btn head-ack" onClick={onStopOrb}>Stop orb</button>}
             {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
@@ -4073,7 +4097,11 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
            onFocus={(e) => { const t = e.target as HTMLElement; if (t.matches("details.block > summary") && t !== rovingAt.current) rove(summaries(), t); }}
            tabIndex={0} role="region" aria-label="Transcript">
         {loading && loadError && (
-          <ErrorNote className="transcript-state" title="Couldn’t load transcript" err={loadError} action={onRetry && { label: "Retry", onClick: onRetry }} />
+          <ErrorNote className="transcript-state" err={loadError}
+            title={/taking too long|timed? ?out|deadline/i.test(loadError!) ? "This session is taking too long" : "Couldn’t load this session"}
+            action={onRetry && { label: "Retry", onClick: onRetry }} secondary={onBack && { label: "Show all sessions", onClick: onBack }}>
+            {/taking too long|timed? ?out|deadline/i.test(loadError!) ? "The server has not answered yet." : undefined}
+          </ErrorNote>
         )}
         {loading && !loadError && slow && <p className="meta-line transcript-state" role="status">Loading transcript…</p>}
         {!loading && turns.length === 0 && !running && !row.ask && !unlanded.length && (
@@ -4124,7 +4152,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
         <div ref={end} />
       </div>
 
-      <div className="composer-wrap">
+      <div className="composer-wrap" ref={composerWrap}>
         {/* Archived stays readable, but says so before anything is typed into it. */}
         {row.archived && (
           <p className="archived-note" role="status">
@@ -4218,11 +4246,11 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
             onClose={() => { if (trigger) dismissed.current = `${trigger.from}:${trigger.kind}${trigger.token}`; setTrigger(null); }}
             onOpen={setPickerOpen} onActive={setActiveOpt} />
           <textarea id="composer" ref={composer} value={draft} rows={1}
-            aria-label={(row.archived ? "Unarchive to continue this session" : row.ask?.secret ? "Answer in the secret field" :row.ask && !askChanged ? "Answer…" : running || status === "Waiting" ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…").replace(/…$/, "")}
+            aria-label={(row.archived ? "Unarchive to continue this session" : failedLoad ? "Waiting for the session to load" : row.ask?.secret ? "Answer in the secret field" :row.ask && !askChanged ? "Answer…" : running || status === "Waiting" ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…").replace(/…$/, "")}
             aria-controls={pickerOpen ? "mention-list" : undefined}
             aria-activedescendant={pickerOpen ? activeOpt : undefined}
             disabled={Boolean(row.ask?.secret) || row.archived}
-            placeholder={row.archived ? "Unarchive to continue this session" : row.ask?.secret ? "Answer in the secret field" :row.ask && !askChanged ? "Answer…" : running || status === "Waiting" ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…"}
+            placeholder={row.archived ? "Unarchive to continue this session" : failedLoad ? "Waiting for the session to load" : row.ask?.secret ? "Answer in the secret field" :row.ask && !askChanged ? "Answer…" : running || status === "Waiting" ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…"}
             onPaste={(e) => take({ dataTransfer: e.clipboardData, preventDefault: () => e.preventDefault() }, false)}
             onChange={(e) => {
               setDraft(e.target.value);
@@ -4319,7 +4347,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
         </div>
         <div className="composer-foot">
           {/* A session that can already edit its checkout has no reason to move; the offer is for read-only ones. */}
-          {row.mode !== "project" && !row.writable && (
+          {row.mode !== "project" && !row.writable && !failedLoad && (
             <span className="composer-local">
               {onStartProject && projects.some((p) => p.slug) ? (
                 <Select label="Start project session" value="" placeholder="Start project session…" align="start"
@@ -4386,6 +4414,14 @@ export default function App() {
   // clear it before it could be read.
   // What failed, named, with the call that failed so Retry repeats it on the same target.
   const [err, setErr] = useState<{ label: string; msg: string; retry: () => void } | null>(null);
+  // The toast stays mounted for its exit, marked data-leaving.
+  const [toast, setToast] = useState<(NonNullable<typeof err> & { leaving?: boolean }) | null>(null);
+  useEffect(() => {
+    if (err) { setToast(err); return; }
+    setToast((t) => (t ? { ...t, leaving: true } : t));
+    const id = window.setTimeout(() => setToast(null), 130);
+    return () => clearTimeout(id);
+  }, [err]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   // When the list last refreshed; null until the first read lands.
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
@@ -4995,13 +5031,9 @@ export default function App() {
       <main className="app-main">
       {lost !== null && view === "sessions" && !selected ? (
         <div className="thread empty">
-          <div className="lookup">
-            <h1 className="lookup-title">Page not found</h1>
-            <p className="lookup-body">Nothing here answers to this address.</p>
-            <div className="lookup-actions">
-              <button className="btn" onClick={goList}>Show all sessions</button>
-            </div>
-          </div>
+          <EmptyState glyph="search" title="Nothing at this address" primary={false} action={{ label: "Show all sessions", onClick: goList }}>
+            The link may be old, or the session was deleted.
+          </EmptyState>
         </div>
       ) : view === "wiki" ? (
         <WikiPage route={wikiRoute} onRoute={goWiki} onBack={goList} onOpenSession={openSession}
@@ -5071,23 +5103,16 @@ export default function App() {
           </>) : (
             // A link to a session the list does not hold: looked up on its
             // own, so an empty or slow list never leaves a blank pane.
-            <div className="lookup" role={missing ? undefined : "status"}>
-              {missing ? (<>
-                <h1 className="lookup-title">Session not found</h1>
-                <p className="lookup-body">This session isn’t on this server. It may be archived or deleted.</p>
-                <div className="lookup-actions">
-                  <button className="btn" onClick={goList}>Show all sessions</button>
-                  <button className="btn" onClick={() => { setArchived(true); setPane("list"); setPalQuery(""); setPalette(true); }}>Search archived</button>
-                </div>
-              </>) : loadFail ? (<>
-                <h1 className="lookup-title">Couldn’t load this session</h1>
-                <p className="lookup-body">{loadFail}</p>
-                <div className="lookup-actions">
-                  <button className="btn" onClick={() => setLoadTry((n) => n + 1)}>Retry</button>
-                  <button className="btn" onClick={goList}>Show all sessions</button>
-                </div>
-              </>) : <p className="lookup-body">Loading session…</p>}
-            </div>
+            missing ? (
+              <EmptyState glyph="search" title="Session not found" primary={false}
+                action={{ label: "Show all sessions", onClick: goList }}
+                secondary={{ label: "Search archived", onClick: () => { setArchived(true); setPane("list"); setPalQuery(""); setPalette(true); } }}>
+                This session isn’t on this server. It may be archived or deleted.
+              </EmptyState>
+            ) : loadFail ? (
+              <ErrorNote title="Couldn’t load this session" err={loadFail}
+                action={{ label: "Retry", onClick: () => setLoadTry((n) => n + 1) }} secondary={{ label: "Show all sessions", onClick: goList }} />
+            ) : <div className="lookup" role="status"><p className="lookup-body">Loading session…</p></div>
           )}
         </div>
       )}
@@ -5096,14 +5121,20 @@ export default function App() {
       {narrow && (pane === "list" || view !== "sessions") && (
         <ViewNav phone view={pane === "list" ? "sessions" : view} onView={onView} wikiFlags={wikiFlags} />
       )}
-      {err ? (
-        // Stays until dismissed or a later action succeeds; the buttons are the only controls.
-        <div className="toast" role="alert">
-          <p className="toast-msg">Couldn’t {err.label} — {err.msg}</p>
-          <div className="toast-actions">
-            <button className="btn" disabled={busy} onClick={err.retry}>Retry</button>
-            <button className="btn" onClick={() => setErr(null)}>Dismiss</button>
+      {toast ? (
+        // Stays until dismissed or a later action succeeds; Esc is the turn's, not the toast's.
+        <div className="toast" data-leaving={toast.leaving || undefined}>
+          <StateIcon kind="alert" />
+          <div className="toast-text" role="alert">
+            <p className="toast-title">Couldn’t {toast.label}</p>
+            <p className="toast-msg">{humanError(toast.msg)}</p>
           </div>
+          <button className="toast-x" aria-label="Dismiss" onClick={() => setErr(null)}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+          <button className="toast-retry" disabled={busy || toast.leaving} aria-busy={busy || undefined} onClick={toast.retry}>
+            {busy ? <><Spinner /> Retrying…</> : "Retry"}
+          </button>
         </div>
       ) : null}
     </div>
