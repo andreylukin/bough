@@ -122,6 +122,20 @@ func (p *projectMode) command(ctx context.Context, script string) (*exec.Cmd, er
 	return o.Command(ctx, "sh", script), nil
 }
 
+// stoppedSince reports whether the orb was stopped under a job started at
+// t; the host (nil) and an orb that cannot tell never were.
+func (p *projectMode) stoppedSince(t time.Time) bool {
+	if p == nil {
+		return false
+	}
+	o, err := p.orb()
+	if err != nil {
+		return false
+	}
+	s, ok := o.(interface{ StoppedSince(time.Time) bool })
+	return ok && s.StoppedSince(t)
+}
+
 // cancel kills c's host process group and, in a project session, also
 // runs the orb's own Cancel: the host process there is only the
 // `container exec` client, and killing it leaves the guest command

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OrbDetail, OrbFile, Project, Row } from "./types";
 import { api } from "./api";
-import { ProjectOrb } from "./orb";
+import { ProjectOrb, confirmStopOrb } from "./orb";
 import { STATUS, StatusMark, TESTS_FAILED_GLYPH, shownStatus } from "./status";
 import { humanError } from "./loading";
 import { hasOwnTitle, sessionTitle } from "./render";
@@ -66,9 +66,11 @@ function Conversation({ row, repo, projects, onOpen, onAssign, picked, onPick, l
  * build log polled once a second while a build runs (the log endpoint
  * hands back an offset, so each poll reads only what is new).
  */
-function OrbSection({ project, onOpen, onChanged, titles }: {
+function OrbSection({ project, onOpen, onChanged, titles, rows = [] }: {
   project: Project; onOpen: (id: string) => void; onChanged: () => Promise<void> | void;
   titles: Record<string, string>;
+  /** For the running jobs a Stop would kill. */
+  rows?: Row[];
 }) {
   const [detail, setDetail] = useState<OrbDetail>();
   const [err, setErr] = useState("");
@@ -116,7 +118,7 @@ function OrbSection({ project, onOpen, onChanged, titles }: {
       }}
       onSave={async (name: OrbFile, text: string) => { await api.putOrbFile(project.id, name, text); load(); }}
       onBuild={() => { void run(() => api.buildOrb(project.id)); }}
-      onStopOrb={(session) => { void run(() => api.stopOrb(session)); }} />
+      onStopOrb={async (session) => { if (await confirmStopOrb(rows.find((r) => r.id === session)?.jobs)) void run(() => api.stopOrb(session)); }} />
   );
 }
 
@@ -417,7 +419,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
                   } },
                 ]} />
               </div>
-              {orbId === p.id && <OrbSection project={p} onOpen={onOpen} onChanged={onOrbChanged} titles={titles} />}
+              {orbId === p.id && <OrbSection project={p} onOpen={onOpen} onChanged={onOrbChanged} titles={titles} rows={rows} />}
               {folded.has(p.id) ? null : rs.length === 0
                 ? <p className="proj-none">{needle ? "Nothing here matches the filter." : "Nothing here yet. Move a session in from below."}</p>
                 : list(rs)}

@@ -146,7 +146,7 @@ knob). Fake is in the non-test package so other areas' tests import it.
 
 Apple CLI mapping (1.1.0, flags checked against `--help` on this machine):
 `container build -t TAG -f FILE --progress plain DIR`;
-`container run -d --name N -v SRC:DST[:ro] --mount type=volume,source=V,target=DST -w DIR -e K=V -c CPUS -m MEM IMAGE sleep infinity`;
+`container run -d --init --name N -v SRC:DST[:ro] --mount type=volume,source=V,target=DST -w DIR -e K=V -c CPUS -m MEM IMAGE sleep infinity`;
 `container start N` (existing stopped container);
 `container exec [-i] [-w DIR] [-e K=V] N ARGV...`; `container stop N`;
 `container delete --force N` (`rm -f` alias); `container inspect N` (no
@@ -553,8 +553,8 @@ deletes `~/.bough/projects/<slug>`.
 | `PUT /api/projects/{id}/orb/files/{name}` | `{"text": "..."}` | `{"ok": true, "orb": OrbSummary}`; name ∈ project.yml, Dockerfile, setup.sh, resume.sh; 400 with parse error |
 | `POST /api/projects/{id}/orb/build` | `{}` | 202 `{"build": Build}`; runs orb.EnsureImage in a goroutine; 409 while building |
 | `GET /api/projects/{id}/orb/build/log?offset=N` | — | `{"text": "...", "offset": M, "state": "building|ok|failed|"}` — bytes from N of build.log, max 256 KiB per call; client polls every 1 s while building |
-| `GET /api/sessions/{id}/orb` | — | `{"orb": OrbState}` (`orb.State` JSON, status forced to `stopped` when PID dead and status was running/starting); local => `{"orb": null}` |
-| `POST /api/sessions/{id}/orb/stop` | — | `{"ok": true}`; runtime Stop on OrbName. Allowed while the child is live: the child's `Orb.Command` re-starts a stopped container on the next exec. serve does NOT write state.json (the child is its only writer); it reports `stopped` from `Inspect` until the child rewrites it |
+| `GET /api/sessions/{id}/orb` | — | `{"orb": OrbState}` (`orb.State` JSON, status forced to `stopped` when PID dead and status was running/starting; `up: true` when the container runs, including after a failed setup); local => `{"orb": null}` |
+| `POST /api/sessions/{id}/orb/stop` | — | `{"ok": true}`; runtime Stop on OrbName. Allowed while the child is live: the child's `Orb.Command` re-starts a stopped container on the next exec. serve marks state.json `stopped` before the runtime Stop (restored if Stop fails); the child writes `running` again on restart. A background job that dies while the orb is marked stopped (or not running) records `stopped: true`, shows `[stopped with the orb]` and queues no wake notice. The web asks to confirm only when the session has running jobs |
 | `POST /api/sessions` | `{"cwd", "prompt", "mode"?: "local"\|"project", "project"?: "<label id>"}` | unchanged `{"session": Row}`. mode omitted => local. project mode: label must have a Slug (400 otherwise), cwd defaults to home and is ignored for the child dir; child env gets `BOUGH_MODE=project BOUGH_PROJECT=<slug>`, and the new session is auto-assigned to that label |
 
 ```go

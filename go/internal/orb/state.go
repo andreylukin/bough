@@ -61,6 +61,28 @@ func writeState(home string, s State) error {
 	return nil
 }
 
+// MarkStopped rewrites a session's state.json as stopped for a stop made
+// outside the owning child (serve's Stop orb, archive, kill), so every
+// reader of the file sees it; the child's next restart writes running
+// again. It returns the state it replaced (zero when there was none).
+func MarkStopped(home, session string) (State, error) {
+	prev, err := ReadState(home, session)
+	if err != nil || prev.Session == "" {
+		return prev, err
+	}
+	next := prev
+	next.Status = StatusStopped
+	return prev, writeState(home, next)
+}
+
+// Restore puts back a state MarkStopped replaced (a stop that failed).
+func Restore(home string, prev State) error {
+	if prev.Session == "" {
+		return nil
+	}
+	return writeJSON(filepath.Join(Dir(home, prev.Session), stateFile), prev)
+}
+
 // readJSON leaves v untouched when the file is missing.
 func readJSON(path string, v any) error {
 	b, err := os.ReadFile(path)

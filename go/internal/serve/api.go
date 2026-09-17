@@ -122,6 +122,7 @@ type AgentCount struct {
 type RowOrb struct {
 	Project string     `json:"project"`
 	Status  orb.Status `json:"status"`
+	Up      bool       `json:"up,omitempty"` // container running (a failed setup can leave it up)
 }
 
 // maxBody caps every JSON request body. Prompts carry pasted logs and
@@ -563,7 +564,8 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 	mode, slug := sessionMode(entries)
 	var rowOrb *RowOrb
 	if mode == "project" {
-		rowOrb = &RowOrb{Project: slug, Status: a.orbState(in.ID).Status}
+		st := a.orbState(in.ID)
+		rowOrb = &RowOrb{Project: slug, Status: st.Status, Up: st.Up}
 	}
 	return Row{
 		ID:       in.ID,

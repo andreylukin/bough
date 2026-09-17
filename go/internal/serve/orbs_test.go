@@ -265,9 +265,35 @@ func TestStopOrb(t *testing.T) {
 	if o, _ := rowOf(t, body)["orb"].(map[string]any); o["status"] != "stopped" {
 		t.Errorf("row after stop = %v", o)
 	}
-	// serve is never state.json's writer.
-	if st, _ := orb.ReadState(f.home, id); st.Status != orb.StatusRunning {
-		t.Errorf("serve rewrote state.json: %+v", st)
+	// state.json says so too: anything reading the file sees the stop.
+	if st, _ := orb.ReadState(f.home, id); st.Status != orb.StatusStopped {
+		t.Errorf("state.json after stop = %+v", st)
+	}
+}
+
+// A failed setup leaves the container running: the row and the orb
+// detail say it is up, so the web can still offer Stop.
+func TestFailedSetupOrbIsUp(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	ctx := context.Background()
+	f.rt.Build(ctx, container.BuildSpec{Tag: "img"}, nil)
+	for _, id := range []string{"upfail", "downfail"} {
+		seedModeSession(t, f, id, map[string]any{"cwd": "/w", "mode": "project", "project": "app"})
+		writeState(t, f.home, orb.State{Session: id, Project: "app", Status: orb.StatusFailed, Error: "resume.sh: exit 3", PID: os.Getpid(), UpdatedAt: time.Now()})
+	}
+	if err := f.rt.Start(ctx, container.RunSpec{Name: container.OrbName("upfail"), Image: "img"}); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]any{"upfail": true, "downfail": nil} {
+		_, body := f.do(t, "GET", "/api/sessions/"+id, "")
+		if o, _ := rowOf(t, body)["orb"].(map[string]any); o["up"] != want {
+			t.Errorf("%s row orb = %v, want up %v", id, o, want)
+		}
+		_, body = f.do(t, "GET", "/api/sessions/"+id+"/orb", "")
+		if o, _ := body["orb"].(map[string]any); o["up"] != want {
+			t.Errorf("%s session orb = %v, want up %v", id, o, want)
+		}
 	}
 }
 

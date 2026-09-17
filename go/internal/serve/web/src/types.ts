@@ -37,7 +37,7 @@ export interface Project {
 export type SessionMode = "local" | "project";
 export type OrbStatus = "" | "building" | "starting" | "running" | "stopped" | "failed";
 export interface OrbSummary { slug: string; image: string; built: boolean; build?: string; error?: string }
-export interface OrbState { session: string; project: string; status: OrbStatus; image?: string; container?: string; worktrees?: Record<string, string>; primary?: string; error?: string; updatedAt: string }
+export interface OrbState { session: string; project: string; status: OrbStatus; image?: string; container?: string; worktrees?: Record<string, string>; primary?: string; error?: string; updatedAt: string; up?: boolean }
 export interface OrbBuild { tag: string; hash: string; state: "" | "building" | "ok" | "failed"; startedAt: string; endedAt?: string; error?: string }
 export type OrbFile = "project.yml" | "Dockerfile" | "setup.sh" | "resume.sh";
 export interface OrbDetail { project: Project; files: Record<OrbFile, string>; hash: string; orb: OrbSummary; build: OrbBuild; orbs: OrbState[]; runtime: { name: string; available: boolean; error?: string } }
@@ -82,7 +82,8 @@ export interface Row {
   mode?: SessionMode;
   /** The git checkout a local session may edit; absent means read-only (or a project session). */
   writable?: string;
-  orb?: { project: string; status: OrbStatus };
+  /** up: the container runs, whatever the status (a failed setup can leave it up). */
+  orb?: { project: string; status: OrbStatus; up?: boolean };
   /** The session that started this one as a background agent. */
   spawnedBy?: string;
   /** A background agent waiting for a running slot (status "queued"). */

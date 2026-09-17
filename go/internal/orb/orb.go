@@ -351,6 +351,20 @@ func (o *Orb) Command(ctx context.Context, argv ...string) *exec.Cmd {
 	return cmd
 }
 
+// StoppedSince reports whether the container was stopped behind the
+// child's back since t: state.json marked stopped at or after t (serve
+// marks it before stopping), or the container is not running now. A job
+// that ends this way was killed by Stop orb, not by its own failure.
+func (o *Orb) StoppedSince(t time.Time) bool {
+	if st, err := ReadState(o.home, o.session); err == nil && st.Status == StatusStopped && !st.UpdatedAt.Before(t) {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cs, err := o.rt.Inspect(ctx, o.spec.Name)
+	return err == nil && cs != container.StateRunning
+}
+
 // guestKiller is the runtime's optional guest-side kill (Apple.KillFunc).
 type guestKiller interface {
 	KillFunc(name string, cmd *exec.Cmd) func() error

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/andreylukin/bough/internal/container"
+	"github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/internal/projectdef"
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
@@ -1016,10 +1017,25 @@ func (s *Supervisor) stopKilledOrb(id string) {
 	defer cancel()
 	name := container.OrbName(id)
 	if st, err := s.rt.Inspect(ctx, name); err == nil && st == container.StateRunning {
-		if err := s.rt.Stop(ctx, name); err != nil {
+		if err := s.stopOrb(ctx, id); err != nil {
 			fmt.Fprintf(os.Stderr, "bough: serve: stop orb %s: %v\n", name, err)
 		}
 	}
+}
+
+// stopOrb stops a session's container on serve's side. state.json is
+// marked stopped first, so the child can tell a job this kills from a job
+// that failed (and not wake a turn for it); a failed stop puts it back.
+func (s *Supervisor) stopOrb(ctx context.Context, id string) error {
+	prev, _ := orb.MarkStopped(s.Home(), id)
+	if err := s.rt.Stop(ctx, container.OrbName(id)); err != nil {
+		_ = orb.Restore(s.Home(), prev)
+		return err
+	}
+	s.mu.Lock()
+	s.stoppedAt[id] = time.Now()
+	s.mu.Unlock()
+	return nil
 }
 
 func (s *Supervisor) killChild(ch *child) {

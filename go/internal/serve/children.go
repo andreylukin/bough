@@ -558,12 +558,9 @@ func (s *Supervisor) EndChild(id string) error {
 	if st, err := s.rt.Inspect(ctx, name); err != nil || st != container.StateRunning {
 		return nil // no container, or already down: nothing to stop
 	}
-	if err := s.rt.Stop(ctx, name); err != nil {
+	if err := s.stopOrb(ctx, id); err != nil {
 		return fmt.Errorf("serve: supervisor: stop orb of %s: %w", id, err)
 	}
-	s.mu.Lock()
-	s.stoppedAt[id] = time.Now()
-	s.mu.Unlock()
 	return nil
 }
 
