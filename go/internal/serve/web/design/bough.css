@@ -2260,3 +2260,13 @@ a.rt-link{text-decoration:none}
 .waiting-dot i{width:8px;height:8px;border-radius:50%;background:var(--text-2);animation:pulse-dot 1.2s ease-in-out infinite}
 @media (prefers-reduced-motion:reduce){.waiting-dot i{animation:none;opacity:.7}}
 /* /WEB4 */
+/* WEB7: the ? shortcut sheet, one list per section */
+.dlg:has(.keys-sec){width:min(480px,calc(100vw - 32px))}
+.keys-sec{display:flex;flex-direction:column;gap:var(--s-1)}
+.keys-h{margin:0;font-size:12px;font-weight:600;color:var(--text-3)}
+.keys-list{margin:0;display:flex;flex-direction:column}
+.keys-row{display:grid;grid-template-columns:minmax(9rem,auto) 1fr;gap:var(--s-3);align-items:baseline;padding:3px 0;font-size:var(--fs-md);line-height:var(--lh-row)}
+.keys-row dt{display:flex;flex-wrap:wrap;gap:4px}
+.keys-row dd{margin:0;color:var(--text-2)}
+.keys-row kbd{font:500 11px/16px var(--mono);padding:1px 6px;border:1px solid var(--line-strong);border-radius:4px;color:var(--text-1)}
+/* /WEB7 */
