@@ -28,3 +28,12 @@ test("while a session loads, the header names no status it would revise a moment
   expect(loaded).toContain("old session prompt");
   expect(loaded).toMatch(/thread-head[\s\S]*>Done</);
 });
+
+import { sidebarSelected } from "../src/app";
+
+test("a session row is only highlighted while a session is what is on screen", () => {
+  expect(sidebarSelected("sessions", null, "s1", "s0")).toBe("s1");
+  expect(sidebarSelected("sessions", null, null, "s0")).toBe("s0");
+  for (const v of ["wiki", "hooks", "projects"] as const) expect(sidebarSelected(v, null, "s1", "s0")).toBeNull();
+  expect(sidebarSelected("sessions", "nope", null, "s0")).toBeNull();
+});

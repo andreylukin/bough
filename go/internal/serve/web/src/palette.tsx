@@ -141,6 +141,29 @@ function score(text: string, q: string, loose: boolean): number {
   return 100;
 }
 
+/** Visit order, most recent first, each session once. */
+export function visit(visited: string[], id: string): string[] {
+  return [id, ...visited.filter((x) => x !== id)].slice(0, 50);
+}
+
+/** Sessions to switch to: the ones visited, last first (so Enter goes back), then the rest by activity. */
+export function recentSessions(rows: Row[], current: string | null, visited: string[], n: number): Row[] {
+  const at = (id: string) => { const i = visited.indexOf(id); return i < 0 ? Infinity : i; };
+  return rows
+    .filter((r) => !r.archived && !r.empty && r.id !== current)
+    .sort((a, b) => at(a.id) - at(b.id) || Date.parse(b.lastAt) - Date.parse(a.lastAt))
+    .slice(0, n);
+}
+
+/** The folders sessions ran in, newest first, each once; home has its own entry. */
+export function startFolders(rows: Row[], home: string, n = 8): string[] {
+  const seen = new Set<string>();
+  for (const r of [...rows].sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt))) {
+    if (r.cwd && r.cwd !== home && !r.orb) seen.add(r.cwd);
+  }
+  return [...seen].slice(0, n);
+}
+
 /** The operators the palette reads out of a query; the rest is text. */
 export interface Ops { text: string; project?: string; after?: number; status?: string }
 
@@ -229,8 +252,12 @@ export function useFullText(q: string, open: boolean): { hits: SearchHit[]; stat
   return { hits: current ? hits : [], state: state === "loading" || current || state === "idle" ? state : "loading", retry: () => setTries((n) => n + 1) };
 }
 
-export function Palette({ open, onClose, rows, commands, onOpenSession, onStart, onStartIn, onOpenWikiPage, initialQuery = "", current = null, startIn }: {
+export function Palette({ open, onClose, rows, commands, onOpenSession, onStart, onStartIn, onOpenWikiPage, initialQuery = "", current = null, startIn, mode = "all", visited = [] }: {
   open: boolean;
+  /** "switch" is ⌘P: sessions only, in visit order. "new" is ⌥N: only the places to start. */
+  mode?: "all" | "switch" | "new";
+  /** Sessions opened, most recent first. */
+  visited?: string[];
   /** Folder name the Start entry starts in, when New aimed the palette at one. */
   startIn?: string;
   onClose: () => void;
@@ -276,8 +303,8 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     field.current?.focus();
   }, [open, initialQuery]);
 
-  const { hits: found, state: searching, retry } = useFullText(q, open);
-  const pages = useWikiHits(q, open, Boolean(onOpenWikiPage));
+  const { hits: found, state: searching, retry } = useFullText(q, open && mode !== "new");
+  const pages = useWikiHits(q, open, Boolean(onOpenWikiPage) && mode === "all");
   const places = useDirs(q, open, Boolean(onStartIn));
 
   const hits = useMemo(() => {
@@ -287,7 +314,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     const needle = ops.text.toLowerCase();
     // With no query: what you would do next, not the sitemap.
     const cmds = commands
-      .filter((c) => !narrowed && (needle || c.suggest))
+      .filter((c) => mode === "new" ? c.id.startsWith("new:") && !narrowed : mode === "all" && !narrowed && (needle || c.suggest))
       .map((c) => ({ c, s: needle ? score(c.label, needle, true) : 10 }))
       .filter((x) => x.s >= 0);
     const sessions = rows
@@ -299,14 +326,12 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
         return { r, title, s: s >= 0 && r.id === current ? Math.min(s, 51) : s };
       })
       // Best first, then the cap: slicing first dropped strong matches.
-      .filter((x) => (needle || narrowed) && x.s >= 0)
+      .filter((x) => mode !== "new" && (needle || narrowed) && x.s >= 0)
       .sort((a, b) => b.s - a.s);
     // With no query, the three sessions you touched last (not this one):
     // a list of 150 titles is the sidebar again.
-    const recent = needle || narrowed ? [] : rows
-      .filter((r) => !r.archived && !r.empty && r.id !== current)
-      .sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt))
-      .slice(0, 3);
+    // ⌘P lists more of them, in the order you visited them.
+    const recent = needle || narrowed || mode === "new" ? [] : recentSessions(rows, current, visited, mode === "switch" ? 12 : 3);
     // Same-named sessions are told apart under the active row: branch,
     // age, and the line the full-text search matched, when it did.
     const foundBy = new Map(found.map((h) => [h.id, h]));
@@ -354,7 +379,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     // A wiki page carries the claim that matched: the point of the wiki
     // is the join between a page and the entry behind it, and a title
     // alone does not show which is which.
-    if (onOpenWikiPage) {
+    if (onOpenWikiPage && mode === "all") {
       for (const p of pages) {
         all.push({
           id: "w:" + p.path,
@@ -400,7 +425,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
       });
     }
     return capped;
-  }, [q, rows, commands, onOpenSession, found, onStart, onStartIn, places, pages, onOpenWikiPage, current, startIn]);
+  }, [q, rows, commands, onOpenSession, found, onStart, onStartIn, places, pages, onOpenWikiPage, current, startIn, mode, visited]);
 
   // Nothing picked yet: the first result that is not destructive, so Enter never archives by default.
   const at = atId === null ? Math.max(0, hits.findIndex((c) => !c.destructive)) : Math.max(0, hits.findIndex((c) => c.id === atId));
@@ -438,7 +463,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
       <div className="pal-scrim" onClick={close} />
       <div className="pal" role="dialog" aria-modal="true" aria-label="Quick access">
         <input ref={field} className="pal-field" value={q} onChange={(e) => { setQ(e.target.value); setAtId(null); }}
-               onKeyDown={keys} placeholder="Search sessions or run a command…"
+               onKeyDown={keys} placeholder={mode === "switch" ? "Switch to a session…" : mode === "new" ? "Start where? Or type a first message…" : "Search sessions or run a command…"}
                aria-label="Search sessions or run a command"
                role="combobox" aria-expanded={hits.length > 0} aria-controls="pal-list" aria-autocomplete="list"
                aria-activedescendant={hits[at] ? "pal-" + hits[at].id : undefined} />
@@ -468,7 +493,7 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
             </p>
           )}
         </div>
-        {!q.trim() && (
+        {!q.trim() && mode !== "new" && (
           <p className="pal-syntax">Narrow with <code>project:bough</code> <code>after:7d</code> <code>status:failed</code></p>
         )}
         {/* Never scrolls away: a failed text search is not hidden under the list. */}
