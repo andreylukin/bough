@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/andreylukin/bough/internal/orb"
@@ -608,9 +609,20 @@ func lastAt(entries []history.Entry, fallback time.Time) time.Time {
 }
 
 // lastModel is the model that answered most recently, or "" for a
-// session that has not had a reply yet.
+// session that has not had a reply yet. A /model switch's one-line echo
+// ("model: plugin · id") counts too: before the next reply it is what
+// the session runs as.
 func lastModel(entries []history.Entry) string {
 	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Kind == "system" {
+			text, _ := entries[i].Data["text"].(string)
+			if rest, ok := strings.CutPrefix(text, "model: "); ok && !strings.Contains(rest, "\n") {
+				if _, m, ok := strings.Cut(rest, " · "); ok && m != "" {
+					return m
+				}
+			}
+			continue
+		}
 		if entries[i].Kind != "assistant" {
 			continue
 		}
