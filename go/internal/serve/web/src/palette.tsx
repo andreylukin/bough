@@ -428,7 +428,11 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
         detail: detailFor(r, title),
         run: () => onOpenSession(r.id),
       } as Command })),
-    ].sort((a, b) => b.s - a.s);
+    ];
+    // Equal scores keep a group together, so ">" never repeats a heading.
+    const firstOf = new Map<string, number>();
+    ranked.forEach((x, i) => { if (!firstOf.has(x.c.group)) firstOf.set(x.c.group, i); });
+    ranked.sort((a, b) => b.s - a.s || firstOf.get(a.c.group)! - firstOf.get(b.c.group)!);
     const all: Command[] = ranked.map((x) => x.c);
     // A wiki page carries the claim that matched: the point of the wiki
     // is the join between a page and the entry behind it, and a title
