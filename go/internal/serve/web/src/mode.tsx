@@ -5,7 +5,7 @@ import { clampToViewport } from "./popover";
 import { STATUS } from "./status";
 import { Select } from "./select";
 import { SetupFailed, orbWord } from "./status";
-import { failedBuild } from "./orb";
+import { failedBuild, orbUp } from "./orb";
 
 export interface ModeValue { mode: SessionMode; project?: string }
 
@@ -45,10 +45,68 @@ const TONE: Record<OrbStatus, string> = {
   failed: "mode-failed", stopped: "mode-stopped",
 };
 
+/**
+ * The step named as it reads while it is running. The popover's WORD list
+ * names the steps as an inventory ("Sync repos"); a chip says what is
+ * happening right now, so it speaks in the present participle.
+ */
+const BUSY_WORD: Record<string, string> = {
+  sync: "Syncing repos", build: "Building image", worktree: "Making worktrees",
+  container: "Starting container", "resume.sh": "Running resume.sh", ready: "Ready",
+};
+
+/**
+ * A 1s tick while `on`. One interval per busy chip, stopped the moment the
+ * orb settles: with many rows building that is N intervals, bounded by the
+ * number of orbs starting at once, and zero once they are up.
+ */
+function useTick(on: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!on) return;
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [on]);
+  return now;
+}
+
+/**
+ * "2.03s", "12s", "4m 46s". A warm start is over in a couple of seconds, so
+ * under ten it keeps its hundredths — that is the number worth comparing;
+ * past that the fraction is noise.
+ */
+export function startupWord(ms: number): string {
+  const s = Math.max(0, ms) / 1000;
+  if (s < 10) return `${s.toFixed(2)}s`;
+  const r = Math.round(s);
+  return r < 60 ? `${r}s` : `${Math.floor(r / 60)}m ${r % 60}s`;
+}
+
+/** The start's total from its phases: to ready, or to now while it is still running. */
+export function startupMs(phases: OrbPhase[] | undefined, now: number): number | undefined {
+  if (!phases?.length) return undefined;
+  const from = Date.parse(phases[0].startedAt);
+  if (!Number.isFinite(from)) return undefined;
+  const ready = phases.find((p) => p.name === "ready");
+  return Math.max(0, (ready ? Date.parse(ready.startedAt) : now) - from);
+}
+
+/** How long the start took. Resting it is a plain fact; while it climbs it borrows the busy amber. */
+export function OrbStartup({ ms, live }: { ms: number; live?: boolean }) {
+  return <span className={"orb-startup mono" + (live ? " is-live" : "")}
+               title="Time from the first step to ready">{startupWord(ms)}</span>;
+}
+
 /** A project session's slug and orb state; a local session shows nothing, local being the norm. */
 /** `bare` drops the project name where a group heading already says it. `name` is the project's display name. */
 /** `phases` makes the chip a disclosure of the start's timed phases (the thread header; never inside a row button). */
 export function ModeChip({ row, bare = false, name, phases = false }: { row: Row; bare?: boolean; name?: string; phases?: boolean }) {
+  // The tick is read before any of the early returns below: a bare row whose
+  // orb settles stops rendering the chip, and a hook called after that gate
+  // would change count mid-render. `busy` is false for every case that bails.
+  const busy = row.orb?.status === "building" || row.orb?.status === "starting";
+  const now = useTick(busy);
   if (row.mode !== "project" || !row.orb) return null;
   const { project, status } = row.orb;
   // A stopped orb is the resting state: most rows in a project are it,
@@ -59,18 +117,48 @@ export function ModeChip({ row, bare = false, name, phases = false }: { row: Row
   // while the orb is doing something.
   if (bare && (status === "" || status === "stopped")) return null;
   const shown = name || project;
+  // A 286s build with the word "Building" on it looks identical at second 4
+  // and at minute 4. The step it is on and how long it has been there is the
+  // whole of the news, and the row already carries the chip — so the chip
+  // says it, and no second fetch is needed: the list poll brought the phase.
+  const step = busy && row.orb.phaseAt
+    ? `${BUSY_WORD[row.orb.phase ?? ""] ?? orbWord(status)} ${phaseDuration({ startedAt: row.orb.phaseAt }, now)}`
+    : "";
   // A failed setup is its own indicator, set apart from the run status that follows it.
   // Bare sits beside a turn's own status (the sidebar): it says "Orb …" and
   // a running orb stays quiet, so green only ever means a running turn.
   const chip = status === "failed"
     ? <SetupFailed name={shown} fresh={Date.now() - Date.parse(row.lastAt) < FRESH_MS} />
     : <span className={"status mode-chip " + (bare && status === "running" ? "mode-up" : TONE[status])} title={`Runs in the ${shown} orb`}>
-        {bare ? `Orb ${orbWord(status).toLowerCase()}` : `${shown} · ${orbWord(status)}`}
+        {step ? (bare ? step : `${shown} · ${step}`)
+              : (bare ? `Orb ${orbWord(status).toLowerCase()}` : `${shown} · ${orbWord(status)}`)}
       </span>;
   const sep = status === "failed" ? <span className="setup-sep" aria-hidden="true"> · </span> : null;
   if (!phases) return <>{chip}{sep}</>;
   return <><PhasesDisclosure session={row.id} status={status} name={shown}>{chip}</PhasesDisclosure>{sep}</>;
 }
+
+/**
+ * How many of these sessions have a container up right now. Counted per
+ * session, because an orb is per session: two sessions in one project are two
+ * orbs. `up` outranks status, since a failed setup can leave one up.
+ */
+export function orbsUp(rows: Row[]): number {
+  return rows.filter((r) => r.mode === "project" && orbUp(r.orb)).length;
+}
+
+/**
+ * "2 orbs up", or nothing. A count of RUNNING orbs is news; a count of stopped
+ * ones is not, so zero renders nothing at all — never "0 orbs up". `quiet`
+ * drops the accent: in the sidebar green means a running *turn* and nothing else.
+ */
+export function OrbUp({ n, quiet = false }: { n: number; quiet?: boolean }) {
+  if (n < 1) return null;
+  return <span className={"orb-up" + (quiet ? " is-quiet" : "")}>{n} orb{n === 1 ? "" : "s"} up</span>;
+}
+
+/** The same phrase for an aria-label or a title. */
+export const orbsUpLabel = (n: number) => `${n} orb${n === 1 ? "" : "s"} up`;
 
 const ORDER = ["sync", "build", "worktree", "container", "resume.sh", "ready"];
 const WORD: Record<string, string> = {
@@ -78,7 +166,7 @@ const WORD: Record<string, string> = {
 };
 
 /** "4s", "1m 15s": a phase's time, to now while it runs. */
-export function phaseDuration(p: OrbPhase, now: number): string {
+export function phaseDuration(p: { startedAt: string; endedAt?: string }, now: number): string {
   const end = p.endedAt ? Date.parse(p.endedAt) : now;
   const s = Math.max(0, Math.round((end - Date.parse(p.startedAt)) / 1000));
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
@@ -176,7 +264,13 @@ function PhasesDisclosure({ session, status, name, children }: { session: string
     <details ref={ref} className="orb-phases" onToggle={(e) => setOpen(e.currentTarget.open)}>
       <summary aria-label={`${name} orb: start phases`}>{children}</summary>
       <div className="orb-pop" role="group" aria-label={`${name} orb start`}>
-        <p className="orb-pop-head">Orb start</p>
+        <p className="orb-pop-head">
+          <span>Orb start</span>
+          {/* The total belongs here, where someone opening the popover went
+              looking for it — not on the crowded header beside the chip. */}
+          {orb && startupMs(orb.phases, now) !== undefined &&
+            <OrbStartup ms={startupMs(orb.phases, now)!} live={orb.status === "building" || orb.status === "starting"} />}
+        </p>
         {orb ? <OrbPhases orb={orb} now={now} /> : <p className="orb-phase-foot">Loading…</p>}
       </div>
     </details>

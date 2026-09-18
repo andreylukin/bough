@@ -28,7 +28,7 @@ export default meta;
 type S = StoryObj<typeof PortalPane>;
 
 const frame = (portals: OrbPortal[] | "fail", row = project): S => ({
-  args: { row, onClose: () => {} },
+  args: { row, onClose: () => {}, onAsk: async () => {} },
   render: (args) => {
     answer = portals; // set before the pane mounts and fetches
     // The pane is a flex child of .app in the real layout; the story
@@ -56,5 +56,11 @@ export const SeveralPorts: S = frame([
 export const Dead: S = frame([{ host: 53108, guest: 3000, name: "web", url: "http://127.0.0.1:53108", live: false }]);
 
 export const NoPortalYet: S = frame([]);
+
+// A dev server that accepts the connection and then goes quiet: the stage
+// waits rather than showing a white rectangle. A URL that never loads puts
+// the frame in its loading phase; the stalled copy follows after 10s.
+export const SlowToLoad: S = frame([{ host: 53108, guest: 3000, name: "web", url: "http://127.0.0.1:1", live: true }]);
+
 export const LocalSession: S = frame([], local);
 export const Unreachable: S = frame("fail");

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OrbDetail, OrbFile, Project, Row } from "./types";
 import { api } from "./api";
 import { ProjectOrb, confirmStopOrb, removeOrbQuestion } from "./orb";
+import { OrbUp, orbsUp, orbsUpLabel } from "./mode";
 import { STATUS, StatusMark, TESTS_FAILED_GLYPH, shownStatus } from "./status";
 import { humanError } from "./loading";
 import { hasOwnTitle, sessionTitle } from "./render";
@@ -109,7 +110,7 @@ function OrbSection({ project, onOpen, onChanged, titles, rows = [] }: {
   };
 
   return (
-    <ProjectOrb project={project} detail={detail} log={log} error={err} onOpen={onOpen} titles={titles}
+    <ProjectOrb project={project} detail={detail} log={log} error={err} onOpen={onOpen} titles={titles} onRetry={load}
       onAttach={() => { void run(() => api.attachOrb(project.id)); }}
       onDetach={async () => {
         const ok = await askConfirm(`Detach the orb from “${project.name}”?`,
@@ -273,6 +274,14 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
     for (const r of rows) m.set(r.project ?? "", (m.get(r.project ?? "") ?? 0) + 1);
     return m;
   }, [rows]);
+  // Orbs up are counted off every row, not the filtered ones: a filter hides
+  // sessions, it does not stop their containers.
+  const upBy = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of rows) if (orbsUp([r])) m.set(r.project ?? "", (m.get(r.project ?? "") ?? 0) + 1);
+    return m;
+  }, [rows]);
+  const upTotal = useMemo(() => orbsUp(rows), [rows]);
   // One phrasing for every section head: the count, then how many repos those sessions span.
   const countLabel = (k: string, rs: Row[]) => {
     const n = rs.length;
@@ -377,6 +386,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
         {/* With no projects the empty state carries the one New project button. */}
         {(projects.length > 0 || needle) && (
           <div className="head-side">
+            {upTotal > 0 && <OrbUp n={upTotal} />}
             <button className="btn" onClick={() => { void createProject(); }}>New project…</button>
           </div>
         )}
@@ -410,6 +420,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
                 <button className="proj-fold" aria-expanded={!folded.has(p.id)} onClick={() => fold(p.id)}>
                   <h2>{p.name}</h2>
                   <span className="num proj-count">{countLabel(p.id, rs)}</span>
+                  <OrbUp n={upBy.get(p.id) ?? 0} />
                   <Chevron />
                 </button>
                 {p.slug ? <>

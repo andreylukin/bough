@@ -29,7 +29,7 @@ const detail: OrbDetail = {
 const meta: Meta<typeof ProjectOrb> = {
   title: "Projects/ProjectOrb",
   component: ProjectOrb,
-  args: { project, log: "", onAttach: noop, onDetach: noop, onSave: async () => {}, onBuild: noop, onStopOrb: noop, onOpen: noop },
+  args: { project, log: "", onAttach: noop, onDetach: noop, onSave: async () => {}, onBuild: noop, onStopOrb: noop, onOpen: noop, onRetry: noop },
   decorators: [(Story) => <div className="app" style={{ height: "100vh" }}><div className="scroll proj-body"><section className="proj"><Story /></section></div></div>],
 };
 export default meta;
@@ -71,3 +71,33 @@ export const FailedRerendering: S = {
   args: failedArgs,
 };
 
+/* The verdict a healthy orb reads: Ready with no mark, a build time and who is inside. */
+export const Ready: S = { args: { detail } };
+
+/* No image yet: a resting verdict, so the word stands alone — no grey glyph, no "Never" build. */
+export const NeverBuilt: S = {
+  args: { detail: { ...detail, orb: { ...detail.orb, image: "", built: false, build: "" }, build: { tag: "", hash: "", state: "" }, orbs: [] } },
+};
+
+/* An older good image behind a failed build: amber, sessions still start. */
+export const StaleImage: S = {
+  args: { detail: { ...detail, build: { ...detail.build, state: "failed", error: "exit status 100" } } },
+};
+
+/* The read itself failed: one error voice with Retry and the verbatim server error. */
+export const ReadFailed: S = { args: { detail: undefined, error: "orb: dial unix /var/run/container.sock: connect: connection refused" } };
+
+/* Preflight failures carry the two things that fix them; the legacy proxy warning is a callout. */
+export const PreflightFailing: S = {
+  args: {
+    detail: {
+      ...detail,
+      preflight: [
+        { kind: "runtime", name: "apple", status: "ok" },
+        { kind: "clone", name: "bough", status: "fail", detail: "no such remote" },
+        { kind: "secret", name: "GH_TOKEN", status: "fail", detail: "`op read` returned nothing" },
+      ],
+      orbs: [{ ...detail.orbs[0], proxyAuth: "legacy" }],
+    },
+  },
+};

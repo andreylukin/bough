@@ -47,7 +47,8 @@ export interface OrbPort { host: number; guest: number; error?: string }
 export interface OrbPortal { host: number; guest: number; name?: string; url: string; live: boolean }
 /** What Remove orb deletes and keeps (GET /api/sessions/:id/orb/remove). */
 export interface OrbRemovePlan { session: string; project: string; status: OrbStatus; container?: string; dir: string; worktrees: string[]; /** Worktrees with uncommitted changes; removal refuses while any remain. */ dirty?: string[]; bytes: number; branches: { repo: string; gitDir: string; branch: string; delete: boolean; reason: string }[] }
-export interface OrbBuild { tag: string; hash: string; state: "" | "building" | "ok" | "failed"; startedAt: string; endedAt?: string; error?: string }
+/** startedAt/endedAt are absent until the project has been built once. */
+export interface OrbBuild { tag: string; hash: string; state: "" | "building" | "ok" | "failed"; startedAt?: string; endedAt?: string; error?: string }
 export type OrbFile = "project.yml" | "Dockerfile" | "setup.sh" | "resume.sh";
 export interface OrbDetail { project: Project; files: Record<OrbFile, string>; hash: string; orb: OrbSummary; build: OrbBuild; orbs: OrbState[]; runtime: { name: string; available: boolean; error?: string }; preflight?: PreflightCheck[] }
 /** One thing a session start needs, checked when the orb panel loads. */
@@ -93,8 +94,12 @@ export interface Row {
   mode?: SessionMode;
   /** The git checkout a local session may edit; absent means read-only (or a project session). */
   writable?: string;
-  /** up: the container runs, whatever the status (a failed setup can leave it up). */
-  orb?: { project: string; status: OrbStatus; up?: boolean };
+  /**
+   * up: the container runs, whatever the status (a failed setup can leave it up).
+   * portals: the guest ports of this session's live portals, dead records dropped.
+   * phase/phaseAt: the step in progress and when it began.
+   */
+  orb?: { project: string; status: OrbStatus; up?: boolean; portals?: number[]; phase?: string; phaseAt?: string };
   /** The session that started this one as a background agent. */
   spawnedBy?: string;
   /** A background agent waiting for a running slot (status "queued"). */

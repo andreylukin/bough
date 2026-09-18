@@ -2,8 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Job, OrbDetail, PreflightCheck, OrbRemovePlan, OrbFile, OrbStatus, Project, Status } from "./types";
 import { askChoice, askConfirm } from "./dialog";
 import { sessionTitle } from "./render";
-import { CopyButton, Pending } from "./loading";
-import { STATUS, StatusMark } from "./status";
+import { CopyButton, Elapsed, ErrorNote, Pending, ago, duration } from "./loading";
+import { MARKED, STATUS, StatusMark } from "./status";
 import { idTail } from "./palette";
 import { OrbAddress } from "./mode";
 
@@ -29,7 +29,7 @@ const CHECK_TONE: Record<PreflightCheck["status"], Status> = { ok: "done", warn:
 const CHECK_KIND: Record<PreflightCheck["kind"], string> = { runtime: "Runtime", clone: "Clone", gh: "", secret: "Secret" };
 
 /** The preflight: runtime up, each repo clones, the gh token, each secret resolves. */
-function Preflight({ checks }: { checks: PreflightCheck[] }) {
+function Preflight({ checks, onRecheck, onEdit }: { checks: PreflightCheck[]; onRecheck: () => void; onEdit: () => void }) {
   const failing = checks.filter((c) => c.status === "fail").length;
   return (
     <>
@@ -43,7 +43,18 @@ function Preflight({ checks }: { checks: PreflightCheck[] }) {
             </li>
           ))}
         </ul>
-        {failing > 0 && <span className="orb-hint">{failing} failing · a new session will likely fail to start</span>}
+        {/* A failing check is the reason the next session will not start, so it
+            carries the two things that fix it rather than a grey aside. Re-check
+            re-reads the orb, which is what recomputes preflight on the server. */}
+        {failing > 0 && (
+          <div className="callout err orb-pf-fix">
+            <p className="orb-pf-line">{failing === 1 ? "One check fails" : `${failing} checks fail`}. A session started now will fail the same way.</p>
+            <span className="orb-pf-acts">
+              <button className="btn" onClick={onEdit}>Edit project.yml</button>
+              <button className="btn" onClick={onRecheck}>Re-check</button>
+            </span>
+          </div>
+        )}
       </dd>
     </>
   );
@@ -123,11 +134,71 @@ const STATE: Record<OrbStatus, Status> = {
   failed: "error", stopped: "stopped",
 };
 
+/** The one-line answer to "is this orb usable right now?", in the shared status vocabulary. */
+export function orbVerdict(d: OrbDetail): { status: Status; word: string; why?: string } {
+  if (!d.runtime.available) return { status: "error", word: "Runtime not running", why: d.runtime.error };
+  if (d.orb.error) return { status: "error", word: "Orb failed", why: d.orb.error };
+  if (d.build.state === "building") return { status: "running", word: "Building image" };
+  if (d.build.state === "failed") return d.orb.built
+    ? { status: "needs-you", word: "Ready · last build failed", why: d.build.error }
+    : { status: "error", word: "Build failed", why: d.build.error };
+  if (!d.orb.built) return { status: "idle", word: "No image yet" };
+  return { status: "done", word: "Ready" };
+}
+
+/**
+ * The verdict's word. `Mark` always draws its glyph, but a resting state does
+ * not wear one: a grey tick on "Ready" and a grey dot on "No image yet" mark
+ * nothing. The fix stays here rather than in `Mark`, whose other callers —
+ * the preflight list and the Runtime row — still want their marks.
+ */
+function VerdictMark({ status, word }: { status: Status; word: string }) {
+  return MARKED.has(status) ? <Mark status={status} word={word} /> : <span className="orb-mark">{word}</span>;
+}
+
+function Fact({ label, children }: { label: string; children: ReactNode }) {
+  return <div className="orb-fact"><span className="eyebrow">{label}</span><span className="orb-fact-v">{children}</span></div>;
+}
+
+/**
+ * The fact strip: the verdict, when the image it would use was built, and who
+ * is in it. Three facts, not a dashboard — the image tag is plumbing nobody
+ * types, so it lives in the Built tile's title.
+ */
+function OrbVerdict({ detail }: { detail: OrbDetail }) {
+  const v = orbVerdict(detail);
+  const b = detail.build;
+  // "Up" is one predicate across the UI; this is the same one the roll-up counts with.
+  const running = detail.orbs.filter((o) => orbUp(o)).length;
+  const total = detail.orbs.length;
+  const start = Date.parse(b.startedAt || "");
+  const end = Date.parse(b.endedAt || "");
+  return (
+    <div className="orb-verdict">
+      <Fact label="Orb"><VerdictMark status={v.status} word={v.word} /></Fact>
+      <Fact label="Built">
+        <span title={detail.orb.image || undefined}>
+          {b.state === "building" && b.startedAt && Number.isFinite(start)
+            ? <Elapsed since={b.startedAt} />
+            : Number.isFinite(start) && Number.isFinite(end)
+              ? <span className="num">{duration(end - start)} <span className="orb-fact-sub">· {ago(b.endedAt!)} ago</span></span>
+              : <span className="orb-fact-sub">Never</span>}
+        </span>
+      </Fact>
+      <Fact label="Sessions">
+        {total === 0 ? <span className="orb-fact-sub">None yet</span>
+          : running > 0 ? <span className="num">{running} up <span className="orb-fact-sub">· {total} total</span></span>
+          : <span className="num orb-fact-sub">{total} total, none up</span>}
+      </Fact>
+    </div>
+  );
+}
+
 /**
  * One project's orb: the definition files, the snapshot image and the
  * containers sessions run in. Presentational; ProjectsView fetches.
  */
-export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, onSave, onBuild, onStopOrb, onRemoveOrb, onOpen, titles = {} }: {
+export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, onSave, onBuild, onStopOrb, onRemoveOrb, onOpen, onRetry, titles = {} }: {
   project: Project; detail?: OrbDetail; log: string;
   /** Session id to title, so a container row names the work. */
   titles?: Record<string, string>;
@@ -138,6 +209,8 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
   onSave: (name: OrbFile, text: string) => Promise<void>;
   onBuild: () => void; onStopOrb: (session: string) => void; onRemoveOrb?: (session: string) => void;
   onOpen?: (session: string) => void;
+  /** Re-read the orb: the Retry of a failed read, and what recomputes preflight. */
+  onRetry: () => void;
 }) {
   const [tab, setTab] = useState<OrbFile>("project.yml");
   // Edits per file survive switching tabs; a saved file drops its draft.
@@ -145,6 +218,7 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState("");
   const logRef = useRef<HTMLPreElement>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [log]);
 
   const about = <p className="proj-none orb-about">An orb is a container image for this project: its sessions run inside it, with the project's repos checked out on a branch of their own.</p>;
@@ -159,7 +233,8 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
   }
   if (!detail) {
     return <div className="proj-orb">{error
-      ? <p className="rp-state err" role="alert">Orb unavailable · {error}</p>
+      ? <ErrorNote title="Couldn’t read this orb" err={error}
+          action={{ label: "Retry", onClick: onRetry }} className="orb-err" />
       : <Pending what="Orb" inline />}</div>;
   }
 
@@ -187,11 +262,57 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
     finally { setSaving(false); }
   };
 
+  const v = orbVerdict(detail);
+  // Only a red or amber verdict has a reason worth the room; Ready says it all.
+  const verdictFail = v.status === "error" || v.status === "needs-you";
+
   return (
     <div className="proj-orb">
-      {about}
-      <dl className="orb-kv">
-        {!detail.preflight?.length && <>
+      {/* The verdict first: whether a session started now would work, when the
+          image it would use was built, and who is already inside. */}
+      <OrbVerdict detail={detail} />
+      {verdictFail && <p className="callout err orb-verdict-why" role="alert">{v.word}{v.why ? <> · <Prose text={v.why} /></> : null}</p>}
+
+      {/* Sessions before the recipe: the containers are what the page is
+          usually opened to check, and the recipe is what it is opened to edit. */}
+      <section className="orb-sec">
+        <h3 className="orb-sec-h">Sessions</h3>
+        {detail.orbs.length === 0
+          ? <p className="proj-none">No session has run in this orb yet.</p>
+          : <div className="orb-sessions">
+            <div className="sel-cols orb-cols" aria-hidden="true"><span>Session</span><span className="orb-ctr">Container</span><span className="orb-st">Status</span><span className="orb-act" /></div>
+            {detail.orbs.map((o) => (
+            <div key={o.session} className="proj-row orb-row">
+              <button className="proj-open" onClick={() => onOpen?.(o.session)}>
+                <span className="proj-title">{sessionTitle({ id: o.session, title: titles[o.session] || o.title })}</span>
+                {/* A fallback name is the same for every untitled session: the id tail tells them apart. */}
+                {!(titles[o.session] || o.title) && <span className="mono row-id">{idTail(o.session)}</span>}
+              </button>
+              {/* The container name is for pasting into a terminal, not for reading. */}
+              <span className="orb-ctr" title={o.container}>
+                {o.container && <CopyButton text={o.container} label={idTail(o.container)} className="link proj-act mono" />}
+              </span>
+              <span className="orb-st" title={o.error}><StatusMark status={STATE[o.status]} /></span>
+              {/* Every row keeps the action slot, so the columns line up whether or not it can stop. */}
+              <span className="orb-act">{orbUp(o) ? <button className="btn btn-sm" onClick={() => onStopOrb(o.session)}>Stop orb</button>
+                : onRemoveOrb && <button className="btn btn-sm btn-danger-quiet" onClick={() => onRemoveOrb(o.session)}>Remove…</button>}</span>
+              {o.status === "running" && (o.ip || o.ports?.length) ? <div className="orb-note"><OrbAddress orb={o} /></div> : null}
+              {/* A long warning is a tinted callout, not coloured prose. The fix is
+                  the row's own Remove… beside it, so this does not repeat the button. */}
+              {o.proxyAuth === "legacy" && (
+                <div className="orb-note callout warn orb-legacy">
+                  <p className="orb-legacy-line"><b>Proxy unauthenticated.</b> Any VM on the bridge can use this orb’s host proxy. Removing it and starting a session recreates it with a token.</p>
+                </div>
+              )}
+            </div>
+            ))}
+          </div>}
+      </section>
+
+      <section className="orb-sec">
+        <h3 className="orb-sec-h">Recipe</h3>
+        {about}
+        <dl className="orb-kv">
           <dt>Runtime</dt>
           <dd>
             <span className="mono">{detail.runtime.name || "unknown"}</span>
@@ -199,79 +320,53 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
               ? <Mark status="done" word="Available" />
               : <Mark status="error" word="Unavailable" detail={detail.runtime.error} />}
           </dd>
-        </>}
-        <dt>Image</dt>
-        <dd>
-          <span className="mono">{detail.orb.image || "none"}</span>
-          {detail.orb.error
-            ? <Mark status="error" word="Failed" detail={detail.orb.error} />
-            : building ? <Mark status="running" word="Building" />
-            : detail.orb.built ? <Mark status="done" word="Built" />
-            : detail.build.state === "failed" ? <Mark status="error" word="Build failed" detail={detail.build.error} />
-            : <Mark status="idle" word="Not built" />}
-        </dd>
-        {!!detail.preflight?.length && <Preflight checks={detail.preflight} />}
-      </dl>
+          {!!detail.preflight?.length && <Preflight checks={detail.preflight} onRecheck={onRetry} onEdit={() => {
+            // Setting the tab alone was a no-op whenever project.yml was
+            // already the open one, which is every fresh render: the
+            // button promised a fix and visibly did nothing. Put the
+            // cursor where the fix gets typed.
+            setTab("project.yml"); setSaveErr("");
+            requestAnimationFrame(() => {
+              const el = editorRef.current;
+              if (!el) return;
+              el.scrollIntoView({ block: "nearest" });
+              el.focus();
+            });
+          }} />}
+        </dl>
 
-      <div className="orb-tabs" role="tablist" aria-label="Definition files">
-        {FILES.map((f) => (
-          <button key={f} role="tab" aria-selected={tab === f} className={"btn mono" + (tab === f ? " btn-primary" : "")}
-                  onClick={() => { setTab(f); setSaveErr(""); }}>
-            {f}{drafts[f] !== undefined && drafts[f] !== (detail.files[f] ?? "") ? " •" : ""}
-          </button>
-        ))}
-      </div>
-      <textarea className="field mono orb-editor" aria-label={tab} spellCheck={false} value={text}
-                placeholder={tab === "project.yml" ? "" : "Empty: saving removes the file"}
-                onChange={(e) => setDrafts((d) => ({ ...d, [tab]: e.target.value }))} />
-      {saveErr && <p className="err orb-save-err" role="alert">{saveErr}</p>}
-      <div className="orb-tabs">
-        <button className="btn btn-primary" disabled={building || !detail.runtime.available} onClick={onBuild}
-                title={detail.runtime.available ? undefined : "Start the container runtime first"}>{building ? "Building…" : "Build image"}</button>
-        <button className="btn" disabled={!dirty || saving} onClick={() => { void save(); }}>{saving ? "Saving…" : "Save"}</button>
-        {!detail.runtime.available && <span className="orb-hint">Start the container runtime first</span>}
-        <button className="btn btn-danger-quiet orb-detach" onClick={onDetach}>Detach orb…</button>
-      </div>
-
-      {(log || detail.build.state) && (
-        <details className="block" open={logOpen} onToggle={(e) => setLogOpen(e.currentTarget.open)}>
-          <summary>
-            <span className="block-label">Build log</span>
-            <span className="block-detail mono">{detail.build.tag}</span>
-            <span className="block-lines">{!building && detail.build.tag && detail.orb.image && detail.build.tag !== detail.orb.image
-              ? `older image · ${detail.build.state}` : detail.build.state || "never built"}</span>
-          </summary>
-          <pre ref={logRef} className="orb-log">{log || "Nothing logged yet."}</pre>
-        </details>
-      )}
-
-      {detail.orbs.length === 0
-        ? <p className="proj-none">No session has run in this orb yet.</p>
-        : <div className="orb-sessions">
-          <div className="sel-cols orb-cols" aria-hidden="true"><span>Session</span><span className="orb-ctr">Container</span><span className="orb-st">Status</span><span className="orb-act" /></div>
-          {detail.orbs.map((o) => (
-          <div key={o.session} className="proj-row orb-row">
-            <button className="proj-open" onClick={() => onOpen?.(o.session)}>
-              <span className="proj-title">{sessionTitle({ id: o.session, title: titles[o.session] || o.title })}</span>
-              {/* A fallback name is the same for every untitled session: the id tail tells them apart. */}
-              {!(titles[o.session] || o.title) && <span className="mono row-id">{idTail(o.session)}</span>}
+        <div className="orb-tabs" role="tablist" aria-label="Definition files">
+          {FILES.map((f) => (
+            <button key={f} role="tab" aria-selected={tab === f} className={"btn mono" + (tab === f ? " btn-primary" : "")}
+                    onClick={() => { setTab(f); setSaveErr(""); }}>
+              {f}{drafts[f] !== undefined && drafts[f] !== (detail.files[f] ?? "") ? " •" : ""}
             </button>
-            {/* The container name is for pasting into a terminal, not for reading. */}
-            <span className="orb-ctr" title={o.container}>
-              {o.container && <CopyButton text={o.container} label={idTail(o.container)} className="link proj-act mono" />}
-            </span>
-            <span className="orb-st" title={o.error}><StatusMark status={STATE[o.status]} /></span>
-            {/* Every row keeps the action slot, so the columns line up whether or not it can stop. */}
-            <span className="orb-act">{orbUp(o) ? <button className="btn btn-sm" onClick={() => onStopOrb(o.session)}>Stop orb</button>
-              : onRemoveOrb && <button className="btn btn-sm btn-danger-quiet" onClick={() => onRemoveOrb(o.session)}>Remove…</button>}</span>
-            {o.status === "running" && (o.ip || o.ports?.length) ? <div className="orb-note"><OrbAddress orb={o} /></div> : null}
-            {o.proxyAuth === "legacy" && (
-              <p className="orb-note"><Mark status="needs-you" word="Proxy unauthenticated"
-                detail="this orb predates proxy tokens, so any VM on the bridge can use its host proxy and relay; remove the orb and start a session to recreate it with a token" /></p>
-            )}
-          </div>
           ))}
-        </div>}
+        </div>
+        <textarea ref={editorRef} className="field mono orb-editor" aria-label={tab} spellCheck={false} value={text}
+                  placeholder={tab === "project.yml" ? "" : "Empty: saving removes the file"}
+                  onChange={(e) => setDrafts((d) => ({ ...d, [tab]: e.target.value }))} />
+        {saveErr && <p className="err orb-save-err" role="alert">{saveErr}</p>}
+        <div className="orb-tabs">
+          <button className="btn btn-primary" disabled={building || !detail.runtime.available} onClick={onBuild}
+                  title={detail.runtime.available ? undefined : "Start the container runtime first"}>{building ? "Building…" : "Build image"}</button>
+          <button className="btn" disabled={!dirty || saving} onClick={() => { void save(); }}>{saving ? "Saving…" : "Save"}</button>
+          {!detail.runtime.available && <span className="orb-hint">Start the container runtime first</span>}
+          <button className="btn btn-danger-quiet orb-detach" onClick={onDetach}>Detach orb…</button>
+        </div>
+
+        {(log || detail.build.state) && (
+          <details className="block" open={logOpen} onToggle={(e) => setLogOpen(e.currentTarget.open)}>
+            <summary>
+              <span className="block-label">Build log</span>
+              <span className="block-detail mono">{detail.build.tag}</span>
+              <span className="block-lines">{!building && detail.build.tag && detail.orb.image && detail.build.tag !== detail.orb.image
+                ? `older image · ${detail.build.state}` : detail.build.state || "never built"}</span>
+            </summary>
+            <pre ref={logRef} className="orb-log">{log || "Nothing logged yet."}</pre>
+          </details>
+        )}
+      </section>
     </div>
   );
 }

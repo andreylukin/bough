@@ -123,6 +123,15 @@ type RowOrb struct {
 	Project string     `json:"project"`
 	Status  orb.Status `json:"status"`
 	Up      bool       `json:"up,omitempty"` // container running (a failed setup can leave it up)
+	// Portals are the guest ports of this session's LIVE portals, in the order
+	// they were opened. The list already dials every recorded portal to build
+	// the orb state, so carrying the answer here is free; a dead record is
+	// dropped, because the header must not offer a port nothing accepts on.
+	Portals []int `json:"portals,omitempty"`
+	// Phase is the step in progress (orb.PhaseSync…PhaseReady); PhaseAt is when
+	// it began, so a row can time it without a second fetch.
+	Phase     string     `json:"phase,omitempty"`
+	PhaseAt *time.Time `json:"phaseAt,omitempty"`
 }
 
 // maxBody caps every JSON request body. Prompts carry pasted logs and
@@ -579,7 +588,21 @@ func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 	var rowOrb *RowOrb
 	if d.mode == "project" {
 		st := a.orbState(in.ID)
-		rowOrb = &RowOrb{Project: d.project, Status: st.Status, Up: st.Up}
+		var live []int
+		for _, p := range st.Portals {
+			if p.Live {
+				live = append(live, p.Guest)
+			}
+		}
+		rowOrb = &RowOrb{Project: d.project, Status: st.Status, Up: st.Up, Portals: live, Phase: st.Phase}
+		// The step in progress is timed from its own start, so a row can
+		// say how long a build has been going without a second fetch.
+		if n := len(st.Phases); n > 0 {
+			if last := st.Phases[n-1]; last.EndedAt.IsZero() {
+				at := last.StartedAt
+				rowOrb.PhaseAt = &at
+			}
+		}
 	}
 	return Row{
 		ID:       in.ID,

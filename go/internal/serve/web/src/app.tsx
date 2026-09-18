@@ -4,7 +4,7 @@ import { api, subscribe, watchBuild, type Change, type Scope, type TurnLine } fr
 import type { Line, Project, Row } from "./types";
 import { MARKED, STATUS, StatusMark, Working, hasFailure, hasQuestion, sessionSignal, statusWord } from "./status";
 import { ProjectsView } from "./projects";
-import { ModeChip, ModePicker, type ModeValue } from "./mode";
+import { ModeChip, ModePicker, OrbUp, orbsUp, orbsUpLabel, type ModeValue } from "./mode";
 import { OrbFailureBody, confirmFailedBuild, confirmStopOrb, orbUp, type OrbFailureLog } from "./orb";
 import { Select, type Option } from "./select";
 import { DialogHost, askChoice, askConfirm, askText, showShortcuts } from "./dialog";
@@ -23,7 +23,7 @@ import { ContextPage } from "./context";
 import { ChangesBody, ChangesPage, EditDiff, FileEdit, callEdits, countOf, outputParts, useChanges } from "./changes";
 import { Palette, idTail, isTypingTarget, startFolders, useFullText, usePaletteKey, visit, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
-import { Elapsed, EmptyState, ErrorNote, InlineFail, Pending, RawDetails, Spinner, StateIcon, elapsed, humanError, providerError } from "./loading";
+import { Elapsed, EmptyState, ErrorNote, InlineFail, Pending, RawDetails, Spinner, StateIcon, ago, elapsed, humanError, providerError } from "./loading";
 import { PortalPane } from "./portal";
 
 export type View = "sessions" | "projects" | "hooks" | "wiki";
@@ -55,14 +55,10 @@ function shortPath(p: string, home: string): string {
   return home && p.startsWith(home) ? "~" + p.slice(home.length) : p;
 }
 
-/** "8m", "3h", "2d": how long ago, as a sidebar reads it. */
-export function ago(iso: string): string {
-  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
-  if (s < 60) return "<1m";
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h`;
-  return `${Math.floor(s / 86400)}d`;
-}
+// `ago` lives in loading.tsx beside `duration`, because orb.tsx needs it and
+// this module already imports orb.tsx: importing back would close a cycle. The
+// re-export keeps every `from "./app"` caller working.
+export { ago };
 
 /** Focus a region's own stop: the composer, the tree's current row, the transcript, else its first control. */
 function focusRegion(r: HTMLElement) {
@@ -759,17 +755,21 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     const key = `${sec}:${gk}`;
     const open = !(searchOn ? searchFolds : wsFolded).has(key);
     const urgent = list.filter((r) => sessionSignal(r) === 0);
+    const up = list[0].project ? orbsUp(list) : 0;
     const seen = new Map<string, number>();
     const nameKey = (r: Row) => titleKey(displayTitle(r) || sessionTitle(r));
     for (const r of list) seen.set(nameKey(r), (seen.get(nameKey(r)) ?? 0) + 1);
     return (
       <div key={key} className="ws">
         <button className="ws-head" role="treeitem" aria-expanded={open} onClick={() => toggleWs(key)}
-                aria-label={`${ws}${open ? "" : urgent.length ? `, ${urgent.length} need${urgent.length === 1 ? "s" : ""} you` : `, ${list.length}`}`} title={list[0].project ? `Project ${ws}` : `${list[0].repo || list[0].cwd}\nNot a project: sessions grouped by where they ran`}>
+                aria-label={`${ws}${open ? "" : urgent.length ? `, ${urgent.length} need${urgent.length === 1 ? "s" : ""} you` : `, ${list.length}`}${!open && up ? `, ${orbsUpLabel(up)}` : ""}`} title={list[0].project ? `Project ${ws}` : `${list[0].repo || list[0].cwd}\nNot a project: sessions grouped by where they ran`}>
           <Icon d={ICONS.chevron} size={12} /><Icon d={list[0].project ? ICONS.projects : ICONS.folder} size={15} /><span className={"ws-name" + (list[0].project ? " ws-project" : "")}>{ws}</span>
           {list[0].project && <span className="ws-mark" aria-hidden="true" />}
           {/* Folded, a group still says when something in it needs you, in that state's colour. */}
           {!open && urgent.length > 0 && <span className={"count " + (urgent.some(hasFailure) ? "is-failed" : "is-waiting")} aria-hidden="true">{urgent.length}</span>}
+          {/* Folded, a project group still says how many of its orbs are up. Open, each
+              running row already carries its own chip. */}
+          {!open && <OrbUp n={up} quiet />}
           {/* Rows pinned to Needs you leave the group; its head says where they went. */}
           {sec === "recent" && lifted.get(gk) ? <span className="ws-lifted" title="Listed under Needs you">{lifted.get(gk)} need{lifted.get(gk) === 1 ? "s" : ""} you ↑</span> : null}
         </button>
@@ -2284,6 +2284,29 @@ export function TurnFiles({ files, turn, edits: diff }: { files: string[]; turn:
  * actually answering. The window is only named when the session records
  * its model; a default model is not guessed at.
  */
+/**
+ * The Portal button, carrying what the pane behind it would say. A live portal
+ * is a running thing, so it gets the accent dot and the port. No live portal is
+ * the resting state: the word alone, no dot, no count.
+ */
+export function PortalButton({ ports, onClick }: { ports: number[]; onClick: () => void }) {
+  const n = ports.length;
+  const label = n === 0 ? null : n === 1 ? String(ports[0]) : `${n} ports`;
+  return (
+    <button className="btn head-ack head-portal" onClick={onClick}
+            title={n === 0 ? "Show a server running inside this session’s orb. Nothing is listening yet."
+              : n === 1 ? `A server is listening on port ${ports[0]} in this session’s orb`
+              : `${n} servers are listening in this session’s orb`}
+            aria-label={n === 0 ? "Portal — nothing is listening yet"
+              : n === 1 ? `Portal — port ${ports[0]} is live`
+              : `Portal — ${n} ports are live`}>
+      {n > 0 && <span className="work-dot work-dot-accent" aria-hidden="true" />}
+      <span>Portal</span>
+      {label && <><span className="work-sep" aria-hidden="true"> · </span><span className="head-portal-port mono">{label}</span></>}
+    </button>
+  );
+}
+
 function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, loading, failed, cat }: { row: Row; /** MB-ERR: the transcript failed to load, so no loading chrome. */ failed?: boolean; lines: Line[]; paused?: number; onRetry?: () => void; onContext?: () => void; /** The Work button, after the metrics. */ work?: React.ReactNode; /** Header actions (Stop orb, Mark seen), after Work. */ actions?: React.ReactNode; loading?: boolean; /** The thread's model catalogue, read once for the strip and the pickers. */ cat: Catalogue | null }) {
   const limits = useMemo(() => {
     const m: Record<string, number> = {};
@@ -4115,10 +4138,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                 palette, and only on a project session, so on a machine
                 whose sessions are nearly all local it was invisible. */}
             {row.mode === "project" && onPortal && (
-              <button className="btn head-ack" onClick={onPortal}
-                      title="Show a server running inside this session's orb">
-                Portal
-              </button>
+              <PortalButton ports={row.orb?.portals ?? []} onClick={onPortal} />
             )}
             {orbUp(row.orb) && onStopOrb && <button className="btn head-ack head-stop" onClick={onStopOrb}>Stop orb</button>}
             {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
@@ -5227,7 +5247,7 @@ export default function App() {
       {/* The portal sits beside the thread, not instead of it: the point
           is to watch the page while the agent changes it. */}
       {row && sub === "portal" && view === "sessions" && (
-        <PortalPane row={row} onClose={() => setSub(null)} />
+        <PortalPane row={row} onClose={() => setSub(null)} onAsk={(t) => api.prompt(row.id, t)} />
       )}
       <DialogHost />
       {narrow && (pane === "list" || view !== "sessions") && (

@@ -2047,6 +2047,32 @@ a.rt-link{text-decoration:none}
 /* /ORB-B3 */
 .orb-why code{padding:0 var(--s-1);border-radius:var(--r-xs);background:var(--raised)}
 .orb-hint{font-size:var(--fs-sm);color:var(--text-3)}
+/* ORB-B4: the orb panel reads verdict → sessions → recipe. The strip answers
+   "would a session started now work, on what image, beside whom" in one line
+   each; a resting verdict carries no hue, so only the word changes. */
+.orb-verdict{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s-2) var(--s-4);
+  padding:var(--s-3);background:var(--raised);border-radius:var(--r-sm);box-shadow:inset 0 0 0 1px var(--line)}
+.orb-fact{display:flex;flex-direction:column;gap:var(--s-1);min-width:0}
+.orb-fact-v{font-size:var(--fs-md);line-height:var(--lh-row);color:var(--text-1);min-width:0;overflow-wrap:anywhere}
+.orb-fact-v .orb-mark{font-weight:500}
+.orb-fact-sub{color:var(--text-3)}
+.orb-verdict-why{margin:0}
+.orb-sec{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--s-3);min-width:0}
+.orb-sec-h{display:flex;align-items:center;min-height:var(--row-sm);margin:0;
+  font:600 var(--fs-ui)/var(--lh-tight) var(--sans);color:var(--text-2);
+  padding-bottom:var(--s-1);border-bottom:1px solid var(--line)}
+.orb-sec .orb-about{margin:0;color:var(--text-3)}
+
+/* A long warning is a tinted callout with its fix, never coloured prose. */
+.orb-pf-fix,.orb-legacy{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-2) var(--s-3);margin-block-start:var(--s-2)}
+.orb-pf-line,.orb-legacy-line{flex:1 1 16rem;margin:0;font-size:var(--fs-md);line-height:var(--lh-row)}
+.orb-legacy-line b{font-weight:500;color:var(--text-1)}
+.orb-err{margin:var(--s-3) 0}
+
+@media (max-width:720px){
+  .orb-verdict{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+/* /ORB-B4 */
 .orb-sessions .orb-cols,.orb-row{display:grid;grid-template-columns:minmax(0,1fr) 13ch 128px 10ch;column-gap:var(--s-3);padding:0}
 .orb-row>.proj-open{grid-column:auto;display:flex}
 .orb-sessions .orb-ctr,.orb-sessions .orb-st{width:auto}
@@ -3773,7 +3799,8 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
    frame is a different origin (a loopback port forwarding into the
    container), so this pane can point it somewhere and remount it but
    never reach inside. */
-.portal-pane{flex:0 0 clamp(360px,38vw,720px);display:flex;flex-direction:column;min-width:0;
+.portal-pane{position:relative;flex:0 0 clamp(360px,38vw,720px);max-width:100%;
+  display:flex;flex-direction:column;min-width:0;
   border-inline-start:1px solid var(--line);background:var(--surface)}
 .portal-head{flex-shrink:0;display:flex;align-items:center;gap:10px;height:38px;padding:0 8px 0 14px;
   border-bottom:1px solid var(--line)}
@@ -3807,6 +3834,98 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 @media (max-width:720px){
   .portal-pane{position:fixed;inset:0;z-index:40;flex:1;border-inline-start:0}
 }
+
+/* Identity, always: the name the agent gave the portal and the port inside
+   the orb. One portal or five, the pane says what it is showing. */
+.portal-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.portal-port{font-size:var(--fs-sm);color:var(--text-3)}
+/* .chip carries the box; only the eyebrow treatment is added. A closed portal
+   is a resting state, so it stays greyscale. */
+.portal-closed{text-transform:uppercase;letter-spacing:.06em;font-size:var(--fs-xs)}
+
+/* The bar is a destination, not a location: the port leads and is fixed, the
+   field holds only the path we will send the frame to. */
+.portal-loc{flex:1;min-width:0;display:flex;align-items:center;gap:var(--s-2);
+  height:var(--ctl-sm);padding-inline-end:var(--s-2);
+  background:var(--bg);border:1px solid var(--line);border-radius:var(--r-sm)}
+.portal-loc:focus-within{border-color:var(--line-strong)}
+.portal-loc-port{flex:none;display:grid;place-items:center;height:100%;padding:0 var(--s-2);
+  font-size:var(--fs-sm);color:var(--text-2);background:var(--raised);
+  border-radius:calc(var(--r-sm) - 1px);border-inline-end:1px solid var(--line)}
+.portal-loc .portal-url{height:100%;padding:0;background:none;border:0;border-radius:0}
+
+/* A cross-origin frame cannot tell us its HTTP status, so the pane says only
+   whether a document arrived. Until one does, the stage — not a white
+   rectangle — is what is on screen. */
+.portal-stage{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;background:var(--bg)}
+.portal-stage>.state{margin:auto;padding:var(--s-5) var(--s-4)}
+.portal-stage[data-phase="loading"] .portal-frame,
+.portal-stage[data-phase="stalled"] .portal-frame{opacity:0}
+.portal-frame{transition:opacity var(--dur-fast) var(--ease-out)}
+.portal-veil{position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:var(--s-3);background:var(--bg)}
+/* A fast load should never show a spinner at all. */
+.portal-veil-row{display:inline-flex;align-items:center;gap:var(--s-2);
+  font:var(--fs-sm)/1 var(--sans);color:var(--text-3);
+  opacity:0;animation:portal-veil-in var(--dur) var(--ease-out) 250ms forwards}
+.portal-veil-row.is-hold{opacity:1;animation:none}
+.portal-veil-row .elapsed{color:var(--text-3)}
+.portal-veil-hold{gap:var(--s-2)}
+.portal-veil-hold>.state{margin:0}
+@keyframes portal-veil-in{to{opacity:1}}
+
+/* A dead end is a centred state with its action, not a paragraph: the pane is
+   narrow, so the buttons stack rather than truncate. */
+.portal-state{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:center;
+  gap:var(--s-2);padding:var(--s-4) var(--s-4) var(--s-5)}
+.portal-state .empty-state{margin:0}
+.portal-state .state-actions{flex-direction:column;align-self:stretch}
+.portal-state .state-actions .btn{width:100%}
+.portal-ask-note{display:flex;justify-content:center;margin:0;font-size:var(--fs-sm);
+  line-height:var(--lh-row);color:var(--text-2);text-align:center}
+
+/* Controls at system size, with a real label the pointer case collapses. */
+.portal-head{height:auto;min-height:var(--row);padding:var(--s-1) var(--s-1) var(--s-1) var(--s-3)}
+.portal-acts{display:flex;align-items:center;gap:var(--s-1);margin-inline-start:auto}
+.portal-pick{margin-inline-start:auto}
+.portal-pick+.portal-acts{margin-inline-start:var(--s-2)}
+.portal-ctl{display:inline-flex;align-items:center;gap:var(--s-2);min-height:var(--ctl);height:var(--ctl);
+  padding:0 var(--s-2);color:var(--text-2);font-size:var(--fs-sm);white-space:nowrap}
+.portal-ctl:hover:not(:disabled){color:var(--text-1)}
+.portal-x{width:auto;height:var(--ctl);margin-inline-start:0;border-radius:var(--r-sm)}
+.portal-bar{gap:var(--s-1);padding:var(--s-1) var(--s-1) var(--s-1) var(--s-2)}
+/* the border the global :focus-visible ring cannot express */
+.portal-url:focus-visible{border-color:var(--line-strong)}
+
+/* A preview needs its own width: drag the edge, double-click to reset.
+   (position/max-width live in the base rule above: declared here they
+   came after the phone media query and silently un-did it.) */
+.portal-grip{position:absolute;inset-block:0;inset-inline-start:-3px;width:7px;z-index:1;
+  cursor:col-resize;touch-action:none;background:none}
+.portal-grip:hover,.portal-grip:focus-visible{background:var(--hover)}
+
+/* The control labels are a label that COMES BACK at touch size, where a
+   title= tooltip does not exist — so this is not .visually-hidden, which
+   hides one for good. Keyed on width alone: a wide touchscreen reports
+   pointer:coarse, and gating on it left four labels rendered into a head
+   sized for icons, overflowing it. */
+@media (min-width:721px){
+  .portal-ctl{width:var(--ctl);padding:0;justify-content:center}
+  .portal-ctl-t{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+}
+@media (max-width:720px){
+  .portal-grip{display:none}
+  .portal-ctl{min-height:var(--row-touch);height:var(--row-touch);padding:0 var(--s-3);font-size:var(--fs-ui)}
+  .portal-head{min-height:var(--row-touch)}
+  .portal-loc{height:var(--row-touch)}
+  .portal-loc .portal-url{font-size:var(--fs-ui)}
+  .portal-bar{flex-wrap:wrap}
+  .portal-bar>.portal-loc{flex:1 0 100%}
+}
+@media (prefers-reduced-motion:reduce){
+  .portal-veil-row{opacity:1;animation:none}
+  .portal-frame{transition:none}
+}
 /* /PORTAL */
 
 /* UPDATED
@@ -3823,3 +3942,43 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 .updated-x:hover{color:var(--text-1);background:var(--hover)}
 /* /UPDATED */
 
+/* PORTAL-ENTRY: the header Portal button carries the live portal. The dot and
+   separator are the work-button primitives; only the port needs rules. */
+.head-portal{gap:6px}
+.head-portal>.head-portal-port{font-size:var(--fs-sm);color:var(--text-2);white-space:nowrap}
+.head-portal:hover>.head-portal-port{color:var(--text-1)}
+/* Narrow panes and touch: the dot is the state, the port gives way first so
+   "Portal" and "Stop orb" both keep their words. */
+@container (max-width:600px){.head-portal>.head-portal-port,.head-portal>.work-sep{display:none}}
+@media (max-width:720px){.head-portal>.head-portal-port,.head-portal>.work-sep{display:none}}
+
+/* ORB ROLL-UP — how many orbs are up, on the heads that can say it.
+   Zero never renders, so this element's presence is itself the news. */
+.orb-up{margin-inline-end:var(--s-2);font:600 var(--fs-xs)/var(--lh-tight) var(--sans);
+  font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--accent)}
+/* The sidebar reserves the accent for a running turn: here it is a word only. */
+.orb-up.is-quiet{color:var(--text-2)}
+/* .ws-lifted already claims the free space in a ws-head; a second auto
+   margin split it between them and shifted that note off the edge. The
+   orb count sits after the name and leaves the edge to the note. */
+.ws-head .orb-up{margin-inline-start:var(--s-2);padding-inline-start:var(--s-2)}
+.ws-head .count+.orb-up{margin-inline-start:var(--s-2)}
+/* The preflight callout's two buttons need their own row: .orb-actions is
+   styled only as a descendant of .orb-failure, so here it was a bare
+   inline span and they sat flush against each other. */
+.orb-pf-acts{display:flex;align-items:center;gap:var(--s-2);flex-wrap:wrap}
+.proj-fold .orb-up{font-size:var(--fs-sm)}
+.head-side .orb-up{margin-inline-end:0;font-size:var(--fs-sm)}
+/* /PORTAL-ENTRY */
+
+/* ORB-PROGRESS: the running step's elapsed time, and a finished start's total in
+   the popover. The total is a fact about a resting orb, so it carries no hue;
+   only the live counter borrows the busy amber already on the chip beside it. */
+.orb-startup{font:400 var(--fs-sm)/var(--lh-row) var(--mono);font-variant-numeric:tabular-nums;color:var(--text-3)}
+.orb-startup.is-live{color:var(--amber)}
+.orb-pop-head{display:flex;align-items:center;justify-content:space-between;gap:var(--s-3)}
+/* The eyebrow treatment is the heading's, not the number's. */
+.orb-pop-head .orb-startup{letter-spacing:normal;text-transform:none}
+/* A ticking counter must not make the row's title jitter once a second. */
+.row-when>.mode-chip{font-variant-numeric:tabular-nums}
+/* /ORB-PROGRESS */

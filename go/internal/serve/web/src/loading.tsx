@@ -27,6 +27,15 @@ export function duration(d: string | number): string {
   return [h && `${h}h`, m && `${m}m`, !h && r && `${r}s`].filter(Boolean).join(" ");
 }
 
+/** "8m", "3h", "2d": how long ago, as a sidebar reads it. */
+export function ago(iso: string): string {
+  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+  if (s < 60) return "<1m";
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
+}
+
 /** A live, ticking elapsed time since `since` (ISO or ms), in the `.num` face. */
 export function Elapsed({ since, title, from = 0 }: { since: string | number; title?: string; /** Seconds before it shows at all. */ from?: number }) {
   const start = typeof since === "number" ? since : Date.parse(since);
@@ -101,11 +110,12 @@ export function InlineFail({ what, onRetry }: { what: string; onRetry?: () => vo
   );
 }
 
-type Act = { label: string; onClick: () => void; busy?: boolean };
+/** `busyLabel` is for an action that is not a retry: "Asking…" must not read "Retrying…". */
+type Act = { label: string; onClick: () => void; busy?: boolean; busyLabel?: string };
 function StateButton({ a, primary }: { a: Act; primary?: boolean }) {
   return (
     <button className={"btn" + (primary ? " btn-primary" : "")} onClick={a.onClick} disabled={a.busy} aria-busy={a.busy || undefined}>
-      {a.busy ? <><Spinner /> Retrying…</> : a.label}
+      {a.busy ? <><Spinner /> {a.busyLabel ?? "Retrying…"}</> : a.label}
     </button>
   );
 }

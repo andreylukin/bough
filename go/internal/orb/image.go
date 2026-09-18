@@ -20,8 +20,11 @@ type Build struct {
 	Tag       string    `json:"tag"`
 	Hash      string    `json:"hash"`
 	State     string    `json:"state"` // "", "building", "ok", "failed"
-	StartedAt time.Time `json:"startedAt"`
-	EndedAt   time.Time `json:"endedAt,omitempty"`
+	// omitzero, not omitempty: omitempty does nothing to a struct, so a
+	// project that has never been built shipped "0001-01-01T00:00:00Z"
+	// and the UI aged it to six figures of days instead of saying Never.
+	StartedAt time.Time `json:"startedAt,omitzero"`
+	EndedAt   time.Time `json:"endedAt,omitzero"`
 	Error     string    `json:"error,omitempty"`
 }
 
