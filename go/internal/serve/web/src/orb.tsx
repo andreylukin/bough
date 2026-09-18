@@ -167,6 +167,17 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
   const text = drafts[tab] ?? saved;
   const dirty = text !== saved;
   const building = detail.build.state === "building";
+  // The build log opens itself while a build runs and when one fails,
+  // but `open` alone fought the user: this page re-renders on every poll,
+  // and each render forced a closed log back open. It opens on the
+  // change of state, and a close sticks until the state changes again.
+  const [logOpen, setLogOpen] = useState(building || detail.build.state === "failed");
+  const lastBuild = useRef(detail.build.state);
+  useEffect(() => {
+    if (detail.build.state === lastBuild.current) return;
+    lastBuild.current = detail.build.state;
+    if (detail.build.state === "building" || detail.build.state === "failed") setLogOpen(true);
+  }, [detail.build.state]);
   const save = async () => {
     setSaving(true); setSaveErr("");
     try {
@@ -223,7 +234,7 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
       </div>
 
       {(log || detail.build.state) && (
-        <details className="block" open={building || detail.build.state === "failed"}>
+        <details className="block" open={logOpen} onToggle={(e) => setLogOpen(e.currentTarget.open)}>
           <summary>
             <span className="block-label">Build log</span>
             <span className="block-detail mono">{detail.build.tag}</span>

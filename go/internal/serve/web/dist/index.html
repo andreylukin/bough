@@ -3770,29 +3770,45 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 /* /CALM-SIDEBAR */
 
 /* PORTAL
-   A web server running inside this session's orb, framed in place. The
-   frame is a different origin (a loopback port that forwards into the
-   container), so the page around it can point at it and remount it but
-   never reach inside. It gets the whole pane: a dev server is the thing
-   being looked at, not a preview beside something else. */
-.portal-head{display:flex;align-items:baseline;gap:10px;min-width:0}
-/* The header is a grid of named areas; a child without one auto-places
-   into the back column, left of the title (see .hk-acts). */
-.thread-head>.portal-pick{grid-area:side}
-.portal-pick{flex-shrink:0}
-.portal-bar{flex-shrink:0;display:flex;align-items:center;gap:8px;min-width:0;
-  padding:8px 16px;border-bottom:1px solid var(--line);background:var(--surface)}
-.portal-url{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  font-size:var(--fs-sm);color:var(--text-2);text-decoration:none}
-.portal-url:hover{color:var(--text-1);text-decoration:underline}
-/* The frame takes the pane: .scroll alone only sets min-height, so
-   without flex:1 the body collapsed to the iframe's default height. */
-.portal-body{flex:1;min-height:0;display:flex;flex-direction:column;padding:0}
+   A web server running inside this session's orb, framed beside the
+   thread so the page and the agent changing it are both on screen. The
+   frame is a different origin (a loopback port forwarding into the
+   container), so this pane can point it somewhere and remount it but
+   never reach inside. */
+.portal-pane{flex:0 0 clamp(360px,38vw,720px);display:flex;flex-direction:column;min-width:0;
+  border-inline-start:1px solid var(--line);background:var(--surface)}
+.portal-head{flex-shrink:0;display:flex;align-items:center;gap:10px;height:38px;padding:0 8px 0 14px;
+  border-bottom:1px solid var(--line)}
+.portal-title{font:600 var(--fs-md)/1 var(--sans);color:var(--text-1)}
+.portal-pick{margin-inline-start:auto}
+.portal-x{display:grid;place-items:center;width:26px;height:26px;flex-shrink:0;margin-inline-start:auto;
+  color:var(--text-3);background:none;border:0;border-radius:var(--r-sm);cursor:pointer}
+.portal-pick+.portal-x{margin-inline-start:0}
+.portal-x:hover{color:var(--text-1);background:var(--hover)}
+
+/* The address is editable: typing a path is how you reach a page the
+   app does not link to from its front door. */
+.portal-bar{flex-shrink:0;display:flex;align-items:center;gap:4px;min-width:0;padding:6px 8px 6px 10px;
+  border-bottom:1px solid var(--line)}
+.portal-url{flex:1;min-width:0;height:26px;padding:0 8px;font-size:var(--fs-sm);color:var(--text-1);
+  background:var(--bg);border:1px solid var(--line);border-radius:var(--r-sm)}
+.portal-url:focus{outline:none;border-color:var(--line-strong)}
+.portal-act{display:grid;place-items:center;width:26px;height:26px;flex-shrink:0;color:var(--text-3);
+  background:none;border:0;border-radius:var(--r-sm);cursor:pointer}
+.portal-act:hover{color:var(--text-1);background:var(--hover)}
+
+.portal-body{flex:1;min-height:0;display:flex;flex-direction:column}
 /* The frame carries the page's own background, not ours: a dev server
    on a white page inside a dark shell should look like itself. */
 .portal-frame{flex:1;width:100%;border:0;background:#fff;display:block}
-.portal-note{margin:0;padding:24px;max-width:56ch;color:var(--text-2);font-size:var(--fs-sm);line-height:1.6}
+.portal-note{margin:0;padding:20px 16px;color:var(--text-2);font-size:var(--fs-sm);line-height:1.6}
 .portal-note code{font-family:var(--mono);font-size:.95em;color:var(--text-1)}
+
+/* On a phone the thread and the portal cannot share the width: the
+   portal takes the screen, with its own close. */
+@media (max-width:720px){
+  .portal-pane{position:fixed;inset:0;z-index:40;flex:1;border-inline-start:0}
+}
 /* /PORTAL */
 </style>
 </head>

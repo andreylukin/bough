@@ -24,7 +24,7 @@ import { ChangesBody, ChangesPage, EditDiff, FileEdit, callEdits, countOf, outpu
 import { Palette, idTail, isTypingTarget, startFolders, useFullText, usePaletteKey, visit, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
 import { Elapsed, EmptyState, ErrorNote, InlineFail, Pending, RawDetails, Spinner, StateIcon, elapsed, humanError, providerError } from "./loading";
-import { PortalPage } from "./portal";
+import { PortalPane } from "./portal";
 
 export type View = "sessions" | "projects" | "hooks" | "wiki";
 
@@ -5154,8 +5154,6 @@ export default function App() {
           onDelete={(id) => act(() => api.deleteProject(id), "delete the project")}
           orbOpen={orbOpen} onOrbOpen={setOrbOpen} onOrbChanged={() => refresh()}
           onNewSession={home ? async (p) => { if (await confirmFailedBuild(p)) void start(home, "", { mode: "project", project: p.id }); } : undefined} />
-      ) : row && sub === "portal" ? (
-        <PortalPage row={row} onBack={() => setSub(null)} />
       ) : row && sub === "changes" ? (
         <ChangesPage row={row} tick={lines.length} onBack={() => setSub(null)} />
       ) : row && context ? (
@@ -5214,6 +5212,11 @@ export default function App() {
         </div>
       )}
       </main>
+      {/* The portal sits beside the thread, not instead of it: the point
+          is to watch the page while the agent changes it. */}
+      {row && sub === "portal" && view === "sessions" && (
+        <PortalPane row={row} onClose={() => setSub(null)} />
+      )}
       <DialogHost />
       {narrow && (pane === "list" || view !== "sessions") && (
         <ViewNav phone view={pane === "list" ? "sessions" : view} onView={onView} wikiFlags={wikiFlags} />

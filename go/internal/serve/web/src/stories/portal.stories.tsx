@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { PortalPage } from "../portal";
+import { PortalPane } from "../portal";
 import type { OrbPortal, Row } from "../types";
 import { rows } from "./fixtures";
 
@@ -23,15 +23,22 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
 const project: Row = { ...rows.find((r) => r.mode === "project")!, title: "Try the checkout flow" };
 const local: Row = { ...rows.find((r) => r.mode === "local")!, title: "Rename the scratch dir" };
 
-const meta: Meta<typeof PortalPage> = { title: "Sessions/Portal", component: PortalPage };
+const meta: Meta<typeof PortalPane> = { title: "Sessions/Portal", component: PortalPane };
 export default meta;
-type S = StoryObj<typeof PortalPage>;
+type S = StoryObj<typeof PortalPane>;
 
 const frame = (portals: OrbPortal[] | "fail", row = project): S => ({
-  args: { row, onBack: () => {} },
+  args: { row, onClose: () => {} },
   render: (args) => {
-    answer = portals; // set before the page mounts and fetches
-    return <div style={{ height: "100vh", display: "flex" }}><PortalPage key={JSON.stringify(portals)} {...args} /></div>;
+    answer = portals; // set before the pane mounts and fetches
+    // The pane is a flex child of .app in the real layout; the story
+    // stands in a row of the same height so its height rule applies.
+    return (
+      <div style={{ height: "100vh", display: "flex" }}>
+        <div style={{ flex: 1, minWidth: 0 }} />
+        <PortalPane key={JSON.stringify(portals)} {...args} />
+      </div>
+    );
   },
 });
 

@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { useEffect, useState } from "react";
 import { ProjectOrb } from "../orb";
 import type { OrbDetail } from "../types";
 import { projects } from "./fixtures";
@@ -42,14 +43,31 @@ export const Building: S = {
     log: "#1 [internal] load build definition from Dockerfile\n#2 FROM docker.io/library/debian:bookworm\n#3 RUN sh /bough-setup/setup.sh\n#3 12.4 Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]\n#3 18.0 Setting up golang-1.22-go (1.22.2-2) ...\n",
   },
 };
-export const Failed: S = {
-  args: {
+const failedArgs: S["args"] = {
     detail: {
       ...detail, orb: { ...detail.orb, built: false, build: "failed" },
       build: { ...detail.build, state: "failed", error: "exit status 100" },
       orbs: [{ session: "20260913-1412-a81f3c", project: "bough", status: "failed", error: "resume.sh: exit 1", updatedAt: hoursAgo(1) }],
       runtime: { name: "apple", available: false, error: "run `container system start`" },
     },
-    log: "#3 RUN sh /bough-setup/setup.sh\n#3 2.1 E: Unable to locate package golang-9\nERROR: process \"/bin/sh -c sh /bough-setup/setup.sh\" did not complete successfully: exit code: 100\n",
-  },
+  log: "#3 RUN sh /bough-setup/setup.sh\n#3 2.1 E: Unable to locate package golang-9\nERROR: process \"/bin/sh -c sh /bough-setup/setup.sh\" did not complete successfully: exit code: 100\n",
 };
+
+export const Failed: S = { args: failedArgs };
+
+// The orb page polls, so it re-renders under the user constantly. The
+// build log used to take `open` straight from the build state, and every
+// one of those renders forced a log the user had closed back open. This
+// story re-renders on a timer so a close that does not stick shows up.
+export const FailedRerendering: S = {
+  render: (args) => {
+    const [, tick] = useState(0);
+    useEffect(() => {
+      const t = setInterval(() => tick((n) => n + 1), 300);
+      return () => clearInterval(t);
+    }, []);
+    return <ProjectOrb {...args} />;
+  },
+  args: failedArgs,
+};
+
