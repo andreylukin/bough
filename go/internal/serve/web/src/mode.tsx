@@ -51,6 +51,13 @@ const TONE: Record<OrbStatus, string> = {
 export function ModeChip({ row, bare = false, name, phases = false }: { row: Row; bare?: boolean; name?: string; phases?: boolean }) {
   if (row.mode !== "project" || !row.orb) return null;
   const { project, status } = row.orb;
+  // A stopped orb is the resting state: most rows in a project are it,
+  // and the group heading above them already says which project. Saying
+  // "Orb stopped" on each one repeats the heading, says nothing the row
+  // did not already say, and takes the width from the title — which is
+  // the one thing on the row that differs. Bare rows keep the word only
+  // while the orb is doing something.
+  if (bare && (status === "" || status === "stopped")) return null;
   const shown = name || project;
   // A failed setup is its own indicator, set apart from the run status that follows it.
   // Bare sits beside a turn's own status (the sidebar): it says "Orb …" and

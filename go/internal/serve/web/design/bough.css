@@ -3728,7 +3728,15 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 
 /* Orb state and age read as one dim phrase at the right edge, not as a
    status chip plus a number. */
-.row-when{display:inline-flex;align-items:center;gap:0;color:var(--text-3)}
+/* The age and any orb word share the right edge, and they give way
+   before the title does: flex-shrink:0 here meant a long chip ate the
+   name, which is the only part of the row that differs from its
+   neighbours. The age itself never wraps or shrinks. */
+.row-when{display:inline-flex;align-items:center;gap:0;min-width:0;color:var(--text-3)}
+.row-when>.mode-chip{min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--sans)}
+.row-name{min-width:0}
+.row-title{flex:1 1 auto}
+.row-age{flex-shrink:0}
 .row-when .mode-chip{color:inherit;font-weight:400}
 .row-when-sep{opacity:.55;padding:0 5px}
 

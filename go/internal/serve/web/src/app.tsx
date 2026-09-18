@@ -697,7 +697,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
                 {bg.failed > 0 && <span className="work-dot" />}
                 {bg.running > 0 && <><WorkGlyph life="running" size={10} />{bg.running}</>}
               </span>
-            )}{!stacked && r.mode === "project" && r.orb && r.orb.status !== "failed" && <span className="row-when-sep" aria-hidden="true">·</span>}<span className="row-age">{ago(failed === "tests failed" && r.testsAt ? r.testsAt : r.lastAt)}</span></span>
+            )}{!stacked && r.mode === "project" && r.orb && r.orb.status !== "failed" && r.orb.status !== "stopped" && r.orb.status !== "" && <span className="row-when-sep" aria-hidden="true">·</span>}<span className="row-age">{ago(failed === "tests failed" && r.testsAt ? r.testsAt : r.lastAt)}</span></span>
             </span>
             {stacked && (label || setup) && !life && <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : r.status === "running" ? " row-meta-run" : "") + (failed || asking || setup || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
               <ModeChip row={r} bare name={setup} />{label}

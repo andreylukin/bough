@@ -51,5 +51,26 @@ export const NeedsYou: S = {
     ],
   },
 };
+// A real project group: one orb doing something, the rest at rest, and
+// long titles. "Orb stopped" on every row repeated the group heading and
+// cut the titles down to "Local S…" / "Verify CAS O…".
+export const ProjectGroupMostlyStopped: S = {
+  args: {
+    rows: [
+      { ...rows[0], id: "g1", title: "Local Service Startup", status: "done", mode: "project",
+        orb: { project: "git-ai-enrichment", status: "running", up: true } },
+      { ...rows[0], id: "g2", title: "Launch Uni Gateway Locally", status: "done", mode: "project",
+        orb: { project: "git-ai-enrichment", status: "stopped" } },
+      { ...rows[0], id: "g3", title: "Local Uni Gateway Smoke Run", status: "done", mode: "project",
+        orb: { project: "git-ai-enrichment", status: "stopped" } },
+      { ...rows[0], id: "g4", title: "Verify CAS Object Replication", status: "done", mode: "project",
+        orb: { project: "git-ai-enrichment", status: "stopped" } },
+      { ...rows[0], id: "g5", title: "Substrate Cluster Rollout Check", status: "done", mode: "project",
+        orb: { project: "git-ai-enrichment", status: "stopped" } },
+    ],
+    selected: "g1",
+  },
+};
+
 export const NothingYet: S = { args: { rows: [], selected: null } };
 export const WithArchived: S = { args: { rows, showArchived: true } };
