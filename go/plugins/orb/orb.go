@@ -242,6 +242,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		r.SetRedact(o.Redact)
 		ctx.Effect(func() { r.SetRedact(nil) })
 	}
+	registerPortalTools(ctx, home, session)
 	ctx.Provide("orb", o)
 	ctx.Provide("orb-state", o)
 	// Stop, never Remove: a resumed session reuses its worktrees and
@@ -417,8 +418,11 @@ func addressSection(b *strings.Builder, st iorb.State) {
 	if len(fwd) > 0 {
 		fmt.Fprintf(b, "Forwarded to the user's host: %s.\n", strings.Join(fwd, ", "))
 	}
+	// project.yml ports are fixed when the container is created, so they
+	// cannot answer "show me this server" mid-turn. A portal can.
+	b.WriteString("To show the user a server running here, call tools.portal.open(<port>) once it is listening: it forwards the port to a 127.0.0.1 URL on their machine and adds it to this session's Portal tab. Portals close when the session ends.\n")
 	if len(st.Ports) == 0 {
-		fmt.Fprintf(b, "No ports are forwarded to the host's 127.0.0.1. If the user needs that, ask, then run \"bough project set %s ports 3000,8080:80\" (host:container); it applies when the orb is removed and recreated.\n", st.Project)
+		fmt.Fprintf(b, "No ports are forwarded to the host's 127.0.0.1 from project.yml. For a service that should be there on every start, ask the user, then run \"bough project set %s ports 3000,8080:80\" (host:container); it applies when the orb is removed and recreated. For anything ad hoc, use a portal instead.\n", st.Project)
 	}
 }
 

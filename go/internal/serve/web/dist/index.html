@@ -3723,6 +3723,77 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
   .chg-chev,.hk-chev>svg,.seg-item,.chg-copy,.proj-id,.wk-row,.hk-table .hk-main,.ov-fail,.ov-wait{transition:none}
 }
 /* /MB-PAGES */
+
+/* CALM-SIDEBAR
+   Colour in the list is a signal, not decoration. A hue that lands on
+   every row says nothing, so only three states wear one: running,
+   waiting on you, and a failure you have not seen yet. Everything
+   settled — done, stopped, idle, queued — is greyscale, and the glyph
+   column goes empty rather than filling with marks that all mean "fine".
+   The neutral ramp is green-cast by design; repeated marks were turning
+   that cast into a colour of its own. */
+
+/* The quiet states keep the column's width so titles stay aligned. */
+.row-mark:empty{width:16px}
+
+/* Orb state and age read as one dim phrase at the right edge, not as a
+   status chip plus a number. */
+.row-when{display:inline-flex;align-items:center;gap:0;color:var(--text-3)}
+.row-when .mode-chip{color:inherit;font-weight:400}
+.row-when-sep{opacity:.55;padding:0 5px}
+
+/* A setup failure days old is history, not an alarm. The header and the
+   Why? panel still carry it in red. */
+.row .setup-failed svg{color:var(--text-3);opacity:1}
+.row .setup-failed[data-fresh] svg{color:var(--red);opacity:.75}
+
+/* The glyph already carries the state in colour; the reason beside it is
+   a word, not a second alarm. Saying it twice is what made a list of four
+   failures feel like a wall of red. */
+.row-meta-bad,.row-meta-ask,.row-meta-run{color:var(--text-2)}
+
+/* One coloured thing per section: the count carries the alarm, the word
+   beside it does not repeat it. */
+.needs .eyebrow{color:var(--text-3)}
+.needs .needs-count{color:var(--amber)}
+
+/* Selection is a fill; the marker beside it is neutral so green keeps
+   meaning "running". */
+.row-on,.row-on:hover{box-shadow:inset 2px 0 0 var(--line-strong)}
+
+/* The turn-log disclosure earns its place on hover and on the open or
+   selected row, so a resting list is titles and ages only. */
+.row-twist{opacity:0;transition:opacity .12s ease}
+.row-wrap:hover .row-twist,.row-open .row-twist,.row-twist:focus-visible,
+.row-wrap:has(.row-on) .row-twist{opacity:1}
+@media (hover:none){.row-twist{opacity:1}}
+/* /CALM-SIDEBAR */
+
+/* PORTAL
+   A web server running inside this session's orb, framed in place. The
+   frame is a different origin (a loopback port that forwards into the
+   container), so the page around it can point at it and remount it but
+   never reach inside. It gets the whole pane: a dev server is the thing
+   being looked at, not a preview beside something else. */
+.portal-head{display:flex;align-items:baseline;gap:10px;min-width:0}
+/* The header is a grid of named areas; a child without one auto-places
+   into the back column, left of the title (see .hk-acts). */
+.thread-head>.portal-pick{grid-area:side}
+.portal-pick{flex-shrink:0}
+.portal-bar{flex-shrink:0;display:flex;align-items:center;gap:8px;min-width:0;
+  padding:8px 16px;border-bottom:1px solid var(--line);background:var(--surface)}
+.portal-url{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:var(--fs-sm);color:var(--text-2);text-decoration:none}
+.portal-url:hover{color:var(--text-1);text-decoration:underline}
+/* The frame takes the pane: .scroll alone only sets min-height, so
+   without flex:1 the body collapsed to the iframe's default height. */
+.portal-body{flex:1;min-height:0;display:flex;flex-direction:column;padding:0}
+/* The frame carries the page's own background, not ours: a dev server
+   on a white page inside a dark shell should look like itself. */
+.portal-frame{flex:1;width:100%;border:0;background:#fff;display:block}
+.portal-note{margin:0;padding:24px;max-width:56ch;color:var(--text-2);font-size:var(--fs-sm);line-height:1.6}
+.portal-note code{font-family:var(--mono);font-size:.95em;color:var(--text-1)}
+/* /PORTAL */
 </style>
 </head>
 <body>

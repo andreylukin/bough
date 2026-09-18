@@ -63,6 +63,7 @@ type State struct {
 	Phases    []Phase           `json:"phases,omitempty"`    // this start's steps, in order
 	IP        string            `json:"ip,omitempty"`        // the container's bridge address, set each start
 	Ports     []PortState       `json:"ports,omitempty"`     // project.yml ports as the container was created with them
+	Portals   []PortalState     `json:"portals,omitempty"`   // portals the owning session opened on the running container
 	UpdatedAt time.Time         `json:"updatedAt"`
 }
 

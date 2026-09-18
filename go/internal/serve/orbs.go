@@ -13,12 +13,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -48,6 +50,34 @@ type OrbState struct {
 	Up bool `json:"up,omitempty"`
 	// Title is the session's, so the orb list names archived sessions too.
 	Title string `json:"title,omitempty"`
+	// Portals shadows State.Portals (a shallower field wins in JSON) to
+	// add Live. state.json records what a session opened, but the
+	// listener lives in that session's process: after it exits the entry
+	// is still there and the URL is dead. The UI has to be able to say
+	// so rather than hand over a link that hangs.
+	Portals []PortalView `json:"portals,omitempty"`
+}
+
+// PortalView is one portal as the control room sees it.
+type PortalView struct {
+	orb.PortalState
+	URL  string `json:"url"`
+	Live bool   `json:"live"`
+}
+
+// portalViews answers, for each recorded portal, whether anything still
+// accepts on its host port.
+func portalViews(ps []orb.PortalState) []PortalView {
+	out := make([]PortalView, 0, len(ps))
+	for _, p := range ps {
+		v := PortalView{PortalState: p, URL: p.URL()}
+		if c, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(p.Host), 150*time.Millisecond); err == nil {
+			c.Close()
+			v.Live = true
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 // OrbRuntime says whether the engine can be used right now.
@@ -121,7 +151,7 @@ func (a *API) orbState(session string) OrbState {
 	if err != nil || s.Session == "" {
 		return OrbState{}
 	}
-	st := OrbState{State: s}
+	st := OrbState{State: s, Portals: portalViews(s.Portals)}
 	switch st.Status {
 	case orb.StatusRunning:
 		st.Up = true
