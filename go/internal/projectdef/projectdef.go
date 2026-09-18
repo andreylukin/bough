@@ -224,8 +224,13 @@ func Parse(b []byte) (Def, error) {
 }
 
 // memoryRE is a size the container runtime's -m flag takes: a whole
-// number with an optional K/M/G/T unit (and B), like 8G or 512MB.
-var memoryRE = regexp.MustCompile(`^[1-9][0-9]*[KkMmGgTt]?[Bb]?$`)
+// number with an optional K/M/G/T/P unit, which may be written the IEC
+// way — 8G, 512MB, 8GiB. It was narrower than the runtime: `container`
+// takes 8GiB and allocates exactly 8 GiB for it, but a project.yml
+// carrying that size failed validation, and since `bough project set`
+// validates before it writes, every later edit to that project was
+// refused over a value the runtime was perfectly happy with.
+var memoryRE = regexp.MustCompile(`^[1-9][0-9]*([KkMmGgTtPp][Ii]?)?[Bb]?$`)
 
 // Placeholder is the example repo path in a new project's skeleton.
 const Placeholder = "~/repos/example"

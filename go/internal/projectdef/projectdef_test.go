@@ -366,6 +366,7 @@ func TestWriteChecksHost(t *testing.T) {
 		{"missing repo", "repos:\n  - path: ~/repos/nope\n", "repos[0].path: ~/repos/nope does not exist"},
 		{"repo is file", "repos:\n  - path: ~/.bough/projects/v/project.yml\n", "is not a directory"},
 		{"memory", "repos:\n  - path: ~/repos/real\nmemory: lots\n", `memory: "lots" is not a size`},
+		{"memory unit only", "repos:\n  - path: ~/repos/real\nmemory: G\n", `memory: "G" is not a size`},
 		{"cpus", "repos:\n  - path: ~/repos/real\ncpus: two\n", "cpus"},
 		{"identity dir", "repos:\n  - path: ~/repos/real\nidentity: [.aws]\n", "identity: ~/.aws does not exist"},
 	}
@@ -432,5 +433,23 @@ func TestParsePorts(t *testing.T) {
 	}
 	if p, err := ParsePorts(""); err != nil || p != nil {
 		t.Fatalf("ParsePorts empty = %v %v", p, err)
+	}
+}
+
+
+// The runtime's -m takes IEC sizes: `container` allocates exactly 8 GiB
+// for 8GiB. Validation used to refuse them, and because `bough project
+// set` validates before writing, one such size in project.yml blocked
+// every later edit to that project.
+func TestMemorySizesTheRuntimeTakes(t *testing.T) {
+	for _, size := range []string{"8G", "8g", "8GB", "8gb", "8GiB", "8Gi", "512M", "512MiB", "1T", "1P", "2048"} {
+		if !memoryRE.MatchString(size) {
+			t.Errorf("memory %q rejected, but the runtime takes it", size)
+		}
+	}
+	for _, bad := range []string{"lots", "8Q", "G", "", "-8G", "8.5G"} {
+		if memoryRE.MatchString(bad) {
+			t.Errorf("memory %q accepted, but it is not a size", bad)
+		}
 	}
 }
