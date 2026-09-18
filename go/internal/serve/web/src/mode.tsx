@@ -36,6 +36,10 @@ export function ModePicker({ projects, value, onChange }: {
   );
 }
 
+/* A failure stops being an alarm once you have had a chance to see it:
+   after this it stays on the row in words, in the resting grey. */
+const FRESH_MS = 6 * 60 * 60 * 1000;
+
 const TONE: Record<OrbStatus, string> = {
   "": "mode-stopped", running: "mode-running", building: "mode-busy", starting: "mode-busy",
   failed: "mode-failed", stopped: "mode-stopped",
@@ -52,7 +56,7 @@ export function ModeChip({ row, bare = false, name, phases = false }: { row: Row
   // Bare sits beside a turn's own status (the sidebar): it says "Orb …" and
   // a running orb stays quiet, so green only ever means a running turn.
   const chip = status === "failed"
-    ? <SetupFailed name={shown} />
+    ? <SetupFailed name={shown} fresh={Date.now() - Date.parse(row.lastAt) < FRESH_MS} />
     : <span className={"status mode-chip " + (bare && status === "running" ? "mode-up" : TONE[status])} title={`Runs in the ${shown} orb`}>
         {bare ? `Orb ${orbWord(status).toLowerCase()}` : `${shown} · ${orbWord(status)}`}
       </span>;

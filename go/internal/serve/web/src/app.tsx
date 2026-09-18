@@ -2,7 +2,7 @@ import { Fragment, createContext, memo, useCallback, useContext, useEffect, useI
 import { createPortal } from "react-dom";
 import { api, subscribe, type Change, type Scope, type TurnLine } from "./api";
 import type { Line, Project, Row } from "./types";
-import { STATUS, StatusMark, Working, hasFailure, hasQuestion, sessionSignal, statusWord } from "./status";
+import { MARKED, STATUS, StatusMark, Working, hasFailure, hasQuestion, sessionSignal, statusWord } from "./status";
 import { ProjectsView } from "./projects";
 import { ModeChip, ModePicker, type ModeValue } from "./mode";
 import { OrbFailureBody, confirmFailedBuild, confirmStopOrb, orbUp, type OrbFailureLog } from "./orb";
@@ -24,6 +24,7 @@ import { ChangesBody, ChangesPage, EditDiff, FileEdit, callEdits, countOf, outpu
 import { Palette, idTail, isTypingTarget, startFolders, useFullText, usePaletteKey, visit, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
 import { Elapsed, EmptyState, ErrorNote, InlineFail, Pending, RawDetails, Spinner, StateIcon, elapsed, humanError, providerError } from "./loading";
+import { PortalPage } from "./portal";
 
 export type View = "sessions" | "projects" | "hooks" | "wiki";
 
@@ -681,10 +682,10 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
             {/* A failure you have not seen is a red mark; the reason is its label. */}
             <span className="row-mark">
               {life
-                ? <WorkGlyph life={life} />
+                ? (life === "finished" || life === "stopped" || life === "unknown" ? null : <WorkGlyph life={life} />)
                 : failed
                 ? <span className="status"><svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{STATUS.error.glyph}</svg><span className="visually-hidden">{why}</span></span>
-                : <StatusMark status={r.status} size={16} bare />}
+                : MARKED.has(r.status) ? <StatusMark status={r.status} size={16} bare /> : null}
             </span>
             {/* Status metadata goes under the title, so a chip never cuts the name. */}
             <span className={stacked ? "row-stack" : "row-line"}>
@@ -696,7 +697,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
                 {bg.failed > 0 && <span className="work-dot" />}
                 {bg.running > 0 && <><WorkGlyph life="running" size={10} />{bg.running}</>}
               </span>
-            )}<span className="row-age">{ago(failed === "tests failed" && r.testsAt ? r.testsAt : r.lastAt)}</span></span>
+            )}{!stacked && r.mode === "project" && r.orb && r.orb.status !== "failed" && <span className="row-when-sep" aria-hidden="true">·</span>}<span className="row-age">{ago(failed === "tests failed" && r.testsAt ? r.testsAt : r.lastAt)}</span></span>
             </span>
             {stacked && (label || setup) && !life && <span className={"num row-meta" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : r.status === "running" ? " row-meta-run" : "") + (failed || asking || setup || r.status === "running" ? " row-meta-live" : "")} aria-hidden="true">
               <ModeChip row={r} bare name={setup} />{label}
@@ -4527,7 +4528,7 @@ export default function App() {
   // The Context panel takes over the thread pane for the open session,
   // and closes when a different one is opened.
   // A session's sub-page: its context inspector or its changes review.
-  const [sub, setSub] = useState<"context" | "changes" | null>(null);
+  const [sub, setSub] = useState<"context" | "changes" | "portal" | null>(null);
   const context = sub === "context";
   const [wikiRoute, setWikiRoute] = useState<WikiRoute>({ at: "index" });
   // A hash route nothing here knows; null on every known one.
@@ -4747,9 +4748,9 @@ export default function App() {
       if (po) { setLost(null); setView("projects"); setOrbOpen(po[1]); setSub(null); setPane("thread"); return; }
       const wr = parseWikiHash(h);
       if (wr) { setLost(null); setView("wiki"); setWikiRoute(wr); setSub(null); setPane("thread"); return; }
-      const m = /^s\/([^/]+)\/?(context|changes)?(?:\?.*)?$/.exec(h);
+      const m = /^s\/([^/]+)\/?(context|changes|portal)?(?:\?.*)?$/.exec(h);
       if (m) {
-        setView("sessions"); setSelected(m[1]); setSub((m[2] as "context" | "changes" | undefined) ?? null); setPane("thread");
+        setView("sessions"); setSelected(m[1]); setSub((m[2] as "context" | "changes" | "portal" | undefined) ?? null); setPane("thread");
       } else if (h === "") {
         // No session named: on a phone that is the list. The thread pane
         // held only "Choose a session", with no list and no way back to it.
@@ -5072,6 +5073,11 @@ export default function App() {
         hint: "Session edits", run: () => { setSub("changes"); setPane("thread"); } },
       { id: "s:context", group: "This session", label: "Inspect context", suggest: true,
         hint: "Context", run: () => { setSub("context"); setPane("thread"); } },
+      // Only a project session has an orb to look into.
+      ...(row.mode === "project" ? [{
+        id: "s:portal", group: "This session", label: "Open portal", suggest: true,
+        hint: "Server in the orb", run: () => { setSub("portal"); setPane("thread"); },
+      }] : []),
       // Searchable only, and it asks first: never one Enter away from an empty box.
       { id: "s:archive", group: "This session",
         label: row.archived ? "Unarchive this session" : "Archive this session",
@@ -5148,6 +5154,8 @@ export default function App() {
           onDelete={(id) => act(() => api.deleteProject(id), "delete the project")}
           orbOpen={orbOpen} onOrbOpen={setOrbOpen} onOrbChanged={() => refresh()}
           onNewSession={home ? async (p) => { if (await confirmFailedBuild(p)) void start(home, "", { mode: "project", project: p.id }); } : undefined} />
+      ) : row && sub === "portal" ? (
+        <PortalPage row={row} onBack={() => setSub(null)} />
       ) : row && sub === "changes" ? (
         <ChangesPage row={row} tick={lines.length} onBack={() => setSub(null)} />
       ) : row && context ? (

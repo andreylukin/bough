@@ -112,6 +112,15 @@ export const STATUS: Record<Status, { label: string; tone: string; glyph: React.
 };
 
 /**
+ * The states that wear a mark in a list. Done, stopped, idle, queued and
+ * interrupted are the resting states: a list is mostly made of them, so a
+ * glyph on each one marks nothing and only adds colour. They keep the
+ * column's width and leave it empty; the word still reaches screen
+ * readers through the row's label.
+ */
+export const MARKED: ReadonlySet<Status> = new Set<Status>(["running", "needs-you", "error"]);
+
+/**
  * The one vocabulary. Every surface that names a state — sidebar, header,
  * turn footers, palette, projects, the orb table — reads its word here,
  * so a finished turn and a finished session both say "Done".
@@ -134,9 +143,9 @@ export function orbWord(s: OrbStatus): string {
  * failed, not the session, so it says whose setup it was and wears its
  * own mark, apart from the run status beside it.
  */
-export function SetupFailed({ name }: { name: string }) {
+export function SetupFailed({ name, fresh }: { name: string; fresh?: boolean }) {
   return (
-    <span className="status setup-failed" title={`${name}: setup failed`}>
+    <span className="status setup-failed" data-fresh={fresh ? "" : undefined} title={`${name}: setup failed`}>
       <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"
            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{STATUS.error.glyph}</svg>
       <span>Setup failed</span>
