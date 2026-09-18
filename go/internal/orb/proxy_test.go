@@ -2,7 +2,7 @@ package orb
 
 import (
 	"bufio"
-	"encoding/json"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -30,28 +31,56 @@ func TestRelayRunsOnlyMCPOnHost(t *testing.T) {
 	}
 	defer p.Close()
 
-	post := func(body string) (*http.Response, relayResponse) {
-		resp, err := http.Post(p.URL()+"/bough/exec", "application/json", strings.NewReader(body))
+	// The framing the shim writes: one base64 arg per line, a blank
+	// line, then base64 stdin.
+	frame := func(stdin string, args ...string) string {
+		var b strings.Builder
+		for _, a := range args {
+			b.WriteString(base64.StdEncoding.EncodeToString([]byte(a)) + "\n")
+		}
+		b.WriteString("\n" + base64.StdEncoding.EncodeToString([]byte(stdin)))
+		return b.String()
+	}
+	post := func(body string) (*http.Response, string, string, int) {
+		resp, err := http.Post(p.URL()+"/bough/exec", "text/plain", strings.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer resp.Body.Close()
-		var rr relayResponse
-		json.NewDecoder(resp.Body).Decode(&rr)
-		return resp, rr
+		raw, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != 200 {
+			return resp, "", "", 0
+		}
+		lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+		if len(lines) != 3 {
+			t.Fatalf("relay body: %q", raw)
+		}
+		exit, _ := strconv.Atoi(lines[0])
+		out, _ := base64.StdEncoding.DecodeString(lines[1])
+		errb, _ := base64.StdEncoding.DecodeString(lines[2])
+		return resp, string(out), string(errb), exit
 	}
-	resp, rr := post(`{"args":["mcp","call","linear-server/x","{}"],"stdin":"in"}`)
-	if resp.StatusCode != 200 || rr.Stdout != "host: mcp call linear-server/x {}\nin" || rr.Stderr != "oops\n" || rr.Exit != 3 {
-		t.Fatalf("relay: %d %+v", resp.StatusCode, rr)
+	resp, out, errs, exit := post(frame("in", "mcp", "call", "linear-server/x", "{}"))
+	if resp.StatusCode != 200 || out != "host: mcp call linear-server/x {}\nin" || errs != "oops\n" || exit != 3 {
+		t.Fatalf("relay: %d out=%q err=%q exit=%d", resp.StatusCode, out, errs, exit)
 	}
-	if resp, _ := post(`{"args":["update"]}`); resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("non-mcp command got %d", resp.StatusCode)
+	// An argument carrying a newline and quotes survives the framing:
+	// that is what base64 is there for.
+	if _, out, _, _ := post(frame("", "mcp", "call", "x/y", "a\nb \"q\"")); !strings.Contains(out, "a\nb \"q\"") {
+		t.Fatalf("argv with a newline did not survive: %q", out)
+	}
+	if resp, _, _, _ := post(frame("", "update")); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-relayed command got %d", resp.StatusCode)
+	}
+	// browser is relayed too, so an orb can drive the host's browser.
+	if resp, _, _, _ := post(frame("", "browser", "snapshot")); resp.StatusCode != 200 {
+		t.Fatalf("browser not relayed: %d", resp.StatusCode)
 	}
 }
 
 func TestShimRelaysThroughHost(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not installed")
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not installed")
 	}
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "host-bough")
@@ -73,6 +102,57 @@ func TestShimRelaysThroughHost(t *testing.T) {
 	out, err := c.Output()
 	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 2 || string(out) != "host: mcp list\n" {
 		t.Fatalf("shim: %q %v", out, err)
+	}
+}
+
+// The shim must not need an interpreter the image may not have. A
+// project with its own Dockerfile had no python3, and the old shim died
+// with "python3: not found" and nothing said why; PATH here is cut down
+// to the bare coreutils an image is fair to assume.
+func TestShimNeedsOnlyBashAndBase64(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not installed")
+	}
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "host-bough")
+	os.WriteFile(fake, []byte("#!/bin/sh\necho \"host: $*\"; cat; exit 0\n"), 0o755)
+	prev := hostBough
+	hostBough = func() (string, error) { return fake, nil }
+	defer func() { hostBough = prev }()
+	p, err := startProxy("127.0.0.1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	scratch := t.TempDir()
+	if err := writeShim(scratch); err != nil {
+		t.Fatal(err)
+	}
+	// A PATH with only bash and base64 (plus the tr/sed the shim uses):
+	// python3, curl, wget and nc are deliberately absent.
+	bin := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"bash", "base64", "tr", "sed"} {
+		src, err := exec.LookPath(tool)
+		if err != nil {
+			t.Skipf("%s not installed", tool)
+		}
+		if err := os.Symlink(src, filepath.Join(bin, tool)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := exec.Command(filepath.Join(shimDir(scratch), "bough"), "mcp", "call", "x/y", "a\nb")
+	c.Env = []string{"BOUGH_HOST=" + p.URL(), "PATH=" + bin}
+	c.Stdin = strings.NewReader("piped")
+	out, err := c.Output()
+	if err != nil {
+		t.Fatalf("shim on a bare PATH: %v (%q)", err, out)
+	}
+	// The newline inside an argument came through, and so did stdin.
+	if want := "host: mcp call x/y a\nb\npiped"; string(out) != want {
+		t.Fatalf("shim: got %q want %q", out, want)
 	}
 }
 
@@ -169,7 +249,10 @@ func TestProxyRequiresToken(t *testing.T) {
 	}
 
 	post := func(auth string) int {
-		req, _ := http.NewRequest("POST", "http://"+p.Addr()+"/bough/exec", strings.NewReader(`{"args":["update"]}`))
+		// A well-formed body for a command that is not relayed, so past
+		// auth it is the command check that answers, not the parser.
+		body := base64.StdEncoding.EncodeToString([]byte("update")) + "\n\n"
+		req, _ := http.NewRequest("POST", "http://"+p.Addr()+"/bough/exec", strings.NewReader(body))
 		if auth != "" {
 			req.Header.Set("Authorization", auth)
 		}
@@ -190,8 +273,8 @@ func TestProxyRequiresToken(t *testing.T) {
 }
 
 func TestShimSendsToken(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not installed")
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not installed")
 	}
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "host-bough")

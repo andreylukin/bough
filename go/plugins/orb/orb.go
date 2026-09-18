@@ -421,6 +421,8 @@ func addressSection(b *strings.Builder, st iorb.State) {
 	// project.yml ports are fixed when the container is created, so they
 	// cannot answer "show me this server" mid-turn. A portal can.
 	b.WriteString("To show the user a server running here, call tools.portal.open(<port>) once it is listening: it forwards the port to a 127.0.0.1 URL on their machine and adds it to this session's Portal tab. Portals close when the session ends.\n")
+	// The browser is the host's; the guest has no Chrome. See cmd/bough/browser.go.
+	b.WriteString("To look at a page yourself, run `bough browser` (agent-browser on the user's machine, which can reach this container's address): `bough browser open <url>`, then `bough browser snapshot -i` for the accessibility tree with refs like @e2, then `bough browser click @e2`. Refs belong to the snapshot that produced them, so take a fresh snapshot after anything that changes the page, and prefer the tree over screenshots.\n")
 	if len(st.Ports) == 0 {
 		fmt.Fprintf(b, "No ports are forwarded to the host's 127.0.0.1 from project.yml. For a service that should be there on every start, ask the user, then run \"bough project set %s ports 3000,8080:80\" (host:container); it applies when the orb is removed and recreated. For anything ad hoc, use a portal instead.\n", st.Project)
 	}

@@ -246,7 +246,9 @@ func (o *Orb) setTokenEnvLocked() {
 }
 
 func (o *Orb) coreEnv() []string {
-	env := []string{"HOME=/root", "TERM=dumb"}
+	// BOUGH_SESSION is the shim's: a relayed command that keeps state on
+	// the host (the browser) scopes it per orb by this id.
+	env := []string{"HOME=/root", "TERM=dumb", "BOUGH_SESSION=" + o.session}
 	if o.scratch != "" {
 		env = append(env, "BOUGH_SCRATCH="+o.scratch)
 	}
