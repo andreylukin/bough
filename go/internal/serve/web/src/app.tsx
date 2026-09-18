@@ -3415,7 +3415,7 @@ function OrbFailure({ id, project, name, onRebuild, onRetry, rebuildErr }: { id:
 
 const noLines: Line[] = [];
 
-export function Thread({ row, lines: given, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
+export function Thread({ row, lines: given, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, onPortal, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
   /** Loaded sessions: names the parent of a background agent and lists this session's agents. */
   rows?: Row[]; onOpenSession?: (id: string) => void;
   row: Row; lines: Line[]; loading?: boolean; stream?: DeltaRun[];
@@ -3429,7 +3429,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   /** Scroll to this turn (1-based) once it is on screen; `at` makes a repeat click count. */
   jump?: { turn: number; at: number; seq?: number; q?: string } | null;
   onSend: (t: string) => Promise<string | null> | void; onAnswer: (t: string, ask?: string) => Promise<string | null> | void; onInterrupt: () => Promise<boolean> | void;
-  onArchive: () => void; onRename: (t: string) => Promise<void>; onContext?: () => void; onAck?: () => void;
+  onArchive: () => void; onRename: (t: string) => Promise<void>; onContext?: () => void; onPortal?: () => void; onAck?: () => void;
   /** Stop a project session's container; the child restarts it on its next command. */
   onStopOrb?: () => void;
   /** Start a project session in this project's orb, carrying the draft over unsent. */
@@ -4111,6 +4111,15 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
         </div>
         <RuntimeStrip cat={catalogue.cat} row={row} lines={lines} paused={paused} onRetry={onRetry} onContext={onContext} loading={loading} failed={failedLoad}
           actions={<>
+            {/* A portal is worth a button: it was reachable only from the
+                palette, and only on a project session, so on a machine
+                whose sessions are nearly all local it was invisible. */}
+            {row.mode === "project" && onPortal && (
+              <button className="btn head-ack" onClick={onPortal}
+                      title="Show a server running inside this session's orb">
+                Portal
+              </button>
+            )}
             {orbUp(row.orb) && onStopOrb && <button className="btn head-ack head-stop" onClick={onStopOrb}>Stop orb</button>}
             {row.trouble && onAck && <button className="btn head-ack" onClick={onAck}>Mark seen</button>}
           </>}
@@ -5078,11 +5087,8 @@ export default function App() {
         hint: "Session edits", run: () => { setSub("changes"); setPane("thread"); } },
       { id: "s:context", group: "This session", label: "Inspect context", suggest: true,
         hint: "Context", run: () => { setSub("context"); setPane("thread"); } },
-      // Only a project session has an orb to look into.
-      ...(row.mode === "project" ? [{
-        id: "s:portal", group: "This session", label: "Open portal", suggest: true,
-        hint: "Server in the orb", run: () => { setSub("portal"); setPane("thread"); },
-      }] : []),
+      { id: "s:portal", group: "This session", label: "Open portal", suggest: row.mode === "project",
+        hint: "Server in the orb", run: () => { setSub("portal"); setPane("thread"); } },
       // Searchable only, and it asks first: never one Enter away from an empty box.
       { id: "s:archive", group: "This session",
         label: row.archived ? "Unarchive this session" : "Archive this session",
@@ -5178,6 +5184,7 @@ export default function App() {
           onEffort={(e) => act(() => api.effort(row.id, e), "change effort")}
           onAssign={(p) => act(() => api.assign(row.id, p), "move the session")}
           onContext={() => setSub("context")}
+          onPortal={() => setSub("portal")}
           onAck={() => act(() => api.ack(row.id), "mark it seen")}
           onStopOrb={async () => { if (await confirmStopOrb(row.jobs)) act(() => api.stopOrb(row.id), "stop the orb"); }}
           onNewProject={() => { setPalQuery("New project"); setPalette(true); }}
