@@ -3810,6 +3810,21 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
   .portal-pane{position:fixed;inset:0;z-index:40;flex:1;border-inline-start:0}
 }
 /* /PORTAL */
+
+/* UPDATED
+   `bough update` restarts the control room, but a page already open
+   keeps the UI it loaded with. This is the one moment a reload is worth
+   asking for, so it sits above the toast and never hides an error. */
+.updated{position:fixed;left:50%;transform:translateX(-50%);bottom:16px;z-index:60;
+  display:flex;align-items:center;gap:12px;max-width:min(560px,calc(100vw - 32px));
+  padding:10px 10px 10px 16px;background:var(--raised);border:1px solid var(--line-strong);
+  border-radius:var(--r-sm);box-shadow:var(--shadow-pop,0 8px 24px rgba(0,0,0,.4))}
+.updated-text{font-size:var(--fs-sm);color:var(--text-1)}
+.updated-x{display:grid;place-items:center;width:26px;height:26px;flex-shrink:0;color:var(--text-3);
+  background:none;border:0;border-radius:var(--r-sm);cursor:pointer}
+.updated-x:hover{color:var(--text-1);background:var(--hover)}
+/* /UPDATED */
+
 </style>
 </head>
 <body>

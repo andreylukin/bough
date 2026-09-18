@@ -1,11 +1,33 @@
 // The one place that knows the wire. Everything else takes typed values.
 import type { Ask, Event, Line, OrbBuild, OrbDetail, OrbFile, OrbRemovePlan, OrbState, OrbSummary, Project, Row, SessionMode } from "./types";
 
+// The control room's UI is embedded in the binary it was served from,
+// so a tab left open across `bough update` keeps running the old JS
+// while the server has the new one — the update looks like it did not
+// land. Every answer names the build that gave it; the first one this
+// page saw is the one it is running.
+let loadedBuild = "";
+let onNewBuild: (() => void) | undefined;
+/** Called once when the server starts answering from a different build. */
+export function watchBuild(f: () => void) { onNewBuild = f; }
+
+function noteBuild(res: Response) {
+  const got = res.headers.get("X-Bough-Build");
+  if (!got) return;
+  if (!loadedBuild) { loadedBuild = got; return; }
+  if (got !== loadedBuild) {
+    const f = onNewBuild;
+    onNewBuild = undefined; // ask once
+    f?.();
+  }
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
     headers: init?.body ? { "content-type": "application/json" } : undefined,
   });
+  noteBuild(res);
   if (!res.ok) {
     // The API answers errors as {"error": "..."} — surface that text,
     // not a bare status code, so the UI can say what actually failed.

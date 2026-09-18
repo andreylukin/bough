@@ -21,6 +21,10 @@ const TokenCookie = "bough_serve_token"
 // check, never the token.
 func Guard(h http.Handler, token string, remote bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Guard answers refusals itself, before the API can stamp them,
+		// and a page has to tell a restart onto a new build from a
+		// server that went away — so a refusal names its build too.
+		w.Header().Set(BuildHeader, buildID())
 		loop := LoopbackHost(r.Host)
 		if !remote && !loop {
 			writeErr(w, http.StatusForbidden, errors.New("serve: host "+r.Host+" is not loopback"))

@@ -1,6 +1,6 @@
 import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api, subscribe, type Change, type Scope, type TurnLine } from "./api";
+import { api, subscribe, watchBuild, type Change, type Scope, type TurnLine } from "./api";
 import type { Line, Project, Row } from "./types";
 import { MARKED, STATUS, StatusMark, Working, hasFailure, hasQuestion, sessionSignal, statusWord } from "./status";
 import { ProjectsView } from "./projects";
@@ -4517,6 +4517,11 @@ export default function App() {
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
   const [looked, setLooked] = useState<Row | null>(null);
   const [view, setView] = useState<View>("sessions");
+  // `bough update` restarts the control room, but this page keeps the UI
+  // it loaded with. The server says which build answered; when that
+  // changes, the page offers the reload rather than looking unfixed.
+  const [updated, setUpdated] = useState(false);
+  useEffect(() => { watchBuild(() => setUpdated(true)); }, []);
   // Where the next new conversation runs; local unless someone picks a project.
   const [newMode, setNewMode] = useState<ModeValue>({ mode: "local" });
   const [orbOpen, setOrbOpen] = useState<string>();
@@ -5220,6 +5225,15 @@ export default function App() {
       <DialogHost />
       {narrow && (pane === "list" || view !== "sessions") && (
         <ViewNav phone view={pane === "list" ? "sessions" : view} onView={onView} wikiFlags={wikiFlags} />
+      )}
+      {updated && (
+        <div className="updated" role="status">
+          <span className="updated-text">bough updated. Reload to get the new control room.</span>
+          <button className="btn" onClick={() => window.location.reload()}>Reload</button>
+          <button className="updated-x" aria-label="Dismiss" onClick={() => setUpdated(false)}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </div>
       )}
       {toast ? (
         // Stays until dismissed or a later action succeeds; Esc is the turn's, not the toast's.

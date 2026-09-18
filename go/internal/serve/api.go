@@ -210,7 +210,13 @@ func NewAPI(sup *Supervisor) *API {
 	return a
 }
 
-func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) { a.mux.ServeHTTP(w, r) }
+// ServeHTTP stamps every answer — the page, the bundle and the API —
+// with the build that gave it, so a tab left open across `bough update`
+// can notice the restart and offer a reload (see build.go).
+func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set(BuildHeader, buildID())
+	a.mux.ServeHTTP(w, r)
+}
 
 // health also carries where a new session would start. Creating one
 // needs a directory, and the page has no way to know the home it is
@@ -537,17 +543,26 @@ func writeEvent(w http.ResponseWriter, fl http.Flusher, ev Event) {
 // read failure is not fatal: the row still names the session, with the
 // status it can honestly claim.
 func (a *API) row(in history.SessionInfo) Row {
-	entries, err := a.sup.Entries(in.ID)
-	if err != nil {
-		entries = nil
-	}
-	return a.rowFrom(in, entries)
+	return a.rowOf(in, a.digest(in))
 }
 
+// rowFrom builds a row from entries already in hand (a caller that just
+// read the transcript for its own reasons).
 func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
+	return a.rowOf(in, digestOf(entries, in.ModTime))
+}
+
+// rowOf joins what the transcript says (the digest, cached per file)
+// with what only this moment can say: whether the child is alive, the
+// session's meta, the orb, the clock.
+func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 	meta := a.sup.Meta(in.ID)
 	live := a.sup.Live(in.ID)
-	st, ask := StatusOf(entries, live)
+	st, ask := d.statusDead, d.askDead
+	var jobs []Job
+	if live {
+		st, ask, jobs = d.statusLive, d.askLive, d.jobsLive
+	}
 	title := meta.Title
 	if title == "" {
 		title = in.Title
@@ -559,13 +574,12 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 	// answered, so the session says what it is actually running.
 	model := meta.Model
 	if model == "" {
-		model = lastModel(entries)
+		model = d.model
 	}
-	mode, slug := sessionMode(entries)
 	var rowOrb *RowOrb
-	if mode == "project" {
+	if d.mode == "project" {
 		st := a.orbState(in.ID)
-		rowOrb = &RowOrb{Project: slug, Status: st.Status, Up: st.Up}
+		rowOrb = &RowOrb{Project: d.project, Status: st.Status, Up: st.Up}
 	}
 	return Row{
 		ID:       in.ID,
@@ -579,24 +593,24 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 		Archived: meta.Archived,
 		Entries:  in.Entries,
 		Modified: in.ModTime,
-		LastAt:   lastAt(entries, in.ModTime),
+		LastAt:   d.lastAt,
 		Ask:      ask,
 		Model:    model,
 		Effort:   meta.Effort,
 		Project:  meta.Project,
-		Jobs:     RunningJobs(entries, live),
-		Cache:    LastCache(entries, model),
-		Trouble:  Troubled(st, entries, meta.Ack, time.Now()),
+		Jobs:     jobs,
+		Cache:    d.cacheFor(model),
+		Trouble:  d.troubled(st, meta.Ack, time.Now()),
 
-		TestsFailed: lastTestFailed(entries),
-		TestsAt:     testsAt(entries),
-		Turns:       countTurns(entries),
+		TestsFailed: d.testsFailed,
+		TestsAt:     d.testsAt,
+		Turns:       d.turns,
 
 		Background: in.Background,
-		Empty:      !hasInput(entries),
+		Empty:      !d.hasInput,
 
-		Mode:     mode,
-		Writable: a.writableRoot(mode, in.Cwd),
+		Mode:     d.mode,
+		Writable: a.writableRoot(d.mode, in.Cwd),
 		Orb:      rowOrb,
 
 		SpawnedBy: firstDir(in.SpawnedBy, meta.SpawnedBy),
@@ -604,7 +618,6 @@ func (a *API) rowFrom(in history.SessionInfo, entries []history.Entry) Row {
 	}
 }
 
-// lastAt is the newest entry's time, or fallback when no entry has one.
 func lastAt(entries []history.Entry, fallback time.Time) time.Time {
 	for i := len(entries) - 1; i >= 0; i-- {
 		if !entries[i].At.IsZero() {
