@@ -7,8 +7,8 @@ require (
 	charm.land/bubbletea/v2 v2.0.9
 	charm.land/glamour/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.6
-	github.com/Gaurav-Gosain/sip v0.7.0
-	github.com/anthropics/anthropic-sdk-go v1.71.0
+	github.com/Gaurav-Gosain/sip v0.8.1
+	github.com/anthropics/anthropic-sdk-go v1.73.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/ultraviolet v0.0.0-20260903151058-ae99b731b8c5
 	github.com/charmbracelet/x/ansi v0.11.8
@@ -21,9 +21,9 @@ require (
 	github.com/dop251/goja v0.0.0-20260903201622-f87b40ad7341
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/uuid v1.6.0
-	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/rivo/uniseg v0.4.7
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 	pgregory.net/rapid v1.3.0
 )
