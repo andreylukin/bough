@@ -150,7 +150,7 @@ const (
 
 const DefaultBase = "docker.io/library/debian:bookworm"
 
-// ErrNotImplemented is what the Linux stubs return from every method.
+// ErrNotImplemented is what the nerdctl stub returns from every method.
 var ErrNotImplemented = errors.New("container: runtime not implemented yet")
 
 // Default picks the runtime for this OS: Apple on darwin; on linux the

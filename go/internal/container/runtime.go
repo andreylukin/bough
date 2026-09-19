@@ -114,11 +114,11 @@ const (
 
 const DefaultBase = "docker.io/library/debian:bookworm"
 
-// ErrNotImplemented is what the Linux stubs return from every method.
+// ErrNotImplemented is what the nerdctl stub returns from every method.
 var ErrNotImplemented = errors.New("container: runtime not implemented yet")
 
-// Default picks the runtime for this OS: Apple on darwin; on linux the
-// first of nerdctl/podman on PATH (stub); otherwise Unsupported.
+// Default picks the runtime for this OS: Apple on darwin; on linux
+// podman when on PATH, else the nerdctl stub; otherwise Unsupported.
 func Default() Runtime {
 	return pick(runtime.GOOS, exec.LookPath)
 }
@@ -128,11 +128,11 @@ func pick(goos string, look func(string) (string, error)) Runtime {
 	case "darwin":
 		return NewApple()
 	case "linux":
+		if _, err := look("podman"); err == nil {
+			return NewPodman()
+		}
 		if _, err := look("nerdctl"); err == nil {
 			return Nerdctl{}
-		}
-		if _, err := look("podman"); err == nil {
-			return Podman{}
 		}
 	}
 	return Unsupported{OS: goos}

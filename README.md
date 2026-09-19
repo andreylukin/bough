@@ -70,7 +70,7 @@ More in [SCREENSHOTS.md](SCREENSHOTS.md).
 | **Hook** | A plain `.js` file in `~/.bough/hooks/<event>/` or `./.bough/hooks/<event>/` that runs when that event fires: `session-start`, `user-prompt-submit`, `pre-code-exec`, `post-result` or `stop`. It can rewrite the prompt, block a program before it runs, or amend its result. Files are re-read on every fire, so edits apply without a restart. [Hooks](go/README.md#hooks-hooks-js) |
 | **Skill** | A `SKILL.md` in `~/.claude/skills/<name>/` or `./.claude/skills/<name>/`, the same layout Claude Code uses. Mention the skill's name in a prompt and its instructions are added to that turn. [Skills](go/README.md#skills) |
 | **Project** | A definition in `~/.bough/projects/<slug>/`: its repos and branches (`project.yml`) plus a `setup.sh` that builds its container image. `bough --project <slug>` starts a session that can change that project's code. |
-| **Orb** | A project session's workspace: git worktrees of the project's repos plus a Linux container built from the project image. Every shell command runs inside the container, and each turn is checkpointed. macOS (Apple `container`) for now. [orbs.md](go/docs/orbs.md) |
+| **Orb** | A project session's workspace: git worktrees of the project's repos plus a Linux container built from the project image. Every shell command runs inside the container, and each turn is checkpointed. Apple `container` on macOS, rootless podman on Linux. [orbs.md](go/docs/orbs.md) |
 | **LLM wiki** | Markdown pages an agent compiles from your session logs: decisions, root causes, gotchas, each citing the log entry it came from. Never injected into prompts. [Below](#an-llm-wiki-of-your-own-work) |
 
 A session with no `--project` is **local**: it runs on your machine and can write only inside the git checkout it started in.
@@ -84,7 +84,7 @@ bough is closest to Claude Code, opencode and pi, and borrows their conventions 
 It is a one-person project in daily use. Known gaps:
 
 - No Windows build. macOS and Linux only.
-- Project sessions (containers) need macOS; the Linux container runtimes are stubs.
+- Project sessions need Apple `container` (macOS) or rootless podman (Linux); nerdctl is a stub.
 - Local sessions have no per-turn file checkpoints, so rewinding the conversation does not undo edits. Use git.
 - The usage numbers above come from one person's sessions, not a controlled benchmark.
 
@@ -94,7 +94,7 @@ The shell is not sandboxed by default. Here is what bough does and does not limi
 
 - **File tools stay in your repo.** Started inside a git checkout, `tools.write` and `tools.patch` work only under that checkout and refuse any other path, symlinks included. Started anywhere else, the session is read-only and those tools don't exist.
 - **The shell runs as you.** `tools.bash` has your files, credentials and network, like a script you ran yourself. The prompt tells the model not to change files outside the checkout with the shell, but nothing enforces that. Keep work committed and read what it proposes.
-- **For an enforced boundary, use a project session.** `bough --project <slug>` runs the shell in a Linux container (Apple `container`, so macOS for now) against git worktrees, and snapshots every turn so `/undo` restores files. See [orbs](go/docs/orbs.md).
+- **For an enforced boundary, use a project session.** `bough --project <slug>` runs the shell in a Linux container (Apple `container` on macOS, rootless podman on Linux) against git worktrees, and snapshots every turn so `/undo` restores files. See [orbs](go/docs/orbs.md).
 - **No telemetry.** bough talks to your LLM provider, the MCP servers you configure, the public [models.dev](https://models.dev) price list, and GitHub when you run `bough update`.
 
 ## Everything is a plugin

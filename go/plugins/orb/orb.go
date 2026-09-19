@@ -76,7 +76,7 @@ func runtimeFor(name string) (container.Runtime, error) {
 	case "nerdctl":
 		return container.Nerdctl{}, nil
 	case "podman":
-		return container.Podman{}, nil
+		return container.NewPodman(), nil
 	case "fake":
 		return container.NewFake(), nil
 	}

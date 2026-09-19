@@ -67,7 +67,7 @@ func TestFakeLifecycle(t *testing.T) {
 func TestStubsNotImplemented(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	for _, r := range []Runtime{Nerdctl{}, Podman{}, Unsupported{OS: "plan9"}} {
+	for _, r := range []Runtime{Nerdctl{}, Unsupported{OS: "plan9"}} {
 		if err := r.Available(ctx); !errors.Is(err, ErrNotImplemented) || !strings.Contains(err.Error(), r.Name()[:4]) {
 			t.Fatalf("%s: %v", r.Name(), err)
 		}
@@ -254,5 +254,27 @@ func TestParseAddress(t *testing.T) {
 	}
 	if ip, err := parseAddress([]byte(`[{"status":{"state":"stopped","networks":[]}}]`)); err != nil || ip != "" {
 		t.Fatalf("stopped = %q %v", ip, err)
+	}
+}
+
+func TestPodmanArgv(t *testing.T) {
+	t.Parallel()
+	got := podmanRunArgs(RunSpec{Name: "n", Image: "img", CPUs: 2, Memory: "4G", Workdir: "/w",
+		Mounts: []Mount{{Source: "/h", Target: "/g", ReadOnly: true}, {Source: "v", Target: "/c", Volume: true}},
+		Env:    []string{"A=1"}, Ports: []PortMap{{Host: 3000, Guest: 3000}}})
+	want := "run -d --init --name n -v /h:/g:ro --mount type=volume,source=v,target=/c -w /w -e A=1 --cpus 2 -m 4G -p 127.0.0.1:3000:3000 img sleep infinity"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("run argv\n got %s\nwant %s", strings.Join(got, " "), want)
+	}
+	if b := strings.Join(podmanBuildArgs(BuildSpec{Dir: "/d", Tag: "t"}), " "); b != "build -t t -f /d/Dockerfile /d" {
+		t.Fatalf("build argv %s", b)
+	}
+	for in, want := range map[string]State{"running\n": StateRunning, "exited\n": StateStopped, "created": StateStopped, "": StateMissing} {
+		if got := parsePodmanStatus([]byte(in)); got != want {
+			t.Errorf("status %q = %s, want %s", in, got, want)
+		}
+	}
+	if got := parseLines([]byte("a:1\n<none>:<none>\n\nb:2\n")); strings.Join(got, ",") != "a:1,b:2" {
+		t.Errorf("lines %v", got)
 	}
 }
