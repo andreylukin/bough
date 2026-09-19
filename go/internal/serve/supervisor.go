@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,9 +54,9 @@ type SessionMeta struct {
 	// never set from here, which the UI shows as the default.
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
-	// Project is the grouping this session belongs to, by project id.
-	// "" is ungrouped, which is the normal state — a session is never
-	// forced into one.
+	// Project is the project this session belongs to, by SLUG — the
+	// directory name under ~/.bough/projects. "" is ungrouped, which is
+	// the normal state; a session is never forced into one.
 	Project string `json:"project,omitempty"`
 	// Ack is the last history seq a person marked seen. A failure or an
 	// unexpected interruption recorded after it still needs them; one at
@@ -76,16 +77,30 @@ type SessionMeta struct {
 	Reported int64 `json:"reported,omitempty"`
 }
 
-// Project is a named grouping of sessions. It exists independently of
-// its members so an empty project can be created first and filled
-// later, and so renaming one does not touch any session.
+// Project is one project. The DIRECTORY is the project:
+// ~/.bough/projects/<slug> holds project.yml, the build scripts and
+// MEMORY.md, and everything here is derived from it on each read — so
+// the agent can create, edit and delete projects with the file tools and
+// serve never disagrees with the disk. There is no table.
 type Project struct {
-	ID   string `json:"id"`
+	// Slug is the directory name and the key: sessions, orbs, images and
+	// caches all name it, so it never changes. Renaming sets Name.
+	Slug string `json:"slug"`
+	// Name is project.yml's `name:`, falling back to the slug.
 	Name string `json:"name"`
-	// Slug names the ~/.bough/projects/<slug> definition this label
-	// carries, "" for a label-only project. The definition lives outside
-	// meta.json so the agent can edit it and a detach never loses it.
-	Slug string `json:"slug,omitempty"`
+	// Error is why project.yml did not parse, "" when it did. A broken
+	// definition is still a project: the editor that fixes it lives on
+	// the project's own page, and dropping it would drop the editor too.
+	Error string `json:"error,omitempty"`
+}
+
+// projectOf turns a directory listing entry into the wire shape.
+func projectOf(e projectdef.Entry) Project {
+	p := Project{Slug: e.Slug, Name: projectdef.Project{Slug: e.Slug, Def: e.Def}.DisplayName()}
+	if e.Err != nil {
+		p.Error = e.Err.Error()
+	}
+	return p
 }
 
 // CreateOptions is what a new session starts as. Mode "" is local.
@@ -189,17 +204,32 @@ type Supervisor struct {
 	// same freshly-appeared history id.
 	createMu sync.Mutex
 
-	mu       sync.Mutex
-	kids     map[string]*child
-	events   map[string][]Event
-	seq      map[string]int64
-	asks     map[string]*Ask
-	subs     map[string]map[int]chan Event
-	deltas   map[string]*deltaState
-	nextID   int
-	meta     map[string]SessionMeta
-	projects map[string]Project
-	closed   bool
+	// mainMu guards mainLocks; each entry serializes Main for ONE slug.
+	// Not s.mu: minting a main thread runs Create, which blocks for up
+	// to createTimeout, and holding the supervisor's mutex across that
+	// would stall every other session.
+	mainMu    sync.Mutex
+	mainLocks map[string]*sync.Mutex
+
+	mu     sync.Mutex
+	kids   map[string]*child
+	events map[string][]Event
+	seq    map[string]int64
+	asks   map[string]*Ask
+	subs   map[string]map[int]chan Event
+	deltas map[string]*deltaState
+	nextID int
+	meta   map[string]SessionMeta
+	closed bool
+	// metaVersion and legacy are meta.json as it was READ: the schema
+	// version, and the pre-version-2 label table migrateProjects folds
+	// into ~/.bough/projects. Both are empty once the migration ran.
+	metaVersion int
+	legacy      map[string]oldProject
+	// mains is slug -> the project's main thread. Serve state, not part
+	// of the definition: a project directory copied to another machine
+	// must not claim a session id that machine never had.
+	mains map[string]string
 	// stoppedAt is when serve stopped a session's container. The child
 	// is state.json's only writer, so until it rewrites the file a
 	// stale "running" is read as stopped.
@@ -268,7 +298,7 @@ func NewSupervisor(opt Options) (*Supervisor, error) {
 		subs:      map[string]map[int]chan Event{},
 		deltas:    map[string]*deltaState{},
 		meta:      map[string]SessionMeta{},
-		projects:  map[string]Project{},
+		mains:     map[string]string{},
 		running:   map[string]bool{},
 	}
 	if opt.MetaPath != "" {
@@ -279,7 +309,9 @@ func NewSupervisor(opt Options) (*Supervisor, error) {
 			return nil, err
 		}
 	}
-	if err := s.adoptDefinitions(); err != nil {
+	// After loadMeta, never inside it: loadMeta is a pure read, and this
+	// writes both ~/.bough/projects and meta.json.
+	if err := s.migrateProjects(); err != nil {
 		return nil, err
 	}
 	// Children queued before a restart start now, as they would have.
@@ -296,38 +328,6 @@ func (s *Supervisor) Home() string { return s.home }
 
 // Runtime is the container engine orbs are asked about.
 func (s *Supervisor) Runtime() container.Runtime { return s.rt }
-
-// adoptDefinitions gives every project definition on disk that no label
-// points at a label of its own, so one the agent created shows up. A
-// definition that fails to parse is still a directory worth showing;
-// only listing itself failing outright would hide them all, and even
-// that must not stop serve.
-func (s *Supervisor) adoptDefinitions() error {
-	defs, _ := projectdef.List(s.home)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	attached := map[string]bool{}
-	for _, p := range s.projects {
-		if p.Slug != "" {
-			attached[p.Slug] = true
-		}
-	}
-	added := false
-	for _, d := range defs {
-		if attached[d.Slug] {
-			continue
-		}
-		p := Project{ID: newProjectID(), Name: d.Slug, Slug: d.Slug}
-		s.projects[p.ID] = p
-		attached[d.Slug] = true
-		added = true
-	}
-	if !added {
-		// Nothing new: leave meta.json byte-for-byte as it was.
-		return nil
-	}
-	return s.saveMetaLocked()
-}
 
 // Entries reads one session's history. An id with no file is
 // ErrUnknownSession, so callers can answer 404 without statting.
@@ -617,10 +617,17 @@ func (s *Supervisor) start(ch *child, dir, id string, extra, more []string) erro
 	// child, and a resumed child takes its mode from its own file: strip
 	// both, then add back only what this spawn asked for.
 	cmd.Env = slices.DeleteFunc(slices.Clone(cmd.Env), func(kv string) bool {
-		return strings.HasPrefix(kv, "BOUGH_MODE=") || strings.HasPrefix(kv, "BOUGH_PROJECT=")
+		return strings.HasPrefix(kv, "BOUGH_MODE=") || strings.HasPrefix(kv, "BOUGH_PROJECT=") ||
+			strings.HasPrefix(kv, "BOUGH_PROJECT_DIR=")
 	})
 	cmd.Env = append(cmd.Env, "BOUGH_ORIGIN=web")
 	cmd.Env = append(cmd.Env, extra...)
+	// Derived at EVERY start, never baked into spawnArgs: the membership
+	// lives in meta.json, is usually set long after the session was
+	// created, and spawnArgs is in-memory and empty after a serve
+	// restart. A session already running does not pick it up — the
+	// injection starts at its next start.
+	cmd.Env = append(cmd.Env, s.projectEnv(id)...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("serve: supervisor: stdin pipe: %w", err)
@@ -659,6 +666,35 @@ func (s *Supervisor) start(ch *child, dir, id string, extra, more []string) erro
 		close(ch.done)
 	}()
 	return nil
+}
+
+// projectEnv is the project env a session's child process needs beyond
+// what its own history file says. A project session gets its mode and
+// slug from its file; this is the LOCAL session assigned to a project,
+// which gets the project directory so context-md prepends its MEMORY.md
+// and tools may write it. Nothing for a session with no project, and
+// nothing for a project whose directory has since been deleted.
+func (s *Supervisor) projectEnv(id string) []string {
+	if id == "" {
+		return nil // a Create: the session has no meta entry yet
+	}
+	slug := s.Meta(id).Project
+	if slug == "" || projectdef.ValidSlug(slug) != nil {
+		return nil
+	}
+	dir := filepath.Join(projectdef.Root(s.home), slug)
+	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+		return nil
+	}
+	env := []string{"BOUGH_PROJECT_DIR=" + dir}
+	// Which side of the project the session is on. Derived here for the
+	// same reason as the directory: the main thread is recorded in
+	// meta.json, not in the spawn arguments, so a restarted serve still
+	// tells it what it is.
+	if s.isMain(id) {
+		env = append(env, "BOUGH_PROJECT_MAIN=1")
+	}
+	return env
 }
 
 // pumpStdout turns the child's JSON lines into Events. The buffer
@@ -1161,68 +1197,120 @@ func (s *Supervisor) SetTitle(id, title string) error {
 	return s.saveMetaLocked()
 }
 
-// newProjectID is a time-ordered id, so a listing is stable and two
-// projects made in the same second cannot collide.
-func newProjectID() string { return history.NewID() }
-
-// Projects lists the groupings, newest id last (ids are time-ordered),
-// with the session count each one holds.
+// Projects lists every project directory, by display name. It reads the
+// filesystem on each call: a project the agent created with the file
+// tools shows up without serve being told, and one it deleted stops
+// showing up. A broken project.yml is listed with its parse error.
 func (s *Supervisor) Projects() []Project {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]Project, 0, len(s.projects))
-	for _, p := range s.projects {
-		out = append(out, p)
+	ents := projectdef.ListAll(s.home)
+	out := make([]Project, 0, len(ents))
+	for _, e := range ents {
+		out = append(out, projectOf(e))
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	// Name, then slug: two projects can carry the same name, and ListAll
+	// already ordered by slug, so the tiebreak keeps the listing stable.
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Slug < out[j].Slug
+	})
 	return out
 }
 
-// NewProject creates a grouping and returns it.
+// Project returns one project by slug.
+func (s *Supervisor) Project(slug string) (Project, bool) {
+	if projectdef.ValidSlug(slug) != nil {
+		return Project{}, false
+	}
+	b, err := os.ReadFile(filepath.Join(projectdef.Root(s.home), slug, projectdef.FileYAML))
+	if err != nil {
+		return Project{}, false
+	}
+	e := projectdef.Entry{Slug: slug, Dir: filepath.Join(projectdef.Root(s.home), slug)}
+	if e.Def, e.Err = projectdef.Parse(b); e.Err != nil {
+		e.Err = fmt.Errorf("projectdef: load %s: %w", slug, e.Err)
+	}
+	return projectOf(e), true
+}
+
+// ErrProjectExists is a slug already on disk. The filesystem is the
+// uniqueness check — there is no table to disagree with it.
+var ErrProjectExists = errors.New("serve: supervisor: a project with that name already exists")
+
+// ErrBadName is a name nothing can be made of: blank, or with no letter
+// or digit to name a directory after.
+var ErrBadName = errors.New("serve: supervisor: a project needs a name")
+
+// NewProject creates ~/.bough/projects/<slug> from a name and returns
+// it. The definition has no repos: which repos a project works on is
+// chosen on its page, not guessed from its name.
 func (s *Supervisor) NewProject(name string) (Project, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return Project{}, fmt.Errorf("serve: supervisor: a project needs a name")
+		return Project{}, ErrBadName
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.projects == nil {
-		s.projects = map[string]Project{}
+	slug := slugify(name)
+	if err := projectdef.ValidSlug(slug); err != nil {
+		return Project{}, fmt.Errorf("%w: %q has no letter or digit to name a directory after", ErrBadName, name)
 	}
-	p := Project{ID: newProjectID(), Name: name}
-	s.projects[p.ID] = p
-	return p, s.saveMetaLocked()
+	if _, err := projectdef.CreateEmpty(s.home, slug, name); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return Project{}, fmt.Errorf("%w: ~/.bough/projects/%s", ErrProjectExists, slug)
+		}
+		return Project{}, fmt.Errorf("serve: supervisor: create project: %w", err)
+	}
+	return Project{Slug: slug, Name: name}, nil
 }
 
-// RenameProject changes a grouping's name; membership is untouched.
-func (s *Supervisor) RenameProject(id, name string) error {
+// RenameProject changes the display name in project.yml. The directory
+// keeps its slug: orbs, images, caches and every past session name it.
+func (s *Supervisor) RenameProject(slug, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return fmt.Errorf("serve: supervisor: a project needs a name")
+		return ErrBadName
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	p, ok := s.projects[id]
-	if !ok {
-		return fmt.Errorf("serve: supervisor: no project %q", id)
+	if _, ok := s.Project(slug); !ok {
+		return fmt.Errorf("serve: supervisor: no project %q: %w", slug, ErrUnknownProject)
 	}
-	p.Name = name
-	s.projects[id] = p
-	return s.saveMetaLocked()
+	if err := projectdef.SetName(s.home, slug, name); err != nil {
+		return fmt.Errorf("serve: supervisor: rename %s: %w", slug, err)
+	}
+	return nil
 }
 
-// DeleteProject removes a grouping and unassigns its sessions. Deleting
-// a project never deletes a conversation — the grouping is a label, and
-// losing the label must not lose the work.
-func (s *Supervisor) DeleteProject(id string) error {
+// DeleteProject removes the project directory and the state a project of
+// the same name would otherwise inherit — its images, its repo cache and
+// its container caches — and unassigns its sessions.
+//
+// It never deletes a conversation or its history. It DOES delete
+// hand-written files that were never committed anywhere (Dockerfile,
+// setup.sh, resume.sh, MEMORY.md), which is why the web asks for the
+// slug to be typed before calling it. Archive keeps everything.
+func (s *Supervisor) DeleteProject(slug string) error {
+	if _, ok := s.Project(slug); !ok {
+		return fmt.Errorf("serve: supervisor: no project %q: %w", slug, ErrUnknownProject)
+	}
+	// Before the files: a thread still running would rebuild its orb
+	// from a definition that is about to stop existing.
+	if err := s.EndProject(slug); err != nil {
+		return err
+	}
+	for _, dir := range []string{
+		filepath.Join(projectdef.Root(s.home), slug),
+		filepath.Join(s.home, ".bough", "orbs", "images", slug),
+		filepath.Join(s.home, ".bough", "orbs", "cache", slug),
+		filepath.Join(s.home, ".bough", "cache", slug),
+	} {
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("serve: supervisor: delete project %s: %w", slug, err)
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.projects[id]; !ok {
-		return fmt.Errorf("serve: supervisor: no project %q", id)
-	}
-	delete(s.projects, id)
+	delete(s.mains, slug)
 	for sid, m := range s.meta {
-		if m.Project == id {
+		if m.Project == slug {
 			m.Project = ""
 			s.meta[sid] = m
 		}
@@ -1230,55 +1318,197 @@ func (s *Supervisor) DeleteProject(id string) error {
 	return s.saveMetaLocked()
 }
 
-// Project returns one label by id.
-func (s *Supervisor) Project(id string) (Project, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	p, ok := s.projects[id]
-	return p, ok
+// ErrUnknownProject is a slug with no directory.
+var ErrUnknownProject = errors.New("serve: supervisor: unknown project")
+
+// ErrProjectSession is a project session someone tried to file
+// elsewhere: its project is where its orb, its worktrees and its
+// MEMORY.md come from, recorded in its history and not a label.
+var ErrProjectSession = errors.New("serve: supervisor: a project session lives in its project's orb; start a thread in the other project instead")
+
+// AssignProject files a session under a project ("" takes it out of
+// one). Local sessions only: see ErrProjectSession.
+func (s *Supervisor) AssignProject(sessionID, slug string) error {
+	if slug != "" {
+		if _, ok := s.Project(slug); !ok {
+			return fmt.Errorf("serve: supervisor: no project %q: %w", slug, ErrUnknownProject)
+		}
+	}
+	entries, _ := s.Entries(sessionID)
+	if mode, _ := sessionMode(entries); mode == "project" {
+		return ErrProjectSession
+	}
+	return s.setProject(sessionID, slug)
 }
 
-// ErrSlugTaken is a definition already attached to another label: two
-// labels on one definition would make "which sessions" ambiguous.
-var ErrSlugTaken = errors.New("serve: supervisor: project definition already attached to another project")
-
-// SetProjectSlug attaches (slug != "") or detaches a definition. It
-// never touches the files: detaching is relabelling, not deleting.
-func (s *Supervisor) SetProjectSlug(id, slug string) (Project, error) {
+// setProject writes the membership with no mode check: for a session
+// serve itself just started in a project's orb, where the history meta
+// entry AssignProject would read may not be on disk yet.
+func (s *Supervisor) setProject(sessionID, slug string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	p, ok := s.projects[id]
-	if !ok {
-		return Project{}, fmt.Errorf("serve: supervisor: no project %q: %w", id, ErrUnknownProject)
+	m := s.meta[sessionID]
+	m.Project = slug
+	s.meta[sessionID] = m
+	return s.saveMetaLocked()
+}
+
+// Main is the project's main thread, created on first use. It is one
+// long-lived session in the project's orb and the parent of every other
+// session in the project, so the finish and failure notices a thread's
+// last turn produces land in a conversation a person is already reading.
+//
+// Creation is serialized per slug, and the id is persisted BEFORE the
+// child is spawned: two browser tabs opening the same project at the
+// same moment would otherwise each mint a main and the project would
+// have two. A recorded main whose history file is gone is re-minted.
+func (s *Supervisor) Main(slug string) (string, error) {
+	if _, ok := s.Project(slug); !ok {
+		return "", fmt.Errorf("serve: supervisor: no project %q: %w", slug, ErrUnknownProject)
 	}
-	if slug != "" {
-		for oid, o := range s.projects {
-			if oid != id && o.Slug == slug {
-				return Project{}, fmt.Errorf("%w: %q is on %q", ErrSlugTaken, slug, o.Name)
+	lock := s.mainLock(slug)
+	lock.Lock()
+	defer lock.Unlock()
+
+	s.mu.Lock()
+	id := s.mains[slug]
+	if id != "" && s.historyExists(id) {
+		s.mu.Unlock()
+		return id, nil
+	}
+	id = history.NewID()
+	s.mains[slug] = id
+	// The membership too: until the child writes its own meta entry,
+	// this is the only thing that says the session is in the project.
+	// SpawnedBy stays "" — a main with a parent could not spawn.
+	m := s.meta[id]
+	m.Project = slug
+	s.meta[id] = m
+	err := s.saveMetaLocked()
+	s.mu.Unlock()
+	if err != nil {
+		return "", err
+	}
+	// Outside s.mu: Create takes createMu and waits for the child's
+	// history file, which is seconds, not microseconds.
+	if _, err := s.Create(CreateOptions{Mode: "project", Slug: slug, ID: id}); err != nil {
+		return "", fmt.Errorf("serve: supervisor: project %s: start the main thread: %w", slug, err)
+	}
+	return id, nil
+}
+
+// MainID is the project's main thread WITHOUT creating one: "" when it
+// has none yet, or when the recorded one's history file is gone.
+func (s *Supervisor) MainID(slug string) string {
+	s.mu.Lock()
+	id := s.mains[slug]
+	s.mu.Unlock()
+	if id == "" || !s.historyExists(id) {
+		return ""
+	}
+	return id
+}
+
+// isMain says whether a session is some project's main thread.
+func (s *Supervisor) isMain(id string) bool {
+	if id == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, main := range s.mains {
+		if main == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Supervisor) mainLock(slug string) *sync.Mutex {
+	s.mainMu.Lock()
+	defer s.mainMu.Unlock()
+	if s.mainLocks == nil {
+		s.mainLocks = map[string]*sync.Mutex{}
+	}
+	if lock, ok := s.mainLocks[slug]; ok {
+		return lock
+	}
+	lock := &sync.Mutex{}
+	s.mainLocks[slug] = lock
+	return lock
+}
+
+func (s *Supervisor) historyExists(id string) bool {
+	_, err := os.Stat(filepath.Join(s.opt.HistDir, id+".jsonl"))
+	return err == nil
+}
+
+// projectSessions is every session of a project except its main thread:
+// the threads main started, and the ones filed under the project that it
+// did not (started from the CLI, or from before there was a main).
+func (s *Supervisor) projectSessions(slug, main string) []string {
+	seen := map[string]bool{main: true}
+	var out []string
+	add := func(id string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	if main != "" {
+		for _, c := range s.Children(main) {
+			add(c.ID)
+		}
+	}
+	s.mu.Lock()
+	var filed []string
+	for id, m := range s.meta {
+		if m.Project == slug {
+			filed = append(filed, id)
+		}
+	}
+	s.mu.Unlock()
+	for _, id := range filed {
+		add(id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// EndProject stops everything the project has running: every thread,
+// then the main thread itself.
+//
+// Orbs are per SESSION (container.OrbName is "bough-orb-"+session), so a
+// project with a main and N threads runs N+1 containers. EndChild stops
+// a CHILD's; main is nobody's child, so its container is stopped here.
+func (s *Supervisor) EndProject(slug string) error {
+	main := s.MainID(slug)
+	var errs []error
+	for _, id := range s.projectSessions(slug, main) {
+		if err := s.EndChild(id); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if main == "" {
+		return errors.Join(errs...)
+	}
+	if err := s.Kill(main); err != nil {
+		errs = append(errs, err)
+	}
+	// Kill stops the orb of a child it was holding; a main nothing holds
+	// (serve restarted, the session idle) leaves Kill a no-op, and its
+	// container would keep running.
+	if s.rt != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if st, err := s.rt.Inspect(ctx, container.OrbName(main)); err == nil && st == container.StateRunning {
+			if err := s.stopOrb(ctx, main); err != nil {
+				errs = append(errs, fmt.Errorf("serve: supervisor: stop orb of %s: %w", main, err))
 			}
 		}
 	}
-	p.Slug = slug
-	s.projects[id] = p
-	return p, s.saveMetaLocked()
-}
-
-// ErrUnknownProject is a label id that does not exist.
-var ErrUnknownProject = errors.New("serve: supervisor: unknown project")
-
-// AssignProject puts a session in a grouping ("" removes it).
-func (s *Supervisor) AssignProject(sessionID, projectID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if projectID != "" {
-		if _, ok := s.projects[projectID]; !ok {
-			return fmt.Errorf("serve: supervisor: no project %q", projectID)
-		}
-	}
-	m := s.meta[sessionID]
-	m.Project = projectID
-	s.meta[sessionID] = m
-	return s.saveMetaLocked()
+	return errors.Join(errs...)
 }
 
 // SetModel asks a session to switch model by writing the same /model
@@ -1359,6 +1589,134 @@ func (s *Supervisor) Acknowledge(id string) error {
 	return s.saveMetaLocked()
 }
 
+// migrateProjects folds the version-1 label table into
+// ~/.bough/projects, which is where a project lives now. It runs once,
+// after loadMeta and before anything serves: the version stamp makes the
+// next boot skip it in O(1). One bad project is logged and skipped —
+// booting serve must not depend on every definition being writable.
+func (s *Supervisor) migrateProjects() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.metaVersion >= metaVersion {
+		return nil
+	}
+	existed := false
+	if s.opt.MetaPath != "" {
+		if _, err := os.Stat(s.opt.MetaPath); err == nil {
+			existed = true
+		}
+	}
+	// Deterministic order: the project-<n> numbering and the -2 suffixes
+	// must not depend on map iteration.
+	ids := make([]string, 0, len(s.legacy))
+	for id := range s.legacy {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	// Slugs a labelled project already carries, and the directories
+	// already on disk. Both, because a definition made outside this
+	// migration — `bough project create`, or an agent writing
+	// ~/.bough/projects/<slug>, after the last boot of the old binary —
+	// belongs to no label: a label named "Bough" that adopted the real
+	// bough project would rename it and file its sessions into someone
+	// else's repos, image and orb.
+	taken := map[string]bool{}
+	for _, p := range s.legacy {
+		if p.Slug != "" {
+			taken[p.Slug] = true
+		}
+	}
+	onDisk := map[string]projectdef.Entry{}
+	for _, e := range projectdef.ListAll(s.home) {
+		onDisk[e.Slug] = e
+	}
+
+	slugOf := make(map[string]string, len(ids)) // label id -> project slug
+	unnamed := 0
+	for _, id := range ids {
+		p := s.legacy[id]
+		if p.Slug != "" {
+			// The definition is already there; the label's Name is the
+			// ONLY copy of the display name ("My Web App" was slugified
+			// to my-web-app when it was attached), so it has to be
+			// written into project.yml BEFORE the table is dropped.
+			if _, ok := s.Project(p.Slug); !ok {
+				continue // its directory is gone: its sessions go unassigned
+			}
+			slugOf[id] = p.Slug
+			if p.Name != "" && p.Name != p.Slug {
+				if err := projectdef.SetName(s.home, p.Slug, p.Name); err != nil {
+					fmt.Fprintln(os.Stderr, "bough serve: migrate project:", err)
+				}
+			}
+			continue
+		}
+		// A label-only project becomes a definition with no repos.
+		base := slugify(p.Name)
+		if projectdef.ValidSlug(base) != nil {
+			// Emoji, CJK or punctuation: nothing to name a directory after.
+			unnamed++
+			base = fmt.Sprintf("project-%d", unnamed)
+		}
+		if len(base) > 55 {
+			base = strings.TrimRight(base[:55], "-") // leave room for a suffix
+		}
+		slug := base
+		// Step past every slug that is spoken for, EXCEPT one an earlier
+		// run of this migration left behind for this same label: that
+		// one is finished rather than duplicated.
+		for i := 2; taken[slug] || (onDisk[slug].Slug != "" && !ourLeftover(onDisk[slug], p.Name)); i++ {
+			slug = fmt.Sprintf("%s-%d", base, i)
+		}
+		taken[slug] = true
+		// A leftover is adopted as it stands: CreateEmpty already wrote
+		// this name into it, so nothing here renames a directory that
+		// this migration did not create.
+		if _, err := projectdef.CreateEmpty(s.home, slug, p.Name); err != nil && !errors.Is(err, fs.ErrExist) {
+			fmt.Fprintln(os.Stderr, "bough serve: migrate project:", err)
+			continue
+		}
+		slugOf[id] = slug
+	}
+
+	for sid, m := range s.meta {
+		if m.Project == "" {
+			continue
+		}
+		if slug, ok := slugOf[m.Project]; ok {
+			m.Project = slug
+			s.meta[sid] = m
+			continue
+		}
+		// Already a slug (this ran before and did not finish), or a label
+		// that no longer resolves. Never leave a bogus slug behind.
+		if _, ok := s.Project(m.Project); ok {
+			continue
+		}
+		m.Project = ""
+		s.meta[sid] = m
+	}
+
+	s.metaVersion, s.legacy = metaVersion, nil
+	if !existed && len(ids) == 0 {
+		// A fresh install: writing meta.json here would only create a
+		// file holding a version number and nothing else.
+		return nil
+	}
+	return s.saveMetaLocked()
+}
+
+// ourLeftover says whether a directory already under ~/.bough/projects
+// is one an earlier run of migrateProjects made for a label of this
+// name and then crashed before the table was dropped. CreateEmpty
+// writes the name and `repos: []` and nothing else, so that shape —
+// parsed, named the same, no repos — is ours to finish. Anything else
+// is a project of the person's own, which must not be renamed or have
+// another project's sessions filed into it.
+func ourLeftover(e projectdef.Entry, name string) bool {
+	return e.Err == nil && e.Def.Name == name && len(e.Def.Repos) == 0
+}
+
 func (s *Supervisor) loadMeta() error {
 	b, err := os.ReadFile(s.opt.MetaPath)
 	if err != nil {
@@ -1371,13 +1729,15 @@ func (s *Supervisor) loadMeta() error {
 	// projects table. Read both shapes: an older file must not lose its
 	// titles and archive flags just because the format moved on.
 	var f metaFile
-	if err := json.Unmarshal(b, &f); err == nil && (f.Sessions != nil || f.Projects != nil) {
+	if err := json.Unmarshal(b, &f); err == nil && (f.Sessions != nil || f.Projects != nil || f.Version > 0) {
 		for k, v := range f.Sessions {
 			s.meta[k] = v
 		}
-		for k, v := range f.Projects {
-			s.projects[k] = v
+		for slug, id := range f.Mains {
+			s.mains[slug] = id
 		}
+		s.metaVersion = f.Version
+		s.legacy = f.Projects
 		s.requeueLocked()
 		return nil
 	}
@@ -1391,11 +1751,32 @@ func (s *Supervisor) loadMeta() error {
 	return nil
 }
 
-// metaFile is what meta.json holds now: sessions and the groupings they
-// belong to, in one atomically-written file.
+// metaVersion is the schema meta.json is written at. 2 is "projects are
+// directories": the label table is gone and SessionMeta.Project holds a
+// slug. The version exists so a new binary skips an already-done
+// migration in O(1) — running an OLD binary against a version-2 file is
+// NOT supported, because its adoptDefinitions would mint fresh labels
+// into the same file and the slugs would stop resolving.
+const metaVersion = 2
+
+// metaFile is what meta.json holds: the schema version and the
+// supervisor's per-session metadata, in one atomically-written file.
 type metaFile struct {
+	Version  int                    `json:"version,omitempty"`
 	Sessions map[string]SessionMeta `json:"sessions,omitempty"`
-	Projects map[string]Project     `json:"projects,omitempty"`
+	// Mains is project slug -> main thread session id.
+	Mains map[string]string `json:"mains,omitempty"`
+	// Projects is the version-1 label table. It is read once, by
+	// migrateProjects, and never written again.
+	Projects map[string]oldProject `json:"projects,omitempty"`
+}
+
+// oldProject is one row of the version-1 label table: a minted id, a
+// display name, and the definition directory it had been pointed at.
+type oldProject struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Slug string `json:"slug,omitempty"`
 }
 
 // saveMetaLocked rewrites meta.json atomically; caller holds s.mu.
@@ -1403,7 +1784,7 @@ func (s *Supervisor) saveMetaLocked() error {
 	if s.opt.MetaPath == "" {
 		return nil
 	}
-	b, err := json.MarshalIndent(metaFile{Sessions: s.meta, Projects: s.projects}, "", "  ")
+	b, err := json.MarshalIndent(metaFile{Version: metaVersion, Sessions: s.meta, Mains: s.mains}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("serve: supervisor: encode meta: %w", err)
 	}

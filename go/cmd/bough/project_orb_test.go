@@ -213,3 +213,19 @@ func TestProjectBuildAfterFailedTag(t *testing.T) {
 		t.Errorf("build.json state = %q", b.State)
 	}
 }
+
+// A project with no repos is a normal project: list names it, and says
+// so in the repos column rather than leaving a hole in the row.
+func TestProjectListNoRepos(t *testing.T) {
+	home, _, run := orbFixture(t)
+	if _, err := projectdef.CreateEmpty(home, "area", "Area"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := run("", "list")
+	if err != nil {
+		t.Fatalf("list: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "area") || !strings.Contains(out, "no repos") {
+		t.Errorf("list:\n%s", out)
+	}
+}

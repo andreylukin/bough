@@ -228,9 +228,17 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	}
 	if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
 		root := o.Root()
-		s.Set("orb", promptSection(root, st, p.Def, missing))
+		memory := filepath.Join(p.Dir, projectdef.FileMemory)
+		// Which session in the project this is. serve sets
+		// BOUGH_PROJECT_MAIN on the main thread and BOUGH_SPAWNED_BY on
+		// the threads it starts; a session started from the CLI is
+		// neither and is told neither.
+		isMain, _ := kernel.Get[bool](ctx, "session-main")
+		parent, _ := kernel.Get[string](ctx, "session-spawned-by")
+		r := projectRole{main: isMain, parent: parent}
+		s.Set("orb", promptSection(root, memory, st, p.Def, missing, r))
 		// A restart gets a new IP: keep the prompt's address current.
-		o.OnResume(func(st iorb.State) { s.Set("orb", promptSection(root, st, p.Def, missing)) })
+		o.OnResume(func(st iorb.State) { s.Set("orb", promptSection(root, memory, st, p.Def, missing, r)) })
 		ctx.Effect(func() { o.OnResume(nil); s.Set("orb", "") })
 	}
 	if reg, err := kernel.Get[*commands.Registry](ctx, "commands"); err == nil {
@@ -428,11 +436,33 @@ func addressSection(b *strings.Builder, st iorb.State) {
 	}
 }
 
+// projectRole is the session's place in its project: the main thread,
+// one of the threads it started, or neither.
+type projectRole struct {
+	main   bool   // this session is the project's main thread
+	parent string // the session that spawned this one; "" when nothing did
+}
+
+// roleLine says which session in the project this is, and what that
+// means for the work in front of it. Without it every session in a
+// project read the same paragraph, so the main thread had no reason to
+// hand anything to a thread and did every job itself.
+func roleLine(r projectRole, slug string) string {
+	switch {
+	case r.main:
+		return fmt.Sprintf("You are the MAIN THREAD of %s: one long-lived session, the one the user types to on the project page, and the parent of every other session in the project. Answer questions and do small edits here, in this conversation. For work that runs long or can run on its own, start a thread — tools.spawn(task, {background: true}) — which gets a container of its own in this project and reports back here when it finishes or fails. Say what you handed off; do not poll for it.\n", slug)
+	case r.parent != "":
+		return fmt.Sprintf("You are a THREAD of %s, started by its main thread (%s). Finish the task you were given in this container and say what you did: your last reply is what reaches the main thread. You cannot start threads of your own — if the work needs splitting or a decision, say so in your reply and the main thread takes it from there.\n", slug, r.parent)
+	}
+	return ""
+}
+
 // promptSection tells the model where its shell runs and what to check.
-func promptSection(root string, st iorb.State, def projectdef.Def, missing []string) string {
+func promptSection(root, memory string, st iorb.State, def projectdef.Def, missing []string, r projectRole) string {
 	checks := def.Checks
 	var b strings.Builder
 	fmt.Fprintf(&b, "Project session: %s. Your shell runs in a Linux container (%s); files under %s are shared with the host at the same paths.\n", st.Project, st.Container, root)
+	b.WriteString(roleLine(r, st.Project))
 	if len(def.Identity) > 0 {
 		fmt.Fprintf(&b, "Host identity lent to this container: %s (dirs mounted at /root/<dir>, read-only unless :rw; gh = GH_TOKEN).\n", strings.Join(def.Identity, ", "))
 	} else {
@@ -464,5 +494,8 @@ func promptSection(root string, st iorb.State, def projectdef.Def, missing []str
 	}
 	b.WriteString("If a build or test is blocked by a missing credential, dependency or tool, do not fall back to weaker verification. Find what the repo expects (Makefile, docker-compose, CI config), fix the project definition with `bough project`, ask for secrets with `tools.secret`, and say plainly what stayed unverified.\n")
 	fmt.Fprintf(&b, "This project's definition (repos, checks, env, setup.sh, resume.sh) is yours to change with \"bough project ... %s ...\" (no args for usage); it validates, and changes apply to the next session.\n", st.Project)
+	// One file, edited only when asked. Nothing extracts or summarises
+	// into it: a brief the user did not write is a brief they cannot trust.
+	fmt.Fprintf(&b, "%s is this project's standing brief, prepended to every session in it. Write it (tools.write) only when the user asks you to remember something for later; keep it short, and never copy a conversation into it.\n", memory)
 	return strings.TrimRight(b.String(), "\n")
 }

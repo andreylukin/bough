@@ -23,8 +23,11 @@ import (
 )
 
 const projectUsage = `usage: bough project <command>
+A project IS its directory, ~/.bough/projects/<slug>: the slug is the key
+everywhere (orbs, images, caches, sessions) and never changes. Its display
+name is the "name:" line in project.yml.
   list                                  every project: repos, image and orb state
-  show <slug> [file]                    print project.yml, Dockerfile, setup.sh, resume.sh (or one)
+  show <slug> [file]                    print project.yml, Dockerfile, setup.sh, resume.sh, MEMORY.md (or one)
   create <slug> <repo>...               new project; a repo is a local path (~ ok) or a git remote
   add-repo <slug> <repo> [--branch B] [--name N]
   remove-repo <slug> <name>
@@ -34,6 +37,9 @@ const projectUsage = `usage: bough project <command>
                                         secrets.NAME keychain:<service>, ports 3000,8080:80
                                         (127.0.0.1 forwards; host:container); "" clears
   write <slug> <file>                   replace a file with stdin (empty stdin deletes a script)
+                                        MEMORY.md is the project's standing brief: it is prepended to
+                                        every session in the project, and only you or an agent you ask
+                                        to remember something ever writes it
   build <slug>                          build the project's image now (streams the log)
   status [slug|session]                 orbs and their state; a slug adds the preflight (runtime up,
                                         repos clone, gh token, secrets resolve); a session in detail

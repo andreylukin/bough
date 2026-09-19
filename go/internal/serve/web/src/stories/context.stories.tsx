@@ -19,10 +19,11 @@ const populated: ContextData = {
   cwd: "/w/bough",
   rules,
   contextFiles: [
-    { path: "/w/bough/AGENTS.md", found: true, dropped: 0, same: "" },
-    { path: "/w/bough/CLAUDE.md", found: true, dropped: 3, same: "/w/bough/AGENTS.md" },
-    { path: "/w/bough/go/AGENTS.md", found: true, dropped: 0, same: "" },
-    { path: "/Users/a/CLAUDE.md", found: false, dropped: 0, same: "" },
+    { path: "/Users/a/.bough/projects/bough/MEMORY.md", lines: 84, found: true, dropped: 0, same: "" },
+    { path: "/w/bough/AGENTS.md", lines: 131, found: true, dropped: 0, same: "" },
+    { path: "/w/bough/CLAUDE.md", lines: 96, found: true, dropped: 3, same: "/w/bough/AGENTS.md" },
+    { path: "/w/bough/go/AGENTS.md", lines: 412, found: true, dropped: 0, same: "" },
+    { path: "/Users/a/CLAUDE.md", lines: 0, found: false, dropped: 0, same: "" },
   ],
   skills: [
     { id: "circleci", name: "circleci", summary: "Read CircleCI job output for a branch or PR.",

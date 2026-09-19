@@ -31,11 +31,15 @@ function Conversation({ row, repo, projects, onOpen, onAssign, picked, onPick, l
   const chip = twin || !hasOwnTitle(row);
   const status = shownStatus(row);
   const at = row.lastAt || row.modified;
-  const current = projects.find((p) => p.id === row.project)?.name ?? "Unassigned";
+  const current = projects.find((p) => p.slug === row.project)?.name ?? "Unassigned";
+  // A project session lives in its project's orb, and its project is in
+  // its history: there is nothing here to move it to.
+  const fixed = row.mode === "project";
   return (
     <div className={"proj-row" + (picked ? " proj-picked" : "")}>
       <label className="proj-check">
-        <input type="checkbox" checked={picked} disabled={locked} onChange={() => onPick(row.id)} />
+        <input type="checkbox" checked={picked} disabled={locked || fixed} onChange={() => onPick(row.id)}
+               title={fixed ? PROJECT_SESSION : undefined} />
         <span className="visually-hidden">Select {title}</span>
       </label>
       {/* Title and when in one target, so a phone row is two short lines, not three. */}
@@ -49,12 +53,14 @@ function Conversation({ row, repo, projects, onOpen, onAssign, picked, onPick, l
       </button>
       <StatusMark status={status} />
       {/* With no project to move to, a one-option menu is a dead end. */}
-      {projects.length > 0 && (
+      {fixed ? (
+        <span className="proj-move proj-fixed" title={PROJECT_SESSION}>In {current}</span>
+      ) : projects.length > 0 && (
         <div className="proj-move" title={`In ${current}`}>
           {/* The pill is an action; the current project is its tooltip and the menu's check. */}
           <Select label={`Move to project, now in ${current}`} value={row.project ?? ""} align="end"
                   onChange={(p) => onAssign(row.id, p)}
-                  options={[{ value: "", label: "Unassigned", short: "Move…" }, ...[...projects].sort(byName).map((p) => ({ value: p.id, label: p.name, short: "Move…" }))]} />
+                  options={[{ value: "", label: "Unassigned", short: "Move…" }, ...[...projects].sort(byName).map((p) => ({ value: p.slug, label: p.name, short: "Move…" }))]} />
         </div>
       )}
     </div>
@@ -79,19 +85,17 @@ function OrbSection({ project, onOpen, onChanged, titles, rows = [] }: {
   const offset = useRef(0);
 
   const load = useCallback(() => {
-    if (!project.slug) return;
-    api.orb(project.id).then((d) => { setDetail(d); setErr(""); }, (e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
-  }, [project.id, project.slug]);
+    api.orb(project.slug).then((d) => { setDetail(d); setErr(""); }, (e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
+  }, [project.slug]);
   useEffect(load, [load]);
 
   const state = detail?.build.state;
   useEffect(() => {
-    if (!project.slug) return;
     let stop = false;
     offset.current = 0; setLog("");
     const tick = async () => {
       try {
-        const r = await api.buildLog(project.id, offset.current);
+        const r = await api.buildLog(project.slug, offset.current);
         if (stop) return;
         if (r.text) setLog((l) => l + r.text);
         offset.current = r.offset;
@@ -102,7 +106,7 @@ function OrbSection({ project, onOpen, onChanged, titles, rows = [] }: {
     };
     void tick();
     return () => { stop = true; };
-  }, [project.id, project.slug, state, load]);
+  }, [project.slug, state, load]);
 
   const run = async (fn: () => Promise<unknown>) => {
     try { await fn(); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
@@ -111,14 +115,8 @@ function OrbSection({ project, onOpen, onChanged, titles, rows = [] }: {
 
   return (
     <ProjectOrb project={project} detail={detail} log={log} error={err} onOpen={onOpen} titles={titles} onRetry={load}
-      onAttach={() => { void run(() => api.attachOrb(project.id)); }}
-      onDetach={async () => {
-        const ok = await askConfirm(`Detach the orb from “${project.name}”?`,
-          `The files in ~/.bough/projects/${project.slug} stay.`, { action: "Detach", danger: true });
-        if (ok) { setDetail(undefined); void run(() => api.detachOrb(project.id)); }
-      }}
-      onSave={async (name: OrbFile, text: string) => { await api.putOrbFile(project.id, name, text); load(); }}
-      onBuild={() => { void run(() => api.buildOrb(project.id)); }}
+      onSave={async (name: OrbFile, text: string) => { await api.putOrbFile(project.slug, name, text); load(); }}
+      onBuild={() => { void run(() => api.buildOrb(project.slug)); }}
       onStopOrb={async (session) => { if (await confirmStopOrb(rows.find((r) => r.id === session)?.jobs)) void run(() => api.stopOrb(session)); }}
       onRemoveOrb={(session) => { void run(async () => {
         const q = removeOrbQuestion((await api.orbRemovePlan(session)).plan);
@@ -153,6 +151,12 @@ const UNKNOWN = "No repo detected";
 const NEW = "\u0000new";
 
 const LEDE = "A project groups sessions from any repo under one name. Moving a session only files it here; nothing inside it changes.";
+
+/** Why a project session has no Move control. One line, on hover. */
+const PROJECT_SESSION = "A project session lives in its project's orb; start a thread in the other project instead.";
+
+/** The files a delete removes, named in the confirm because none of them is committed anywhere. */
+const PROJECT_FILES = "project.yml, Dockerfile, setup.sh, resume.sh and MEMORY.md";
 
 function Chevron() {
   return (
@@ -217,17 +221,17 @@ export function suggestName(repos: string[]): string {
 
 export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssignMany, onCreate, onRename, onDelete, orbOpen, onOrbOpen, onOrbChanged = () => {}, onNewSession }: {
   projects: Project[]; rows: Row[];
-  /** The project whose orb section is expanded (#/projects/<id>/orb). */
+  /** The project whose orb section is expanded (#/projects/<slug>/orb). */
   orbOpen?: string;
   onOrbOpen?: (id: string | undefined) => void;
-  /** An orb was attached, detached or built: the project list is stale. */
+  /** An orb was built or a session stopped: the project list is stale. */
   onOrbChanged?: () => Promise<void> | void;
   onOpen: (id: string) => void;
   onBack?: () => void;
   onAssign: (id: string, project: string) => void;
   /** Resolves to the ids that did not move. */
   onAssignMany: (ids: string[], project: string) => Promise<string[]>;
-  onCreate: (name: string) => Promise<{ id: string }>;
+  onCreate: (name: string) => Promise<{ slug: string }>;
   onRename: (id: string, name: string) => Promise<void>;
   onDelete: (id: string) => void;
   /** Starts a session in the project's orb (the palette's "New session in <project>"). */
@@ -242,7 +246,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
   // Controlled by the route when the app passes it; a story drives it locally.
   const [orbLocal, setOrbLocal] = useState<string>();
   const orbId = onOrbOpen ? orbOpen : orbLocal;
-  const toggleOrb = (id: string) => (onOrbOpen ?? setOrbLocal)(orbId === id ? undefined : id);
+  const toggleOrb = (slug: string) => (onOrbOpen ?? setOrbLocal)(orbId === slug ? undefined : slug);
 
   const inferred = useInferredRepos();
   const repoOf = useMemo(() => {
@@ -342,10 +346,10 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
     made.current = null;
     await askText("New project", { placeholder: "What is this work?", action: "Create",
       onSubmit: async (name) => {
-        const id = made.current ?? (await onCreate(name)).id;
-        made.current = id;
+        const slug = made.current ?? (await onCreate(name)).slug;
+        made.current = slug;
         // With a selection, the new project is where it goes.
-        if (ids.length && !(await assign(id))) throw new Error("the project exists, but some sessions did not move");
+        if (ids.length && !(await assign(slug))) throw new Error("the project exists, but some sessions did not move");
       } });
     // Done or cancelled, the next creation is a new project.
     made.current = null;
@@ -357,13 +361,13 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
     await askText(`Create project from ${repo}`, { initial: repo, action: "Create and move",
       placeholder: "What is this work?",
       onSubmit: async (name) => {
-        const id = made.current ?? (await onCreate(name)).id;
-        made.current = id;
+        const slug = made.current ?? (await onCreate(name)).slug;
+        made.current = slug;
         setFailed(null); setMoving(true);
         let left: string[];
-        try { left = await onAssignMany(batch, id); } catch { left = batch; }
+        try { left = await onAssignMany(batch, slug); } catch { left = batch; }
         setMoving(false);
-        if (left.length) { setSelected(new Set(left)); setFailed({ project: id, n: left.length }); throw new Error("the project exists, but some sessions did not move"); }
+        if (left.length) { setSelected(new Set(left)); setFailed({ project: slug, n: left.length }); throw new Error("the project exists, but some sessions did not move"); }
       } });
     made.current = null;
   };
@@ -410,37 +414,42 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
         )}
 
         {sorted.map((p) => {
-          const rs = byProject.get(p.id) ?? [];
+          const rs = byProject.get(p.slug) ?? [];
           // A filter hides projects with nothing matching, unless its orb is open.
-          if (needle && rs.length === 0 && orbId !== p.id) return null;
-          const all = totals.get(p.id) ?? 0;
+          if (needle && rs.length === 0 && orbId !== p.slug) return null;
+          const all = totals.get(p.slug) ?? 0;
           return (
-            <section key={p.id} className="proj">
+            <section key={p.slug} className="proj">
               <div className="proj-head">
-                <button className="proj-fold" aria-expanded={!folded.has(p.id)} onClick={() => fold(p.id)}>
+                <button className="proj-fold" aria-expanded={!folded.has(p.slug)} onClick={() => fold(p.slug)}>
                   <h2>{p.name}</h2>
-                  <span className="num proj-count">{countLabel(p.id, rs)}</span>
-                  <OrbUp n={upBy.get(p.id) ?? 0} />
+                  <span className="num proj-count">{countLabel(p.slug, rs)}</span>
+                  <OrbUp n={upBy.get(p.slug) ?? 0} />
                   <Chevron />
                 </button>
-                {p.slug ? <>
-                  {onNewSession && <button className="btn btn-sm" onClick={() => onNewSession(p)}>New session</button>}
-                  <button className="btn btn-sm proj-orb-btn" aria-expanded={orbId === p.id} onClick={() => toggleOrb(p.id)}>Orb</button>
-                </> : (
-                  <button className="btn btn-sm" aria-expanded={orbId === p.id} onClick={() => toggleOrb(p.id)}>Add orb</button>
-                )}
+                {/* The project's own page: its main thread, its threads and its files. */}
+                <a className="btn btn-sm" href={`#/projects/${p.slug}`}>Open</a>
+                {onNewSession && <button className="btn btn-sm" onClick={() => onNewSession(p)}>New session</button>}
+                <button className="btn btn-sm proj-orb-btn" aria-expanded={orbId === p.slug} onClick={() => toggleOrb(p.slug)}>Orb</button>
                 <GroupMenu name={p.name} items={[
-                  { label: "Rename…", run: () => { void askText("Rename project", { initial: p.name, action: "Rename", onSubmit: (name) => onRename(p.id, name) }); } },
-                  { label: "Delete…", danger: true, run: async () => {
-                    const ok = await askConfirm(`Delete “${p.name}”?`,
-                      `Its ${all} session${all === 1 ? "" : "s"} stay, unassigned.`,
-                      { action: "Delete project", danger: true });
-                    if (ok) onDelete(p.id);
+                  { label: "Rename…", run: () => { void askText("Rename project", { initial: p.name, action: "Rename", onSubmit: (name) => onRename(p.slug, name) }); } },
+                  // Typed, not clicked: this deletes hand-written files
+                  // (the scripts, MEMORY.md) that are committed nowhere.
+                  { label: "Delete…", danger: true, run: () => {
+                    void askText(`Delete “${p.name}”?`, {
+                      body: `Removes ~/.bough/projects/${p.slug} and everything in it — ${PROJECT_FILES} — and the image and caches built from it. `
+                        + `Its ${all} session${all === 1 ? "" : "s"} stay, unassigned. Type ${p.slug} to confirm.`,
+                      placeholder: p.slug, action: "Delete project", danger: true,
+                      onSubmit: async (typed) => {
+                        if (typed !== p.slug) throw new Error(`type ${p.slug} to confirm`);
+                        onDelete(p.slug);
+                      },
+                    });
                   } },
                 ]} />
               </div>
-              {orbId === p.id && <OrbSection project={p} onOpen={onOpen} onChanged={onOrbChanged} titles={titles} rows={rows} />}
-              {folded.has(p.id) ? null : rs.length === 0
+              {orbId === p.slug && <OrbSection project={p} onOpen={onOpen} onChanged={onOrbChanged} titles={titles} rows={rows} />}
+              {folded.has(p.slug) ? null : rs.length === 0
                 ? <p className="proj-none">{needle ? "Nothing here matches the filter." : "Nothing here yet. Move a session in from below."}</p>
                 : list(rs)}
             </section>
@@ -495,7 +504,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
           <span className="num rp-count">{moving ? `Moving ${ids.length}…` : `${ids.length} selected`}</span>
           {/* Choosing a project is the move; "New project…" files the selection into what it makes. */}
           <Select label="Move to project" value="" align="start" placeholder="Move to project"
-                  options={[...sorted.map((p) => ({ value: p.id, label: p.name })), { value: NEW, label: "New project…" }]}
+                  options={[...sorted.map((p) => ({ value: p.slug, label: p.name })), { value: NEW, label: "New project…" }]}
                   onChange={(v) => { if (moving) return; if (v === NEW) void createProject(); else void assign(v); }} />
           {failed && (
             <span className="err rp-err" role="alert">

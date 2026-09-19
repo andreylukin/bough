@@ -13,10 +13,18 @@ import {
 
 export interface ContextFile {
   path: string;
+  /** Lines on disk; 0 when the file is not there. */
+  lines: number;
   found: boolean;
   dropped: number;
   same: string;
 }
+
+// A context file is prepended to every turn, so its length is paid
+// again on every turn. Same numbers as longLines/tooLongLines in
+// internal/serve/context.go.
+export const LONG = 200;
+export const TOO_LONG = 400;
 
 export interface ContextSkill {
   id: string;
@@ -64,17 +72,20 @@ export const contextApi = {
  * else.
  */
 function FileRow({ f }: { f: ContextFile }) {
+  const long = f.lines > TOO_LONG ? "ctx-lines-max" : f.lines > LONG ? "ctx-lines-long" : "";
   return (
     <details className="proj-row hk-row ctx-file">
       <summary className="ctx-file-main">
         <span className="mono hk-name" title={f.path}>{shortPath(f.path)}</span>
-        {f.dropped > 0
-          ? (
-            <span className="hk-when">
-              {f.dropped} {f.dropped === 1 ? "section" : "sections"} dropped, identical to {base(f.same)}
-            </span>
-          )
-          : <span className="hk-when">In full</span>}
+        <span className="hk-when">
+          <span className={long}>
+            {f.lines} {f.lines === 1 ? "line" : "lines"}
+            {long ? " · long — injected every turn" : ""}
+          </span>
+          {f.dropped > 0
+            ? ` · ${f.dropped} ${f.dropped === 1 ? "section" : "sections"} dropped, identical to ${base(f.same)}`
+            : " · in full"}
+        </span>
       </summary>
       <p className="mono hk-path">{f.path}</p>
     </details>

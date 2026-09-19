@@ -332,6 +332,14 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	local := mode != "project"
 	if local {
 		st.writeRoots = iorb.LocalWriteRoots()
+		// A local session assigned to a project may write that project's
+		// directory. The context-md header names MEMORY.md by path every
+		// turn, and "remember this" is the agent editing that file: without
+		// the root the one write the prompt asks for is refused. A project
+		// session already reaches it through projectMode.allowed.
+		if dir, _ := kernel.Get[string](ctx, "session-project-dir"); dir != "" {
+			st.writeRoots = append(st.writeRoots, filepath.Clean(dir))
+		}
 	}
 	if !local {
 		slug, _ := kernel.Get[string](ctx, "session-project")

@@ -5,23 +5,23 @@ import type { Line, Project, Row } from "../types";
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
 
 export const projects: Project[] = [
-  { id: "p1", name: "Incident 42" },
-  { id: "p2", name: "Control room", slug: "bough", orb: { slug: "bough", image: "bough-orb/bough:3f9a2c71d0be", built: true, build: "ok" } },
+  { slug: "incident-42", name: "Incident 42", orb: { slug: "incident-42", image: "bough-orb/incident-42:0c1d2e3f4a5b", built: false } },
+  { slug: "bough", name: "Control room", orb: { slug: "bough", image: "bough-orb/bough:3f9a2c71d0be", built: true, build: "ok" } },
 ];
 
 export const rows: Row[] = [
   { id: "s1", title: "Fix the flaky PTY test", cwd: "/w/bough", repo: "andreylukin/bough", branch: "main",
-    status: "running", live: true, archived: false, entries: 12, modified: hoursAgo(1), lastAt: hoursAgo(1), project: "p2",
+    status: "running", live: true, archived: false, entries: 12, modified: hoursAgo(1), lastAt: hoursAgo(1), project: "bough",
     model: "claude-sonnet-5", effort: "default" },
   { id: "s2", title: "Which migration order is safe?", cwd: "/w/api", repo: "acme/api", branch: "db-split",
-    status: "needs-you", live: true, archived: false, entries: 8, modified: hoursAgo(3), lastAt: hoursAgo(3), project: "p1",
+    status: "needs-you", live: true, archived: false, entries: 8, modified: hoursAgo(3), lastAt: hoursAgo(3), project: "incident-42",
     ask: { id: "a1", text: "The migration touches two tables. Run it against staging first?",
            options: ["Yes, staging first", "No, straight to prod"], seq: 8 } },
   { id: "s3", title: "## Wiki compile from history", cwd: "/w/bough", repo: "andreylukin/bough",
     status: "done", live: false, archived: false, entries: 40, modified: hoursAgo(26), lastAt: hoursAgo(26) },
   { id: "s4", title: "Headless SIGPIPE on closed stdout", cwd: "/w/bough", repo: "andreylukin/bough",
     branch: "headless-pipe", status: "error", live: false, archived: false, entries: 5, modified: hoursAgo(30), lastAt: hoursAgo(30),
-    project: "p1" },
+    project: "incident-42" },
   { id: "s5", title: "Rename the scratch dir", cwd: "/w/bough", status: "stopped", live: false,
     archived: false, entries: 3, modified: hoursAgo(24 * 5), lastAt: hoursAgo(24 * 5) },
   // Recorded test failures: every surface must rank these as needing you,
@@ -210,7 +210,7 @@ export const agentRows: Row[] = [
     live: true, archived: false, entries: 6, modified: hoursAgo(0.1), lastAt: hoursAgo(0.1), mode: "local", spawnedBy: "p-lead" },
   { id: "k-tests002", title: "Move handler tests to per-file suites", cwd: "/w/bough", repo: "andreylukin/bough", status: "running",
     live: true, archived: false, entries: 9, modified: hoursAgo(0.1), lastAt: hoursAgo(0.1), mode: "project",
-    orb: { project: "p2", status: "running" }, spawnedBy: "p-lead" },
+    orb: { project: "bough", status: "running" }, spawnedBy: "p-lead" },
   { id: "k-docs0003", title: "", cwd: "/w/bough", repo: "andreylukin/bough", status: "queued", queued: true,
     live: false, archived: false, entries: 0, modified: hoursAgo(0.1), lastAt: hoursAgo(0.1), mode: "local", spawnedBy: "p-lead" },
   { id: "k-grep0004", title: "Find callers of writeJSON", cwd: "/w/bough", repo: "andreylukin/bough", status: "done",

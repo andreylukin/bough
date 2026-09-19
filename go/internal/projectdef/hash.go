@@ -54,7 +54,8 @@ func (r Repo) BaseRef() string {
 // ImageHash fingerprints the build inputs of the snapshot image, and only
 // those (docs/orb-speed.md §1): the base; on the setup.sh path the script
 // and the lockfiles its steps declare; on the Dockerfile path every project
-// dir file except project.yml and resume.sh. Declared lockfiles are read
+// dir file except MEMORY.md, and except project.yml and resume.sh unless
+// the Dockerfile names them. Declared lockfiles are read
 // with `git show <ref>:<file>` so uncommitted edits in the user's checkout,
 // and worktree changes by agents, never trigger a rebuild. A remote repo
 // not cloned yet contributes nothing; orb.Open clones before hashing so
@@ -215,6 +216,13 @@ func hashTree(dir, dockerfile string, field func(string, []byte)) error {
 			return err
 		}
 		rel, _ := filepath.Rel(dir, p)
+		// MEMORY.md is never a build input, even under a Dockerfile that
+		// happens to mention it (a comment, or `COPY . .`): editing the
+		// brief would otherwise retag the image, and orb.Open removes and
+		// recreates the container on a new tag.
+		if rel == FileMemory {
+			return nil
+		}
 		if (rel == FileYAML || rel == FileResume) && !strings.Contains(dockerfile, rel) {
 			return nil
 		}

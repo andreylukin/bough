@@ -1,8 +1,8 @@
 // Package contextmd is the "context-md" plugin: at the start of every
-// turn the loop prepends Preamble() — whichever exist of ./AGENTS.md,
-// ./CLAUDE.md, ~/.claude/CLAUDE.md, ~/.bough/BOUGH.md — to the
-// system prompt, labeled per file, so a file created or edited
-// mid-session is seen on the next turn.
+// turn the loop prepends Preamble() — whichever exist of the project's
+// MEMORY.md, ./AGENTS.md, ./CLAUDE.md, ~/.claude/CLAUDE.md,
+// ~/.bough/BOUGH.md — to the system prompt, labeled per file, so a file
+// created or edited mid-session is seen on the next turn.
 package contextmd
 
 import (
@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/andreylukin/bough/internal/projectdef"
 	"github.com/andreylukin/bough/kernel"
 )
 
@@ -172,6 +173,33 @@ func (s *SystemContext) Loaded() []string {
 	return out
 }
 
+// Paths is the files the context-md row reads, in order, for a session
+// in project slug ("" = no project). One helper so the injector and the
+// control room's context view cannot disagree about the list.
+//
+// The relative entries are LEFT relative on purpose: Parts re-reads
+// them against the process cwd every turn, and plugins/orb chdirs to
+// the primary worktree AFTER this row mounts (bough.yml has context-md
+// before orb), which is how a project session picks up its worktree's
+// AGENTS.md. Absolutizing them here would make every orb session read
+// $HOME/AGENTS.md instead. serve is the one caller that knows a
+// session's cwd and joins them itself.
+func Paths(home, slug string) []string {
+	var out []string
+	if slug != "" {
+		// The project's standing brief, first: it is what the user wrote
+		// about the project as a whole, and a repo's AGENTS.md that
+		// repeats it is then the copy that gets dropped.
+		out = append(out, filepath.Join(projectdef.Root(home), slug, projectdef.FileMemory))
+	}
+	return append(out,
+		"AGENTS.md",
+		"CLAUDE.md",
+		filepath.Join(home, ".claude", "CLAUDE.md"),
+		filepath.Join(home, ".bough", "BOUGH.md"),
+	)
+}
+
 type plugin struct{}
 
 func init() {
@@ -186,11 +214,25 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("context-md: home dir: %w", err)
 	}
-	ctx.Provide("context-md", New(
-		"AGENTS.md",
-		"CLAUDE.md",
-		filepath.Join(home, ".claude", "CLAUDE.md"),
-		filepath.Join(home, ".bough", "BOUGH.md"),
-	))
+	ctx.Provide("context-md", New(Paths(home, sessionSlug(ctx))...))
 	return nil
+}
+
+// sessionSlug is the project this session belongs to, or "".
+//
+// A project session carries the slug itself ("session-project"). A
+// LOCAL session assigned to a project carries only the directory
+// ("session-project-dir"), because the slug service is baked into the
+// immutable history meta entry and a local session must stay local
+// there — so the slug comes back off the directory name, which is what
+// projectdef.Root joins.
+func sessionSlug(ctx *kernel.Context) string {
+	if mode, _ := kernel.Get[string](ctx, "session-mode"); mode == "project" {
+		slug, _ := kernel.Get[string](ctx, "session-project")
+		return slug
+	}
+	if dir, _ := kernel.Get[string](ctx, "session-project-dir"); dir != "" {
+		return filepath.Base(filepath.Clean(dir))
+	}
+	return ""
 }

@@ -6,7 +6,7 @@ const noop = () => {};
 const meta: Meta<typeof ProjectsView> = {
   title: "Projects/ProjectsView",
   component: ProjectsView,
-  args: { onOpen: noop, onAssign: noop, onAssignMany: async () => [], onCreate: async () => ({ id: "p" }), onRename: async () => {}, onDelete: noop },
+  args: { onOpen: noop, onAssign: noop, onAssignMany: async () => [], onCreate: async () => ({ slug: "p" }), onRename: async () => {}, onDelete: noop },
   decorators: [(Story) => <div className="app" style={{ height: "100vh" }}><Story /></div>],
 };
 export default meta;
@@ -17,4 +17,4 @@ export const Grouped: S = { args: { projects, rows } };
 export const NoProjects: S = { args: { projects: [], rows } };
 /** The narrow pass: the head wraps, rows are two lines, checkboxes always show. */
 export const Phone: S = { args: { projects, rows }, globals: { viewport: { value: "mobile1" } } };
-export const EmptyProject: S = { args: { projects: [{ id: "p9", name: "Nothing here" }], rows: [] } };
+export const EmptyProject: S = { args: { projects: [{ slug: "nothing-here", name: "Nothing here" }], rows: [] } };

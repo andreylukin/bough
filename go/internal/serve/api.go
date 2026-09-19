@@ -71,7 +71,9 @@ type Row struct {
 	// from the child, so do not present them as ground truth.
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
-	// Project is the grouping this conversation was put in, by id.
+	// Project is the project this conversation belongs to, by slug. For a
+	// project session it is the slug its history recorded, which nothing
+	// can re-file; for a local one it is where a person filed it.
 	Project string `json:"project,omitempty"`
 	// Jobs are the background jobs still running; Cache is the prompt
 	// cache after the last turn that reported one.
@@ -130,7 +132,7 @@ type RowOrb struct {
 	Portals []int `json:"portals,omitempty"`
 	// Phase is the step in progress (orb.PhaseSync…PhaseReady); PhaseAt is when
 	// it began, so a row can time it without a second fetch.
-	Phase     string     `json:"phase,omitempty"`
+	Phase   string     `json:"phase,omitempty"`
 	PhaseAt *time.Time `json:"phaseAt,omitempty"`
 }
 
@@ -188,8 +190,11 @@ func NewAPI(sup *Supervisor) *API {
 	a.mux.HandleFunc("GET /api/projects/by-repo", a.byRepo)
 	a.mux.HandleFunc("POST /api/projects/from-repo", a.projectFromRepo)
 	a.mux.HandleFunc("POST /api/projects", a.createProject)
-	a.mux.HandleFunc("POST /api/projects/{id}/rename", a.renameProject)
-	a.mux.HandleFunc("DELETE /api/projects/{id}", a.deleteProject)
+	a.mux.HandleFunc("GET /api/projects/{slug}", a.projectDetail)
+	a.mux.HandleFunc("POST /api/projects/{slug}/rename", a.renameProject)
+	a.mux.HandleFunc("POST /api/projects/{slug}/message", a.messageProject)
+	a.mux.HandleFunc("POST /api/projects/{slug}/archive", a.archiveProject)
+	a.mux.HandleFunc("DELETE /api/projects/{slug}", a.deleteProject)
 	a.mux.HandleFunc("POST /api/sessions/{id}/project", a.assignProject)
 	a.mux.HandleFunc("GET /api/sessions/{id}/events", a.events)
 	a.mux.HandleFunc("GET /api/sessions/{id}/children", a.children)
@@ -306,7 +311,7 @@ func (a *API) createSession(w http.ResponseWriter, r *http.Request) {
 		Cwd     string `json:"cwd"`
 		Prompt  string `json:"prompt"`
 		Mode    string `json:"mode"`
-		Project string `json:"project"` // label id, project mode only
+		Project string `json:"project"` // project slug, project mode only
 		// Background agent fields: a session starting a child.
 		Slug          string `json:"slug"`
 		Model         string `json:"model"`
@@ -324,7 +329,7 @@ func (a *API) createSession(w http.ResponseWriter, r *http.Request) {
 	switch body.Mode {
 	case "", "local":
 	case "project":
-		a.createProjectSession(w, body.Prompt, body.Project)
+		a.createProjectSession(w, body.Prompt, body.Project, body.MaxPerSession, body.MaxRunning)
 		return
 	default:
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: unknown mode %q (have local, project)", body.Mode))
@@ -585,6 +590,13 @@ func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 	if model == "" {
 		model = d.model
 	}
+	// A project session's project is the one its history names: it is
+	// where its orb and its worktrees came from, so the membership serve
+	// stores cannot contradict it.
+	project := meta.Project
+	if d.mode == "project" && d.project != "" {
+		project = d.project
+	}
 	var rowOrb *RowOrb
 	if d.mode == "project" {
 		st := a.orbState(in.ID)
@@ -620,7 +632,7 @@ func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 		Ask:      ask,
 		Model:    model,
 		Effort:   meta.Effort,
-		Project:  meta.Project,
+		Project:  project,
 		Jobs:     jobs,
 		Cache:    d.cacheFor(model),
 		Trouble:  d.troubled(st, meta.Ack, time.Now()),
@@ -731,8 +743,12 @@ func statusFor(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, ErrBadAnswer):
 		return http.StatusBadRequest
-	case errors.Is(err, ErrNoAsk), errors.Is(err, ErrArchived):
+	case errors.Is(err, ErrNoAsk), errors.Is(err, ErrArchived), errors.Is(err, ErrProjectExists), errors.Is(err, ErrProjectSession):
 		return http.StatusConflict
+	case errors.Is(err, ErrUnknownProject):
+		return http.StatusNotFound
+	case errors.Is(err, ErrBadName):
+		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError
 	}

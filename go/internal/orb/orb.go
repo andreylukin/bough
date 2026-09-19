@@ -182,6 +182,16 @@ func (o *Orb) prepareMounts(ctx context.Context) ([]container.Mount, error) {
 		}
 		add(container.Mount{Source: common, Target: common})
 	}
+	if o.state.Primary == "" {
+		// No repos: the session's own orb dir is the working directory, so
+		// the spec's Workdir (and every exec) still names a real path.
+		dst := Dir(o.home, o.session)
+		if err := os.MkdirAll(dst, 0o755); err != nil {
+			return nil, fmt.Errorf("orb dir %s: %w", dst, err)
+		}
+		add(container.Mount{Source: dst, Target: dst})
+		o.state.Primary = dst
+	}
 	if o.scratch != "" {
 		// The scratchpad makes its dir on first write, but a bind mount
 		// needs the source now, and job scripts land there before any
@@ -191,9 +201,15 @@ func (o *Orb) prepareMounts(ctx context.Context) ([]container.Mount, error) {
 		}
 		add(container.Mount{Source: o.scratch, Target: o.scratch})
 	}
-	// Read-only so resume.sh is runnable in the guest; the agent edits the
-	// definition through host tools, never from inside the container.
-	add(container.Mount{Source: p.Dir, Target: p.Dir, ReadOnly: true})
+	// Read-WRITE, and Source==Target so host and guest name the file the
+	// same way: MEMORY.md is the project's standing brief, injected into
+	// every session here, and the agent is asked to edit it when the user
+	// says to remember something — tools.write (which runs on the host)
+	// and a shell heredoc (which runs in the guest) must reach one file.
+	// The cost is that a guest-side edit of project.yml, Dockerfile or
+	// setup.sh skips projectdef.WriteFile's validation, which is why the
+	// prompt still sends those through `bough project`.
+	add(container.Mount{Source: p.Dir, Target: p.Dir})
 	for _, dir := range p.Def.Caches {
 		src := cacheDir(o.home, p.Slug, dir)
 		if err := os.MkdirAll(src, 0o755); err != nil {

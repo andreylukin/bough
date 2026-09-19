@@ -18,8 +18,8 @@ function Picker({ start }: { start: ModeValue }) {
 }
 
 export const Local: S = { render: () => <Picker start={{ mode: "local" }} /> };
-export const Project: S = { render: () => <Picker start={{ mode: "project", project: "p2" }} /> };
-export const NoOrbProjects: S = { render: () => <div className="controls"><ModePicker projects={[{ id: "p1", name: "Incident 42" }]} value={{ mode: "local" }} onChange={() => {}} /></div> };
+export const Project: S = { render: () => <Picker start={{ mode: "project", project: "bough" }} /> };
+export const NoProjects: S = { render: () => <div className="controls"><ModePicker projects={[]} value={{ mode: "local" }} onChange={() => {}} /></div> };
 
 const statuses: OrbStatus[] = ["building", "starting", "running", "stopped", "failed"];
 export const Chips: S = {

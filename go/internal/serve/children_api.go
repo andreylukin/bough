@@ -58,11 +58,11 @@ func (a *API) createChild(w http.ResponseWriter, opt CreateOptions, maxPerSessio
 func (a *API) queuedRow(id string) Row {
 	m := a.sup.Meta(id)
 	prompt, _ := a.sup.QueuedPrompt(id)
+	// A queued child has no history yet; only a project spawn carries a
+	// project, so the membership is what says where it will run.
 	mode := "local"
-	for _, p := range a.sup.Projects() {
-		if p.ID == m.Project && p.Slug != "" {
-			mode = "project"
-		}
+	if m.Project != "" {
+		mode = "project"
 	}
 	now := time.Now()
 	return Row{

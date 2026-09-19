@@ -20,11 +20,11 @@ byte-identical setup.sh already rebuilds in 10 s (BuildKit layer cache hit,
 | base (`Def.Base` or `BaseTag()`) | yes | yes |
 | setup.sh bytes | yes | only if the Dockerfile dir contains it |
 | lockfiles a step declares (`# bough:uses`, §2) at the repo's base ref | yes | no |
-| project dir files | no | every regular file EXCEPT `project.yml`, `resume.sh` |
+| project dir files | no | every regular file EXCEPT `project.yml`, `resume.sh`, `MEMORY.md` |
 
 NOT hashed (never rebuild): `checks`, `env`, `secrets`, `identity`, `cpus`,
 `memory`, `caches`, `lsp`, `repos` (other than via declared lockfiles),
-resume.sh, and lockfiles no step declares.
+resume.sh, `MEMORY.md`, and lockfiles no step declares.
 
 Consequences, all required for the hash change to be honest:
 - The generated Dockerfile emits no `ENV` lines. `Def.Env` reaches the
@@ -45,7 +45,12 @@ test machine: an unchanged project went from `e857a920c1c3` to
 `ba230460a93c`.
 
 Dockerfile path: project.yml and resume.sh ARE hashed when the Dockerfile
-text names them (a `COPY resume.sh` bakes it in).
+text names them (a `COPY resume.sh` bakes it in). MEMORY.md never is, on
+either path and whatever the Dockerfile says — a `COPY . .`, or the mere
+mention of it in a comment, would otherwise retag the image every time
+the brief was edited, and a new tag makes `orb.Open` remove and recreate
+the container. The guest reads it from the definition directory, which is
+mounted, not from a layer.
 
 Pruning: a build removes old tags no container uses. A session that got
 its tag but has not started its container yet can lose it; Open then
@@ -114,7 +119,7 @@ alone does not depend on them.
 
 Build serialisation (`orb.EnsureImage`), extended:
 - One flock per project: `~/.bough/orbs/images/<slug>/build.lock` (exists).
-  Serve's `POST /api/projects/{id}/orb/build` takes the same lock (exists).
+  Serve's `POST /api/projects/{slug}/orb/build` takes the same lock (exists).
 - After acquiring the lock the waiter RE-HASHES (definition may have been
   edited while it waited) and re-checks `ImageExists`; it builds only if
   the fresh tag is still missing. N sessions opened during a build → one

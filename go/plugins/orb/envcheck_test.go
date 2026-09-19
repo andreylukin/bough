@@ -56,7 +56,7 @@ func TestMissingEnvRealScripts(t *testing.T) {
 func TestPromptSectionMissingEnvAndRule(t *testing.T) {
 	t.Parallel()
 	st := iorb.State{Project: "demo", Container: "c"}
-	s := promptSection("/r", st, projectdef.Def{}, []string{"A", "B"})
+	s := promptSection("/r", "/p/MEMORY.md", st, projectdef.Def{}, []string{"A", "B"}, projectRole{})
 	for _, want := range []string{
 		"Env referenced by resume.sh/checks that may be unset: A, B. If so, set them (bough project set demo env.NAME / tools.secret) before trusting checks.",
 		"do not fall back to weaker verification",
@@ -66,7 +66,7 @@ func TestPromptSectionMissingEnvAndRule(t *testing.T) {
 			t.Errorf("section lacks %q:\n%s", want, s)
 		}
 	}
-	if s := promptSection("/r", st, projectdef.Def{}, nil); strings.Contains(s, "Unset env") {
+	if s := promptSection("/r", "/p/MEMORY.md", st, projectdef.Def{}, nil, projectRole{}); strings.Contains(s, "Unset env") {
 		t.Errorf("no missing env still lists it:\n%s", s)
 	}
 }

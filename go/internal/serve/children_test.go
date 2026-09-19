@@ -2,6 +2,7 @@ package serve
 
 import (
 	"errors"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -309,5 +310,126 @@ func TestFailReason(t *testing.T) {
 		if got := failReason(in); got != want {
 			t.Errorf("failReason(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// A finished thread reports to the project's main thread. That is the
+// whole reason a web-created project session is parented: before it
+// was, childEventLocked returned early and the notice went nowhere.
+func TestProjectThreadReportsToMain(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t, envTurns+"=1")
+	slug := mkProject(t, f, "Reporting")
+	main, err := f.sup.Main(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stopped, so the notice takes the stored-entry path: main is idle
+	// far more often than it is live, and that is the path that has to
+	// survive a serve restart.
+	if err := f.sup.Kill(main); err != nil {
+		t.Fatal(err)
+	}
+	code, body := f.do(t, "POST", "/api/sessions", `{"mode":"project","project":"`+slug+`","prompt":"ship it"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("create thread = %d %v", code, body)
+	}
+	thread, _ := rowOf(t, body)["id"].(string)
+	if f.sup.Meta(thread).SpawnedBy != main {
+		t.Fatalf("thread spawnedBy = %q, want main %q", f.sup.Meta(thread).SpawnedBy, main)
+	}
+	got := waitNotices(t, f.fixture, main, 1)
+	want := "[agent ship it · " + thread + " finished] echo ship it"
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("main's notices = %q, want [%q]", got, want)
+	}
+	if f.sup.Live(main) {
+		t.Error("the report restarted main")
+	}
+}
+
+// A project's main thread lives as long as the project, so its lifetime
+// tally would eventually refuse every thread. Only the ones still going
+// count against its budget.
+func TestMainThreadBudgetCountsOnlyLiveThreads(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t, envTurns+"=1")
+	slug := mkProject(t, f, "Busy")
+	main, err := f.sup.Main(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two threads that finish, then two that hang: a plain parent would
+	// be at four of a budget of two.
+	for range 2 {
+		id, _, err := f.sup.CreateChild(CreateOptions{Prompt: "done now", SpawnedBy: main}, 2, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "the thread to finish", func() bool {
+			st, _ := StatusOf(mustEntries(t, f.fixture, id), f.sup.Live(id))
+			return st == StatusDone
+		})
+	}
+	for range 2 {
+		id, _, err := f.sup.CreateChild(CreateOptions{Prompt: "HANG", SpawnedBy: main}, 2, 0)
+		if err != nil {
+			t.Fatalf("a finished thread did not give its slot back: %v", err)
+		}
+		waitFor(t, "the thread to start its turn", func() bool {
+			st, _ := StatusOf(mustEntries(t, f.fixture, id), f.sup.Live(id))
+			return st == StatusRunning
+		})
+	}
+	// Two are still going, so the budget is spent.
+	if _, _, err := f.sup.CreateChild(CreateOptions{Prompt: "HANG", SpawnedBy: main}, 2, 0); !errors.Is(err, ErrAgentLimit) {
+		t.Fatalf("fifth = %v, want ErrAgentLimit", err)
+	}
+	// A parent that is not a main still counts every child it ever
+	// started: an ordinary session's budget is a lifetime one.
+	f.seed(t, "plain")
+	for range 2 {
+		if _, _, err := f.sup.CreateChild(CreateOptions{Prompt: "done now", SpawnedBy: "plain"}, 2, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := f.sup.CreateChild(CreateOptions{Prompt: "x", SpawnedBy: "plain"}, 2, 0); !errors.Is(err, ErrAgentLimit) {
+		t.Fatalf("plain parent's third = %v, want ErrAgentLimit", err)
+	}
+}
+
+func mustEntries(t *testing.T, f *fixture, id string) []history.Entry {
+	t.Helper()
+	es, _ := history.ReadFile(filepath.Join(f.hist, id+".jsonl"))
+	return es
+}
+
+// A thread nobody has messaged yet holds no running slot. It opens no
+// turn, so it emits none of the done/cancelled/exit events that give a
+// slot back: sixteen empty threads from the project page's "New thread"
+// used to wedge every spawn until serve restarted.
+func TestAnUnpromptedChildHoldsNoRunningSlot(t *testing.T) {
+	t.Parallel()
+	f := childFixture(t)
+	idle, queued, err := f.sup.CreateChild(CreateOptions{SpawnedBy: "parent"}, 0, 1)
+	if err != nil || queued {
+		t.Fatalf("CreateChild = %q %v %v", idle, queued, err)
+	}
+	waitFor(t, "the idle thread to give its slot back", func() bool {
+		f.sup.mu.Lock()
+		defer f.sup.mu.Unlock()
+		return !f.sup.running[idle]
+	})
+	if f.sup.Live(idle) != true {
+		t.Fatal("the idle thread is not running; the slot proves nothing")
+	}
+	// maxRunning is 1: the next thread still starts rather than queueing
+	// behind a session that will never finish.
+	next, queued, err := f.sup.CreateChild(CreateOptions{Prompt: "hello", SpawnedBy: "parent"}, 0, 1)
+	if err != nil {
+		t.Fatalf("CreateChild: %v", err)
+	}
+	if queued {
+		t.Fatalf("thread %s queued behind an idle one", next)
 	}
 }

@@ -1,5 +1,5 @@
 // The one place that knows the wire. Everything else takes typed values.
-import type { Ask, Event, Line, OrbBuild, OrbDetail, OrbFile, OrbRemovePlan, OrbState, OrbSummary, Project, Row, SessionMode } from "./types";
+import type { Ask, Event, Line, OrbBuild, OrbDetail, OrbFile, OrbRemovePlan, OrbState, OrbSummary, Project, ProjectDetail, Row, SessionMode } from "./types";
 
 // The control room's UI is embedded in the binary it was served from,
 // so a tab left open across `bough update` keeps running the old JS
@@ -97,7 +97,7 @@ export const api = {
       `/api/sessions/${id}${since > 0 ? `?since=${since}` : ""}`,
     ),
 
-  /** mode omitted is local; project names a label that carries an orb slug. */
+  /** mode omitted is local; project is the slug of the project whose orb it runs in. */
   create: (cwd: string, prompt: string, mode?: SessionMode, project?: string) =>
     req<{ session: Row }>("/api/sessions", {
       method: "POST",
@@ -141,19 +141,20 @@ export const api = {
   newProject: (name: string) =>
     req<{ project: Project }>("/api/projects", { method: "POST", body: JSON.stringify({ name }) })
       .then((r) => r.project),
-  renameProject: (id: string, name: string) => post(`/api/projects/${id}/rename`, { name }),
-  deleteProject: (id: string) => req<{ ok: true }>(`/api/projects/${id}`, { method: "DELETE" }),
-  /** Create a skeleton definition for a label, or attach an existing one. */
-  attachOrb: (id: string, slug?: string) =>
-    req<{ project: Project; orb: OrbSummary }>(`/api/projects/${id}/orb`, { method: "POST", body: JSON.stringify(slug ? { slug } : {}) }),
-  /** Detach only: the files under ~/.bough/projects stay. */
-  detachOrb: (id: string) => req<{ ok: true }>(`/api/projects/${id}/orb`, { method: "DELETE" }),
-  orb: (id: string) => req<OrbDetail>(`/api/projects/${id}/orb`),
-  putOrbFile: (id: string, name: OrbFile, text: string) =>
-    req<{ ok: true; orb: OrbSummary }>(`/api/projects/${id}/orb/files/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ text }) }),
-  buildOrb: (id: string) => req<{ build: OrbBuild }>(`/api/projects/${id}/orb/build`, { method: "POST", body: "{}" }),
-  buildLog: (id: string, offset: number) =>
-    req<{ text: string; offset: number; state: OrbBuild["state"] }>(`/api/projects/${id}/orb/build/log?offset=${offset}`),
+  renameProject: (slug: string, name: string) => post(`/api/projects/${slug}/rename`, { name }),
+  /** Removes the definition directory and everything keyed by the slug; conversations stay. */
+  deleteProject: (slug: string) => req<{ ok: true }>(`/api/projects/${slug}`, { method: "DELETE" }),
+  /** One project's page: its main thread, its threads and their orbs. Reading never starts anything. */
+  project: (slug: string) => req<ProjectDetail>(`/api/projects/${slug}`),
+  /** Send to the project, which is its main thread — created on the first message. */
+  messageProject: (slug: string, text: string) =>
+    req<{ ok: true; main: string }>(`/api/projects/${slug}/message`, { method: "POST", body: JSON.stringify({ text }) }),
+  orb: (slug: string) => req<OrbDetail>(`/api/projects/${slug}/orb`),
+  putOrbFile: (slug: string, name: OrbFile, text: string) =>
+    req<{ ok: true; orb: OrbSummary }>(`/api/projects/${slug}/orb/files/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ text }) }),
+  buildOrb: (slug: string) => req<{ build: OrbBuild }>(`/api/projects/${slug}/orb/build`, { method: "POST", body: "{}" }),
+  buildLog: (slug: string, offset: number) =>
+    req<{ text: string; offset: number; state: OrbBuild["state"] }>(`/api/projects/${slug}/orb/build/log?offset=${offset}`),
   sessionOrb: (id: string) => req<{ orb: OrbState | null }>(`/api/sessions/${id}/orb`).then((r) => r.orb),
   /** Why a session's orb failed: its error and the tail of resume.log. */
   sessionOrbLog: (id: string) => req<{ status: string; error: string; phase?: string; log?: string; image: string; text: string }>(`/api/sessions/${id}/orb/log`),
@@ -185,4 +186,4 @@ export function subscribe(id: string, onEvent: (ev: Event) => void): () => void 
   return () => src.close();
 }
 
-export type { Ask, Event, Line, Project, Row };
+export type { Ask, Event, Line, Project, ProjectDetail, Row };

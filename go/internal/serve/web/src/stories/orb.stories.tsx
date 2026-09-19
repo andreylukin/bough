@@ -15,6 +15,7 @@ const detail: OrbDetail = {
     Dockerfile: "",
     "setup.sh": "apt-get update && apt-get install -y golang git\n",
     "resume.sh": "",
+    "MEMORY.md": "The control room is bough's web UI. dist/app.js is committed; rebuild it with `bun run build`.\n",
   },
   hash: "3f9a2c71d0be",
   orb: { slug: "bough", image: "bough-orb/bough:3f9a2c71d0be", built: true, build: "ok" },
@@ -29,13 +30,12 @@ const detail: OrbDetail = {
 const meta: Meta<typeof ProjectOrb> = {
   title: "Projects/ProjectOrb",
   component: ProjectOrb,
-  args: { project, log: "", onAttach: noop, onDetach: noop, onSave: async () => {}, onBuild: noop, onStopOrb: noop, onOpen: noop, onRetry: noop },
+  args: { project, log: "", onSave: async () => {}, onBuild: noop, onStopOrb: noop, onOpen: noop, onRetry: noop },
   decorators: [(Story) => <div className="app" style={{ height: "100vh" }}><div className="scroll proj-body"><section className="proj"><Story /></section></div></div>],
 };
 export default meta;
 type S = StoryObj<typeof ProjectOrb>;
 
-export const NoOrb: S = { args: { project: projects[0] } };
 export const Editing: S = { args: { detail } };
 export const Building: S = {
   args: {

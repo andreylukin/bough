@@ -24,12 +24,14 @@ export interface Ask {
   secret?: boolean;
 }
 
-/** A named grouping of conversations. A label, not a container. */
+/** One project. The directory ~/.bough/projects/<slug> IS the project,
+ *  so the slug is the key everywhere: routes, sessions, orbs and images. */
 export interface Project {
-  id: string;
+  slug: string;
+  /** project.yml's `name:`, falling back to the slug. */
   name: string;
-  /** The ~/.bough/projects/<slug> definition this label runs its orb from; absent for a label only. */
-  slug?: string;
+  /** Why project.yml did not parse. The project still lists: its editor is on its own page. */
+  error?: string;
   orb?: OrbSummary;
 }
 
@@ -49,8 +51,24 @@ export interface OrbPortal { host: number; guest: number; name?: string; url: st
 export interface OrbRemovePlan { session: string; project: string; status: OrbStatus; container?: string; dir: string; worktrees: string[]; /** Worktrees with uncommitted changes; removal refuses while any remain. */ dirty?: string[]; bytes: number; branches: { repo: string; gitDir: string; branch: string; delete: boolean; reason: string }[] }
 /** startedAt/endedAt are absent until the project has been built once. */
 export interface OrbBuild { tag: string; hash: string; state: "" | "building" | "ok" | "failed"; startedAt?: string; endedAt?: string; error?: string }
-export type OrbFile = "project.yml" | "Dockerfile" | "setup.sh" | "resume.sh";
+export type OrbFile = "project.yml" | "Dockerfile" | "setup.sh" | "resume.sh" | "MEMORY.md";
 export interface OrbDetail { project: Project; files: Record<OrbFile, string>; hash: string; orb: OrbSummary; build: OrbBuild; orbs: OrbState[]; runtime: { name: string; available: boolean; error?: string }; preflight?: PreflightCheck[] }
+/**
+ * One project as its own page reads it (GET /api/projects/{slug}): the
+ * definition, the main thread, and every other session in the project.
+ * Mirrors serve.ProjectDetail, which embeds Project.
+ */
+export interface ProjectDetail extends Project {
+  /** The main thread's session id; absent until the project has been messaged. */
+  main?: string;
+  /** The main thread's container, absent when it has never started one. */
+  mainOrb?: OrbState;
+  /** Every session orb recorded for this project, main's included. */
+  orbs: OrbState[];
+  /** Every session in the project but main, oldest first. */
+  threads: Row[];
+}
+
 /** One thing a session start needs, checked when the orb panel loads. */
 export interface PreflightCheck { kind: "runtime" | "clone" | "gh" | "secret"; name: string; status: "ok" | "warn" | "fail"; detail?: string }
 

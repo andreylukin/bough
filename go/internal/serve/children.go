@@ -21,9 +21,12 @@ import (
 const StatusQueued Status = "queued"
 
 var (
-	// ErrDepth refuses a background agent starting agents of its own.
-	ErrDepth = errors.New("serve: supervisor: a background agent cannot start agents (depth 1)")
-	// ErrAgentLimit is a parent past its lifetime agent budget.
+	// ErrDepth refuses a spawned session starting sessions of its own.
+	// The wording is the model's: inside a project every session but the
+	// main thread is a thread, and a thread that wants more work started
+	// asks main rather than branching a tree nothing reports up.
+	ErrDepth = errors.New("serve: supervisor: a project thread cannot start threads; ask the main thread (depth 1)")
+	// ErrAgentLimit is a parent past its agent budget.
 	ErrAgentLimit = errors.New("serve: supervisor: background agent limit reached")
 )
 
@@ -94,6 +97,16 @@ func (s *Supervisor) CreateChild(opt CreateOptions, maxPerSession, maxRunning in
 	if pinfo.SpawnedBy != "" || s.Meta(parent).SpawnedBy != "" {
 		return "", false, ErrDepth
 	}
+	// A project's main thread lives for as long as the project does, so
+	// its LIFETIME tally reaches the cap after a few months of threads
+	// and it would start refusing work forever. Only the threads still
+	// going occupy one of its slots. Read before s.mu: it reads every
+	// child's history file.
+	perSessionLive := s.isMain(parent)
+	busy := 0
+	if perSessionLive {
+		busy = s.busyChildren(parent)
+	}
 	q := queuedChild{id: history.NewID(), prompt: opt.Prompt}
 	// The parent's model, as the loop pipeline pins one: the child's
 	// config default may be a provider with no key here.
@@ -124,10 +137,12 @@ func (s *Supervisor) CreateChild(opt CreateOptions, maxPerSession, maxRunning in
 		s.mu.Unlock()
 		return "", false, fmt.Errorf("serve: supervisor: closed")
 	}
-	n := 0
-	for _, m := range s.meta {
-		if m.SpawnedBy == parent {
-			n++
+	n := busy
+	if !perSessionLive {
+		for _, m := range s.meta {
+			if m.SpawnedBy == parent {
+				n++
+			}
 		}
 	}
 	if n >= maxPerSession {
@@ -138,13 +153,8 @@ func (s *Supervisor) CreateChild(opt CreateOptions, maxPerSession, maxRunning in
 	// in practice, and a lowered setting should take effect.
 	s.maxRunning = maxRunning
 	m := SessionMeta{SpawnedBy: parent}
-	if slug != "" {
-		for _, p := range s.projects {
-			if p.Slug == slug {
-				m.Project = p.ID
-			}
-		}
-	}
+	// The slug IS the membership now: no label to look up.
+	m.Project = slug
 	if len(s.running) >= s.maxRunning {
 		m.Queued = true
 		m.Task = &ChildTask{Dir: q.dir, Prompt: q.prompt, Extra: q.extra, Args: q.args}
@@ -209,10 +219,21 @@ func (s *Supervisor) launch(ch *child, q queuedChild) error {
 		s.killChild(ch)
 		return nil
 	}
-	if q.prompt != "" {
-		if err := s.writePrompt(ch, q.prompt); err != nil {
-			return err
-		}
+	if q.prompt == "" {
+		// Nobody has asked this one for anything yet — a thread created
+		// from the project page is an empty room. It opens no turn, so
+		// it emits none of the done/cancelled/exit events that give a
+		// slot back, and holding one would leak it until serve
+		// restarts. The "input" event takes a slot again the moment the
+		// thread is messaged.
+		s.mu.Lock()
+		delete(s.running, ch.id)
+		s.mu.Unlock()
+		go s.drainQueue()
+		return nil
+	}
+	if err := s.writePrompt(ch, q.prompt); err != nil {
+		return err
 	}
 	return nil
 }
@@ -504,6 +525,20 @@ func (s *Supervisor) QueuedPrompt(id string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// busyChildren counts the children still going: waiting for a slot,
+// running, or holding a question open. A thread that finished, errored
+// or was stopped gives its slot back — nothing of it is still running,
+// and its conversation stays readable either way.
+func (s *Supervisor) busyChildren(parent string) int {
+	n := 0
+	for _, c := range s.Children(parent) {
+		if c.Queued || c.Status == StatusRunning || c.Status == StatusNeedsYou {
+			n++
+		}
+	}
+	return n
 }
 
 // agentCounts is what a parent row carries: running children, queued

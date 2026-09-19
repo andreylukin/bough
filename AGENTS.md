@@ -100,6 +100,29 @@ the way it is, and what broke when it was not.
 Go only — cgo would cost the single static binary that every install
 path depends on.
 
+**A project is a directory, not a record.** `~/.bough/projects/<slug>/`
+IS the project: serve derives its list from the directory on every read,
+so a definition an agent wrote with the file tools is a project without
+serve being told. The slug is the key everywhere — orbs, images, caches,
+`SessionMeta.Project`, every past session — and it never changes; the
+display name is the `name:` line in `project.yml`, and a rename rewrites
+that one line textually (the file ships comments and is hand-edited).
+Deleting a project removes the definition directory and the state a
+project of the same name would inherit (its image and cache dirs), and
+never a conversation. Each project has one **main thread**; sessions
+started for it from the web hang off that thread, which is what makes
+their finish notices land somewhere a person reads, while a CLI
+`bough --project <slug>` session is listed on the page but reports to
+nobody. The contract is [`go/docs/orbs.md`](go/docs/orbs.md).
+
+**`MEMORY.md` is a file like `AGENTS.md`, not a memory system.** The
+project's standing brief lives at `~/.bough/projects/<slug>/MEMORY.md`
+and `context-md` prepends it to every session in the project, deduped by
+section. The only writers are the person editing it and an agent asked
+to remember something, using the ordinary write tool. No hook, no
+per-turn extraction, no small-model summarisation — if a change would
+make something write it automatically, that is the wrong change.
+
 ## Gates a change has to pass
 
 1. `gofmt`, `go vet ./...`, and `go test -race ./...` all clean, run by

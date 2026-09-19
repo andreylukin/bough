@@ -34,6 +34,10 @@ type Checks struct {
 }
 
 type Def struct {
+	// Name is what a person calls the project; the slug stays the key.
+	// Optional, so every project.yml written before it still parses under
+	// KnownFields(true).
+	Name   string            `yaml:"name,omitempty"`
 	Repos  []Repo            `yaml:"repos"`
 	Checks Checks            `yaml:"checks,omitempty"`
 	LSP    []string          `yaml:"lsp,omitempty"`    // roots; parsed, unused this run
@@ -147,9 +151,17 @@ const (
 	FileDockerfile = "Dockerfile"
 	FileSetup      = "setup.sh"
 	FileResume     = "resume.sh"
+	// FileMemory is the project's standing brief: prose every session in
+	// the project is given, edited by the user or, when asked, by an
+	// agent. Nothing writes it automatically.
+	FileMemory = "MEMORY.md"
 )
 
-var EditableFiles = []string{FileYAML, FileDockerfile, FileSetup, FileResume}
+// EditableFiles is also the order the orb page lists its tabs in
+// (serve/orbs.go builds OrbDetail.Files from it and web/src/orb.tsx
+// mirrors it), so new files go on the end: reordering would move that
+// page's default tab and `bough project show`'s output.
+var EditableFiles = []string{FileYAML, FileDockerfile, FileSetup, FileResume, FileMemory}
 
 var slugRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
@@ -179,9 +191,8 @@ func Parse(b []byte) (Def, error) {
 	if err := dec.Decode(&d); err != nil {
 		return Def{}, fmt.Errorf("projectdef: parse %s: %w", FileYAML, err)
 	}
-	if len(d.Repos) == 0 {
-		return Def{}, fmt.Errorf("projectdef: %s: at least one repo is required", FileYAML)
-	}
+	// No repos is a project too: a definition can be a brief and an orb
+	// with nothing checked out, and a label-only project migrates into one.
 	seen := map[string]bool{}
 	for i, r := range d.Repos {
 		if (r.Remote == "") == (r.Path == "") {
@@ -456,8 +467,46 @@ func List(home string) ([]Project, error) {
 	return out, errors.Join(errs...)
 }
 
-var skeletonYAML = `# bough project definition. Lives outside every repo; never committed.
-repos:
+const skeletonHeader = "# bough project definition. Lives outside every repo; never committed.\n"
+
+// Entry is one directory under Root, whether or not it parses.
+type Entry struct {
+	Slug string
+	Dir  string
+	Def  Def
+	Err  error // why the definition did not parse; nil when it did
+}
+
+// ListAll returns every project directory sorted by slug, including the
+// ones whose project.yml is broken, with the error on the entry. A broken
+// definition must still show up: the editor that can fix it is on the
+// project's own page, and List would drop the page along with the yaml.
+func ListAll(home string) []Entry {
+	ents, err := os.ReadDir(Root(home))
+	if err != nil {
+		return nil
+	}
+	var out []Entry
+	for _, e := range ents {
+		if !e.IsDir() || ValidSlug(e.Name()) != nil {
+			continue
+		}
+		dir := filepath.Join(Root(home), e.Name())
+		b, err := os.ReadFile(filepath.Join(dir, FileYAML))
+		if err != nil {
+			continue
+		}
+		en := Entry{Slug: e.Name(), Dir: dir}
+		if en.Def, en.Err = Parse(b); en.Err != nil {
+			en.Err = fmt.Errorf("projectdef: load %s: %w", e.Name(), en.Err)
+		}
+		out = append(out, en)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
+	return out
+}
+
+var skeletonYAML = skeletonHeader + `repos:
   - path: ` + Placeholder + `   # or remote: git@github.com:you/example.git
     branch: main
 checks:
@@ -497,6 +546,33 @@ func Create(home, slug string) (Project, error) {
 	return Load(home, slug)
 }
 
+// CreateEmpty makes a definition with no repos and no build script: the
+// shape a project that was only ever a label migrates into. It writes no
+// skeleton — the skeleton's placeholder repo is refused by CheckHost on
+// the next write, and a setup.sh nobody asked for would be built and
+// snapshotted.
+func CreateEmpty(home, slug, name string) (Project, error) {
+	if err := ValidSlug(slug); err != nil {
+		return Project{}, err
+	}
+	dir := filepath.Join(Root(home), slug)
+	if err := os.MkdirAll(Root(home), 0o755); err != nil {
+		return Project{}, fmt.Errorf("projectdef: create %s: %w", slug, err)
+	}
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		return Project{}, fmt.Errorf("projectdef: create %s: %w", slug, err)
+	}
+	text := skeletonHeader
+	if n := strings.TrimSpace(name); n != "" {
+		text += nameLine(n) + "\n"
+	}
+	text += "repos: []\n"
+	if err := atomicWrite(filepath.Join(dir, FileYAML), []byte(text), 0o644); err != nil {
+		return Project{}, fmt.Errorf("projectdef: create %s: %w", slug, err)
+	}
+	return Load(home, slug)
+}
+
 func ReadFile(home, slug, name string) (string, error) {
 	if err := checkName(slug, name); err != nil {
 		return "", err
@@ -528,6 +604,10 @@ func WriteFile(home, slug, name, text string) error {
 		if err := CheckHost(home, d); err != nil {
 			return err
 		}
+	} else if name == FileMemory {
+		// Prose: nothing to validate. Clearing the editor leaves an empty
+		// brief rather than deleting it — the scripts are features a
+		// project may not have, this one is a file the user is writing.
 	} else if text == "" {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("projectdef: delete %s/%s: %w", slug, name, err)
@@ -575,6 +655,84 @@ func checkName(slug, name string) error {
 		return fmt.Errorf("projectdef: %q is not an editable file (want one of %s)", name, strings.Join(EditableFiles, ", "))
 	}
 	return nil
+}
+
+// DisplayName is what to call the project in a UI: the name it was given,
+// else its slug.
+func (p Project) DisplayName() string {
+	if p.Def.Name != "" {
+		return p.Def.Name
+	}
+	return p.Slug
+}
+
+var topNameRE = regexp.MustCompile(`^name\s*:`)
+
+// SetName writes `name:` into project.yml by editing the text, replacing
+// the existing top-level name line or inserting one after the leading
+// comments. It is textual on purpose: the file ships comments
+// (`# caches:`, `# env:`) and the user hand-edits it, and marshalling Def
+// back over it would drop every comment and reorder every key. The
+// directory is never renamed — orbs, images, caches and the history of
+// every past session are keyed by slug on disk.
+func SetName(home, slug, name string) error {
+	if err := ValidSlug(slug); err != nil {
+		return err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" || strings.ContainsFunc(name, func(r rune) bool { return unicode.IsControl(r) }) {
+		return fmt.Errorf("projectdef: set name %s: %q is not a name (one line, not empty)", slug, name)
+	}
+	path := filepath.Join(Root(home), slug, FileYAML)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("projectdef: set name %s: %w", slug, err)
+	}
+	text := withNameLine(string(b), nameLine(name))
+	if _, err := Parse([]byte(text)); err != nil {
+		return err
+	}
+	if err := atomicWrite(path, []byte(text), 0o644); err != nil {
+		return fmt.Errorf("projectdef: set name %s: %w", slug, err)
+	}
+	return nil
+}
+
+// nameLine renders `name: <x>` on one line, quoting whatever needs it.
+// yaml folds a long plain scalar across lines, which the textual splice
+// cannot carry, so anything that does not come back as one line is
+// written double-quoted instead.
+func nameLine(name string) string {
+	b, err := yaml.Marshal(map[string]string{"name": name})
+	if s := strings.TrimRight(string(b), "\n"); err == nil && !strings.Contains(s, "\n") {
+		return s
+	}
+	return "name: " + strconv.Quote(name)
+}
+
+// withNameLine replaces the top-level name line in text, or inserts it
+// after the leading comment block.
+func withNameLine(text, line string) string {
+	lines := strings.Split(text, "\n")
+	for i, l := range lines {
+		if topNameRE.MatchString(l) {
+			lines[i] = line
+			return strings.Join(lines, "\n")
+		}
+	}
+	at := 0
+	for at < len(lines) {
+		t := strings.TrimSpace(lines[at])
+		if t != "" && !strings.HasPrefix(t, "#") {
+			break
+		}
+		at++
+	}
+	if at >= len(lines) {
+		// Comments only: keep the trailing newline the file ended with.
+		return strings.TrimRight(text, "\n") + "\n" + line + "\n"
+	}
+	return strings.Join(slices.Insert(lines, at, line), "\n")
 }
 
 // UsesDockerfile reports whether the build uses the Dockerfile; it wins

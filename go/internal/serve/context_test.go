@@ -1,12 +1,15 @@
 package serve
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/andreylukin/bough/plugins/contextmd"
 	"github.com/andreylukin/bough/plugins/history"
 )
 
@@ -47,7 +50,7 @@ func TestSessionContext(t *testing.T) {
 	}
 
 	files, _ := body["contextFiles"].([]any)
-	if len(files) != 4 {
+	if len(files) != len(contextmd.Paths(f.home, "")) {
 		t.Fatalf("contextFiles = %v", body["contextFiles"])
 	}
 	agents, _ := files[0].(map[string]any)
@@ -62,6 +65,14 @@ func TestSessionContext(t *testing.T) {
 	}
 	if home, _ := files[2].(map[string]any); home["found"] != false {
 		t.Errorf("~/.claude/CLAUDE.md row = %v, want not found", home)
+	}
+	// Length is what a context file costs on every turn, so it is on
+	// the row; a file that is not there has no length.
+	if agents["lines"] != float64(3) {
+		t.Errorf("AGENTS.md lines = %v, want 3", agents["lines"])
+	}
+	if home, _ := files[2].(map[string]any); home["lines"] != float64(0) {
+		t.Errorf("missing file lines = %v, want 0", home["lines"])
 	}
 
 	rules, _ := body["rules"].([]any)
@@ -131,5 +142,70 @@ func TestSessionContextUnknownSession(t *testing.T) {
 	f := newHooksAPI(t)
 	if code, _ := f.do(t, "GET", "/api/sessions/nope/context", ""); code != http.StatusNotFound {
 		t.Fatalf("unknown session = %d, want 404", code)
+	}
+}
+
+// A session in a project is told the project's MEMORY.md first, and
+// being first is what makes it the file credited for a section that
+// the repo's AGENTS.md repeats.
+func TestSessionContextProjectMemory(t *testing.T) {
+	t.Parallel()
+	f := newHooksAPI(t)
+	slug := mkProject(t, f, "Web")
+	mem := filepath.Join(f.home, ".bough", "projects", slug, "MEMORY.md")
+	write(t, mem, "## Deploy\n\nship on green.\n")
+	work := filepath.Join(f.home, "work")
+	write(t, filepath.Join(work, "AGENTS.md"), "## Deploy\n\nship on green.\n\n## Testing\n\nrun make.\n")
+	seedAt(t, f, "s1", work)
+	if code, body := f.do(t, "POST", "/api/sessions/s1/project", `{"project":"`+slug+`"}`); code != http.StatusOK {
+		t.Fatalf("assign = %d %v", code, body)
+	}
+
+	_, body := f.do(t, "GET", "/api/sessions/s1/context", "")
+	files, _ := body["contextFiles"].([]any)
+	if len(files) != len(contextmd.Paths(f.home, slug)) {
+		t.Fatalf("contextFiles = %v", body["contextFiles"])
+	}
+	first, _ := files[0].(map[string]any)
+	if first["path"] != mem || first["found"] != true || first["lines"] != float64(3) {
+		t.Fatalf("first row = %v, want %s read first", first, mem)
+	}
+	// MEMORY.md said it, so AGENTS.md is the copy that is dropped.
+	agents, _ := files[1].(map[string]any)
+	if agents["dropped"] != float64(1) || agents["same"] != mem {
+		t.Errorf("AGENTS.md row = %v, want its section credited to MEMORY.md", agents)
+	}
+}
+
+// The count the control room colours is the count of lines on disk: a
+// trailing newline ends the last line, it does not start another.
+func TestSessionContextLineCount(t *testing.T) {
+	t.Parallel()
+	if longLines >= tooLongLines {
+		t.Fatalf("thresholds %d/%d are the wrong way round", longLines, tooLongLines)
+	}
+	lines := func(n int, nl bool) string {
+		body := ""
+		for i := 0; i < n; i++ {
+			body += fmt.Sprintf("line %d\n", i)
+		}
+		if !nl {
+			body = strings.TrimSuffix(body, "\n")
+		}
+		return body
+	}
+	f := newHooksAPI(t)
+	work := filepath.Join(f.home, "long")
+	write(t, filepath.Join(work, "AGENTS.md"), lines(longLines+1, true))
+	write(t, filepath.Join(work, "CLAUDE.md"), lines(tooLongLines+1, false))
+	seedAt(t, f, "s1", work)
+
+	_, got := f.do(t, "GET", "/api/sessions/s1/context", "")
+	files, _ := got["contextFiles"].([]any)
+	for i, want := range []int{longLines + 1, tooLongLines + 1} {
+		row, _ := files[i].(map[string]any)
+		if row["lines"] != float64(want) {
+			t.Errorf("%v lines = %v, want %d", row["path"], row["lines"], want)
+		}
 	}
 }

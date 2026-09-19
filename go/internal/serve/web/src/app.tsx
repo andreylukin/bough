@@ -4,6 +4,7 @@ import { api, subscribe, watchBuild, type Change, type Scope, type TurnLine } fr
 import type { Line, Project, Row } from "./types";
 import { MARKED, STATUS, StatusMark, Working, hasFailure, hasQuestion, sessionSignal, statusWord } from "./status";
 import { ProjectsView } from "./projects";
+import { ProjectView } from "./project";
 import { ModeChip, ModePicker, OrbUp, orbsUp, orbsUpLabel, type ModeValue } from "./mode";
 import { OrbFailureBody, confirmFailedBuild, confirmStopOrb, orbUp, type OrbFailureLog } from "./orb";
 import { Select, type Option } from "./select";
@@ -26,7 +27,7 @@ import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wi
 import { Elapsed, EmptyState, ErrorNote, InlineFail, Pending, RawDetails, Spinner, StateIcon, ago, elapsed, humanError, providerError } from "./loading";
 import { PortalPane } from "./portal";
 
-export type View = "sessions" | "projects" | "hooks" | "wiki";
+export type View = "sessions" | "projects" | "project" | "hooks" | "wiki";
 
 const POLL_MS = 4000; // sessions we are not streaming still change status
 
@@ -298,7 +299,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   // where a session ran, and whether it is still recent.
   // Runs nobody started by hand always fold into Background — the person
   // chose that; one that needs attention lights the section header instead.
-  const projectNames = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects]);
+  const projectNames = useMemo(() => new Map(projects.map((p) => [p.slug, p.name])), [projects]);
   const { recent, needIds, lifted, recentAll, background, archived, kids } = useMemo(() => {
     const recent: Row[] = [], background: Row[] = [], archived: Row[] = [];
     // A background agent is not a row of its own: its parent's row counts
@@ -932,7 +933,17 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   );
 }
 
-const NAV_HREF: Record<View, string> = { sessions: "#/", projects: "#/projects", hooks: "#/hooks", wiki: "#/wiki" };
+const NAV_HREF: Record<View, string> = { sessions: "#/", projects: "#/projects", project: "#/projects", hooks: "#/hooks", wiki: "#/wiki" };
+
+/** A label id from before projects were keyed by slug: a UUID, which the
+ *  slug pattern also accepts, so the shape has to be tested outright. */
+const OLD_PROJECT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** What projectdef.ValidSlug accepts. A route that is not one names no project. */
+const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
+/** Why a project session has no Project picker. One line, on hover. */
+const PROJECT_SESSION = "A project session lives in its project's orb; start a thread in the other project instead.";
 
 /**
  * The pages beside sessions, as links: they have routes, so they open in a
@@ -3074,8 +3085,11 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only, cat
       {only !== "model" && (
         <div className="ctl">
           <span className="ctl-label">Project</span>
-          <Select label="Project" value={row.project ?? ""} align="end" onChange={onAssign}
-                  options={[{ value: "", label: "Unassigned" }, ...projects.map((p) => ({ value: p.id, label: p.name }))]} />
+          {/* A project session's project is in its history and its orb: there is nothing to move it to. */}
+          {row.mode === "project"
+            ? <span className="ctl-fixed" title={PROJECT_SESSION}>{projects.find((p) => p.slug === row.project)?.name ?? row.project}</span>
+            : <Select label="Project" value={row.project ?? ""} align="end" onChange={onAssign}
+                      options={[{ value: "", label: "Unassigned" }, ...projects.map((p) => ({ value: p.slug, label: p.name }))]} />}
         </div>
       )}
     </div>
@@ -3426,7 +3440,7 @@ function OrbFailure({ id, project, name, onRebuild, onRetry, rebuildErr }: { id:
     <div className="block orb-failure" role="region" aria-label={`${name} setup failure`}>
       {err ? <p className="send-failed-text" role="alert">Couldn’t load the log: {err}</p>
         : !log ? <p className="meta-line">Loading…</p>
-        : <OrbFailureBody log={log} projectId={project} name={name} onRebuild={onRebuild}
+        : <OrbFailureBody log={log} projectSlug={project} name={name} onRebuild={onRebuild}
             onRetry={onRetry && (async () => { try { await onRetry(); setRetried(true); } catch (e) { if ((e as Error).message !== "cancelled") setRetryErr((e as Error).message); } })} />}
       {retried && <p className="meta-line" role="status">Stopped. The orb restarts and reruns resume.sh on the session’s next command.</p>}
       {retryErr && <p className="send-failed-text" role="alert">Couldn’t stop the orb: {retryErr}</p>}
@@ -4114,7 +4128,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
               {row.branch && <span style={{ color: "var(--line-strong)" }}>/</span>}{row.branch}
             </span>
           )}
-          <ModeChip row={row} phases name={projects.find((p) => p.id === row.orb?.project)?.name} />
+          <ModeChip row={row} phases name={projects.find((p) => p.slug === row.orb?.project)?.name} />
           {/* A short link beside the chip: a full button pushed the title row
               past its 32px and covered the strip below. */}
           {row.orb?.status === "failed" && (
@@ -4191,7 +4205,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           </div>
         </div>
       </header>
-      {orbView === "why" && row.orb?.status === "failed" && <OrbFailure key={row.id} id={row.id} project={row.project} name={projects.find((p) => p.id === row.project)?.name ?? row.orb.project} onRebuild={row.project ? rebuild : undefined} onRetry={onStopOrb ? async () => { if (!(await confirmStopOrb(row.jobs))) throw new Error("cancelled"); await api.stopOrb(row.id); } : undefined} rebuildErr={rebuildErr} />}
+      {orbView === "why" && row.orb?.status === "failed" && <OrbFailure key={row.id} id={row.id} project={row.project} name={projects.find((p) => p.slug === row.project)?.name ?? row.orb.project} onRebuild={row.project ? rebuild : undefined} onRetry={onStopOrb ? async () => { if (!(await confirmStopOrb(row.jobs))) throw new Error("cancelled"); await api.stopOrb(row.id); } : undefined} rebuildErr={rebuildErr} />}
       {orbView === "build" && row.orb && <OrbBuildLog key={row.id} id={row.id} project={row.orb.project} onRebuild={row.project ? rebuild : undefined} rebuildErr={rebuildErr} />}
 
       <div className="scroll transcript" ref={scroller} onScroll={onScroll} onKeyDown={latestKey}
@@ -4464,10 +4478,10 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           {/* A session that can already edit its checkout has no reason to move; the offer is for read-only ones. */}
           {row.mode !== "project" && !row.writable && !failedLoad && (
             <span className="composer-local">
-              {onStartProject && projects.some((p) => p.slug) ? (
+              {onStartProject && projects.length > 0 ? (
                 <Select label="Start project session" value="" placeholder="Start project session…" align="start"
                         note="Your draft moves with you, unsent"
-                        options={projects.filter((p) => p.slug).map((p) => ({ value: p.id, label: p.name }))}
+                        options={projects.map((p) => ({ value: p.slug, label: p.name }))}
                         onChange={(id) => onStartProject(id, expand(draft))} />
               ) : onNewProject && (
                 // No project to run in yet: the palette's project flow; the draft stays here.
@@ -4554,6 +4568,8 @@ export default function App() {
   // Where the next new conversation runs; local unless someone picks a project.
   const [newMode, setNewMode] = useState<ModeValue>({ mode: "local" });
   const [orbOpen, setOrbOpen] = useState<string>();
+  // The project whose page is open (#/projects/<slug>).
+  const [projectSlug, setProjectSlug] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
   // Only a narrow window reads this (see the 720px media query): a
   // phone shows the list or the thread, never both.
@@ -4735,13 +4751,14 @@ export default function App() {
   const rowName = row ? sessionTitle(row) : "";
   useEffect(() => {
     const page = lost !== null && view === "sessions" && !selected ? "Page not found"
+      : view === "project" ? (projects.find((p) => p.slug === projectSlug)?.name ?? projectSlug)
       : view === "projects" ? "Projects"
       : view === "hooks" ? "Hooks"
       : view === "wiki" ? (wikiRoute.at === "page" ? `${wikiRoute.path.split("/").pop()!.replace(/\.md$/, "")} · Wiki`
         : wikiRoute.at === "review" ? "Review · Wiki" : wikiRoute.at === "activity" ? "Activity · Wiki" : "Wiki")
       : rowName;
     document.title = page ? `${page} · bough` : "bough";
-  }, [lost, view, selected, wikiRoute, rowName]);
+  }, [lost, view, selected, wikiRoute, rowName, projectSlug, projects]);
 
   // A preview outlives its turn only if the entry it was previewing
   // never arrived. Once the session is no longer running there is
@@ -4779,7 +4796,24 @@ export default function App() {
       // A direct link to a page shows that page, on a phone too.
       if (h === "hooks" || h === "projects") { setLost(null); setView(h); setSub(null); setPane("thread"); if (h === "projects") setOrbOpen(undefined); return; }
       const po = /^projects\/([^/]+)\/orb$/.exec(h);
-      if (po) { setLost(null); setView("projects"); setOrbOpen(po[1]); setSub(null); setPane("thread"); return; }
+      if (po) {
+        setLost(null); setView("projects"); setSub(null); setPane("thread");
+        // A link minted when projects were labels names an id nothing
+        // resolves; the project list is where it meant to go.
+        setOrbOpen(OLD_PROJECT_ID.test(po[1]) ? undefined : po[1]);
+        if (OLD_PROJECT_ID.test(po[1])) window.location.hash = "#/projects";
+        return;
+      }
+      const ps = /^projects\/([^/]+)$/.exec(h);
+      if (ps) {
+        // A label id from before the re-key, or anything that is not a
+        // slug, names no project: the list is where that link meant to go.
+        if (OLD_PROJECT_ID.test(ps[1]) || !SLUG.test(ps[1])) { window.location.hash = "#/projects"; return; }
+        // The page picks the session it shows (main, or a thread) once it
+        // has read the project; whatever was open elsewhere is not it.
+        setLost(null); setView("project"); setProjectSlug(ps[1]); setSelected(null); setSub(null); setPane("thread");
+        return;
+      }
       const wr = parseWikiHash(h);
       if (wr) { setLost(null); setView("wiki"); setWikiRoute(wr); setSub(null); setPane("thread"); return; }
       const m = /^s\/([^/]+)\/?(context|changes|portal)?(?:\?.*)?$/.exec(h);
@@ -4815,6 +4849,7 @@ export default function App() {
   useEffect(() => {
     if (lost !== null) return; // the unknown route stays in the URL it came from
     const want = view === "hooks" ? "#/hooks"
+      : view === "project" ? `#/projects/${projectSlug}`
       : view === "projects" ? (orbOpen ? `#/projects/${orbOpen}/orb` : "#/projects")
       : view === "wiki" ? `#/${wikiHash(wikiRoute)}`
       : selected ? `#/s/${selected}${sub ? `/${sub}` : ""}`
@@ -4823,7 +4858,7 @@ export default function App() {
     routed.current = true;
     const next = hashToReplace(window.location.hash, want, sub, first);
     if (next !== null) window.history.replaceState(null, "", next);
-  }, [view, selected, sub, wikiRoute, lost]);
+  }, [view, selected, sub, wikiRoute, lost, projectSlug]);
 
   // Moving around the wiki pushes, like opening a conversation: Back
   // from a cited entry returns to the page, and from a page to the index.
@@ -4930,6 +4965,13 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  /**
+   * Which session the project page shows. It is the App's `selected`, so
+   * the transcript, the event stream and the composer are the ones the
+   * sessions view uses — the page only says which thread they are for.
+   */
+  const showProjectSession = useCallback((id: string) => setSelected(id || null), []);
 
   const openSession = useCallback((id: string) => {
     setLost(null); setSelected(id); setSub(null); setView("sessions"); setPane("thread");
@@ -5045,9 +5087,9 @@ export default function App() {
       hint: "Folder: " + shortPath(p, home), run: () => start(p, ""),
     })) : []),
     // A project session runs in that project's orb; home is only where serve records it.
-    ...(home ? projects.filter((p) => p.slug).map((p) => ({
-      id: `new:orb:${p.id}`, group: "Start", label: `New session in ${p.name}`,
-      hint: "orb", run: () => start(home, "", { mode: "project" as const, project: p.id }),
+    ...(home ? projects.map((p) => ({
+      id: `new:orb:${p.slug}`, group: "Start", label: `New session in ${p.name}`,
+      hint: "orb", run: () => start(home, "", { mode: "project" as const, project: p.slug }),
     })) : []),
     ...(home ? [{
       id: "new:folder", group: "Start", label: "New session in a folder…", hint: "a git checkout can be edited",
@@ -5125,6 +5167,43 @@ export default function App() {
     ] : []),
   ];
 
+  /**
+   * The conversation, wherever it is shown. The sessions view gives it the
+   * whole pane; the project page puts the same element in its middle
+   * column, on the same stream and the same composer — a thread opened
+   * there is not a second, lesser view of it.
+   */
+  const threadFor = (r: Row) => (
+    <Thread key={r.id} row={r} lines={lines} jump={jump?.id === r.id ? jump : null} loading={loadedFor !== r.id} loadError={loadFail ?? undefined} paused={paused}
+      onRetry={() => (loadedFor === r.id ? retryRef.current() : setLoadTry((n) => n + 1))} stream={stream} activity={activity} projects={projects} busy={busy || Boolean(locked[r.id])} onBack={goList}
+      sending={pending[r.id] ?? []}
+      setSending={(f) => setPending((m) => ({ ...m, [r.id]: f(m[r.id] ?? []) }))}
+      onSend={(t) => deliverTo(r.id, () => api.prompt(r.id, t))}
+      onAnswer={(t, ask) => deliverTo(r.id, () => api.answer(r.id, t, ask))}
+      onInterrupt={() => act(() => api.interrupt(r.id), "stop the turn")}
+      onArchive={() => archiveRow(r)}
+      rows={rows} onOpenSession={openSession}
+      onRename={async (t) => { await api.rename(r.id, t); await refresh(); }}
+      onModel={(m, plugin) => act(() => api.model(r.id, m, plugin), "change model")}
+      onEffort={(e) => act(() => api.effort(r.id, e), "change effort")}
+      onAssign={(p) => act(() => api.assign(r.id, p), "move the session")}
+      onContext={() => setSub("context")}
+      onPortal={() => setSub("portal")}
+      onAck={() => act(() => api.ack(r.id), "mark it seen")}
+      onStopOrb={async () => { if (await confirmStopOrb(r.jobs)) act(() => api.stopOrb(r.id), "stop the orb"); }}
+      onNewProject={() => { setPalQuery("New project"); setPalette(true); }}
+      onStartProject={home ? async (project, draft) => { if (await confirmFailedBuild(projects.find((p) => p.slug === project))) act(async () => {
+        // The draft moves, unsent: the new session's composer holds it.
+        const created = await api.create(home, "", "project", project);
+        try {
+          if (draft.trim()) localStorage.setItem("bough:draft:" + created.id, draft);
+          localStorage.removeItem("bough:draft:" + r.id);
+          localStorage.removeItem("bough:draft-atts:" + r.id);
+        } catch { /* storage off */ }
+        openSession(created.id);
+      }, "start a project session"); } : undefined} />
+  );
+
   return (
     <div className="app" data-pane={pane} tabIndex={-1}>
       {row && !sub && view === "sessions" && (
@@ -5149,7 +5228,7 @@ export default function App() {
                query={query} onQuery={setQuery} said={said}
                saidElsewhere={{ count: [...said.keys()].filter((id) => !rows.some((r) => r.id === id)).length, open: () => { setPalQuery(query.trim()); setPalette(true); } }}
                onTurn={(id, turn) => { if (id !== selected || view !== "sessions" || sub) openSession(id); else setPane("thread"); setJump({ id, turn, at: Date.now() }); }}
-               view={view} wikiFlags={wikiFlags} onNew={newSession} onFind={() => setPalette(true)}
+               view={view === "project" ? "projects" : view} wikiFlags={wikiFlags} onNew={newSession} onFind={() => setPalette(true)}
                onView={onView}
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)}
                archivedState={!archived || rowsAll ? "ready" : loadErr ? "failed" : "loading"} onRetryArchived={() => void refresh()}
@@ -5175,49 +5254,31 @@ export default function App() {
           onBack={goList}
           onAssign={(id, p) => act(() => api.assign(id, p), "move the session")}
           onCreate={async (name) => { const p = await api.newProject(name); await refresh(); return p; }}
-          onRename={async (id, name) => { await api.renameProject(id, name); await refresh(); }}
+          onRename={async (slug, name) => { await api.renameProject(slug, name); await refresh(); }}
           onAssignMany={async (ids, p) => {
             // Per session: what moved is done, what did not stays selected there.
             const out = await Promise.allSettled(ids.map((id) => api.assign(id, p)));
             await refresh();
             return ids.filter((_, i) => out[i].status === "rejected");
           }}
-          onDelete={(id) => act(() => api.deleteProject(id), "delete the project")}
+          onDelete={(slug) => act(() => api.deleteProject(slug), "delete the project")}
           orbOpen={orbOpen} onOrbOpen={setOrbOpen} onOrbChanged={() => refresh()}
-          onNewSession={home ? async (p) => { if (await confirmFailedBuild(p)) void start(home, "", { mode: "project", project: p.id }); } : undefined} />
+          onNewSession={home ? async (p) => { if (await confirmFailedBuild(p)) void start(home, "", { mode: "project", project: p.slug }); } : undefined} />
+      ) : view === "project" ? (
+        <ProjectView slug={projectSlug} rows={rows} conversation={row ? threadFor(row) : undefined}
+          onShow={showProjectSession} onBack={goList} onOpenSession={openSession}
+          onChanged={() => { void refresh(); }}
+          onNewThread={home ? async () => {
+            const created = await api.create(home, "", "project", projectSlug);
+            await refresh();
+            return created.id;
+          } : undefined} />
       ) : row && sub === "changes" ? (
         <ChangesPage row={row} tick={lines.length} onBack={() => setSub(null)} />
       ) : row && context ? (
         <ContextPage session={row.id} model={row.model} used={loadedFor === row.id ? sessionUsage(lines)?.lastIn : undefined} onBack={() => setSub(null)} />
       ) : row ? (
-        <Thread key={row.id} row={row} lines={lines} jump={jump?.id === row.id ? jump : null} loading={loadedFor !== row.id} loadError={loadFail ?? undefined} paused={paused}
-          onRetry={() => (loadedFor === row.id ? retryRef.current() : setLoadTry((n) => n + 1))} stream={stream} activity={activity} projects={projects} busy={busy || Boolean(locked[row.id])} onBack={goList}
-          sending={pending[row.id] ?? []}
-          setSending={(f) => setPending((m) => ({ ...m, [row.id]: f(m[row.id] ?? []) }))}
-          onSend={(t) => deliverTo(row.id, () => api.prompt(row.id, t))}
-          onAnswer={(t, ask) => deliverTo(row.id, () => api.answer(row.id, t, ask))}
-          onInterrupt={() => act(() => api.interrupt(row.id), "stop the turn")}
-          onArchive={() => archiveRow(row)}
-          rows={rows} onOpenSession={openSession}
-          onRename={async (t) => { await api.rename(row.id, t); await refresh(); }}
-          onModel={(m, plugin) => act(() => api.model(row.id, m, plugin), "change model")}
-          onEffort={(e) => act(() => api.effort(row.id, e), "change effort")}
-          onAssign={(p) => act(() => api.assign(row.id, p), "move the session")}
-          onContext={() => setSub("context")}
-          onPortal={() => setSub("portal")}
-          onAck={() => act(() => api.ack(row.id), "mark it seen")}
-          onStopOrb={async () => { if (await confirmStopOrb(row.jobs)) act(() => api.stopOrb(row.id), "stop the orb"); }}
-          onNewProject={() => { setPalQuery("New project"); setPalette(true); }}
-          onStartProject={home ? async (project, draft) => { if (await confirmFailedBuild(projects.find((p) => p.id === project))) act(async () => {
-            // The draft moves, unsent: the new session's composer holds it.
-            const created = await api.create(home, "", "project", project);
-            try {
-              if (draft.trim()) localStorage.setItem("bough:draft:" + created.id, draft);
-              localStorage.removeItem("bough:draft:" + row.id);
-              localStorage.removeItem("bough:draft-atts:" + row.id);
-            } catch { /* storage off */ }
-            openSession(created.id);
-          }, "start a project session"); } : undefined} />
+        threadFor(row)
       ) : selected && pending[selected]?.length && !missing && !loadFail ? (
         <PendingThread sending={pending[selected]} />
       ) : (
@@ -5225,7 +5286,7 @@ export default function App() {
           {!selected ? (showWelcome ? <Welcome onStart={(cwd, p) => start(cwd, p)} onSkip={() => { setWelcome("off"); if (narrow) goList(); }} onBack={narrow ? () => { setWelcome("off"); goList(); } : undefined} /> : <>
             <ControlOverview actions={home ? <>
                 <ModePicker projects={projects} value={newMode} onChange={setNewMode} />
-                <button className="btn ov-new" onClick={async () => { if (newMode.mode === "project" && !(await confirmFailedBuild(projects.find((p) => p.id === newMode.project)))) return; void start(newMode.mode === "local" && startDir?.checkout ? startDir.path : home, "", newMode); }}>New session</button>
+                <button className="btn ov-new" onClick={async () => { if (newMode.mode === "project" && !(await confirmFailedBuild(projects.find((p) => p.slug === newMode.project)))) return; void start(newMode.mode === "local" && startDir?.checkout ? startDir.path : home, "", newMode); }}>New session</button>
               </> : undefined} rows={rows} onOpenFailure={(id, seq) => { openSession(id); if (seq) setJump({ id, turn: 0, seq, at: Date.now() }); }} onReveal={(id) => { setPane("list"); setQuery(""); setReveal({ id, at: Date.now() }); }} loadedAt={loadedAt} loadErr={loadErr} onRetry={() => void refresh()} />
           </>) : (
             // A link to a session the list does not hold: looked up on its
@@ -5251,7 +5312,7 @@ export default function App() {
       )}
       <DialogHost />
       {narrow && (pane === "list" || view !== "sessions") && (
-        <ViewNav phone view={pane === "list" ? "sessions" : view} onView={onView} wikiFlags={wikiFlags} />
+        <ViewNav phone view={pane === "list" ? "sessions" : view === "project" ? "projects" : view} onView={onView} wikiFlags={wikiFlags} />
       )}
       {updated && (
         <div className="updated" role="status">

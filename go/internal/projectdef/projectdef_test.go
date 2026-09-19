@@ -40,7 +40,8 @@ func TestParseValidate(t *testing.T) {
 		name, yml, want string
 	}{
 		{"ok", "repos:\n  - path: /x\n", ""},
-		{"no repos", "checks: {fast: go test}\n", "at least one repo"},
+		{"no repos", "checks: {fast: go test}\n", ""},
+		{"empty repos", "repos: []\n", ""},
 		{"both", "repos:\n  - path: /x\n    remote: git@h:a/x.git\n", "exactly one"},
 		{"neither", "repos:\n  - branch: main\n", "exactly one"},
 		{"dup", "repos:\n  - path: /a/x\n  - remote: git@h:b/x.git\n", "duplicate"},
@@ -111,8 +112,10 @@ func TestCreateListWrite(t *testing.T) {
 	if err := WriteFile(home, "demo", "evil.sh", "x"); err == nil {
 		t.Fatal("non-editable name accepted")
 	}
-	if err := WriteFile(home, "demo", FileYAML, "repos: []\n"); err == nil {
-		t.Fatal("empty repos accepted")
+	// A project with no repos is a project: a brief and an orb, nothing
+	// checked out.
+	if err := WriteFile(home, "demo", FileYAML, "repos: []\n"); err != nil {
+		t.Fatalf("empty repos refused: %v", err)
 	}
 	if err := WriteFile(home, "demo", FileYAML, ""); err == nil {
 		t.Fatal("project.yml deleted")
@@ -436,7 +439,6 @@ func TestParsePorts(t *testing.T) {
 	}
 }
 
-
 // The runtime's -m takes IEC sizes: `container` allocates exactly 8 GiB
 // for 8GiB. Validation used to refuse them, and because `bough project
 // set` validates before writing, one such size in project.yml blocked
@@ -451,5 +453,160 @@ func TestMemorySizesTheRuntimeTakes(t *testing.T) {
 		if memoryRE.MatchString(bad) {
 			t.Errorf("memory %q accepted, but it is not a size", bad)
 		}
+	}
+}
+
+// MEMORY.md is prose: it is not parsed, and clearing the editor leaves an
+// empty brief instead of deleting the file the way an empty script does.
+func TestMemoryFile(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if _, err := Create(home, "m"); err != nil {
+		t.Fatal(err)
+	}
+	if s, err := ReadFile(home, "m", FileMemory); s != "" || err != nil {
+		t.Fatalf("missing MEMORY.md = %q, %v", s, err)
+	}
+	brief := "# bough\n\nThe orb builds from setup.sh: not a repo: a brief.\n"
+	if err := WriteFile(home, "m", FileMemory, brief); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := ReadFile(home, "m", FileMemory); s != brief {
+		t.Fatalf("round trip = %q", s)
+	}
+	path := filepath.Join(Root(home), "m", FileMemory)
+	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o644 {
+		t.Fatalf("stat = %v, %v", fi, err)
+	}
+	if err := WriteFile(home, "m", FileMemory, ""); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(path); err != nil || fi.Size() != 0 {
+		t.Fatalf("empty write did not leave an empty file: %v, %v", fi, err)
+	}
+	// An empty script still deletes.
+	if err := WriteFile(home, "m", FileSetup, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(Root(home), "m", FileSetup)); !os.IsNotExist(err) {
+		t.Fatalf("empty setup.sh survived: %v", err)
+	}
+}
+
+// The name is spliced into project.yml as text: a Marshal round trip of
+// Def would drop the comments the file ships and the user adds.
+func TestSetName(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	p, err := Create(home, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.DisplayName() != "demo" {
+		t.Fatalf("DisplayName = %q, want the slug", p.DisplayName())
+	}
+	before, _ := ReadFile(home, "demo", FileYAML)
+	if err := SetName(home, "demo", "Bough web"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := ReadFile(home, "demo", FileYAML)
+	for _, keep := range []string{"# bough project definition", "# caches: [/root/.cache/go-build]", "# env: {GOFLAGS: -mod=mod}", Placeholder} {
+		if !strings.Contains(got, keep) {
+			t.Fatalf("SetName dropped %q:\n%s", keep, got)
+		}
+	}
+	if strings.Index(got, "repos:") > strings.Index(got, "checks:") {
+		t.Fatalf("key order moved:\n%s", got)
+	}
+	if !strings.Contains(got, "\nname: Bough web\n") {
+		t.Fatalf("name line missing:\n%s", got)
+	}
+	if again := func() string { SetName(home, "demo", "Bough web"); s, _ := ReadFile(home, "demo", FileYAML); return s }(); again != got {
+		t.Fatalf("not idempotent:\n%s", again)
+	}
+	if err := SetName(home, "demo", "Bough: the web one"); err != nil {
+		t.Fatal(err)
+	}
+	renamed, _ := ReadFile(home, "demo", FileYAML)
+	if strings.Count(renamed, "\nname:") != 1 {
+		t.Fatalf("second name line:\n%s", renamed)
+	}
+	q, err := Load(home, "demo")
+	if err != nil || q.DisplayName() != "Bough: the web one" {
+		t.Fatalf("DisplayName = %q, %v", q.Def.Name, err)
+	}
+	if lines := strings.Count(renamed, "\n"); lines != strings.Count(before, "\n")+1 {
+		t.Fatalf("line count moved by %d", lines-strings.Count(before, "\n"))
+	}
+	for _, bad := range []string{"", "  ", "one\ntwo"} {
+		if err := SetName(home, "demo", bad); err == nil {
+			t.Errorf("SetName(%q) accepted", bad)
+		}
+	}
+	if err := SetName(home, "missing", "x"); err == nil {
+		t.Fatal("SetName on a missing project")
+	}
+}
+
+// A label-only project migrates into a definition with no repos and no
+// build script; it must save again through the web editor unchanged.
+func TestCreateEmpty(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	p, err := CreateEmpty(home, "lab", "Lab notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Def.Repos) != 0 || p.DisplayName() != "Lab notes" {
+		t.Fatalf("def %+v", p.Def)
+	}
+	for _, f := range []string{FileSetup, FileDockerfile, FileResume, FileMemory} {
+		if _, err := os.Stat(filepath.Join(p.Dir, f)); !os.IsNotExist(err) {
+			t.Fatalf("CreateEmpty wrote %s", f)
+		}
+	}
+	yml, _ := ReadFile(home, "lab", FileYAML)
+	if strings.Contains(yml, Placeholder) {
+		t.Fatalf("placeholder in a migrated definition:\n%s", yml)
+	}
+	if err := WriteFile(home, "lab", FileYAML, yml); err != nil {
+		t.Fatalf("re-saving what CreateEmpty wrote: %v", err)
+	}
+	if _, err := CreateEmpty(home, "lab", "again"); err == nil {
+		t.Fatal("second CreateEmpty succeeded")
+	}
+	if p, err := CreateEmpty(home, "plain", ""); err != nil || p.DisplayName() != "plain" {
+		t.Fatalf("unnamed = %+v, %v", p, err)
+	}
+}
+
+// A broken project.yml must still list: the only editor that can fix it
+// is on that project's own page.
+func TestListAll(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if _, err := Create(home, "good"); err != nil {
+		t.Fatal(err)
+	}
+	bad := filepath.Join(Root(home), "bad")
+	os.MkdirAll(bad, 0o755)
+	os.WriteFile(filepath.Join(bad, FileYAML), []byte("repo:\n  - path: /x\n"), 0o644)
+	os.MkdirAll(filepath.Join(Root(home), "no-yaml"), 0o755)
+	os.MkdirAll(filepath.Join(Root(home), "Bad Slug"), 0o755)
+	all := ListAll(home)
+	if len(all) != 2 || all[0].Slug != "bad" || all[1].Slug != "good" {
+		t.Fatalf("ListAll = %+v", all)
+	}
+	if all[0].Err == nil || !strings.Contains(all[0].Err.Error(), "bad") {
+		t.Fatalf("broken entry = %+v", all[0])
+	}
+	if all[1].Err != nil || all[1].Dir != filepath.Join(Root(home), "good") {
+		t.Fatalf("good entry = %+v", all[1])
+	}
+	if ps, err := List(home); err == nil || len(ps) != 1 {
+		t.Fatalf("List = %v, %v", ps, err)
+	}
+	if all := ListAll(filepath.Join(home, "nope")); all != nil {
+		t.Fatalf("no root = %+v", all)
 	}
 }

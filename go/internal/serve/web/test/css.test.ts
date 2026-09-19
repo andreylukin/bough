@@ -110,3 +110,19 @@ test("MB-KEYS: key hints under the composer stay hidden on phones and touch, aft
   expect(at).toBeGreaterThan(-1);
   expect(keys.slice(at)).toMatch(/@media \(max-width:720px\),\(pointer:coarse\)\{\.composer-foot>\.composer-hint\{display:none\}\}/);
 });
+
+// The project page's two side columns used to be `display:none` below
+// 1080px and 860px with nothing in their place, which took the
+// MEMORY.md editor and every thread with them.
+test("the project page's side columns become drawers when they will not fit", () => {
+  const prj = /\/\* PROJECT-PAGE[\s\S]*?\/\* \/PROJECT-PAGE \*\//.exec(css)?.[0] ?? "";
+  expect(prj).toBeTruthy();
+  const tight = /@media \(max-width:1080px\)\{([\s\S]*?)\n\}/.exec(prj)?.[1] ?? "";
+  expect(tight).toMatch(/\.prj-panel\{position:absolute/);
+  expect(tight).not.toMatch(/\.prj-panel\{display:none\}/);
+  const narrow = /@media \(max-width:860px\)\{([\s\S]*?)\n\}/.exec(prj)?.[1] ?? "";
+  expect(narrow).toMatch(/\.prj-threads\[data-open\]\{display:flex;position:absolute/);
+  // A drawer over the conversation is dismissable, and its toggle is shown.
+  expect(prj).toMatch(/\.prj-scrim\{display:none;position:absolute/);
+  expect(narrow).toMatch(/\.prj-threads-btn\{display:inline-flex\}/);
+});

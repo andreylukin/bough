@@ -1177,6 +1177,10 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .ctx-file[open]>.ctx-file-main::before{transform:rotate(90deg)}
 .ctx-file-main>*{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ctx-file>.hk-path{padding-inline-start:20px}
+/* A context file costs its length on every turn: past 200 lines the
+   count says so, past 400 it is a problem. */
+.ctx-lines-long{color:var(--amber)}
+.ctx-lines-max{color:var(--red)}
 .hk-fold>summary{cursor:pointer;list-style:none}
 .hk-fold>summary::-webkit-details-marker{display:none}
 .hk-chev{width:16px;text-align:center;color:var(--text-3);transition:transform .15s}
@@ -1943,7 +1947,11 @@ a.rt-link{text-decoration:none}
 .proj-open:focus-visible{outline:none}
 .proj-move{opacity:0;transition:opacity .12s}
 .proj-row:hover .proj-move,.proj-row:focus-within .proj-move{opacity:1}
+/* A project session cannot be moved: the row says where it lives, in the resting grey. */
+.proj-fixed{align-self:center;font-size:var(--fs-sm);color:var(--text-3);white-space:nowrap}
 @media (pointer:coarse){.proj-move{opacity:1}.proj-act{min-height:44px}}
+/* A project session's project is not a choice: it reads as a value, not a control. */
+.ctl-fixed{font-size:var(--fs-md);color:var(--text-2)}
 .rp-norepo{font-size:var(--fs-md);font-style:italic;color:var(--text-3)}
 /* Orb panel. */
 .orb-label{display:inline-block;min-width:64px;margin-inline-end:8px;font-size:var(--fs-sm);font-weight:600;color:var(--text-3)}
@@ -3982,3 +3990,104 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 /* A ticking counter must not make the row's title jitter once a second. */
 .row-when>.mode-chip{font-variant-numeric:tabular-nums}
 /* /ORB-PROGRESS */
+
+/* PROJECT-PAGE: one project — the threads, the main conversation, the
+   project itself. Three columns beside the control room's own sidebar,
+   flat and dense like the sidebar: hairline dividers, no cards, no
+   shadows, and the conversation always the widest thing on screen. */
+.prj{flex:1 1 0%;display:flex;min-width:0;overflow:hidden;position:relative}
+.prj-loading{padding:var(--s-5)}
+
+/* col B: the threads */
+.prj-threads{width:260px;min-width:220px;flex-shrink:0;display:flex;flex-direction:column;
+             border-right:1px solid var(--line);background:var(--surface)}
+.prj-threads-head{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-2) var(--s-3);border-bottom:1px solid var(--line)}
+.prj-threads-count{margin-inline-end:auto;color:var(--text-3);font-size:var(--fs-sm)}
+.prj-threads-list{flex:1 1 0%;padding-bottom:var(--s-5)}
+/* The main thread is the room, not a peer: it sits above the hairline every other row is under. */
+.prj-main-thread{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:0 var(--s-2);width:100%;
+                 padding:var(--s-2) var(--s-3);background:none;border:0;border-bottom:1px solid var(--line);
+                 color:inherit;text-align:start;cursor:pointer;font:inherit}
+.prj-main-thread:hover{background:var(--hover)}
+.prj-main-thread.is-on{background:var(--sel)}
+.prj-main-label{font-size:var(--fs-md);font-weight:600}
+.prj-main-slug{grid-column:1;font-size:var(--fs-sm);color:var(--text-3)}
+.prj-main-st{grid-row:1/span 2;grid-column:2}
+.prj-none{margin:var(--s-2) var(--s-3);color:var(--text-3);font-size:var(--fs-sm)}
+.prj-group-head{display:flex;align-items:center;gap:var(--s-2);width:100%;padding:var(--s-2) var(--s-3) var(--s-1);
+                background:none;border:0;color:var(--text-3);font:500 var(--fs-sm)/var(--lh-tight) var(--sans);cursor:pointer;text-align:start}
+.prj-group-label{flex:1 1 auto}
+.prj-thread{display:grid;grid-template-columns:12px minmax(0,1fr) auto;align-items:center;gap:0 var(--s-2);width:100%;
+            min-height:var(--row-sm);padding:var(--s-1) var(--s-3);background:none;border:0;color:inherit;text-align:start;cursor:pointer;font:inherit}
+.prj-thread:hover{background:var(--hover)}
+.prj-thread.is-on{background:var(--sel)}
+.prj-thread-main{min-width:0;display:flex;flex-direction:column}
+.prj-thread-title{font-size:var(--fs-md);line-height:var(--lh-row);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prj-thread-note,.prj-thread-when{font-size:var(--fs-sm);color:var(--text-3)}
+.prj-thread-note{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* A 6px dot, not a pill: the column is too narrow for a word, and the
+   word is on the row for a screen reader anyway. Interrupted is hollow —
+   stopped, not failed — and a failure wears the triangle instead. */
+.prj-dot{width:6px;height:6px;border-radius:50%;background:currentColor;justify-self:center}
+.prj-dot[data-status="interrupted"]{width:7px;height:7px;background:none;border:1px solid currentColor}
+.prj-dot[data-status="running"]{animation:prj-pulse 1.8s var(--ease) infinite}
+@keyframes prj-pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@media (prefers-reduced-motion:reduce){.prj-dot[data-status="running"]{animation:none}}
+.prj-tri{justify-self:center;color:var(--red)}
+
+/* col C: the conversation */
+.prj-main{flex:1 1 0%;display:flex;flex-direction:column;min-width:0}
+.prj-bar{flex-shrink:0;display:flex;align-items:center;gap:var(--s-3);padding:var(--s-2) var(--s-4);border-bottom:1px solid var(--line)}
+.prj-bar-main{flex:1 1 auto;min-width:0}
+.prj-name{margin:0;font:600 var(--fs-h2)/var(--lh-tight) var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prj-crumb{margin:0;display:flex;align-items:baseline;gap:.35em;font-size:var(--fs-sm);color:var(--text-3);white-space:nowrap;overflow:hidden}
+.prj-crumb-rest{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.prj-back{flex:0 0 auto}
+/* The one pill on the page: which state the conversation on screen is in. */
+.prj-pill{flex-shrink:0;border:1px solid var(--line);border-radius:var(--r-pill,999px);padding:2px var(--s-2)}
+.prj-bad{margin:var(--s-2) var(--s-4);display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--s-2)}
+.prj-conv{flex:1 1 0%;display:flex;min-height:0;min-width:0}
+.prj-first{margin:auto;padding:var(--s-5) var(--s-4);max-width:56ch;display:flex;flex-direction:column;align-items:start;gap:var(--s-2)}
+.prj-first-line{margin:0;color:var(--text-2);font-size:var(--fs-ui)}
+.prj-first-box{width:100%;resize:vertical;padding:var(--s-2) var(--s-3);font:var(--fs-md)/var(--lh-prose) var(--sans)}
+.prj-first-err{margin:0;font-size:var(--fs-sm)}
+
+/* col D: the project */
+.prj-panel{width:300px;min-width:260px;flex-shrink:0;overflow-y:auto;padding:var(--s-3);
+           border-left:1px solid var(--line);background:var(--surface)}
+.prj-sec{border-top:1px solid var(--line);padding-block:var(--s-3)}
+.prj-sec:first-child{border-top:0;padding-top:0}
+.prj-sec-h{margin:0 0 var(--s-2)}
+.prj-orb-line{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-1);font-size:var(--fs-md)}
+.prj-orb-down{color:var(--text-2)}
+.prj-orb-stop{margin-inline-start:auto}
+.prj-dim{margin:var(--s-1) 0;color:var(--text-3);font-size:var(--fs-sm)}
+.prj-orbs,.prj-files{font-size:var(--fs-md)}
+.prj-orbs>summary,.prj-files>summary{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-1) 0;cursor:pointer}
+.prj-files-sum{margin-inline-start:auto;color:var(--text-3);font-size:var(--fs-sm)}
+.prj-panel .orb-editor{min-height:11rem}
+/* The file editor's own lines, shared with the orb panel. */
+.file-note{margin:var(--s-2) 0 0;color:var(--text-3);font-size:var(--fs-sm)}
+.file-meta{margin:var(--s-2) 0 var(--s-1);font-size:var(--fs-sm);color:var(--text-2)}
+.file-said{margin:var(--s-2) 0 0;color:var(--accent);font-size:var(--fs-sm)}
+/* Narrow: the conversation is the page and the other two columns
+   become drawers over it — the panel first, then the thread list. A
+   column that is simply gone takes MEMORY.md and every thread with it,
+   which is most of what this page is for, so each one keeps a way back:
+   a toggle in the title bar, a scrim, and its own Close. */
+.prj-scrim{display:none;position:absolute;inset:0;z-index:var(--z-pop);border:0;padding:0;background:rgb(0 0 0/.32);cursor:default}
+.prj-drawer-close,.prj-threads-btn{display:none}
+@media (max-width:1080px){
+  .prj-scrim{display:block}
+  .prj-panel{position:absolute;inset-block:0;inset-inline-end:0;z-index:calc(var(--z-pop) + 1);
+             width:min(340px,92vw);box-shadow:var(--shadow-pop)}
+  .prj-panel>.prj-drawer-close{display:block;margin:0 0 var(--s-2) auto}
+}
+@media (max-width:860px){
+  .prj-threads-btn{display:inline-flex}
+  .prj-threads{display:none}
+  .prj-threads[data-open]{display:flex;position:absolute;inset-block:0;inset-inline-start:0;z-index:calc(var(--z-pop) + 1);
+                          width:min(300px,86vw);box-shadow:var(--shadow-pop)}
+  .prj-threads[data-open] .prj-drawer-close{display:inline-flex}
+}
+/* /PROJECT-PAGE */

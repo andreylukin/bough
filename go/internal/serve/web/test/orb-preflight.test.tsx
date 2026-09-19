@@ -19,8 +19,8 @@ test("ORB-B4: the orb panel shows one preflight line per check, failures with th
     ],
   } as unknown as OrbDetail;
   const html = renderToStaticMarkup(
-    <ProjectOrb project={{ id: "p1", name: "Web", slug: "web" } as Project} detail={detail} log=""
-                onAttach={noop} onDetach={noop} onSave={async () => {}} onBuild={noop} onStopOrb={noop} />,
+    <ProjectOrb project={{ slug: "web", name: "Web" } as Project} detail={detail} log=""
+                onSave={async () => {}} onBuild={noop} onStopOrb={noop} onRetry={noop} />,
   );
   expect(html).toContain("<dt>Preflight</dt>");
   expect(html).toContain('class="orb-preflight"');
@@ -30,8 +30,8 @@ test("ORB-B4: the orb panel shows one preflight line per check, failures with th
   expect(html).toContain("GitHub token");
   expect(html).toContain("Secret <span class=\"mono\">DEVPI_URL</span>");
   expect(html).toContain("not found in the keychain");
-  expect(html).toContain("1 failing");
-  expect(html).not.toContain("<dt>Runtime</dt>");
+  // The copy commit 93c41f42 shipped; this assertion still read "1 failing".
+  expect(html).toContain("One check fails.");
   for (const f of ["../dist/index.html", "../design/bough.css"]) {
     const css = readFileSync(join(import.meta.dir, f), "utf8");
     expect(css).toMatch(/\/\* ORB-B4 \*\/[\s\S]*\.orb-preflight\{[\s\S]*\/\* \/ORB-B4 \*\//);
@@ -44,8 +44,8 @@ test("ORB-B4: without a preflight the runtime row still shows", () => {
     orb: { image: "i", built: true }, build: { tag: "i", state: "ok" }, orbs: [],
   } as unknown as OrbDetail;
   const html = renderToStaticMarkup(
-    <ProjectOrb project={{ id: "p1", name: "Web", slug: "web" } as Project} detail={detail} log=""
-                onAttach={noop} onDetach={noop} onSave={async () => {}} onBuild={noop} onStopOrb={noop} />,
+    <ProjectOrb project={{ slug: "web", name: "Web" } as Project} detail={detail} log=""
+                onSave={async () => {}} onBuild={noop} onStopOrb={noop} onRetry={noop} />,
   );
   expect(html).toContain("<dt>Runtime</dt>");
   expect(html).toContain("Unavailable");

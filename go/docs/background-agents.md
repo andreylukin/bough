@@ -323,6 +323,13 @@ the parent's cwd. The handler rejects: parent unknown 404; parent has
 (depth 1)`; count ≥ maxPerSession 429
 `serve: api: background agent limit reached (<n> per session)`.
 
+A PROJECT MAIN THREAD is counted differently: it lives as long as its
+project, so a lifetime tally would refuse every thread after a few
+months. `CreateChild` counts only its non-terminal children — queued,
+running, or holding a question open — against `maxPerSession`. The global
+`maxRunning` queue is unchanged. `ErrDepth`'s text now reads
+`a project thread cannot start threads; ask the main thread (depth 1)`.
+
 Response 201: the usual row plus `"queued": true|false`. A queued child has
 no id from a process yet, so the supervisor mints it: see 3c.
 

@@ -11,9 +11,9 @@ const detail = (orbs: unknown[]) => ({
   orb: { image: "bough-orb/web:abc", built: true }, build: { tag: "", state: "" }, orbs,
 }) as unknown as OrbDetail;
 const orbRow = (project: Project, d: OrbDetail, titles = {}) => renderToStaticMarkup(
-  <ProjectOrb project={project} detail={d} log="" titles={titles} onAttach={noop} onDetach={noop}
-              onSave={async () => {}} onBuild={noop} onStopOrb={noop} />);
-const web = { id: "p1", name: "Web", slug: "web" } as Project;
+  <ProjectOrb project={project} detail={d} log="" titles={titles}
+              onSave={async () => {}} onBuild={noop} onStopOrb={noop} onRetry={noop} />);
+const web = { slug: "web", name: "Web" } as Project;
 
 test("A7: each Container cell shows its own container's tail, not the shared prefix", () => {
   const html = orbRow(web, detail([
@@ -33,7 +33,7 @@ test("A7: an archived session keeps its title in the orb list", () => {
 
 test("A7: the orb blurb no longer says local sessions only read", () => {
   expect(orbRow(web, detail([]))).not.toContain("only read");
-  expect(orbRow({ id: "p2", name: "Bare" } as Project, detail([]))).not.toContain("only read");
+  expect(orbRow({ slug: "bare", name: "Bare" } as Project, detail([]))).not.toContain("only read");
 });
 
 test("A7: the sidebar's orb chip names the orb and never wears the turn's running tone", () => {
@@ -45,16 +45,14 @@ test("A7: the sidebar's orb chip names the orb and never wears the turn's runnin
 
 const view = (projects: Project[]) => renderToStaticMarkup(
   <ProjectsView projects={projects} rows={[]} onOpen={noop} onAssign={noop} onAssignMany={async () => []}
-                onCreate={async () => ({ id: "p" })} onRename={async () => {}} onDelete={noop} onNewSession={noop} />);
+                onCreate={async () => ({ slug: "p" })} onRename={async () => {}} onDelete={noop} onNewSession={noop} />);
 
-test("A7: a project with an orb has a visible Orb button and New session on its row", () => {
+test("A7: every project has a visible Orb button and New session on its row", () => {
   const html = view([{ ...web, orb: { slug: "web", image: "", built: true, repos: ["shop"] } }]);
   expect(html).toMatch(/<button[^>]*proj-orb-btn[^>]*>Orb<\/button>/);
   expect(html).toMatch(/<button[^>]*>New session<\/button>/);
-  // A label without an orb gets Add orb and no New session.
-  const bare = view([{ id: "p2", name: "Bare" } as Project]);
-  expect(bare).toContain("Add orb");
-  expect(bare).not.toContain("New session");
+  // There is no such thing as a project without an orb any more.
+  expect(html).not.toContain("Add orb");
 });
 
 test("A7: the header counts the repos a project.yml names", () => {

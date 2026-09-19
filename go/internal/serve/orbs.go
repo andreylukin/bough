@@ -29,6 +29,7 @@ import (
 	"github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/internal/projectdef"
 	"github.com/andreylukin/bough/plugins/history"
+	"github.com/google/uuid"
 )
 
 // OrbSummary is a definition's image at a glance.
@@ -101,7 +102,8 @@ type OrbDetail struct {
 	Preflight []orb.PreflightCheck `json:"preflight"`
 }
 
-// projectRow is a label plus its orb, present only when a slug is set.
+// projectRow is a project plus the state of the image its sessions run
+// in. Every project has one: the definition directory IS the project.
 type projectRow struct {
 	Project
 	Orb *OrbSummary `json:"orb,omitempty"`
@@ -113,12 +115,10 @@ const (
 )
 
 func (a *API) routeOrbs() {
-	a.mux.HandleFunc("POST /api/projects/{id}/orb", a.attachOrb)
-	a.mux.HandleFunc("DELETE /api/projects/{id}/orb", a.detachOrb)
-	a.mux.HandleFunc("GET /api/projects/{id}/orb", a.orbDetail)
-	a.mux.HandleFunc("PUT /api/projects/{id}/orb/files/{name}", a.putOrbFile)
-	a.mux.HandleFunc("POST /api/projects/{id}/orb/build", a.buildOrb)
-	a.mux.HandleFunc("GET /api/projects/{id}/orb/build/log", a.buildLog)
+	a.mux.HandleFunc("GET /api/projects/{slug}/orb", a.orbDetail)
+	a.mux.HandleFunc("PUT /api/projects/{slug}/orb/files/{name}", a.putOrbFile)
+	a.mux.HandleFunc("POST /api/projects/{slug}/orb/build", a.buildOrb)
+	a.mux.HandleFunc("GET /api/projects/{slug}/orb/build/log", a.buildLog)
 	a.mux.HandleFunc("GET /api/sessions/{id}/orb", a.sessionOrb)
 	a.mux.HandleFunc("GET /api/sessions/{id}/orb/log", a.sessionOrbLog)
 	a.mux.HandleFunc("GET /api/sessions/{id}/orb/build/log", a.sessionBuildLog)
@@ -269,30 +269,35 @@ func (a *API) listProjects(w http.ResponseWriter, r *http.Request) {
 	ps := a.sup.Projects()
 	out := make([]projectRow, 0, len(ps))
 	for _, p := range ps {
-		row := projectRow{Project: p}
-		if p.Slug != "" {
-			sum, _ := a.orbSummary(r.Context(), p.Slug)
-			row.Orb = &sum
-		}
-		out = append(out, row)
+		sum, _ := a.orbSummary(r.Context(), p.Slug)
+		out = append(out, projectRow{Project: p, Orb: &sum})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"projects": out})
 }
 
-// labelWithOrb resolves a label that must carry a definition, answering
-// 404 itself when it does not.
-func (a *API) labelWithOrb(w http.ResponseWriter, id string) (Project, bool) {
-	p, ok := a.sup.Project(id)
-	if !ok {
-		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: no project %q", id))
+// projectOr404 resolves a slug from the path, answering itself when it
+// does not name a project.
+func (a *API) projectOr404(w http.ResponseWriter, slug string) (Project, bool) {
+	p, ok := a.sup.Project(slug)
+	if ok {
+		return p, true
+	}
+	if oldProjectID(slug) {
+		writeErr(w, http.StatusBadRequest, errOldProjectID)
 		return Project{}, false
 	}
-	if p.Slug == "" {
-		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: project %q has no orb", p.Name))
-		return Project{}, false
-	}
-	return p, true
+	writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: no project %q", slug))
+	return Project{}, false
 }
+
+// errOldProjectID answers a link minted when projects were labels with
+// their own ids. A UUIDv7 is lowercase hex and hyphens, which ValidSlug
+// accepts, so the id shape is tested outright — otherwise these arrive
+// as a bare 404 and read as "the project is gone".
+var errOldProjectID = errors.New("serve: api: that link is from an older control room; projects are named by slug now")
+
+// oldProjectID says whether a path or body value is one of those ids.
+func oldProjectID(s string) bool { _, err := uuid.Parse(s); return err == nil }
 
 var slugJunk = regexp.MustCompile(`[^a-z0-9]+`)
 
@@ -305,70 +310,8 @@ func slugify(name string) string {
 	return s
 }
 
-func (a *API) attachOrb(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	var body struct {
-		Slug string `json:"slug"`
-	}
-	// An empty body means "use the name": allowed.
-	if r.ContentLength != 0 && !decode(w, r, &body) {
-		return
-	}
-	p, ok := a.sup.Project(id)
-	if !ok {
-		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: no project %q", id))
-		return
-	}
-	slug := strings.TrimSpace(body.Slug)
-	if slug == "" {
-		slug = slugify(p.Name)
-	}
-	if err := projectdef.ValidSlug(slug); err != nil {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: attach orb: %w", err))
-		return
-	}
-	for _, o := range a.sup.Projects() {
-		if o.ID != id && o.Slug == slug {
-			writeErr(w, http.StatusConflict, fmt.Errorf("serve: api: %q is already the orb of %q", slug, o.Name))
-			return
-		}
-	}
-	home := a.sup.Home()
-	// An existing directory is attached as it stands, broken yaml and
-	// all: the person is here to fix it, not to lose it to a skeleton.
-	if _, err := os.Stat(filepath.Join(projectdef.Root(home), slug, projectdef.FileYAML)); errors.Is(err, os.ErrNotExist) {
-		if _, err := projectdef.Create(home, slug); err != nil {
-			writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: create orb %q: %w", slug, err))
-			return
-		}
-	}
-	p, err := a.sup.SetProjectSlug(id, slug)
-	if err != nil {
-		code := http.StatusInternalServerError
-		if errors.Is(err, ErrSlugTaken) {
-			code = http.StatusConflict
-		}
-		writeErr(w, code, err)
-		return
-	}
-	sum, _ := a.orbSummary(r.Context(), slug)
-	writeJSON(w, http.StatusOK, map[string]any{"project": p, "orb": sum})
-}
-
-func (a *API) detachOrb(w http.ResponseWriter, r *http.Request) {
-	if _, err := a.sup.SetProjectSlug(r.PathValue("id"), ""); err != nil {
-		code := http.StatusInternalServerError
-		if errors.Is(err, ErrUnknownProject) {
-			code = http.StatusNotFound
-		}
-		writeErr(w, code, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
 func (a *API) orbDetail(w http.ResponseWriter, r *http.Request) {
-	p, ok := a.labelWithOrb(w, r.PathValue("id"))
+	p, ok := a.projectOr404(w, r.PathValue("slug"))
 	if !ok {
 		return
 	}
@@ -434,7 +377,7 @@ func (a *API) orbsOf(slug string) []OrbState {
 }
 
 func (a *API) putOrbFile(w http.ResponseWriter, r *http.Request) {
-	p, ok := a.labelWithOrb(w, r.PathValue("id"))
+	p, ok := a.projectOr404(w, r.PathValue("slug"))
 	if !ok {
 		return
 	}
@@ -466,7 +409,7 @@ func (a *API) putOrbFile(w http.ResponseWriter, r *http.Request) {
 // it through the log endpoint. orb.EnsureImage's own lock keeps this
 // from racing a child that is building the same image.
 func (a *API) buildOrb(w http.ResponseWriter, r *http.Request) {
-	p, ok := a.labelWithOrb(w, r.PathValue("id"))
+	p, ok := a.projectOr404(w, r.PathValue("slug"))
 	if !ok {
 		return
 	}
@@ -524,7 +467,7 @@ func (a *API) buildOrb(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) buildLog(w http.ResponseWriter, r *http.Request) {
-	p, ok := a.labelWithOrb(w, r.PathValue("id"))
+	p, ok := a.projectOr404(w, r.PathValue("slug"))
 	if !ok {
 		return
 	}
@@ -680,28 +623,32 @@ func (a *API) stopOrb(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// createProjectSession starts a session inside a label's orb. cwd is
+// createProjectSession starts a thread inside a project's orb. cwd is
 // ignored: the child works in its own worktree.
-func (a *API) createProjectSession(w http.ResponseWriter, prompt, label string) {
-	p, ok := a.sup.Project(label)
+//
+// The thread is a CHILD of the project's main thread, not a session of
+// its own. That is what makes the report land: a parentless session's
+// finish never reaches anybody (childEventLocked returns early without
+// a SpawnedBy), so every thread a person starts from the project page
+// would end in silence. Starting the first one starts the main thread.
+func (a *API) createProjectSession(w http.ResponseWriter, prompt, slug string, maxPerSession, maxRunning int) {
+	p, ok := a.sup.Project(slug)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: no project %q", label))
+		if oldProjectID(slug) {
+			writeErr(w, http.StatusBadRequest, errOldProjectID)
+			return
+		}
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: no project %q", slug))
 		return
 	}
-	if p.Slug == "" {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("serve: api: project %q has no orb definition; add one first", p.Name))
-		return
-	}
-	id, err := a.sup.Create(CreateOptions{Cwd: a.sup.Home(), Prompt: prompt, Mode: "project", Slug: p.Slug})
+	main, err := a.sup.Main(p.Slug)
 	if err != nil {
-		writeErr(w, statusFor(err), fmt.Errorf("serve: api: create session: %w", err))
+		writeErr(w, statusFor(err), fmt.Errorf("serve: api: project %s: %w", p.Slug, err))
 		return
 	}
-	if err := a.sup.AssignProject(id, p.ID); err != nil {
-		writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: create session: assign %s: %w", p.Name, err))
-		return
-	}
-	a.writeRow(w, http.StatusCreated, id)
+	// CreateChild mints its own id, files the membership and starts the
+	// child in the project's orb; SpawnedBy is the whole point.
+	a.createChild(w, CreateOptions{Prompt: prompt, Slug: p.Slug, SpawnedBy: main}, maxPerSession, maxRunning)
 }
 
 // removeOrbPlan is what Remove orb would delete and keep, for its confirm.

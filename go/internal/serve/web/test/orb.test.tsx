@@ -26,13 +26,14 @@ test("a local row shows no chip", () => {
   expect(renderToStaticMarkup(<ModeChip row={row({ mode: "local" })} />)).toBe("");
 });
 
-test("the picker offers Local and only projects that carry an orb", () => {
-  const projects = [{ id: "p1", name: "Web", slug: "web" }, { id: "p2", name: "Label only" }] as Project[];
+test("the picker offers Local and every project, by slug", () => {
+  const projects = [{ slug: "web", name: "Web" }, { slug: "shop", name: "Shop" }] as Project[];
   const html = renderToStaticMarkup(<ModePicker projects={projects} value={{ mode: "local" }} onChange={noop} />);
   expect(html).toContain("Local");
   expect(html).toContain('aria-pressed="true"');
-  const none = renderToStaticMarkup(<ModePicker projects={[projects[1]]} value={{ mode: "local" }} onChange={noop} />);
-  expect(none).toContain("No project has an orb yet");
+  // Every project has an orb: the directory is the definition.
+  const none = renderToStaticMarkup(<ModePicker projects={[]} value={{ mode: "local" }} onChange={noop} />);
+  expect(none).toContain("No project yet");
 });
 
 const origFetch = globalThis.fetch;
@@ -44,8 +45,8 @@ test("creating a session sends mode and project", async () => {
     body = String(init?.body);
     return new Response(JSON.stringify({ session: { id: "x" } }), { status: 200 });
   }) as typeof fetch;
-  await api.create("/w", "hi", "project", "p1");
-  expect(JSON.parse(body)).toMatchObject({ mode: "project", project: "p1" });
+  await api.create("/w", "hi", "project", "web");
+  expect(JSON.parse(body)).toMatchObject({ mode: "project", project: "web" });
 });
 
 test("the project page shows the editor, the build failure and the log", () => {

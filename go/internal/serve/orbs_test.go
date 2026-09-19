@@ -29,47 +29,90 @@ func writeState(t *testing.T, home string, st orb.State) {
 	}
 }
 
-func projectByID(t *testing.T, f *apiFixture, id string) map[string]any {
+func projectBySlug(t *testing.T, f *apiFixture, slug string) map[string]any {
 	t.Helper()
 	_, body := f.do(t, "GET", "/api/projects", "")
 	ps, _ := body["projects"].([]any)
 	for _, p := range ps {
-		if m, _ := p.(map[string]any); m["id"] == id {
+		if m, _ := p.(map[string]any); m["slug"] == slug {
 			return m
 		}
 	}
-	t.Fatalf("project %s not listed: %v", id, body)
+	t.Fatalf("project %s not listed: %v", slug, body)
 	return nil
 }
 
-// An old meta.json with label-only projects must load, list and stay
-// byte-for-byte the same when no definition exists.
-func TestLabelOnlyProjectsUnchanged(t *testing.T) {
+// A version-1 meta.json migrates on boot: the label table becomes
+// directories, the display names survive into project.yml, and every
+// session's membership is rewritten to a slug.
+func TestMigrateLabelTable(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	meta := filepath.Join(home, ".bough", "serve", "meta.json")
 	os.MkdirAll(filepath.Dir(meta), 0o755)
-	golden := `{"sessions":{"s1":{"project":"p1"}},"projects":{"p1":{"id":"p1","name":"Infra"}}}`
-	os.WriteFile(meta, []byte(golden), 0o644)
+	// p1 label only; p2 already attached to a definition whose directory
+	// carries the slugified name; p3 a name nothing can be slugified from.
+	if _, err := projectdef.Create(home, "my-web-app"); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(meta, []byte(`{"sessions":{`+
+		`"s1":{"project":"p1"},"s2":{"project":"p2"},"s3":{"project":"p3"},"s4":{"project":"gone"},"s5":{"title":"keep me"}},`+
+		`"projects":{`+
+		`"p1":{"id":"p1","name":"Platform infra"},`+
+		`"p2":{"id":"p2","name":"My Web App","slug":"my-web-app"},`+
+		`"p3":{"id":"p3","name":"🚀"}}}`), 0o644)
+
 	sup, err := NewSupervisor(Options{Exe: "/bin/true", HistDir: filepath.Join(home, ".bough", "history"), MetaPath: meta, Runtime: container.NewFake()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer sup.Close()
-	if b, _ := os.ReadFile(meta); string(b) != golden {
-		t.Fatalf("meta.json rewritten: %s", b)
+
+	want := map[string]string{"platform-infra": "Platform infra", "my-web-app": "My Web App", "project-1": "🚀"}
+	got := map[string]string{}
+	for _, p := range sup.Projects() {
+		got[p.Slug] = p.Name
 	}
-	ps := sup.Projects()
-	if len(ps) != 1 || ps[0] != (Project{ID: "p1", Name: "Infra"}) {
-		t.Fatalf("projects = %+v", ps)
+	for slug, name := range want {
+		if got[slug] != name {
+			t.Errorf("project %s = %q, want %q (all: %v)", slug, got[slug], name, got)
+		}
 	}
-	b, _ := json.Marshal(ps[0])
-	if string(b) != `{"id":"p1","name":"Infra"}` {
-		t.Fatalf("label-only project json = %s", b)
+	if len(got) != len(want) {
+		t.Errorf("projects = %v, want %v", got, want)
+	}
+	for sid, slug := range map[string]string{"s1": "platform-infra", "s2": "my-web-app", "s3": "project-1", "s4": "", "s5": ""} {
+		if m := sup.Meta(sid); m.Project != slug {
+			t.Errorf("%s project = %q, want %q", sid, m.Project, slug)
+		}
+	}
+	if m := sup.Meta("s5"); m.Title != "keep me" {
+		t.Errorf("session metadata lost in the migration: %+v", m)
+	}
+	// The table is gone and the file says so, so the next boot skips it.
+	b, _ := os.ReadFile(meta)
+	if strings.Contains(string(b), `"projects"`) || !strings.Contains(string(b), `"version": 2`) {
+		t.Fatalf("meta.json after migration: %s", b)
+	}
+
+	// Booting again changes nothing: the version stamp short-circuits it.
+	before := string(b)
+	sup2, err := NewSupervisor(Options{Exe: "/bin/true", HistDir: filepath.Join(home, ".bough", "history"), MetaPath: meta, Runtime: container.NewFake()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sup2.Close()
+	if b, _ := os.ReadFile(meta); string(b) != before {
+		t.Errorf("second boot rewrote meta.json:\n%s\n%s", before, b)
+	}
+	if len(sup2.Projects()) != len(want) {
+		t.Errorf("second boot projects = %+v", sup2.Projects())
 	}
 }
 
-func TestDefinitionOnDiskGetsALabel(t *testing.T) {
+// A definition the agent wrote with the file tools is a project: nothing
+// has to be told about it.
+func TestDefinitionOnDiskIsAProject(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	if _, err := projectdef.Create(home, "made-by-agent"); err != nil {
@@ -81,71 +124,48 @@ func TestDefinitionOnDiskGetsALabel(t *testing.T) {
 	}
 	defer sup.Close()
 	ps := sup.Projects()
-	if len(ps) != 1 || ps[0].Slug != "made-by-agent" || ps[0].Name != "made-by-agent" {
+	if len(ps) != 1 || ps[0] != (Project{Slug: "made-by-agent", Name: "made-by-agent"}) {
 		t.Fatalf("projects = %+v", ps)
+	}
+	// Broken yaml is still a project: the editor that fixes it is on its page.
+	os.WriteFile(filepath.Join(projectdef.Root(home), "made-by-agent", projectdef.FileYAML), []byte("repos: [\n"), 0o644)
+	ps = sup.Projects()
+	if len(ps) != 1 || ps[0].Error == "" {
+		t.Fatalf("broken definition = %+v", ps)
 	}
 }
 
-func TestAttachDetachOrb(t *testing.T) {
+// Every project has an orb surface: the directory IS the definition, so
+// there is nothing to attach.
+func TestOrbDetail(t *testing.T) {
 	t.Parallel()
 	f := newAPI(t)
-	id := mkProject(t, f, "My App")
-	other := mkProject(t, f, "Other")
-
-	if p := projectByID(t, f, id); p["orb"] != nil || p["slug"] != nil {
-		t.Fatalf("label-only project carries orb fields: %v", p)
+	slug := mkProject(t, f, "My App")
+	if slug != "my-app" {
+		t.Fatalf("slug = %q", slug)
 	}
-	code, body := f.do(t, "POST", "/api/projects/"+id+"/orb", `{}`)
-	if code != http.StatusOK {
-		t.Fatalf("attach = %d %v", code, body)
-	}
-	if p, _ := body["project"].(map[string]any); p["slug"] != "my-app" {
-		t.Fatalf("attach project = %v", body)
-	}
-	if _, err := os.Stat(filepath.Join(projectdef.Root(f.home), "my-app", projectdef.FileYAML)); err != nil {
-		t.Fatalf("skeleton not created: %v", err)
-	}
-	if o, _ := projectByID(t, f, id)["orb"].(map[string]any); o["slug"] != "my-app" || !strings.HasPrefix(o["image"].(string), "bough-orb/my-app:") {
+	if o, _ := projectBySlug(t, f, slug)["orb"].(map[string]any); o["slug"] != "my-app" || !strings.HasPrefix(o["image"].(string), "bough-orb/my-app:") {
 		t.Fatalf("listed orb = %v", o)
 	}
-	if code, _ := f.do(t, "POST", "/api/projects/"+other+"/orb", `{"slug":"my-app"}`); code != http.StatusConflict {
-		t.Errorf("second label on one slug = %d, want 409", code)
-	}
-	if code, _ := f.do(t, "POST", "/api/projects/"+other+"/orb", `{"slug":"Bad Slug"}`); code != http.StatusBadRequest {
-		t.Errorf("bad slug = %d, want 400", code)
-	}
-	if code, body := f.do(t, "GET", "/api/projects/"+id+"/orb", ""); code != http.StatusOK {
+	if code, body := f.do(t, "GET", "/api/projects/"+slug+"/orb", ""); code != http.StatusOK {
 		t.Fatalf("detail = %d %v", code, body)
-	} else if files, _ := body["files"].(map[string]any); len(files) != 4 || files["project.yml"] == "" {
+	} else if files, _ := body["files"].(map[string]any); len(files) != len(projectdef.EditableFiles) {
 		t.Errorf("detail files = %v", body["files"])
 	} else if rt, _ := body["runtime"].(map[string]any); rt["name"] != "fake" || rt["available"] != true {
 		t.Errorf("detail runtime = %v", body["runtime"])
+	} else if p, _ := body["project"].(map[string]any); p["slug"] != "my-app" || p["name"] != "My App" {
+		t.Errorf("detail project = %v", body["project"])
 	}
-
-	if code, _ := f.do(t, "DELETE", "/api/projects/"+id+"/orb", ""); code != http.StatusOK {
-		t.Fatalf("detach = %d", code)
-	}
-	if p := projectByID(t, f, id); p["orb"] != nil || p["slug"] != nil {
-		t.Errorf("still attached: %v", p)
-	}
-	if _, err := os.Stat(filepath.Join(projectdef.Root(f.home), "my-app")); err != nil {
-		t.Errorf("detach deleted the definition: %v", err)
-	}
-	if code, _ := f.do(t, "GET", "/api/projects/"+id+"/orb", ""); code != http.StatusNotFound {
-		t.Errorf("detail after detach = %d, want 404", code)
-	}
-	// Re-attaching finds the existing directory instead of failing on it.
-	if code, body := f.do(t, "POST", "/api/projects/"+id+"/orb", ``); code != http.StatusOK {
-		t.Errorf("re-attach = %d %v", code, body)
+	if code, _ := f.do(t, "GET", "/api/projects/not-a-project/orb", ""); code != http.StatusNotFound {
+		t.Errorf("detail of nothing = %d, want 404", code)
 	}
 }
 
 func TestPutOrbFile(t *testing.T) {
 	t.Parallel()
 	f := newAPI(t)
-	id := mkProject(t, f, "web")
-	f.do(t, "POST", "/api/projects/"+id+"/orb", `{}`)
-	base := "/api/projects/" + id + "/orb/files/"
+	slug := mkProject(t, f, "web")
+	base := "/api/projects/" + slug + "/orb/files/"
 	if code, _ := f.do(t, "PUT", base+"project.yml", `{"text":"repos: [\n"}`); code != http.StatusBadRequest {
 		t.Errorf("bad yaml = %d, want 400", code)
 	}
@@ -169,27 +189,26 @@ func TestPutOrbFile(t *testing.T) {
 func TestBuildOrbPollsToOK(t *testing.T) {
 	t.Parallel()
 	f := newAPI(t)
-	id := mkProject(t, f, "built")
-	f.do(t, "POST", "/api/projects/"+id+"/orb", `{}`)
+	slug := mkProject(t, f, "built")
 
-	code, body := f.do(t, "POST", "/api/projects/"+id+"/orb/build", `{}`)
+	code, body := f.do(t, "POST", "/api/projects/"+slug+"/orb/build", `{}`)
 	if code != http.StatusAccepted {
 		t.Fatalf("build = %d %v", code, body)
 	}
 	var text string
 	offset := 0.0
 	waitFor(t, "build ok", func() bool {
-		_, lb := f.do(t, "GET", "/api/projects/"+id+"/orb/build/log?offset="+jsonNum(offset), "")
+		_, lb := f.do(t, "GET", "/api/projects/"+slug+"/orb/build/log?offset="+jsonNum(offset), "")
 		text += lb["text"].(string)
 		offset = lb["offset"].(float64)
 		return lb["state"] == "ok"
 	})
-	_, lb := f.do(t, "GET", "/api/projects/"+id+"/orb/build/log?offset="+jsonNum(offset), "")
+	_, lb := f.do(t, "GET", "/api/projects/"+slug+"/orb/build/log?offset="+jsonNum(offset), "")
 	text += lb["text"].(string)
 	if !strings.Contains(text, "fake commit bough-orb/built:") {
 		t.Errorf("log = %q", text)
 	}
-	if o, _ := projectByID(t, f, id)["orb"].(map[string]any); o["built"] != true {
+	if o, _ := projectBySlug(t, f, slug)["orb"].(map[string]any); o["built"] != true {
 		t.Errorf("not built after ok: %v", o)
 	}
 
@@ -197,7 +216,7 @@ func TestBuildOrbPollsToOK(t *testing.T) {
 	f.sup.mu.Lock()
 	f.sup.building["built"] = true
 	f.sup.mu.Unlock()
-	if code, _ := f.do(t, "POST", "/api/projects/"+id+"/orb/build", `{}`); code != http.StatusConflict {
+	if code, _ := f.do(t, "POST", "/api/projects/"+slug+"/orb/build", `{}`); code != http.StatusConflict {
 		t.Errorf("build while building = %d, want 409", code)
 	}
 }
@@ -306,23 +325,39 @@ func TestFailedSetupOrbIsUp(t *testing.T) {
 func TestCreateProjectSession(t *testing.T) {
 	t.Parallel()
 	// The serve process itself carries a mode: it must not leak.
-	f := newAPI(t, envNewID+"=sess-proj", "BOUGH_MODE=project", "BOUGH_PROJECT=leak")
-	label := mkProject(t, f, "App")
-	if code, _ := f.do(t, "POST", "/api/sessions", `{"mode":"project","project":"`+label+`"}`); code != http.StatusBadRequest {
-		t.Errorf("project mode on a label-only project = %d, want 400", code)
+	f := newAPI(t, "BOUGH_MODE=project", "BOUGH_PROJECT=leak")
+	slug := mkProject(t, f, "App")
+	if code, _ := f.do(t, "POST", "/api/sessions", `{"mode":"project","project":"no-such-project"}`); code != http.StatusBadRequest {
+		t.Errorf("project mode on a project that does not exist = %d, want 400", code)
 	}
-	f.do(t, "POST", "/api/projects/"+label+"/orb", `{}`)
-	code, body := f.do(t, "POST", "/api/sessions", `{"mode":"project","project":"`+label+`","cwd":"/nowhere"}`)
+	code, body := f.do(t, "POST", "/api/sessions", `{"mode":"project","project":"`+slug+`","cwd":"/nowhere"}`)
 	if code != http.StatusCreated {
 		t.Fatalf("create = %d %v", code, body)
 	}
 	row := rowOf(t, body)
-	if row["project"] != label || row["mode"] != "project" {
+	id, _ := row["id"].(string)
+	if row["project"] != slug || row["mode"] != "project" {
 		t.Errorf("row = project %v mode %v", row["project"], row["mode"])
 	}
-	es, _ := history.Read(filepath.Join(f.hist, "sess-proj.jsonl"))
+	// The session is a thread of the project's main thread, so its
+	// finish reaches a conversation a person reads.
+	main := f.sup.MainID(slug)
+	if main == "" || id == main || row["spawnedBy"] != main {
+		t.Errorf("row %q spawnedBy = %v, want main %q", id, row["spawnedBy"], main)
+	}
+	waitFor(t, "the thread's history", func() bool {
+		es, _ := history.Read(filepath.Join(f.hist, id+".jsonl"))
+		return len(es) > 0
+	})
+	es, _ := history.Read(filepath.Join(f.hist, id+".jsonl"))
 	if len(es) == 0 || es[0].Data["mode"] != "project" || es[0].Data["project"] != "app" || !sameResolvedDir(es[0].Data["cwd"], f.home) {
 		t.Fatalf("child meta = %+v", es)
+	}
+	// Main runs in the same project's orb, and is nobody's child: a
+	// SpawnedBy on it would make the depth rule refuse its spawns.
+	mes, _ := history.Read(filepath.Join(f.hist, main+".jsonl"))
+	if len(mes) == 0 || mes[0].Data["mode"] != "project" || mes[0].Data["project"] != "app" || mes[0].Data["spawned_by"] != "" {
+		t.Fatalf("main meta = %+v", mes)
 	}
 	if code, _ := f.do(t, "POST", "/api/sessions", `{"mode":"cloud","cwd":"/"}`); code != http.StatusBadRequest {
 		t.Errorf("unknown mode = %d, want 400", code)
@@ -355,29 +390,28 @@ func sameResolvedDir(got any, want string) bool {
 func TestBuildOrbClonesRemoteAndReportsEarlyFailure(t *testing.T) {
 	t.Parallel()
 	f := newAPI(t)
-	id := mkProject(t, f, "remote")
-	f.do(t, "POST", "/api/projects/"+id+"/orb", `{}`)
-	base := "/api/projects/" + id + "/orb/files/"
+	slug := mkProject(t, f, "remote")
+	base := "/api/projects/" + slug + "/orb/files/"
 	missing := filepath.Join(t.TempDir(), "nope.git")
 	if code, body := f.do(t, "PUT", base+"project.yml", `{"text":"repos:\n  - remote: `+missing+`\n    name: app\n"}`); code != http.StatusOK {
 		t.Fatalf("save = %d %v", code, body)
 	}
-	if code, body := f.do(t, "POST", "/api/projects/"+id+"/orb/build", `{}`); code != http.StatusAccepted {
+	if code, body := f.do(t, "POST", "/api/projects/"+slug+"/orb/build", `{}`); code != http.StatusAccepted {
 		t.Fatalf("build = %d %v", code, body)
 	}
 	var lb map[string]any
 	waitFor(t, "build failed", func() bool {
-		_, lb = f.do(t, "GET", "/api/projects/"+id+"/orb/build/log?offset=0", "")
+		_, lb = f.do(t, "GET", "/api/projects/"+slug+"/orb/build/log?offset=0", "")
 		return lb["state"] == "failed"
 	})
 	if msg, _ := lb["error"].(string); msg == "" {
 		t.Errorf("failed build has no error: %v", lb)
 	}
-	_, d := f.do(t, "GET", "/api/projects/"+id+"/orb", "")
+	_, d := f.do(t, "GET", "/api/projects/"+slug+"/orb", "")
 	if b, _ := d["build"].(map[string]any); b["state"] != "failed" || b["error"] == "" {
 		t.Errorf("detail build = %v", d["build"])
 	}
-	if o, _ := projectByID(t, f, id)["orb"].(map[string]any); o["build"] != "failed" {
+	if o, _ := projectBySlug(t, f, slug)["orb"].(map[string]any); o["build"] != "failed" {
 		t.Errorf("summary = %v", o)
 	}
 }
@@ -388,18 +422,17 @@ func TestBuildOrbClonesRemoteAndReportsEarlyFailure(t *testing.T) {
 func TestOrbDetailBuildState(t *testing.T) {
 	t.Parallel()
 	f := newAPI(t)
-	id := mkProject(t, f, "bs")
-	f.do(t, "POST", "/api/projects/"+id+"/orb", `{}`)
-	f.do(t, "POST", "/api/projects/"+id+"/orb/build", `{}`)
+	slug := mkProject(t, f, "bs")
+	f.do(t, "POST", "/api/projects/"+slug+"/orb/build", `{}`)
 	waitFor(t, "build ok", func() bool {
-		_, lb := f.do(t, "GET", "/api/projects/"+id+"/orb/build/log?offset=0", "")
+		_, lb := f.do(t, "GET", "/api/projects/"+slug+"/orb/build/log?offset=0", "")
 		return lb["state"] == "ok"
 	})
 
 	f.sup.mu.Lock()
 	f.sup.building["bs"] = true
 	f.sup.mu.Unlock()
-	_, d := f.do(t, "GET", "/api/projects/"+id+"/orb", "")
+	_, d := f.do(t, "GET", "/api/projects/"+slug+"/orb", "")
 	if b, _ := d["build"].(map[string]any); b["state"] != "building" {
 		t.Errorf("detail build while building = %v", b)
 	}
@@ -411,7 +444,7 @@ func TestOrbDetailBuildState(t *testing.T) {
 	home := f.sup.Home()
 	b, _ := json.Marshal(orb.Build{Tag: "bough-orb/bs:old", State: "failed", Error: "boom"})
 	os.WriteFile(filepath.Join(home, ".bough", "orbs", "images", "bs", "build.json"), b, 0o644)
-	_, d = f.do(t, "GET", "/api/projects/"+id+"/orb", "")
+	_, d = f.do(t, "GET", "/api/projects/"+slug+"/orb", "")
 	sum, _ := d["orb"].(map[string]any)
 	if sum["built"] != true || sum["build"] == "failed" {
 		t.Errorf("summary contradicts itself: %v", sum)
@@ -476,9 +509,8 @@ func TestRemoveOrb(t *testing.T) {
 func TestOrbDetailPreflight(t *testing.T) {
 	t.Parallel()
 	f := newAPI(t)
-	id := mkProject(t, f, "pf")
-	f.do(t, "POST", "/api/projects/"+id+"/orb", `{}`)
-	_, d := f.do(t, "GET", "/api/projects/"+id+"/orb", "")
+	slug := mkProject(t, f, "pf")
+	_, d := f.do(t, "GET", "/api/projects/"+slug+"/orb", "")
 	pf, _ := d["preflight"].([]any)
 	if len(pf) == 0 {
 		t.Fatalf("no preflight in %v", d)
@@ -494,8 +526,7 @@ func TestOrbDetailPreflight(t *testing.T) {
 func TestOrbDetailTitlesAndRepos(t *testing.T) {
 	t.Parallel()
 	f := newAPI(t)
-	id := mkProject(t, f, "tr")
-	f.do(t, "POST", "/api/projects/"+id+"/orb", `{}`)
+	slug := mkProject(t, f, "tr")
 	seedModeSession(t, f, "gone", map[string]any{"cwd": "/w", "mode": "project", "project": "tr"})
 	if err := f.sup.SetTitle("gone", "Debug the server"); err != nil {
 		t.Fatal(err)
@@ -504,7 +535,12 @@ func TestOrbDetailTitlesAndRepos(t *testing.T) {
 		t.Fatalf("archive = %d %v", code, body)
 	}
 	writeState(t, f.home, orb.State{Session: "gone", Project: "tr", Status: orb.StatusStopped, UpdatedAt: time.Now()})
-	_, d := f.do(t, "GET", "/api/projects/"+id+"/orb", "")
+	// A new project declares no repos; this one works on app.
+	if code, body := f.do(t, "PUT", "/api/projects/"+slug+"/orb/files/project.yml",
+		`{"text":"repos:\n  - remote: `+filepath.Join(t.TempDir(), "app.git")+`\n    name: app\n"}`); code != http.StatusOK {
+		t.Fatalf("save = %d %v", code, body)
+	}
+	_, d := f.do(t, "GET", "/api/projects/"+slug+"/orb", "")
 	os_, _ := d["orbs"].([]any)
 	if len(os_) != 1 {
 		t.Fatalf("orbs = %v", d["orbs"])
@@ -515,5 +551,67 @@ func TestOrbDetailTitlesAndRepos(t *testing.T) {
 	sum, _ := d["orb"].(map[string]any)
 	if rs, _ := sum["repos"].([]any); len(rs) == 0 {
 		t.Errorf("summary repos = %v", sum)
+	}
+}
+
+// A project with no repos — what a label-only project migrates into —
+// has a page: the detail is a 200 with a preflight the orb strip can
+// render, not a 500 and a blank panel.
+func TestOrbDetailNoRepos(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	slug := mkProject(t, f, "empty area")
+	code, d := f.do(t, "GET", "/api/projects/"+slug+"/orb", "")
+	if code != http.StatusOK {
+		t.Fatalf("detail = %d %v", code, d)
+	}
+	pf, _ := d["preflight"].([]any)
+	if len(pf) == 0 {
+		t.Fatalf("no preflight in %v", d)
+	}
+	if c, _ := pf[0].(map[string]any); c["kind"] != "runtime" {
+		t.Errorf("first check = %v", c)
+	}
+	sum, _ := d["orb"].(map[string]any)
+	if rs, _ := sum["repos"].([]any); len(rs) != 0 {
+		t.Errorf("summary repos = %v, want none", rs)
+	}
+	if sum["error"] != nil {
+		t.Errorf("summary error = %v", sum["error"])
+	}
+	if files, _ := d["files"].(map[string]any); files[projectdef.FileMemory] == nil {
+		t.Errorf("files = %v, want one entry per editable file", files)
+	}
+}
+
+// A work area created from a repo group is a definition directory from
+// the first click: no repos in it, but a slug, so the project page has
+// an orb to configure instead of an "attach one" prompt.
+func TestProjectFromRepoMakesAnEmptyDefinition(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	f.api.home = f.home
+	now := time.Now()
+	f.seed(t, "01a00000-0000-7000-8000-0000000000f1",
+		history.Entry{Seq: 1, At: now, Kind: "meta", Data: map[string]any{"cwd": f.home}},
+		codeEntry(2, `tools.bash("cd repos/lone-repo && ls")`),
+	)
+	code, body := f.do(t, "POST", "/api/projects/from-repo", `{"repos":["lone-repo"],"name":"Ship it"}`)
+	if code != http.StatusOK {
+		t.Fatalf("from-repo = %d %v", code, body)
+	}
+	p, _ := body["project"].(map[string]any)
+	if p["slug"] != "ship-it" {
+		t.Fatalf("project = %v, want the slug of a new definition", p)
+	}
+	def, err := projectdef.Load(f.sup.Home(), "ship-it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(def.Def.Repos) != 0 {
+		t.Errorf("repos = %v, want none: the repos it works on are chosen by hand", def.Def.Repos)
+	}
+	if def.Def.Name != "Ship it" {
+		t.Errorf("name = %q, want the name the caller gave", def.Def.Name)
 	}
 }

@@ -727,3 +727,94 @@ func TestStopMarksStoppedBeforeJobsDie(t *testing.T) {
 		t.Fatal("a job dying mid-stop did not see StoppedSince")
 	}
 }
+
+// A project that is only a place to work — no repos, no build script —
+// still opens: the session's own orb dir becomes the working directory,
+// and it is mounted, or every exec would land nowhere.
+func TestOpenNoRepos(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	home := t.TempDir()
+	if _, err := projectdef.CreateEmpty(home, "area", "Area"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := projectdef.Load(home, "area")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := container.NewFake()
+	o, err := Open(ctx, rt, home, "s9", p, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := o.State()
+	if st.Status != StatusRunning || st.Primary != Dir(home, "s9") || len(st.Worktrees) != 0 {
+		t.Fatalf("state %+v", st)
+	}
+	if rt.LastRun.Workdir != st.Primary {
+		t.Fatalf("workdir %q, want %q", rt.LastRun.Workdir, st.Primary)
+	}
+	if !slices.ContainsFunc(rt.LastRun.Mounts, func(m container.Mount) bool {
+		return m.Source == st.Primary && m.Target == st.Primary && !m.ReadOnly
+	}) {
+		t.Fatalf("primary not mounted: %+v", rt.LastRun.Mounts)
+	}
+	if fi, err := os.Stat(st.Primary); err != nil || !fi.IsDir() {
+		t.Fatalf("primary dir: %v", err)
+	}
+	if err := o.Command(ctx, "true").Run(); err != nil {
+		t.Fatalf("orb unusable: %v", err)
+	}
+}
+
+// A definition with neither Dockerfile nor setup.sh still builds: the
+// image is the base image, so a project that is only a place to work has
+// something to run in.
+func TestEnsureImageNoBuildScript(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if _, err := projectdef.CreateEmpty(home, "bare", ""); err != nil {
+		t.Fatal(err)
+	}
+	p, err := projectdef.Load(home, "bare")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt := container.NewFake()
+	tag, err := EnsureImage(context.Background(), rt, home, p, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(tag, "bough-orb/bare:") {
+		t.Fatalf("tag %s", tag)
+	}
+	if ok, _ := rt.ImageExists(context.Background(), tag); !ok {
+		t.Fatalf("image not built: %v", rt.CallList())
+	}
+	if b, _ := ReadBuild(home, "bare"); b.State != "ok" {
+		t.Fatalf("build %+v", b)
+	}
+}
+
+// The project directory is mounted read-WRITE, at the same path in the
+// guest as on the host: MEMORY.md is injected into every session in the
+// project and the agent is asked to edit it, so tools.write (host) and
+// a shell heredoc (guest) have to reach one file.
+func TestProjectDirMountedWritable(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	dir := t.TempDir()
+	o := &Orb{rt: container.NewFake(), home: home, session: "s",
+		project: projectdef.Project{Slug: "p", Dir: dir}}
+	mounts, err := o.prepareMounts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(mounts, func(m container.Mount) bool { return m.Source == dir })
+	if i < 0 {
+		t.Fatalf("project dir not mounted: %+v", mounts)
+	}
+	if m := mounts[i]; m.Target != dir || m.ReadOnly {
+		t.Errorf("project dir mount = %+v, want %s read-write at the same path", m, dir)
+	}
+}

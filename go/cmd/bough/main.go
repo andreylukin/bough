@@ -410,6 +410,8 @@ func main() {
 	// The mode is fixed before any row mounts: history writes it into
 	// meta and tools decides at Apply whether write/patch exist.
 	spawnedBy, sessionID := takeSessionEnv()
+	sessProjectDir := takeProjectDirEnv()
+	sessMain := takeMainEnv()
 	sessMode, sessProject, err := chooseMode(*projectF, *localF, sets)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "bough:", err)
@@ -440,6 +442,15 @@ func main() {
 	ctx.Provide("origin", sessionOrigin(mode))
 	ctx.Provide("session-mode", sessMode)
 	ctx.Provide("session-project", sessProject)
+	// The project directory of a LOCAL session assigned to a project.
+	// Kept apart from session-project, which is a slug written into the
+	// history meta entry and used to build a project session's write
+	// roots: this one only names a directory to read MEMORY.md from and
+	// to allow writes to.
+	ctx.Provide("session-project-dir", projectDirFor(sessMode, sessProjectDir))
+	// True on a project's main thread: the session the project page
+	// talks to, and the parent of every other session in the project.
+	ctx.Provide("session-main", sessMain)
 	ctx.Provide("session-spawned-by", spawnedBy)
 	ctx.Provide("session-id", sessionID)
 	// A dev install running a build older than its checkout: say so

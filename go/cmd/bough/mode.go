@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	iorb "github.com/andreylukin/bough/internal/orb"
@@ -76,6 +77,30 @@ func takeModeEnv() (mode, project string) {
 	os.Unsetenv("BOUGH_MODE")
 	os.Unsetenv("BOUGH_PROJECT")
 	return mode, project
+}
+
+// takeProjectDirEnv reads and clears BOUGH_PROJECT_DIR: the project
+// directory serve sets on a LOCAL session that is assigned to a
+// project, so context-md prepends that project's MEMORY.md and tools
+// may write it. It is a directory, not a slug, and never chooses a
+// mode: BOUGH_MODE/BOUGH_PROJECT alone do that. Cleared like the rest
+// of the session env so a `bough` the agent runs from tools.bash does
+// not inherit this session's project.
+func takeProjectDirEnv() string {
+	dir := os.Getenv("BOUGH_PROJECT_DIR")
+	os.Unsetenv("BOUGH_PROJECT_DIR")
+	return dir
+}
+
+// takeMainEnv reads and clears BOUGH_PROJECT_MAIN: serve sets it on the
+// one long-lived session that is a project's main thread, so the prompt
+// can tell it what it is. Cleared like the rest of the session env, or
+// a `bough` the agent runs from its own shell would claim to be the
+// main thread too.
+func takeMainEnv() bool {
+	main := os.Getenv("BOUGH_PROJECT_MAIN") != ""
+	os.Unsetenv("BOUGH_PROJECT_MAIN")
+	return main
 }
 
 // takeSessionEnv reads and clears BOUGH_SPAWNED_BY/BOUGH_SESSION_ID,
@@ -162,4 +187,15 @@ func chooseMode(flagProject string, flagLocal bool, sets setFlags) (mode, projec
 		}
 	}
 	return mode, project, nil
+}
+
+// projectDirFor is the session's project directory, and only in local
+// mode: a project session gets the same directory from its slug, and an
+// inherited BOUGH_PROJECT_DIR must not make a project session read
+// another project's MEMORY.md.
+func projectDirFor(mode, dir string) string {
+	if mode != "local" || dir == "" {
+		return ""
+	}
+	return filepath.Clean(dir)
 }

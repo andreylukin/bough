@@ -48,7 +48,11 @@ func projectList(out io.Writer, home string) error {
 		for i, r := range p.Def.Repos {
 			names[i] = r.RepoName()
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", p.Slug, strings.Join(names, ", "), imageWord(rt, home, p), orbCounts(states, p.Slug))
+		repos := "no repos"
+		if len(names) > 0 {
+			repos = strings.Join(names, ", ")
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", p.Slug, repos, imageWord(rt, home, p), orbCounts(states, p.Slug))
 	}
 	tw.Flush()
 	return err

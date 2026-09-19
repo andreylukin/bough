@@ -12,8 +12,8 @@ import { BINDINGS, keyChips } from "./keys";
  * promises, so a call site reads as plainly as prompt() did.
  */
 type Req =
-  | { kind: "text"; title: string; initial: string; placeholder?: string; action: string; allowEmpty: boolean;
-      onSubmit?: (v: string) => Promise<void>; resolve: (v: string | null) => void }
+  | { kind: "text"; title: string; body?: string; initial: string; placeholder?: string; action: string; allowEmpty: boolean;
+      danger?: boolean; onSubmit?: (v: string) => Promise<void>; resolve: (v: string | null) => void }
   | { kind: "confirm"; title: string; body: string; action: string; danger: boolean; safe: boolean;
       resolve: (v: boolean) => void }
 
@@ -62,13 +62,13 @@ if (typeof window !== "undefined" && window.visualViewport) {
  * onSubmit the dialog stays open until it resolves, so closing means it
  * was saved; a rejection keeps the draft and shows why.
  */
-export function askText(title: string, opts: { initial?: string; placeholder?: string; action?: string; allowEmpty?: boolean;
-  onSubmit?: (v: string) => Promise<void> } = {}): Promise<string | null> {
+export function askText(title: string, opts: { initial?: string; body?: string; placeholder?: string; action?: string; allowEmpty?: boolean;
+  danger?: boolean; onSubmit?: (v: string) => Promise<void> } = {}): Promise<string | null> {
   return new Promise((resolve) => {
     // Rendered outside the app (a story, a test) there is no host.
-    if (!push) { resolve(window.prompt(title, opts.initial ?? "")); return; }
-    push({ kind: "text", title, initial: opts.initial ?? "", placeholder: opts.placeholder,
-           action: opts.action ?? "Save", allowEmpty: opts.allowEmpty ?? false, onSubmit: opts.onSubmit, resolve });
+    if (!push) { resolve(window.prompt([title, opts.body].filter(Boolean).join("\n\n"), opts.initial ?? "")); return; }
+    push({ kind: "text", title, body: opts.body, initial: opts.initial ?? "", placeholder: opts.placeholder,
+           action: opts.action ?? "Save", allowEmpty: opts.allowEmpty ?? false, danger: opts.danger, onSubmit: opts.onSubmit, resolve });
   });
 }
 
@@ -194,7 +194,7 @@ export function DialogHost() {
       <div ref={box} className="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-title" aria-busy={saving || undefined}
            onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); dismiss(); } }}>
         <h2 id="dlg-title" className="dlg-title">{req.title}</h2>
-        {(req.kind === "confirm" || req.kind === "choice") && <p className="dlg-body">{req.body}</p>}
+        {(req.kind === "confirm" || req.kind === "choice" || (req.kind === "text" && req.body)) && <p className="dlg-body">{req.body}</p>}
         {req.kind === "keys" && (["Global", "Session", "Composer"] as const).map((sec) => (
           <section key={sec} className="keys-sec" aria-labelledby={`keys-${sec}`}>
             <h3 id={`keys-${sec}`} className="keys-h">{sec}</h3>
@@ -232,7 +232,7 @@ export function DialogHost() {
           {req.kind === "keys" ? null : req.kind === "choice" ? [...req.actions].reverse().map((a, i, all) => (
             <button key={a} ref={i === all.length - 1 ? ok : undefined} className={"btn" + (i === all.length - 1 ? " btn-primary" : "")}
                     onClick={() => finish(a)}>{a}</button>
-          )) : <button ref={ok} className={"btn " + (req.kind === "confirm" && req.danger ? "btn-danger" : "btn-primary")}
+          )) : <button ref={ok} className={"btn " + (req.danger ? "btn-danger" : "btn-primary")}
                   disabled={blocked || saving} onClick={submit}>
             {saving ? req.action.replace(/e?$/, "ing…") : req.action}
           </button>}

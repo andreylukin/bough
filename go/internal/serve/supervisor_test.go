@@ -77,7 +77,7 @@ func fakeChild() {
 	if dir != "" && id != "" && os.Getenv(envNoHist) == "" {
 		cwd, _ := os.Getwd()
 		appendEntry(filepath.Join(dir, id+".jsonl"), history.Entry{
-			Seq: 1, At: time.Now(), Kind: "meta", Data: map[string]any{"cwd": cwd, "origin": os.Getenv("BOUGH_ORIGIN"), "mode": os.Getenv("BOUGH_MODE"), "project": os.Getenv("BOUGH_PROJECT"), "spawned_by": os.Getenv("BOUGH_SPAWNED_BY"), "args": strings.Join(os.Args[1:], " ")},
+			Seq: 1, At: time.Now(), Kind: "meta", Data: map[string]any{"cwd": cwd, "origin": os.Getenv("BOUGH_ORIGIN"), "mode": os.Getenv("BOUGH_MODE"), "project": os.Getenv("BOUGH_PROJECT"), "project_dir": os.Getenv("BOUGH_PROJECT_DIR"), "spawned_by": os.Getenv("BOUGH_SPAWNED_BY"), "args": strings.Join(os.Args[1:], " ")},
 		})
 	}
 	meta := map[string]any{"kind": "meta", "text": "ready"}

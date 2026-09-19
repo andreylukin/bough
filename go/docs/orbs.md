@@ -24,8 +24,36 @@ LSP broker and cloud runtimes are out of scope.
   valid inside the container. Checkpoints work unchanged against the
   host worktree (the child `chdir`s into the primary worktree).
 - The project definition lives in `~/.bough/projects/<slug>/`, never in a
-  repo. serve's existing label projects may point at one via a new `slug`
-  field; label-only projects keep working exactly as today.
+  repo, and IS the project: serve derives its list from that directory
+  and keys everything by the slug.
+  The display name is `name:` in `project.yml`; renaming a project
+  rewrites that one line and NEVER renames the directory.
+- `MEMORY.md` in that directory is the project's standing brief. It is a
+  file like `AGENTS.md`, not a memory system: `context-md` prepends it to
+  every session in the project, deduped by section, and the only things
+  that write it are the person (the editor on the project page) and an
+  agent asked to remember something (the ordinary write tool; the
+  injected header names the path). No hook, no per-turn extraction, no
+  summarisation — nothing automatic ever writes it. It is not a build
+  input either (`ImageHash` skips it), so editing the brief never
+  rebuilds an image or recreates a container.
+- Every project has a **main thread**: one long-lived session in the
+  project's orb, created the first time the project is opened or
+  messaged, recorded in `meta.json` as `mains: {slug: id}` (serve state,
+  not part of the definition — a project directory copied to another
+  machine must not claim a foreign session). Messaging the project is
+  messaging main. Every project session started from the web is a CHILD
+  of main, which is what makes a thread's finish or failure land
+  somewhere a person reads: `Supervisor.report` -> `notifyFrom(parent)`
+  returns early for a parentless session.
+  Orbs are per SESSION, so a project with a main and N threads runs N+1
+  containers; `Supervisor.EndProject` stops all of them and is what both
+  archive and delete go through.
+  **Not parented**, this run: a session started from the CLI or the TUI
+  with `bough --project <slug>`, and every project session that existed
+  before the migration to slug keying. They are listed on the project
+  page (the threads list is the union of main's children and everything
+  filed under the slug), but they report to nobody.
 
 Why the child sets up its own orb (not serve): the session id is only
 known once the child's history row mounts (supervisor learns it after
@@ -209,25 +237,58 @@ type Project struct {
 	Def  Def
 }
 
+// DisplayName is Def.Name, else the slug. Def.Name is `name:` in
+// project.yml and is the ONLY place a project's display name lives.
+func (p Project) DisplayName() string
+
 const (
 	FileYAML       = "project.yml"
 	FileDockerfile = "Dockerfile"
 	FileSetup      = "setup.sh"
 	FileResume     = "resume.sh"
+	FileMemory     = "MEMORY.md"
 )
 
-var EditableFiles = []string{FileYAML, FileDockerfile, FileSetup, FileResume}
+// EditableFiles is the order the orb panel's tabs and `bough project
+// show` use; the project page leads with MEMORY.md instead.
+var EditableFiles = []string{FileYAML, FileDockerfile, FileSetup, FileResume, FileMemory}
+
+// Entry is one directory under Root, parsed or not.
+type Entry struct {
+	Slug string
+	Dir  string
+	Def  Def
+	Err  error // why project.yml did not parse; nil when it did
+}
 
 func Root(home string) string                     // home/.bough/projects
 func ValidSlug(s string) error
 func List(home string) ([]Project, error)         // dirs with a project.yml; bad yaml => entry skipped + returned in a joined error
+// ListAll keeps the broken ones, with the error on the Entry: a
+// definition that does not parse still has a page, and the editor that
+// fixes it is on that page. Sorted by slug.
+func ListAll(home string) []Entry
 func Load(home, slug string) (Project, error)
 func Create(home, slug string) (Project, error)   // writes skeleton project.yml + setup.sh; exists => error
+// CreateEmpty writes project.yml with `repos: []`, an optional `name:`
+// and NOTHING else: the shape a project that was only ever a label
+// migrates into, and what `POST /api/projects` makes. No skeleton (its
+// placeholder repo is refused on the next write) and no setup.sh
+// (which would be built and snapshotted).
+func CreateEmpty(home, slug, name string) (Project, error)
+// SetName replaces or inserts the top-level `name:` line TEXTUALLY:
+// project.yml ships comments and is hand-edited, and marshalling Def
+// over it would drop every comment and reorder every key. The directory
+// is never renamed — orbs, images, caches and every past session are
+// keyed by slug on disk.
+func SetName(home, slug, name string) error
 func ReadFile(home, slug, name string) (string, error)   // missing => "", nil
-// WriteFile validates: name in EditableFiles; project.yml must parse and
-// have >=1 repo; writing Dockerfile when setup.sh exists (or vice versa)
-// is allowed and Dockerfile WINS at build time. Empty text deletes the
-// file (project.yml cannot be deleted). Atomic temp+rename.
+// WriteFile validates: name in EditableFiles; project.yml must parse
+// (zero repos is fine: a project need not have a checkout); writing
+// Dockerfile when setup.sh exists (or vice versa) is allowed and
+// Dockerfile WINS at build time. Empty text deletes the file, EXCEPT
+// MEMORY.md, which is plain text and whose empty body is an empty file
+// (project.yml cannot be deleted). Atomic temp+rename.
 func WriteFile(home, slug, name, text string) error
 func Parse(b []byte) (Def, error)
 
@@ -235,7 +296,8 @@ func Parse(b []byte) (Def, error)
 // (or BaseTag); on the setup.sh path its bytes plus each step's
 // `# bough:uses` files at the repo's base ref (read from the host source
 // checkout / cached clone, never a worktree); on the Dockerfile path every
-// project dir file except project.yml and resume.sh. Hex, first 12 chars.
+// project dir file except project.yml, resume.sh and MEMORY.md. Hex,
+// first 12 chars.
 func ImageHash(home string, p Project) (string, error)
 // ParseSteps splits setup.sh on `# bough:step <name>`; the preamble before
 // the first marker is prepended to every step; no markers = one step.
@@ -320,7 +382,8 @@ type Build struct {
 // Open prepares a session's orb: EnsureImage, worktrees (branch
 // "bough/<session>" off Repo.Branch; existing worktree reused on resume),
 // cache dirs ~/.bough/cache/<slug>/<sha256(guest path)[:10]> (host binds), Start with mounts
-// {each worktree, scratchDir} at identical paths — plus, for Path repos,
+// {each worktree, scratchDir, the project definition dir read-WRITE so the
+// agent can edit MEMORY.md} at identical paths — plus, for Path repos,
 // the source checkout's .git dir at its identical path, because a
 // worktree's .git FILE points at <source>/.git/worktrees/<name> and git
 // inside the container fails without it (remote repos: the cache .git
@@ -411,6 +474,22 @@ own shell; it only isolates file changes.
   `BOUGH_PROJECT=<slug>`. Flags win over env. main reads then
   `os.Unsetenv`s both (same reason as BOUGH_ORIGIN: the agent's own bough
   runs must not inherit it).
+- `BOUGH_PROJECT_DIR=<host project dir>` is separate and never chooses a
+  mode: serve sets it on a LOCAL session filed under a project, so
+  `context-md` prepends that project's `MEMORY.md` and `tools.write` may
+  edit it (service `session-project-dir`, local mode only; a project
+  session gets the same directory from its slug). It is derived from
+  `SessionMeta.Project` at EVERY start, not from spawn args, so it
+  survives a serve restart — a session already running does not pick up a
+  new assignment until its next start. Read and unset like the others.
+- `BOUGH_PROJECT_MAIN=1` marks the one session that is a project's MAIN
+  THREAD: the session the project page talks to and the parent of every
+  other session in the project. serve derives it at EVERY start from the
+  main it recorded, like `BOUGH_PROJECT_DIR`, so a restart does not lose
+  it (service `session-main`; `plugins/orb` turns it into the "you are
+  the main thread / you are a thread of ..." line in the prompt, pairing
+  it with `BOUGH_SPAWNED_BY` for the other side). Read and unset like the
+  others.
 - Resume (`-c`, `-r id`, history.file): the mode comes from the resumed
   file's meta, never flags/env. A `--project` that disagrees with the file
   prints a notice and is ignored.
@@ -423,6 +502,7 @@ own shell; it only isolates file changes.
 |---|---|---|---|
 | `session-mode` | `string` — `"local"` or `"project"` | launcher (cmd/bough/main.go) | history, tools, orb, loop prompt (via tools' section) |
 | `session-project` | `string` — slug, `""` for local | launcher | history, orb |
+| `session-main` | `bool` — this session is its project's main thread | launcher | orb (prompt role) |
 | `orb` | `OrbExec` (below) | plugins/orb | tools (optional; absent in local) |
 | `orb-state` | `interface{ State() orb.State }` | plugins/orb | ui/session (optional) |
 
@@ -545,25 +625,40 @@ type OrbSummary struct {
 }
 ```
 
-`meta.json` persists `Slug` inside projects. On load, every
-`projectdef.List` slug with no label gets a label `{Name: slug, Slug: slug}`
-(so a definition the agent created shows up). Deleting a label never
-deletes `~/.bough/projects/<slug>`.
+The DIRECTORY is the project: `serve.Project{Slug, Name, Error}` is
+derived from `projectdef.ListAll(home)` on every read, so a definition the
+agent wrote with the file tools is a project without serve being told, and
+one it removed stops being one. `meta.json` holds no project table (it is
+`"version": 2`); `SessionMeta.Project` holds a SLUG. A version-1 file
+migrates on boot: the label's name is written into `project.yml` first
+(`projectdef.SetName`), a label with no definition becomes one with no
+repos, and every `SessionMeta.Project` is rewritten from id to slug.
+Running an OLD binary against a version-2 file is not supported.
+
+Deleting a project removes `~/.bough/projects/<slug>` AND the state a
+project of the same name would inherit — `~/.bough/orbs/images/<slug>`,
+`~/.bough/orbs/cache/<slug>`, `~/.bough/cache/<slug>` — and unassigns its
+sessions. It never deletes a conversation.
 
 ### Endpoints
 
 | method + path | request | response |
 |---|---|---|
-| `GET /api/projects` | — | `{"projects": [Project & {"orb"?: OrbSummary}]}` (orb present iff slug) |
-| `POST /api/projects/{id}/orb` | `{"slug": "..."}` (optional; default slugified name) | `{"project": Project, "orb": OrbSummary}`; creates skeleton via projectdef.Create or attaches an existing dir; 400 bad slug, 409 slug attached to another label |
-| `DELETE /api/projects/{id}/orb` | — | `{"ok": true}`; detaches (clears Slug), files kept |
-| `GET /api/projects/{id}/orb` | — | `OrbDetail` below; 404 no slug |
-| `PUT /api/projects/{id}/orb/files/{name}` | `{"text": "..."}` | `{"ok": true, "orb": OrbSummary}`; name ∈ project.yml, Dockerfile, setup.sh, resume.sh; 400 with parse error |
-| `POST /api/projects/{id}/orb/build` | `{}` | 202 `{"build": Build}`; runs orb.EnsureImage in a goroutine; 409 while building |
-| `GET /api/projects/{id}/orb/build/log?offset=N` | — | `{"text": "...", "offset": M, "state": "building|ok|failed|"}` — bytes from N of build.log, max 256 KiB per call; client polls every 1 s while building |
+| `GET /api/projects` | — | `{"projects": [Project & {"orb": OrbSummary}]}`; every project has one |
+| `POST /api/projects` | `{"name": "..."}` | `{"project": Project}`; creates `~/.bough/projects/<slugify(name)>` with no repos. 400 a name with no letter or digit, 409 the slug is taken |
+| `GET /api/projects/{slug}` | — | `ProjectDetail`: the project, `main` (the main thread's id, `""` until it has one — reading the page never creates one), `mainOrb` (main's `OrbState`), `orbs` (every session orb for the slug), and `threads`, the union of main's children and every session filed under the slug, oldest first |
+| `POST /api/projects/{slug}/rename` | `{"name": "..."}` | `{"ok": true}`; writes `name:` into project.yml textually. The directory keeps its slug |
+| `POST /api/projects/{slug}/message` | `{"text": "..."}` | `{"ok": true, "main": "<id>"}`; creates the main thread on the first message and sends to it. 409 with the question when main has a pending ask |
+| `POST /api/projects/{slug}/archive` | — | `{"ok": true, "archived": N}`; stops main, every thread and each of their containers, then archives those conversations. Nothing on disk is deleted and a message starts the project again |
+| `DELETE /api/projects/{slug}` | — | `{"ok": true}`; see above — the web confirms by making you type the slug |
+| `GET /api/projects/{slug}/orb` | — | `OrbDetail` below; 404 unknown slug, 400 when the path is a pre-slug label id |
+| `PUT /api/projects/{slug}/orb/files/{name}` | `{"text": "..."}` | `{"ok": true, "orb": OrbSummary}`; name ∈ project.yml, Dockerfile, setup.sh, resume.sh, MEMORY.md; 400 with parse error |
+| `POST /api/projects/{slug}/orb/build` | `{}` | 202 `{"build": Build}`; runs orb.EnsureImage in a goroutine; 409 while building |
+| `GET /api/projects/{slug}/orb/build/log?offset=N` | — | `{"text": "...", "offset": M, "state": "building|ok|failed|"}` — bytes from N of build.log, max 256 KiB per call; client polls every 1 s while building |
+| `POST /api/sessions/{id}/project` | `{"project": "<slug>"}` | `{"ok": true}`; `""` unassigns. 409 for a session whose history says `mode: project` — its project is recorded there and nothing re-files it |
 | `GET /api/sessions/{id}/orb` | — | `{"orb": OrbState}` (`orb.State` JSON, status forced to `stopped` when PID dead and status was running/starting; `up: true` when the container runs, including after a failed setup); local => `{"orb": null}` |
 | `POST /api/sessions/{id}/orb/stop` | — | `{"ok": true}`; runtime Stop on OrbName. Allowed while the child is live: the child's `Orb.Command` re-starts a stopped container on the next exec. serve marks state.json `stopped` before the runtime Stop (restored if Stop fails); the child writes `running` again on restart. A background job that dies while the orb is marked stopped (or not running) records `stopped: true`, shows `[stopped with the orb]` and queues no wake notice. The web asks to confirm only when the session has running jobs |
-| `POST /api/sessions` | `{"cwd", "prompt", "mode"?: "local"\|"project", "project"?: "<label id>"}` | unchanged `{"session": Row}`. mode omitted => local. project mode: label must have a Slug (400 otherwise), cwd defaults to home and is ignored for the child dir; child env gets `BOUGH_MODE=project BOUGH_PROJECT=<slug>`, and the new session is auto-assigned to that label |
+| `POST /api/sessions` | `{"cwd", "prompt", "mode"?: "local"\|"project", "project"?: "<slug>"}` | 201 `{"session": Row, "queued": bool}`. mode omitted => local. project mode: the slug must name a project (400 otherwise), cwd defaults to home and is ignored for the child dir; child env gets `BOUGH_MODE=project BOUGH_PROJECT=<slug>`, and the session is started as a THREAD of the project's main thread (`spawnedBy` = main, created if the project has none), so it goes through the background-agent queue and reports its finished turns to main |
 
 ```go
 type OrbDetail struct {
@@ -725,11 +820,11 @@ offline. Fake runtime everywhere except the one live test.
   state.json; EnsureImage waiter does not truncate build.log; headless e2e
   (`--project` + fake runtime) runs `tools.bash("pwd")`.
 - **serve-api**: httptest over a Supervisor with Fake runtime and a stub
-  exe: attach/detach orb, PUT files (400 on bad yaml), build 202 → log poll
+  exe: orb detail, PUT files (400 on bad yaml), build 202 → log poll
   reaches ok, 409 while building, sessions row `mode`/`orb` from a written
   state.json, dead-PID => stopped, create with mode=project sets env
-  (assert via the stub child echoing its env) and auto-assigns label,
-  label-only projects and old meta.json unchanged (golden).
+  (assert via the stub child echoing its env) and files the session under
+  the slug, and a version-1 meta.json migrating to directories.
 - **web-ui**: `bun run build && bun run check`; stories render each state;
   existing projects stories unchanged; phone width checked in Storybook at
   400px.

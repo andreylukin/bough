@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { Job, OrbDetail, PreflightCheck, OrbRemovePlan, OrbFile, OrbStatus, Project, Status } from "./types";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import type { Job, OrbDetail, PreflightCheck, OrbRemovePlan, OrbFile, OrbState, OrbStatus, Project, Status } from "./types";
 import { askChoice, askConfirm } from "./dialog";
 import { sessionTitle } from "./render";
 import { CopyButton, Elapsed, ErrorNote, Pending, ago, duration } from "./loading";
@@ -7,7 +7,9 @@ import { MARKED, STATUS, StatusMark } from "./status";
 import { idTail } from "./palette";
 import { OrbAddress } from "./mode";
 
-const FILES: OrbFile[] = ["project.yml", "Dockerfile", "setup.sh", "resume.sh"];
+// Same order as projectdef.EditableFiles, which is what the detail's
+// files map is built from.
+const FILES: OrbFile[] = ["project.yml", "Dockerfile", "setup.sh", "resume.sh", "MEMORY.md"];
 
 /** Server text with `backticked` commands, the commands set as code. */
 function Prose({ text }: { text: string }) {
@@ -89,7 +91,7 @@ export async function confirmFailedBuild(p?: Project): Promise<boolean> {
   const c = await askChoice(`${p.name}’s image build failed`,
     "A new session rebuilds the image first and will likely fail the same way. Fix the recipe in Projects → Orb, or start anyway.",
     ["Open orb", "Start anyway"]);
-  if (c === "Open orb") location.hash = `#/projects/${p.id}/orb`;
+  if (c === "Open orb") location.hash = `#/projects/${p.slug}/orb`;
   return c === "Start anyway";
 }
 
@@ -102,13 +104,13 @@ const FAILED: Record<string, string> = { build: "Image build failed", setup: "Se
  * only the fix that applies (Rebuild for a build, Edit resume.sh and Retry
  * for setup). The fix lives on the project's orb page, linked, not as CLI text.
  */
-export function OrbFailureBody({ log, projectId, name, onRebuild, onRetry }: {
-  log: OrbFailureLog; projectId?: string; name: string; onRebuild?: () => void; onRetry?: () => void;
+export function OrbFailureBody({ log, projectSlug, name, onRebuild, onRetry }: {
+  log: OrbFailureLog; projectSlug?: string; name: string; onRebuild?: () => void; onRetry?: () => void;
 }) {
   const phase = log.phase || "start";
   const [first, ...rest] = (log.error || "The orb failed without an error message.").split("\n");
   const lines = rest.filter((l) => !l.startsWith("full log: ")).map((l) => l.trim());
-  const orbHref = projectId ? `#/projects/${projectId}/orb` : undefined;
+  const orbHref = projectSlug ? `#/projects/${projectSlug}/orb` : undefined;
   const tail = log.text ? log.text.split("\n").slice(-120).join("\n") : "";
   return <>
     <p className="orb-failure-title"><strong>{FAILED[phase] ?? FAILED.start}</strong> <span className="meta-line">{first}</span></p>
@@ -129,7 +131,7 @@ export function OrbFailureBody({ log, projectId, name, onRebuild, onRetry }: {
 }
 
 /** An orb's state in the session vocabulary, so its rows read like every other list. */
-const STATE: Record<OrbStatus, Status> = {
+export const ORB_AS_STATUS: Record<OrbStatus, Status> = {
   "": "queued", running: "running", building: "running", starting: "running",
   failed: "error", stopped: "stopped",
 };
@@ -195,16 +197,146 @@ function OrbVerdict({ detail }: { detail: OrbDetail }) {
 }
 
 /**
+ * What an empty pane says. project.yml is required, MEMORY.md is a file
+ * that may legitimately be empty (an empty save writes an empty file),
+ * and the scripts are removed by saving nothing.
+ */
+export function filePlaceholder(f: OrbFile): string {
+  if (f === "project.yml") return "";
+  if (f === "MEMORY.md") return "Empty. Write what every session in this project should know: what it is, where things live, decisions already made.";
+  return "Empty: saving removes the file";
+}
+
+/**
+ * The definition files, a tab per file over one pane, with the drafts and
+ * the Save that both pages share.
+ *
+ * `order` is a prop because the two callers lead with different files:
+ * the orb panel keeps projectdef.EditableFiles' order, the project page
+ * puts MEMORY.md first. The tab is controlled so a caller can point at
+ * the file it wants fixed (the preflight's "Edit project.yml").
+ */
+export function FileEditor({ order, files, tab, onTab, onSave, editorRef, meta, note, actions, announce }: {
+  order: readonly OrbFile[];
+  files: Partial<Record<OrbFile, string>>;
+  tab: OrbFile; onTab: (f: OrbFile) => void;
+  /** Rejects with the server's parse error, which stays beside the editor. */
+  onSave: (name: OrbFile, text: string) => Promise<void>;
+  editorRef?: RefObject<HTMLTextAreaElement | null>;
+  /** The pane's header line, e.g. "MEMORY.md · 84 lines". */
+  meta?: (f: OrbFile, text: string) => ReactNode;
+  /** One line under the tabs that stays whatever is open. */
+  note?: ReactNode;
+  /** Buttons that sit before Save. */
+  actions?: ReactNode;
+  /** Say so when a save lands; the orb panel's Build log already does. */
+  announce?: boolean;
+}) {
+  // Edits per file survive switching tabs; a saved file drops its draft.
+  const [drafts, setDrafts] = useState<Partial<Record<OrbFile, string>>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState("");
+  const [said, setSaid] = useState("");
+  const saved = files[tab] ?? "";
+  const text = drafts[tab] ?? saved;
+  const dirty = text !== saved;
+  useEffect(() => {
+    if (!said) return;
+    const t = window.setTimeout(() => setSaid(""), 2600);
+    return () => clearTimeout(t);
+  }, [said]);
+  const save = async () => {
+    setSaving(true); setSaveErr("");
+    try {
+      await onSave(tab, text);
+      setDrafts((d) => { const n = { ...d }; delete n[tab]; return n; });
+      if (announce) setSaid(`${tab} saved.`);
+    } catch (e) { setSaveErr(e instanceof Error ? e.message : String(e)); }
+    finally { setSaving(false); }
+  };
+  return (
+    <>
+      <div className="orb-tabs" role="tablist" aria-label="Definition files">
+        {order.map((f) => (
+          <button key={f} role="tab" aria-selected={tab === f} className={"btn mono" + (tab === f ? " btn-primary" : "")}
+                  onClick={() => { onTab(f); setSaveErr(""); }}>
+            {f}{drafts[f] !== undefined && drafts[f] !== (files[f] ?? "") ? " \u2022" : ""}
+          </button>
+        ))}
+      </div>
+      {note && <p className="file-note">{note}</p>}
+      {meta?.(tab, text)}
+      <textarea ref={editorRef} className="field mono orb-editor" aria-label={tab} spellCheck={false} value={text}
+                placeholder={filePlaceholder(tab)}
+                onChange={(e) => setDrafts((d) => ({ ...d, [tab]: e.target.value }))} />
+      {saveErr && <p className="err orb-save-err" role="alert">{saveErr}</p>}
+      <div className="orb-tabs">
+        {actions}
+        <button className="btn" disabled={!dirty || saving} onClick={() => { void save(); }}>{saving ? "Saving\u2026" : "Save"}</button>
+      </div>
+      {said && <p className="file-said" role="status">{said}</p>}
+    </>
+  );
+}
+
+/**
+ * Every container recorded for a project: one row per session, with the
+ * one action that row can take. Shared by the orb panel and the project
+ * page's thread orbs, so a container reads the same wherever it is seen.
+ */
+export function OrbSessions({ orbs, titles = {}, onOpen, onStopOrb, onRemoveOrb, none = "No session has run in this orb yet." }: {
+  orbs: OrbState[];
+  /** Session id to title, so a container row names the work. */
+  titles?: Record<string, string>;
+  onOpen?: (session: string) => void;
+  onStopOrb: (session: string) => void;
+  onRemoveOrb?: (session: string) => void;
+  /** What stands in for an empty table. */
+  none?: ReactNode;
+}) {
+  if (orbs.length === 0) return <p className="proj-none">{none}</p>;
+  return (
+    <div className="orb-sessions">
+      <div className="sel-cols orb-cols" aria-hidden="true"><span>Session</span><span className="orb-ctr">Container</span><span className="orb-st">Status</span><span className="orb-act" /></div>
+      {orbs.map((o) => (
+      <div key={o.session} className="proj-row orb-row">
+        <button className="proj-open" onClick={() => onOpen?.(o.session)}>
+          <span className="proj-title">{sessionTitle({ id: o.session, title: titles[o.session] || o.title })}</span>
+          {/* A fallback name is the same for every untitled session: the id tail tells them apart. */}
+          {!(titles[o.session] || o.title) && <span className="mono row-id">{idTail(o.session)}</span>}
+        </button>
+        {/* The container name is for pasting into a terminal, not for reading. */}
+        <span className="orb-ctr" title={o.container}>
+          {o.container && <CopyButton text={o.container} label={idTail(o.container)} className="link proj-act mono" />}
+        </span>
+        <span className="orb-st" title={o.error}><StatusMark status={ORB_AS_STATUS[o.status]} /></span>
+        {/* Every row keeps the action slot, so the columns line up whether or not it can stop. */}
+        <span className="orb-act">{orbUp(o) ? <button className="btn btn-sm" onClick={() => onStopOrb(o.session)}>Stop orb</button>
+          : onRemoveOrb && <button className="btn btn-sm btn-danger-quiet" onClick={() => onRemoveOrb(o.session)}>Remove…</button>}</span>
+        {o.status === "running" && (o.ip || o.ports?.length) ? <div className="orb-note"><OrbAddress orb={o} /></div> : null}
+        {/* A long warning is a tinted callout, not coloured prose. The fix is
+            the row's own Remove… beside it, so this does not repeat the button. */}
+        {o.proxyAuth === "legacy" && (
+          <div className="orb-note callout warn orb-legacy">
+            <p className="orb-legacy-line"><b>Proxy unauthenticated.</b> Any VM on the bridge can use this orb’s host proxy. Removing it and starting a session recreates it with a token.</p>
+          </div>
+        )}
+      </div>
+      ))}
+    </div>
+  );
+}
+
+/**
  * One project's orb: the definition files, the snapshot image and the
  * containers sessions run in. Presentational; ProjectsView fetches.
  */
-export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, onSave, onBuild, onStopOrb, onRemoveOrb, onOpen, onRetry, titles = {} }: {
+export function ProjectOrb({ project, detail, log, error, onSave, onBuild, onStopOrb, onRemoveOrb, onOpen, onRetry, titles = {} }: {
   project: Project; detail?: OrbDetail; log: string;
   /** Session id to title, so a container row names the work. */
   titles?: Record<string, string>;
   /** Why the detail could not be read, when it could not. */
   error?: string;
-  onAttach: () => void; onDetach: () => void;
   /** Rejects with the server's parse error, which stays beside the editor. */
   onSave: (name: OrbFile, text: string) => Promise<void>;
   onBuild: () => void; onStopOrb: (session: string) => void; onRemoveOrb?: (session: string) => void;
@@ -213,24 +345,11 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
   onRetry: () => void;
 }) {
   const [tab, setTab] = useState<OrbFile>("project.yml");
-  // Edits per file survive switching tabs; a saved file drops its draft.
-  const [drafts, setDrafts] = useState<Partial<Record<OrbFile, string>>>({});
-  const [saving, setSaving] = useState(false);
-  const [saveErr, setSaveErr] = useState("");
   const logRef = useRef<HTMLPreElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [log]);
 
   const about = <p className="proj-none orb-about">An orb is a container image for this project: its sessions run inside it, with the project's repos checked out on a branch of their own.</p>;
-  if (!project.slug) {
-    return (
-      <div className="proj-orb">
-        {about}
-        <p className="proj-none">No orb yet for “{project.name}”.</p>
-        <div className="orb-tabs"><button className="btn btn-primary" onClick={onAttach}>Add orb</button></div>
-      </div>
-    );
-  }
   if (!detail) {
     return <div className="proj-orb">{error
       ? <ErrorNote title="Couldn’t read this orb" err={error}
@@ -238,9 +357,6 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
       : <Pending what="Orb" inline />}</div>;
   }
 
-  const saved = detail.files[tab] ?? "";
-  const text = drafts[tab] ?? saved;
-  const dirty = text !== saved;
   const building = detail.build.state === "building";
   // The build log opens itself while a build runs and when one fails,
   // but `open` alone fought the user: this page re-renders on every poll,
@@ -253,15 +369,6 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
     lastBuild.current = detail.build.state;
     if (detail.build.state === "building" || detail.build.state === "failed") setLogOpen(true);
   }, [detail.build.state]);
-  const save = async () => {
-    setSaving(true); setSaveErr("");
-    try {
-      await onSave(tab, text);
-      setDrafts((d) => { const n = { ...d }; delete n[tab]; return n; });
-    } catch (e) { setSaveErr(e instanceof Error ? e.message : String(e)); }
-    finally { setSaving(false); }
-  };
-
   const v = orbVerdict(detail);
   // Only a red or amber verdict has a reason worth the room; Ready says it all.
   const verdictFail = v.status === "error" || v.status === "needs-you";
@@ -277,36 +384,7 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
           usually opened to check, and the recipe is what it is opened to edit. */}
       <section className="orb-sec">
         <h3 className="orb-sec-h">Sessions</h3>
-        {detail.orbs.length === 0
-          ? <p className="proj-none">No session has run in this orb yet.</p>
-          : <div className="orb-sessions">
-            <div className="sel-cols orb-cols" aria-hidden="true"><span>Session</span><span className="orb-ctr">Container</span><span className="orb-st">Status</span><span className="orb-act" /></div>
-            {detail.orbs.map((o) => (
-            <div key={o.session} className="proj-row orb-row">
-              <button className="proj-open" onClick={() => onOpen?.(o.session)}>
-                <span className="proj-title">{sessionTitle({ id: o.session, title: titles[o.session] || o.title })}</span>
-                {/* A fallback name is the same for every untitled session: the id tail tells them apart. */}
-                {!(titles[o.session] || o.title) && <span className="mono row-id">{idTail(o.session)}</span>}
-              </button>
-              {/* The container name is for pasting into a terminal, not for reading. */}
-              <span className="orb-ctr" title={o.container}>
-                {o.container && <CopyButton text={o.container} label={idTail(o.container)} className="link proj-act mono" />}
-              </span>
-              <span className="orb-st" title={o.error}><StatusMark status={STATE[o.status]} /></span>
-              {/* Every row keeps the action slot, so the columns line up whether or not it can stop. */}
-              <span className="orb-act">{orbUp(o) ? <button className="btn btn-sm" onClick={() => onStopOrb(o.session)}>Stop orb</button>
-                : onRemoveOrb && <button className="btn btn-sm btn-danger-quiet" onClick={() => onRemoveOrb(o.session)}>Remove…</button>}</span>
-              {o.status === "running" && (o.ip || o.ports?.length) ? <div className="orb-note"><OrbAddress orb={o} /></div> : null}
-              {/* A long warning is a tinted callout, not coloured prose. The fix is
-                  the row's own Remove… beside it, so this does not repeat the button. */}
-              {o.proxyAuth === "legacy" && (
-                <div className="orb-note callout warn orb-legacy">
-                  <p className="orb-legacy-line"><b>Proxy unauthenticated.</b> Any VM on the bridge can use this orb’s host proxy. Removing it and starting a session recreates it with a token.</p>
-                </div>
-              )}
-            </div>
-            ))}
-          </div>}
+        <OrbSessions orbs={detail.orbs} titles={titles} onOpen={onOpen} onStopOrb={onStopOrb} onRemoveOrb={onRemoveOrb} />
       </section>
 
       <section className="orb-sec">
@@ -325,7 +403,7 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
             // already the open one, which is every fresh render: the
             // button promised a fix and visibly did nothing. Put the
             // cursor where the fix gets typed.
-            setTab("project.yml"); setSaveErr("");
+            setTab("project.yml");
             requestAnimationFrame(() => {
               const el = editorRef.current;
               if (!el) return;
@@ -335,25 +413,12 @@ export function ProjectOrb({ project, detail, log, error, onAttach, onDetach, on
           }} />}
         </dl>
 
-        <div className="orb-tabs" role="tablist" aria-label="Definition files">
-          {FILES.map((f) => (
-            <button key={f} role="tab" aria-selected={tab === f} className={"btn mono" + (tab === f ? " btn-primary" : "")}
-                    onClick={() => { setTab(f); setSaveErr(""); }}>
-              {f}{drafts[f] !== undefined && drafts[f] !== (detail.files[f] ?? "") ? " •" : ""}
-            </button>
-          ))}
-        </div>
-        <textarea ref={editorRef} className="field mono orb-editor" aria-label={tab} spellCheck={false} value={text}
-                  placeholder={tab === "project.yml" ? "" : "Empty: saving removes the file"}
-                  onChange={(e) => setDrafts((d) => ({ ...d, [tab]: e.target.value }))} />
-        {saveErr && <p className="err orb-save-err" role="alert">{saveErr}</p>}
-        <div className="orb-tabs">
-          <button className="btn btn-primary" disabled={building || !detail.runtime.available} onClick={onBuild}
-                  title={detail.runtime.available ? undefined : "Start the container runtime first"}>{building ? "Building…" : "Build image"}</button>
-          <button className="btn" disabled={!dirty || saving} onClick={() => { void save(); }}>{saving ? "Saving…" : "Save"}</button>
-          {!detail.runtime.available && <span className="orb-hint">Start the container runtime first</span>}
-          <button className="btn btn-danger-quiet orb-detach" onClick={onDetach}>Detach orb…</button>
-        </div>
+        <FileEditor order={FILES} files={detail.files} tab={tab} onTab={setTab} onSave={onSave} editorRef={editorRef}
+                    actions={<>
+                      <button className="btn btn-primary" disabled={building || !detail.runtime.available} onClick={onBuild}
+                              title={detail.runtime.available ? undefined : "Start the container runtime first"}>{building ? "Building…" : "Build image"}</button>
+                    </>} />
+        {!detail.runtime.available && <div className="orb-tabs"><span className="orb-hint">Start the container runtime first</span></div>}
 
         {(log || detail.build.state) && (
           <details className="block" open={logOpen} onToggle={(e) => setLogOpen(e.currentTarget.open)}>

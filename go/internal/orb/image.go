@@ -17,9 +17,9 @@ import (
 )
 
 type Build struct {
-	Tag       string    `json:"tag"`
-	Hash      string    `json:"hash"`
-	State     string    `json:"state"` // "", "building", "ok", "failed"
+	Tag   string `json:"tag"`
+	Hash  string `json:"hash"`
+	State string `json:"state"` // "", "building", "ok", "failed"
 	// omitzero, not omitempty: omitempty does nothing to a struct, so a
 	// project that has never been built shipped "0001-01-01T00:00:00Z"
 	// and the UI aged it to six figures of days instead of saying Never.
@@ -193,11 +193,11 @@ func build(ctx context.Context, rt container.Runtime, home string, p projectdef.
 	if p.UsesDockerfile() {
 		return rt.Build(ctx, container.BuildSpec{Dir: p.Dir, Dockerfile: filepath.Join(p.Dir, projectdef.FileDockerfile), Tag: tag}, w)
 	}
+	// No setup.sh either: the image is the base with one empty layer. A
+	// project that is only a place to work (no repos, no build) must still
+	// have an image to run in; ImageHash already hashes the missing file.
 	text, err := os.ReadFile(filepath.Join(p.Dir, projectdef.FileSetup))
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("project %s has neither %s nor %s", p.Slug, projectdef.FileDockerfile, projectdef.FileSetup)
-		}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	steps, err := projectdef.ParseSteps(string(text))

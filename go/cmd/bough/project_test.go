@@ -74,8 +74,16 @@ func TestProjectCommand(t *testing.T) {
 	if _, err := run("", "remove-repo", "web", "web"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := run("", "remove-repo", "web", "api"); err == nil {
-		t.Error("removing the last repo succeeded")
+	// A project may have no repos at all: a brief and an orb with nothing
+	// checked out is a project. Put one back for what follows.
+	if _, err := run("", "remove-repo", "web", "api"); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := projectdef.Load(home, "web"); len(p.Def.Repos) != 0 {
+		t.Errorf("remove-repo left %+v", p.Def.Repos)
+	}
+	if _, err := run("", "add-repo", "web", "git@github.com:me/api.git", "--branch", "dev"); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := run("repo: []\n", "write", "web", "project.yml"); err == nil {
 		t.Error("a typo'd project.yml was written")
