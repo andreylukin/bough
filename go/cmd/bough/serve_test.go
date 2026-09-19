@@ -8,6 +8,14 @@ import (
 	"testing"
 )
 
+func TestServeArgsHost(t *testing.T) {
+	t.Parallel()
+	_, _, _, host, err := serveArgs([]string{"--run", "9001", "--host=bough.example.ts.net"})
+	if err != nil || host != "bough.example.ts.net" {
+		t.Fatalf("host = %q, %v", host, err)
+	}
+}
+
 func TestServeArgs(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -36,9 +44,14 @@ func TestServeArgs(t *testing.T) {
 		{[]string{":9000"}, "", "", true},
 		{[]string{"--insecure-bind", "0.0.0.0:9000"}, "start", "0.0.0.0:9000", false},
 		{[]string{"--run", "0.0.0.0:9000", "--insecure-bind"}, "--run", "0.0.0.0:9000", false},
+		// A proxy's name rides along; it needs a value.
+		{[]string{"--run", "9001", "--host=bough.example.ts.net"}, "--run", "127.0.0.1:9001", false},
+		{[]string{"--host", "bough.example.ts.net"}, "start", defaultServeAddr, false},
+		{[]string{"--host="}, "", "", true},
+		{[]string{"--host"}, "", "", true},
 	}
 	for _, c := range cases {
-		verb, addr, _, err := serveArgs(c.in)
+		verb, addr, _, _, err := serveArgs(c.in)
 		if (err != nil) != c.bad || verb != c.verb || addr != c.addr {
 			t.Errorf("serveArgs(%v) = %q %q %v, want %q %q bad=%v", c.in, verb, addr, err, c.verb, c.addr, c.bad)
 		}

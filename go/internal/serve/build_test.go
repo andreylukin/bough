@@ -33,7 +33,7 @@ func TestEveryAnswerNamesItsBuild(t *testing.T) {
 // Guard answers before the API ever sees the request.
 func TestRefusalsNameTheirBuildToo(t *testing.T) {
 	f := newAPI(t)
-	guarded := httptest.NewServer(Guard(f.api, "tok", false))
+	guarded := httptest.NewServer(Guard(f.api, "tok", false, ""))
 	t.Cleanup(guarded.Close)
 
 	req, err := http.NewRequest("GET", guarded.URL+"/api/sessions", nil)

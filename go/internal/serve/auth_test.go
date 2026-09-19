@@ -10,7 +10,7 @@ import (
 func guardRig(t *testing.T) http.Handler {
 	t.Helper()
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
-	return Guard(ok, "sekret", false)
+	return Guard(ok, "sekret", false, "")
 }
 
 func guardDo(h http.Handler, method, path, host string, hdr map[string]string) *httptest.ResponseRecorder {
@@ -37,9 +37,34 @@ func TestGuardForeignHostRejected(t *testing.T) {
 			t.Errorf("host %s = %d, want 200", host, rec.Code)
 		}
 	}
-	remote := Guard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), "sekret", true)
+	remote := Guard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), "sekret", true, "")
 	if rec := guardDo(remote, "GET", "/api/health", "10.0.0.5:7684", map[string]string{"Authorization": "Bearer sekret"}); rec.Code != http.StatusOK {
 		t.Errorf("remote bind = %d, want 200", rec.Code)
+	}
+}
+
+func TestGuardTrustedHost(t *testing.T) {
+	t.Parallel()
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	h := Guard(ok, "sekret", false, "bough.example.ts.net")
+	bearer := map[string]string{"Authorization": "Bearer sekret"}
+	for _, host := range []string{"bough.example.ts.net", "Bough.Example.ts.net:443", "127.0.0.1:7684"} {
+		if rec := guardDo(h, "GET", "/api/health", host, bearer); rec.Code != http.StatusOK {
+			t.Errorf("host %s = %d, want 200", host, rec.Code)
+		}
+	}
+	for _, host := range []string{"evil.example", "bough.example.ts.net.evil.example", "xbough.example.ts.net"} {
+		if rec := guardDo(h, "GET", "/api/health", host, bearer); rec.Code != http.StatusForbidden {
+			t.Errorf("host %s = %d, want 403", host, rec.Code)
+		}
+	}
+	// The trusted name gets the UI cookie on "/", like loopback does.
+	rec := guardDo(h, "GET", "/", "bough.example.ts.net", nil)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Set-Cookie"), TokenCookie+"=sekret") {
+		t.Errorf("trusted host / = %d cookie %q, want 200 with token", rec.Code, rec.Header().Get("Set-Cookie"))
+	}
+	if rec := guardDo(h, "GET", "/", "evil.example", nil); rec.Header().Get("Set-Cookie") != "" {
+		t.Errorf("foreign host got a cookie: %q", rec.Header().Get("Set-Cookie"))
 	}
 }
 

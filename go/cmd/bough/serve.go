@@ -32,46 +32,60 @@ const defaultServeAddr = "127.0.0.1:7684"
 // args or an address starts (or attaches to) the daemon; "status" and
 // "stop" are their own verbs; the hidden "--run <addr>" is how the
 // detached child is told to be the server in the foreground.
-// --insecure-bind, anywhere, allows a non-loopback address. Pure.
-func serveArgs(all []string) (verb, addr string, insecure bool, err error) {
-	usage := "(usage: bough serve [--insecure-bind] [addr|status|stop])"
+// --insecure-bind, anywhere, allows a non-loopback address.
+// --host=NAME, anywhere, trusts one more Host header — the name a
+// reverse proxy in front of a loopback bind forwards. Pure.
+func serveArgs(all []string) (verb, addr string, insecure bool, host string, err error) {
+	usage := "(usage: bough serve [--insecure-bind] [--host=NAME] [addr|status|stop])"
 	var args []string
-	for _, a := range all {
-		if a == "--insecure-bind" {
+	for i := 0; i < len(all); i++ {
+		a := all[i]
+		switch {
+		case a == "--insecure-bind":
 			insecure = true
 			continue
+		case strings.HasPrefix(a, "--host="):
+			host = strings.TrimPrefix(a, "--host=")
+		case a == "--host" && i+1 < len(all):
+			i++
+			host = all[i]
+		default:
+			args = append(args, a)
+			continue
 		}
-		args = append(args, a)
+		if host == "" {
+			return "", "", false, "", fmt.Errorf("serve: --host needs a name %s", usage)
+		}
 	}
 	switch {
 	case len(args) == 0:
-		return "start", defaultServeAddr, insecure, nil
+		return "start", defaultServeAddr, insecure, host, nil
 	case args[0] == "--run":
 		switch len(args) {
 		case 1:
-			return "--run", defaultServeAddr, insecure, nil
+			return "--run", defaultServeAddr, insecure, host, nil
 		case 2:
 			a, aerr := serveAddr(args[1], insecure)
 			if aerr != nil {
-				return "", "", false, aerr
+				return "", "", false, "", aerr
 			}
-			return "--run", a, insecure, nil
+			return "--run", a, insecure, host, nil
 		}
-		return "", "", false, fmt.Errorf("serve: --run takes at most one address, got %v %s", args[1:], usage)
+		return "", "", false, "", fmt.Errorf("serve: --run takes at most one address, got %v %s", args[1:], usage)
 	case len(args) > 1:
-		return "", "", false, fmt.Errorf("serve: takes at most one argument, got %v %s", args, usage)
+		return "", "", false, "", fmt.Errorf("serve: takes at most one argument, got %v %s", args, usage)
 	}
 	switch args[0] {
 	case "status", "stop":
-		return args[0], "", insecure, nil
+		return args[0], "", insecure, host, nil
 	case "start":
-		return "start", defaultServeAddr, insecure, nil
+		return "start", defaultServeAddr, insecure, host, nil
 	}
 	a, err := serveAddr(args[0], insecure)
 	if err != nil {
-		return "", "", false, err
+		return "", "", false, "", err
 	}
-	return "start", a, insecure, nil
+	return "start", a, insecure, host, nil
 }
 
 // serveAddr accepts host:port or a bare port; a bare port binds
@@ -79,7 +93,7 @@ func serveArgs(all []string) (verb, addr string, insecure bool, err error) {
 // is refused unless insecure: the API runs agents and writes hooks,
 // and a token is all that would stand between it and the network.
 func serveAddr(a string, insecure bool) (string, error) {
-	usage := "(usage: bough serve [--insecure-bind] [addr|status|stop])"
+	usage := "(usage: bough serve [--insecure-bind] [--host=NAME] [addr|status|stop])"
 	if strings.HasPrefix(a, "-") {
 		return "", fmt.Errorf("serve: unknown flag %s %s", a, usage)
 	}
@@ -146,7 +160,7 @@ func writeServePidfile(home, addr string) func() {
 // launchServe starts `bin serve --run addr` detached (own session,
 // output appended to ~/.bough/serve.log) and returns its pid and log
 // path.
-func launchServe(home, bin, addr string, insecure bool) (int, string, error) {
+func launchServe(home, bin, addr string, insecure bool, host string) (int, string, error) {
 	logPath := filepath.Join(home, ".bough", "serve.log")
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return 0, "", fmt.Errorf("serve: log dir: %w", err)
@@ -160,6 +174,9 @@ func launchServe(home, bin, addr string, insecure bool) (int, string, error) {
 	if insecure {
 		argv = append(argv, "--insecure-bind")
 	}
+	if host != "" {
+		argv = append(argv, "--host="+host)
+	}
 	cmd := exec.Command(bin, argv...)
 	cmd.Stdout = logF
 	cmd.Stderr = logF
@@ -171,7 +188,7 @@ func launchServe(home, bin, addr string, insecure bool) (int, string, error) {
 }
 
 func runServe(args []string) {
-	verb, addr, insecure, err := serveArgs(args)
+	verb, addr, insecure, host, err := serveArgs(args)
 	if err != nil {
 		fatal(err)
 	}
@@ -208,7 +225,7 @@ func runServe(args []string) {
 		fmt.Printf("bough serve: stopped http://%s (pid %d)\n", w.addr, w.pid)
 		return
 	case "--run":
-		if err := serveForeground(home, addr, insecure); err != nil {
+		if err := serveForeground(home, addr, insecure, host); err != nil {
 			fatal(err)
 		}
 		return
@@ -224,7 +241,7 @@ func runServe(args []string) {
 		}
 		return
 	}
-	pid, logPath, err := launchServe(home, resolveExe(), addr, insecure)
+	pid, logPath, err := launchServe(home, resolveExe(), addr, insecure, host)
 	if err != nil {
 		fatal(err)
 	}
@@ -249,7 +266,7 @@ func runServe(args []string) {
 
 // serveForeground is the daemon body: supervisor + API on addr until
 // SIGINT/SIGTERM, then drain HTTP and kill every child.
-func serveForeground(home, addr string, insecure bool) error {
+func serveForeground(home, addr string, insecure bool, host string) error {
 	remote := watch.CheckLoopback(addr) != nil
 	if remote {
 		fmt.Fprintf(os.Stderr, "bough serve: WARNING: %s is not loopback; the API is reachable from the network, guarded only by the token in %s\n", addr, serveclient.TokenPath(home))
@@ -279,7 +296,7 @@ func serveForeground(home, addr string, insecure bool) error {
 		return fmt.Errorf("serve: listen %s: %w", addr, err)
 	}
 	api := serve.NewAPI(sup)
-	srv := &http.Server{Addr: addr, Handler: serve.Guard(api, token, remote && insecure)}
+	srv := &http.Server{Addr: addr, Handler: serve.Guard(api, token, remote && insecure, host)}
 
 	// Watchers run for as long as the server does. They execute shell,
 	// so a server bound off loopback gets none — say why, rather than

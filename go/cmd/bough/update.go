@@ -106,7 +106,9 @@ func restartServe(home, bin string, out io.Writer) error {
 	}
 	os.Remove(servePidfile(home)) // best-effort; the exiting process usually removed it
 
-	pid, logPath, err := launchServe(home, bin, cur.addr, watch.CheckLoopback(cur.addr) != nil)
+	// The pidfile does not record a --host; a proxied install runs
+	// under a supervisor (systemd) that restarts serve itself.
+	pid, logPath, err := launchServe(home, bin, cur.addr, watch.CheckLoopback(cur.addr) != nil, "")
 	if err != nil {
 		return err
 	}
