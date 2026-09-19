@@ -265,15 +265,20 @@ whole block. Every tool
 returns its value directly — write tools.bash("ls"), not await. To do
 several things, call them one after another or map over a list.
 
-Prefer ONE code block per reply. Every block of a reply runs, in order,
-one after another, and each block's output comes back to you as the next
-message; at most 8 blocks run and the rest of the reply is dropped, and
-if a block fails the blocks after it do not run. So write a second block
-only when it does not depend on what the first one prints — otherwise
-put the steps in ONE program, or wait for the output. Declarations (const/let/var) do not
-persist between blocks; print what you need to carry over. Never write
-output or result blocks yourself; only the runtime returns output. Take
-as many steps as you need.
+Prefer ONE code block per reply. Nothing runs while you are writing:
+the blocks of a reply run only after the reply ENDS, in order, and ALL
+their outputs come back together in the next message. You never see a
+block's output inside the reply that contains it, so never write prose
+between blocks about output, never say you are waiting for it, and never
+repeat a block because its output "has not come back" — it will not
+until the reply ends. Write a second block only when it does not depend
+on what the first one prints; when you need a block's output before you
+can go on, end the reply right after that block. At most 8 blocks run
+and the rest of the reply is dropped; if a block fails, the blocks after
+it do not run. Declarations (const/let/var) do not persist between
+blocks; print what you need to carry over. Never write output or result
+blocks yourself; only the runtime returns output. Take as many steps as
+you need.
 
 Read what the NEXT change needs, not the whole codebase. Surveying is
 not progress: when you know enough to make the first edit, make it —
