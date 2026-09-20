@@ -3,7 +3,6 @@ package orb
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,36 +13,19 @@ import (
 	"github.com/andreylukin/bough/plugins/tools"
 )
 
-// progress rewrites one line on w with the start's current phase, read
-// from state.json every tick, until the returned stop clears it. It is
-// what a TUI session shows while the orb builds, before the TUI is up.
-func progress(w io.Writer, home, session string, tick time.Duration) (stop func()) {
-	done := make(chan struct{})
-	finished := make(chan struct{})
-	go func() {
-		defer close(finished)
-		t := time.NewTicker(tick)
-		defer t.Stop()
-		for {
-			if st, err := iorb.ReadState(home, session); err == nil && st.Session != "" {
-				fmt.Fprint(w, "\r\x1b[K"+iorb.PhaseLine(st, time.Now()))
-			}
-			select {
-			case <-done:
-				fmt.Fprint(w, "\r\x1b[K")
-				return
-			case <-t.C:
-			}
-		}
-	}()
-	return func() { close(done); <-finished }
-}
-
 const logTail = 40
+
+// orbLike is what /orb needs of the session's orb: the handle, which
+// answers before the container is up.
+type orbLike interface {
+	State() iorb.State
+	Root() string
+	Stop(context.Context) error
+}
 
 // orbCommand is /orb in a project session: status, logs and stop, while
 // any other argument still runs the /orb setup skill.
-func orbCommand(o *iorb.Orb, home string, jobs func() []tools.Running) func(string) (string, error) {
+func orbCommand(o orbLike, home string, jobs func() []tools.Running) func(string) (string, error) {
 	return func(args string) (string, error) {
 		verb, rest, _ := strings.Cut(strings.TrimSpace(args), " ")
 		switch verb {

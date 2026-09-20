@@ -379,8 +379,9 @@ type Build struct {
 	Error     string    `json:"error,omitempty"`
 }
 
-// Open prepares a session's orb: EnsureImage, worktrees (branch
-// "bough/<session>" off Repo.Branch; existing worktree reused on resume),
+// Open = Prepare (sync repos, worktrees — branch "bough/<session>" off
+// Repo.Branch; existing worktree reused on resume) then Start (EnsureImage,
+// container, resume.sh); the orb row runs the two apart. Start:
 // cache dirs ~/.bough/cache/<slug>/<sha256(guest path)[:10]> (host binds), Start with mounts
 // {each worktree, scratchDir, the project definition dir read-WRITE so the
 // agent can edit MEMORY.md} at identical paths — plus, for Path repos,
@@ -545,19 +546,42 @@ type orbExec interface {
 - Mount order is decided by Inject keys, not bough.yml position, and
   `tools-basic` injects only `codemode`, so tools may mount BEFORE orb.
   Therefore tools must never read `orb` at Apply (see Tools below).
-- Project: `orb.Open(ctx, rt, home, sessionID, project, scratchDir)`
-  where sessionID = history path basename, scratchDir = `scratch` service
-  `Dir()`. Then chdir to `state.Primary` through a package var
-  `var chdir = os.Chdir` (tests swap it: os.Chdir is process-global and
-  would race every other `t.Parallel()` test; the one test that needs a
-  real chdir runs in the e2e subprocess), provide `orb` and `orb-state`,
-  set prompt section `orb` (container, repos, checks.fast/full, "your
+- Project: the row runs `orb.Prepare(ctx, rt, home, sessionID, project,
+  scratchDir)` inline (sessionID = history path basename, scratchDir =
+  `scratch` service `Dir()`): repos synced, worktrees added, the process
+  chdir'd into the primary — seconds of local git, and what the first
+  turn's checkpoint, cwd and env section need. Then it provides `orb`
+  and `orb-state` AT ONCE as a `handle` (plugins/orb/handle.go) and runs
+  `(*Orb).Start` (image, container, resume.sh) on its own goroutine.
+  `orb.Open` is the two in sequence. Apply used to wait
+  for the whole start, and every row after it — ui, web — waited with it:
+  the composer, model picker and thinking were dead for an image build,
+  and a serve child did not read stdin until the container was up. Now
+  the rows after it mount in milliseconds; `handle.Command` (tools.bash)
+  and `handle.Ready` (write/patch via `projectMode.wait`) block on the
+  start with the caller's context, the script timeout paused, and the
+  60 s bash clock starts only once the container is up. A failed start
+  settles the handle with the error: Command then fails with the reason,
+  never runs on the host. The one exception is a headless run by a
+  person or script (`ui-mode` headless, origin not web): it waits for the
+  start inline and fails the row on a failed open or resume.sh, since a
+  turn answered from nowhere hid the cause. The chdir goes through a
+  package var `var chdir = os.Chdir` (tests swap it: os.Chdir is
+  process-global and would race every other `t.Parallel()` test; the
+  one test that needs a real chdir runs in the e2e subprocess). When the
+  start settles the row's watcher sets prompt section `orb` (container,
+  repos, checks.fast/full, "your
   shell runs in a Linux container; files under <root> are shared with the
   host"), plus the blocked-verification rule (docs/secrets.md §5) and,
   when `missingEnv` (plugins/orb/envcheck.go) finds env that resume.sh or
   the checks reference but nothing sets, `Unset env referenced by
   resume.sh/checks: A, B. ...`; the same list goes to stderr once per open
-  as `bough: orb: <slug>: unset env A, B (resume.sh/checks)`. Effect on unmount: `Stop` (never Remove — resume reuses it).
+  as `bough: orb: <slug>: unset env A, B (resume.sh/checks)`. While the
+  start runs the section is `startingPromptSection`: the container
+  exists, is starting, the tools wait for it, no address yet. Effect on
+  unmount: cancel a start in flight and wait for it to let go, then
+  `Stop` (never Remove — resume reuses it). A reload keeps the handle,
+  failed or not: a failed build is not retried until the next process.
 - Open failure: row error names the row and wraps
   (`orb: open %s: %w`); state.json says failed so serve shows it.
 - `runtime.Available` failing => the same error path with the fix
@@ -579,9 +603,12 @@ type orbExec interface {
 - Project: `bash` foreground and `jobs.start` resolve `orb` with
   `kernel.Get[orbExec]` AT CALL TIME and build the command via
   `orb.Command(ctx, "sh", script)` instead of `exec.CommandContext(ctx,
-  "sh", script)`. If mode is project and `orb` is absent (row pending or
-  failed), bash returns an error ("tools: bash: project orb not ready:
+  "sh", script)`. If mode is project and `orb` is absent (row pending),
+  bash returns an error ("tools: bash: project orb not ready:
   see the orb row") — it must NEVER fall back to running on the host.
+  An orb still starting is waited for first (`projectMode.wait`: the
+  handle's `Ready`, the turn's context, script timeout paused), before
+  the bash clock or a job's limit starts; a failed start is the error.
   The script temp file is created in `$BOUGH_SCRATCH` (mounted at the
   same path) instead of os.TempDir. Process-group kill, timeout,
   WaitDelay stay as is (see the kill-semantics note in §1a).

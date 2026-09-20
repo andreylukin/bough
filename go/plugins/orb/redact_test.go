@@ -1,6 +1,7 @@
 package orb
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,8 +63,12 @@ func TestProjectHistoryRedactsSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ctx.Unmount()
-	if _, err := kernel.Get[any](ctx, "orb"); err != nil {
+	h, err := kernel.Get[*handle](ctx, "orb")
+	if err != nil {
 		t.Fatalf("orb: %v", err)
+	}
+	if err := h.Ready(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	rec, err := kernel.Get[func(string, map[string]any)](ctx, "history-record")
 	if err != nil {

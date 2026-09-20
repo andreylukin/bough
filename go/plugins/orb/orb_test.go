@@ -1,7 +1,7 @@
 package orb
 
 import (
-	"encoding/json"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andreylukin/bough/internal/container"
 	iorb "github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/internal/projectdef"
 	"github.com/andreylukin/bough/kernel"
@@ -30,9 +31,30 @@ func TestLocalSessionMountsNothing(t *testing.T) {
 	}
 }
 
-type fakeSections struct{ m map[string]string }
+type fakeSections struct {
+	mu sync.Mutex
+	m  map[string]string
+}
 
-func (f *fakeSections) Set(name, text string) { f.m[name] = text }
+func (f *fakeSections) Set(name, text string) { f.mu.Lock(); defer f.mu.Unlock(); f.m[name] = text }
+func (f *fakeSections) get(name string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.m[name]
+}
+
+// waitFor polls cond: the start settles on its own goroutine, and the
+// row's watcher runs after it.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
 
 func TestLocalSessionSetsReadOnlySection(t *testing.T) {
 	t.Parallel()
@@ -42,14 +64,16 @@ func TestLocalSessionSetsReadOnlySection(t *testing.T) {
 	if err := (plugin{}).Apply(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	if secs.m["mode"] != iorb.LocalPromptSection {
-		t.Errorf("mode section = %q", secs.m["mode"])
+	if secs.get("mode") != iorb.LocalPromptSection {
+		t.Errorf("mode section = %q", secs.get("mode"))
 	}
 }
 
 // The row mounts after the real scratchpad row (Inject keys, not row
-// order), opens the orb with the fake runtime, chdirs into the primary
-// worktree and writes state.json.
+// order) and returns at once, with the orb still starting behind its
+// handle; a command waits for it. Once the fake runtime lets the start
+// through, the row has chdir'd into the primary worktree and written
+// state.json.
 func TestProjectRowOpensOrb(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -82,6 +106,8 @@ func TestProjectRowOpensOrb(t *testing.T) {
 	userHome = func() (string, error) { return home, nil }
 	var dirs []string
 	chdir = func(d string) error { dirs = append(dirs, d); return nil }
+	gate := make(chan struct{})
+	newFake = func() container.Runtime { f := container.NewFake(); f.StartGate = gate; return f }
 
 	ctx := kernel.NewContext()
 	ctx.Provide("session-mode", "project")
@@ -102,11 +128,29 @@ func TestProjectRowOpensOrb(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ctx.Unmount()
-	o, err := kernel.Get[interface{ State() iorb.State }](ctx, "orb-state")
+	o, err := kernel.Get[*handle](ctx, "orb-state")
 	if err != nil {
 		for _, r := range ctx.Rows() {
 			t.Logf("%s %s %v %v", r.ID, r.State, r.Missing, r.Err)
 		}
+		t.Fatal(err)
+	}
+	// Mounted, not open: the worktree is there and the process is in it,
+	// the start is held at the container start.
+	if !o.Starting() || len(dirs) != 1 {
+		t.Fatalf("row waited for the start: starting=%v chdir=%v", o.Starting(), dirs)
+	}
+	if line := o.Line(); !strings.HasPrefix(line, "orb demo · ") {
+		t.Errorf("Line while starting = %q", line)
+	}
+	// A command bounded by its own context gives up with the reason.
+	short, cancelShort := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	if c := o.Command(short, "true"); c.Err == nil || !strings.Contains(c.Err.Error(), "waiting for the container") {
+		t.Errorf("Command while starting: err = %v", c.Err)
+	}
+	cancelShort()
+	close(gate)
+	if err := o.Ready(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	st := o.State()
@@ -130,7 +174,7 @@ func TestProjectRowOpensOrb(t *testing.T) {
 	if err := ctx.Remount("orb"); err != nil {
 		t.Fatal(err)
 	}
-	o2, err := kernel.Get[interface{ State() iorb.State }](ctx, "orb-state")
+	o2, err := kernel.Get[*handle](ctx, "orb-state")
 	if err != nil || o2 != o {
 		t.Fatalf("reload reopened the orb: %v", err)
 	}
@@ -157,40 +201,27 @@ func TestProjectRowOpensOrb(t *testing.T) {
 		t.Errorf("after /orb stop %s", s.Status)
 	}
 
-	// A chdir failing after the orb is open must not leave it running
-	// with no owner.
+	// A chdir failing leaves no container behind: the start settles
+	// failed before one is started.
+	ctx.Unmount()
 	chdir = func(string) error { return os.ErrNotExist }
-	if err := ctx.Remount("orb"); err != nil {
+	ctx2 := kernel.NewContext()
+	ctx2.Provide("session-mode", "project")
+	ctx2.Provide("session-project", "demo")
+	ctx2.Provide("codemode", codemode.New(5*time.Second))
+	ctx2.Provide("commands", commands.NewRegistry())
+	if err := ctx2.Mount(rows); err != nil {
 		t.Fatal(err)
 	}
-	if s, _ := iorb.ReadState(home, "sess1"); s.Status != iorb.StatusStopped {
-		t.Fatalf("failed chdir left the orb %s", s.Status)
+	defer ctx2.Unmount()
+	o3, err := kernel.Get[*handle](ctx2, "orb-state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o3.Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "chdir") {
+		t.Fatalf("Ready after a failed chdir = %v", err)
+	}
+	if s, _ := iorb.ReadState(home, "sess1"); s.Status != iorb.StatusFailed || !strings.Contains(s.Error, "chdir") {
+		t.Fatalf("failed chdir left the orb %s (%q)", s.Status, s.Error)
 	}
 }
-
-// Before the TUI is up, a start prints one line that follows state.json.
-func TestProgressLine(t *testing.T) {
-	t.Parallel()
-	home := t.TempDir()
-	now := time.Now().UTC()
-	b, _ := json.Marshal(iorb.State{Session: "s", Project: "demo", Status: iorb.StatusBuilding, Phase: iorb.PhaseBuild,
-		Phases: []iorb.Phase{{Name: iorb.PhaseBuild, StartedAt: now}}})
-	os.MkdirAll(iorb.Dir(home, "s"), 0o755)
-	os.WriteFile(filepath.Join(iorb.Dir(home, "s"), "state.json"), b, 0o644)
-	var buf syncBuf
-	stop := progress(&buf, home, "s", 5*time.Millisecond)
-	time.Sleep(30 * time.Millisecond)
-	stop()
-	out := buf.String()
-	if !strings.Contains(out, "\r\x1b[Korb demo · build image") || !strings.HasSuffix(out, "\r\x1b[K") {
-		t.Errorf("progress = %q", out)
-	}
-}
-
-type syncBuf struct {
-	mu sync.Mutex
-	b  strings.Builder
-}
-
-func (s *syncBuf) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
-func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }

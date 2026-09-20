@@ -1,6 +1,7 @@
 package orb
 
 import (
+	"context"
 	"io"
 	"os"
 	"os/exec"
@@ -45,11 +46,20 @@ func TestProjectOrbOpenFailureKeepsSessionUp(t *testing.T) {
 		t.Fatalf("a failed orb open killed the mount: %v", err)
 	}
 	defer ctx.Unmount()
-	if _, err := kernel.Get[any](ctx, "orb"); err == nil {
-		t.Error("a failed open still provided an orb")
+	// The orb service is there from the mount, but it never runs anything
+	// on the host: a command against the failed start fails with the reason.
+	h, err := kernel.Get[*handle](ctx, "orb")
+	if err != nil {
+		t.Fatal(err)
 	}
-	text := secs.m["orb"]
-	if !strings.Contains(text, "failed to start") || !strings.Contains(text, "bough project write broken setup.sh") {
+	if err := h.Ready(context.Background()); err == nil {
+		t.Fatal("a failed open reported ready")
+	}
+	if c := h.Command(context.Background(), "true"); c.Err == nil || !strings.Contains(c.Err.Error(), "no-such-repo") {
+		t.Errorf("Command after a failed open: err = %v", c.Err)
+	}
+	waitFor(t, "the failed prompt section", func() bool { return strings.Contains(secs.get("orb"), "failed to start") })
+	if text := secs.get("orb"); !strings.Contains(text, "bough project write broken setup.sh") {
 		t.Errorf("orb prompt section = %q", text)
 	}
 }
@@ -128,6 +138,12 @@ func TestTUIOrbFailureIsNotice(t *testing.T) {
 	if strings.Contains(buf.String(), "bough: orb") {
 		t.Errorf("stderr under the tui: %q", buf.String())
 	}
+	h, err := kernel.Get[*handle](ctx, "orb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Ready(context.Background())
+	waitFor(t, "the orb notice", func() bool { n, _ := kernel.Get[string](ctx, "orb-notice"); return n != "" })
 	n, err := kernel.Get[string](ctx, "orb-notice")
 	if err != nil || !strings.Contains(n, "broken") || !strings.Contains(n, "bough project show broken") {
 		t.Errorf("orb-notice = %q, %v", n, err)

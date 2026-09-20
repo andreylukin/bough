@@ -51,7 +51,7 @@ var opened = struct {
 }{m: map[string]openOrb{}}
 
 type openOrb struct {
-	o    *iorb.Orb
+	h    *handle
 	slug string
 	cfg  map[string]any
 }
@@ -66,6 +66,9 @@ func (plugin) Name() string { return "orb" }
 // scratch dir is mounted into the container at its host path.
 func (plugin) Inject() []string { return []string{"history", "scratch"} }
 
+// newFake is swapped by tests that need a hand on the fake runtime.
+var newFake = func() container.Runtime { return container.NewFake() }
+
 // runtimeFor maps the row's runtime config to a backend.
 func runtimeFor(name string) (container.Runtime, error) {
 	switch name {
@@ -78,7 +81,7 @@ func runtimeFor(name string) (container.Runtime, error) {
 	case "podman":
 		return container.NewPodman(), nil
 	case "fake":
-		return container.NewFake(), nil
+		return newFake(), nil
 	}
 	return nil, fmt.Errorf("orb: runtime %q: want apple, nerdctl, podman or fake", name)
 }
@@ -130,7 +133,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if err != nil {
 		return err
 	}
-	h, err := kernel.Get[pather](ctx, "history")
+	hist, err := kernel.Get[pather](ctx, "history")
 	if err != nil {
 		return fmt.Errorf("orb: %w", err)
 	}
@@ -138,7 +141,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("orb: %w", err)
 	}
-	session := strings.TrimSuffix(filepath.Base(h.Path()), ".jsonl")
+	session := strings.TrimSuffix(filepath.Base(hist.Path()), ".jsonl")
 	home, err := userHome()
 	if err != nil {
 		return fmt.Errorf("orb: home dir: %w", err)
@@ -148,10 +151,11 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		return fmt.Errorf("orb: open %s: %w", slug, err)
 	}
 	// Open can build an image; bound it so a wedged engine fails the
-	// row instead of hanging the mount forever.
+	// start instead of hanging forever. The context lives as long as the
+	// handle: the start runs past this Apply.
 	octx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
 	if err := rt.Available(octx); err != nil {
+		cancel()
 		return fmt.Errorf("orb: open %s: runtime %s: %w (run `bough update` or `container system start`)", slug, rt.Name(), err)
 	}
 	opened.Lock()
@@ -159,113 +163,186 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	delete(opened.m, session)
 	opened.Unlock()
 	reused = reused && prev.slug == slug && reflect.DeepEqual(prev.cfg, cfg)
-	if !reused && prev.o != nil {
-		stopOrb(prev.o)
+	if !reused && prev.h != nil {
+		prev.h.close()
 	}
-	o := prev.o
-	if !reused {
-		// Before the TUI is up the terminal would stay blank for a whole
-		// image build: one line follows the start's phases instead.
-		stopProgress := func() {}
-		if mode, _ := kernel.Get[string](ctx, "ui-mode"); mode == "tui" && !uiActive(ctx) && isTerminal(os.Stderr) {
-			stopProgress = progress(os.Stderr, home, session, 250*time.Millisecond)
-		}
-		o, err = iorb.Open(octx, rt, home, session, p, pad.Dir())
-		stopProgress()
-		if err != nil {
-			// Not a row failure: the first mount is strict, so an error here
-			// killed the whole session process before it read stdin, and a
-			// message sent to it vanished with no error anywhere. A broken
-			// setup.sh made the session unreachable. The session stays up
-			// without an orb (tools.bash refuses: "project orb not ready"),
-			// says why, and the next start retries the build.
-			st, _ := iorb.ReadState(home, session)
-			report := failureReport(slug, iorb.FailedAt(st), err)
-			uiMode := uiModeOf(ctx)
-			if headlessRun(ctx) {
-				// A person or script ran this one turn: running it without
-				// the orb would answer from nowhere, and exit 0 or a model
-				// error hid the cause. serve's children (origin web) stay
-				// up so the web can show the failure.
-				return fmt.Errorf("%s", report)
+	h := prev.h
+	if reused {
+		cancel()
+	} else {
+		h = newHandle(home, session, slug, cancel)
+		// The host half now: repos synced, worktrees added, the process
+		// moved into the primary worktree. Seconds of local git, and
+		// what the first turn's checkpoint, cwd and prompt need. The
+		// container half runs on its own.
+		o, err := prepare(octx, rt, home, session, p, pad.Dir())
+		start := func() {
+			if err != nil {
+				h.settle(nil, err)
+				return
 			}
-			say(ctx, uiMode, report)
-			if s, serr := kernel.Get[sections](ctx, "prompt-sections"); serr == nil {
-				s.Set("orb", failedPromptSection(slug, err))
-				ctx.Effect(func() { s.Set("orb", "") })
+			if err := o.Start(octx); err != nil {
+				h.settle(nil, err)
+				return
 			}
-			return nil
+			h.settle(o, nil)
 		}
-	}
-	st := o.State()
-	if st.ProxyAuth == iorb.ProxyAuthLegacy && !reused {
-		say(ctx, uiModeOf(ctx), fmt.Sprintf("orb: %s: %s", slug, iorb.LegacyProxyNotice))
-	}
-	// Checkpoints and relative paths use the process cwd: it must be the
-	// primary worktree, which is also the container's workdir.
-	if st.Primary != "" {
-		if err := chdir(st.Primary); err != nil {
-			// Open started the container and no Effect owns it yet.
-			stopOrb(o)
-			return fmt.Errorf("orb: chdir %s: %w", st.Primary, err)
-		}
-	}
-	resume, _ := projectdef.ReadFile(home, slug, projectdef.FileResume)
-	setup, _ := projectdef.ReadFile(home, slug, projectdef.FileSetup)
-	dockerfile, _ := projectdef.ReadFile(home, slug, projectdef.FileDockerfile)
-	missing := missingEnv(resume, p.Def.Checks, p.Def, setup+"\n"+dockerfile)
-	if len(missing) > 0 && !reused {
-		say(ctx, uiModeOf(ctx), fmt.Sprintf("orb: %s: unset env %s (resume.sh/checks)", slug, strings.Join(missing, ", ")))
-	}
-	if st.Status == iorb.StatusFailed && !reused {
-		report := failureReport(slug, iorb.FailedAt(st), fmt.Errorf("%s", st.Error))
 		if headlessRun(ctx) {
-			// Same as a failed open: no turn runs against a broken orb.
-			stopOrb(o)
-			return fmt.Errorf("%s", report)
+			// A person or script ran this one turn: running it without
+			// the orb would answer from nowhere, and exit 0 or a model
+			// error hid the cause. So this one start is waited for, and
+			// its failure is the row's.
+			start()
+			if err := h.Ready(octx); err != nil {
+				h.close()
+				st, _ := iorb.ReadState(home, session)
+				return fmt.Errorf("%s", failureReport(slug, iorb.FailedAt(st), err))
+			}
+			// resume.sh failing leaves the container up but the project
+			// broken (no deps, no dev server): no turn runs against it.
+			if st := h.Orb().State(); st.Status == iorb.StatusFailed {
+				h.close()
+				return fmt.Errorf("%s", failureReport(slug, iorb.FailedAt(st), fmt.Errorf("%s", st.Error)))
+			}
+		} else {
+			// Everyone else gets the row now and the orb when it is up:
+			// the rows after this one (ui, web) mount at once, so the
+			// person can type, pick a model and read while the image
+			// builds. tools.bash, write and patch wait on the handle.
+			// A failed start used to kill the whole session process
+			// before it read stdin, and a message sent to it vanished
+			// with no error anywhere; the session stays up without an
+			// orb, says why, and the next start retries the build.
+			go start()
 		}
-		say(ctx, uiModeOf(ctx), report)
 	}
-	if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
-		root := o.Root()
-		memory := filepath.Join(p.Dir, projectdef.FileMemory)
-		// Which session in the project this is. serve sets
-		// BOUGH_PROJECT_MAIN on the main thread and BOUGH_SPAWNED_BY on
-		// the threads it starts; a session started from the CLI is
-		// neither and is told neither.
-		isMain, _ := kernel.Get[bool](ctx, "session-main")
-		parent, _ := kernel.Get[string](ctx, "session-spawned-by")
-		r := projectRole{main: isMain, parent: parent}
-		s.Set("orb", promptSection(root, memory, st, p.Def, missing, r))
-		// A restart gets a new IP: keep the prompt's address current.
-		o.OnResume(func(st iorb.State) { s.Set("orb", promptSection(root, memory, st, p.Def, missing, r)) })
-		ctx.Effect(func() { o.OnResume(nil); s.Set("orb", "") })
+	// Which session in the project this is. serve sets
+	// BOUGH_PROJECT_MAIN on the main thread and BOUGH_SPAWNED_BY on
+	// the threads it starts; a session started from the CLI is
+	// neither and is told neither.
+	isMain, _ := kernel.Get[bool](ctx, "session-main")
+	parent, _ := kernel.Get[string](ctx, "session-spawned-by")
+	r := projectRole{main: isMain, parent: parent}
+	secs, _ := kernel.Get[sections](ctx, "prompt-sections")
+	uiMode := uiModeOf(ctx)
+	// gone is this Apply's lifetime: a watcher from before a reload must
+	// not write a section the reload's Effect just cleared.
+	gone := make(chan struct{})
+	// settled is the per-Apply work that needs the open orb: the prompt
+	// section with its address, the notices, the address refresh on
+	// restart. On a reused, already open orb it runs at once.
+	settled := func() {
+		select {
+		case <-gone:
+			return
+		default:
+		}
+		o := h.Orb()
+		if o == nil {
+			// Said once, by the Apply whose start it was: a reload keeps
+			// the failed handle and only restores the section.
+			err := h.Ready(context.Background())
+			if !reused {
+				st, _ := iorb.ReadState(home, session)
+				say(ctx, uiMode, failureReport(slug, iorb.FailedAt(st), err))
+			}
+			if secs != nil {
+				secs.Set("orb", failedPromptSection(slug, err))
+			}
+			return
+		}
+		st := o.State()
+		if st.ProxyAuth == iorb.ProxyAuthLegacy && !reused {
+			say(ctx, uiMode, fmt.Sprintf("orb: %s: %s", slug, iorb.LegacyProxyNotice))
+		}
+		resume, _ := projectdef.ReadFile(home, slug, projectdef.FileResume)
+		setup, _ := projectdef.ReadFile(home, slug, projectdef.FileSetup)
+		dockerfile, _ := projectdef.ReadFile(home, slug, projectdef.FileDockerfile)
+		missing := missingEnv(resume, p.Def.Checks, p.Def, setup+"\n"+dockerfile)
+		if len(missing) > 0 && !reused {
+			say(ctx, uiMode, fmt.Sprintf("orb: %s: unset env %s (resume.sh/checks)", slug, strings.Join(missing, ", ")))
+		}
+		if st.Status == iorb.StatusFailed && !reused {
+			say(ctx, uiMode, failureReport(slug, iorb.FailedAt(st), fmt.Errorf("%s", st.Error)))
+		}
+		if secs != nil {
+			root := o.Root()
+			memory := filepath.Join(p.Dir, projectdef.FileMemory)
+			secs.Set("orb", promptSection(root, memory, st, p.Def, missing, r))
+			// A restart gets a new IP: keep the prompt's address current.
+			o.OnResume(func(st iorb.State) {
+				select {
+				case <-gone:
+				default:
+					secs.Set("orb", promptSection(root, memory, st, p.Def, missing, r))
+				}
+			})
+		}
 	}
+	if h.Starting() {
+		if secs != nil {
+			secs.Set("orb", startingPromptSection(slug, h.Root(), r))
+		}
+		go func() {
+			select {
+			case <-h.ready:
+				settled()
+			case <-gone:
+			}
+		}()
+	} else {
+		settled()
+	}
+	ctx.Effect(func() {
+		close(gone)
+		h.OnResume(nil)
+		if secs != nil {
+			secs.Set("orb", "")
+		}
+	})
 	if reg, err := kernel.Get[*commands.Registry](ctx, "commands"); err == nil {
-		registerOrbCommand(ctx, reg, o, home)
+		registerOrbCommand(ctx, reg, h, home)
 	}
 	// Resolved secrets never reach history: every entry goes through the
-	// orb's redactor (a no-op under `redact: false`).
-	if r, ok := h.(interface{ SetRedact(func(string) string) }); ok {
-		r.SetRedact(o.Redact)
+	// orb's redactor (a no-op under `redact: false`, and before it is up).
+	if r, ok := hist.(interface{ SetRedact(func(string) string) }); ok {
+		r.SetRedact(h.Redact)
 		ctx.Effect(func() { r.SetRedact(nil) })
 	}
 	registerPortalTools(ctx, home, session)
-	ctx.Provide("orb", o)
-	ctx.Provide("orb-state", o)
+	ctx.Provide("orb", h)
+	ctx.Provide("orb-state", h)
 	// Stop, never Remove: a resumed session reuses its worktrees and
 	// container. A reload (this row still mounted and still desired as
 	// is) keeps the orb running for the next Apply instead.
 	ctx.Effect(func() {
 		if reloading(ctx, cfg) {
 			opened.Lock()
-			opened.m[session] = openOrb{o: o, slug: slug, cfg: cfg}
+			opened.m[session] = openOrb{h: h, slug: slug, cfg: cfg}
 			opened.Unlock()
 			return
 		}
-		stopOrb(o)
+		h.close()
 	})
 	return nil
+}
+
+// prepare is the host half of a start: the orb's worktrees, then the
+// process's move into the primary one (checkpoints and relative paths
+// use the cwd, which is also the container's workdir).
+func prepare(ctx context.Context, rt container.Runtime, home, session string, p projectdef.Project, scratch string) (*iorb.Orb, error) {
+	o, err := iorb.Prepare(ctx, rt, home, session, p, scratch)
+	if err != nil {
+		return nil, err
+	}
+	if st := o.State(); st.Primary != "" {
+		if err := chdir(st.Primary); err != nil {
+			err = fmt.Errorf("chdir %s: %w", st.Primary, err)
+			o.Abort(err)
+			return nil, fmt.Errorf("orb: %w", err)
+		}
+	}
+	return o, nil
 }
 
 // reloading reports whether the orb row is being disposed only to be
@@ -290,7 +367,7 @@ func reloading(ctx *kernel.Context, cfg map[string]any) bool {
 // registerOrbCommand takes over /orb from the setup skill for this
 // session (orbCommand still forwards everything else to the skill) and
 // gives it back on unmount.
-func registerOrbCommand(ctx *kernel.Context, reg *commands.Registry, o *iorb.Orb, home string) {
+func registerOrbCommand(ctx *kernel.Context, reg *commands.Registry, o orbLike, home string) {
 	jobs := func() []tools.Running {
 		if j, err := kernel.Get[interface{ Running() []tools.Running }](ctx, "job-notices"); err == nil {
 			return j.Running()
@@ -318,22 +395,6 @@ func registerOrbCommand(ctx *kernel.Context, reg *commands.Registry, o *iorb.Orb
 			return "", commands.SubmitAction(strings.TrimSpace("/orb " + args))
 		})
 	})
-}
-
-// uiActive reports whether the ui row is already mounted (the TUI owns
-// the terminal, so nothing may print to it).
-func uiActive(ctx *kernel.Context) bool {
-	for _, r := range ctx.Rows() {
-		if r.Plugin == "ui" && r.State == kernel.StateActive {
-			return true
-		}
-	}
-	return false
-}
-
-func isTerminal(f *os.File) bool {
-	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
 func stopOrb(o *iorb.Orb) {
@@ -398,6 +459,16 @@ func phaseWord(phase string) string {
 		return " setup (resume.sh)"
 	}
 	return " to start"
+}
+
+// startingPromptSection is the model's picture of its container while it
+// is still starting: it exists, the tools wait for it, and there is no
+// address to give yet.
+func startingPromptSection(slug, root string, r projectRole) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Project session: %s. Your shell runs in a Linux container that is still starting (repos syncing, image building or container booting). tools.bash, write and patch wait for it and then run as normal, so use them as you would; do not poll for it or ask the user to wait. Files under %s are shared with the host at the same paths. The container's address is not known yet: once a command has run, the prompt says where servers started here are reachable.\n", slug, root)
+	b.WriteString(roleLine(r, slug))
+	return b.String()
 }
 
 // failedPromptSection tells the model its project container did not start,

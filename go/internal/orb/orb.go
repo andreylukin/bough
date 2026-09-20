@@ -31,6 +31,13 @@ type Orb struct {
 	project projectdef.Project
 	scratch string
 
+	// Between Prepare and Start: the mounts the worktrees gave, and the
+	// state a previous start left (its image says whether an existing
+	// container is stale).
+	mounts  []container.Mount
+	prev    State
+	prevErr error
+
 	mu       sync.Mutex
 	state    State
 	spec     container.RunSpec
@@ -41,35 +48,76 @@ type Orb struct {
 	secretWarned sync.Map // secret names already reported unresolved
 }
 
-// Open prepares a session's orb; see docs/orbs.md §1c.
+// Open prepares a session's orb and starts it; see docs/orbs.md §1c.
+// Prepare and Start are the two halves for a caller that needs the
+// worktrees now and the container later (the orb row).
 func Open(ctx context.Context, rt container.Runtime, home, session string, p projectdef.Project, scratchDir string) (*Orb, error) {
+	o, err := Prepare(ctx, rt, home, session, p, scratchDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := o.Start(ctx); err != nil {
+		return nil, err
+	}
+	return o, nil
+}
+
+// Prepare is the host side of a start: the session's directory, the
+// repos synced and the worktrees added, so the primary worktree exists
+// and the process can move into it. It is seconds of local git; the
+// image build and the container start are Start, which may be minutes.
+func Prepare(ctx context.Context, rt container.Runtime, home, session string, p projectdef.Project, scratchDir string) (*Orb, error) {
 	if session == "" || strings.ContainsAny(session, `/\`) || session == "cache" || session == "images" {
 		return nil, fmt.Errorf("orb: open: bad session id %q", session)
 	}
 	// Read before any writeState below overwrites it: the previous image
 	// tells us whether an existing container is stale.
-	prev, prevErr := ReadState(home, session)
 	o := &Orb{rt: rt, home: home, session: session, project: p, scratch: scratchDir}
+	o.prev, o.prevErr = ReadState(home, session)
 	o.state = State{Session: session, Project: p.Slug, Container: container.OrbName(session), PID: os.Getpid()}
-	fail := func(err error) (*Orb, error) {
-		o.state.Status, o.state.Error = StatusFailed, err.Error()
-		o.state.endPhase(err.Error())
-		writeState(home, o.state)
-		return nil, fmt.Errorf("orb: open %s: %w", session, err)
-	}
 	if err := os.MkdirAll(Dir(home, session), 0o755); err != nil {
-		return fail(err)
+		return nil, o.fail(err)
 	}
 	if err := rt.Available(ctx); err != nil {
-		return fail(fmt.Errorf("%w (run `bough update` or `container system start`)", err))
+		return nil, o.fail(fmt.Errorf("%w (run `bough update` or `container system start`)", err))
 	}
 	o.state.Status = StatusStarting
 	o.state.begin(PhaseSync)
 	writeState(home, o.state)
 	if err := SyncRepos(ctx, home, p); err != nil {
-		return fail(err)
+		return nil, o.fail(err)
 	}
+	o.state.begin(PhaseWorktree)
+	writeState(home, o.state)
+	mounts, err := o.prepareMounts(ctx)
+	if err != nil {
+		return nil, o.fail(err)
+	}
+	o.mounts = mounts
+	writeState(home, o.state)
+	return o, nil
+}
 
+// Abort records a start the caller gave up on between Prepare and Start
+// (it could not move into the worktree): state.json says failed, at the
+// phase it was in, so serve and the ui see why nothing is running.
+func (o *Orb) Abort(err error) { o.fail(err) }
+
+// fail settles a start that did not get there: state.json says failed
+// at the phase it was in, and the error names the session.
+func (o *Orb) fail(err error) error {
+	o.state.Status, o.state.Error = StatusFailed, err.Error()
+	o.state.endPhase(err.Error())
+	writeState(o.home, o.state)
+	return fmt.Errorf("orb: open %s: %w", o.session, err)
+}
+
+// Start is the container side of a start, after Prepare: the image, the
+// container (reused when the last state we wrote proves it runs this
+// image), then resume.sh.
+func (o *Orb) Start(ctx context.Context) error {
+	rt, home, p := o.rt, o.home, o.project
+	fail := o.fail
 	o.state.Status = StatusBuilding
 	o.state.begin(PhaseBuild)
 	writeState(home, o.state)
@@ -79,15 +127,8 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 	}
 	o.state.Image = tag
 	o.state.Status = StatusStarting
-	o.state.begin(PhaseWorktree)
-	writeState(home, o.state)
-
-	mounts, err := o.prepareMounts(ctx)
-	if err != nil {
-		return fail(err)
-	}
 	o.spec = container.RunSpec{
-		Name: o.state.Container, Image: tag, Mounts: mounts,
+		Name: o.state.Container, Image: tag, Mounts: o.mounts,
 		Env: o.baseEnv(), Workdir: o.state.Primary, CPUs: p.Def.CPUs, Memory: p.Def.Memory,
 	}
 	o.state.begin(PhaseContainer)
@@ -101,7 +142,7 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 	if err != nil {
 		return fail(fmt.Errorf("inspect %s: %w", o.spec.Name, err))
 	}
-	if st != container.StateMissing && (prevErr != nil || prev.Image != tag) {
+	if st != container.StateMissing && (o.prevErr != nil || o.prev.Image != tag) {
 		if err := rt.Remove(ctx, o.spec.Name); err != nil {
 			return fail(fmt.Errorf("remove stale %s: %w", o.spec.Name, err))
 		}
@@ -113,9 +154,9 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 		err = o.newTokenLocked()
 		o.planPortsLocked()
 	} else {
-		o.token, err = readToken(home, session)
+		o.token, err = readToken(home, o.session)
 		o.setTokenEnvLocked()
-		o.keepPortsLocked(prev.Ports)
+		o.keepPortsLocked(o.prev.Ports)
 	}
 	if err != nil {
 		return fail(fmt.Errorf("orb token: %w", err))
@@ -138,7 +179,7 @@ func Open(ctx context.Context, rt container.Runtime, home, session string, p pro
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.resumeLocked(ctx)
-	return o, nil
+	return nil
 }
 
 // SyncRepos clones or fetches every remote repo's cache. Call it BEFORE

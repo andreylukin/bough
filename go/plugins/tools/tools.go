@@ -122,6 +122,40 @@ func (p *projectMode) command(ctx context.Context, script string) (*exec.Cmd, er
 	return o.Command(ctx, "sh", script), nil
 }
 
+// pause is the script-timeout pause, or nil when nothing runs scripts.
+func (s *Stats) pause() func() func() {
+	if s.jobs == nil {
+		return nil
+	}
+	return s.jobs.pause
+}
+
+// wait holds a project session's tool until its container is up. The
+// orb row mounts before its container is running (the start runs on its
+// own goroutine so the ui is not dead for an image build), and a turn
+// can begin meanwhile; the script timeout is paused for the wait so a
+// long build is not the block's failure. The turn's context bounds it.
+func (p *projectMode) wait(ctx context.Context, pause func() func()) error {
+	if p == nil {
+		return nil
+	}
+	o, err := p.orb()
+	if err != nil {
+		return err
+	}
+	w, ok := o.(interface {
+		Ready(context.Context) error
+		Starting() bool
+	})
+	if !ok || !w.Starting() {
+		return nil
+	}
+	if pause != nil {
+		defer pause()()
+	}
+	return w.Ready(ctx)
+}
+
 // redactor is the orb's secret redactor; nil (pass through) on the host
 // or for an orb that does not redact.
 func (p *projectMode) redactor() *iorb.Redactor {
@@ -205,6 +239,16 @@ func (p *projectMode) allowed(tool, path string) error {
 // without roots never registers either tool.
 func (s *Stats) canWrite(tool, path string) error {
 	if s.project != nil || len(s.writeRoots) == 0 {
+		if s.project != nil {
+			// The worktree the path must land in exists once the orb is up.
+			parent := context.Background()
+			if s.runCtx != nil {
+				parent = s.runCtx()
+			}
+			if err := s.project.wait(parent, s.pause()); err != nil {
+				return fmt.Errorf("%s: %w", tool, err)
+			}
+		}
 		return s.project.allowed(tool, path)
 	}
 	abs, err := filepath.Abs(path)
@@ -441,6 +485,19 @@ func (s *Stats) bash(cmd string, opts ...any) (string, error) {
 			return "", err
 		}
 	}
+	parent := context.Background()
+	if s.runCtx != nil {
+		parent = s.runCtx()
+	}
+	project := s.project
+	if hookmeta.OnHost(parent) {
+		project = nil // a hook is the user's script: it runs on the host
+	}
+	// The container first, then any clock: a build still running is
+	// neither the command's 60 seconds nor a job's limit.
+	if err := project.wait(parent, s.pause()); err != nil {
+		return "", fmt.Errorf("bash: %w", err)
+	}
 	if len(opts) > 0 && opts[0] != nil {
 		limit, err := jobLimit(opts[0])
 		if err != nil {
@@ -461,14 +518,6 @@ func (s *Stats) bash(cmd string, opts ...any) (string, error) {
 			msg += fmt.Sprintf("\nwatching its output for %q", until)
 		}
 		return msg + "\nYou will be told when it finishes; tools.job(" + strconv.Itoa(b.id) + ") reads it meanwhile.", nil
-	}
-	parent := context.Background()
-	if s.runCtx != nil {
-		parent = s.runCtx()
-	}
-	project := s.project
-	if hookmeta.OnHost(parent) {
-		project = nil // a hook is the user's script: it runs on the host
 	}
 	ctx, cancel := context.WithTimeout(parent, bashTimeout)
 	defer cancel()

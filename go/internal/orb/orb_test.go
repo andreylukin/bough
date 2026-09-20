@@ -652,7 +652,7 @@ func TestOpenRecordsPhases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{PhaseSync, PhaseBuild, PhaseWorktree, PhaseContainer, PhaseResume, PhaseReady}
+	want := []string{PhaseSync, PhaseWorktree, PhaseBuild, PhaseContainer, PhaseResume, PhaseReady}
 	disk, _ := ReadState(home, "p1")
 	if got := phaseNames(disk); !slices.Equal(got, want) || disk.Phase != PhaseReady {
 		t.Fatalf("phases %v (phase %q), want %v", got, disk.Phase, want)

@@ -29,6 +29,9 @@ type Fake struct {
 	LastRun      RunSpec // the spec of the last container created
 	Addr         string  // Address of a running container
 	FailStart    error
+	// StartGate, when set, holds every Start until it is closed: a test
+	// that needs the orb to still be starting.
+	StartGate <-chan struct{}
 }
 
 func NewFake() *Fake {
@@ -89,7 +92,14 @@ func (f *Fake) ImageExists(_ context.Context, tag string) (bool, error) {
 	return f.images[tag], nil
 }
 
-func (f *Fake) Start(_ context.Context, spec RunSpec) error {
+func (f *Fake) Start(ctx context.Context, spec RunSpec) error {
+	if f.StartGate != nil {
+		select {
+		case <-f.StartGate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.record("start " + spec.Name)
