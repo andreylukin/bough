@@ -44,7 +44,7 @@ const column = (over: Partial<Parameters<typeof ProjectPage>[0]> = {}) => page({
 
 test("the groups are in urgency order and an empty one is not rendered", () => {
   const html = column();
-  const order = ["Needs you", "Error", "Running", "Interrupted", "Idle"].map((g) => html.indexOf(`prj-group-label">${g}<`));
+  const order = ["Needs you", "Error", "Running", "Interrupted", "Done", "Idle"].map((g) => html.indexOf(`prj-group-label">${g}<`));
   expect(order.every((i) => i >= 0)).toBe(true);
   expect(order).toEqual([...order].sort((a, b) => a - b));
   // Nothing is queued, so no group says so, and no group is rendered empty.
@@ -134,12 +134,14 @@ test("threadGroup reads the one status vocabulary", () => {
   expect(threadGroup(row("x", "x", { status: "queued" }))).toBe("running");
   expect(threadGroup(row("x", "x", { status: "interrupted" }))).toBe("interrupted");
   expect(threadGroup(row("x", "x", { status: "stopped" }))).toBe("idle");
+  expect(threadGroup(row("x", "x", { status: "done" }))).toBe("done");
+  expect(threadGroup(row("x", "x", { status: "idle", empty: true }))).toBe("empty");
 });
 
 test("groupThreads drops empty groups and keeps the urgency order", () => {
   const gs = groupThreads(threads);
-  expect(gs.map((g) => g.group)).toEqual(["needs-you", "error", "running", "interrupted", "idle"]);
-  expect(gs[4].rows.length).toBe(2);
+  expect(gs.map((g) => g.group)).toEqual(["needs-you", "error", "running", "interrupted", "done", "idle"]);
+  expect(gs[4].rows.length).toBe(1);
   expect(groupThreads([]).length).toBe(0);
   expect(groupThreads([row("z", "z")]).map((g) => g.group)).toEqual(["idle"]);
 });
@@ -207,21 +209,26 @@ test("the home is the composer, then main, then the queue; no transcript and no 
   expect(html).toContain("the one the composer talks to");
   // The header line reads the queue's own numbers.
   expect(html).toContain("1 needs you · 1 error · 1 running · 6 threads");
-  // Idle is not folded away on the home: everything is on the page.
+  // Done and idle are on the page up to a cap; nothing is folded away for six threads.
   expect(html).toContain("Old spike");
+  expect(html).toContain("Second spike");
   expect(html).not.toContain("Archived. A message reopens it.");
   expect(page({ detail: { ...detail, mainArchived: true } })).toContain("Archived. A message reopens it.");
 });
 
-test("idle threads past eight fold behind one line, the rest never do", () => {
-  const many = [...threads, ...Array.from({ length: 12 }, (_, i) => row(`i${i}`, `idle ${i}`, { status: "done" }))];
+test("done threads past eight fold behind one line, empty ones fold entirely, the rest never do", () => {
+  const many = [...threads, ...Array.from({ length: 12 }, (_, i) => row(`i${i}`, `done ${i}`, { status: "done" })),
+                row("e1", "Untitled", { empty: true }), row("e2", "Untitled", { empty: true })];
   const html = page({ detail: { ...detail, threads: many } });
-  expect(html).toContain("Show all 14");
-  expect(html.split('class="prj-thread"').length - 1).toBe(4 + 8);
+  expect(html).toContain("Show all 13");
+  expect(html).toContain("Show all 2");
+  // 4 live + 8 of 13 done + 1 idle + 0 of 2 empty
+  expect(html.split('class="prj-thread"').length - 1).toBe(4 + 8 + 1);
+  expect(html.indexOf('data-group="idle"')).toBeLessThan(html.indexOf('data-group="empty"'));
 });
 
 test("threadCounts and countsLine read the same vocabulary as the column", () => {
-  expect(threadCounts(threads)).toEqual({ "needs-you": 1, error: 1, running: 1, interrupted: 1, idle: 2 });
+  expect(threadCounts(threads)).toEqual({ "needs-you": 1, error: 1, running: 1, interrupted: 1, done: 1, idle: 1, empty: 0 });
   expect(countsLine([])).toBe("0 threads");
   expect(countsLine([row("a", "a", { status: "error" }), row("b", "b")])).toBe("1 error · 2 threads");
 });

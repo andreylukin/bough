@@ -34,16 +34,16 @@ const clock = (iso: string) =>
  * vocabulary: the group comes from the same hasQuestion/shownStatus the
  * sidebar and the overview read.
  */
-export type ThreadGroup = "needs-you" | "error" | "running" | "interrupted" | "idle";
+export type ThreadGroup = "needs-you" | "error" | "running" | "interrupted" | "done" | "idle" | "empty";
 
-export const GROUP_ORDER: readonly ThreadGroup[] = ["needs-you", "error", "running", "interrupted", "idle"];
+export const GROUP_ORDER: readonly ThreadGroup[] = ["needs-you", "error", "running", "interrupted", "done", "idle", "empty"];
 
 export const GROUP_LABEL: Record<ThreadGroup, string> = {
-  "needs-you": "Needs you", error: "Error", running: "Running", interrupted: "Interrupted", idle: "Idle",
+  "needs-you": "Needs you", error: "Error", running: "Running", interrupted: "Interrupted", done: "Done", idle: "Idle", empty: "Empty",
 };
 
-/** Idle is most of a busy project and says nothing; it starts closed. */
-const CLOSED: ReadonlySet<ThreadGroup> = new Set<ThreadGroup>(["idle"]);
+/** Done is most of a busy project; empty is nothing at all. Both start closed. */
+const CLOSED: ReadonlySet<ThreadGroup> = new Set<ThreadGroup>(["done", "idle", "empty"]);
 
 export function threadGroup(r: Row): ThreadGroup {
   if (hasQuestion(r)) return "needs-you";
@@ -52,6 +52,9 @@ export function threadGroup(r: Row): ThreadGroup {
   if (s === "error") return "error";
   if (s === "running" || s === "queued") return "running";
   if (s === "interrupted") return "interrupted";
+  // A session nobody typed into is not idle work, it is nothing: last, and folded.
+  if (r.empty) return "empty";
+  if (s === "done") return "done";
   return "idle";
 }
 
@@ -166,7 +169,7 @@ function OrbLine({ orb, onStop }: { orb?: OrbState; onStop: () => void }) {
 
 /** How many threads are in each state; the header line and the queue read the same numbers. */
 export function threadCounts(rows: Row[]): Record<ThreadGroup, number> {
-  const n: Record<ThreadGroup, number> = { "needs-you": 0, error: 0, running: 0, interrupted: 0, idle: 0 };
+  const n: Record<ThreadGroup, number> = { "needs-you": 0, error: 0, running: 0, interrupted: 0, done: 0, idle: 0, empty: 0 };
   for (const r of rows) n[threadGroup(r)]++;
   return n;
 }
@@ -182,8 +185,9 @@ export function countsLine(rows: Row[]): string {
   return parts.join(" · ");
 }
 
-/** Idle threads beyond this many fold behind one line on the home. */
+/** Done and idle threads beyond this many fold behind one line on the home; empty ones fold entirely. */
 const IDLE_SHOWN = 8;
+const FOLDED_ON_HOME: ReadonlySet<ThreadGroup> = new Set<ThreadGroup>(["done", "idle"]);
 
 /**
  * The composer on the home. Messaging the project is messaging its main
@@ -228,7 +232,7 @@ export function ProjectHome({ detail, mainRow, onOpen, onMessage, onNewThread }:
   detail: ProjectDetail; mainRow?: Row; onOpen: (id: string) => void;
   onMessage: (text: string) => Promise<void>; onNewThread?: () => void;
 }) {
-  const [allIdle, setAllIdle] = useState(false);
+  const [shownAll, setShownAll] = useState<Set<ThreadGroup>>(() => new Set());
   const groups = useMemo(() => groupThreads(detail.threads), [detail.threads]);
   const mainNote = mainRow ? threadNote(mainRow) : "";
   return (
@@ -254,8 +258,10 @@ export function ProjectHome({ detail, mainRow, onOpen, onMessage, onNewThread }:
         )}
         {detail.threads.length === 0 && <p className="prj-none">No threads yet. Ask the main thread to start work, or create one.</p>}
         {groups.map((g) => {
-          const capped = g.group === "idle" && !allIdle && g.rows.length > IDLE_SHOWN;
-          const rows = capped ? g.rows.slice(0, IDLE_SHOWN) : g.rows;
+          const all = shownAll.has(g.group);
+          const limit = g.group === "empty" ? 0 : FOLDED_ON_HOME.has(g.group) ? IDLE_SHOWN : Infinity;
+          const capped = !all && g.rows.length > limit;
+          const rows = capped ? g.rows.slice(0, limit) : g.rows;
           return (
             <div key={g.group} className="prj-group" data-group={g.group}>
               <div className="prj-group-head">
@@ -263,7 +269,7 @@ export function ProjectHome({ detail, mainRow, onOpen, onMessage, onNewThread }:
                 <span className="num prj-group-count">{g.rows.length}</span>
               </div>
               {rows.map((r) => <ThreadRow key={r.id} row={r} on={false} onOpen={onOpen} />)}
-              {capped && <button type="button" className="link prj-more" onClick={() => setAllIdle(true)}>Show all {g.rows.length}</button>}
+              {capped && <button type="button" className="link prj-more" onClick={() => setShownAll((prev) => new Set(prev).add(g.group))}>Show all {g.rows.length}</button>}
             </div>
           );
         })}

@@ -85,6 +85,20 @@ const writeSet = (key: string, s: Set<string>) => {
 
 /** Sessions untouched this long leave their workspace for the Inactive section. */
 const INACTIVE_MS = 72 * 3_600_000;
+/**
+ * What Home opens by itself on arrival: the session that most needs you,
+ * else the most recent — but only a person's own, and only from the last
+ * day. A week-old interrupted background thread used to win on signal
+ * alone and greet you every morning; the overview is the better greeting.
+ */
+export function arrivalPick(rows: Row[], now: number): Row | undefined {
+  return rows.filter((r) => !r.archived && !r.empty && !r.background && now - Date.parse(r.lastAt) < ARRIVAL_MS)
+    .sort((a, b) => sessionSignal(a) - sessionSignal(b) || Date.parse(b.lastAt) - Date.parse(a.lastAt))[0];
+}
+const ARRIVAL_MS = 24 * 3_600_000;
+
+/** However old, a group shows at least this many rows before "N older". */
+const FRESH_MIN = 3;
 /** Quiet for 72h and nothing waiting on you: folded under its group. */
 const isOld = (r: Row, now: number) => sessionSignal(r) >= 2 && now - Date.parse(r.lastAt) >= INACTIVE_MS;
 
@@ -790,9 +804,10 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
           // a search shows them all.
           const now = Date.now();
           const fresh = list.filter((r) => !isOld(r, now)), older = list.filter((r) => isOld(r, now));
-          // A group of only old sessions still leads with its latest, so it
-          // never reads as an empty group holding just a link.
-          if (!fresh.length && older.length) fresh.push(older.shift()!);
+          // A group leads with a few rows whatever their age: on a laptop
+          // where last week's work is the work, one row and "57 older"
+          // per group left the sidebar saying nothing.
+          while (fresh.length < FRESH_MIN && older.length) fresh.push(older.shift()!);
           const olderKey = `older:${key}`;
           const olderOpen = foldOpen(olderKey, unfolded.has(olderKey));
           const dup = (r: Row) => (seen.get(nameKey(r)) ?? 0) > 1;
@@ -4937,8 +4952,7 @@ export default function App() {
     // A list that answers late finds the overview already on screen: leave it there, never swap it away.
     if (loadedAt - mountedAt.current > 400) return;
     if (window.location.hash.replace(/^#\/?/, "") !== "" || window.matchMedia?.("(max-width:720px)").matches) return;
-    const top = rows.filter((r) => !r.archived && !r.empty)
-      .sort((a, b) => sessionSignal(a) - sessionSignal(b) || Number(Boolean(a.background)) - Number(Boolean(b.background)) || Date.parse(b.lastAt) - Date.parse(a.lastAt))[0];
+    const top = arrivalPick(rows, Date.now());
     if (top) { setSelected(top.id); setPane("thread"); }
   }, [loadedAt, rows]);
 

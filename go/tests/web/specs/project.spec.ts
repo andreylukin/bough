@@ -169,12 +169,12 @@ test('the home indexes the threads; a thread opens with the column beside it and
   await expect(home.getByRole('textbox', { name: 'Message the project' })).toBeVisible();
   await expect(home.locator('.prj-main-row')).toContainText('Main thread');
   await expect(home.locator('.prj-group', { hasText: 'Error' })).toContainText('Port the PTY suite');
-  await expect(home.locator('.prj-group', { hasText: 'Idle' })).toContainText('Write the docs');
+  await expect(home.locator('.prj-group', { hasText: 'Done' })).toContainText('Write the docs');
   await expect(page.locator('.prj-threads')).toHaveCount(0);
   await expect(page.locator('.prj-crumb')).toContainText('1 error · 2 threads');
 
   // Main is a conversation like any other; beside it, the column, with
-  // main pinned above the groups and Idle folded.
+  // main pinned above the groups and Done folded.
   await home.locator('.prj-main-row').click();
   await expect(page.locator('.prj-conv')).toContainText('Plan the migration');
   const col = page.locator('.prj-threads');
@@ -185,7 +185,7 @@ test('the home indexes the threads; a thread opens with the column beside it and
   await expect(err.locator('.prj-group-label')).toHaveText('Error');
   await expect(err).toContainText('Port the PTY suite');
   await expect(col.getByText('Write the docs')).toHaveCount(0);
-  await col.locator('.prj-group-head', { hasText: 'Idle' }).click();
+  await col.locator('.prj-group-head', { hasText: 'Done' }).click();
   await expect(col.getByText('Write the docs')).toBeVisible();
 
   // Between threads through the column; back to the project by its name.

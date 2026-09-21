@@ -162,6 +162,8 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:var(--fs-base)/1.5 v
 /* Quieter than its rows: the chevron and icon come on hover or focus; a folded group keeps its chevron. */
 .ws-head svg{opacity:0;transition:opacity .12s}
 .ws-head:hover svg,.ws-head:focus-visible svg,.ws-head[aria-expanded="false"] svg:first-child{opacity:1}
+/* A project group is a room with a page; its mark stays on, so it never reads as one more folder. */
+.ws-head[data-project]>svg:nth-of-type(2){opacity:1}
 @media (hover:none){.ws-head svg{opacity:1}}
 .sidebar .scroll>.ws+.ws,.sidebar .scroll>.needs+.ws{margin-block-start:var(--s-2)}.sec-body>.ws+.ws{margin-block-start:var(--s-3)}
 .ws>[role=group]{margin-block-start:var(--s-1)}
