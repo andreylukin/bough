@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProjectPage, countsLine, groupThreads, lineCount, threadCounts, threadGroup, threadNote } from "../src/project";
-import type { OrbFile, ProjectDetail, Row } from "../src/types";
+import type { OrbFile, OrbState, ProjectDetail, Row } from "../src/types";
 
 const at = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
 
@@ -60,11 +60,13 @@ test("a status is a dot, never a pill, in the threads column; the conversation's
   expect(html).toContain("Waiting for you");
 });
 
-test("the main thread is pinned with its slug, above the groups, not as a peer row", () => {
+test("the main thread is pinned with its state, above the groups, not as a peer row", () => {
   const html = column();
   expect(html).toContain("Main thread");
   expect(html.indexOf("prj-main-thread")).toBeLessThan(html.indexOf("prj-group-head"));
-  expect(html).toContain(">bough<");
+  // Its state, not the slug: the title bar already names the project.
+  expect(html).toContain('prj-main-slug">Running<');
+  expect(html).not.toContain(">bough<");
 });
 
 test("no threads: one line and no group headers at all", () => {
@@ -85,7 +87,9 @@ test("MEMORY.md is named by its filename and counted in lines, and nothing calls
   const html = page();
   expect(html).toContain("MEMORY.md");
   expect(html).toContain("3 lines");
-  expect(html).toContain("Prepended to every session in this project. Nothing writes this but you and the agent.");
+  expect(html).toContain("Prepended to every session in this project.");
+  // The tab already names the file; the meta line is the count alone.
+  expect(html).not.toContain('<span class="mono">MEMORY.md</span> ·');
   expect(html.toLowerCase()).not.toContain(">memory<");
   expect(html).not.toContain("Memories");
 });
@@ -102,11 +106,18 @@ test("a long MEMORY.md says what it costs, in amber past 200 lines and red past 
 
 test("the orb line describes the main thread's container and never claims to stop the threads", () => {
   expect(page()).toContain("Main thread’s orb");
-  expect(page()).toContain("Each thread runs in a container of its own.");
+  expect(page()).toContain('title="Each thread runs in a container of its own."');
+  // A failed thread orb is said on the fold line, not hidden under a count.
+  const failed = page({ detail: { ...detail, orbs: [...detail.orbs, { session: "t9", project: "bough", status: "failed", up: false } as OrbState] } });
+  expect(failed).toContain("1 failed");
   const down = page({ detail: { ...detail, mainOrb: { ...detail.mainOrb!, status: "stopped", up: false } } });
   expect(down).toContain("Main thread’s orb is stopped. It starts when you message the project.");
+  // A project that has been messaged has threads: the line is about main alone.
   const never = page({ detail: { ...detail, mainOrb: undefined } });
-  expect(never).toContain("No orb yet. It starts when you first message the project.");
+  expect(never).toContain("Main thread has no orb yet.");
+  expect(never).not.toContain("No orb yet. It starts when you first message the project.");
+  const fresh = page({ detail: { ...detail, mainOrb: undefined, main: "", threads: [] } });
+  expect(fresh).toContain("No orb yet. It starts when you first message the project.");
 });
 
 test("a definition that does not parse keeps its page and points at the editor", () => {
@@ -117,12 +128,13 @@ test("a definition that does not parse keeps its page and points at the editor",
 
 test("an opened thread swaps the conversation and offers the way back to the project", () => {
   const html = page({ open: "t2", conversation: <div className="thread">thread</div> });
-  expect(html).toContain("‹ Control room");
+  expect(html).toContain("‹ All threads");
+  expect(html).not.toContain("‹ Control room");
   expect(html).toContain("Migration order");
   expect(html).not.toContain("prj-home");
   // Main opened is a conversation like any other, named as main.
   const main = page({ open: "main-1", conversation: <div className="thread">main</div> });
-  expect(main).toContain("‹ Control room");
+  expect(main).toContain("‹ All threads");
   expect(main).toContain("· Main thread");
   expect(main).toContain('prj-main-thread is-on');
 });
@@ -163,7 +175,7 @@ test("lines are counted the way an editor counts them", () => {
 
 test("an absent MEMORY.md says what to write in the pane, not in a dialog", () => {
   const html = page({ files: {} });
-  expect(html).toContain("Empty. Write what every session in this project should know: what it is, where things live, decisions already made.");
+  expect(html).toContain("Write what every session in this project should know: what it is, where things live, decisions already made.");
   expect(html).toContain("0 lines");
   expect(html).not.toContain("role=\"dialog\"");
 });
