@@ -4419,11 +4419,11 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
             onClose={() => { if (trigger) dismissed.current = `${trigger.from}:${trigger.kind}${trigger.token}`; setTrigger(null); }}
             onOpen={setPickerOpen} onActive={setActiveOpt} />
           <textarea id="composer" ref={composer} value={draft} rows={1}
-            aria-label={(row.archived ? "Archived. Unarchive to continue" : failedLoad ? "Waiting for the session to load" : row.ask?.secret ? "Answer in the secret field above" : row.ask && !askChanged ? "Type your answer…" : running || status === "Waiting" ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…").replace(/…$/, "")}
+            aria-label={(row.archived ? "Read-only" : failedLoad ? "Waiting for the session to load" : row.ask?.secret ? "Answer in the secret field above" : row.ask && !askChanged ? "Type your answer…" : running || status === "Waiting" ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…").replace(/…$/, "")}
             aria-controls={pickerOpen ? "mention-list" : undefined}
             aria-activedescendant={pickerOpen ? activeOpt : undefined}
             disabled={Boolean(row.ask?.secret) || row.archived}
-            placeholder={row.archived ? "Archived. Unarchive to continue" : failedLoad ? "Waiting for the session to load" : row.ask?.secret ? "Answer in the secret field above" : row.ask && !askChanged ? "Type your answer…" : running || status === "Waiting" ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…"}
+            placeholder={row.archived ? "Read-only" : failedLoad ? "Waiting for the session to load" : row.ask?.secret ? "Answer in the secret field above" : row.ask && !askChanged ? "Type your answer…" : running || status === "Waiting" ? "Steer the running turn…" : row.spawnedBy ? "Message this background agent…" : "Describe the next task…"}
             onPaste={(e) => take({ dataTransfer: e.clipboardData, preventDefault: () => e.preventDefault() }, false)}
             onChange={(e) => {
               setDraft(e.target.value);

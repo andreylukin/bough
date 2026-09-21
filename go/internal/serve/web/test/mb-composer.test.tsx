@@ -10,7 +10,7 @@ const render = (r: Partial<Row>) => renderToStaticMarkup(<Thread row={{ id: "s1"
 test("MB-composer: placeholder copy per state, aria-label without the ellipsis", () => {
   expect(render({})).toContain('placeholder="Describe the next task…"');
   expect(render({})).toContain('aria-label="Describe the next task"');
-  expect(render({ archived: true } as Partial<Row>)).toContain('placeholder="Archived. Unarchive to continue"');
+  expect(render({ archived: true } as Partial<Row>)).toContain('placeholder="Read-only"');
 });
 
 test("MB-composer: idle keys are chips; a running turn lists Esc stop; status sits outside the key hint", () => {
