@@ -265,6 +265,10 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .thread.empty{align-items:center;justify-content:center;text-align:center;color:var(--text-3)}
 .thread.empty h1{font-size:20px;font-weight:600;color:var(--text-2);margin:0 0 8px}
 .thread.empty p{margin:0 auto 16px;max-width:46ch}
+/* An empty transcript uses the same voice as an empty home: a title and one line, not a lone grey sentence. */
+.thread-empty{color:var(--text-3)}
+.thread-empty h2{margin:0 0 6px;font-size:var(--fs-lg);font-weight:600;color:var(--text-2)}
+.thread-empty p{margin:0 auto;max-width:46ch;font-size:var(--fs-md)}
 /* One fixed height on every session: title, status and the run setting on
    row 1, the budget on row 2 starting at the same x each time. */
 .thread-head{flex-shrink:0;display:grid;grid-template-columns:auto minmax(0,1fr) auto;
@@ -273,6 +277,9 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .thread-head>.back{grid-area:back}
 .thread-head>.head-main{grid-area:main}
 .thread-head>.head-side{grid-area:side}
+/* A background agent's way back: a 20px breadcrumb row above the title, so the title stays level with the side controls. */
+.thread-head:has(>.child-parent-link){grid-template-rows:20px 32px minmax(24px,auto);grid-template-areas:"parent parent parent" "back main side" "strip strip strip"}
+.thread-head>.child-parent-link{grid-area:parent;justify-self:start;min-height:20px;margin:0}
 /* Wiki headers put their buttons in a bare .hk-acts: without an area it
    auto-placed into the empty back column, left of the title. */
 .thread-head>.hk-acts{grid-area:side;margin-inline-start:12px}
@@ -451,6 +458,9 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .turn-files li{font-size:var(--fs-sm);color:var(--text-2);overflow-wrap:anywhere}
 .turn-foot-left{display:contents}
 .turn-foot-right{margin-inline-start:auto;color:var(--text-3)}
+/* The end of a turn sits closer to its prose than the tool rows do, and Done carries a dot so it does not read as one more row. */
+.turn>.turn-body+.turn-foot{margin-top:-4px}
+.turn-outcome:not(.turn-failed):not(.turn-stopped)::before{content:"";display:inline-block;width:5px;height:5px;margin:0 7px 2px 0;border-radius:50%;background:var(--accent)}
 .turn-files>summary .rt-add,.turn-files>summary .rt-del{margin-inline-start:6px}
 .turn-files li a{display:flex;gap:8px;align-items:baseline;color:var(--text-2)}
 .turn-files li a:hover{color:var(--text-1)}
@@ -869,14 +879,14 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .turn-hooks-body .hook-line{margin:0 0 6px;overflow-wrap:anywhere}
 .thinking pre{color:var(--text-3);font:var(--fs-md)/1.65 var(--sans);white-space:pre-wrap;
               text-indent:0;padding-inline-start:14px;max-width:78ch}
-.think-body{padding:2px 12px 12px;max-width:78ch}
+.think-body{padding:2px 0 8px 18px;border-inline-start:1px solid var(--line);max-width:78ch}
 .think-body .md{color:var(--text-2);font-size:var(--fs-md);line-height:20px}
 /* Open, the body starts with the sentence the summary previewed. */
 .thinking[open]>summary .block-detail{display:none}
 .think-body .md pre{background:var(--bg)}
 .thinking .block-detail{font-style:italic}
 /* Reasoning is not execution: no filled card, so tool calls carry the weight. */
-.block.thinking{background:none;border:1px solid var(--line)}
+.block.thinking{background:none;border:0}
 /* Bookkeeping rows are one thin line: no card, muted 12px, detail on hover
    (.thin-pop) and the full blocks one click in. */
 .block.thin{background:none;border:0;border-radius:0;overflow:visible}
@@ -1032,7 +1042,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .prompt-images img{display:block;max-height:160px;max-width:100%;border-radius:var(--r-sm);border:1px solid var(--line)}
 .composer:not(:has(> #composer:focus)) .hint{visibility:hidden}
 /* Under the box: where this session runs, and a focus-only line of keys. */
-.composer-foot{display:flex;align-items:center;gap:12px;min-height:16px;margin-top:4px;padding-inline:12px}
+.composer-foot{display:flex;align-items:center;gap:16px;min-height:16px;margin-top:4px;padding-inline:12px}
 .composer-hint{margin-inline-start:auto}
 .composer-wrap:not(:has(#composer:focus)) .composer-hint{visibility:hidden}
 .composer-local{display:flex;align-items:center;gap:8px;min-width:0}
@@ -1638,8 +1648,6 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .md-pre>.md-copy{position:absolute;top:6px;right:6px;width:auto;padding:0 8px;font:var(--fs-sm) var(--sans);color:var(--text-2);opacity:0}
 .md-pre:hover>.md-copy,.md-pre>.md-copy:focus-visible{opacity:1}
 .work-note{margin:0;padding:8px 12px}
-.head-main:has(>.child-parent-link){flex-wrap:wrap;row-gap:0}
-.head-main>.child-parent-link{flex-basis:100%}
 .sec-fold.sec-fold-2{height:auto;min-height:44px}
 .sec-stack{display:flex;flex-direction:column;align-items:flex-start;min-width:0}
 .session-child .row-meta{overflow:visible;text-overflow:clip}
@@ -2485,6 +2493,8 @@ pre.edit-rows,.block pre.edit-rows{text-indent:0;margin:2px 0 var(--s-2);padding
 .rt-bar>span{min-width:2px}
 @container (min-width:900px){
   .thread-head:not(.page-head){grid-template-rows:36px}
+  /* The parent breadcrumb keeps its own row above the one-row header. */
+  .thread-head:not(.page-head):has(>.child-parent-link){grid-template-rows:20px 36px;grid-template-areas:"parent parent parent parent" "back main strip side"}
   .thread-head:not(.page-head)>.runtime-strip{justify-content:flex-end}
 }
 @media (max-width:720px){
@@ -2795,6 +2805,8 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
 .block.thin>summary .block-label{font-size:var(--fs-md);line-height:20px;font-weight:500;color:var(--text-2);transition:color var(--dur-fast) var(--ease)}
 .block.thin>summary:hover .block-label{color:var(--text-1)}
 .block.thin>summary .block-detail{font:var(--fs-sm)/20px var(--mono);color:var(--text-3);min-width:0}
+/* An agent is named by its prompt: prose, not a command. */
+.block.thin>summary .agent-notice-name{font-family:var(--sans)}
 .block.thin>summary .tool-meta{margin-left:auto;font-size:var(--fs-sm);font-variant-numeric:tabular-nums;color:var(--text-3)}
 .block.thin>summary .copy-btn{width:20px;height:20px;opacity:0}
 .block.thin>summary:hover .copy-btn,.block.thin>summary:focus-within .copy-btn{opacity:1}
