@@ -242,6 +242,12 @@ export function shortId(id: string): string {
 }
 /** A citation as a chip reads it: the entry, with the session in the tooltip. */
 const citeName = (c: { session: string; seq: number; source?: string; ref?: string }) => c.source ? `${c.source}:${c.ref}` : `#${c.seq}`;
+/** The chip's short form for prose: the owner dropped from `owner/repo#7801`, a commit as its `@sha` alone. */
+const citeShort = (c: { session: string; seq: number; source?: string; ref?: string }) => {
+  if (!c.source || !c.ref) return citeName(c);
+  const ref = c.ref.includes("@") ? c.ref.slice(c.ref.indexOf("@")) : c.ref.replace(/^[^/#]+\//, "");
+  return `${c.source}:${ref}`;
+};
 const citeWho = (c: { session: string; seq: number; source?: string; ref?: string }) => c.source ? `${c.source} ${c.ref}` : `session ${shortId(c.session)}, entry ${c.seq}`;
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g;
 /** Full session UUIDs in free text (commit subjects, commands) as short, labeled ids. */
@@ -502,11 +508,14 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, onIngest, ch
 
 // ——— Page ————————————————————————————————————————————————————————
 
-export function Cites({ block, cite, onCite, onHot }: {
+export function Cites({ block, cite, onCite, onHot, short = false }: {
   block: WikiBlock; cite?: { session: string; seq: number } | null; onCite: (c: WikiCite) => void;
   /** Hovering or focusing a chip highlights its margin note. */
   onHot?: (on: boolean) => void;
+  /** Prose surfaces (Me) show the short ref; the full one stays in the title. */
+  short?: boolean;
 }) {
+  const name = short ? citeShort : citeName;
   return (
     <>
       {block.cites.map((c) => {
@@ -514,8 +523,8 @@ export function Cites({ block, cite, onCite, onHot }: {
         if (c.source) {
           const key = `${c.source}:${c.ref}`;
           return c.url
-            ? <a key={key} className="wk-cite wk-cite-ext" href={c.url} target="_blank" rel="noreferrer" title={citeWho(c)}>{citeName(c)}</a>
-            : <span key={key} className="wk-cite wk-cite-ext" title={citeWho(c)}>{citeName(c)}</span>;
+            ? <a key={key} className="wk-cite wk-cite-ext" href={c.url} target="_blank" rel="noreferrer" title={citeWho(c)}>{name(c)}</a>
+            : <span key={key} className="wk-cite wk-cite-ext" title={citeWho(c)}>{name(c)}</span>;
         }
         const on = cite && cite.session === c.session && cite.seq === c.seq;
         return (

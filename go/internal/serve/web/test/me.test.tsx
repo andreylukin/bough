@@ -54,7 +54,9 @@ test("the brief is prose first, then the rows by kind, then the projects", () =>
 test("an external citation is a link out, a session citation is a chip, and a source with no address is a name", () => {
   const html = page();
   expect(html).toContain('href="https://github.com/asi/uni-nes/issues/7801"');
-  expect(html).toContain(">gh:asi/uni-nes#7801<");
+  // Prose shows the short ref (owner dropped); the full one is the title.
+  expect(html).toContain(">gh:uni-nes#7801<");
+  expect(html).toContain('title="gh asi/uni-nes#7801"');
   expect(html).toContain(">#12<");
   expect(html).toContain('<span class="wk-cite wk-cite-ext" title="linear NME-1462">linear:NME-1462</span>');
 });
@@ -75,6 +77,7 @@ test("the rail counts each project from the fleet and names it", () => {
   expect(html).toContain(">quiet<");
   // Sources: the one that failed says why.
   expect(html).toContain("not connected");
+  expect(html).toContain(">connect</button>");
   // Earlier briefs, not today's.
   expect(html).not.toContain("Sep 21</button>");
   expect(html).toContain("Sep 18</button>");
@@ -84,8 +87,11 @@ test("no profile: one explanation and no Refresh; a profile and no brief: one se
   const none = page({ data: { date: "2026-09-21", hasProfile: false, days: [] } });
   expect(none).toContain("Tell the brief whose work this is");
   expect(none).not.toContain(">Refresh<");
+  expect(none).toContain("Write your profile");
+  expect(none).toContain("Sources appear after the first brief.");
   const empty = page({ data: { date: "2026-09-21", hasProfile: true, days: [] } });
-  expect(empty).toContain("Refresh writes it now");
+  expect(empty).toContain("No brief yet today");
+  expect(empty).toContain("Write it now");
   expect(empty).not.toContain("me-brief");
 });
 

@@ -4181,40 +4181,46 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 .me{flex:1 1 0%;display:flex;min-width:0;overflow:hidden}
 .me-loading{padding:var(--s-5)}
 .me-main{flex:1 1 0%;display:flex;flex-direction:column;min-width:0}
-.me-bar{flex-shrink:0;display:flex;align-items:center;gap:var(--s-3);padding:var(--s-2) var(--s-4);border-bottom:1px solid var(--line)}
-.me-bar-main{flex:1 1 auto;min-width:0}
-.me-title{margin:0;font:600 var(--fs-h2)/var(--lh-tight) var(--sans)}
-.me-sub{margin:0;font-size:var(--fs-sm);color:var(--text-3)}
+.me-bar{flex-shrink:0;display:flex;align-items:center;gap:var(--s-3);min-height:40px;padding:var(--s-2) var(--s-4);border-bottom:1px solid var(--line)}
+.me-title{flex:1 1 auto;min-width:0;margin:0;font:600 var(--fs-h2)/var(--lh-tight) var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.me-sub{font-size:var(--fs-sm);color:var(--text-3);white-space:nowrap}
 .me-stale{color:var(--amber)}
 .me-body{flex:1 1 0%;padding:var(--s-4) var(--s-5) var(--s-6)}
-.me-none{margin:0;color:var(--text-2);font-size:var(--fs-md)}
-.me-brief{max-width:72ch;margin-bottom:var(--s-5)}
+/* The brief and the rows share one column and one right edge. */
+.me-brief,.me-group,.me-none{max-width:80ch}
+.me-none{margin:0 0 var(--s-5);padding-bottom:var(--s-4);border-bottom:1px solid var(--line)}
+.me-brief{margin-bottom:var(--s-5);padding-bottom:var(--s-4);border-bottom:1px solid var(--line)}
 .me-lede{margin:0 0 var(--s-3);font-size:var(--fs-lg);line-height:var(--lh-prose)}
 /* The claim's markdown and its chips share one line: the wrapper and its
    paragraph go inline, so a citation follows the last word. */
 .me-lede .md,.me-claim .md,.me-lede .md>p,.me-claim .md>p{display:inline;margin:0}
-.me-h{margin:var(--s-4) 0 var(--s-2);font:600 var(--fs-md)/var(--lh-tight) var(--sans);color:var(--text-2)}
+.me-h{margin:var(--s-5) 0 var(--s-2);font:600 var(--fs-md)/var(--lh-tight) var(--sans);color:var(--text-2)}
+.me-h:first-child{margin-top:0}
 .me-claim{margin:0 0 var(--s-1);line-height:var(--lh-prose)}
 .me-bullet{display:grid;grid-template-columns:1.1em minmax(0,1fr)}
-.me-claim-body{min-width:0}
+.me-claim-body{min-width:0;text-wrap:pretty}
 .me-bullet::before{content:"•";color:var(--text-3)}
-.me-claim .wk-cite,.me-lede .wk-cite{margin-inline-start:var(--s-1);vertical-align:1px}
+/* An inline-block chip breaks away from the last word on its own instead
+   of dragging it to the next line, and a long ref ellipsizes: the full
+   one is the title. */
+.me-claim .wk-cite,.me-lede .wk-cite{display:inline-block;max-width:28ch;margin-inline-start:var(--s-1);overflow:hidden;text-overflow:ellipsis;vertical-align:-3px;line-height:1.5}
 .wk-cite-ext{text-decoration:none}
 a.wk-cite-ext:hover{color:var(--accent);border-color:var(--accent)}
-.me-group{max-width:80ch;margin-bottom:var(--s-4)}
+.me-group{margin-bottom:var(--s-5)}
 .me-group-h{margin:0 0 var(--s-1);padding-bottom:var(--s-1);border-bottom:1px solid var(--line)}
 .me-group-h .num{margin-inline-start:var(--s-1);color:var(--text-3)}
-.me-sig{display:grid;grid-template-columns:5ch minmax(0,1fr) auto;align-items:center;gap:0 var(--s-3);width:100%;
+/* The kind colours the heading, not every row's source: one neutral column. */
+.me-group[data-kind="needs-you"] .me-group-h{color:var(--amber)}
+.me-group[data-kind="moving"] .me-group-h{color:var(--accent)}
+.me-sig{display:grid;grid-template-columns:6ch minmax(0,1fr) auto;align-items:center;gap:0 var(--s-3);width:100%;
         padding:var(--s-1) var(--s-2);margin:0 calc(-1 * var(--s-2));background:none;border:0;border-radius:var(--r-sm);color:inherit;text-align:start;font:inherit;text-decoration:none}
 button.me-sig,a.me-sig{cursor:pointer}
 button.me-sig:hover,a.me-sig:hover{background:var(--hover)}
-.me-sig-src{font-size:var(--fs-xs);color:var(--text-3)}
+.me-sig-src{font-size:var(--fs-xs);color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .me-sig-main{min-width:0;display:flex;flex-direction:column}
 .me-sig-title{font-size:var(--fs-md);line-height:var(--lh-row);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .me-sig-note,.me-sig-when{font-size:var(--fs-sm);color:var(--text-3)}
 .me-sig-note{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.me-group[data-kind="needs-you"] .me-sig-src{color:var(--amber)}
-.me-group[data-kind="moving"] .me-sig-src{color:var(--accent)}
 .me-rail{width:280px;min-width:240px;flex-shrink:0;overflow-y:auto;padding:var(--s-3);border-left:1px solid var(--line);background:var(--surface)}
 .me-sec{border-top:1px solid var(--line);padding-block:var(--s-3)}
 .me-sec:first-child{border-top:0;padding-top:0}
@@ -4228,7 +4234,10 @@ button.me-sig:hover,a.me-sig:hover{background:var(--hover)}
 .me-c-you{color:var(--amber)}.me-c-run{color:var(--accent)}.me-c-err{color:var(--red)}
 .me-dim{color:var(--text-3);font-size:var(--fs-sm)}
 .me-src{margin:0;display:flex;justify-content:space-between;gap:var(--s-2);font-size:var(--fs-sm)}
-.me-src.is-off .mono{color:var(--amber)}
+/* A source that is off: the reason carries the warning, the name stays plain, and the fix is one word away. */
+.me-src-off{display:inline-flex;gap:var(--s-2);white-space:nowrap}
+.me-src.is-off .me-dim{color:var(--amber)}
+.me-src-off .link{font-size:var(--fs-sm)}
 .me-day{display:block;margin:0 0 var(--s-1);font-size:var(--fs-sm)}
 @media (max-width:1080px){.me-rail{display:none}}
 /* /ME */
