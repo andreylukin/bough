@@ -3781,7 +3781,7 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 }
 
 /* §6 wiki */
-.wk-health{display:flex;flex-wrap:wrap;align-items:center;gap:0 4px;min-height:32px;margin:0;padding:0;border:0;font:var(--fs-sm)/16px var(--sans);color:var(--text-3)}
+.wk-health{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;min-height:32px;margin:0;padding:0;border:0;font:var(--fs-sm)/16px var(--sans);color:var(--text-3)}
 .wk-health code{padding:0 4px;border-radius:var(--r-xs);background:var(--raised);font:var(--fs-sm)/16px var(--mono);color:var(--text-2);margin-inline-start:4px}
 .wk-health .wk-copy{display:inline-grid;place-items:center;width:var(--ctl-sm);height:var(--ctl-sm);opacity:1}
 .wk-dot{display:inline-block;width:6px;height:6px;margin-inline-end:6px;border-radius:50%;background:var(--text-3);font-size:0}
@@ -4214,9 +4214,10 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 .me-brief,.me-group,.me-none{max-width:80ch}
 .me-none{margin:0 0 var(--s-5);padding-bottom:var(--s-4);border-bottom:1px solid var(--line)}
 .me-brief{margin-bottom:var(--s-5);padding-bottom:var(--s-4);border-bottom:1px solid var(--line)}
-/* A citation chip breaks anywhere: on a phone a long issue key ran off the pane. */
-.me-brief .wk-cite{white-space:normal;overflow-wrap:anywhere;box-decoration-break:clone;-webkit-box-decoration-break:clone}
-@media (max-width:720px){.me-body{padding:var(--s-4) 16px var(--s-6)}}
+/* On a phone the bar keeps its two buttons whole and drops the stamp; the
+   title takes what is left. The 28ch chip cap below keeps every chip in
+   the pane at this width too. */
+@media (max-width:720px){.me-body{padding:var(--s-4) 16px var(--s-6)} .me-bar .btn{flex-shrink:0;white-space:nowrap} .me-sub{display:none}}
 .me-lede{margin:0 0 var(--s-3);font-size:var(--fs-lg);line-height:var(--lh-prose)}
 /* The claim's markdown and its chips share one line: the wrapper and its
    paragraph go inline, so a citation follows the last word. */
