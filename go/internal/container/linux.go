@@ -42,6 +42,7 @@ func (u Nerdctl) Remove(context.Context, string) error { return stubErr(u.label_
 func (u Nerdctl) Inspect(context.Context, string) (State, error) {
 	return StateMissing, stubErr(u.label_())
 }
+func (u Nerdctl) Running(context.Context) ([]string, error)  { return nil, stubErr(u.label_()) }
 func (u Nerdctl) CreateVolume(context.Context, string) error { return stubErr(u.label_()) }
 func (u Nerdctl) Images(context.Context) ([]string, error)   { return nil, stubErr(u.label_()) }
 func (u Nerdctl) ContainerImages(context.Context) ([]string, error) {
@@ -65,6 +66,7 @@ func (u Unsupported) Remove(context.Context, string) error { return stubErr(u.la
 func (u Unsupported) Inspect(context.Context, string) (State, error) {
 	return StateMissing, stubErr(u.label_())
 }
+func (u Unsupported) Running(context.Context) ([]string, error)  { return nil, stubErr(u.label_()) }
 func (u Unsupported) CreateVolume(context.Context, string) error { return stubErr(u.label_()) }
 func (u Unsupported) Images(context.Context) ([]string, error)   { return nil, stubErr(u.label_()) }
 func (u Unsupported) ContainerImages(context.Context) ([]string, error) {

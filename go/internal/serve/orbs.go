@@ -112,6 +112,8 @@ type projectRow struct {
 const (
 	maxLogChunk    = 256 << 10
 	runtimeTimeout = 5 * time.Second
+	// runningTTL is how long one running-container snapshot answers for.
+	runningTTL = 10 * time.Second
 )
 
 func (a *API) routeOrbs() {
@@ -179,14 +181,47 @@ func (a *API) orbState(session string) OrbState {
 }
 
 // containerUp asks the runtime whether a session's container runs.
+//
+// It reads a snapshot of every running container, taken at most every
+// runningTTL: the session list asks this for every orb row on every
+// poll, and on a laptop with sixty orbs the per-row inspect it used to
+// run took the list past twenty seconds. A stop or start this serve
+// performs drops the snapshot, so its own actions show at once.
 func (a *API) containerUp(session string) bool {
-	if a.sup.Runtime() == nil {
+	rt := a.sup.Runtime()
+	if rt == nil {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), runtimeTimeout)
-	defer cancel()
-	cs, err := a.sup.Runtime().Inspect(ctx, container.OrbName(session))
-	return err == nil && cs == container.StateRunning
+	name := container.OrbName(session)
+	a.runningMu.Lock()
+	defer a.runningMu.Unlock()
+	if a.running == nil || time.Since(a.runningAt) > runningTTL {
+		ctx, cancel := context.WithTimeout(context.Background(), runtimeTimeout)
+		names, err := rt.Running(ctx)
+		cancel()
+		if err != nil {
+			// A runtime that cannot list (or a stub) still answers the one
+			// question, the slow way, and nothing is cached from it.
+			ctx, cancel := context.WithTimeout(context.Background(), runtimeTimeout)
+			defer cancel()
+			cs, err := rt.Inspect(ctx, name)
+			return err == nil && cs == container.StateRunning
+		}
+		a.running = map[string]bool{}
+		for _, n := range names {
+			a.running[n] = true
+		}
+		a.runningAt = time.Now()
+	}
+	return a.running[name]
+}
+
+// forgetRunning drops the running-container snapshot: the next question
+// asks the runtime again. Called after anything this serve starts or stops.
+func (a *API) forgetRunning() {
+	a.runningMu.Lock()
+	a.running = nil
+	a.runningMu.Unlock()
 }
 
 // ownerAlive decides whether state.json's PID still owns the orb. The
@@ -620,6 +655,7 @@ func (a *API) stopOrb(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: stop orb %q: %w", id, err))
 		return
 	}
+	a.forgetRunning() // the snapshot said it was up; it is not now
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -698,5 +734,6 @@ func (a *API) removeOrb(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: remove orb %q: %w", id, err))
 		return
 	}
+	a.forgetRunning()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "plan": plan})
 }

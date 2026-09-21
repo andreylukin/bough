@@ -278,3 +278,18 @@ func TestPodmanArgv(t *testing.T) {
 		t.Errorf("lines %v", got)
 	}
 }
+
+func TestParseRunning(t *testing.T) {
+	t.Parallel()
+	out := `[{"configuration":{"id":"bough-orb-a"},"status":"running"},` +
+		`{"configuration":{"id":"bough-orb-b"},"status":{"state":"running","networks":[]}},` +
+		`{"configuration":{"id":"bough-orb-c"},"status":"stopped"},` +
+		`{"configuration":{"id":""},"status":"running"}]`
+	names, err := parseRunning([]byte(out))
+	if err != nil || strings.Join(names, ",") != "bough-orb-a,bough-orb-b" {
+		t.Fatalf("running = %v %v", names, err)
+	}
+	if names, err := parseRunning(nil); err != nil || len(names) != 0 {
+		t.Fatalf("empty = %v %v", names, err)
+	}
+}

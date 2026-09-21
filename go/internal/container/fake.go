@@ -167,6 +167,20 @@ func (f *Fake) Inspect(_ context.Context, name string) (State, error) {
 	return StateMissing, nil
 }
 
+func (f *Fake) Running(context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.record("running")
+	var names []string
+	for name, st := range f.containers {
+		if st == StateRunning {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names, nil
+}
+
 func (f *Fake) Address(_ context.Context, name string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/andreylukin/bough/internal/orb"
@@ -38,6 +39,11 @@ type API struct {
 	ingest func(only string) error
 	// brief writes today's brief now (spawnBrief); a field for the same reason.
 	brief func() error
+	// running is the runtime's running containers as of runningAt, the
+	// snapshot containerUp answers from (see orbs.go).
+	runningMu sync.Mutex
+	running   map[string]bool
+	runningAt time.Time
 	// start is the directory serve was started in, the folder first-run
 	// setup offers. getenv and setenv are fields so a test neither reads
 	// the developer's keys nor writes the process environment.

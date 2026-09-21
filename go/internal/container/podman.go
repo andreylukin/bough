@@ -258,6 +258,14 @@ func (p *Podman) Images(ctx context.Context) ([]string, error) {
 	return parseLines(out), nil
 }
 
+func (p *Podman) Running(ctx context.Context) ([]string, error) {
+	out, err := p.run(ctx, "ps", "--format", "{{.Names}}") // ps without -a is the running ones
+	if err != nil {
+		return nil, err
+	}
+	return parseLines(out), nil
+}
+
 func (p *Podman) ContainerImages(ctx context.Context) ([]string, error) {
 	out, err := p.run(ctx, "ps", "-a", "--format", "{{.Image}}")
 	if err != nil {

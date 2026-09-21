@@ -34,6 +34,10 @@ type Runtime interface {
 	Stop(ctx context.Context, name string) error
 	Remove(ctx context.Context, name string) error // missing is nil
 	Inspect(ctx context.Context, name string) (State, error)
+	// Running names every running container in one call: the control
+	// room asks about every orb on every list, and one exec is what a
+	// list can afford where sixty are not.
+	Running(ctx context.Context) ([]string, error)
 	CreateVolume(ctx context.Context, name string) error // exists is nil
 	// Images lists every image tag; ContainerImages the image of every
 	// container, stopped ones included; RemoveImage deletes one tag.

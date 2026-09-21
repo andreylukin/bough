@@ -615,3 +615,59 @@ func TestProjectFromRepoMakesAnEmptyDefinition(t *testing.T) {
 		t.Errorf("name = %q, want the name the caller gave", def.Def.Name)
 	}
 }
+
+// Sixty failed orbs used to mean sixty `container inspect` execs per
+// list. The runtime is asked once for what runs, and the answer serves
+// every row for a while; a stop this serve performs is seen at once.
+func TestContainerUpIsOneListPerSnapshot(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	ctx := context.Background()
+	f.rt.Build(ctx, container.BuildSpec{Tag: "img"}, nil)
+	for _, id := range []string{"f1", "f2", "f3"} {
+		seedModeSession(t, f, id, map[string]any{"cwd": "/w", "mode": "project", "project": "app"})
+		writeState(t, f.home, orb.State{Session: id, Project: "app", Status: orb.StatusFailed, UpdatedAt: time.Now()})
+	}
+	if err := f.rt.Start(ctx, container.RunSpec{Name: container.OrbName("f2"), Image: "img"}); err != nil {
+		t.Fatal(err)
+	}
+	before := len(f.rt.CallList())
+	_, body := f.do(t, "GET", "/api/sessions", "")
+	rows, _ := body["sessions"].([]any)
+	up := map[string]bool{}
+	for _, r := range rows {
+		row := r.(map[string]any)
+		o, _ := row["orb"].(map[string]any)
+		up[row["id"].(string)] = o["up"] == true
+	}
+	if !up["f2"] || up["f1"] || up["f3"] {
+		t.Fatalf("up = %v", up)
+	}
+	calls := f.rt.CallList()[before:]
+	running, inspects := 0, 0
+	for _, c := range calls {
+		if c == "running" {
+			running++
+		}
+		if strings.HasPrefix(c, "inspect") {
+			inspects++
+		}
+	}
+	if running != 1 || inspects != 0 {
+		t.Fatalf("runtime calls for one list = %v (want one running, no inspect)", calls)
+	}
+	// A second list inside the TTL asks nothing.
+	before = len(f.rt.CallList())
+	f.do(t, "GET", "/api/sessions", "")
+	if n := len(f.rt.CallList()) - before; n != 0 {
+		t.Fatalf("second list made %d runtime calls", n)
+	}
+	// Stopped through this serve: the next list sees it down without waiting out the TTL.
+	if code, _ := f.do(t, "POST", "/api/sessions/f2/orb/stop", ""); code != http.StatusOK {
+		t.Fatalf("stop = %d", code)
+	}
+	_, body = f.do(t, "GET", "/api/sessions/f2", "")
+	if o, _ := rowOf(t, body)["orb"].(map[string]any); o["up"] == true {
+		t.Fatalf("f2 still up after stop: %v", o)
+	}
+}

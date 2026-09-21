@@ -429,6 +429,43 @@ func (a *Apple) ContainerImages(ctx context.Context) ([]string, error) {
 	return parseContainerImages(out)
 }
 
+func (a *Apple) Running(ctx context.Context) ([]string, error) {
+	out, err := a.run(ctx, "list", "--format", "json")
+	if err != nil {
+		return nil, err
+	}
+	return parseRunning(out)
+}
+
+// parseRunning is the names of the running containers in a list. The
+// status is a string on older releases and {"state": …} on 1.1.0, as
+// parseInspect reads it.
+func parseRunning(out []byte) ([]string, error) {
+	var items []struct {
+		Configuration struct {
+			ID string `json:"id"`
+		} `json:"configuration"`
+		Status any `json:"status"`
+	}
+	if len(bytes.TrimSpace(out)) == 0 {
+		return nil, nil
+	}
+	if err := json.Unmarshal(out, &items); err != nil {
+		return nil, fmt.Errorf("container: apple: list json: %w", err)
+	}
+	var names []string
+	for _, it := range items {
+		st, _ := it.Status.(string)
+		if obj, ok := it.Status.(map[string]any); ok {
+			st, _ = obj["state"].(string)
+		}
+		if strings.EqualFold(st, "running") && it.Configuration.ID != "" {
+			names = append(names, it.Configuration.ID)
+		}
+	}
+	return names, nil
+}
+
 func parseContainerImages(out []byte) ([]string, error) {
 	var items []struct {
 		Configuration struct {
