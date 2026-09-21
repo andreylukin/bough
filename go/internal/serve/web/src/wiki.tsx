@@ -248,11 +248,16 @@ const citeName = (c: { session: string; seq: number; source?: string; ref?: stri
  * as is; the full reference stays in the tooltip.
  */
 export function shortRef(source: string, ref: string): string {
-  if (source === "gh") { const m = /^(?:[^/#]+\/)?([^/#]+)(#\d+)$/.exec(ref); return m ? m[1] + m[2] : `gh:${ref}`; }
-  if (source === "git") { const m = /@([0-9a-f]{7,40})$/i.exec(ref); return m ? `git:${m[1].slice(0, 7)}` : `git:${ref}`; }
-  if (source === "linear") return ref;
-  return `${source}:${ref}`;
+  const name = source === "gh" ? (() => { const m = /^(?:[^/#]+\/)?([^/#]+)(#\d+)$/.exec(ref); return m ? m[1] + m[2] : `gh:${ref}`; })()
+    : source === "git" ? (() => { const m = /@([0-9a-f]{7,40})$/i.exec(ref); return m ? `git:${m[1].slice(0, 7)}` : `git:${ref}`; })()
+    : source === "linear" ? ref
+    : `${source}:${ref}`;
+  // A long repo name loses its head, not its tail: the number at the end
+  // is what tells two chips from the same repo apart.
+  return name.length > CHIP_MAX ? "…" + name.slice(name.length - CHIP_MAX + 1) : name;
 }
+/** The longest chip; the CSS cap is the same width, so this is the only truncation that fires. */
+const CHIP_MAX = 28;
 const citeWho = (c: { session: string; seq: number; source?: string; ref?: string }) => c.source ? `${c.source} ${c.ref}` : `session ${shortId(c.session)}, entry ${c.seq}`;
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g;
 /** Full session UUIDs in free text (commit subjects, commands) as short, labeled ids. */

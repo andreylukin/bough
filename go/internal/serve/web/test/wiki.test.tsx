@@ -4,7 +4,9 @@ import { ErrorNote, humanError } from "../src/loading";
 import { cleanExcerpt, countsLine, denumber, healthTone, humanTitle, literalUnderscores, pageMissing, parseWikiHash, shortRef, stamp } from "../src/wiki";
 
 test("shortRef keeps the shortest token that still names an external cite", () => {
-  expect(shortRef("gh", "asi/uni-network-evaluation-scheduler#7801")).toBe("uni-network-evaluation-scheduler#7801");
+  // Past the chip width the head goes, never the number.
+  expect(shortRef("gh", "asi/uni-network-evaluation-scheduler#7801")).toBe("…k-evaluation-scheduler#7801");
+  expect(shortRef("gh", "asi/uni-nes#7801")).toBe("uni-nes#7801");
   expect(shortRef("git", "uni-network-evaluation-scheduler@a1b2c3d")).toBe("git:a1b2c3d");
   expect(shortRef("git", "repo@0123456789abcdef0123")).toBe("git:0123456");
   expect(shortRef("linear", "NME-1462")).toBe("NME-1462");

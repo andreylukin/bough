@@ -789,6 +789,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
           <span className="ws-fold" role="presentation" onClick={(e) => { if (list[0].project && onOpenProject) { e.stopPropagation(); toggleWs(key); } }}><Icon d={ICONS.chevron} size={12} /></span>
           {/* The eyebrow is text only: small caps and colour already say "group"; an icon and a mark put the name off the title column. */}
           <span className={"ws-name" + (list[0].project ? " ws-project" : "")}>{ws}</span>
+          {/* After the name, so project and folder eyebrows share one left edge and a project still reads as one. */}
+          {list[0].project && <Icon d={ICONS.projects} size={12} />}
           {/* Folded, a group still says when something in it needs you, in that state's colour. */}
           {!open && urgent.length > 0 && <span className={"count " + (urgent.some(hasFailure) ? "is-failed" : "is-waiting")} aria-hidden="true">{urgent.length}</span>}
           {/* Folded, a project group still says how many of its orbs are up. Open, each
