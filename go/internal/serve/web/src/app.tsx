@@ -3316,6 +3316,15 @@ function SendingPrompt({ p, accepted = false, clamp = true, onClip, clipped, onT
 
 /** A session just started with a prompt, before its row is in the list:
  *  the prompt in place, not a "Loading session…" swap. */
+/** A session that exists but has not written its first line: its container is being prepared. */
+export function StartingThread() {
+  return (
+    <div className="thread">
+      <div className="lookup" role="status"><p className="lookup-body">Starting the session… its container is being prepared.</p><WaitingDot /></div>
+    </div>
+  );
+}
+
 export function PendingThread({ sending }: { sending: Pending[] }) {
   return (
     <div className="thread">
@@ -4534,6 +4543,13 @@ export default function App() {
   const [loadFail, setLoadFail] = useState<string | null>(null);
   // Only an authoritative 404 says a session is not here; other failures can be retried.
   const [missing, setMissing] = useState(false);
+  // Sessions this page created, by when. A project thread is answered
+  // before its child has written a line — its container is still being
+  // prepared — so a 404 on one of these is "starting", not "not found",
+  // and the read is tried again until it lands.
+  const created = useRef(new Map<string, number>());
+  const [starting, setStarting] = useState(false);
+  const STARTING_MS = 120_000;
   const [paused, setPaused] = useState<number | undefined>(undefined);
   const [loadTry, setLoadTry] = useState(0);
   const retryRef = useRef<() => void>(() => {});
@@ -4649,15 +4665,27 @@ export default function App() {
     setLines([]);
     setLoadedFor(null);
     lastSeq.current = 0; // the cursor belongs to the session just left
-    setLoadFail(null); setPaused(undefined); setMissing(false);
+    setLoadFail(null); setPaused(undefined); setMissing(false); setStarting(false);
+    let retry: ReturnType<typeof setTimeout> | undefined;
     // Its failure is the transcript's own state, with a retry, not a toast.
     api.session(selected).then((r) => {
       if (!live) return;
+      created.current.delete(selected);
       setLines(r.entries);
       setLoadedFor(selected);
       setLooked(r.session);
       setRows((prev) => prev.map((x) => (x.id === r.session.id ? r.session : x)));
-    }).catch((e) => { if (live) { setLoadFail(e instanceof Error ? e.message : String(e)); setMissing((e as { status?: number }).status === 404); } });
+    }).catch((e) => {
+      if (!live) return;
+      const gone = (e as { status?: number }).status === 404;
+      const since = created.current.get(selected);
+      if (gone && since !== undefined && Date.now() - since < STARTING_MS) {
+        setStarting(true);
+        retry = setTimeout(() => setLoadTry((n) => n + 1), 1000);
+        return;
+      }
+      setLoadFail(e instanceof Error ? e.message : String(e)); setMissing(gone);
+    });
 
     setStream([]);
     // How many delta runs were already on screen when the last recorded
@@ -4738,7 +4766,7 @@ export default function App() {
       timer = setTimeout(catchUp, 120);
     });
     retryRef.current = () => { clearTimeout(timer); backoff = 4000; catchUp(); };
-    return () => { live = false; clearTimeout(timer); stop(); };
+    return () => { live = false; clearTimeout(retry); clearTimeout(timer); stop(); };
   }, [selected, loadTry]);
 
   // The filter reads transcripts too, as ⌘K does: what you remember is
@@ -5054,8 +5082,10 @@ export default function App() {
   // What the chrome can do, the keyboard can do. Session-scoped
   // commands only appear when one is open, so the list never offers
   // something that would fail.
+  const markCreated = (id: string) => { created.current.set(id, Date.now()); };
   const start = (cwd: string, prompt: string, mode?: ModeValue) => act(async () => {
     const created = await api.create(cwd, prompt, mode?.mode, mode?.project);
+    markCreated(created.id);
     // The prompt shows where it will land while the new row is fetched.
     if (prompt.trim()) setPending((m) => ({ ...m, [created.id]: [{ id: created.id, text: prompt, after: 0, at: new Date().toISOString() }] }));
     if (mode?.mode === "project" && mode.project) goProject(mode.project, created.id);
@@ -5216,6 +5246,7 @@ export default function App() {
       onStartProject={home ? async (project, draft) => { if (await confirmFailedBuild(projects.find((p) => p.slug === project))) act(async () => {
         // The draft moves, unsent: the new session's composer holds it.
         const created = await api.create(home, "", "project", project);
+        markCreated(created.id);
         try {
           if (draft.trim()) localStorage.setItem("bough:draft:" + created.id, draft);
           localStorage.removeItem("bough:draft:" + r.id);
@@ -5286,11 +5317,12 @@ export default function App() {
           orbOpen={orbOpen} onOrbOpen={setOrbOpen} onOrbChanged={() => refresh()}
           onNewSession={home ? async (p) => { if (await confirmFailedBuild(p)) void start(home, "", { mode: "project", project: p.slug }); } : undefined} />
       ) : view === "project" ? (
-        <ProjectView slug={projectSlug} rows={rows} conversation={row ? threadFor(row) : undefined} focus={projectFocus}
+        <ProjectView slug={projectSlug} rows={rows} conversation={row ? threadFor(row) : selected && starting ? <StartingThread /> : undefined} focus={projectFocus}
           onShow={showProjectSession} onBack={goList} onOpenSession={openSession}
           onChanged={() => { void refresh(); }}
           onNewThread={home ? async () => {
             const created = await api.create(home, "", "project", projectSlug);
+            markCreated(created.id);
             await refresh();
             return created.id;
           } : undefined} />
@@ -5300,6 +5332,8 @@ export default function App() {
         <ContextPage session={row.id} model={row.model} used={loadedFor === row.id ? sessionUsage(lines)?.lastIn : undefined} onBack={() => setSub(null)} />
       ) : row ? (
         threadFor(row)
+      ) : selected && starting ? (
+        <StartingThread />
       ) : selected && pending[selected]?.length && !missing && !loadFail ? (
         <PendingThread sending={pending[selected]} />
       ) : (

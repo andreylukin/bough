@@ -218,3 +218,33 @@ test('a link from when projects were labels lands on Projects, not on nothing', 
   // And the projects that DO exist are on it, by name.
   await expect(page.locator('.proj-body').getByText('Orbit', { exact: true })).toBeVisible();
 });
+
+// A project thread is answered before its child has written a line: the
+// container is still being prepared. The page used to read the 404 on
+// that first fetch as "Session not found"; it is a session that is
+// starting, and the read is tried again until the transcript lands.
+test('a thread just started reads as starting, not as not found, until its transcript exists', async ({ serve, page }) => {
+  let created = '';
+  let refused = 0;
+  await page.route(/\/api\/sessions$/, async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    const res = await route.fetch();
+    created = (await res.json()).session.id;
+    return route.fulfill({ response: res });
+  });
+  await page.route(/\/api\/sessions\/[^/?]+(\?.*)?$/, (route) => {
+    const id = route.request().url().split('/api/sessions/')[1].split('?')[0];
+    if (route.request().method() === 'GET' && created && id === created && refused < 2) { refused++; return route.fulfill({ status: 404, json: { error: 'no such session' } }); }
+    return route.continue();
+  });
+
+  await page.goto(serve.url + '/#/projects/orbit');
+  await page.locator('.prj-home').getByRole('button', { name: 'New thread' }).click();
+  await expect(page.getByText('Starting the session…')).toBeVisible();
+  await expect(page.getByText('Session not found')).toHaveCount(0);
+  // The retries land once the child has written; the thread is on screen.
+  await expect.poll(() => refused).toBe(2);
+  await expect(page.getByText('Starting the session…')).toHaveCount(0);
+  await expect(page.locator('.prj-conv .thread')).toBeVisible();
+  await expect(page.locator('.prj-crumb')).toContainText('‹ Orbit');
+});
