@@ -54,7 +54,7 @@ function Conversation({ row, repo, projects, onOpen, onAssign, picked, onPick, l
       <StatusMark status={status} />
       {/* With no project to move to, a one-option menu is a dead end. */}
       {fixed ? (
-        <span className="proj-move proj-fixed" title={PROJECT_SESSION}>In {current}</span>
+        <div className="proj-move" title={PROJECT_SESSION}><span className="proj-fixed">In {current}</span></div>
       ) : projects.length > 0 && (
         <div className="proj-move" title={`In ${current}`}>
           {/* The pill is an action; the current project is its tooltip and the menu's check. */}
@@ -287,9 +287,11 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
   }, [rows]);
   const upTotal = useMemo(() => orbsUp(rows), [rows]);
   // One phrasing for every section head: the count, then how many repos those sessions span.
-  const countLabel = (k: string, rs: Row[]) => {
+  // A project's repos are its sessions' plus the ones its project.yml declares,
+  // the same union the page head counts, so the two numbers agree.
+  const countLabel = (k: string, rs: Row[], declared: string[] = []) => {
     const n = rs.length;
-    const repos = new Set(rs.map(repoOf).filter((x) => x !== UNKNOWN)).size;
+    const repos = new Set([...rs.map(repoOf).filter((x) => x !== UNKNOWN), ...declared]).size;
     return (needle ? `${n} of ${totals.get(k) ?? 0} match` : `${n} ${n === 1 ? "session" : "sessions"}`)
       + (repos > 0 ? ` · ${repos} ${repos === 1 ? "repo" : "repos"}` : "");
   };
@@ -387,9 +389,10 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
     return (
       <>
         {rest.map(row)}
+        {/* Folds like the section heads do: the chevron carries show/hide, aligned with the row titles. */}
         <button type="button" className="link proj-empty" aria-expanded={open}
                 onClick={() => setEmptyOpen((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; })}>
-          {open ? "Hide" : "Show"} {blank.length} empty {blank.length === 1 ? "session" : "sessions"}
+          <Chevron />{blank.length} empty {blank.length === 1 ? "session" : "sessions"}
         </button>
         {open && blank.map(row)}
       </>
@@ -410,7 +413,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
         {(projects.length > 0 || needle) && (
           <div className="head-side">
             {upTotal > 0 && <OrbUp n={upTotal} />}
-            <button className="btn" onClick={() => { void createProject(); }}>New project…</button>
+            <button className="btn btn-primary" onClick={() => { void createProject(); }}>New project…</button>
           </div>
         )}
       </header>
@@ -442,7 +445,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
               <div className="proj-head">
                 <button className="proj-fold" aria-expanded={!folded.has(p.slug)} onClick={() => fold(p.slug)}>
                   <h2>{p.name}</h2>
-                  <span className="num proj-count">{countLabel(p.slug, rs)}</span>
+                  <span className="num proj-count">{countLabel(p.slug, rs, p.orb?.repos)}</span>
                   <OrbUp n={upBy.get(p.slug) ?? 0} />
                   <Chevron />
                 </button>
@@ -475,7 +478,8 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
           );
         })}
 
-        <section className="proj">
+        {/* A filter nothing matches is one line above; a second "nothing matches" here said it again. */}
+        {!(needle && shown.length === 0) && <section className="proj">
           <div className="proj-head">
             <button className="proj-fold" aria-expanded={!folded.has("")} onClick={() => fold("")}>
               <h2>Unassigned</h2>
@@ -515,7 +519,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
                 </div>
               );
             })}
-        </section>
+        </section>}
       </div>
 
       {ids.length > 0 && (

@@ -349,6 +349,21 @@ export function ProjectOrb({ project, detail, log, error, onSave, onBuild, onSto
   const editorRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [log]);
 
+  // The build log opens itself while a build runs and when one fails,
+  // but `open` alone fought the user: this page re-renders on every poll,
+  // and each render forced a closed log back open. It opens on the
+  // change of state, and a close sticks until the state changes again.
+  // These sit above the no-detail return: hooks after an early return
+  // change count when the detail arrives, and React unmounts the page.
+  const buildState = detail?.build.state;
+  const [logOpen, setLogOpen] = useState(buildState === "building" || buildState === "failed");
+  const lastBuild = useRef(buildState);
+  useEffect(() => {
+    if (!buildState || buildState === lastBuild.current) return;
+    lastBuild.current = buildState;
+    if (buildState === "building" || buildState === "failed") setLogOpen(true);
+  }, [buildState]);
+
   const about = <p className="proj-none orb-about">An orb is a container image for this project: its sessions run inside it, with the project's repos checked out on a branch of their own.</p>;
   if (!detail) {
     return <div className="proj-orb">{error
@@ -358,17 +373,6 @@ export function ProjectOrb({ project, detail, log, error, onSave, onBuild, onSto
   }
 
   const building = detail.build.state === "building";
-  // The build log opens itself while a build runs and when one fails,
-  // but `open` alone fought the user: this page re-renders on every poll,
-  // and each render forced a closed log back open. It opens on the
-  // change of state, and a close sticks until the state changes again.
-  const [logOpen, setLogOpen] = useState(building || detail.build.state === "failed");
-  const lastBuild = useRef(detail.build.state);
-  useEffect(() => {
-    if (detail.build.state === lastBuild.current) return;
-    lastBuild.current = detail.build.state;
-    if (detail.build.state === "building" || detail.build.state === "failed") setLogOpen(true);
-  }, [detail.build.state]);
   const v = orbVerdict(detail);
   // Only a red or amber verdict has a reason worth the room; Ready says it all.
   const verdictFail = v.status === "error" || v.status === "needs-you";
