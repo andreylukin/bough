@@ -1670,7 +1670,7 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .wk-split{flex-grow:1;display:flex;min-height:0}
 .wk-doc{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:var(--s-3);padding:var(--s-5) var(--s-6)}
 .wk-split[data-source="1"] .wk-doc{flex:0 0 min(536px,45%);border-right:1px solid var(--line);padding:var(--s-5)}
-.wk-claim{display:grid;grid-template-columns:minmax(0,var(--measure-prose)) minmax(280px,1fr);gap:0 var(--s-5);align-items:start}
+.wk-claim{display:grid;grid-template-columns:minmax(0,var(--measure-prose)) minmax(240px,320px);gap:0 var(--s-5);align-items:start}
 .wk-titleblock{max-width:var(--measure-prose);margin-bottom:var(--s-2)}
 .wk-h1{margin:0;font:600 var(--fs-h1)/var(--lh-tight) var(--sans);color:var(--text-1);overflow-wrap:anywhere}
 .wk-meta{margin:var(--s-1) 0 0;font-size:var(--fs-sm);line-height:var(--lh-row);color:var(--text-3)}
@@ -1684,7 +1684,8 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
                    border-radius:50%;background:var(--text-3)}
 .wk-h{margin:6px 0 0;font-size:var(--fs-h2);font-weight:600;line-height:1.25;color:var(--text-1)}
 .wk-cite{font:11.5px var(--mono);color:var(--text-3);background:none;border:1px solid var(--line-strong);
-         border-radius:var(--r-xs);padding:0 5px;margin-inline-start:6px;vertical-align:1px;white-space:nowrap;cursor:pointer}
+         border-radius:var(--r-xs);padding:0 5px;margin-inline-start:6px;vertical-align:-2px;white-space:nowrap;cursor:pointer;
+         display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .wk-cite:hover{color:var(--text-1)}
 .wk-cite-on,.wk-cite-on:hover{color:var(--bg);background:var(--accent);border-color:var(--accent)}
 .wk-cite-bad{color:var(--red);border-color:var(--red)}
@@ -1698,7 +1699,7 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .wk-note{font-size:var(--fs-sm);line-height:1.45;color:var(--text-3);border-inline-start:2px solid var(--line-strong);
          padding-inline-start:var(--s-2);white-space:pre-wrap;overflow-wrap:anywhere;min-width:0;transition:border-color 150ms,color 150ms}
 .wk-note-on{border-inline-start-color:var(--accent);color:var(--text-2)}
-.wk-note-about{display:block;font-family:var(--sans);color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wk-note-about{display:none;font-family:var(--sans);color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wk-note-bad{border-inline-start-color:var(--red);color:var(--red)}
 .wk-note-src{display:block;margin-bottom:3px;font-family:var(--mono);color:var(--text-2)}
 .wk-links .md ul{margin:0;padding-inline-start:18px;display:flex;flex-direction:column;gap:2px}
@@ -1764,7 +1765,7 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
    page head masks the chip rows scrolling under it; code wraps inside the column. */
 .wk-note-text{display:block}
 .wk-note-text{font-family:var(--mono)}
-.wk-note-clamp{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;cursor:pointer}
+.wk-note-clamp{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;overflow:hidden;cursor:pointer}
 .wk-note-more{margin-top:2px;font-size:var(--fs-xs)}
 .wk-text code,.wk-item-claim code{overflow-wrap:anywhere;word-break:break-word;white-space:pre-wrap;padding-inline:3px}
 .wk-doc .md a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
@@ -1775,6 +1776,11 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .wk-citedby li::before{content:"\00b7";margin-inline:8px;color:var(--text-3)}
 .wk-state-quiet{color:var(--text-3);background:color-mix(in oklab,var(--text-3) 14%,transparent)}
 .wk-history{min-height:44px}
+.wk-history-none{min-height:auto}
+.wk-history-head .wk-facts{flex:1 1 auto;min-width:0}
+.thread-head.page-head .head-main h1.wk-crumb-quiet{font:500 var(--fs-md)/20px var(--sans);letter-spacing:0;color:var(--text-2)}
+.wk-where-inline{margin-inline-start:0}
+.wk-item{gap:6px;padding:12px 0}
 .wk-malformed{margin:0;max-width:65ch;padding:12px 14px;border:1px solid var(--amber);border-inline-start-width:3px;border-radius:var(--r-6)}
 .wk-malformed strong{display:block;color:var(--text-1);font-weight:600}
 .wk-malformed p{margin:4px 0 0}
@@ -1796,6 +1802,8 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   /* The note folds under its paragraph, clamped; tap expands it. */
   .wk-claim{grid-template-columns:minmax(0,var(--measure-prose))}
   .wk-note{margin-top:var(--s-2)}
+  .wk-note-about{display:block}
+  .wk-note-clamp{-webkit-line-clamp:2}
 }
 @media (max-width:900px){
   .wk-split[data-source="1"] .wk-doc{display:none}

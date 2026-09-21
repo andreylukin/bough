@@ -54,9 +54,9 @@ test("the brief is prose first, then the rows by kind, then the projects", () =>
 test("an external citation is a link out, a session citation is a chip, and a source with no address is a name", () => {
   const html = page();
   expect(html).toContain('href="https://github.com/asi/uni-nes/issues/7801"');
-  expect(html).toContain(">gh:asi/uni-nes#7801<");
+  expect(html).toContain(">uni-nes#7801<");
   expect(html).toContain(">#12<");
-  expect(html).toContain('<span class="wk-cite wk-cite-ext" title="linear NME-1462">linear:NME-1462</span>');
+  expect(html).toContain('<span class="wk-cite wk-cite-ext" title="linear NME-1462">NME-1462</span>');
 });
 
 test("a signal opens its session when it has one, else its url, else nothing", () => {

@@ -62,7 +62,7 @@ test('the brief renders with linked citations, the signals under it, and Refresh
   await page.goto(serve.url + '/#/me');
   await expect(page.locator('.me-brief')).toContainText('Today is about the demand fix.');
   await expect(page.locator('.me-brief a.wk-cite-ext').first()).toHaveAttribute('href', 'https://github.com/asi/uni-nes/issues/7801');
-  await expect(page.locator('.me-brief').getByText('linear:NME-1462')).toBeVisible();
+  await expect(page.locator('.me-brief').getByText('NME-1462')).toBeVisible();
   await expect(page.locator('.me-group[data-kind="needs-you"]')).toContainText('Review comment on the demand fix');
   await expect(page.locator('.me-rail')).toContainText('not connected');
   await page.getByRole('button', { name: 'Refresh' }).click();
