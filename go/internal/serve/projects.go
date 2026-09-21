@@ -25,6 +25,10 @@ type ProjectDetail struct {
 	// been opened or messaged. Reading the page never creates one: a
 	// glance at a project must not start a container.
 	Main string `json:"main,omitempty"`
+	// MainArchived says the main thread is folded away: the session list
+	// hides it, so the page could not otherwise tell an archived project
+	// from a live one.
+	MainArchived bool `json:"mainArchived,omitempty"`
 	// MainOrb is the main thread's container as the orb strip shows it,
 	// nil when it has never started one.
 	MainOrb *OrbState `json:"mainOrb,omitempty"`
@@ -49,6 +53,7 @@ func (a *API) projectDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	d := ProjectDetail{Project: p, Main: a.sup.MainID(p.Slug), Orbs: a.orbsOf(p.Slug), Threads: []Row{}}
 	if d.Main != "" {
+		d.MainArchived = a.sup.Meta(d.Main).Archived
 		if st := a.orbState(d.Main); st.Session != "" {
 			d.MainOrb = &st
 		}

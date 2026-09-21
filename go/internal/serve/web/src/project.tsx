@@ -198,6 +198,85 @@ function FirstMessage({ onMessage }: { onMessage: (text: string) => Promise<void
   );
 }
 
+/**
+ * The project's state as the main thread opens with it: how many threads
+ * want a person, how many are moving, and the last thing any of them
+ * said. Counts come from the same threadGroup the column uses.
+ */
+export function threadCounts(rows: Row[]): Record<ThreadGroup, number> {
+  const n: Record<ThreadGroup, number> = { "needs-you": 0, error: 0, running: 0, interrupted: 0, idle: 0 };
+  for (const r of rows) n[threadGroup(r)]++;
+  return n;
+}
+
+/** The most recently touched thread that has something to say; undefined when none does. */
+export function latestThread(rows: Row[]): Row | undefined {
+  const when = (r: Row) => Date.parse(r.lastAt || r.modified) || 0;
+  return rows.filter((r) => threadNote(r)).sort((a, b) => when(b) - when(a))[0];
+}
+
+/**
+ * What the home shows of the threads: everything that is not idle, then
+ * the freshest idle ones up to a handful. The column has the rest.
+ */
+export function homeThreads(rows: Row[], max = 6): Row[] {
+  const when = (r: Row) => Date.parse(r.lastAt || r.modified) || 0;
+  const live = rows.filter((r) => threadGroup(r) !== "idle").sort((a, b) => when(b) - when(a));
+  const idle = rows.filter((r) => threadGroup(r) === "idle").sort((a, b) => when(b) - when(a));
+  return [...live, ...idle].slice(0, Math.max(max, live.length));
+}
+
+/**
+ * The main thread's opening: a status strip, the latest update from any
+ * thread, and the threads that are moving or waiting. It sits above
+ * main's own transcript, so the project's conversation starts with the
+ * project's state rather than with whichever notice landed last.
+ */
+export function ProjectHome({ threads, archived, open, onOpen }: {
+  threads: Row[]; archived?: boolean; open: string; onOpen: (id: string) => void;
+}) {
+  const n = threadCounts(threads);
+  const latest = latestThread(threads);
+  const shown = homeThreads(threads);
+  const rest = threads.length - shown.length;
+  const cells: { group: ThreadGroup; label: string; tone?: string }[] = [
+    { group: "needs-you", label: "need you", tone: STATUS["needs-you"]?.tone },
+    { group: "error", label: n.error === 1 ? "error" : "errors", tone: STATUS.error?.tone },
+    { group: "running", label: "running", tone: STATUS.running?.tone },
+    { group: "interrupted", label: "interrupted" },
+    { group: "idle", label: "idle" },
+  ];
+  return (
+    <section className="prj-home" aria-label="Project status">
+      <div className="prj-strip" role="list">
+        {cells.filter((c) => n[c.group] > 0 || c.group === "idle").map((c) => (
+          <div key={c.group} className="prj-cell" role="listitem" data-group={c.group}>
+            <b className="num" style={n[c.group] && c.tone ? { color: c.tone } : undefined}>{n[c.group]}</b>
+            <span>{c.label}</span>
+          </div>
+        ))}
+        {archived && <p className="prj-home-note">Archived. A message reopens it.</p>}
+      </div>
+      {latest && (
+        <button type="button" className="prj-latest" onClick={() => onOpen(latest.id)}>
+          <span className="prj-latest-head">
+            <span className="eyebrow">Latest</span>
+            <span className="num prj-dim">{ago(latest.lastAt || latest.modified)}</span>
+            <span className="prj-latest-from" title={sessionTitle(latest)}>· {sessionTitle(latest)}</span>
+          </span>
+          <span className="prj-latest-text">{threadNote(latest)}</span>
+        </button>
+      )}
+      {shown.length > 0 && (
+        <div className="prj-home-threads">
+          {shown.map((r) => <ThreadRow key={r.id} row={r} on={open === r.id} onOpen={onOpen} />)}
+          {rest > 0 && <p className="prj-home-rest">{rest} more idle {rest === 1 ? "thread" : "threads"} in the column.</p>}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function ProjectPage({
   detail, files, error, filesError, conversation, mainRow, open, onOpen, onNewThread, onBack, onSave, onStopOrb, onOpenSession, onMessage, onRetry, titles = {},
 }: {
@@ -338,7 +417,11 @@ export function ProjectPage({
 
         <div className="prj-conv">
           {!detail.main ? <FirstMessage onMessage={onMessage} />
-            : conversation ?? <div className="lookup" role="status"><p className="lookup-body">Loading thread…</p></div>}
+            : <>
+                {/* Main is the project's home: it opens with the project's state. A thread is just its conversation. */}
+                {!open && threads.length > 0 && <ProjectHome threads={threads} archived={detail.mainArchived} open={open} onOpen={onOpen} />}
+                {conversation ?? <div className="lookup" role="status"><p className="lookup-body">Loading thread…</p></div>}
+              </>}
         </div>
       </section>
 
@@ -401,8 +484,10 @@ export function ProjectPage({
  * session that is, so opening a thread here costs the same as opening it
  * from the sidebar.
  */
-export function ProjectView({ slug, rows, conversation, onShow, onBack, onOpenSession, onNewThread, onChanged }: {
+export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, onOpenSession, onNewThread, onChanged }: {
   slug: string;
+  /** A thread the page was opened on (a session just started in this project, or a link to one). */
+  focus?: { id: string; at: number };
   rows: Row[];
   conversation?: ReactNode;
   onShow: (id: string) => void;
@@ -420,8 +505,10 @@ export function ProjectView({ slug, rows, conversation, onShow, onBack, onOpenSe
   // The thread on screen; "" is the main thread, which is the project itself.
   const [open, setOpen] = useState("");
 
+  // When the detail on screen was read; a focus newer than it waits for the next read.
+  const loadedAt = useRef(0);
   const load = useCallback(async () => {
-    try { setDetail(await api.project(slug)); setErr(""); }
+    try { const d = await api.project(slug); loadedAt.current = Date.now(); setDetail(d); setErr(""); }
     catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }, [slug]);
   const loadFiles = useCallback(async () => {
@@ -434,6 +521,7 @@ export function ProjectView({ slug, rows, conversation, onShow, onBack, onOpenSe
   }, [slug]);
 
   useEffect(() => { setDetail(undefined); setFiles(undefined); setFilesErr(""); setOpen(""); }, [slug]);
+  useEffect(() => { if (focus) { setOpen(focus.id); void load(); } }, [focus, load]);
   useEffect(() => { void load(); void loadFiles(); }, [load, loadFiles]);
   useEffect(() => {
     const t = setInterval(() => { if (!document.hidden) void load(); }, 4000);
@@ -441,9 +529,10 @@ export function ProjectView({ slug, rows, conversation, onShow, onBack, onOpenSe
   }, [load]);
 
   // A thread that is no longer in the project (archived, moved) stops being the one on screen.
+  // A detail read before the thread was asked for cannot know about it yet.
   useEffect(() => {
-    if (open && detail && !detail.threads.some((t) => t.id === open)) setOpen("");
-  }, [open, detail]);
+    if (open && detail && !detail.threads.some((t) => t.id === open) && !(focus?.id === open && focus.at > loadedAt.current)) setOpen("");
+  }, [open, detail, focus]);
 
   const show = open || detail?.main || "";
   useEffect(() => { onShow(show); }, [show, onShow]);

@@ -61,6 +61,8 @@ export interface OrbDetail { project: Project; files: Record<OrbFile, string>; h
 export interface ProjectDetail extends Project {
   /** The main thread's session id; absent until the project has been messaged. */
   main?: string;
+  /** The main thread is archived: the list hides it, so the page says so itself. */
+  mainArchived?: boolean;
   /** The main thread's container, absent when it has never started one. */
   mainOrb?: OrbState;
   /** Every session orb recorded for this project, main's included. */

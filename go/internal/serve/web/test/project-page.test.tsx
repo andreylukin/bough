@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ProjectPage, groupThreads, lineCount, threadGroup, threadNote } from "../src/project";
+import { ProjectPage, groupThreads, homeThreads, latestThread, lineCount, threadCounts, threadGroup, threadNote } from "../src/project";
 import type { OrbFile, ProjectDetail, Row } from "../src/types";
 
 const at = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
@@ -182,4 +182,43 @@ test("both side columns keep a way back at narrow widths", () => {
   expect(html).toContain("prj-panel-btn");
   expect(html).toContain("prj-scrim");
   expect(html.split("prj-drawer-close").length - 1).toBe(2);
+});
+
+// The main thread is the project's home: it opens with the project's
+// state, above its own transcript. A thread opened in its place is just
+// that thread's conversation.
+test("main opens with the status strip, the latest update and the moving threads, above the conversation", () => {
+  const html = page();
+  expect(html).toContain("prj-home");
+  expect(html.indexOf("prj-home")).toBeLessThan(html.indexOf(">conversation<"));
+  expect(html).toContain('data-group="needs-you"');
+  expect(html).toContain("1</b><span>need you");
+  expect(html).toContain("1</b><span>error");
+  // Interrupted and idle both count; nothing is a group of zero but idle.
+  expect(html).toContain('data-group="interrupted"');
+  expect(html).toContain("2</b><span>idle");
+  // The latest update is the freshest thread with something to say: the
+  // question. The error an hour later has no text of its own.
+  expect(html).toContain("prj-latest");
+  expect(html).toContain("prj-latest-text\">Staging first?<");
+  expect(html).not.toContain("Archived. A message reopens it.");
+});
+
+test("an opened thread has no home, and an archived main says so", () => {
+  expect(page({ open: "t2", conversation: <div className="thread">thread</div> })).not.toContain("prj-home");
+  expect(page({ detail: { ...detail, mainArchived: true } })).toContain("Archived. A message reopens it.");
+  expect(page({ detail: { ...detail, threads: [] } })).not.toContain("prj-home");
+});
+
+test("threadCounts, latestThread and homeThreads read the same vocabulary as the column", () => {
+  expect(threadCounts(threads)).toEqual({ "needs-you": 1, error: 1, running: 1, interrupted: 1, idle: 2 });
+  expect(latestThread(threads)?.id).toBe("t2");
+  expect(latestThread([row("q", "quiet")])).toBeUndefined();
+  // Everything moving or stuck, then the freshest idle ones; the cap never cuts a live thread.
+  const many = [...threads, ...Array.from({ length: 10 }, (_, i) => row(`i${i}`, `idle ${i}`, { status: "done" }))];
+  const shown = homeThreads(many);
+  expect(shown.length).toBe(6);
+  expect(shown.slice(0, 4).every((r) => threadGroup(r) !== "idle")).toBe(true);
+  const live = Array.from({ length: 9 }, (_, i) => row(`r${i}`, `run ${i}`, { status: "running" }));
+  expect(homeThreads(live).length).toBe(9);
 });

@@ -774,6 +774,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
           {/* Rows pinned to Needs you leave the group; its head says where they went. */}
           {sec === "recent" && lifted.get(gk) ? <span className="ws-lifted" title="Listed under Needs you">{lifted.get(gk)} need{lifted.get(gk) === 1 ? "s" : ""} you ↑</span> : null}
         </button>
+        {/* A project group is a room with a page: the head folds, this opens it. */}
+        {list[0].project && <a className="ws-goto" href={`#/projects/${list[0].project}`} title="Open the project page" aria-label={`Open project ${ws}`}><Icon d={ICONS.projects} size={13} /></a>}
         {/* Folded, what needs you stays in view. */}
         {!open && urgent.length > 0 && <div role="group">{urgent.map((r) => session(r, (seen.get(nameKey(r)) ?? 0) > 1))}</div>}
         {open && (() => {
@@ -4570,6 +4572,8 @@ export default function App() {
   const [orbOpen, setOrbOpen] = useState<string>();
   // The project whose page is open (#/projects/<slug>).
   const [projectSlug, setProjectSlug] = useState("");
+  // The thread the page was asked to open (#/projects/<slug>/t/<id>).
+  const [projectFocus, setProjectFocus] = useState<{ id: string; at: number }>();
   const [projects, setProjects] = useState<Project[]>([]);
   // Only a narrow window reads this (see the 720px media query): a
   // phone shows the list or the thread, never both.
@@ -4804,7 +4808,7 @@ export default function App() {
         if (OLD_PROJECT_ID.test(po[1])) window.location.hash = "#/projects";
         return;
       }
-      const ps = /^projects\/([^/]+)$/.exec(h);
+      const ps = /^projects\/([^/]+)(?:\/t\/([^/]+))?$/.exec(h);
       if (ps) {
         // A label id from before the re-key, or anything that is not a
         // slug, names no project: the list is where that link meant to go.
@@ -4812,6 +4816,7 @@ export default function App() {
         // The page picks the session it shows (main, or a thread) once it
         // has read the project; whatever was open elsewhere is not it.
         setLost(null); setView("project"); setProjectSlug(ps[1]); setSelected(null); setSub(null); setPane("thread");
+        setProjectFocus(ps[2] ? { id: ps[2], at: Date.now() } : undefined);
         return;
       }
       const wr = parseWikiHash(h);
@@ -4849,7 +4854,7 @@ export default function App() {
   useEffect(() => {
     if (lost !== null) return; // the unknown route stays in the URL it came from
     const want = view === "hooks" ? "#/hooks"
-      : view === "project" ? `#/projects/${projectSlug}`
+      : view === "project" ? (projectFocus ? `#/projects/${projectSlug}/t/${projectFocus.id}` : `#/projects/${projectSlug}`)
       : view === "projects" ? (orbOpen ? `#/projects/${orbOpen}/orb` : "#/projects")
       : view === "wiki" ? `#/${wikiHash(wikiRoute)}`
       : selected ? `#/s/${selected}${sub ? `/${sub}` : ""}`
@@ -4858,7 +4863,7 @@ export default function App() {
     routed.current = true;
     const next = hashToReplace(window.location.hash, want, sub, first);
     if (next !== null) window.history.replaceState(null, "", next);
-  }, [view, selected, sub, wikiRoute, lost, projectSlug]);
+  }, [view, selected, sub, wikiRoute, lost, projectSlug, projectFocus]);
 
   // Moving around the wiki pushes, like opening a conversation: Back
   // from a cited entry returns to the page, and from a page to the index.
@@ -4973,6 +4978,16 @@ export default function App() {
    */
   const showProjectSession = useCallback((id: string) => setSelected(id || null), []);
 
+  // A project session belongs on its project's page, with the page's
+  // main thread and the other threads beside it: opened as a plain
+  // session it is a conversation with no room around it.
+  const goProject = useCallback((slug: string, id?: string) => {
+    setLost(null); setView("project"); setProjectSlug(slug); setSelected(null); setSub(null); setPane("thread");
+    setProjectFocus(id ? { id, at: Date.now() } : undefined);
+    const hash = id ? `#/projects/${slug}/t/${id}` : `#/projects/${slug}`;
+    if (window.location.hash !== hash) window.history.pushState(null, "", hash);
+  }, []);
+
   const openSession = useCallback((id: string) => {
     setLost(null); setSelected(id); setSub(null); setView("sessions"); setPane("thread");
     // A push, so Back returns to where you were rather than leaving.
@@ -5038,7 +5053,8 @@ export default function App() {
     const created = await api.create(cwd, prompt, mode?.mode, mode?.project);
     // The prompt shows where it will land while the new row is fetched.
     if (prompt.trim()) setPending((m) => ({ ...m, [created.id]: [{ id: created.id, text: prompt, after: 0, at: new Date().toISOString() }] }));
-    openSession(created.id);
+    if (mode?.mode === "project" && mode.project) goProject(mode.project, created.id);
+    else openSession(created.id);
   }, "start a session");
   // New starts where the open session works, and the new session's header
   // shows that folder before anything is sent. With none open, the palette
@@ -5200,7 +5216,7 @@ export default function App() {
           localStorage.removeItem("bough:draft:" + r.id);
           localStorage.removeItem("bough:draft-atts:" + r.id);
         } catch { /* storage off */ }
-        openSession(created.id);
+        goProject(project, created.id);
       }, "start a project session"); } : undefined} />
   );
 
@@ -5265,7 +5281,7 @@ export default function App() {
           orbOpen={orbOpen} onOrbOpen={setOrbOpen} onOrbChanged={() => refresh()}
           onNewSession={home ? async (p) => { if (await confirmFailedBuild(p)) void start(home, "", { mode: "project", project: p.slug }); } : undefined} />
       ) : view === "project" ? (
-        <ProjectView slug={projectSlug} rows={rows} conversation={row ? threadFor(row) : undefined}
+        <ProjectView slug={projectSlug} rows={rows} conversation={row ? threadFor(row) : undefined} focus={projectFocus}
           onShow={showProjectSession} onBack={goList} onOpenSession={openSession}
           onChanged={() => { void refresh(); }}
           onNewThread={home ? async () => {

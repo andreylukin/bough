@@ -48,3 +48,4 @@ go/internal/serve/web/types/
 # Evolve run records: per-run logs and the loop state.
 bench/evolve/iterations/
 bench/evolve/state.json
+.mobbin/
