@@ -122,11 +122,11 @@ export function MePage({ data, error, rows = [], projectNames = {}, refreshing, 
             <article className="me-brief" aria-label="Brief">
               {page.blocks.map((b, i) => {
                 if (b.kind === "heading") return <h2 key={i} className="me-h">{b.text}</h2>;
-                if (b.kind === "lede") return <p key={i} className="me-lede"><Markdown text={literalUnderscores(b.text)} /><Cites block={b} short onCite={() => {}} onHot={(on) => setHot(on ? i : null)} /></p>;
+                if (b.kind === "lede") return <p key={i} className="me-lede"><Markdown text={literalUnderscores(b.text)} /><Cites block={b} onCite={() => {}} onHot={(on) => setHot(on ? i : null)} /></p>;
                 if (b.kind === "claim") return (
                   <div key={i} className={"me-claim" + (b.bullet ? " me-bullet" : "") + (hot === i ? " is-hot" : "")}>
                     {/* One span for the text and its chips: the bullet grid has two cells, the dot and this. */}
-                    <span className="me-claim-body"><Markdown text={literalUnderscores(b.text)} /><Cites block={b} short onCite={() => {}} onHot={(on) => setHot(on ? i : null)} /></span>
+                    <span className="me-claim-body"><Markdown text={literalUnderscores(b.text)} /><Cites block={b} onCite={() => {}} onHot={(on) => setHot(on ? i : null)} /></span>
                   </div>
                 );
                 return null;
