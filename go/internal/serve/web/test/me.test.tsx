@@ -37,7 +37,7 @@ const row = (id: string, project: string, over: Partial<Row> = {}): Row =>
 const noop = () => {};
 const page = (over: Partial<Parameters<typeof MePage>[0]> = {}) =>
   renderToStaticMarkup(<MePage data={data} rows={[row("a", "smart-scheduler", { status: "needs-you" }), row("b", "smart-scheduler", { status: "running", live: true }), row("c", "nas-event-log")]}
-                               projectNames={{ "smart-scheduler": "SMART scheduler" }} onRefresh={noop} onRetry={noop} onOpenSession={noop} onOpenProject={noop} onOpenPage={noop} {...over} />);
+                               projectNames={{ "smart-scheduler": "SMART scheduler", "nas-event-log": "nas-event-log" }} onRefresh={noop} onRetry={noop} onOpenSession={noop} onOpenProject={noop} onOpenPage={noop} {...over} />);
 
 test("the brief is prose first, then the rows by kind, then the projects", () => {
   const html = page();
@@ -103,6 +103,8 @@ test("groupSignals keeps the page's order and drops empty kinds; projectLines sk
   expect(groupSignals(signals).map((g) => g.kind)).toEqual(["needs-you", "moving", "done"]);
   const lines = projectLines([row("a", "p1", { status: "error" }), row("b", "p1", { archived: true, status: "running" }), row("c", "p2", { status: "needs-you" })]);
   expect(lines.map((l) => l.slug)).toEqual(["p2", "p1"]);
+  // With the project list in hand, a slug no project answers to is left out.
+  expect(projectLines([row("a", "p1"), row("d", "gone")], { p1: "One" }).map((l) => l.slug)).toEqual(["p1"]);
   expect(lines[1].error).toBe(1);
   expect(lines[1].running).toBe(0);
 });

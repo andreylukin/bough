@@ -26,8 +26,11 @@ export function groupSignals(items: MeSignal[]): { kind: MeSignal["kind"]; label
 /** One line per project from the fleet: what wants a person, what is moving, when it last spoke. */
 export function projectLines(rows: Row[], names: Record<string, string> = {}): { slug: string; name: string; needsYou: number; running: number; error: number; lastAt: string }[] {
   const m = new Map<string, { slug: string; name: string; needsYou: number; running: number; error: number; lastAt: string }>();
+  const known = Object.keys(names).length > 0;
   for (const r of rows) {
     if (!r.project || r.archived) continue;
+    // A slug no project directory answers to (deleted, or a demo) has no page to open.
+    if (known && !(r.project in names)) continue;
     const p = m.get(r.project) ?? { slug: r.project, name: names[r.project] ?? r.project, needsYou: 0, running: 0, error: 0, lastAt: "" };
     const st = shownStatus(r);
     if (hasQuestion(r)) p.needsYou++;
