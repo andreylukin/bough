@@ -161,7 +161,7 @@ function OrbLine({ orb, onStop }: { orb?: OrbState; onStop: () => void }) {
              strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{STATUS[st].glyph}</svg>
         {orbWord(orb.status)}
       </span>
-      {orb.updatedAt && <span className="num prj-dim">· up {ago(orb.updatedAt)}</span>}
+      {orb.updatedAt && <span className="num prj-dim">· {ago(orb.updatedAt)} ago</span>}
       <button type="button" className="link prj-orb-stop" onClick={onStop}>Stop</button>
     </p>
   );

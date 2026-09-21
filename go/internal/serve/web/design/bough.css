@@ -163,7 +163,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:var(--fs-base)/1.5 v
 .ws-head svg{opacity:0;transition:opacity .12s}
 .ws-head:hover svg,.ws-head:focus-visible svg,.ws-head[aria-expanded="false"] svg:first-child{opacity:1}
 /* A project group is a room with a page; its mark stays on, so it never reads as one more folder. */
-.ws-head[data-project]>svg:nth-of-type(2){opacity:1}
+.ws-head[data-project]>svg{opacity:1}
 @media (hover:none){.ws-head svg{opacity:1}}
 .sidebar .scroll>.ws+.ws,.sidebar .scroll>.needs+.ws{margin-block-start:var(--s-2)}.sec-body>.ws+.ws{margin-block-start:var(--s-3)}
 .ws>[role=group]{margin-block-start:var(--s-1)}
@@ -1105,6 +1105,7 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .proj-none{margin:6px 0 0;font-size:var(--fs-md);color:var(--text-3)}
 .proj-row{display:flex;align-items:center;gap:14px;min-height:40px;padding:4px 0;border-bottom:1px solid var(--line)}
 .proj-row:last-child{border-bottom:0}
+.proj-empty{display:block;margin:var(--s-2) 0 0;font-size:var(--fs-sm)}
 .proj-open{flex:1 1 auto;min-width:0;text-align:start;font:var(--fs-ui)/20px var(--sans);color:var(--text-1);
            background:none;border:0;padding:0;cursor:pointer;white-space:nowrap;overflow:hidden;
            text-overflow:ellipsis}
@@ -3697,6 +3698,7 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 .rp-repo-head .btn.rp-create{height:var(--ctl-sm);min-height:0;padding:0 8px;font:500 var(--fs-sm)/1 var(--sans)}
 .proj-body .proj-row{min-height:32px;margin:0;padding:0 12px;border-radius:0;border-bottom:1px solid var(--line);transition:background-color var(--dur-fast) var(--ease)}
 .proj-body .rp-repo>.proj-row:last-child,.proj-body .proj>.proj-row:last-child{border-bottom:0}
+.proj-empty{display:block;margin:var(--s-2) 0 0;font-size:var(--fs-sm)}
 .proj-body .proj-row:hover{background:var(--hover)}
 .proj-row:has(.proj-open:focus-visible){outline:2px solid var(--focus);outline-offset:-2px}
 .proj-row>.proj-open{font:var(--fs-md)/20px var(--sans)}

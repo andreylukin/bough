@@ -372,10 +372,29 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
     made.current = null;
   };
 
-  const list = (rs: Row[], grouped = false) => rs.map((r) => (
-    <Conversation key={r.id} row={r} repo={grouped || repoOf(r) === UNKNOWN ? undefined : repoOf(r)} projects={projects} onOpen={onOpen} onAssign={onAssign}
-                  picked={selected.has(r.id)} onPick={pick} locked={moving} twin={twins(r)} />
-  ));
+  // Sessions nobody typed into fold behind one line at the foot of their
+  // project: a page of "Untitled · Sep 14" rows said nothing about the work.
+  const [emptyOpen, setEmptyOpen] = useState<Set<string>>(() => new Set());
+  const list = (rs: Row[], grouped = false, key = "") => {
+    const row = (r: Row) => (
+      <Conversation key={r.id} row={r} repo={grouped || repoOf(r) === UNKNOWN ? undefined : repoOf(r)} projects={projects} onOpen={onOpen} onAssign={onAssign}
+                    picked={selected.has(r.id)} onPick={pick} locked={moving} twin={twins(r)} />
+    );
+    const blank = rs.filter((r) => r.empty), rest = rs.filter((r) => !r.empty);
+    // A filter in force shows everything it matched; so does a project that is only blanks.
+    if (needle || blank.length === 0 || rest.length === 0) return rs.map(row);
+    const open = emptyOpen.has(key);
+    return (
+      <>
+        {rest.map(row)}
+        <button type="button" className="link proj-empty" aria-expanded={open}
+                onClick={() => setEmptyOpen((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; })}>
+          {open ? "Hide" : "Show"} {blank.length} empty {blank.length === 1 ? "session" : "sessions"}
+        </button>
+        {open && blank.map(row)}
+      </>
+    );
+  };
 
   return (
     <div className={"thread" + (ids.length > 0 ? " proj-picking" : "")}>
@@ -451,7 +470,7 @@ export function ProjectsView({ projects, rows, onOpen, onBack, onAssign, onAssig
               {orbId === p.slug && <OrbSection project={p} onOpen={onOpen} onChanged={onOrbChanged} titles={titles} rows={rows} />}
               {folded.has(p.slug) ? null : rs.length === 0
                 ? <p className="proj-none">{needle ? "Nothing here matches the filter." : "Nothing here yet. Move a session in from below."}</p>
-                : list(rs)}
+                : list(rs, false, p.slug)}
             </section>
           );
         })}
