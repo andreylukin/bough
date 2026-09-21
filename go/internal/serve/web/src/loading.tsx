@@ -273,12 +273,24 @@ export function useCopied(ms = 1500): [boolean, (text: string) => void] {
   const [copied, setCopied] = useState(false);
   const t = useRef(0);
   useEffect(() => () => clearTimeout(t.current), []);
+  const done = () => {
+    setCopied(true);
+    clearTimeout(t.current);
+    t.current = window.setTimeout(() => setCopied(false), ms);
+  };
+  // Without the async clipboard (plain http, an old webview) a hidden
+  // textarea and execCommand still copy, so the button always confirms.
+  const fallback = (text: string) => {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); } catch { /* nothing to copy with */ }
+    ta.remove();
+    done();
+  };
   const copy = (text: string) => {
-    void navigator.clipboard?.writeText(text).then(() => {
-      setCopied(true);
-      clearTimeout(t.current);
-      t.current = window.setTimeout(() => setCopied(false), ms);
-    });
+    if (!navigator.clipboard?.writeText) return fallback(text);
+    navigator.clipboard.writeText(text).then(done, () => fallback(text));
   };
   return [copied, copy];
 }

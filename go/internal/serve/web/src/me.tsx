@@ -15,7 +15,7 @@ import { Cites, literalUnderscores, useLoad, wikiApi, type MeData, type MeSignal
  */
 
 const KINDS: { kind: MeSignal["kind"]; label: string }[] = [
-  { kind: "needs-you", label: "Needs you" }, { kind: "moving", label: "Moving" }, { kind: "waiting", label: "Waiting on" }, { kind: "done", label: "Done since yesterday" },
+  { kind: "needs-you", label: "Needs you" }, { kind: "moving", label: "Moving" }, { kind: "waiting", label: "Waiting on others" }, { kind: "done", label: "Done since yesterday" },
 ];
 
 /** The signals by kind, in the page's order; an empty kind is not a group. */
@@ -93,37 +93,40 @@ export function MePage({ data, error, rows = [], projectNames = {}, refreshing, 
       <section className="me-main">
         <header className="me-bar">
           <Back onBack={onBack} />
-          <div className="me-bar-main">
-            <h1 className="me-title">{day(data.date)}</h1>
-            <p className="me-sub">
-              {page
-                ? <>{data.stale ? <span className="me-stale">Last brief is from {day(data.path!.slice(-13, -3))} · </span> : null}brief as of {data.asOf ? ago(data.asOf) : "—"} ago</>
-                : data.hasProfile ? "No brief yet today." : "No profile yet."}
-            </p>
-          </div>
+          <h1 className="me-title">{day(data.date)}</h1>
+          {/* The freshness stamp sits with the actions, one line, so the bar keeps the rail's baseline. */}
+          {page && (
+            <span className="me-sub num">
+              {data.stale ? <span className="me-stale">Last brief is from {day(data.path!.slice(-13, -3))} · </span> : null}as of {data.asOf ? ago(data.asOf) : "—"} ago
+            </span>
+          )}
           {standup && <button type="button" className="btn btn-sm" onClick={() => copy(standup)}>{copied ? "Copied" : "Copy standup"}</button>}
           {onRefresh && data.hasProfile && <button type="button" className="btn btn-sm btn-primary" disabled={refreshing} onClick={onRefresh}>{refreshing ? "Writing…" : "Refresh"}</button>}
         </header>
 
         <div className="scroll me-body">
           {!data.hasProfile && (
-            <EmptyState glyph="search" title="Tell the brief whose work this is" primary={false}
-                        action={onOpenPage ? { label: "Write topics/me/profile.md", onClick: () => onOpenPage("topics/me/profile.md") } : undefined}>
+            <EmptyState title="Tell the brief whose work this is" primary={false}
+                        action={onOpenPage ? { label: "Write your profile", onClick: () => onOpenPage("topics/me/profile.md") } : undefined}>
               The brief reads <span className="mono">~/.bough/wiki/topics/me/profile.md</span> first: your teams, channels, ids, the repos you own. Without it nothing is written.
             </EmptyState>
           )}
           {data.hasProfile && !page && (
-            <p className="me-none">The tick writes the first brief within half an hour of a working-hours start, or Refresh writes it now.</p>
+            <div className="me-none">
+              <EmptyState title="No brief yet today" primary={false} action={onRefresh ? { label: "Write it now", onClick: onRefresh } : undefined}>
+                The tick writes one within half an hour of your working-hours start.
+              </EmptyState>
+            </div>
           )}
           {page && (
             <article className="me-brief" aria-label="Brief">
               {page.blocks.map((b, i) => {
                 if (b.kind === "heading") return <h2 key={i} className="me-h">{b.text}</h2>;
-                if (b.kind === "lede") return <p key={i} className="me-lede"><Markdown text={literalUnderscores(b.text)} /><Cites block={b} onCite={() => {}} onHot={(on) => setHot(on ? i : null)} /></p>;
+                if (b.kind === "lede") return <p key={i} className="me-lede"><Markdown text={literalUnderscores(b.text)} /><Cites block={b} short onCite={() => {}} onHot={(on) => setHot(on ? i : null)} /></p>;
                 if (b.kind === "claim") return (
                   <div key={i} className={"me-claim" + (b.bullet ? " me-bullet" : "") + (hot === i ? " is-hot" : "")}>
                     {/* One span for the text and its chips: the bullet grid has two cells, the dot and this. */}
-                    <span className="me-claim-body"><Markdown text={literalUnderscores(b.text)} /><Cites block={b} onCite={() => {}} onHot={(on) => setHot(on ? i : null)} /></span>
+                    <span className="me-claim-body"><Markdown text={literalUnderscores(b.text)} /><Cites block={b} short onCite={() => {}} onHot={(on) => setHot(on ? i : null)} /></span>
                   </div>
                 );
                 return null;
@@ -156,17 +159,21 @@ export function MePage({ data, error, rows = [], projectNames = {}, refreshing, 
             </button>
           ))}
         </section>
-        {data.signals?.sources && data.signals.sources.length > 0 && (
-          <section className="me-sec">
-            <h3 className="eyebrow me-sec-h">Sources</h3>
-            {data.signals.sources.map((s) => (
-              <p key={s.name} className={"me-src" + (s.ok ? "" : " is-off")}>
-                <span className="mono">{s.name}</span>
-                <span className="me-dim">{s.ok ? (s.at ? ago(s.at) : "ok") : (s.error || "off")}</span>
-              </p>
-            ))}
-          </section>
-        )}
+        <section className="me-sec">
+          <h3 className="eyebrow me-sec-h">Sources</h3>
+          {!data.signals?.sources?.length && <p className="me-dim">Sources appear after the first brief.</p>}
+          {data.signals?.sources?.map((s) => (
+            <p key={s.name} className={"me-src" + (s.ok ? "" : " is-off")}>
+              <span className="mono">{s.name}</span>
+              {s.ok
+                ? <span className="me-dim">{s.at ? ago(s.at) : "ok"}</span>
+                : <span className="me-src-off">
+                    <span className="me-dim">{s.error || "off"}</span>
+                    {onOpenPage && <button type="button" className="link" title={s.error || "off"} onClick={() => onOpenPage("topics/me/profile.md")}>{/expired|invalid|revoked/i.test(s.error || "") ? "reconnect" : "connect"}</button>}
+                  </span>}
+            </p>
+          ))}
+        </section>
         {data.days.length > 1 && (
           <section className="me-sec">
             <h3 className="eyebrow me-sec-h">Earlier</h3>
