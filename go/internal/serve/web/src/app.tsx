@@ -1163,11 +1163,14 @@ export function JobBlock({ line }: { line: Line }) {
     // serve leads a failure with its reason: it belongs in the label, not one click in.
     const why = m[2] === "failed" ? /^Background agent failed: (.*)\n?([\s\S]*)$/.exec(m[3]) : null;
     const body = (why ? why[2] : m[3]).trim();
+    // The agent's name is often its whole prompt: the row shows its first clause, in prose, the rest on hover.
+    const name = m[1].trim();
+    const short = name.split(/(?<=[.!?:])\s|\n/)[0].split(/\s+/).slice(0, 10).join(" ");
     return (
       <details className="block thin agent-notice">
         <summary>
           <span className="block-label">Background agent {m[2]}{why ? `: ${why[1]}` : ""}</span>
-          <span className="block-detail" title={m[1]}>{m[1]}</span>
+          <span className="block-detail agent-notice-name" title={name}>{short.length < name.length ? short.replace(/[.!?:]$/, "") + "…" : short}</span>
         </summary>
         {body && <div className="block-body"><Markdown text={body} /></div>}
       </details>
@@ -2510,7 +2513,8 @@ export function ChangesChip({ row }: { row: Row }) {
   // R4-F: nothing to count reads as one phrase, not "Session edits None".
   const none = c.text === "None";
   const aria = none ? `No edits. Working tree: ${t.text}` : `Session edits: ${c.text}${c.add !== undefined ? `, ${c.add} added, ${c.del} removed` : ""}. Working tree: ${t.text}${data.session.failed || data.tree.failed ? ", stale" : ""}`;
-  const body = none ? <span className="rt-label">No edits</span> : <>
+  // A local session outside a checkout has no number to show: two words, not a sentence at value weight.
+  const body = c.quiet && c.text === "No Git repository" ? <span className="rt-label" title="No Git repository">No repo</span> : none ? <span className="rt-label">No edits</span> : <>
     <span className="rt-label">Edits</span>
     <span className={"num rt-value" + (c.quiet ? " rt-stale" : "")}>{c.text}{c.add !== undefined && <> <span className="rt-add">+{c.add}</span> <span className={"rt-del" + (c.del ? "" : " rt-zero")}>−{c.del}</span></>}</span>
   </>;
@@ -3094,7 +3098,7 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only, cat
                   footer={(o) => {
                     const m = o && cat?.providers.flatMap((p) => p.models ?? []).find((x) => x.id === o.value);
                     // Input / output per 1M tokens; the highlighted row already names the model.
-                    return m?.input && m?.output ? <>${+m.input.toFixed(2)} / ${+m.output.toFixed(2)} <span className="sel-foot-unit">per 1M</span></> : "Price unavailable";
+                    return m?.input && m?.output ? <>${+m.input.toFixed(2)} / ${+m.output.toFixed(2)} <span className="sel-foot-unit">per 1M</span></> : cat ? "Price unavailable" : null;
                   }}
                   // The provider that lists the model runs it; a bare id would stay on the current one.
                   onChange={(v) => (v ? onModel(v, cat?.providers.find((p) => p.models?.some((m) => m.id === v))?.plugin) : undefined)} />
@@ -4135,9 +4139,10 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     <SessionChanges.Provider value={changes}>
     <div className="thread" ref={threadRef}>
       <header className="thread-head">
+        {/* A breadcrumb row of its own above the title: inside .head-main it wrapped and pushed the title off the side controls. */}
+        {row.spawnedBy && <ParentLink id={row.spawnedBy} rows={rows} onOpen={onOpenSession} />}
         <Back onBack={onBack} />
         <div className="head-main">
-          {row.spawnedBy && <ParentLink id={row.spawnedBy} rows={rows} onOpen={onOpenSession} />}
           <h1 title={row.title} ref={headRef} tabIndex={-1}>{sessionTitle(row)}</h1>
           {/* Until the transcript is read the header names no status: "Done" became "Done · 11 failed" a moment later. */}
           {loading ? null : (status === "Sending" || status === "Waiting" || row.status === "running") ? (
@@ -4150,7 +4155,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           ) : row.mode === "project" && row.orb?.status === "failed" ? null /* Setup failed says it; "Done" beside it contradicted it. */
             // Worst outcome first: a finished session whose work failed does not read as a bare Done.
             : row.status === "done" && counts.failed > 0
-              ? <span className="status head-trouble"><StatusMark status="error" bare /><span className="visually-hidden">{statusWord("done")}, </span>{counts.failed} failed</span>
+              // The mark carries the red and the Work button the count, once: "12 failed" twice on one line named no subject.
+              ? <span className="status head-trouble" title={`${counts.failed} ${counts.failed === 1 ? "worker" : "workers"} failed`}><StatusMark status="error" bare />{statusWord("done")}<span className="visually-hidden">, {counts.failed} {counts.failed === 1 ? "worker" : "workers"} failed</span></span>
               : row.status === "done" && lastFail
                 ? <span className="status head-failed" title={`${lastFail} failed`}><WarnMark />Failed</span>
                 : <StatusMark status={row.status} />}
@@ -4253,7 +4259,10 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
         )}
         {loading && !loadError && slow && <p className="meta-line transcript-state" role="status">Loading transcript…</p>}
         {!loading && turns.length === 0 && !running && !row.ask && !unlanded.length && (
-          <p className="meta-line transcript-state">No recorded turns yet. Type a prompt below to start.</p>
+          <div className="transcript-state thread-empty">
+            <h2>{row.spawnedBy ? "This background agent has not run yet" : "Nothing here yet"}</h2>
+            <p>Describe the next task below, or press / for skills.</p>
+          </div>
         )}
         <EditPrompt.Provider value={editPrompt}>
         {turns.map((t, i) => (
@@ -4459,7 +4468,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
               {row.mode !== "project" && row.writable && (
                 <span className="mode-local mode-badge" title={`File edits are allowed only inside ${row.writable}. The shell runs as you.`}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z" /></svg><span className="mode-word">Edits {row.writable.split("/").pop()}</span></span>
               )}
-              {row.mode !== "project" && !row.writable && (
+              {/* The footer's "Start project session…" already says this session cannot write; the badge stays only when there is no such offer. */}
+              {row.mode !== "project" && !row.writable && !((onStartProject && projects.length > 0) || onNewProject) && (
                 <span className="mode-local mode-badge" title="Runs on this machine. Can edit files only inside a git checkout; read-only elsewhere."><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg><span className="mode-word">Read-only</span></span>
               )}
             </div>
@@ -4513,7 +4523,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
             <span className="composer-local">
               {onStartProject && projects.length > 0 ? (
                 <Select label="Start project session" value="" placeholder="Start project session…" align="start"
-                        note="Your draft moves with you, unsent"
+                        note="This session is read-only outside a git checkout. Your draft moves with you, unsent"
                         options={projects.map((p) => ({ value: p.slug, label: p.name }))}
                         onChange={(id) => onStartProject(id, expand(draft))} />
               ) : onNewProject && (
