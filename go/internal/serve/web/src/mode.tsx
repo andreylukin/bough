@@ -25,8 +25,8 @@ export function ModePicker({ projects, value, onChange }: {
               title="Runs on this machine. Can edit files only inside a git checkout; read-only elsewhere."
               onClick={() => onChange({ mode: "local" })}>Local</button>
       {withOrb.length > 0
-        ? <Select label="Project" value={local ? "" : value.project ?? ""} align="start" placeholder="In a project…"
-                  options={withOrb.map((p) => ({ value: p.slug, label: p.name, detail: failedBuild(p) ? "Build failed" : undefined }))}
+        ? <Select label="Project" value={local ? "" : value.project ?? ""} align="start" placeholder="In a project…" currentGroup="Project"
+                  options={withOrb.map((p) => ({ value: p.slug, label: p.name, group: "Project", detail: failedBuild(p) ? "Build failed" : undefined }))}
                   onChange={(slug) => onChange(slug ? { mode: "project", project: slug } : { mode: "local" })} />
         : <button type="button" className="seg-item" disabled title="No project yet">Project</button>}
       {!local && failedBuild(withOrb.find((p) => p.slug === value.project)) && (

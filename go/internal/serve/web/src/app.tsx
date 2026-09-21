@@ -2,14 +2,14 @@ import { Fragment, createContext, memo, useCallback, useContext, useEffect, useI
 import { createPortal } from "react-dom";
 import { api, subscribe, watchBuild, type Change, type Scope, type TurnLine } from "./api";
 import type { Line, Project, Row } from "./types";
-import { MARKED, STATUS, StatusMark, Working, hasFailure, hasQuestion, sessionSignal, statusWord } from "./status";
+import { MARKED, STATUS, StatusMark, Working, hasFailure, hasQuestion, orbWord, sessionSignal, statusWord } from "./status";
 import { ProjectsView } from "./projects";
 import { ProjectView } from "./project";
 import { ModeChip, ModePicker, OrbUp, orbsUp, orbsUpLabel, type ModeValue } from "./mode";
 import { OrbFailureBody, confirmFailedBuild, confirmStopOrb, orbUp, type OrbFailureLog } from "./orb";
 import { Select, type Option } from "./select";
 import { DialogHost, askChoice, askConfirm, askText, showShortcuts } from "./dialog";
-import { focusComposerKey, isMac, newSessionKey, overviewKeys, sheetKey, switchKey, treeKey } from "./keys";
+import { focusComposerKey, isMac, newSessionKey, sheetKey, switchKey, treeKey } from "./keys";
 import { Welcome, welcomeDismissed } from "./welcome";
 import { clampToViewport } from "./popover";
 import { Markdown, programRan, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, cleanError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
@@ -3131,7 +3131,7 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only, cat
  * Home: the sidebar is the one list of sessions, so Home lists none. It
  * says how many need you and points at the first such row there.
  */
-function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onRetry, actions }: {
+export function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onRetry, actions }: {
   /** Header controls: where a new session runs, and New session. */
   actions?: React.ReactNode;
   rows: Row[]; onReveal: (id: string) => void; loadedAt: number | null; loadErr: string | null; onRetry: () => void;
@@ -3139,9 +3139,12 @@ function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onR
   onOpenFailure: (id: string, seq?: number) => void;
 }) {
   // The sidebar's own rule (sessionSignal): a failure outranks "done".
-  const live = rows.filter((r) => !r.archived && !(r.empty && !r.live));
-  const needs = live.filter((r) => sessionSignal(r) === 0).sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt));
-  const failed = needs.filter(hasFailure).slice(0, 5);
+  // An empty session whose orb failed to set up stays, as in the sidebar:
+  // hiding it would say "nothing needs you" under a red row.
+  const setupFailed = (r: Row) => r.orb?.status === "failed";
+  const live = rows.filter((r) => !r.archived && !(r.empty && !r.live && !setupFailed(r)));
+  const needs = live.filter((r) => sessionSignal(r) === 0 || setupFailed(r)).sort((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt));
+  const failed = needs.filter((r) => hasFailure(r) || setupFailed(r)).slice(0, 5);
   const questions = needs.filter(hasQuestion);
   const runningRows = live.filter((r) => !r.background && sessionSignal(r) === 1);
   const running = runningRows.length;
@@ -3166,7 +3169,7 @@ function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onR
     <div className="ov">
       <header className="ov-head">
         <h1>Overview</h1>
-        <span className="ov-hint"><kbd>{modKey()}</kbd><kbd>K</kbd> to search or start a session</span>
+        <span className="ov-hint"><kbd>{modKey()}K</kbd> to search or start a session</span>
         {actions && <div className="ov-actions">{actions}</div>}
       </header>
       <div className="scroll ov-body">
@@ -3190,7 +3193,7 @@ function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onR
                         <StatusMark status="error" size={16} bare />
                         <span className="ov-fail-main">
                           <span className="ov-fail-what" title={plainTitle(r.title) || r.id}>{sessionTitle(r)}</span>
-                          <span className="ov-state is-failed">{r.trouble ? r.trouble[0].toUpperCase() + r.trouble.slice(1) : r.testsFailed ? "Tests failed" : "Failed"}</span>
+                          <span className="ov-state is-failed">{r.trouble ? r.trouble[0].toUpperCase() + r.trouble.slice(1) : r.testsFailed ? "Tests failed" : setupFailed(r) ? orbWord("failed") : "Failed"}</span>
                           {/* The failing call when the transcript names one. */}
                           {e?.cmd && <span className="mono ov-fail-cmd" title={e.cmd}>{e.cmd}{e.exit !== undefined && ` · exit ${e.exit}`}</span>}
                         </span>
@@ -3226,10 +3229,12 @@ function ControlOverview({ rows, onReveal, onOpenFailure, loadedAt, loadErr, onR
           loadedAt === null ? <p className="ov-none" role="status">Loading sessions…</p> : (
             <div className="ov-empty" role="status">
               {/* Something running is not "nothing": say what is going on, and link to it. */}
-              {runningRow
-                ? <p className="ov-empty-title"><button className="link ov-point" onClick={() => onReveal(runningRow.id)}>{running} running</button></p>
-                : <p className="ov-empty-title">Nothing needs your attention</p>}
-              <p className="ov-empty-keys">{overviewKeys(modKey()).map((k) => <span key={k.label} className="ov-key"><kbd>{k.key}</kbd> {k.label}</span>)}<span className="ov-key"><kbd>?</kbd> All shortcuts</span></p>
+              <p className="ov-empty-title">Nothing needs your attention</p>
+              {runningRow && (
+                <p className="ov-empty-sub">{running} session{running === 1 ? "" : "s"} running · <button className="link ov-point" onClick={() => onReveal(runningRow.id)}>open</button></p>
+              )}
+              {/* One tip, not a toolbar: the header already says the rest. */}
+              <p className="ov-empty-keys"><span className="ov-key"><kbd>{modKey()}K</kbd> Search or start a session</span><span className="ov-key"><kbd>?</kbd> All shortcuts</span></p>
             </div>
           )
         )}
