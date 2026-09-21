@@ -69,9 +69,19 @@ func (c Counts) flagged() int { return c.Uncited + c.Unsupported + c.Superseded 
 
 // Cite is one citation, with the entry it points at as the digest
 // reads it. Problem is set when the entry cannot be found.
+//
+// A citation is usually a history entry. The brief (topics/me) also
+// cites what it read outside history — a pull request, a Slack message,
+// a Linear issue, a Notion page, a commit — as `<source>:<ref>`. Those
+// carry Source and Ref instead of Session and Seq, and URL when the ref
+// has an address; nothing resolves them, since the evidence is not on
+// this machine, so they are never unsupported.
 type Cite struct {
 	Session string `json:"session"`
 	Seq     int64  `json:"seq"`
+	Source  string `json:"source,omitempty"`
+	Ref     string `json:"ref,omitempty"`
+	URL     string `json:"url,omitempty"`
 	Label   string `json:"label"`
 	Excerpt string `json:"excerpt"`
 	At      string `json:"at,omitempty"`
@@ -276,6 +286,14 @@ func classify(b *Block, text string) {
 		text = text[loc[1]:]
 		b.State = "inferred"
 	}
+	// External first: `gh:owner/repo#7801` would otherwise read as a
+	// session called gh:owner/repo citing entry 7801.
+	for _, m := range extCiteRE.FindAllStringSubmatch(text, -1) {
+		if !slices.ContainsFunc(b.Cites, func(c Cite) bool { return c.Source == m[1] && c.Ref == m[2] }) {
+			b.Cites = append(b.Cites, Cite{Source: m[1], Ref: m[2], URL: extURL(m[1], m[2]), Label: m[1], Excerpt: m[2]})
+		}
+	}
+	text = extCiteRE.ReplaceAllString(text, "")
 	for _, m := range citeRE.FindAllStringSubmatch(text, -1) {
 		seq, _ := strconv.ParseInt(m[2], 10, 64)
 		// The same entry cited twice in one block is one piece of evidence.
@@ -298,7 +316,7 @@ func classify(b *Block, text string) {
 }
 
 func stripCites(text string) string {
-	t := citeRE.ReplaceAllString(text, "")
+	t := citeRE.ReplaceAllString(extCiteRE.ReplaceAllString(text, ""), "")
 	t = spacesRE.ReplaceAllString(t, " ")
 	t = punctRE.ReplaceAllString(t, "$1")
 	return strings.TrimSpace(t)
@@ -350,6 +368,9 @@ func shortDuration(d time.Duration) string {
 // fill resolves c; claim is the text citing it, so the excerpt can start
 // at the part of the entry that claim is about rather than its first line.
 func (r *resolver) fill(c *Cite, claim string) {
+	if c.Source != "" {
+		return // not on this machine: nothing to look up, nothing to be wrong
+	}
 	d, found, ok := r.cited(c.Session, c.Seq)
 	if !ok {
 		c.Problem = "cites a session that does not exist: " + c.Session
@@ -460,7 +481,7 @@ func (r *resolver) resolve(pg *Page) {
 			pg.Counts.Superseded++
 		}
 		for _, c := range b.Cites {
-			if !slices.Contains(pg.Sessions, c.Session) {
+			if c.Session != "" && !slices.Contains(pg.Sessions, c.Session) {
 				pg.Sessions = append(pg.Sessions, c.Session)
 			}
 		}

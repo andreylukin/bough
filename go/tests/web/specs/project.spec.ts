@@ -226,6 +226,10 @@ test('a link from when projects were labels lands on Projects, not on nothing', 
 test('a thread just started reads as starting, not as not found, until its transcript exists', async ({ serve, page }) => {
   let created = '';
   let refused = 0;
+  // Refused until the page has shown it is starting: a busy machine can
+  // take longer than two retries to paint, and a count would then let a
+  // read through before the assertion looks.
+  let release = false;
   await page.route(/\/api\/sessions$/, async (route) => {
     if (route.request().method() !== 'POST') return route.continue();
     const res = await route.fetch();
@@ -234,7 +238,7 @@ test('a thread just started reads as starting, not as not found, until its trans
   });
   await page.route(/\/api\/sessions\/[^/?]+(\?.*)?$/, (route) => {
     const id = route.request().url().split('/api/sessions/')[1].split('?')[0];
-    if (route.request().method() === 'GET' && created && id === created && refused < 2) { refused++; return route.fulfill({ status: 404, json: { error: 'no such session' } }); }
+    if (route.request().method() === 'GET' && created && id === created && (!release || refused < 2)) { refused++; return route.fulfill({ status: 404, json: { error: 'no such session' } }); }
     return route.continue();
   });
 
@@ -242,8 +246,9 @@ test('a thread just started reads as starting, not as not found, until its trans
   await page.locator('.prj-home').getByRole('button', { name: 'New thread' }).click();
   await expect(page.getByText('Starting the session…')).toBeVisible();
   await expect(page.getByText('Session not found')).toHaveCount(0);
+  release = true;
   // The retries land once the child has written; the thread is on screen.
-  await expect.poll(() => refused).toBe(2);
+  await expect.poll(() => refused).toBeGreaterThanOrEqual(2);
   await expect(page.getByText('Starting the session…')).toHaveCount(0);
   await expect(page.locator('.prj-conv .thread')).toBeVisible();
   await expect(page.locator('.prj-crumb')).toContainText('‹ Orbit');

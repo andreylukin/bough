@@ -32,12 +32,18 @@ func Run(p paths, exe string, all bool, maxSessions int, quiet time.Duration, on
 	if err := writeSkill(p); err != nil {
 		return err
 	}
+	// The brief rides the same tick: due or not is decided here, so a
+	// quiet day still costs nothing (briefDue is three stats).
+	var briefErr error
+	if due, _ := briefDue(p, time.Now(), false); due && only == "" {
+		briefErr = runBrief(p, exe)
+	}
 	pend, err := FindPending(p, quiet, all, time.Now())
 	if only != "" {
 		pend = slices.DeleteFunc(pend, func(x Pending) bool { return x.ID != only })
 	}
 	if err != nil || len(pend) == 0 {
-		return err
+		return errors.Join(err, briefErr)
 	}
 	if len(pend) > maxSessions {
 		pend = pend[:maxSessions]
@@ -67,7 +73,7 @@ func Run(p paths, exe string, all bool, maxSessions int, quiet time.Duration, on
 	)
 	runErr := cmd.Run()
 	commit(p, "ingest "+strings.Join(ids, " "))
-	return runErr
+	return errors.Join(runErr, briefErr)
 }
 
 // ensureWiki creates the wiki directory, its index and log (the log

@@ -36,6 +36,8 @@ type API struct {
 	// ingest starts a wiki ingest (spawnIngest). A field so a test can
 	// see the call without running a model.
 	ingest func(only string) error
+	// brief writes today's brief now (spawnBrief); a field for the same reason.
+	brief func() error
 	// start is the directory serve was started in, the folder first-run
 	// setup offers. getenv and setenv are fields so a test neither reads
 	// the developer's keys nor writes the process environment.
@@ -151,6 +153,7 @@ func NewAPI(sup *Supervisor) *API {
 	start, _ := os.Getwd()
 	a := &API{sup: sup, mux: http.NewServeMux(), home: home, start: start, getenv: os.Getenv, setenv: os.Setenv, checkKey: checkProviderKey}
 	a.ingest = a.spawnIngest
+	a.brief = a.spawnBrief
 	a.mux.HandleFunc("GET /api/health", a.health)
 	a.mux.HandleFunc("GET /api/setup", a.setup)
 	a.mux.HandleFunc("GET /api/dirs", a.dirs)
@@ -213,6 +216,8 @@ func NewAPI(sup *Supervisor) *API {
 	a.mux.HandleFunc("POST /api/wiki/check", a.wikiCheck)
 	a.mux.HandleFunc("GET /api/wiki/search", a.wikiSearch)
 	a.mux.HandleFunc("POST /api/wiki/ingest", a.wikiIngest)
+	a.mux.HandleFunc("GET /api/me", a.me)
+	a.mux.HandleFunc("POST /api/me/refresh", a.meRefresh)
 	// The UI, on EXACT paths only. A catch-all "GET /" would match a
 	// wrong-method request to a real API route (GET on a POST-only
 	// path), and ServeMux then serves the page instead of the 405 it

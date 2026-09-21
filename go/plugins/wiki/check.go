@@ -26,6 +26,34 @@ func (p Problem) String() string { return fmt.Sprintf("%s:%d: %s", p.Page, p.Lin
 // backticks. It is the wiki's only link back to what happened.
 var citeRE = regexp.MustCompile("`([A-Za-z0-9][A-Za-z0-9:._-]*)#(\\d+)`")
 
+// extCiteRE is a citation of something outside history, as the brief
+// writes them: `gh:owner/repo#7801`, `slack:C06T/1758.12`,
+// `linear:NME-1462`, `notion:<page id>`, `git:repo@sha`, `url:https://…`.
+// The source is one of a fixed few so a typo cannot pass as evidence.
+var extCiteRE = regexp.MustCompile("`(gh|slack|linear|notion|git|circle|url):([^`\\s]+)`")
+
+// extURL is where an external citation points, when its ref has an
+// address a browser can open; "" when it is only a name.
+func extURL(source, ref string) string {
+	switch source {
+	case "url":
+		return ref
+	case "gh":
+		// owner/repo#N is a pull request or issue; GitHub redirects between the two.
+		if i := strings.Index(ref, "#"); i > 0 {
+			return "https://github.com/" + ref[:i] + "/issues/" + ref[i+1:]
+		}
+		return "https://github.com/" + ref
+	case "notion":
+		return "https://www.notion.so/" + strings.ReplaceAll(ref, "-", "")
+	case "slack", "linear", "circle":
+		if strings.HasPrefix(ref, "https://") {
+			return ref
+		}
+	}
+	return ""
+}
+
 // linkRE is a relative markdown link to another page.
 var linkRE = regexp.MustCompile(`\]\(([^)\s:#]+\.md)(?:#[^)]*)?\)`)
 
@@ -62,7 +90,7 @@ func Check(p paths) ([]Problem, error) {
 		}
 		for i, line := range strings.Split(string(b), "\n") {
 			if rel != "log.md" { // the log names sessions, it does not cite entries
-				for _, m := range citeRE.FindAllStringSubmatch(line, -1) {
+				for _, m := range citeRE.FindAllStringSubmatch(extCiteRE.ReplaceAllString(line, ""), -1) {
 					if msg := checkCite(p, seqs, m[1], m[2]); msg != "" {
 						probs = append(probs, Problem{rel, i + 1, msg})
 					}

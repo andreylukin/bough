@@ -46,13 +46,13 @@ func (plugin) Name() string                                { return "wiki" }
 func (plugin) Inject() []string                            { return nil }
 func (plugin) Apply(*kernel.Context, map[string]any) error { return nil }
 
-const usage = "pending [--all] | digest <session> [--from N] | check | run [--all] [--max N] [--only <session>] | install [--every 5m] | uninstall"
+const usage = "pending [--all] | digest <session> [--from N] | check | run [--all] [--max N] [--only <session>] | brief | install [--every 5m] | uninstall"
 
 func (plugin) Commands() []kernel.Command {
 	return []kernel.Command{{
 		Name:    "wiki",
 		Usage:   usage,
-		Summary: "the LLM wiki compiled from history (~/.bough/wiki): pending sessions, digests, citation check, ingest runs, the 5-minute scheduler",
+		Summary: "the LLM wiki compiled from history (~/.bough/wiki): pending sessions, digests, citation check, ingest runs, today's brief, the 5-minute scheduler",
 		Run:     runCLI,
 	}}
 }
@@ -130,6 +130,12 @@ func runCLI(_ map[string]any, args []string) error {
 			return err
 		}
 		return Run(p, exe, flags.all, flags.max, defaultQuiet, flags.only)
+	case "brief":
+		exe, err := selfExe()
+		if err != nil {
+			return err
+		}
+		return Brief(p, exe)
 	case "install":
 		exe, err := selfExe()
 		if err != nil {

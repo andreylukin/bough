@@ -154,20 +154,41 @@ func (a *API) wikiIngest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// me is GET /api/me: the brief and signals the Me page renders.
+func (a *API) me(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, a.wikiStore().Me(time.Now()))
+}
+
+// meRefresh is POST /api/me/refresh: write today's brief now.
+func (a *API) meRefresh(w http.ResponseWriter, r *http.Request) {
+	if err := a.brief(); err != nil {
+		writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: start brief: %w", err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // spawnIngest runs `bough wiki run` detached, appending to the same
 // log the scheduler writes. The run takes the wiki's lock, so a tick
 // that is already ingesting makes this a no-op rather than a second run.
 func (a *API) spawnIngest(only string) error {
+	args := []string{"wiki", "run"}
+	if only != "" {
+		args = append(args, "--only", only)
+	}
+	return a.spawnWiki(args...)
+}
+
+// spawnBrief runs `bough wiki brief` detached, the same way.
+func (a *API) spawnBrief() error { return a.spawnWiki("wiki", "brief") }
+
+func (a *API) spawnWiki(args ...string) error {
 	exe := a.sup.opt.Exe
 	if exe == "" {
 		var err error
 		if exe, err = os.Executable(); err != nil {
 			return err
 		}
-	}
-	args := []string{"wiki", "run"}
-	if only != "" {
-		args = append(args, "--only", only)
 	}
 	dir := a.wikiStore().Dir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {

@@ -309,3 +309,25 @@ func TestSearch(t *testing.T) {
 		t.Fatal("blank query matched")
 	}
 }
+
+func TestExternalCitationsAreCitedAndLinked(t *testing.T) {
+	var b Block
+	b.Kind = "claim"
+	classify(&b, "Waiting on Priya's review. `gh:asi/uni-nes#7801` `notion:abc-123` `url:https://x.y/z`")
+	if b.State != "cited" || len(b.Cites) != 3 {
+		t.Fatalf("state=%s cites=%+v", b.State, b.Cites)
+	}
+	if b.Cites[0].URL != "https://github.com/asi/uni-nes/issues/7801" || b.Cites[1].URL != "https://www.notion.so/abc123" || b.Cites[2].URL != "https://x.y/z" {
+		t.Fatalf("urls: %+v", b.Cites)
+	}
+	if b.Text != "Waiting on Priya's review." {
+		t.Fatalf("text = %q", b.Text)
+	}
+	// Mixed with a session citation, both are kept and neither is confused for the other.
+	var m Block
+	m.Kind = "claim"
+	classify(&m, "Ran the tests. `01a0c046-e48e-716b-9f1c-26c93cbbc95d#12` `gh:asi/uni-nes#7801`")
+	if len(m.Cites) != 2 || m.Cites[0].Source != "gh" || m.Cites[1].Session == "" || m.Cites[1].Seq != 12 {
+		t.Fatalf("cites = %+v", m.Cites)
+	}
+}

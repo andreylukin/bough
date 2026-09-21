@@ -1,6 +1,6 @@
 ---
 name: llm-wiki
-description: "The LLM wiki at ~/.bough/wiki, compiled from bough's session history. Use for /llm-wiki ingest, /llm-wiki query <question>, /llm-wiki lint."
+description: "The LLM wiki at ~/.bough/wiki, compiled from bough's session history. Use for /llm-wiki ingest, /llm-wiki query <question>, /llm-wiki lint, /llm-wiki brief."
 manual: true
 ---
 
@@ -56,7 +56,14 @@ Updated: YYYY-MM-DD · Sessions: `<session>#<seq>`, ...
 
 **The grounding rule.** Every load-bearing claim — a decision, a number, a
 path, a command, a cause — carries a citation `` `<session>#<seq>` `` (in
-backticks) pointing at the history entry it came from. Find the seq in the
+backticks) pointing at the history entry it came from. A claim that rests
+on something read outside history (the brief does this) cites it as
+`` `<source>:<ref>` ``, with the source one of `gh`, `slack`, `linear`,
+`notion`, `git`, `circle`, `url`: `` `gh:owner/repo#7801` ``,
+`` `slack:C06TKRHR7J9/1758123.456` ``, `` `linear:NME-1462` ``,
+`` `notion:<page id>` ``, `` `git:uni-git-ai-cas@a1b2c3d` ``,
+`` `url:https://…` ``. The control room links these; nothing resolves them,
+so cite exactly what you read. Find the seq in the
 digest *before* you write the claim. No citation, no claim. Inference is
 labeled as inference: start the sentence (or bullet) with `*Inference:*`,
 so the control room can tell it from a claim that lost its citation.
@@ -127,3 +134,99 @@ scheduler does.
    duplicate pages that should merge, and important subjects mentioned
    without a page. Fix clear cases; list the rest for the user.
 3. Log `## [YYYY-MM-DD] lint | <what changed>`.
+
+## Brief
+
+`/llm-wiki brief`: what the person is doing today, across everything you
+can read, as `topics/me/briefs/<YYYY-MM-DD>.md` (today's date, local
+time) plus `topics/me/signals.json`. The scheduler runs this during
+working hours, every half hour; the control room's Me page renders it and
+its Refresh runs it now. It is the standup reply they would write, with
+evidence.
+
+Read `topics/me/profile.md` first: who they are, their teams, channels,
+Slack and Linear ids, the repos they own, and what they want left out. No
+profile, no brief — say so and stop. If a profile exists but is thin, use
+what is there; do not invent ids.
+
+**Gather, in parallel, each source that is available** (a source that is
+not connected or fails is reported in `signals.json` under `sources`, not
+guessed at):
+
+1. **Threads** — `"${BOUGH_BIN:-bough}" wiki pending --all` and the recent
+   sessions by title: what ran today, what is waiting on an answer, what
+   failed. Cite `` `<session>#<seq>` ``.
+2. **Git** — `git -C ~/repos/<repo> log --since=yesterday --author=<their email>`
+   over the repos the profile names (and any under `~/repos` with commits
+   today). Cite `` `git:<repo>@<short sha>` ``.
+3. **GitHub** — `gh pr list --author=@me --state=open` and
+   `gh search prs --review-requested=@me --state=open`; review comments
+   waiting on them. Cite `` `gh:owner/repo#N` ``.
+4. **Linear** — issues assigned to them updated in the last two days, and
+   status transitions. Cite `` `linear:<KEY>` ``.
+5. **Slack** — messages from them in the last day (outreach is work), and
+   mentions of them that have no reply. Cite `` `slack:<channel>/<ts>` ``.
+6. **Notion** — pages they created or edited since yesterday. Cite
+   `` `notion:<page id>` ``.
+
+**Write `topics/me/briefs/<date>.md`:**
+
+```markdown
+# Brief, <Weekday> <Month> <D>
+
+<One sentence: the one thing today is about.> `<cite>`
+
+## Since yesterday
+
+- <one casual first-person line per piece of work> `<cite>`
+
+## Today
+
+- <what they are doing or about to do> `<cite>`
+
+## Waiting on
+
+- <person or thing> — <what for> `<cite>`
+
+Updated: <YYYY-MM-DD HH:MM>
+```
+
+Voice: casual, first person, chat tone; a bullet is a pointer, not a
+report; plain English, no ticket ids or PR numbers in the prose (they are
+in the citation); honest about state. Four to eight bullets in all. Open
+PRs are not automatically yesterday's work: something is "since
+yesterday" only if a commit, comment, message or thread from that window
+says so. Every bullet cites. The lede may be `*Inference:*` when it is
+your reading of the day; nothing else may.
+
+Rewrite the whole file each run while its date is today. Never touch an
+earlier day's brief: those are frozen.
+
+**Write `topics/me/signals.json`** — the rows the Me page lists under the
+brief, machine-readable:
+
+```json
+{
+  "asOf": "<RFC 3339>",
+  "items": [
+    {"kind": "needs-you", "source": "gh", "title": "Review comment on the demand-settlement fix",
+     "note": "Priya, on the timeout default", "project": "smart-scheduler",
+     "at": "<RFC 3339>", "cite": "gh:asi/uni-nes#7801", "url": "https://github.com/…"},
+    {"kind": "moving", "source": "thread", "title": "fix the broken ci on main",
+     "project": "git-ai-enrichment", "at": "…", "cite": "<session>#<seq>", "session": "<session>"}
+  ],
+  "sources": [
+    {"name": "gh", "ok": true, "at": "<RFC 3339>"},
+    {"name": "slack", "ok": false, "error": "not connected"}
+  ]
+}
+```
+
+`kind` is one of `needs-you` (a person is waited on: a review, a question,
+a mention with no reply), `moving` (running or in review by others),
+`waiting` (they wait on someone), `done` (finished since yesterday).
+`project` is a bough project slug when the item belongs to one, else the
+repo name, else omitted. Keep it under forty items; the page is a glance.
+
+Then `"${BOUGH_BIN:-bough}" wiki check`; fix what it reports. Do not
+touch index.md or log.md for a brief, and do not commit; the scheduler does.

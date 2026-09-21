@@ -295,3 +295,78 @@ func TestSkillIsManual(t *testing.T) {
 		t.Fatal("the llm-wiki skill must be manual (loaded by /llm-wiki only, never on a prose mention)")
 	}
 }
+
+func TestBriefDue(t *testing.T) {
+	p := testPaths(t)
+	if err := os.MkdirAll(p.me(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tue10 := time.Date(2026, 9, 22, 10, 0, 0, 0, time.Local) // a Tuesday
+	if due, why := briefDue(p, tue10, false); due || why != "no topics/me/profile.md" {
+		t.Fatalf("without a profile: due=%v why=%q", due, why)
+	}
+	if due, _ := briefDue(p, tue10, true); due {
+		t.Fatal("force still needs a profile")
+	}
+	if err := os.WriteFile(p.profile(), []byte("# Me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if due, why := briefDue(p, tue10, false); !due {
+		t.Fatalf("a working hour with no brief: %q", why)
+	}
+	for _, at := range []time.Time{tue10.Add(-4 * time.Hour), tue10.Add(10 * time.Hour), tue10.AddDate(0, 0, 4)} { // 06:00, 20:00, Saturday
+		if due, _ := briefDue(p, at, false); due {
+			t.Errorf("%s should not be due", at.Format(time.RFC1123))
+		}
+		if due, _ := briefDue(p, at, true); !due {
+			t.Errorf("%s forced should be due", at.Format(time.RFC1123))
+		}
+	}
+	// Today's brief, fresh: not due. Half an hour old: due again.
+	brief := filepath.Join(p.wiki, filepath.FromSlash(BriefPath(tue10)))
+	if err := os.MkdirAll(filepath.Dir(brief), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(brief, []byte("# Brief\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(brief, tue10, tue10.Add(-10*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if due, why := briefDue(p, tue10, false); due || why != "brief is fresh" {
+		t.Fatalf("fresh brief: due=%v why=%q", due, why)
+	}
+	if due, _ := briefDue(p, tue10.Add(briefEvery), false); !due {
+		t.Fatal("a stale brief is due")
+	}
+}
+
+func TestCheckAcceptsExternalCitations(t *testing.T) {
+	p := testPaths(t)
+	dir := filepath.Join(p.wiki, "topics", "me", "briefs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	page := "# Brief\n\nWaiting on a review. `gh:asi/uni-nes#7801`\n\nPinged in oncall. `slack:C06T/1758.12` `linear:NME-1462`\n"
+	if err := os.WriteFile(filepath.Join(dir, "2026-09-22.md"), []byte(page), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.index(), []byte("- [Brief](topics/me/briefs/2026-09-22.md)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	probs, err := Check(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(probs) != 0 {
+		t.Fatalf("external citations flagged: %v", probs)
+	}
+	// A made-up source is still a session that does not exist.
+	if err := os.WriteFile(filepath.Join(dir, "2026-09-23.md"), []byte("# Brief\n\nx `jira:ABC#12`\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	probs, _ = Check(p)
+	if len(probs) == 0 || !strings.Contains(probs[len(probs)-1].Msg, "does not exist") {
+		t.Fatalf("unknown source passed: %v", probs)
+	}
+}

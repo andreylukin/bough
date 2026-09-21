@@ -12,6 +12,10 @@ export interface WikiCounts { cited: number; inferred: number; uncited: number; 
 export interface WikiCite {
   session: string;
   seq: number;
+  /** An external citation (`gh:owner/repo#7801`): source and ref instead of session and seq; url when it has an address. */
+  source?: string;
+  ref?: string;
+  url?: string;
   label: string;
   excerpt: string;
   at?: string;
@@ -147,7 +151,35 @@ const q = encodeURIComponent;
 
 let indexRead: Promise<WikiIndexData> | null = null;
 
+/** One row under the brief: what wants the person, what is moving, what they wait on, what got done. */
+export interface MeSignal {
+  kind: "needs-you" | "moving" | "waiting" | "done";
+  source: string;
+  title: string;
+  note?: string;
+  project?: string;
+  at?: string;
+  cite?: string;
+  url?: string;
+  session?: string;
+}
+export interface MeSource { name: string; ok: boolean; at?: string; error?: string }
+export interface MeSignals { asOf?: string; items?: MeSignal[]; sources?: MeSource[] }
+/** GET /api/me, mirroring plugins/wiki/brief.go. */
+export interface MeData {
+  date: string;
+  hasProfile: boolean;
+  path?: string;
+  page?: WikiPageData;
+  stale?: boolean;
+  asOf?: string;
+  signals?: MeSignals | null;
+  days: string[];
+}
+
 export const wikiApi = {
+  me: () => req<MeData>("/api/me"),
+  refreshMe: () => req<{ ok: true }>("/api/me/refresh", { method: "POST" }).then(() => {}),
   // One index read at a time for every caller (the nav count and the page):
   // a read still in flight is shared, not queued behind.
   index: () => indexRead ??= req<WikiIndexData>("/api/wiki").finally(() => { indexRead = null; }),
@@ -209,8 +241,8 @@ export function shortId(id: string): string {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(id) ? id.slice(0, 8) : id;
 }
 /** A citation as a chip reads it: the entry, with the session in the tooltip. */
-const citeName = (c: { session: string; seq: number }) => `#${c.seq}`;
-const citeWho = (c: { session: string; seq: number }) => `session ${shortId(c.session)}, entry ${c.seq}`;
+const citeName = (c: { session: string; seq: number; source?: string; ref?: string }) => c.source ? `${c.source}:${c.ref}` : `#${c.seq}`;
+const citeWho = (c: { session: string; seq: number; source?: string; ref?: string }) => c.source ? `${c.source} ${c.ref}` : `session ${shortId(c.session)}, entry ${c.seq}`;
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g;
 /** Full session UUIDs in free text (commit subjects, commands) as short, labeled ids. */
 const shortIds = (s: string) => s.replace(UUID, (id) => `session ${shortId(id)}`);
@@ -470,7 +502,7 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, onIngest, ch
 
 // ——— Page ————————————————————————————————————————————————————————
 
-function Cites({ block, cite, onCite, onHot }: {
+export function Cites({ block, cite, onCite, onHot }: {
   block: WikiBlock; cite?: { session: string; seq: number } | null; onCite: (c: WikiCite) => void;
   /** Hovering or focusing a chip highlights its margin note. */
   onHot?: (on: boolean) => void;
@@ -478,6 +510,13 @@ function Cites({ block, cite, onCite, onHot }: {
   return (
     <>
       {block.cites.map((c) => {
+        // An external citation is a link out, or a name when it has no address; never a source pane.
+        if (c.source) {
+          const key = `${c.source}:${c.ref}`;
+          return c.url
+            ? <a key={key} className="wk-cite wk-cite-ext" href={c.url} target="_blank" rel="noreferrer" title={citeWho(c)}>{citeName(c)}</a>
+            : <span key={key} className="wk-cite wk-cite-ext" title={citeWho(c)}>{citeName(c)}</span>;
+        }
         const on = cite && cite.session === c.session && cite.seq === c.seq;
         return (
           <button key={`${c.session}#${c.seq}`}
@@ -506,7 +545,7 @@ const plainText = (s: string) => cleanExcerpt(s)
 
 /** The margin note: the first citation's entry, or why it is broken. */
 function Note({ block, hot = false }: { block: WikiBlock; hot?: boolean }) {
-  const c = block.cites.find((x) => x.problem) ?? block.cites[0];
+  const c = block.cites.find((x) => x.problem) ?? block.cites.find((x) => !x.source);
   if (!c) return <div />;
   return <NoteBody c={c} more={block.cites.length - 1} claim={block.text} hot={hot} />;
 }
@@ -1126,7 +1165,7 @@ export function WikiActivityView({ data, onIngest, onOpenPage, onOpenSession, on
 
 // ——— Live container ——————————————————————————————————————————————
 
-function useLoad<T>(load: (() => Promise<T>) | null, key: string, poll = 0) {
+export function useLoad<T>(load: (() => Promise<T>) | null, key: string, poll = 0) {
   const [data, setData] = useState<T | null>(null);
   const [err, setErr] = useState("");
   // eslint-disable-next-line react-hooks/exhaustive-deps

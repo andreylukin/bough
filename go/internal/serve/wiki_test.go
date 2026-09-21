@@ -120,3 +120,52 @@ func TestWikiSearchAndCheck(t *testing.T) {
 		t.Fatalf("check = %d %v", code, body)
 	}
 }
+
+func TestMeReadsTheBriefAndRefreshStartsOne(t *testing.T) {
+	f := newAPI(t)
+	f.api.home = f.home
+	_, body := f.do(t, "GET", "/api/me", "")
+	if body["hasProfile"] != false || body["page"] != nil {
+		t.Fatalf("empty me = %v", body)
+	}
+	me := filepath.Join(f.home, ".bough", "wiki", "topics", "me")
+	if err := os.MkdirAll(filepath.Join(me, "briefs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, text := range map[string]string{
+		"profile.md":           "# Me\n\nSRE.\n",
+		"briefs/2026-09-18.md": "# Brief, Fri Sep 18\n\nOld day.\n",
+		"briefs/2026-09-21.md": "# Brief, Mon Sep 21\n\nWaiting on a review. `gh:asi/uni-nes#7801`\n",
+		"signals.json":         `{"asOf":"2026-09-21T14:00:00Z","items":[{"kind":"needs-you","source":"gh","title":"Review"}],"sources":[]}`,
+	} {
+		if err := os.WriteFile(filepath.Join(me, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	code, body := f.do(t, "GET", "/api/me", "")
+	if code != http.StatusOK || body["hasProfile"] != true || body["path"] != "topics/me/briefs/2026-09-21.md" {
+		t.Fatalf("me = %d %v", code, body)
+	}
+	days, _ := body["days"].([]any)
+	if len(days) != 2 || days[0] != "2026-09-21" {
+		t.Fatalf("days = %v", days)
+	}
+	page, _ := body["page"].(map[string]any)
+	blocks, _ := page["blocks"].([]any)
+	if len(blocks) == 0 {
+		t.Fatalf("page = %v", page)
+	}
+	if sig, _ := body["signals"].(map[string]any); sig["asOf"] != "2026-09-21T14:00:00Z" {
+		t.Fatalf("signals = %v", body["signals"])
+	}
+	// The brief on disk is not today's (unless this test runs on 2026-09-21): stale says so.
+	if stale := body["stale"] == true; stale != (body["date"] != "2026-09-21") {
+		t.Fatalf("stale = %v for date %v", body["stale"], body["date"])
+	}
+
+	ran := 0
+	f.api.brief = func() error { ran++; return nil }
+	if code, _ := f.do(t, "POST", "/api/me/refresh", ""); code != http.StatusOK || ran != 1 {
+		t.Fatalf("refresh = %d ran=%d", code, ran)
+	}
+}
