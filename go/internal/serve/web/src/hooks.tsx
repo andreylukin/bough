@@ -95,6 +95,7 @@ export interface HooksData {
 const clock = (iso: string) =>
   new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 const when = (iso: string | null, never: string) => (iso ? clock(iso) : never);
+const took = (ms: number) => ms < 1 ? "<1ms" : `${ms}ms`;
 const hms = (iso: string) => new Date(iso).toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
 /** An audit timestamp: date, time to the second, and the zone's offset. */
 const stamp = (iso: string) => new Date(iso).toLocaleString([], { year: "numeric", month: "short", day: "numeric",
@@ -295,7 +296,8 @@ function Payload({ fire, side }: { fire: Partial<Fire>; side: "input" | "output"
   return (
     <section className="hk-payload" aria-label={label}>
       <h4>{label}{bytes !== undefined && value !== null && <span className="num hk-when"> · {bytes.toLocaleString()} bytes</span>}
-        {capped && <span className="num hk-when" title={`Truncated: ${fire.truncated!.join(", ")}`}> · truncated to 10,000 bytes</span>}</h4>
+        {capped && <span className="num hk-when" title={`Truncated: ${fire.truncated!.join(", ")}`}> · truncated to 10,000 bytes</span>}
+        {value != null && <CopyButton text={formatJson(value)} label="Copy" className="btn btn-sm" />}</h4>
       {error ? <p className="hk-bad">Capture error — {error}</p>
         : cut ? <p className="hk-when">Oversize — omitted in full at the 64 KiB capture cap. No partial payload was stored.</p>
         : value === undefined ? <p className="hk-when">Unavailable — this record has no captured {side} (legacy records did not capture payloads).</p>
@@ -306,13 +308,13 @@ function Payload({ fire, side }: { fire: Partial<Fire>; side: "input" | "output"
 }
 
 /** Uses only recorded identity: a name cannot distinguish home, project or Go hooks. */
-export function FireInspection({ fire, load = hooksApi.read, save = hooksApi.write, showDefinition = true }: {
-  fire: Partial<Fire>; load?: Load; save?: Save; showDefinition?: boolean;
+export function FireInspection({ fire, load = hooksApi.read, save = hooksApi.write, showDefinition = true, showDescription = true }: {
+  fire: Partial<Fire>; load?: Load; save?: Save; showDefinition?: boolean; showDescription?: boolean;
 }) {
   return (
     <div className="hk-inspect">
-      {fire.description && <p className="hk2-note hk-description">{fire.description}</p>}
-      <div className="hk-io"><Payload fire={fire} side="input" /><Payload fire={fire} side="output" /></div>
+      {showDescription && fire.description && <p className="hk2-note hk-description">{fire.description}</p>}
+      <div className={"hk-io" + (fire.output === null ? " is-quiet" : "")}><Payload fire={fire} side="input" /><Payload fire={fire} side="output" /></div>
       {showDefinition && (fire.path
         ? <Source key={fire.path} path={fire.path} load={load} save={save} definition inRun />
         : <p className="hk2-note">Definition unavailable — no file path was recorded. Built-in handler.</p>)}
@@ -400,7 +402,7 @@ function HookRow({ h, latest, off, setOff, onOff, load, save, dryrun, titles }: 
         {latest ? <details className="hk2-more">
           <summary>Latest recorded input / output · {clock(latest.at)}</summary>
           <div className="hk2-more-body">
-            <p className="hk2-note">{stamp(latest.at)} · {latest.event} · {latest.ms}ms · <Decision fire={latest} />{latest.session && <> · <a className="hk-session link" href={`#/s/${latest.session}`}>{sessionTitle({ id: latest.session, title: titles[latest.session] })}</a></>}</p>
+            <p className="hk2-note">{stamp(latest.at)} · {latest.event} · {took(latest.ms)} · <Decision fire={latest} />{latest.session && <> · <a className="hk-session link" href={`#/s/${latest.session}`}>{sessionTitle({ id: latest.session, title: titles[latest.session] })}</a></>}</p>
             <FireInspection fire={latest} load={load} save={save} showDefinition={false} />
           </div>
         </details> : <p className="hk2-note">Input / output never captured for this file in the available history.</p>}
@@ -511,12 +513,13 @@ function Decision({ fire }: { fire: Fire }) {
  * One recorded run (or a folded run of identical quiet ones). The chevron
  * is the row's button; the session link sits above it, so it stays a link.
  */
-function FireRow({ f, n, all, titles, load, save }: {
+export function FireRow({ f, n, all, titles, load, save }: {
   f: Fire; n: number; all: Fire[]; titles: Record<string, string>; load: Load; save: Save;
 }) {
   const [open, setOpen] = useState(false);
   const id = useId();
   const title = f.session ? sessionTitle({ id: f.session, title: titles[f.session] }) : "";
+  const shared = all.every((x) => x.description === f.description);
   return (
     <div className={"hk-fire" + (open ? " hk-open" : "")}>
       <div className="hk-main" title={new Date(f.at).toString()}>
@@ -526,7 +529,7 @@ function FireRow({ f, n, all, titles, load, save }: {
           ? <a className="hk-sess link" href={`#/s/${f.session}`} title={f.session}>{title}</a>
           : <span className="hk-sess" />}
         <span className="mono hk-when hk-ev" title={f.event}>{f.event}</span>
-        <span className="num hk-when hk-took">{f.ms < 1 ? "<1ms" : `${f.ms}ms`}</span>
+        <span className="num hk-when hk-took">{took(f.ms)}</span>
         <span className="hk-dec"><Decision fire={f} />{n > 1 && <span className="num hk-count" title={`${n} runs collapsed`}>{n}</span>}</span>
         <button className="hk-chev" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
           <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
@@ -538,11 +541,15 @@ function FireRow({ f, n, all, titles, load, save }: {
           {f.error && <p className="hk2-alert">{f.error}</p>}
           {/* A notice never reached the model; this is the only place it survives after the turn scrolls away. */}
           {f.notice && <p className="hk-notice">{f.notice}</p>}
+          {/* Folded runs share one hook: its purpose and definition are said once, not per run. */}
+          {shared && f.description && <p className="hk2-note hk-description">{f.description}</p>}
+          {!f.path && <p className="hk2-note">Definition unavailable — no file path was recorded. Built-in handler.</p>}
+          {n > 1 && <p className="hk-runs-head">{n} runs, newest first</p>}
           <ul className="hk-runs">
             {all.map((x, j) => (
               <li key={j}>
-                <p className="num hk-when">{stamp(x.at)} · {x.ms}ms</p>
-                <FireInspection fire={x} load={load} save={save} />
+                <p className="num hk-when">{stamp(x.at)} · {took(x.ms)}</p>
+                <FireInspection fire={x} load={load} save={save} showDefinition={j === 0 && !!x.path} showDescription={!shared} />
               </li>
             ))}
           </ul>
@@ -563,7 +570,6 @@ function SetupItem({ title, path, children }: { title: string; path: string; chi
       <div className="proj-head">
         <h2>{title}</h2>
         <span className="hk2-state hk2-muted">Not configured</span>
-        <span className="proj-count" />
         <button className="link" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
           Add {title.toLowerCase()}…
         </button>
