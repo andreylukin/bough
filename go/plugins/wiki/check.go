@@ -85,7 +85,9 @@ func Check(p paths) ([]Problem, error) {
 			return err
 		}
 		special := rel == "index.md" || rel == "log.md"
-		if !special && !strings.Contains(string(index), rel) {
+		// The briefs are a diary the Me page reads by date, never by the
+		// index, and a brief run is told to leave index.md alone.
+		if !special && !strings.HasPrefix(rel, "topics/me/briefs/") && !strings.Contains(string(index), rel) {
 			probs = append(probs, Problem{rel, 1, "not listed in index.md"})
 		}
 		for i, line := range strings.Split(string(b), "\n") {

@@ -297,6 +297,14 @@ func serveForeground(home, addr string, insecure bool, host string) error {
 	}
 	api := serve.NewAPI(sup)
 	srv := &http.Server{Addr: addr, Handler: serve.Guard(api, token, remote && insecure, host)}
+	// Shutdown waits for in-flight requests, and an event stream is in
+	// flight for as long as a tab is open: every restart used to sit out
+	// the five seconds and log "context deadline exceeded". Requests
+	// derive from a context Shutdown cancels, so the streams end first.
+	reqCtx, endRequests := context.WithCancel(context.Background())
+	defer endRequests()
+	srv.BaseContext = func(net.Listener) context.Context { return reqCtx }
+	srv.RegisterOnShutdown(endRequests)
 
 	// Watchers run for as long as the server does. They execute shell,
 	// so a server bound off loopback gets none — say why, rather than

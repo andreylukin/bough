@@ -351,7 +351,8 @@ func TestCheckAcceptsExternalCitations(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "2026-09-22.md"), []byte(page), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(p.index(), []byte("- [Brief](topics/me/briefs/2026-09-22.md)\n"), 0o644); err != nil {
+	// A brief is never in the index, and check does not ask it to be.
+	if err := os.WriteFile(p.index(), []byte("# Wiki index\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	probs, err := Check(p)
