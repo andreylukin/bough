@@ -156,7 +156,7 @@ test('the first message creates the main thread', async ({ serve, page }) => {
   // The page opens main's conversation, with the way back to the project.
   await expect(page.getByText('No main thread yet. The first message starts one.')).toHaveCount(0);
   await expect(page.locator('.prj-conv')).toContainText('Set up the relay');
-  await expect(page.getByRole('button', { name: '‹ Relay' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '‹ All threads' })).toBeVisible();
 });
 
 test('the home indexes the threads; a thread opens with the column beside it and the way back', async ({ serve, page }) => {
@@ -180,7 +180,8 @@ test('the home indexes the threads; a thread opens with the column beside it and
   const col = page.locator('.prj-threads');
   const main = col.locator('.prj-main-thread');
   await expect(main).toContainText('Main thread');
-  await expect(main).toContainText('orbit');
+  // Under its name, its state word, not the slug the title bar already carries.
+  await expect(main).toContainText('Done');
   const err = col.locator('.prj-group', { hasText: 'Error' });
   await expect(err.locator('.prj-group-label')).toHaveText('Error');
   await expect(err).toContainText('Port the PTY suite');
@@ -188,10 +189,10 @@ test('the home indexes the threads; a thread opens with the column beside it and
   await col.locator('.prj-group-head', { hasText: 'Done' }).click();
   await expect(col.getByText('Write the docs')).toBeVisible();
 
-  // Between threads through the column; back to the project by its name.
+  // Between threads through the column; back to the project's home.
   await col.getByText('Port the PTY suite').click();
   await expect(page.locator('.prj-conv')).toContainText('exit status 1');
-  await page.getByRole('button', { name: '‹ Orbit' }).click();
+  await page.getByRole('button', { name: '‹ All threads' }).click();
   await expect(page.locator('.prj-home')).toBeVisible();
   await expect(page.locator('.prj-threads')).toHaveCount(0);
 });
@@ -251,5 +252,5 @@ test('a thread just started reads as starting, not as not found, until its trans
   await expect.poll(() => refused).toBeGreaterThanOrEqual(2);
   await expect(page.getByText('Starting the session…')).toHaveCount(0);
   await expect(page.locator('.prj-conv .thread')).toBeVisible();
-  await expect(page.locator('.prj-crumb')).toContainText('‹ Orbit');
+  await expect(page.locator('.prj-crumb')).toContainText('‹ All threads');
 });

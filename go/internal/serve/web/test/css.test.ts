@@ -133,6 +133,6 @@ test("phone: the project chip is words beside the status, the drawer has a head,
   expect(css).toMatch(/\.prj-drawer-head\{display:flex[^}]*min-height:44px/);
   expect(css).toMatch(/@media \(max-width:720px\)\{\.prj-panel\{width:100vw\}\}/);
   expect(css).toMatch(/\.me-brief \.wk-cite\{white-space:normal;overflow-wrap:anywhere/);
-  expect(css).toMatch(/\.sidebar-closed \.side-icon-reserved\{display:none\}/);
+  expect(css).toMatch(/\.side-icon-reserved\{display:none\}/);
   expect(css).toMatch(/\.wk-health\{display:flex;flex-wrap:wrap/);
 });
