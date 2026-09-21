@@ -203,7 +203,7 @@ function OrbVerdict({ detail }: { detail: OrbDetail }) {
  */
 export function filePlaceholder(f: OrbFile): string {
   if (f === "project.yml") return "";
-  if (f === "MEMORY.md") return "Empty. Write what every session in this project should know: what it is, where things live, decisions already made.";
+  if (f === "MEMORY.md") return "Write what every session in this project should know: what it is, where things live, decisions already made.";
   return "Empty: saving removes the file";
 }
 

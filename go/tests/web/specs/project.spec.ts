@@ -109,11 +109,11 @@ test('MEMORY.md is saved only on purpose, and is still there after a reload', as
   await page.goto(serve.url + '/#/projects/relay');
   const editor = page.locator('textarea[aria-label="MEMORY.md"]');
   await expect(editor).toHaveValue('');
-  await expect(editor).toHaveAttribute('placeholder', /^Empty\. Write what every session in this project should know/);
+  await expect(editor).toHaveAttribute('placeholder', /^Write what every session in this project should know/);
   const save = page.getByRole('button', { name: 'Save', exact: true });
   // Nothing typed: there is nothing to write, and nothing writes it but you.
   await expect(save).toBeDisabled();
-  await expect(page.getByText('Prepended to every session in this project. Nothing writes this but you and the agent.')).toBeVisible();
+  await expect(page.getByText('Prepended to every session in this project.')).toBeVisible();
 
   await editor.fill('The relay speaks to agent-browser on the host.\nPorts are forwarded, not proxied.\n');
   await expect(save).toBeEnabled();

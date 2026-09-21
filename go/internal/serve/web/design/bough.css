@@ -4007,7 +4007,7 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 .prj-loading{padding:var(--s-5)}
 
 /* col B: the threads */
-.prj-threads{width:260px;min-width:220px;flex-shrink:0;display:flex;flex-direction:column;
+.prj-threads{width:280px;min-width:220px;flex-shrink:0;display:flex;flex-direction:column;
              border-right:1px solid var(--line);background:var(--surface)}
 .prj-threads-head{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-2) var(--s-3);border-bottom:1px solid var(--line)}
 .prj-threads-count{margin-inline-end:auto;color:var(--text-3);font-size:var(--fs-sm)}
@@ -4032,6 +4032,8 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 .prj-thread-main{min-width:0;display:flex;flex-direction:column}
 .prj-thread-title{font-size:var(--fs-md);line-height:var(--lh-row);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .prj-thread-note,.prj-thread-when{font-size:var(--fs-sm);color:var(--text-3)}
+.prj-threads .prj-thread-when{font-size:var(--fs-xs)}
+.prj-thread-id{color:var(--text-3);font-weight:400}
 .prj-thread-note{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* A 6px dot, not a pill: the column is too narrow for a word, and the
    word is on the row for a screen reader anyway. Interrupted is hollow —
@@ -4060,9 +4062,19 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
    at the conversation's width, so a title is not cut where it need not be. */
 .prj-home{flex:1 1 0%;padding:var(--s-4) var(--s-5) var(--s-6)}
 .prj-home .prj-first{margin:0 0 var(--s-4);padding:0;max-width:none}
+.prj-first-line{margin:0 0 var(--s-2);font-size:var(--fs-sm);color:var(--text-2)}
+/* The same shell as the thread composer: one product, one box. */
+.prj-first-shell{margin:0}
+.prj-first-shell:has(> textarea:focus){outline:2px solid var(--accent);outline-offset:2px}
+.prj-first-shell .composer-bar{margin-top:var(--s-1)}
+.prj-first-err{margin:var(--s-2) 0 0}
 .prj-queue{max-width:80ch}
 .prj-queue-head{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-2) 0;border-bottom:1px solid var(--line)}
-.prj-home .prj-group-head{padding-inline:0;cursor:default}
+/* A group is a section, not a row: a small caps label with its count beside it, and room above. */
+.prj-home .prj-group{margin-top:var(--s-3)}
+.prj-home .prj-group-head{padding:var(--s-1) 0;cursor:default;font:600 var(--fs-xs)/1.2 var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--text-2)}
+.prj-home .prj-group-label{flex:0 0 auto}
+.prj-home .prj-group-count{color:var(--text-3);font-weight:400}
 .prj-home .prj-thread{padding-inline:var(--s-2);border-radius:var(--r-sm)}
 .prj-main-row{border-bottom:1px solid var(--line);border-radius:0 !important;padding-block:var(--s-2)}
 .prj-main-row .prj-thread-title{font-weight:600}
@@ -4082,6 +4094,20 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 .prj-orbs>summary,.prj-files>summary{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-1) 0;cursor:pointer}
 .prj-files-sum{margin-inline-start:auto;color:var(--text-3);font-size:var(--fs-sm)}
 .prj-panel .orb-editor{min-height:11rem}
+/* Five files do not fit as pills in 300px: one row of underline tabs. */
+.prj-panel .orb-tabs[role=tablist]{gap:0;border-bottom:1px solid var(--line)}
+.prj-panel .orb-tabs[role=tablist] .btn{height:28px;padding-inline:var(--s-1);border:0;border-radius:0;background:none;color:var(--text-3);font-size:var(--fs-sm);white-space:nowrap}
+.prj-panel .orb-tabs[role=tablist] .btn:hover{color:var(--text-1)}
+.prj-panel .orb-tabs[role=tablist] .btn[aria-selected=true]{box-shadow:inset 0 -2px var(--accent);background:none;color:var(--text-1)}
+.prj-panel .file-meta{margin:var(--s-2) 0 var(--s-1);color:var(--text-3)}
+/* Thread orbs in a 300px panel: two lines a row, like the sidebar, not a four-column table. */
+.prj-panel .orb-sessions .orb-cols{display:none}
+.prj-panel .orb-row{grid-template-columns:minmax(0,1fr) max-content;row-gap:var(--s-1);margin-inline:0;padding:var(--s-2) 0}
+.prj-panel .orb-row>.proj-open{gap:var(--s-2)}
+.prj-panel .orb-row>.orb-st{white-space:nowrap}
+.prj-panel .orb-row>.orb-ctr{grid-column:1;grid-row:2}
+.prj-panel .orb-row>.orb-st{grid-column:2;grid-row:1}
+.prj-panel .orb-row>.orb-act{grid-column:2;grid-row:2}
 /* The file editor's own lines, shared with the orb panel. */
 .file-note{margin:var(--s-2) 0 0;color:var(--text-3);font-size:var(--fs-sm)}
 .file-meta{margin:var(--s-2) 0 var(--s-1);font-size:var(--fs-sm);color:var(--text-2)}

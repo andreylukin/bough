@@ -73,7 +73,7 @@ test("Save is disabled until the buffer is dirty", () => {
 
 test("an absent MEMORY.md is a placeholder in the pane, and saving creates it", () => {
   const html = editor("");
-  expect(html).toContain("Empty. Write what every session in this project should know: what it is, where things live, decisions already made.");
+  expect(html).toContain("Write what every session in this project should know: what it is, where things live, decisions already made.");
   expect(html).toContain(">0 lines<");
   // An empty MEMORY.md is a file, not a delete: the scripts say the other thing.
   expect(filePlaceholder("MEMORY.md")).not.toContain("removes the file");

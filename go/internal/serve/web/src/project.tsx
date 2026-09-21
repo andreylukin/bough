@@ -23,7 +23,7 @@ import { Back, useMedia } from "./app";
 /** MEMORY.md first: it is the file this page is usually opened to write. */
 export const PROJECT_FILES: readonly OrbFile[] = ["MEMORY.md", "project.yml", "Dockerfile", "setup.sh", "resume.sh"];
 
-const MEMORY_NOTE = "Prepended to every session in this project. Nothing writes this but you and the agent.";
+const MEMORY_NOTE = "Prepended to every session in this project.";
 
 const clock = (iso: string) =>
   new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -107,11 +107,21 @@ function Dot({ status }: { status: Status }) {
   return <span className="prj-dot" data-status={status} style={{ color: STATUS[status]?.tone }} aria-hidden="true" />;
 }
 
-function ThreadRow({ row, on, onOpen }: { row: Row; on: boolean; onOpen: (id: string) => void }) {
+/** The rows of one group, each told apart from the row above it when the titles are the same. */
+function rowsOf(rows: Row[], on: string, onOpen: (id: string) => void) {
+  return rows.map((r, i) => (
+    <ThreadRow key={r.id} row={r} on={on === r.id} onOpen={onOpen}
+               twin={i > 0 && sessionTitle(rows[i - 1]) === sessionTitle(r)} />
+  ));
+}
+
+function ThreadRow({ row, on, onOpen, twin }: { row: Row; on: boolean; onOpen: (id: string) => void; twin?: boolean }) {
   const st = shownStatus(row);
   const at = row.lastAt || row.modified;
-  const note = threadNote(row);
+  // The title already names the work; the note is only worth a line when it says something else.
+  const note0 = threadNote(row);
   const title = sessionTitle(row);
+  const note = note0 && !title.startsWith(note0.slice(0, 40)) && !note0.startsWith(title.slice(0, 40)) ? note0 : "";
   return (
     <button type="button" className={"prj-thread" + (on ? " is-on" : "")} aria-current={on || undefined}
             onClick={() => onOpen(row.id)} aria-label={[title, note, statusWord(st), ago(at)].filter(Boolean).join(", ")}>
@@ -120,7 +130,8 @@ function ThreadRow({ row, on, onOpen }: { row: Row; on: boolean; onOpen: (id: st
         <span className="prj-thread-title" title={title}>{title}</span>
         {note && <span className="prj-thread-note" title={note}>{note}</span>}
       </span>
-      <span className="num prj-thread-when" title={clock(at)}>{ago(at)}</span>
+      {/* A twin of the row above is told apart by its id tail, where the ellipsis cannot eat it. */}
+      <span className="num prj-thread-when" title={clock(at)}>{twin && <span className="mono prj-thread-id">{row.id.slice(0, 6)} · </span>}{ago(at)}</span>
     </button>
   );
 }
@@ -136,7 +147,7 @@ function Group({ group, rows, open, folded, onFold, onOpen }: {
         <span className="prj-group-label">{GROUP_LABEL[group]}</span>
         <span className="num prj-group-count">{rows.length}</span>
       </button>
-      {!folded && rows.map((r) => <ThreadRow key={r.id} row={r} on={open === r.id} onOpen={onOpen} />)}
+      {!folded && rowsOf(rows, open, onOpen)}
     </div>
   );
 }
@@ -147,8 +158,9 @@ function Group({ group, rows, open, folded, onFold, onOpen }: {
  * container for the project as a whole — so it never claims that
  * stopping this one stops the threads.
  */
-function OrbLine({ orb, onStop }: { orb?: OrbState; onStop: () => void }) {
-  if (!orb || !orb.status) return <p className="prj-orb-line prj-orb-down">No orb yet. It starts when you first message the project.</p>;
+function OrbLine({ orb, messaged, onStop }: { orb?: OrbState; messaged: boolean; onStop: () => void }) {
+  // A project with threads has been messaged: the orb line then talks about main alone, not the project.
+  if (!orb || !orb.status) return <p className="prj-orb-line prj-orb-down">{messaged ? "Main thread has no orb yet." : "No orb yet. It starts when you first message the project."}</p>;
   if (!orbUp(orb)) return <p className="prj-orb-line prj-orb-down">Main thread’s orb is stopped. It starts when you message the project.</p>;
   const st = ORB_AS_STATUS[orb.status];
   return (
@@ -185,9 +197,12 @@ export function countsLine(rows: Row[]): string {
   return parts.join(" · ");
 }
 
-/** Done and idle threads beyond this many fold behind one line on the home; empty ones fold entirely. */
+/**
+ * Threads beyond this many fold behind one line on the home; empty ones
+ * fold entirely. Needs-you and running never fold: they are the work.
+ */
 const IDLE_SHOWN = 8;
-const FOLDED_ON_HOME: ReadonlySet<ThreadGroup> = new Set<ThreadGroup>(["done", "idle"]);
+const FOLDED_ON_HOME: ReadonlySet<ThreadGroup> = new Set<ThreadGroup>(["error", "interrupted", "done", "idle"]);
 
 /**
  * The composer on the home. Messaging the project is messaging its main
@@ -210,14 +225,21 @@ function ProjectComposer({ onMessage, line, autoFocus }: { onMessage: (text: str
   return (
     <div className="prj-first">
       {line && <p className="prj-first-line">{line}</p>}
-      <textarea ref={box} className="field prj-first-box" rows={3} value={text} aria-label="Message the project"
-                placeholder="Message the project. Main answers here, or hands the work to a thread." disabled={busy}
-                onChange={(e) => setText(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }} />
+      {/* The same shell as the thread composer under a conversation, so the two boxes on this page read as one thing. */}
+      <div className="composer composer-multi prj-first-shell">
+        <textarea ref={box} className="prj-first-box" rows={2} value={text} aria-label="Message the project"
+                  placeholder="Message the project. Main answers here, or hands the work to a thread." disabled={busy}
+                  onChange={(e) => setText(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }} />
+        <div className="composer-bar">
+          <div className="composer-actions">
+            <button type="button" className="btn btn-primary" disabled={!text.trim() || busy} onClick={() => { void send(); }}>
+              {busy ? "Sending…" : "Send"}
+            </button>
+          </div>
+        </div>
+      </div>
       {err && <p className="err prj-first-err" role="alert">{humanError(err)}</p>}
-      <button type="button" className="btn btn-primary" disabled={!text.trim() || busy} onClick={() => { void send(); }}>
-        {busy ? "Sending…" : "Send"}
-      </button>
     </div>
   );
 }
@@ -268,7 +290,7 @@ export function ProjectHome({ detail, mainRow, onOpen, onMessage, onNewThread }:
                 <span className="prj-group-label">{GROUP_LABEL[g.group]}</span>
                 <span className="num prj-group-count">{g.rows.length}</span>
               </div>
-              {rows.map((r) => <ThreadRow key={r.id} row={r} on={false} onOpen={onOpen} />)}
+              {rowsOf(rows, "", onOpen)}
               {capped && <button type="button" className="link prj-more" onClick={() => setShownAll((prev) => new Set(prev).add(g.group))}>Show all {g.rows.length}</button>}
             </div>
           );
@@ -342,6 +364,7 @@ export function ProjectPage({
   const memory = files?.["MEMORY.md"] ?? "";
   const memoryLines = lineCount(memory);
   const threadOrbs = detail.orbs.filter((o) => o.session !== detail.main);
+  const orbsFailed = threadOrbs.filter((o) => ORB_AS_STATUS[o.status] === "error").length;
   // Point the editor at the file that has to be fixed, wherever the page is.
   const editFile = (f: OrbFile) => {
     setPanel(true); setFilesOpen(true); setTab(f);
@@ -370,7 +393,7 @@ export function ProjectPage({
             <button type="button" className={"prj-main-thread" + (inMain ? " is-on" : "")} aria-current={inMain || undefined}
                     onClick={() => onOpen(detail.main!)}>
               <span className="prj-main-label">Main thread</span>
-              <span className="mono prj-main-slug">{detail.slug}</span>
+              <span className="prj-main-slug">{mainRow ? statusWord(shownStatus(mainRow)) : detail.mainArchived ? "Archived" : detail.slug}</span>
               {mainRow && <span className="prj-main-st"><StatusMark status={shownStatus(mainRow)} size={12} bare /></span>}
             </button>
           )}
@@ -396,7 +419,7 @@ export function ProjectPage({
             <p className="prj-crumb">
               {open
                 ? <>
-                    <button type="button" className="link prj-back" onClick={() => onOpen("")}>‹ {detail.name}</button>
+                    <button type="button" className="link prj-back" onClick={() => onOpen("")}>‹ All threads</button>
                     <span className="prj-crumb-rest" title={inMain ? "Main thread" : openRow ? sessionTitle(openRow) : ""}>· {inMain ? "Main thread" : openRow ? sessionTitle(openRow) : "…"}</span>
                   </>
                 : <>
@@ -441,11 +464,10 @@ export function ProjectPage({
           <button type="button" className="btn btn-ghost btn-sm prj-drawer-close" onClick={() => setPanel(false)}>Close</button>
           <section className="prj-sec">
             <h3 className="prj-sec-h eyebrow">Orbs</h3>
-            <OrbLine orb={detail.mainOrb} onStop={() => detail.main && onStopOrb(detail.main)} />
+            <OrbLine orb={detail.mainOrb} messaged={Boolean(detail.main) || threads.length > 0} onStop={() => detail.main && onStopOrb(detail.main)} />
             <details className="prj-orbs">
-              <summary>Thread orbs <span className="num">{threadOrbs.length}</span></summary>
-              {/* Stopping one container stops one thread; the others keep theirs. */}
-              <p className="prj-dim">Each thread runs in a container of its own.</p>
+              {/* The fold line carries the state, so a failed orb is not hidden under a bare count. Stopping one container stops one thread; the others keep theirs. */}
+              <summary title="Each thread runs in a container of its own.">Thread orbs <span className="num">{threadOrbs.length}</span>{orbsFailed > 0 && <span className="prj-dim" style={{ margin: 0 }}>· {orbsFailed} failed</span>}</summary>
               <OrbSessions orbs={threadOrbs} titles={titles} onOpen={onOpenSession} onStopOrb={onStopOrb}
                            none="No thread has started a container yet." />
             </details>
@@ -465,7 +487,7 @@ export function ProjectPage({
                                 const n = lineCount(text);
                                 return (
                                   <p className="file-meta">
-                                    <span className="mono">{f}</span> · <span className={("num " + lineTone(n)).trim()}>{n} {n === 1 ? "line" : "lines"}</span>
+                                    <span className={("num " + lineTone(n)).trim()}>{n} {n === 1 ? "line" : "lines"}</span>
                                     {n > LONG && <span className={lineTone(n)}> · long — injected every turn</span>}
                                   </p>
                                 );
