@@ -630,7 +630,8 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .welcome-how h2{margin:0 0 var(--s-2);font-size:var(--fs-xs);font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3)}
 .welcome-how ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:var(--s-2);font-size:var(--fs-md);line-height:var(--lh-prose);color:var(--text-2)}
 .welcome-how b{font-weight:600;color:var(--text-1)}
-.welcome-foot{margin:var(--s-5) 0 0;text-align:center}
+.welcome-head{display:grid;grid-template-columns:1fr auto;column-gap:var(--s-3);align-items:start}
+.welcome-head .welcome-skip{grid-column:2;grid-row:1;align-self:center}
 @media (max-width:720px){
   .welcome-inner{padding:24px 16px}.welcome-step{padding:12px}
   .welcome-key-row{grid-template-columns:minmax(0,1fr) auto}.welcome-key-row select{grid-column:1/-1}
@@ -3508,9 +3509,8 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 
 /* §1 overview */
 .ov{display:flex;flex-direction:column;min-height:0;flex:1}
-.ov-hint{display:inline-flex;align-items:center;gap:4px}
-.ov-hint kbd+kbd{margin-inline-start:0}
-.ov-hint kbd:last-of-type{margin-inline-end:4px}
+.ov-hint{display:inline-flex;align-items:center;gap:6px;line-height:18px}
+.ov-hint kbd{vertical-align:middle}
 .ov-actions{display:flex;align-items:center;gap:8px;margin-inline-start:auto}
 .ov-new{display:none}
 .seg{display:inline-flex;align-items:center;gap:2px;height:var(--ctl);padding:2px;background:var(--raised);border-radius:var(--r-sm);box-shadow:inset 0 0 0 1px var(--line)}
@@ -3533,18 +3533,19 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 .ov-fail>.status,.ov-wait>.status{flex:none}
 .ov-fail-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}
 .ov-fail-main>.ov-fail-what,.ov-wait-line{display:flex;align-items:baseline;gap:8px;min-width:0}
-.ov-fail-main{flex-direction:row;align-items:baseline;gap:8px}
-.ov-wait .ov-fail-main{flex-direction:column;align-items:stretch;gap:0}
+.ov-fail-main{flex-direction:column;align-items:stretch;gap:0}
+.ov-fail-main>.ov-fail-what{display:inline}
+.ov-fail-main>.ov-state{align-self:flex-start}
 .ov-fail-what,.ov-wait-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 var(--fs-md)/20px var(--sans);color:var(--text-1)}
 .ov-fail-what{flex:0 1 auto}
 .ov-state{flex:none;font-size:var(--fs-sm)}
 .ov-state.is-failed{color:var(--red)}
 .ov-state.is-waiting{color:var(--amber)}
-.ov-fail-cmd{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-sm);color:var(--text-3)}
+.ov-fail-cmd{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-sm);line-height:16px;color:var(--text-3)}
 .ov-wait-q{font-size:var(--fs-sm);line-height:16px;color:var(--text-2);-webkit-line-clamp:1;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ov-meta{flex:none;font-size:var(--fs-sm);color:var(--text-3);font-variant-numeric:tabular-nums}
 .ov-fail .btn.btn-sm{flex:none;height:var(--ctl-sm);min-height:0;padding:0 8px;font:500 var(--fs-sm)/1 var(--sans)}
-.ov-empty{padding:96px 16px 48px;margin:0 auto}
+.ov-empty{padding:48px 16px;margin:auto}
 .ov-empty-title{font-size:var(--fs-base);font-weight:500}
 .ov-empty-keys{gap:4px 8px}
 @media (max-width:720px){

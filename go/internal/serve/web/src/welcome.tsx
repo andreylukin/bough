@@ -57,7 +57,7 @@ export function keyCallout(providers: SetupProvider[], checks: KeyChecks): { lea
   const names = (l: SetupProvider[]) => l.map((p) => label(p.name)).join(", ");
   return {
     lead: `${names(bad)} ${bad.length > 1 ? "keys" : "key"} rejected.`,
-    body: good.length ? `Replace it, or pick a model from a provider that works (${names(good)}).` : "Replace it with a key the provider accepts.",
+    body: good.length ? `Replace it, or use ${names(good)}.` : "Replace it with a key the provider accepts.",
   };
 }
 
@@ -232,6 +232,7 @@ export function Welcome({ onStart, onSkip, onBack }: {
         <header className="welcome-head">
           <h1>Welcome to bough</h1>
           <p>A coding agent that writes one JavaScript program per step.</p>
+          <button type="button" className="btn btn-sm welcome-skip" onClick={() => { dismiss(); onSkip(); }}>Skip the welcome</button>
         </header>
 
         <section className="welcome-setup" aria-label="Set up">
@@ -311,7 +312,6 @@ export function Welcome({ onStart, onSkip, onBack }: {
           </ul>
         </section>
 
-        <p className="welcome-foot"><button className="link welcome-skip" onClick={() => { dismiss(); onSkip(); }}>Skip the welcome</button></p>
       </div>
     </div>
   );

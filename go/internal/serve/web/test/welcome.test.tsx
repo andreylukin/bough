@@ -37,5 +37,5 @@ test("a rejected key reads as a lead and what to do", () => {
   expect(keyCallout([p("anthropic", true)], { anthropic: "ok" })).toBeNull();
   const mixed = keyCallout([p("anthropic", true), p("openai", true), p("openrouter", true)], { anthropic: "rejected", openai: "ok", openrouter: "ok" });
   expect(mixed.lead).toBe("Anthropic key rejected.");
-  expect(mixed.body).toBe("Replace it, or pick a model from a provider that works (OpenAI, OpenRouter).");
+  expect(mixed.body).toBe("Replace it, or use OpenAI, OpenRouter.");
 });
