@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ProjectPage, groupThreads, homeThreads, latestThread, lineCount, threadCounts, threadGroup, threadNote } from "../src/project";
+import { ProjectPage, countsLine, groupThreads, lineCount, threadCounts, threadGroup, threadNote } from "../src/project";
 import type { OrbFile, ProjectDetail, Row } from "../src/types";
 
 const at = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
@@ -39,8 +39,11 @@ const page = (over: Partial<Parameters<typeof ProjectPage>[0]> = {}) =>
                  conversation={<div className="thread">conversation</div>} {...over} />,
   );
 
+// The column: beside a conversation, the way between threads.
+const column = (over: Partial<Parameters<typeof ProjectPage>[0]> = {}) => page({ open: "t1", conversation: <div className="thread">conversation</div>, ...over });
+
 test("the groups are in urgency order and an empty one is not rendered", () => {
-  const html = page();
+  const html = column();
   const order = ["Needs you", "Error", "Running", "Interrupted", "Idle"].map((g) => html.indexOf(`prj-group-label">${g}<`));
   expect(order.every((i) => i >= 0)).toBe(true);
   expect(order).toEqual([...order].sort((a, b) => a - b));
@@ -50,7 +53,7 @@ test("the groups are in urgency order and an empty one is not rendered", () => {
 });
 
 test("a status is a dot, never a pill, in the threads column; the one pill is the title bar's", () => {
-  const html = page();
+  const html = column();
   expect(html.split("prj-dot").length - 1).toBeGreaterThan(2);
   expect(html.split("prj-pill").length - 1).toBe(1);
   // The word still reaches a screen reader, through the row's label.
@@ -58,23 +61,24 @@ test("a status is a dot, never a pill, in the threads column; the one pill is th
 });
 
 test("the main thread is pinned with its slug, above the groups, not as a peer row", () => {
-  const html = page();
+  const html = column();
   expect(html).toContain("Main thread");
   expect(html.indexOf("prj-main-thread")).toBeLessThan(html.indexOf("prj-group-head"));
   expect(html).toContain(">bough<");
 });
 
 test("no threads: one line and no group headers at all", () => {
-  const html = page({ detail: { ...detail, threads: [] } });
+  const html = column({ detail: { ...detail, threads: [] } });
   expect(html).toContain("No threads yet. Ask the main thread to start work, or create one.");
   expect(html).not.toContain("prj-group-head");
   expect(html).toContain("prj-main-thread");
 });
 
-test("no main thread: the page is one sentence and a composer", () => {
+test("no main thread: the home says the first message starts one, and pins no main row", () => {
   const html = page({ detail: { ...detail, main: undefined, mainOrb: undefined, threads: [] }, conversation: undefined });
-  expect(html).toContain("No main thread yet. Send a message to start one.");
+  expect(html).toContain("No main thread yet. The first message starts one.");
   expect(html).toContain("prj-first-box");
+  expect(html).not.toContain("prj-main-row");
 });
 
 test("MEMORY.md is named by its filename and counted in lines, and nothing calls it memory", () => {
@@ -111,10 +115,16 @@ test("a definition that does not parse keeps its page and points at the editor",
   expect(html).toContain("Edit project.yml");
 });
 
-test("an opened thread swaps the conversation and offers the way back", () => {
+test("an opened thread swaps the conversation and offers the way back to the project", () => {
   const html = page({ open: "t2", conversation: <div className="thread">thread</div> });
-  expect(html).toContain("‹ Main thread");
+  expect(html).toContain("‹ Control room");
   expect(html).toContain("Migration order");
+  expect(html).not.toContain("prj-home");
+  // Main opened is a conversation like any other, named as main.
+  const main = page({ open: "main-1", conversation: <div className="thread">main</div> });
+  expect(main).toContain("‹ Control room");
+  expect(main).toContain("· Main thread");
+  expect(main).toContain('prj-main-thread is-on');
 });
 
 test("threadGroup reads the one status vocabulary", () => {
@@ -174,7 +184,7 @@ test("Files still spins while it is only loading", () => {
 // and every thread with them, while the title bar's toggle stayed live
 // and inert.
 test("both side columns keep a way back at narrow widths", () => {
-  const html = page();
+  const html = column();
   // The toggle for the thread list, the scrim that dismisses a drawer,
   // and a Close inside each one. Which of them is visible is the
   // stylesheet's business.
@@ -184,41 +194,34 @@ test("both side columns keep a way back at narrow widths", () => {
   expect(html.split("prj-drawer-close").length - 1).toBe(2);
 });
 
-// The main thread is the project's home: it opens with the project's
-// state, above its own transcript. A thread opened in its place is just
-// that thread's conversation.
-test("main opens with the status strip, the latest update and the moving threads, above the conversation", () => {
+// The home indexes the threads; it is not one of them. The composer is
+// first, main is pinned as the thread it talks to, and the rest sit under
+// their state. No conversation is rendered on the home, and no column.
+test("the home is the composer, then main, then the queue; no transcript and no second column", () => {
   const html = page();
   expect(html).toContain("prj-home");
-  expect(html.indexOf("prj-home")).toBeLessThan(html.indexOf(">conversation<"));
-  expect(html).toContain('data-group="needs-you"');
-  expect(html).toContain("1</b><span>need you");
-  expect(html).toContain("1</b><span>error");
-  // Interrupted and idle both count; nothing is a group of zero but idle.
-  expect(html).toContain('data-group="interrupted"');
-  expect(html).toContain("2</b><span>idle");
-  // The latest update is the freshest thread with something to say: the
-  // question. The error an hour later has no text of its own.
-  expect(html).toContain("prj-latest");
-  expect(html).toContain("prj-latest-text\">Staging first?<");
+  expect(html).not.toContain(">conversation<");
+  expect(html).not.toContain("prj-threads-list");
+  expect(html.indexOf("prj-first-box")).toBeLessThan(html.indexOf("prj-main-row"));
+  expect(html.indexOf("prj-main-row")).toBeLessThan(html.indexOf("prj-group-head"));
+  expect(html).toContain("the one the composer talks to");
+  // The header line reads the queue's own numbers.
+  expect(html).toContain("1 needs you · 1 error · 1 running · 6 threads");
+  // Idle is not folded away on the home: everything is on the page.
+  expect(html).toContain("Old spike");
   expect(html).not.toContain("Archived. A message reopens it.");
-});
-
-test("an opened thread has no home, and an archived main says so", () => {
-  expect(page({ open: "t2", conversation: <div className="thread">thread</div> })).not.toContain("prj-home");
   expect(page({ detail: { ...detail, mainArchived: true } })).toContain("Archived. A message reopens it.");
-  expect(page({ detail: { ...detail, threads: [] } })).not.toContain("prj-home");
 });
 
-test("threadCounts, latestThread and homeThreads read the same vocabulary as the column", () => {
+test("idle threads past eight fold behind one line, the rest never do", () => {
+  const many = [...threads, ...Array.from({ length: 12 }, (_, i) => row(`i${i}`, `idle ${i}`, { status: "done" }))];
+  const html = page({ detail: { ...detail, threads: many } });
+  expect(html).toContain("Show all 14");
+  expect(html.split('class="prj-thread"').length - 1).toBe(4 + 8);
+});
+
+test("threadCounts and countsLine read the same vocabulary as the column", () => {
   expect(threadCounts(threads)).toEqual({ "needs-you": 1, error: 1, running: 1, interrupted: 1, idle: 2 });
-  expect(latestThread(threads)?.id).toBe("t2");
-  expect(latestThread([row("q", "quiet")])).toBeUndefined();
-  // Everything moving or stuck, then the freshest idle ones; the cap never cuts a live thread.
-  const many = [...threads, ...Array.from({ length: 10 }, (_, i) => row(`i${i}`, `idle ${i}`, { status: "done" }))];
-  const shown = homeThreads(many);
-  expect(shown.length).toBe(6);
-  expect(shown.slice(0, 4).every((r) => threadGroup(r) !== "idle")).toBe(true);
-  const live = Array.from({ length: 9 }, (_, i) => row(`r${i}`, `run ${i}`, { status: "running" }));
-  expect(homeThreads(live).length).toBe(9);
+  expect(countsLine([])).toBe("0 threads");
+  expect(countsLine([row("a", "a", { status: "error" }), row("b", "b")])).toBe("1 error · 2 threads");
 });

@@ -263,7 +263,7 @@ export function sidebarSelected(view: View, lost: string | null, selected: strin
   return view !== "sessions" || lost !== null ? null : selected ?? lastId;
 }
 
-export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, saidElsewhere, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry }: {
+export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, saidElsewhere, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry, onOpenProject }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
   /** Project labels, so a project group is headed by its name. */
   projects?: Project[];
@@ -294,6 +294,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   onShowList?: () => void;
   /** A row to bring into view and focus: its groups open, the search cleared. */
   reveal?: { id: string; at: number } | null;
+  /** Open a project's page: what a project group's name does. */
+  onOpenProject?: (slug: string) => void;
 }) {
   // Status lives in the glyphs and the order; the sections are only
   // where a session ran, and whether it is still recent.
@@ -598,7 +600,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
       // A section's → shares its click's one state: it opens, and never moves on.
       if (right && open && cur.classList.contains("sec-fold")) return;
       if (right && open) go(items[items.indexOf(cur) + 1]);
-      else if (right || open) cur.click();
+      else if (right || open) (cur.querySelector<HTMLElement>(".ws-fold") ?? cur).click();
       else if (cur.classList.contains("ws-head")) go(cur.closest(".sec")?.querySelector<HTMLElement>("button.sec-fold"));
       return;
     }
@@ -762,9 +764,14 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     for (const r of list) seen.set(nameKey(r), (seen.get(nameKey(r)) ?? 0) + 1);
     return (
       <div key={key} className="ws">
-        <button className="ws-head" role="treeitem" aria-expanded={open} onClick={() => toggleWs(key)}
-                aria-label={`${ws}${open ? "" : urgent.length ? `, ${urgent.length} need${urgent.length === 1 ? "s" : ""} you` : `, ${list.length}`}${!open && up ? `, ${orbsUpLabel(up)}` : ""}`} title={list[0].project ? `Project ${ws}` : `${list[0].repo || list[0].cwd}\nNot a project: sessions grouped by where they ran`}>
-          <Icon d={ICONS.chevron} size={12} /><Icon d={list[0].project ? ICONS.projects : ICONS.folder} size={15} /><span className={"ws-name" + (list[0].project ? " ws-project" : "")}>{ws}</span>
+        {/* A project's name opens its page and its chevron folds the group,
+            like every project sidebar; a folder's whole head folds, since a
+            folder has no page. The arrow keys fold through .ws-fold. */}
+        <button className="ws-head" role="treeitem" aria-expanded={open} data-project={list[0].project || undefined}
+                onClick={() => { if (list[0].project && onOpenProject) onOpenProject(list[0].project); else toggleWs(key); }}
+                aria-label={`${ws}${open ? "" : urgent.length ? `, ${urgent.length} need${urgent.length === 1 ? "s" : ""} you` : `, ${list.length}`}${!open && up ? `, ${orbsUpLabel(up)}` : ""}`} title={list[0].project ? `Open project ${ws}` : `${list[0].repo || list[0].cwd}\nNot a project: sessions grouped by where they ran`}>
+          <span className="ws-fold" role="presentation" onClick={(e) => { if (list[0].project && onOpenProject) { e.stopPropagation(); toggleWs(key); } }}><Icon d={ICONS.chevron} size={12} /></span>
+          <Icon d={list[0].project ? ICONS.projects : ICONS.folder} size={15} /><span className={"ws-name" + (list[0].project ? " ws-project" : "")}>{ws}</span>
           {list[0].project && <span className="ws-mark" aria-hidden="true" />}
           {/* Folded, a group still says when something in it needs you, in that state's colour. */}
           {!open && urgent.length > 0 && <span className={"count " + (urgent.some(hasFailure) ? "is-failed" : "is-waiting")} aria-hidden="true">{urgent.length}</span>}
@@ -774,8 +781,6 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
           {/* Rows pinned to Needs you leave the group; its head says where they went. */}
           {sec === "recent" && lifted.get(gk) ? <span className="ws-lifted" title="Listed under Needs you">{lifted.get(gk)} need{lifted.get(gk) === 1 ? "s" : ""} you ↑</span> : null}
         </button>
-        {/* A project group is a room with a page: the head folds, this opens it. */}
-        {list[0].project && <a className="ws-goto" href={`#/projects/${list[0].project}`} title="Open the project page" aria-label={`Open project ${ws}`}><Icon d={ICONS.projects} size={13} /></a>}
         {/* Folded, what needs you stays in view. */}
         {!open && urgent.length > 0 && <div role="group">{urgent.map((r) => session(r, (seen.get(nameKey(r)) ?? 0) > 1))}</div>}
         {open && (() => {
@@ -5249,7 +5254,7 @@ export default function App() {
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)}
                archivedState={!archived || rowsAll ? "ready" : loadErr ? "failed" : "loading"} onRetryArchived={() => void refresh()}
                onAck={(id) => act(() => api.ack(id), "mark it seen")}
-               onShowList={() => setPane("list")} reveal={reveal}
+               onShowList={() => setPane("list")} reveal={reveal} onOpenProject={goProject}
                loadedAt={loadedAt} loadErr={loadErr} onRetry={() => void refresh()} />
       <main className="app-main">
       {lost !== null && view === "sessions" && !selected ? (

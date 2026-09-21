@@ -2258,14 +2258,10 @@ a.rt-link{text-decoration:none}
 .ws-head .count{color:var(--text-3)}
 .ws-head .count.is-failed{color:var(--red)}.ws-head .count.is-waiting{color:var(--amber)}
 .ws-lifted{margin-inline-start:auto;font-size:var(--fs-xs);color:var(--text-3);white-space:nowrap}
-/* The way from a project group to its page: on the head's right edge,
-   shown when the head is pointed at or the link itself is focused. */
-.ws{position:relative}
-.ws-goto{position:absolute;top:0;right:var(--s-1);height:var(--row-sm);display:flex;align-items:center;padding:0 var(--s-1);
-         color:var(--text-3);opacity:0;border-radius:var(--r-xs)}
-.ws:hover>.ws-goto,.ws-goto:focus-visible{opacity:1}
-.ws-goto:hover{color:var(--text);background:var(--hover)}
-.ws-head:has(~.ws-goto){padding-inline-end:var(--s-5)}
+/* The chevron is its own target inside a project's head: the head opens
+   the page, the chevron folds. Its hit area is the row's height. */
+.ws-fold{display:inline-flex;align-items:center;align-self:stretch;margin:0 -2px;padding:0 2px;border-radius:var(--r-xs)}
+.ws-head[data-project] .ws-fold:hover{background:var(--sel)}
 /* WEB0: button press eases; popovers enter with a short fade and scale
    (entry only). pulse-dot is for the waiting row. The reduced-motion
    blanket rule turns all of these off. */
@@ -4056,30 +4052,18 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 .prj-bad{margin:var(--s-2) var(--s-4);display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--s-2)}
 .prj-conv{flex:1 1 0%;display:flex;flex-direction:column;min-height:0;min-width:0}
 .prj-conv>.thread{flex:1 1 0%;min-height:0}
-/* The home: the project's state above main's transcript. Same density as
-   the column beside it — a strip of counts, one update, a few rows. */
-.prj-home{flex-shrink:0;max-height:45%;overflow-y:auto;padding:var(--s-3) var(--s-4) var(--s-2);border-bottom:1px solid var(--line)}
-.prj-strip{display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--s-2) var(--s-4);margin-bottom:var(--s-2)}
-.prj-cell{display:flex;align-items:baseline;gap:var(--s-1);font-size:var(--fs-sm);color:var(--text-3)}
-.prj-cell>b{font:600 var(--fs-h2)/var(--lh-tight) var(--sans);color:var(--text-2)}
-.prj-home-note{margin:0;margin-inline-start:auto;font-size:var(--fs-sm);color:var(--amber)}
-.prj-latest{display:flex;flex-direction:column;gap:2px;width:100%;margin-bottom:var(--s-2);padding:var(--s-2) var(--s-3);
-            background:var(--surface);border:1px solid var(--line);border-radius:var(--r-sm);color:inherit;text-align:start;cursor:pointer;font:inherit}
-.prj-latest:hover{background:var(--hover)}
-.prj-latest-head{display:flex;align-items:baseline;gap:var(--s-2);min-width:0;font-size:var(--fs-sm);color:var(--text-3)}
-.prj-latest-from{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.prj-latest-text{font-size:var(--fs-md);line-height:var(--lh-prose)}
-.prj-home-threads{margin:0 calc(-1 * var(--s-3))}
-.prj-home-rest{margin:var(--s-1) var(--s-3) 0;font-size:var(--fs-sm);color:var(--text-3)}
-.prj-first{margin:auto;padding:var(--s-5) var(--s-4);max-width:56ch;display:flex;flex-direction:column;align-items:start;gap:var(--s-2)}
-.prj-first-line{margin:0;color:var(--text-2);font-size:var(--fs-ui)}
-.prj-first-box{width:100%;resize:vertical;padding:var(--s-2) var(--s-3);font:var(--fs-md)/var(--lh-prose) var(--sans)}
-.prj-first-err{margin:0;font-size:var(--fs-sm)}
-.prj-first{margin:auto;padding:var(--s-5) var(--s-4);max-width:56ch;display:flex;flex-direction:column;align-items:start;gap:var(--s-2)}
-.prj-first-line{margin:0;color:var(--text-2);font-size:var(--fs-ui)}
-.prj-first-box{width:100%;resize:vertical;padding:var(--s-2) var(--s-3);font:var(--fs-md)/var(--lh-prose) var(--sans)}
-.prj-first-err{margin:0;font-size:var(--fs-sm)}
-
+/* The home: the composer, then the queue. The same rows as the column,
+   at the conversation's width, so a title is not cut where it need not be. */
+.prj-home{flex:1 1 0%;padding:var(--s-4) var(--s-5) var(--s-6)}
+.prj-home .prj-first{margin:0 0 var(--s-4);padding:0;max-width:none}
+.prj-queue{max-width:80ch}
+.prj-queue-head{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-2) 0;border-bottom:1px solid var(--line)}
+.prj-home .prj-group-head{padding-inline:0;cursor:default}
+.prj-home .prj-thread{padding-inline:var(--s-2);border-radius:var(--r-sm)}
+.prj-main-row{border-bottom:1px solid var(--line);border-radius:0 !important;padding-block:var(--s-2)}
+.prj-main-row .prj-thread-title{font-weight:600}
+.prj-main-row .prj-dim{font-weight:400;font-size:var(--fs-sm)}
+.prj-more{margin:var(--s-1) var(--s-2);font-size:var(--fs-sm)}
 /* col D: the project */
 .prj-panel{width:300px;min-width:260px;flex-shrink:0;overflow-y:auto;padding:var(--s-3);
            border-left:1px solid var(--line);background:var(--surface)}

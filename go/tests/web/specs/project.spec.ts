@@ -99,7 +99,7 @@ test('a project created through the API is a directory, and its page asks for th
   expect(fs.existsSync(path.join(serve.home, '.bough', 'projects', 'ship-it', 'project.yml'))).toBe(true);
 
   await page.goto(serve.url + '/#/projects/ship-it');
-  await expect(page.getByText('No main thread yet. Send a message to start one.')).toBeVisible();
+  await expect(page.getByText('No main thread yet. The first message starts one.')).toBeVisible();
   await expect(page.locator('h1.prj-name')).toHaveText('Ship it');
   // No thread, so no group header is drawn at all.
   await expect(page.locator('.prj-group-head')).toHaveCount(0);
@@ -153,25 +153,34 @@ test('the first message creates the main thread', async ({ serve, page }) => {
   await page.getByRole('button', { name: 'Send', exact: true }).click();
 
   await expect.poll(() => posted).toBe('Take over the migration.');
-  // The page stops asking for a first message and shows main's conversation.
-  await expect(page.getByText('No main thread yet. Send a message to start one.')).toHaveCount(0);
+  // The page opens main's conversation, with the way back to the project.
+  await expect(page.getByText('No main thread yet. The first message starts one.')).toHaveCount(0);
   await expect(page.locator('.prj-conv')).toContainText('Set up the relay');
+  await expect(page.getByRole('button', { name: '‹ Relay' })).toBeVisible();
 });
 
-test('threads sit under their status group, with the main thread pinned above them', async ({ serve, page }) => {
+test('the home indexes the threads; a thread opens with the column beside it and the way back', async ({ serve, page }) => {
   await page.goto(serve.url + '/#/projects/orbit');
   await expect(page.locator('h1.prj-name')).toHaveText('Orbit');
 
-  // The main thread is the room, not a peer row: pinned, above the groups.
-  const main = page.locator('.prj-main-thread');
+  // The home: composer first, main pinned as the thread it talks to, then
+  // every thread under its state — no transcript, no second column.
+  const home = page.locator('.prj-home');
+  await expect(home.getByRole('textbox', { name: 'Message the project' })).toBeVisible();
+  await expect(home.locator('.prj-main-row')).toContainText('Main thread');
+  await expect(home.locator('.prj-group', { hasText: 'Error' })).toContainText('Port the PTY suite');
+  await expect(home.locator('.prj-group', { hasText: 'Idle' })).toContainText('Write the docs');
+  await expect(page.locator('.prj-threads')).toHaveCount(0);
+  await expect(page.locator('.prj-crumb')).toContainText('1 error · 2 threads');
+
+  // Main is a conversation like any other; beside it, the column, with
+  // main pinned above the groups and Idle folded.
+  await home.locator('.prj-main-row').click();
+  await expect(page.locator('.prj-conv')).toContainText('Plan the migration');
+  const col = page.locator('.prj-threads');
+  const main = col.locator('.prj-main-thread');
   await expect(main).toContainText('Main thread');
   await expect(main).toContainText('orbit');
-  await expect(page.locator('.prj-conv')).toContainText('Plan the migration');
-
-  // A failed thread is under Error; a finished one is under Idle, which
-  // starts collapsed. Scoped to the column: the left sidebar lists every
-  // session in the install by the same titles.
-  const col = page.locator('.prj-threads');
   const err = col.locator('.prj-group', { hasText: 'Error' });
   await expect(err.locator('.prj-group-label')).toHaveText('Error');
   await expect(err).toContainText('Port the PTY suite');
@@ -179,11 +188,27 @@ test('threads sit under their status group, with the main thread pinned above th
   await col.locator('.prj-group-head', { hasText: 'Idle' }).click();
   await expect(col.getByText('Write the docs')).toBeVisible();
 
-  // Opening a thread swaps the conversation and offers the way back.
+  // Between threads through the column; back to the project by its name.
   await col.getByText('Port the PTY suite').click();
   await expect(page.locator('.prj-conv')).toContainText('exit status 1');
-  await page.getByRole('button', { name: '‹ Main thread' }).click();
-  await expect(page.locator('.prj-conv')).toContainText('Plan the migration');
+  await page.getByRole('button', { name: '‹ Orbit' }).click();
+  await expect(page.locator('.prj-home')).toBeVisible();
+  await expect(page.locator('.prj-threads')).toHaveCount(0);
+});
+
+test('the sidebar: a project\'s name opens its page, its chevron only folds', async ({ serve, page }) => {
+  await page.goto(serve.url + '/#/');
+  const head = page.locator('.ws-head[data-project="orbit"]');
+  await expect(head).toBeVisible();
+  // The page opens on whatever session the list leads with; folding must not leave it.
+  const before = await page.evaluate(() => window.location.hash);
+  await head.locator('.ws-fold').click();
+  await expect(head).toHaveAttribute('aria-expanded', 'false');
+  expect(await page.evaluate(() => window.location.hash)).toBe(before);
+  expect(before).not.toContain('/projects/');
+  await head.click();
+  await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#/projects/orbit');
+  await expect(page.locator('h1.prj-name')).toHaveText('Orbit');
 });
 
 test('a link from when projects were labels lands on Projects, not on nothing', async ({ serve, page }) => {

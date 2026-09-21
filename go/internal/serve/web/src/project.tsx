@@ -164,17 +164,37 @@ function OrbLine({ orb, onStop }: { orb?: OrbState; onStop: () => void }) {
   );
 }
 
+/** How many threads are in each state; the header line and the queue read the same numbers. */
+export function threadCounts(rows: Row[]): Record<ThreadGroup, number> {
+  const n: Record<ThreadGroup, number> = { "needs-you": 0, error: 0, running: 0, interrupted: 0, idle: 0 };
+  for (const r of rows) n[threadGroup(r)]++;
+  return n;
+}
+
+/** The header's one line about the project: what wants a person, what is moving, how much there is. */
+export function countsLine(rows: Row[]): string {
+  const n = threadCounts(rows);
+  const parts: string[] = [];
+  if (n["needs-you"]) parts.push(`${n["needs-you"]} need${n["needs-you"] === 1 ? "s" : ""} you`);
+  if (n.error) parts.push(`${n.error} ${n.error === 1 ? "error" : "errors"}`);
+  if (n.running) parts.push(`${n.running} running`);
+  parts.push(`${rows.length} ${rows.length === 1 ? "thread" : "threads"}`);
+  return parts.join(" · ");
+}
+
+/** Idle threads beyond this many fold behind one line on the home. */
+const IDLE_SHOWN = 8;
+
 /**
- * The composer a project has before it has a main thread. One sentence
- * and one box: sending is what creates the thread, so there is nothing
- * else to click.
+ * The composer on the home. Messaging the project is messaging its main
+ * thread — the one that hands work out — and creates it the first time.
  */
-function FirstMessage({ onMessage }: { onMessage: (text: string) => Promise<void> }) {
+function ProjectComposer({ onMessage, line, autoFocus }: { onMessage: (text: string) => Promise<void>; line?: string; autoFocus?: boolean }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const box = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => { box.current?.focus(); }, []);
+  useEffect(() => { if (autoFocus) box.current?.focus(); }, [autoFocus]);
   const send = async () => {
     const t = text.trim();
     if (!t || busy) return;
@@ -185,95 +205,70 @@ function FirstMessage({ onMessage }: { onMessage: (text: string) => Promise<void
   };
   return (
     <div className="prj-first">
-      <p className="prj-first-line">No main thread yet. Send a message to start one.</p>
+      {line && <p className="prj-first-line">{line}</p>}
       <textarea ref={box} className="field prj-first-box" rows={3} value={text} aria-label="Message the project"
-                placeholder="What is this project working on?" disabled={busy}
+                placeholder="Message the project. Main answers here, or hands the work to a thread." disabled={busy}
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }} />
       {err && <p className="err prj-first-err" role="alert">{humanError(err)}</p>}
       <button type="button" className="btn btn-primary" disabled={!text.trim() || busy} onClick={() => { void send(); }}>
-        {busy ? "Starting…" : "Send"}
+        {busy ? "Sending…" : "Send"}
       </button>
     </div>
   );
 }
 
 /**
- * The project's state as the main thread opens with it: how many threads
- * want a person, how many are moving, and the last thing any of them
- * said. Counts come from the same threadGroup the column uses.
+ * The project's home: the composer, then the queue. The durable things
+ * here are threads, and the page indexes them — it is not one of them.
+ * Main is pinned first as the thread the composer talks to; the rest sit
+ * under their state, most urgent first, with idle capped behind a line.
  */
-export function threadCounts(rows: Row[]): Record<ThreadGroup, number> {
-  const n: Record<ThreadGroup, number> = { "needs-you": 0, error: 0, running: 0, interrupted: 0, idle: 0 };
-  for (const r of rows) n[threadGroup(r)]++;
-  return n;
-}
-
-/** The most recently touched thread that has something to say; undefined when none does. */
-export function latestThread(rows: Row[]): Row | undefined {
-  const when = (r: Row) => Date.parse(r.lastAt || r.modified) || 0;
-  return rows.filter((r) => threadNote(r)).sort((a, b) => when(b) - when(a))[0];
-}
-
-/**
- * What the home shows of the threads: everything that is not idle, then
- * the freshest idle ones up to a handful. The column has the rest.
- */
-export function homeThreads(rows: Row[], max = 6): Row[] {
-  const when = (r: Row) => Date.parse(r.lastAt || r.modified) || 0;
-  const live = rows.filter((r) => threadGroup(r) !== "idle").sort((a, b) => when(b) - when(a));
-  const idle = rows.filter((r) => threadGroup(r) === "idle").sort((a, b) => when(b) - when(a));
-  return [...live, ...idle].slice(0, Math.max(max, live.length));
-}
-
-/**
- * The main thread's opening: a status strip, the latest update from any
- * thread, and the threads that are moving or waiting. It sits above
- * main's own transcript, so the project's conversation starts with the
- * project's state rather than with whichever notice landed last.
- */
-export function ProjectHome({ threads, archived, open, onOpen }: {
-  threads: Row[]; archived?: boolean; open: string; onOpen: (id: string) => void;
+export function ProjectHome({ detail, mainRow, onOpen, onMessage, onNewThread }: {
+  detail: ProjectDetail; mainRow?: Row; onOpen: (id: string) => void;
+  onMessage: (text: string) => Promise<void>; onNewThread?: () => void;
 }) {
-  const n = threadCounts(threads);
-  const latest = latestThread(threads);
-  const shown = homeThreads(threads);
-  const rest = threads.length - shown.length;
-  const cells: { group: ThreadGroup; label: string; tone?: string }[] = [
-    { group: "needs-you", label: "need you", tone: STATUS["needs-you"]?.tone },
-    { group: "error", label: n.error === 1 ? "error" : "errors", tone: STATUS.error?.tone },
-    { group: "running", label: "running", tone: STATUS.running?.tone },
-    { group: "interrupted", label: "interrupted" },
-    { group: "idle", label: "idle" },
-  ];
+  const [allIdle, setAllIdle] = useState(false);
+  const groups = useMemo(() => groupThreads(detail.threads), [detail.threads]);
+  const mainNote = mainRow ? threadNote(mainRow) : "";
   return (
-    <section className="prj-home" aria-label="Project status">
-      <div className="prj-strip" role="list">
-        {cells.filter((c) => n[c.group] > 0 || c.group === "idle").map((c) => (
-          <div key={c.group} className="prj-cell" role="listitem" data-group={c.group}>
-            <b className="num" style={n[c.group] && c.tone ? { color: c.tone } : undefined}>{n[c.group]}</b>
-            <span>{c.label}</span>
-          </div>
-        ))}
-        {archived && <p className="prj-home-note">Archived. A message reopens it.</p>}
-      </div>
-      {latest && (
-        <button type="button" className="prj-latest" onClick={() => onOpen(latest.id)}>
-          <span className="prj-latest-head">
-            <span className="eyebrow">Latest</span>
-            <span className="num prj-dim">{ago(latest.lastAt || latest.modified)}</span>
-            <span className="prj-latest-from" title={sessionTitle(latest)}>· {sessionTitle(latest)}</span>
-          </span>
-          <span className="prj-latest-text">{threadNote(latest)}</span>
-        </button>
-      )}
-      {shown.length > 0 && (
-        <div className="prj-home-threads">
-          {shown.map((r) => <ThreadRow key={r.id} row={r} on={open === r.id} onOpen={onOpen} />)}
-          {rest > 0 && <p className="prj-home-rest">{rest} more idle {rest === 1 ? "thread" : "threads"} in the column.</p>}
+    <div className="scroll prj-home">
+      <ProjectComposer onMessage={onMessage} autoFocus
+                       line={!detail.main ? "No main thread yet. The first message starts one." : detail.mainArchived ? "Archived. A message reopens it." : undefined} />
+      <div className="prj-queue">
+        <div className="prj-queue-head">
+          <span className="eyebrow">Threads</span>
+          <span className="num prj-threads-count">{detail.threads.length}</span>
+          {onNewThread && <button type="button" className="btn btn-ghost btn-sm" onClick={onNewThread}>New thread</button>}
         </div>
-      )}
-    </section>
+        {detail.main && (
+          <button type="button" className="prj-thread prj-main-row" onClick={() => onOpen(detail.main!)}
+                  aria-label={["Main thread", mainNote, mainRow ? statusWord(shownStatus(mainRow)) : "", mainRow ? ago(mainRow.lastAt || mainRow.modified) : ""].filter(Boolean).join(", ")}>
+            {mainRow ? <Dot status={shownStatus(mainRow)} /> : <span className="prj-dot" data-status="idle" aria-hidden="true" />}
+            <span className="prj-thread-main">
+              <span className="prj-thread-title">Main thread <span className="prj-dim">· the one the composer talks to</span></span>
+              {mainNote && <span className="prj-thread-note" title={mainNote}>{mainNote}</span>}
+            </span>
+            {mainRow && <span className="num prj-thread-when" title={clock(mainRow.lastAt || mainRow.modified)}>{ago(mainRow.lastAt || mainRow.modified)}</span>}
+          </button>
+        )}
+        {detail.threads.length === 0 && <p className="prj-none">No threads yet. Ask the main thread to start work, or create one.</p>}
+        {groups.map((g) => {
+          const capped = g.group === "idle" && !allIdle && g.rows.length > IDLE_SHOWN;
+          const rows = capped ? g.rows.slice(0, IDLE_SHOWN) : g.rows;
+          return (
+            <div key={g.group} className="prj-group" data-group={g.group}>
+              <div className="prj-group-head">
+                <span className="prj-group-label">{GROUP_LABEL[g.group]}</span>
+                <span className="num prj-group-count">{g.rows.length}</span>
+              </div>
+              {rows.map((r) => <ThreadRow key={r.id} row={r} on={false} onOpen={onOpen} />)}
+              {capped && <button type="button" className="link prj-more" onClick={() => setAllIdle(true)}>Show all {g.rows.length}</button>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -292,7 +287,7 @@ export function ProjectPage({
   conversation?: ReactNode;
   /** The main thread's row, when the session list holds it: the one status pill. */
   mainRow?: Row;
-  /** The thread shown in the middle column; "" is the main thread. */
+  /** The session shown in the middle column, main included; "" is the home. */
   open: string;
   onOpen: (id: string) => void;
   /** Absent in a story; the page still lists what is there. */
@@ -336,8 +331,8 @@ export function ProjectPage({
   }
 
   const threads = detail.threads;
-  const openRow = open ? threads.find((t) => t.id === open) : undefined;
-  const shownRow = open ? openRow : mainRow;
+  const openRow = open ? (open === detail.main ? mainRow : threads.find((t) => t.id === open)) : undefined;
+  const inMain = Boolean(open) && open === detail.main;
   const memory = files?.["MEMORY.md"] ?? "";
   const memoryLines = lineCount(memory);
   const threadOrbs = detail.orbs.filter((o) => o.session !== detail.main);
@@ -349,6 +344,10 @@ export function ProjectPage({
 
   return (
     <div className="prj">
+      {/* Beside a conversation the column is the way between threads; on
+          the home the page itself is the index, and a second copy would
+          be noise. */}
+      {open && (
       <aside className="prj-threads" aria-label="Threads" data-open={drawer || undefined}>
         <div className="prj-threads-head">
           <span className="eyebrow">Threads</span>
@@ -361,12 +360,14 @@ export function ProjectPage({
         <div className="scroll prj-threads-list">
           {/* The main thread is the room, not a peer: it is pinned above the
               hairline with the project it speaks for under its name. */}
-          <button type="button" className={"prj-main-thread" + (open ? "" : " is-on")} aria-current={!open || undefined}
-                  onClick={() => onOpen("")}>
-            <span className="prj-main-label">Main thread</span>
-            <span className="mono prj-main-slug">{detail.slug}</span>
-            {mainRow && <span className="prj-main-st"><StatusMark status={shownStatus(mainRow)} size={12} bare /></span>}
-          </button>
+          {detail.main && (
+            <button type="button" className={"prj-main-thread" + (inMain ? " is-on" : "")} aria-current={inMain || undefined}
+                    onClick={() => onOpen(detail.main!)}>
+              <span className="prj-main-label">Main thread</span>
+              <span className="mono prj-main-slug">{detail.slug}</span>
+              {mainRow && <span className="prj-main-st"><StatusMark status={shownStatus(mainRow)} size={12} bare /></span>}
+            </button>
+          )}
           {threads.length === 0
             ? <p className="prj-none">No threads yet. Ask the main thread to start work, or create one.</p>
             : groups.map((g) => (
@@ -375,6 +376,7 @@ export function ProjectPage({
             ))}
         </div>
       </aside>
+      )}
 
       <section className="prj-main">
         <header className="prj-bar">
@@ -386,22 +388,22 @@ export function ProjectPage({
                 instead, and a narrow conversation column used to clip
                 the chip clean off the end. */}
             <p className="prj-crumb">
-              {openRow
+              {open
                 ? <>
-                    <button type="button" className="link prj-back" onClick={() => onOpen("")}>‹ Main thread</button>
-                    <span className="prj-crumb-rest" title={sessionTitle(openRow)}>· {sessionTitle(openRow)}</span>
+                    <button type="button" className="link prj-back" onClick={() => onOpen("")}>‹ {detail.name}</button>
+                    <span className="prj-crumb-rest" title={inMain ? "Main thread" : openRow ? sessionTitle(openRow) : ""}>· {inMain ? "Main thread" : openRow ? sessionTitle(openRow) : "…"}</span>
                   </>
                 : <>
                     <span className="mono">{detail.slug}</span>
-                    <span className="prj-crumb-rest">· {threads.length} {threads.length === 1 ? "thread" : "threads"}</span>
+                    <span className="prj-crumb-rest">· {countsLine(threads)}</span>
                   </>}
             </p>
           </div>
-          {shownRow && <span className="prj-pill"><StatusMark status={shownStatus(shownRow)} size={12} /></span>}
+          {openRow && <span className="prj-pill"><StatusMark status={shownStatus(openRow)} size={12} /></span>}
           {/* Shown only where the thread list is a drawer; wider, the
               column is simply there and a toggle would be a lie. */}
-          <button type="button" className="btn btn-sm prj-threads-btn" aria-expanded={drawer}
-                  onClick={() => { setDrawer((v) => !v); setPanel(false); }}>Threads</button>
+          {open && <button type="button" className="btn btn-sm prj-threads-btn" aria-expanded={drawer}
+                  onClick={() => { setDrawer((v) => !v); setPanel(false); }}>Threads</button>}
           <button type="button" className="btn btn-sm prj-panel-btn" aria-expanded={panel}
                   onClick={() => { setPanel((v) => !v); setDrawer(false); }}>Project</button>
         </header>
@@ -416,12 +418,9 @@ export function ProjectPage({
         )}
 
         <div className="prj-conv">
-          {!detail.main ? <FirstMessage onMessage={onMessage} />
-            : <>
-                {/* Main is the project's home: it opens with the project's state. A thread is just its conversation. */}
-                {!open && threads.length > 0 && <ProjectHome threads={threads} archived={detail.mainArchived} open={open} onOpen={onOpen} />}
-                {conversation ?? <div className="lookup" role="status"><p className="lookup-body">Loading thread…</p></div>}
-              </>}
+          {!open
+            ? <ProjectHome detail={detail} mainRow={mainRow} onOpen={onOpen} onMessage={onMessage} onNewThread={onNewThread} />
+            : conversation ?? <div className="lookup" role="status"><p className="lookup-body">Loading thread…</p></div>}
         </div>
       </section>
 
@@ -502,14 +501,14 @@ export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, o
   const [files, setFiles] = useState<Partial<Record<OrbFile, string>>>();
   const [err, setErr] = useState("");
   const [filesErr, setFilesErr] = useState("");
-  // The thread on screen; "" is the main thread, which is the project itself.
+  // The session on screen, main included; "" is the home.
   const [open, setOpen] = useState("");
 
   // When the detail on screen was read; a focus newer than it waits for the next read.
   const loadedAt = useRef(0);
-  const load = useCallback(async () => {
-    try { const d = await api.project(slug); loadedAt.current = Date.now(); setDetail(d); setErr(""); }
-    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+  const load = useCallback(async (): Promise<ProjectDetail | undefined> => {
+    try { const d = await api.project(slug); loadedAt.current = Date.now(); setDetail(d); setErr(""); return d; }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); return undefined; }
   }, [slug]);
   const loadFiles = useCallback(async () => {
     // The files come from the orb detail, which is the endpoint that
@@ -531,10 +530,10 @@ export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, o
   // A thread that is no longer in the project (archived, moved) stops being the one on screen.
   // A detail read before the thread was asked for cannot know about it yet.
   useEffect(() => {
-    if (open && detail && !detail.threads.some((t) => t.id === open) && !(focus?.id === open && focus.at > loadedAt.current)) setOpen("");
+    if (open && detail && open !== detail.main && !detail.threads.some((t) => t.id === open) && !(focus?.id === open && focus.at > loadedAt.current)) setOpen("");
   }, [open, detail, focus]);
 
-  const show = open || detail?.main || "";
+  const show = open;
   useEffect(() => { onShow(show); }, [show, onShow]);
 
   // The reload comes FIRST: selecting a thread the loaded detail does
@@ -554,7 +553,7 @@ export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, o
       open={open} onOpen={setOpen} onBack={onBack} onOpenSession={onOpenSession} titles={titles}
       onRetry={() => { void load(); void loadFiles(); }}
       onNewThread={onNewThread ? newThread : undefined}
-      onMessage={async (text) => { await api.messageProject(slug, text); setOpen(""); await load(); onChanged?.(); }}
+      onMessage={async (text) => { await api.messageProject(slug, text); const d = await load(); if (d?.main) setOpen(d.main); onChanged?.(); }}
       onSave={async (name, text) => { await api.putOrbFile(slug, name, text); await loadFiles(); await load(); }}
       onStopOrb={(session) => { void (async () => {
         if (!(await confirmStopOrb(rows.find((r) => r.id === session)?.jobs))) return;
