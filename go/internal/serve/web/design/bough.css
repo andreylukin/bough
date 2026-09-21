@@ -126,7 +126,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:var(--fs-base)/1.5 v
 .side-icon:hover,.side-icon-on{color:var(--text-1);background:var(--raised)}
 .side-new{display:grid;place-items:center;width:32px;height:32px;padding:0;border:1px solid var(--line-strong);border-radius:var(--r-6);
   background:var(--raised);color:var(--text-1);cursor:pointer}
-.side-new{margin-inline-start:auto}
+.side-collapse{margin-inline-end:auto}
 .side-title{margin:0 0 0 6px;font:600 var(--fs-h2)/var(--lh-tight) var(--sans);color:var(--text-1)}
 .side-title+.side-icon{margin-inline-start:auto}.side-title~.side-new{margin-inline-start:0}
 .side-new:hover{border-color:var(--accent)}
@@ -140,7 +140,9 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:var(--fs-base)/1.5 v
 .side-nav-rail{flex-direction:column;align-items:center;padding:6px 0 calc(6px + env(safe-area-inset-bottom))}
 .side-nav-rail .side-nav-item{flex:0 0 auto;width:32px;height:32px;padding:0;justify-content:center}
 .side-nav-rail .nav-count{top:-4px;left:auto;right:-6px}
-.session-search{flex-shrink:0;padding:0 12px 8px}
+.session-search{flex-shrink:0;padding:0 8px 4px}
+.session-search .field{height:32px;padding-block:0;background:none;border-color:var(--line)}
+.session-search .field:focus{outline:none;border-color:var(--accent)}
 .field-label{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;font-size:var(--fs-sm);font-weight:500;color:var(--text-3);margin-bottom:6px}
 .field{width:100%;font:var(--fs-md) var(--sans);color:var(--text-1);background:var(--raised);
        border:1px solid var(--line-strong);border-radius:7px;padding:8px 11px}
@@ -165,9 +167,8 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:var(--fs-base)/1.5 v
 /* A project group is a room with a page; its mark stays on, so it never reads as one more folder. */
 .ws-head[data-project]>svg{opacity:1}
 @media (hover:none){.ws-head svg{opacity:1}}
-.sidebar .scroll>.ws+.ws,.sidebar .scroll>.needs+.ws{margin-block-start:var(--s-2)}.sec-body>.ws+.ws{margin-block-start:var(--s-3)}
+.sidebar .scroll>.ws+.ws,.sidebar .scroll>.needs+.ws{margin-block-start:var(--s-2)}.sec-body>.ws+.ws{margin-block-start:var(--s-2)}
 .ws>[role=group]{margin-block-start:var(--s-1)}
-.ws-mark{flex-shrink:0;width:6px;height:6px;border:1px solid var(--text-3);border-radius:2px}
 .ws-head .count{margin-inline-start:auto}
 .needs{display:flex;flex-direction:column}
 .needs .eyebrow{display:flex;align-items:center;height:var(--row-sm);padding:0 10px}
@@ -178,7 +179,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:var(--fs-base)/1.5 v
 .ws-head[aria-expanded="true"] svg:first-child{transform:rotate(90deg)}
 .ws-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:70%}
 .ws-rule{flex:1 1 auto;min-width:16px;height:1px;background:var(--line)}
-.sec-fold{width:100%;height:var(--row-sm);margin-top:var(--s-3);padding:0 6px 0 10px;gap:6px;background:none;border:0;border-radius:var(--r-sm);cursor:pointer;text-align:start;font:var(--fs-sm)/var(--lh-row) var(--sans);white-space:nowrap}
+.sec-fold{width:100%;height:var(--row-sm);margin-top:var(--s-2);padding:0 6px 0 10px;gap:6px;background:none;border:0;border-radius:var(--r-sm);cursor:pointer;text-align:start;font:var(--fs-sm)/var(--lh-row) var(--sans);white-space:nowrap}
 .sec-fold>.count,.sec-fold>.sec-count{margin-inline-start:auto}
 .sec-fold svg{flex-shrink:0;transition:transform .12s}
 .sec-fold[aria-expanded="true"] svg{transform:rotate(90deg)}
@@ -186,7 +187,7 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:var(--fs-base)/1.5 v
 .sec-count{color:var(--text-3);font-size:var(--fs-sm);font-variant-numeric:tabular-nums}
 .sec-count-trouble{color:var(--red)}
 .sec-count-needs-you{color:var(--amber)}
-.sec{margin-top:2px}
+.sec{margin-top:0}
 @media (max-width:720px),(pointer:coarse){.sec-fold,.ws-head{height:44px}.side-icon,.side-new{width:44px;height:44px}}
 /* A session: its status mark, its title, and a trailing count only when there is one. */
 .row{display:flex;align-items:center;gap:10px;width:100%;height:var(--row);text-align:start;padding:0 10px;
@@ -205,6 +206,9 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:var(--fs-base)/1.5 v
 .row-meta-run{color:var(--accent)}
 .row-meta-live{display:inline}.row-jobs+.row-meta-live{margin-inline-start:0}
 .row-id{flex-shrink:0;font-size:var(--fs-xs);color:var(--text-3);opacity:.7}
+/* The setup chip is an inline-flex box beside bare text; one flex line keeps chip, dot and word on the same baseline. */
+.row-stack .row-meta-live{display:flex;align-items:center;gap:0;font-size:var(--fs-sm);line-height:16px}
+.row-stack .row-meta-live .setup-sep{white-space:pre}
 .turn-note{color:var(--text-3)}
 .side-fresh{display:flex;align-items:center;gap:8px;height:28px;margin:0;padding:0 12px;font-size:var(--fs-sm);color:var(--text-3)}
 /* Hover, selected and focus each look different: a tint, a tint with a marker, a ring. */
@@ -1089,11 +1093,11 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .phone-nav{display:none}
 
 /* sidebar views: icon over label, the way back to the pages beside sessions */
-.side-nav{flex-shrink:0;display:flex;gap:4px;padding:6px 8px calc(6px + env(safe-area-inset-bottom));border-top:1px solid var(--line)}
-.side-nav-item{flex:1 1 0;position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 4px;text-decoration:none;
-  background:none;border:0;border-radius:var(--r-6);color:var(--text-3);font:var(--fs-sm)/16px var(--sans);cursor:pointer}
+.side-nav{flex-shrink:0;display:flex;gap:4px;padding:4px 8px calc(4px + env(safe-area-inset-bottom));border-top:1px solid var(--line)}
+.side-nav-item{flex:1 1 0;position:relative;display:flex;flex-direction:column;align-items:center;gap:1px;padding:4px;text-decoration:none;
+  background:none;border:0;border-radius:var(--r-6);color:var(--text-2);font:var(--fs-sm)/16px var(--sans);cursor:pointer}
 .side-nav-item:hover{color:var(--text-1);background:var(--raised)}
-.side-nav-on{color:var(--text-1);background:var(--sel)}
+.side-nav-on{color:var(--text-1);background:var(--sel);box-shadow:inset 0 2px 0 var(--accent)}
 .side-nav-item .nav-count{position:absolute;top:2px;left:calc(50% + 10px);margin:0}
 
 /* projects */
@@ -2220,12 +2224,11 @@ a.rt-link{text-decoration:none}
     grid-template-rows:56px;grid-template-areas:"back main strip more"}
   .thread-head:not(.page-head):has(>.runtime-strip>.work-summary:only-child)>.runtime-strip{grid-column:3;grid-row:1;align-self:center}
 }
-/* Sidebar: a group's name starts where its rows' titles do; the chevron sits in the glyph column. */
-.ws-head{gap:10px}
-.ws-head>svg:first-child{width:16px}
-.ws-head>svg:nth-of-type(2){display:none}
-.ws-mark{opacity:0}
-.ws-head:hover .ws-mark,.ws-head:focus-visible .ws-mark{opacity:1}
+/* Sidebar: a group's name starts where its rows' titles do (10px pad + 16px mark + 10px gap);
+   the chevron sits in the glyph column, where "N older" keeps its own. */
+.ws-head{position:relative;gap:10px;padding:0 10px 0 36px}
+.ws-head .ws-fold{position:absolute;left:18px;top:0;bottom:0;margin:0;padding:0 2px}
+.ws-older{padding-inline-start:18px}
 .sec-body>.ws{padding-inline-start:0;border-inline-start:0;margin-inline-start:0}
 /* Needs you is a summary above the groups, ruled off from them. */
 .needs{padding-bottom:var(--s-2);margin-bottom:var(--s-2);border-bottom:1px solid var(--line-strong)}
@@ -2555,7 +2558,7 @@ pre.edit-rows,.block pre.edit-rows{text-indent:0;margin:2px 0 var(--s-2);padding
 /* /R4-F */
 /* R4-I: .app takes focus on a route change without a ring; a history slot with no history holds its width unseen. */
 .app:focus{outline:none}
-.side-icon-reserved{visibility:hidden}
+.side-icon-reserved{display:none}
 /* /R4-I */
 /* R4-J: markdown measure, neutral archive, control transitions/fonts/heights, hooks pills, turn gap */
 @property --md-measure{syntax:"<length>";inherits:true;initial-value:0px}

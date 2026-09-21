@@ -787,8 +787,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
                 onClick={() => { if (list[0].project && onOpenProject) onOpenProject(list[0].project); else toggleWs(key); }}
                 aria-label={`${ws}${open ? "" : urgent.length ? `, ${urgent.length} need${urgent.length === 1 ? "s" : ""} you` : `, ${list.length}`}${!open && up ? `, ${orbsUpLabel(up)}` : ""}`} title={list[0].project ? `Open project ${ws}` : `${list[0].repo || list[0].cwd}\nNot a project: sessions grouped by where they ran`}>
           <span className="ws-fold" role="presentation" onClick={(e) => { if (list[0].project && onOpenProject) { e.stopPropagation(); toggleWs(key); } }}><Icon d={ICONS.chevron} size={12} /></span>
-          <Icon d={list[0].project ? ICONS.projects : ICONS.folder} size={15} /><span className={"ws-name" + (list[0].project ? " ws-project" : "")}>{ws}</span>
-          {list[0].project && <span className="ws-mark" aria-hidden="true" />}
+          {/* The eyebrow is text only: small caps and colour already say "group"; an icon and a mark put the name off the title column. */}
+          <span className={"ws-name" + (list[0].project ? " ws-project" : "")}>{ws}</span>
           {/* Folded, a group still says when something in it needs you, in that state's colour. */}
           {!open && urgent.length > 0 && <span className={"count " + (urgent.some(hasFailure) ? "is-failed" : "is-waiting")} aria-hidden="true">{urgent.length}</span>}
           {/* Folded, a project group still says how many of its orbs are up. Open, each
@@ -821,6 +821,13 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
                 </button>
               )}
               {olderOpen && older.map((r) => session(r, dup(r)))}
+              {/* A long expansion folds from its foot too, so the way back is never a scroll away. */}
+              {olderOpen && older.length > 8 && (
+                <button type="button" className="ws-older" role="treeitem" aria-expanded={olderOpen}
+                        onClick={foldToggle(olderKey, () => toggleFold(olderKey))}>
+                  <Icon d={ICONS.chevron} size={12} />Hide older
+                </button>
+              )}
             </div>
           );
         })()}
@@ -896,8 +903,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
       {toolbar}
       {showSearch && (
         <div className="session-search">
-          <label htmlFor="q" className="visually-hidden">Search sessions</label>
-          <input id="q" ref={searchRef} className="field" autoComplete="off" value={query} placeholder="Search sessions"
+          <label htmlFor="q" className="visually-hidden">Filter sessions</label>
+          <input id="q" ref={searchRef} className="field" autoComplete="off" value={query} placeholder="Filter sessions"
                  onChange={(e) => onQuery(e.target.value)}
                  onKeyDown={(e) => {
                    if (e.key === "Escape") { e.preventDefault(); onQuery(""); setSearching(false); searchBtn.current?.focus(); return; }
