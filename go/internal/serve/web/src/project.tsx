@@ -405,7 +405,7 @@ export function ProjectPage({
                   </>}
             </p>
           </div>
-          {openRow && <span className="prj-pill"><StatusMark status={shownStatus(openRow)} size={12} /></span>}
+          {/* No status pill here: the conversation's own header, right under this bar, already wears it. */}
           {/* Shown only where the thread list is a drawer; wider, the
               column is simply there and a toggle would be a lie. */}
           {open && <button type="button" className="btn btn-sm prj-threads-btn" aria-expanded={drawer}

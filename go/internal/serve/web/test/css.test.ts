@@ -117,12 +117,12 @@ test("MB-KEYS: key hints under the composer stay hidden on phones and touch, aft
 test("the project page's side columns become drawers when they will not fit", () => {
   const prj = /\/\* PROJECT-PAGE[\s\S]*?\/\* \/PROJECT-PAGE \*\//.exec(css)?.[0] ?? "";
   expect(prj).toBeTruthy();
-  const tight = /@media \(max-width:1080px\)\{([\s\S]*?)\n\}/.exec(prj)?.[1] ?? "";
+  // Both columns drawer at the same width: every 1080px block, read together.
+  const tight = [...prj.matchAll(/@media \(max-width:1080px\)\{([\s\S]*?)\n\}/g)].map((m) => m[1]).join("\n");
   expect(tight).toMatch(/\.prj-panel\{position:absolute/);
   expect(tight).not.toMatch(/\.prj-panel\{display:none\}/);
-  const narrow = /@media \(max-width:860px\)\{([\s\S]*?)\n\}/.exec(prj)?.[1] ?? "";
-  expect(narrow).toMatch(/\.prj-threads\[data-open\]\{display:flex;position:absolute/);
+  expect(tight).toMatch(/\.prj-threads\[data-open\]\{display:flex;position:absolute/);
   // A drawer over the conversation is dismissable, and its toggle is shown.
   expect(prj).toMatch(/\.prj-scrim\{display:none;position:absolute/);
-  expect(narrow).toMatch(/\.prj-threads-btn\{display:inline-flex\}/);
+  expect(tight).toMatch(/\.prj-threads-btn\{display:inline-flex\}/);
 });

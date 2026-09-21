@@ -87,8 +87,12 @@ func (d *rowDigest) cacheFor(model string) *Cache {
 
 // troubled is Troubled with the last entry the digest kept, so a row
 // still expires its own trouble on the clock without the transcript.
-func (d *rowDigest) troubled(st Status, ack int64, now time.Time) string {
-	if d.empty || d.lastSeq <= ack || now.Sub(d.lastEntryAt) >= troubleWindow {
+func (d *rowDigest) troubled(st Status, ack int64, now time.Time, background bool) string {
+	window := troubleWindow
+	if background {
+		window = backgroundTroubleWindow
+	}
+	if d.empty || d.lastSeq <= ack || now.Sub(d.lastEntryAt) >= window {
 		return ""
 	}
 	switch {

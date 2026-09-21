@@ -646,7 +646,7 @@ func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 		Project:  project,
 		Jobs:     jobs,
 		Cache:    d.cacheFor(model),
-		Trouble:  d.troubled(st, meta.Ack, time.Now()),
+		Trouble:  d.troubled(st, meta.Ack, time.Now(), in.Background),
 
 		TestsFailed: d.testsFailed,
 		TestsAt:     d.testsAt,

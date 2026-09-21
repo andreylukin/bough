@@ -52,10 +52,10 @@ test("the groups are in urgency order and an empty one is not rendered", () => {
   expect(html).not.toContain('prj-group-count">0<');
 });
 
-test("a status is a dot, never a pill, in the threads column; the one pill is the title bar's", () => {
+test("a status is a dot, never a pill, in the threads column; the conversation's header wears the pill", () => {
   const html = column();
   expect(html.split("prj-dot").length - 1).toBeGreaterThan(2);
-  expect(html.split("prj-pill").length - 1).toBe(1);
+  expect(html).not.toContain("prj-pill");
   // The word still reaches a screen reader, through the row's label.
   expect(html).toContain("Waiting for you");
 });

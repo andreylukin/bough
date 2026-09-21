@@ -88,6 +88,12 @@ func RunningJobs(entries []history.Entry, childAlive bool) []Job {
 // first time the feature is on. A week covers a weekend away.
 const troubleWindow = 7 * 24 * time.Hour
 
+// backgroundTroubleWindow is the same bound for a run nobody sat in front
+// of. A background agent that was interrupted is its parent's to deal
+// with, and a parent that has not by the next day is not going to; two
+// six-day-old research agents headed Needs you every morning for a week.
+const backgroundTroubleWindow = 24 * time.Hour
+
 // hasInput reports whether anyone ever sent the session a message.
 func hasInput(entries []history.Entry) bool {
 	for _, e := range entries {

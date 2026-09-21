@@ -4109,7 +4109,10 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
              width:min(340px,92vw);box-shadow:var(--shadow-pop)}
   .prj-panel>.prj-drawer-close{display:block;margin:0 0 var(--s-2) auto}
 }
-@media (max-width:860px){
+/* The thread column drawers at the same width as the panel: beside the
+   control room's own sidebar, three columns at 900px left the
+   conversation a third of the screen. */
+@media (max-width:1080px){
   .prj-threads-btn{display:inline-flex}
   .prj-threads{display:none}
   .prj-threads[data-open]{display:flex;position:absolute;inset-block:0;inset-inline-start:0;z-index:calc(var(--z-pop) + 1);

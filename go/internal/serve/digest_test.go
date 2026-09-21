@@ -68,14 +68,21 @@ func TestDigestTroubleStillExpires(t *testing.T) {
 		{Seq: 2, Kind: "error", At: now, Data: map[string]any{"text": "boom"}},
 	}
 	d := digestOf(entries, now)
-	if got := d.troubled(StatusError, 0, now); got != "failed" {
+	if got := d.troubled(StatusError, 0, now, false); got != "failed" {
 		t.Fatalf("fresh failure: %q, want failed", got)
 	}
-	if got := d.troubled(StatusError, 0, now.Add(troubleWindow)); got != "" {
+	if got := d.troubled(StatusError, 0, now.Add(troubleWindow), false); got != "" {
 		t.Fatalf("failure past the window: %q, want none", got)
 	}
+	// A background run's trouble expires by the next day, a person's does not.
+	if got := d.troubled(StatusInterrupted, 0, now.Add(2*backgroundTroubleWindow), true); got != "" {
+		t.Fatalf("two-day-old background interruption: %q, want none", got)
+	}
+	if got := d.troubled(StatusInterrupted, 0, now.Add(2*backgroundTroubleWindow), false); got != "interrupted" {
+		t.Fatalf("two-day-old interruption of a person's session: %q, want interrupted", got)
+	}
 	// Seen is seen, whatever the clock says.
-	if got := d.troubled(StatusError, 2, now); got != "" {
+	if got := d.troubled(StatusError, 2, now, false); got != "" {
 		t.Fatalf("acked failure: %q, want none", got)
 	}
 }
