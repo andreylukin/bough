@@ -438,7 +438,11 @@ export function ProjectPage({
       )}
       {panel && (
         <aside className="prj-panel" aria-label="Project">
-          <button type="button" className="btn btn-ghost btn-sm prj-drawer-close" onClick={() => setPanel(false)}>Close</button>
+          {/* As a drawer it says what it is: a lone Close over the Orbs caption named nothing. */}
+          <div className="prj-drawer-head">
+            <h2>Project</h2>
+            <button type="button" className="btn btn-ghost btn-sm prj-drawer-close" onClick={() => setPanel(false)}>Close</button>
+          </div>
           <section className="prj-sec">
             <h3 className="prj-sec-h eyebrow">Orbs</h3>
             <OrbLine orb={detail.mainOrb} onStop={() => detail.main && onStopOrb(detail.main)} />

@@ -438,17 +438,21 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, onIngest, ch
         ) : (
           <>
             {/* Health as one sentence; only flagged claims are red. */}
+            {/* Each fact is its own span in a wrapping row: as one string with
+                " · " between, a phone wrapped it mid-sentence with a dangling dot. */}
             <p className="wk-health">
-              <span className={"wk-dot" + (h.installed ? " is-on" : " is-waiting")} aria-hidden="true" />
-              {h.installed ? `Scheduler every ${h.every ? duration(h.every) : "tick"}`
-                : <>Not scheduled <code className="mono">bough wiki install</code><CopyPath text="bough wiki install" label="Copy command" /></>}
-              {" · "}{h.ingesting ? "Ingesting now" : `Last ingest ${since(h.lastIngest)}`}
-              {h.pending > 0 && <> · {plural(h.pending, "session")} waiting</>}
-              {data.thin > 0 && <> · {check ? <button className="wk-link" onClick={runCheck}>{plural(data.thin, "page")} {data.thin === 1 ? "rests" : "rest"} on one citation</button>
-                : <>{plural(data.thin, "page")} {data.thin === 1 ? "rests" : "rest"} on one citation</>}</>}
-              {data.orphans > 0 && <> · <span className="wk-dot is-attn" aria-hidden="true" />{check ? <button className="wk-link" onClick={runCheck} title="Pages with no inbound links">{plural(data.orphans, "orphan page")}</button>
-                : <span title="Pages with no inbound links">{plural(data.orphans, "orphan page")}</span>}</>}
-              {flagged > 0 && <> · <button className="wk-link wk-link-bad" onClick={onReview}>Review {plural(flagged, "flagged claim")}</button></>}
+              <span className="wk-fact">
+                <span className={"wk-dot" + (h.installed ? " is-on" : " is-waiting")} aria-hidden="true" />
+                {h.installed ? `Scheduler every ${h.every ? duration(h.every) : "tick"}`
+                  : <>Not scheduled <code className="mono">bough wiki install</code><CopyPath text="bough wiki install" label="Copy command" /></>}
+              </span>
+              <span className="wk-fact">{h.ingesting ? "Ingesting now" : `Last ingest ${since(h.lastIngest)}`}</span>
+              {h.pending > 0 && <span className="wk-fact">{plural(h.pending, "session")} waiting</span>}
+              {data.thin > 0 && <span className="wk-fact">{check ? <button className="wk-link" onClick={runCheck}>{plural(data.thin, "page")} {data.thin === 1 ? "rests" : "rest"} on one citation</button>
+                : <>{plural(data.thin, "page")} {data.thin === 1 ? "rests" : "rest"} on one citation</>}</span>}
+              {data.orphans > 0 && <span className="wk-fact"><span className="wk-dot is-attn" aria-hidden="true" />{check ? <button className="wk-link" onClick={runCheck} title="Pages with no inbound links">{plural(data.orphans, "orphan page")}</button>
+                : <span title="Pages with no inbound links">{plural(data.orphans, "orphan page")}</span>}</span>}
+              {flagged > 0 && <span className="wk-fact"><button className="wk-link wk-link-bad" onClick={onReview}>Review {plural(flagged, "flagged claim")}</button></span>}
             </p>
 
             {(problems || err) && (

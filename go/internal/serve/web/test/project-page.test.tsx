@@ -194,6 +194,8 @@ test("both side columns keep a way back at narrow widths", () => {
   expect(html).toContain("prj-panel-btn");
   expect(html).toContain("prj-scrim");
   expect(html.split("prj-drawer-close").length - 1).toBe(2);
+  // As a drawer the panel names itself: a lone Close over the Orbs caption said nothing.
+  expect(html).toMatch(/<div class="prj-drawer-head"><h2>Project<\/h2><button[^>]*prj-drawer-close/);
 });
 
 // The home indexes the threads; it is not one of them. The composer is

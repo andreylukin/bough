@@ -224,6 +224,8 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .row-stack{display:flex;flex-direction:column;justify-content:center;min-width:0;flex:1 1 auto}
 .row-stack .row-title{font-size:var(--fs-md);line-height:var(--lh-row)}
 .row-stack .row-meta{margin-inline-start:0;overflow:hidden;text-overflow:ellipsis}
+/* Setup failed and Idle sat on two baselines: the status line is a flex row, its words centred on one 16px line. */
+.row-stack>.row-meta{display:flex;align-items:center;flex-wrap:wrap;gap:0 4px;min-width:0}
 .row.row-2{height:auto;min-height:32px;padding-block:6px}
 .row-2:has(.row-meta-live){min-height:48px}
 .row-wrap:hover>.row-has-ack .row-jobs,.row-wrap:focus-within>.row-has-ack .row-jobs{visibility:hidden}
@@ -583,6 +585,8 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .ov-empty-title{margin:0;font-size:var(--fs-base);font-weight:500;color:var(--text-1)}
 .ov-empty-sub{margin:0;font-size:var(--fs-md);color:var(--text-2)}
 .ov-empty-keys{margin:8px 0 0;display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px 8px;font-size:var(--fs-sm);color:var(--text-3)}
+/* A touch screen has no keys to press: the hints go, the sentence stays. */
+@media (pointer:coarse){.ov-empty-keys,.ov-hint{display:none}}
 .ov-empty-keys kbd{font:500 var(--fs-xs)/16px var(--mono);padding:1px 6px;border:1px solid var(--line-strong);border-radius:var(--r-xs);color:var(--text-2)}
 /* First run: an empty server teaches the three steps to a working session. */
 .welcome{flex:1;min-height:0;overflow:auto}
@@ -1259,8 +1263,9 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   /* No side column here: wiki actions take the strip row under the title. */
   .thread-head>.hk-acts{grid-area:strip;margin:4px 0 6px}
   .head-pop-run{display:block}
-  .head-main{flex-wrap:wrap;align-content:center;gap:0 10px}
-  .head-main h1{flex:1 1 100%;line-height:20px;max-width:none}
+  .head-main{flex-wrap:wrap;align-content:center;gap:2px 8px}
+  .head-main h1{flex:1 1 100%;line-height:20px;max-width:none;text-align:start;text-wrap:nowrap}
+  /* Status and project share one 20px line; the project is words, not a raised pill, beside the status. */
   /* The budget wraps: a chip past a hidden scroll edge could not be seen at all. */
   .thread-head{padding:0 12px 4px 8px;gap:0 8px}
   .thread-head>.runtime-strip{flex-wrap:wrap;overflow:visible;padding:0 4px;gap:0 10px;font-variant-numeric:tabular-nums}
@@ -1302,6 +1307,8 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
   .sidebar .side-nav{display:none}
   .row-line{flex-direction:column;align-items:stretch;justify-content:center;gap:0}
   .row-line>.row-meta{margin-inline-start:0}
+  /* The id tail is a desktop affordance: on a phone it read as a stray beside the ages. */
+  .row-id{display:none}
   .row:has(.row-line>.row-meta){height:auto;min-height:44px;padding-block:4px}
   .phone-nav{display:flex;position:fixed;inset-inline:0;bottom:0;z-index:var(--z-pop);background:var(--surface)}
   .app:has(.phone-nav){padding-bottom:calc(56px + env(safe-area-inset-bottom));box-sizing:border-box}
@@ -1637,6 +1644,8 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .nav-count{margin-inline-start:6px;font:var(--fs-xs) var(--mono);color:var(--amber);font-variant-numeric:tabular-nums}
 .wk-health{margin:0;padding-bottom:var(--s-3);border-bottom:1px solid var(--line);
            font-size:var(--fs-sm);line-height:var(--lh-row);color:var(--text-3);text-wrap:pretty}
+.wk-health{display:flex;flex-wrap:wrap;gap:4px 12px}
+.wk-fact{display:inline-flex;align-items:center;gap:var(--s-1);white-space:nowrap}
 .wk-health .wk-link{font-size:inherit}
 .wk-dot{margin-inline-end:var(--s-1);font-size:var(--fs-xs);color:var(--text-3)}
 .wk-link-bad,.wk-link-bad:hover{color:var(--red)}
@@ -2498,12 +2507,12 @@ pre.edit-rows,.block pre.edit-rows{text-indent:0;margin:2px 0 var(--s-2);padding
 }
 /* A phone's toolbar is too narrow for "Skills" and a model name both: Skills becomes its slash. */
 @media (max-width:480px){
-  .composer-tools .skills-btn{font-size:0;width:28px;padding:0;justify-content:center}
+  .composer-tools .skills-btn{width:28px;padding:0;justify-content:center}
+  @media (min-width:390px){.composer-tools .skills-btn{width:auto;padding-inline:8px}}
   .composer-tools{gap:0}
   .composer-tools .controls{flex-shrink:0}
   .composer-tools .ctl-run>.sel:first-of-type>.sel-btn{max-width:96px;padding-inline:3px}
   .composer-tools .mode-badge{width:24px}
-  .composer-tools .skills-btn::before{content:"/";font:500 var(--fs-md) var(--mono);color:var(--text-2)}
 }
 /* /R3-I */
 /* R3-J: visual polish. Disabled Send goes neutral, not a dimmed accent;
@@ -2556,6 +2565,9 @@ pre.edit-rows,.block pre.edit-rows{text-indent:0;margin:2px 0 var(--s-2);padding
 /* R4-I: .app takes focus on a route change without a ring; a history slot with no history holds its width unseen. */
 .app:focus{outline:none}
 .side-icon-reserved{visibility:hidden}
+/* Folded, the reserved arrow slots left an 80px hole under the toggle. */
+.sidebar-closed .side-icon-reserved{display:none}
+@media (pointer:coarse){.side-nav-rail .side-nav-item{width:44px;height:44px}}
 /* /R4-I */
 /* R4-J: markdown measure, neutral archive, control transitions/fonts/heights, hooks pills, turn gap */
 @property --md-measure{syntax:"<length>";inherits:true;initial-value:0px}
@@ -3014,6 +3026,11 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
 .thread-head .head-clock{font-size:var(--fs-sm);color:var(--text-3);font-variant-numeric:tabular-nums;margin-inline-start:-6px}
 .thread-head .head-clock::before{content:"·";margin-inline-end:6px}
 .thread-head .mode-chip{height:20px;padding:0 8px;border-radius:var(--r-pill);font:500 var(--fs-sm)/1 var(--sans);color:var(--text-2);background:var(--raised);box-shadow:inset 0 0 0 1px var(--line);border:0}
+/* A phone's header: status and project on one 20px line, the project as words, not a raised pill beside a bare Done. */
+@media (max-width:720px){
+  .thread-head .head-main>.status,.thread-head .head-main .orb-phases>summary,.thread-head .mode-chip{align-self:center;height:20px;line-height:20px}
+  .thread-head .mode-chip,.thread-head .orb-phases>summary:hover .mode-chip{padding:0;background:none;box-shadow:none;color:var(--text-3)}
+}
 .thread-head .head-main>.link{font:500 var(--fs-sm)/16px var(--sans);color:var(--text-2);text-decoration:none}
 .thread-head .head-main>.link:hover{text-decoration:underline}
 /* metrics: inline properties, 28px hit area, no borders */
@@ -3221,6 +3238,8 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
   .composer-tools .skills-btn,.composer-tools .sel-btn,.composer-tools .ctl-run .sel-btn,.composer-tools .ctl-run>.sel:first-of-type>.sel-btn{height:36px;font-size:var(--fs-md);max-width:none}
   .composer-tools .skills-btn{width:36px;padding:0;justify-content:center}
   .composer-tools .skills-word,.composer-sep{display:none}
+  /* From 390px the word fits beside the model: a lone slash read as a typo. */
+  @media (min-width:390px){.composer-tools .skills-btn{width:auto;padding-inline:8px;gap:6px}.composer-tools .skills-word{display:inline}}
   .skills-glyph{width:20px;font-size:var(--fs-lg)}
   .composer-tools .ctl-run>.sel:first-of-type>.sel-btn{max-width:200px}
   .composer-tools .ctl-run>.sel:first-of-type .sel-suffix{display:inline;white-space:nowrap}
@@ -4092,12 +4111,14 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
    which is most of what this page is for, so each one keeps a way back:
    a toggle in the title bar, a scrim, and its own Close. */
 .prj-scrim{display:none;position:absolute;inset:0;z-index:var(--z-pop);border:0;padding:0;background:rgb(0 0 0/.32);cursor:default}
-.prj-drawer-close,.prj-threads-btn{display:none}
+.prj-drawer-close,.prj-threads-btn,.prj-drawer-head{display:none}
 @media (max-width:1080px){
   .prj-scrim{display:block}
   .prj-panel{position:absolute;inset-block:0;inset-inline-end:0;z-index:calc(var(--z-pop) + 1);
              width:min(340px,92vw);box-shadow:var(--shadow-pop)}
-  .prj-panel>.prj-drawer-close{display:block;margin:0 0 var(--s-2) auto}
+  .prj-drawer-head{display:flex;align-items:center;justify-content:space-between;min-height:44px;margin-bottom:var(--s-2)}
+  .prj-drawer-head>h2{margin:0;font:600 var(--fs-lg)/22px var(--sans);color:var(--text-1)}
+  .prj-drawer-head>.prj-drawer-close{display:inline-flex}
 }
 /* The thread column drawers at the same width as the panel: beside the
    control room's own sidebar, three columns at 900px left the
@@ -4109,6 +4130,8 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
                           width:min(300px,86vw);box-shadow:var(--shadow-pop)}
   .prj-threads[data-open] .prj-drawer-close{display:inline-flex}
 }
+/* A phone's drawer is the page: a 1px sliver of it peeking out on the left read as a glitch. */
+@media (max-width:720px){.prj-panel{width:100vw}}
 /* /PROJECT-PAGE */
 
 /* ME: today's brief and the rows under it, the projects beside. Reads
@@ -4124,6 +4147,9 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 .me-body{flex:1 1 0%;padding:var(--s-4) var(--s-5) var(--s-6)}
 .me-none{margin:0;color:var(--text-2);font-size:var(--fs-md)}
 .me-brief{max-width:72ch;margin-bottom:var(--s-5)}
+/* A citation chip breaks anywhere: on a phone a long issue key ran off the pane. */
+.me-brief .wk-cite{white-space:normal;overflow-wrap:anywhere;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+@media (max-width:720px){.me-body{padding:var(--s-4) 16px var(--s-6)}}
 .me-lede{margin:0 0 var(--s-3);font-size:var(--fs-lg);line-height:var(--lh-prose)}
 /* The claim's markdown and its chips share one line: the wrapper and its
    paragraph go inline, so a citation follows the last word. */
