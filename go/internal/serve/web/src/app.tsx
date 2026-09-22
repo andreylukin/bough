@@ -1,7 +1,7 @@
 import { Fragment, createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, subscribe, watchBuild, type Change, type Scope, type TurnLine } from "./api";
-import type { Line, Project, Row } from "./types";
+import type { Event as LiveEvent, Line, Project, Row } from "./types";
 import { MARKED, STATUS, StatusMark, Working, hasFailure, hasQuestion, orbWord, sessionSignal, statusWord } from "./status";
 import { ProjectsView } from "./projects";
 import { ProjectView, StartThreadCtx } from "./project";
@@ -12,7 +12,7 @@ import { DialogHost, askChoice, askConfirm, askText, showShortcuts } from "./dia
 import { focusComposerKey, isMac, newSessionKey, sheetKey, switchKey, treeKey } from "./keys";
 import { Welcome, welcomeDismissed } from "./welcome";
 import { clampToViewport } from "./popover";
-import { Markdown, programRan, codeLabel, callVerb, callFailed, callsHeadline, callStep, isCall, presentTense, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, cleanError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
+import { Markdown, programRan, codeLabel, callVerb, callFailed, callRunning, callsHeadline, callStep, isCall, isNativeCall, presentTense, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, cleanError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
 import { agentWakeNotes, agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
@@ -22,7 +22,7 @@ import { Mentions, triggerAt, type Trigger } from "./mention";
 import { FireInspection, HooksPage, type Fire, type Load, type Save } from "./hooks";
 import { MeView } from "./me";
 import { ContextPage } from "./context";
-import { ChangesBody, ChangesPage, EditDiff, FileEdit, callEdits, countOf, outputParts, useChanges } from "./changes";
+import { ChangesBody, ChangesPage, EditDiff, FileEdit, callEdits, countOf, nativeEdits, outputParts, useChanges } from "./changes";
 import { Palette, idTail, isTypingTarget, startFolders, useFullText, usePaletteKey, visit, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
 import { Elapsed, EmptyState, ErrorNote, InlineFail, Pending, RawDetails, Spinner, StateIcon, ago, elapsed, humanError, providerError } from "./loading";
@@ -1343,6 +1343,7 @@ function AnswerActs({ line, body }: { line: Line; body: string }) {
 export function Entry({ line, codes, nested, until }: { line: Line; codes: string[]; nested?: boolean; /** When the next entry landed: a thinking block's end. */ until?: string }) {
   const footSeq = useContext(FootAnswer);
   const k = line.kind;
+  if (isNativeCall(line)) return <NativeCall line={line} />;
   if (isCall(line)) return <CallRows calls={[line]} nested />;
   if (k === "assistant" || k === "sub:assistant") {
     // The loop's "blocks dropped" marker is a notice about the reply, not part of it.
@@ -1712,16 +1713,20 @@ interface CallFacts { verb: string; gist: string; cmd: string; exit?: number; ms
  * index.ts" with the lines changed, then how many reads and commands.
  * Null when the programs used none of those tools.
  */
-export function runSummary(codes: string[], facts: CallFacts[], turnEdits?: Change[] | null, /** The calls that did not fail; all of them when omitted. */ okCodes = codes): { label: string; add: number; del: number; rest: string } | null {
+export function runSummary(codes: string[], facts: CallFacts[], turnEdits?: Change[] | null, /** The calls that did not fail; all of them when omitted. */ okCodes = codes,
+  /** An engine's native calls in the run: counted from their records, as there is no source to read. */ native: Line[] = []): { label: string; add: number; del: number; rest: string } | null {
   const all = codes.join("\n"), ok = okCodes.join("\n");
   const count = (name: string, text = all) => [...text.matchAll(new RegExp(`tools\\.${name}\\s*\\(`, "g"))].length;
+  const okNative = native.filter((l) => !callRunning(l) && !callFailed(l));
+  const tools = (name: string, ls = native) => ls.filter((l) => l.data?.tool === name).length;
+  const nEdits = nativeEdits(okNative);
   // A failed call's edits are not counted as done.
-  const edited = [...new Set([...ok.matchAll(/tools\.(?:patch|write)\s*\(\s*(["'`])([^"'`]+)\1/g)].map((m) => m[2].split("/").pop()!))];
-  const reads = count("view"), runs = count("bash"), edits = count("patch", ok) + count("write", ok);
+  const edited = [...new Set([...[...ok.matchAll(/tools\.(?:patch|write)\s*\(\s*(["'`])([^"'`]+)\1/g)].map((m) => m[2]), ...nEdits.map((f) => f.path)].map((p) => p.split("/").pop()!))];
+  const reads = count("view") + tools("view"), runs = count("bash") + tools("bash"), edits = count("patch", ok) + count("write", ok) + tools("patch", okNative) + tools("write", okNative);
   if (!reads && !runs && !edits && !turnEdits?.length) return null;
   // Counted from the calls, so a write nobody printed counts too (all additions).
   let add = 0, del = 0;
-  for (const f of callEdits(ok)) { add += f.add; del += f.del; }
+  for (const f of [...callEdits(ok), ...nEdits]) { add += f.add; del += f.del; }
   const rest = [reads ? `read ${reads} ${reads === 1 ? "file" : "files"}` : "", runs ? `ran ${runs} ${runs === 1 ? "command" : "commands"}` : ""].filter(Boolean);
   if (turnEdits?.length) {
     // The checkpoint diff is what the header and footer read: shell edits count too.
@@ -1798,6 +1803,68 @@ export function CallRows({ calls, running, nested }: { calls: Line[]; running?: 
         </li>
       )}
     </ol>
+  );
+}
+
+/** A native call's facts for its run's header and hover list, from its own record. */
+function nativeFacts(l: Line): CallFacts {
+  const d = l.data ?? {};
+  const out = str(d.output).split("\n").filter((x) => x.trim());
+  return {
+    verb: callVerb(str(d.tool)), gist: l.text, cmd: str(d.cmd) || l.text,
+    exit: typeof d.exit === "number" ? d.exit : undefined, ms: typeof d.ms === "number" ? d.ms : undefined,
+    failed: !callRunning(l) && callFailed(l), preview: out.slice(0, 3).join("\n") || undefined,
+  };
+}
+
+/** The last lines of a running call's live output: enough to see it is alive, and what it says now. */
+const tailLines = (s: string, n = 3) => s.split("\n").filter((l) => l.trim()).slice(-n);
+
+/**
+ * An engine session's call, as one row: what it did and what it cost,
+ * opening onto what it printed. There is no program around it to show,
+ * so the row is the call itself. While it runs it spins and keeps its
+ * last three lines of output in view; a call that outlived its turn says
+ * which job it became, and one whose result reached the model after the
+ * model had moved on says "late".
+ */
+export function NativeCall({ line, current }: { line: Line; /** The failure its turn ended on: open. */ current?: boolean }) {
+  const d = line.data ?? {};
+  const tool = str(d.tool);
+  const running = callRunning(line);
+  const canceled = d.canceled === true;
+  const failed = !running && !canceled && callFailed(line);
+  const why = failed && typeof d.error === "string" ? firstLine(cleanError(d.error)) : "";
+  const output = str(d.output);
+  const tail = running ? tailLines(str(d.tail)) : [];
+  const job = typeof d.job === "number" ? d.job : undefined;
+  return (
+    <details className={"block thin toolcall call-native" + (failed ? " block-failed" : "")} data-seq={running ? undefined : line.seq}
+             open={current || (running && tail.length > 0) || undefined}>
+      <summary role="button">
+        <span className="block-label">{running ? presentTense(callVerb(tool)) : callVerb(tool)}</span>
+        {line.text && <span className="mono block-detail" title={str(d.cmd) || line.text}>{line.text}</span>}
+        {why && <span className="tool-thrown" title={why}>{why}</span>}
+        {failed && <FailMark />}
+        {canceled && <span className="tool-unrecorded tool-stopped"><StopMark />Cancelled</span>}
+        {job !== undefined && <span className="num call-badge" title="It outlived its turn and ran on as a background job">Job {job}</span>}
+        {d.late === true && <span className="num call-badge" title="The model moved on while this ran; the result reached it later">Late</span>}
+        {running ? (
+          <span className="num tool-meta tool-running">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                 strokeLinecap="round" className="spin-mark" aria-hidden="true"><circle cx="12" cy="12" r="8.5" strokeDasharray="40 14" /></svg>
+            <Elapsed since={line.at} title="Running" />
+          </span>
+        ) : <CallMeta line={line} />}
+        {output && <CopyButton text={output} what="output" />}
+      </summary>
+      <div className="block-body">
+        {running ? (tail.length > 0 && <pre className="mono call-tail" aria-live="off">{tail.join("\n")}</pre>)
+          : output.trim() ? <div className="tool-output"><Code text={output} lang={tool === "view" ? langForPath(line.text) : ""} /></div>
+          : <p className="tool-noresult">No output.</p>}
+        {d.truncated === true && <p className="exec-note exec-note-quiet">Output shortened here: the head and tail are kept</p>}
+      </div>
+    </details>
   );
 }
 
@@ -1972,7 +2039,8 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned, turnEdi
       const calls: Line[] = [];
       for (let j = i + 1; j < lines.length; j++) {
         const r = lines[j];
-        if (r.kind === "call" && !used.has(j)) { calls.push(r); used.add(j); continue; }
+        // A native call recorded while a run_js block ran is not that block's own.
+        if (r.kind === "call" && !isNativeCall(r) && !used.has(j)) { calls.push(r); used.add(j); continue; }
         if (r.kind === "code") break;
         if (r.kind !== "result" || used.has(j)) continue;
         const code = str(r.data?.code);
@@ -1982,6 +2050,10 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned, turnEdi
       facts.push(f);
       if (!f.failed) okCodes.push(l.text);
       rows.push(<ToolCall key={l.seq} code={l} result={result} calls={calls} live={live} stopped={stopped} current={failSeq !== undefined && result?.seq === failSeq} spawned={spawned} />);
+    } else if (isNativeCall(l)) {
+      const f = nativeFacts(l);
+      facts.push(f);
+      rows.push(<NativeCall key={l.seq} line={l} current={failSeq === l.seq} />);
     } else if (l.kind === "job") {
       // Consecutive job rows share one head.
       let j = i;
@@ -2020,7 +2092,7 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned, turnEdi
   const known = verbs.every((v) => KNOWN_VERBS.has(v));
   // Mixed work is named from counts, edits first; never after its first command.
   const mixed = !known || verbs.length > 2;
-  const summary = mixed ? runSummary(lines.filter((l) => l.kind === "code").map((l) => l.text), facts, turnEdits, okCodes) : null;
+  const summary = mixed ? runSummary(lines.filter((l) => l.kind === "code").map((l) => l.text), facts, turnEdits, okCodes, lines.filter(isNativeCall)) : null;
   const label = summary ? summary.label : mixed ? "Tool group" : verbs.map((v, i) => (i ? v.toLowerCase() : v)).join(" and ");
   const targets = [...new Set(facts.map((f) => f.gist).filter(Boolean))];
   const fileish = verbs.every((v) => v === "Wrote" || v === "Patched" || v === "Read");
@@ -2310,9 +2382,16 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
   // Under a second is not a fact worth a slot ("Worked for 0s").
   if (worked >= 1000) facts.push("Worked for " + duration(worked));
   // What failed, said where the turn ends: a phone has no hover to read it from.
-  const failCmd = fail ? gistOf(parseCall(str(fail.data?.code)).gist) : "";
-  const failOut = fail ? resultBody(fail).split("\n").filter((l) => l.trim()).slice(-3) : [];
-  const failName = fail ? failNameOf(str(fail.data?.code), resultBody(fail)) || failCmd : "";
+  // A native call is its own record: the command, and the output it kept.
+  const native = fail && isNativeCall(fail);
+  const failCmd = !fail ? "" : native ? str(fail.data?.cmd) || fail.text : gistOf(parseCall(str(fail.data?.code)).gist);
+  const failBody = !fail ? "" : native ? str(fail.data?.output) : resultBody(fail);
+  const failOut = failBody.split("\n").filter((l) => l.trim()).slice(-3);
+  const failName = !fail ? "" : native ? (fail.data?.tool === "bash" ? failNameOf(`tools.bash(${JSON.stringify(failCmd)})`, failBody) : callVerb(str(fail.data?.tool))) || failCmd
+    : failNameOf(str(fail.data?.code), resultBody(fail)) || failCmd;
+  // The engine closed the turn with calls still running: they ran on as jobs, in Work.
+  const stillRunning = typeof done.data?.running === "number" ? done.data.running : 0;
+  const work = useWork();
   // The failed call already open on screen says it all; the footer then only points at it.
   const [shownOpen, setShownOpen] = useState(Boolean(fail));
   useEffect(() => {
@@ -2327,7 +2406,8 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
     document.addEventListener("toggle", check, true);
     return () => document.removeEventListener("toggle", check, true);
   }, [fail]);
-  const model = str(done.data?.model);
+  // The engine's done names no model: its replies carry their own provenance.
+  const model = str(done.data?.model) || str([...turn.body].reverse().find((l) => l.kind === "assistant" && str(l.data?.model))?.data?.model);
   const show = () => {
     const el = document.querySelector<HTMLElement>(`details.block[data-seq="${fail?.seq}"]`);
     if (!el) return;
@@ -2364,6 +2444,11 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
       )}
       {facts.map((f) => <span key={f} className="num">{f}</span>)}
       {files.length > 0 && <TurnFiles files={files} turn={turn} edits={edits} />}
+      {stillRunning > 0 && (
+        <button type="button" className="link num turn-running" onClick={() => work?.openWork?.()} disabled={!work?.openWork}>
+          {stillRunning === 1 ? "1 call still running" : `${stillRunning} calls still running`}
+        </button>
+      )}
       {extra}
       {(u?.cost !== undefined || tokens || model) && <span className="turn-foot-right">
         {u?.cost !== undefined ? <span className="num" title={tokens}>{money(u.cost)}</span> : tokens && <span className="num">{tokens}</span>}
@@ -2384,6 +2469,43 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
 /** The input seq of the turn being drawn: a turn's edits are diffed from its own checkpoint. */
 const TurnSeq = createContext<number | undefined>(undefined);
 
+/** An engine call in flight: its live start event and the output streamed since (call-delta). */
+export type NativeRun = { id: string; kind: string; tool: string; detail: string; at: string; tail: string; worker?: string };
+
+/** The running native calls after one live event: a start adds its row, a call-delta extends its tail. */
+export function liveNative(m: Map<string, NativeRun>, ev: LiveEvent): Map<string, NativeRun> {
+  const id = typeof ev.extra?.id === "string" ? ev.extra.id : "";
+  if (ev.kind === "call-delta") {
+    const c = m.get(id);
+    // Only the tail is ever shown; the record carries the whole output.
+    return c ? new Map(m).set(id, { ...c, tail: (c.tail + ev.text).slice(-4000) }) : m;
+  }
+  if ((ev.kind === "call" || ev.kind === "sub:call") && id && ev.extra?.phase === "start") {
+    const worker = typeof ev.extra.worker === "string" ? ev.extra.worker : undefined;
+    return new Map(m).set(id, { id, kind: ev.kind, tool: String(ev.extra.tool ?? ""), detail: ev.text, at: ev.at, tail: "", worker });
+  }
+  // A call still running when its turn closed runs on as a job, in Work, not as a row of a finished turn.
+  if (ev.kind === "done" || ev.kind === "cancelled") return m.size ? new Map() : m;
+  return m;
+}
+
+/**
+ * The transcript with an engine's running calls appended as unrecorded
+ * call lines (phase "start"), so they take their place in the live turn
+ * the way a recorded call does, and give way to that record by id.
+ */
+export function withRunningCalls(lines: Line[], running: Map<string, NativeRun>): Line[] {
+  if (!running.size) return lines;
+  const recorded = new Set(lines.filter(isNativeCall).map((l) => l.data!.id as string));
+  const last = lines.length ? lines[lines.length - 1].seq : 0;
+  const extra = [...running.values()].filter((c) => !recorded.has(c.id)).map((c, i): Line => ({
+    // Between the last record and the next: never a seq a record can take.
+    seq: last + (i + 1) / 1000, at: c.at, kind: c.kind, text: c.detail,
+    data: { id: c.id, tool: c.tool, phase: "start", tail: c.tail, ...(c.worker ? { worker: c.worker } : {}) },
+  }));
+  return extra.length ? [...lines, ...extra] : lines;
+}
+
 /** The call in flight: the tools plugin's live "call" start event (never recorded), until its end or the block's result lands. */
 export type RunningCall = { kind: string; tool: string; detail: string; at: string };
 export const RunningCallCtx = createContext<RunningCall | null>(null);
@@ -2399,7 +2521,7 @@ export const SessionChanges = createContext<ReturnType<typeof useChanges> | null
  */
 export function TurnFiles({ files, turn, edits: diff }: { files: string[]; turn: Turn; /** The turn's checkpoint diff: the same counts as the header, shell edits included. */ edits?: Change[] | null }) {
   const id = useWork()?.session ?? "";
-  const calls = useMemo(() => callEdits(turn.body.filter((l) => l.kind === "code").map((l) => l.text).join("\n")), [turn.body]);
+  const calls = useMemo(() => [...callEdits(turn.body.filter((l) => l.kind === "code").map((l) => l.text).join("\n")), ...nativeEdits(turn.body)], [turn.body]);
   const edits = diff?.length ? diff : calls;
   const add = edits.reduce((n, f) => n + Math.max(0, f.add), 0), del = edits.reduce((n, f) => n + Math.max(0, f.del), 0);
   const text = <>
@@ -2775,8 +2897,11 @@ const segOpen = new Map<string, boolean>();
  */
 /** MB-TR: "+12 −3" on a folded segment, from the edits its own calls made; a zero side is left out. */
 function WorkEdits({ seg }: { seg: Extract<Segment, { kind: "work" }> }) {
-  const code = seg.items.flatMap((it) => it.kind === "tools" ? it.lines : it.kind === "line" ? [it.line] : []).filter((l) => l.kind === "code").map((l) => l.text).join("\n");
-  const edits = useMemo(() => callEdits(code), [code]);
+  const lines = seg.items.flatMap((it) => it.kind === "tools" ? it.lines : it.kind === "line" ? [it.line] : []);
+  const code = lines.filter((l) => l.kind === "code").map((l) => l.text).join("\n");
+  // Native calls carry their own counts; keyed by seq, as the lines are a fresh array every render.
+  const nativeKey = lines.filter(isNativeCall).map((l) => l.seq).join(",");
+  const edits = useMemo(() => [...callEdits(code), ...nativeEdits(lines)], [code, nativeKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const add = edits.reduce((n, f) => n + f.add, 0), del = edits.reduce((n, f) => n + f.del, 0);
   if (!add && !del) return null;
   return <span className="num work-seg-edits">{add > 0 && <span className="rt-add">+{add}</span>}{del > 0 && <span className="rt-del">−{del}</span>}</span>;
@@ -2814,6 +2939,15 @@ function WorkSegmentRow({ seg, session, defaultOpen, running, since, step, all, 
       <div className="work-seg-body">{children}</div>
     </details>
   );
+}
+
+/** What woke the engine, said as what happened: its own input is an instruction to the model, not something you typed. */
+export function wakeLabel(prompt: Line): string {
+  const d = prompt.data ?? {};
+  if (d.reason === "heartbeat") return "The agent checked on its running calls";
+  if (d.reason === "notice") return "A background job finished while the agent was idle";
+  const n = Array.isArray(d.calls) ? d.calls.length : typeof d.calls === "number" ? d.calls : 1;
+  return n > 1 ? `${n} background calls finished` : "A background call finished";
 }
 
 export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; tail?: React.ReactNode; /** 1-based position, so the turn log can land on it. */ n?: number;
@@ -2856,9 +2990,17 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
   const bad = (l?: Line) => typeof l?.data?.exit === "number" && l.data.exit !== 0;
   // A done that recorded no exit still ended on a failure when its last result failed.
   const lastResult = [...turn.body].reverse().find((l) => l.kind === "result");
-  const fail = !turn.done || turn.stopped ? undefined
+  const resultFail = !turn.done || turn.stopped ? undefined
     : typeof exit === "number" ? (exit !== 0 ? [...turn.body].reverse().find((l) => l.kind === "result" && bad(l)) : undefined)
     : bad(lastResult) ? lastResult : undefined;
+  // On the engine a call is the unit: the turn ended on the last native call that failed
+  // (a bash one when the done names an exit). A cancelled call is a stop, not a failure.
+  const nativeLast = !turn.done || turn.stopped ? undefined
+    : typeof exit === "number" ? (exit !== 0 ? [...turn.body].reverse().find((l) => isNativeCall(l) && bad(l)) : undefined)
+    : [...turn.body].reverse().find(isNativeCall);
+  const fail = resultFail ?? (nativeLast && callFailed(nativeLast) && nativeLast.data?.canceled !== true ? nativeLast : undefined);
+  // A turn the engine opened itself: a background call finished, or it checked on its running calls.
+  const wake = turn.prompt?.data?.wake === true;
   const [full, setFull] = useState(false);
   const [opened, setOpened] = useState<number | null>(null);
   // R3-F: the turn's checkpoint diff, read once it is done, so its group and footer count what the header counts.
@@ -2966,7 +3108,12 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
           {wakeJobs.map((w) => <JobRow key={w.key} w={w} />)}
         </div>
       )}
-      {turn.prompt && !wakeJobs && !wakeAgents && (
+      {turn.prompt && wake && !wakeJobs && !wakeAgents && (
+        <div className="job-wake call-wake" role="note">
+          <p className="meta-line"><span aria-hidden="true">↻ </span>{wakeLabel(turn.prompt)} · {when(turn.prompt.at)}</p>
+        </div>
+      )}
+      {turn.prompt && !wake && !wakeJobs && !wakeAgents && (
         <div className="prompt">
           <div className="prompt-text prompt-bubble">
             {/* A long brief (pasted logs, a spec) is evidence, not the
@@ -3013,7 +3160,8 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
           if (!running && sg.rows < 2) return rows;
           // R4-D: once the last call's result landed its row is done; a lagging activity label must not say it still runs.
           const tip = sg.items.at(-1);
-          const settled = tip?.kind === "tools" ? tip.lines.at(-1)?.kind === "result" : tip?.kind === "line" && tip.line.kind === "result";
+          const done = (l?: Line) => l?.kind === "result" || Boolean(l && isNativeCall(l) && !callRunning(l));
+          const settled = tip?.kind === "tools" ? done(tip.lines.at(-1)) : tip?.kind === "line" && done(tip.line);
           const step = working && working !== "Working" && working !== WAITING_MODEL && working !== "Thinking" && !settled ? working : sg.step;
           return (
             <WorkSegmentRow key={"seg" + sg.seq} seg={sg} session={ctx?.session ?? ""} all={allSegs}
@@ -3080,6 +3228,24 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
  * dropped. Nothing here is ever a source of truth.
  */
 export interface DeltaRun { kind: "assistant" | "thinking"; text: string }
+
+/**
+ * The live reply after one delta event: a fragment extends the run of its
+ * kind or starts the next; the engine's delta-reset (a retry, or a newer
+ * request replacing the one that streamed) clears it, since what was shown
+ * was never said.
+ */
+export function streamAfter(prev: DeltaRun[], ev: { kind: string; text: string }): DeltaRun[] {
+  if (ev.kind === "delta-reset") return prev.length ? [] : prev;
+  const kind = ev.kind === "thinking-delta" ? "thinking" : "assistant";
+  const n = prev.length;
+  if (n && prev[n - 1].kind === kind) {
+    const next = prev.slice();
+    next[n - 1] = { kind, text: next[n - 1].text + ev.text };
+    return next;
+  }
+  return [...prev, { kind, text: ev.text }];
+}
 
 export function StreamView({ runs }: { runs: DeltaRun[] }) {
   if (!runs.length) return null;
@@ -3854,7 +4020,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
       const id = l.kind === "job" ? jobIdOf(l) : undefined;
       if (id !== undefined && !jobFirst.has(String(id))) jobFirst.set(String(id), l.seq);
     }
-    return { session: row.id, live: row.live, workers, byKey, jobs, jobFirst, review, stops, requestStop };
+    return { session: row.id, live: row.live, workers, byKey, jobs, jobFirst, review, stops, requestStop, openWork: () => setWorkOpen(true) };
   }, [row.id, row.live, workers, byKey, lines, review, stops, requestStop]);
   const counts = workCounts(workers, review.isNew);
   // Visible whenever there is work, and while background agents are still being looked up.
@@ -4712,6 +4878,9 @@ export default function App() {
   const [activity, setActivity] = useState("");
   // The call in flight, from the tools plugin's live start event: what the turn is doing, from the runtime rather than a guess.
   const [runningCall, setRunningCall] = useState<RunningCall | null>(null);
+  // An engine session's calls in flight, by call id, with their live output. Several run at
+  // once, each is a row of its own, and none is recorded until it ends.
+  const [nativeRunning, setNativeRunning] = useState<Map<string, NativeRun>>(() => new Map());
   const [query, setQuery] = useState("");
   const [archived, setArchived] = useState(false);
   // Whether the rows on hand were fetched with archived ones included.
@@ -4841,6 +5010,7 @@ export default function App() {
     });
 
     setStream([]);
+    setNativeRunning(new Map());
     // How many delta runs were already on screen when the last recorded
     // event arrived. The server drains its delta buffer synchronously
     // before it forwards a recorded entry, so every run up to this mark
@@ -4897,28 +5067,31 @@ export default function App() {
       // The small model's label for what the turn is doing right now. A
       // status, not a record: it changes nothing to catch up on.
       if (ev.kind === "activity") { setActivity(ev.text); return; }
-      if (ev.kind === "call" || ev.kind === "sub:call") {
+      // An engine's call carries the provider's call id (a string); the loop's per-block calls number theirs.
+      const native = (ev.kind === "call" || ev.kind === "sub:call") && typeof ev.extra?.id === "string";
+      // Live only, never refetched: a native call's start and its streamed output.
+      if (ev.kind === "call-delta" || (native && ev.extra?.phase === "start")) {
+        setNativeRunning((m) => liveNative(m, ev));
+        return;
+      }
+      // A native call's end falls through: it is recorded, and the refetch below brings the row that replaces the running one.
+      if (!native && (ev.kind === "call" || ev.kind === "sub:call")) {
         // A start is live only (nothing to catch up on); an end is recorded and refetched below.
         if (ev.extra?.phase === "start") { setRunningCall({ kind: ev.kind, tool: String(ev.extra.tool ?? ""), detail: ev.text, at: ev.at }); return; }
         setRunningCall(null);
       } else if (ev.kind !== "assistant-delta" && ev.kind !== "thinking-delta") setRunningCall(null); // the block moved on
-      if (ev.kind === "assistant-delta" || ev.kind === "thinking-delta") {
-        setActivity(""); // the program it named is over; its label must not come back
-        const kind = ev.kind === "thinking-delta" ? "thinking" : "assistant";
+      if (ev.kind === "assistant-delta" || ev.kind === "thinking-delta" || ev.kind === "delta-reset") {
+        if (ev.kind !== "delta-reset") setActivity(""); // the program it named is over; its label must not come back
+        // A reset leaves nothing on screen for the next record to supersede.
+        else superseded = 0;
         setStream((prev) => {
-          const n = prev.length;
-          let next: DeltaRun[];
-          if (n && prev[n - 1].kind === kind) {
-            next = prev.slice();
-            next[n - 1] = { kind, text: next[n - 1].text + ev.text };
-          } else {
-            next = [...prev, { kind, text: ev.text }];
-          }
+          const next = streamAfter(prev, ev);
           runs = next.length;
           return next;
         });
         return;
       }
+      if (ev.kind === "done" || ev.kind === "cancelled") setNativeRunning((m) => liveNative(m, ev));
       superseded = runs;
       clearTimeout(timer);
       timer = setTimeout(catchUp, 120);
@@ -5383,9 +5556,11 @@ export default function App() {
    * column, on the same stream and the same composer — a thread opened
    * there is not a second, lesser view of it.
    */
+  // Running native calls sit after the recorded lines as rows of the live turn, until their own record lands.
+  const shownLines = useMemo(() => withRunningCalls(lines, nativeRunning), [lines, nativeRunning]);
   const threadFor = (r: Row) => (
     <RunningCallCtx.Provider key={r.id} value={runningCall}>
-    <Thread key={r.id} row={r} lines={lines} jump={jump?.id === r.id ? jump : null} loading={loadedFor !== r.id} loadError={loadFail ?? undefined} paused={paused}
+    <Thread key={r.id} row={r} lines={shownLines} jump={jump?.id === r.id ? jump : null} loading={loadedFor !== r.id} loadError={loadFail ?? undefined} paused={paused}
       onRetry={() => (loadedFor === r.id ? retryRef.current() : setLoadTry((n) => n + 1))} stream={stream} activity={runningCall ? callStep({ data: { tool: runningCall.tool }, text: runningCall.detail }) : activity} projects={projects} busy={busy || Boolean(locked[r.id])} onBack={goList}
       sending={pending[r.id] ?? []}
       setSending={(f) => setPending((m) => ({ ...m, [r.id]: f(m[r.id] ?? []) }))}
