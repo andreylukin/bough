@@ -275,6 +275,10 @@ func serveForeground(home, addr string, insecure bool, host string) error {
 	if err != nil {
 		return fmt.Errorf("serve: %w", err)
 	}
+	// The pidfile (and `serve status`) name the config the daemon's
+	// sessions resolve; only the TUI path set this, so serve always said
+	// "(embedded)" even with a ~/.bough/bough.yml in force.
+	webConfig = resolveConfig(false, "").describe()
 	if done := writeServePidfile(home, addr); done != nil {
 		defer done()
 	}

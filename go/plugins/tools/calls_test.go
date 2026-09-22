@@ -168,3 +168,24 @@ func TestCallEventsSkipBackgroundJobs(t *testing.T) {
 		}
 	}
 }
+
+// The tools row's job_grace / job_settle set the foreground wait and
+// the status settle; a bad value fails the row with its name.
+func TestJobGraceConfig(t *testing.T) {
+	ctx := kernel.NewContext()
+	ctx.Provide("codemode", codemode.New(5*time.Second))
+	provideHostProject(ctx)
+	if err := (plugin{}).Apply(ctx, map[string]any{"job_grace": "0s", "job_settle": "1500ms"}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	st, _ := kernel.Get[*Stats](ctx, "turn-stats")
+	if st.jobs.grace != 0 || st.jobs.settleFor != 1500*time.Millisecond {
+		t.Fatalf("grace=%s settle=%s", st.jobs.grace, st.jobs.settleFor)
+	}
+	bad := kernel.NewContext()
+	bad.Provide("codemode", codemode.New(5*time.Second))
+	provideHostProject(bad)
+	if err := (plugin{}).Apply(bad, map[string]any{"job_grace": "soon"}); err == nil || !strings.Contains(err.Error(), "tools-basic: job_grace") {
+		t.Fatalf("bad duration accepted: %v", err)
+	}
+}

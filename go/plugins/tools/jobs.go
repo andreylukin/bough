@@ -60,6 +60,7 @@ type job struct {
 	spillAt string   // its path; "-" when it could not be made
 	matched bool     // the until pattern already fired
 	done    bool
+	claimed bool // a caller is (or was) waiting on it and takes its result: no notice
 	stopped bool // killed by Stop orb: not a failure, not news
 	exit    int
 	err     string
@@ -181,9 +182,17 @@ func firstLine(s string) string {
 // Jobs is the "job-notices" service: the background jobs of this
 // session and the notices they have queued for the agent.
 type Jobs struct {
-	ctx   context.Context // the plugin's context: a job survives a turn cancel
-	stop  context.CancelFunc
-	pause func() func() // codemode's Pause seam, for jobWait
+	ctx context.Context // the plugin's context: a job survives a turn cancel
+	// grace is how long tools.bash(cmd, limit) waits for the job in the
+	// foreground before handing back a job id. In a month of real
+	// sessions 97% of "background" jobs finished within a minute (half
+	// within a second) and the model then polled tools.jobs() a
+	// thousand times to learn so; a job that ends inside the grace is
+	// answered like a foreground command instead. wait is how long
+	// tools.jobs()/job() block for a change before answering.
+	grace, settleFor time.Duration
+	stop             context.CancelFunc
+	pause            func() func() // codemode's Pause seam, for jobWait
 	// runCtx is the running script's context (nil = none): esc cancels
 	// it, and a jobWait blocked in Go only notices through it.
 	runCtx func() context.Context
@@ -204,8 +213,13 @@ type Jobs struct {
 	running sync.WaitGroup // one per job until its Wait returns
 }
 
+const (
+	defaultJobGrace = 20 * time.Second
+	defaultJobWait  = 10 * time.Second
+)
+
 func newJobs(ctx context.Context) *Jobs {
-	return &Jobs{ctx: ctx, wake: make(chan struct{}, 1)}
+	return &Jobs{grace: defaultJobGrace, settleFor: defaultJobWait, ctx: ctx, wake: make(chan struct{}, 1)}
 }
 
 // Stop kills every job still running and waits for their notices, so
@@ -442,11 +456,11 @@ func (j *Jobs) start(cmd string, limit time.Duration, until string) (*job, error
 			}
 			b.stopped = project.stoppedSince(b.started)
 		}
-		line, out, exit, stopped := b.line(), b.output(), b.exit, b.stopped
+		line, out, exit, stopped, claimed := b.line(), b.output(), b.exit, b.stopped, b.claimed
 		b.mu.Unlock()
 		j.recordJob(b, "finished", exit)
-		if stopped {
-			return // the user stopped the orb: waking a paid turn to say so helps no one
+		if stopped || claimed {
+			return // stopped by the user, or answered to the caller waiting on it: nothing to wake a turn for
 		}
 		j.notify(b.owner, line+"\n"+tailLines(out, 40))
 	}()
@@ -506,6 +520,10 @@ func tailLines(s string, n int) string {
 
 // jobs lists this session's background jobs.
 func (j *Jobs) jobs() (string, error) {
+	// A poll while something runs waits for a change first: asked in a
+	// tight loop, this answered "running" every 14 s for a model turn
+	// each time, when one blocking call would have carried the finish.
+	j.settle(nil)
 	j.mu.Lock()
 	list := append([]*job(nil), j.list...)
 	j.mu.Unlock()
@@ -527,6 +545,7 @@ func (j *Jobs) job(id int) (string, error) {
 	if b == nil {
 		return "", fmt.Errorf("no job %d (tools.jobs() lists them)", id)
 	}
+	j.settle(b)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.line() + "\n" + b.output(), nil
@@ -584,4 +603,96 @@ func (j *Jobs) jobKill(id int) (string, error) {
 	}
 	cancel()
 	return fmt.Sprintf("job %d killed", id), nil
+}
+
+// settle waits up to j.wait for a running job to end (the one given,
+// or any when nil), with the script timeout paused, so a status call
+// made while something runs carries the finish instead of "running".
+// It returns at once when nothing is running.
+func (j *Jobs) settle(only *job) {
+	running := func() bool {
+		j.mu.Lock()
+		defer j.mu.Unlock()
+		for _, x := range j.list {
+			if only != nil && x != only {
+				continue
+			}
+			x.mu.Lock()
+			d := x.done
+			x.mu.Unlock()
+			if !d {
+				return true
+			}
+		}
+		return false
+	}
+	if j.settleFor <= 0 || !running() {
+		return
+	}
+	if j.pause != nil {
+		defer j.pause()()
+	}
+	var turn <-chan struct{}
+	if j.runCtx != nil {
+		if rc := j.runCtx(); rc != nil {
+			turn = rc.Done()
+		}
+	}
+	deadline := time.Now().Add(j.settleFor)
+	for running() && time.Now().Before(deadline) {
+		select {
+		case <-j.ctx.Done():
+			return
+		case <-turn:
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+// claim waits up to j.grace for a just-started job, with the script
+// timeout paused. A job that ends in time is the caller's: its output
+// comes back like a foreground command's, and no finish notice wakes a
+// later turn. One that is still running is left to the notices.
+func (j *Jobs) claim(b *job) (out string, exit int, err string, finished bool) {
+	if j.grace <= 0 {
+		return "", 0, "", false
+	}
+	if j.pause != nil {
+		defer j.pause()()
+	}
+	var turn <-chan struct{}
+	if j.runCtx != nil {
+		if rc := j.runCtx(); rc != nil {
+			turn = rc.Done()
+		}
+	}
+	b.mu.Lock()
+	b.claimed = true
+	b.mu.Unlock()
+	deadline := time.Now().Add(j.grace)
+	for {
+		b.mu.Lock()
+		if b.done {
+			out, exit, err = b.output(), b.exit, b.err
+			b.mu.Unlock()
+			return out, exit, err, true
+		}
+		if time.Now().After(deadline) {
+			b.claimed = false // back to the notices: it outlived the grace
+			b.mu.Unlock()
+			return "", 0, "", false
+		}
+		b.mu.Unlock()
+		select {
+		case <-j.ctx.Done():
+			return "", 0, "", false
+		case <-turn:
+			b.mu.Lock()
+			b.claimed = false
+			b.mu.Unlock()
+			return "", 0, "", false
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }

@@ -20,10 +20,16 @@ func LogFor(home string, s State) (name, path string) {
 }
 
 // StopContainer marks state.json stopped and stops the container, putting
-// the state back when the runtime refuses.
+// the state back when the runtime refuses. A container that no longer
+// exists is stopped already: state.json said "running" for eight orbs
+// whose VMs were long gone, and the reaper retried each every five
+// minutes for a week because the failed stop restored "running".
 func StopContainer(ctx context.Context, rt container.Runtime, home, session string) error {
 	prev, _ := MarkStopped(home, session)
 	if err := rt.Stop(ctx, container.OrbName(session)); err != nil {
+		if st, ierr := rt.Inspect(ctx, container.OrbName(session)); ierr == nil && st == container.StateMissing {
+			return nil
+		}
 		_ = Restore(home, prev)
 		return err
 	}

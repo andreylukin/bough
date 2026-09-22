@@ -66,7 +66,14 @@ func (a *API) reapIdleOrbs(ctx context.Context, idle time.Duration, now time.Tim
 			continue
 		}
 		st, err := orb.ReadState(home, d.Name())
-		if err != nil || st.Session == "" || st.Status != orb.StatusRunning {
+		if err != nil || st.Session == "" {
+			continue
+		}
+		// A start that failed after the container came up (resume.sh
+		// exit 1) leaves the VM running under a "failed" state: three of
+		// those ran for a week at 8 GB each. Idle is idle whatever the
+		// state says; only one already stopped is nothing to do.
+		if st.Status != orb.StatusRunning && st.Status != orb.StatusFailed {
 			continue
 		}
 		last := st.UpdatedAt

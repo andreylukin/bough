@@ -3416,12 +3416,13 @@ function WaitingDot() {
   return <div className="waiting-dot" aria-hidden="true"><i /></div>;
 }
 
-const WAITING_MODEL = "Waiting for model";
+const WAITING_MODEL = "Model is thinking";
+const WAITING_WHY = "Nothing has come back yet. A reasoning model can think for 10–25 s before its first word, and some models return no reasoning summary to stream meanwhile.";
 
 /** R2-B: the send was taken and nothing has come back yet. MB-STREAM: the wait is timed from 3s. */
 export function WaitingModel({ since }: { since?: string | number }) {
   const [mounted] = useState(() => Date.now());
-  return <p className="waiting-model" role="status"><i className="breath-dot" aria-hidden="true" /><span>{WAITING_MODEL}</span><Elapsed since={since ?? mounted} from={3} /></p>;
+  return <p className="waiting-model" role="status" title={WAITING_WHY}><i className="breath-dot" aria-hidden="true" /><span>{WAITING_MODEL}</span><Elapsed since={since ?? mounted} from={3} /></p>;
 }
 
 function SendingPrompt({ p, accepted = false, clamp = true, onClip, clipped, onToggle, children }: { p: Pending; /** The turn it started is running: no longer on its way. */ accepted?: boolean; clamp?: boolean; onClip?: (el: HTMLParagraphElement) => void; clipped?: boolean; onToggle?: () => void;

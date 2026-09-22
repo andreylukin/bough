@@ -37,8 +37,8 @@ test("once the turn runs, the sent prompt is solid and the hint says Waiting", (
   expect(html).toContain("fix the tests");
   expect(html).not.toContain("turn-sending");
   expect(html).not.toContain("Sending…");
-  expect(html).toContain("Waiting for model");
-  expect(html).toMatch(/composer-status[^>]*><span class="composer-dot" aria-hidden="true"><\/span>Waiting for model</);
+  expect(html).toContain("Model is thinking");
+  expect(html).toMatch(/composer-status[^>]*><span class="composer-dot" aria-hidden="true"><\/span>Model is thinking</);
 });
 
 test("resending a stopped turn's prompt shows Sending, then lands on the new input", () => {
@@ -79,15 +79,15 @@ test("R2-B: the status goes Sending, then Waiting once accepted, then Streaming"
   expect(composerStatus({ sending: true, accepted: true, running: false, streamed: false, activity: "" })).toBe("Waiting");
   expect(composerStatus({ sending: false, running: true, streamed: true, activity: "" })).toBe("Working");
   const accepted = renderToStaticMarkup(<Thread row={{ ...row, status: "done" } as Row} lines={[]} sending={[{ ...sent[0], accepted: true }]} {...props} />);
-  expect(accepted).toContain("Waiting for model");
+  expect(accepted).toContain("Model is thinking");
   expect(accepted).toContain("breath-dot");
   const waiting = renderToStaticMarkup(<Thread row={{ ...row, status: "running" } as Row} lines={[]} sending={sent} {...props} />);
-  expect(waiting).toContain("Waiting for model");
+  expect(waiting).toContain("Model is thinking");
   const streaming = renderToStaticMarkup(<Thread row={{ ...row, status: "running" } as Row} lines={[]} sending={[]} activity="Reading app.tsx" {...props} />);
   expect(streaming).toContain('class="working"');
-  expect(streaming).not.toContain("Waiting for model");
+  expect(streaming).not.toContain("Model is thinking");
   expect(streaming).toContain("composer-status-working");
-  expect(streaming).not.toContain("Waiting for model…");
+  expect(streaming).not.toContain("Model is thinking…");
 });
 
 // R3-C: Esc before the first token really stops the server turn.
@@ -126,7 +126,7 @@ test("R3-D: an errored session never reads Working or Sending for a send it did 
   const cmd = [{ id: "c2", text: "/model nope", after: 0, accepted: true }];
   const html = renderToStaticMarkup(<Thread row={{ ...row, status: "error" } as Row} lines={[]} sending={cmd as any} {...threadProps} />);
   expect(html).not.toMatch(/thread-head[\s\S]*>(Sending|Working)</);
-  expect(html).not.toContain("Waiting for model");
+  expect(html).not.toContain("Model is thinking");
 });
 
 test("R4-D: one word per phase — Waiting before output, then Working, never Streaming", () => {
@@ -164,7 +164,7 @@ test("while the turn waits for the model, the composer offers to steer, not a ne
   const html = renderToStaticMarkup(<Thread row={row} lines={[]} sending={[{ ...sent[0], accepted: true }]} onSend={async () => null} onAnswer={async () => null}
     onInterrupt={() => {}} onArchive={() => {}} onRename={async () => {}} onModel={() => {}} onEffort={() => {}} onAssign={() => {}}
     onBack={() => {}} onContext={() => {}} onAck={() => {}} projects={[]} busy={false} jump={null} />);
-  expect(html).toMatch(/composer-status[^>]*><span class="composer-dot" aria-hidden="true"><\/span>Waiting for model</);
+  expect(html).toMatch(/composer-status[^>]*><span class="composer-dot" aria-hidden="true"><\/span>Model is thinking</);
   expect(html).toContain('placeholder="Steer the running turn…"');
 });
 

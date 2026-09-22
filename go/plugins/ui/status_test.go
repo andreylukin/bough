@@ -359,6 +359,23 @@ func TestSpinnerAppearsWhileRunning(t *testing.T) {
 	}
 }
 
+// Between the send and the first thing back, the bar says the model is
+// thinking: a reasoning model is silent for 10-25 s here, and a bare
+// title read as "stuck".
+func TestStatusBarSaysThinkingUntilOutput(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.typeStr("go")
+	d.press(keyEnter())
+	if p := d.plain(); !strings.Contains(p, "waiting for the model") {
+		t.Fatalf("no waiting line before the first output:\n%s", p)
+	}
+	d.event("assistant-delta", "hel")
+	if p := d.plain(); strings.Contains(p, "waiting for the model") {
+		t.Fatalf("waiting line outlived the first output:\n%s", p)
+	}
+}
+
 func TestSpinnerClearedOnDone(t *testing.T) {
 	t.Parallel()
 	d := defaultDrv(t)

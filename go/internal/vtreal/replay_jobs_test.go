@@ -36,6 +36,7 @@ func jobsConfig(tape string) string {
   plugin: codemode
 - id: tools
   plugin: tools-basic
+  config: {job_grace: 0s, job_settle: 0s} # these suites test the background path itself
 - id: commands
   plugin: commands
 - id: history

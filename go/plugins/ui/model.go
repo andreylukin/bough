@@ -122,6 +122,7 @@ type model struct {
 	height      int
 	running     bool           // a turn is in flight (input sent, no done/error yet)
 	turnStart   time.Time      // when the in-flight turn started (status bar elapsed)
+	gotOutput   bool           // something has come back this turn: the wait is over
 	where       string         // "repo (branch)" for the status bar; "" outside a repo
 	lastRequest time.Time      // when the model last answered (cache chip, cache.go)
 	lastEnd     string         // how the last turn ended: "done", "cancelled", "" (tabtitle.go)
@@ -1127,6 +1128,10 @@ func (m *model) addEvent(ev Event) {
 	id := m.nextID
 	m.nextID++
 	switch ev.Kind {
+	case "assistant", "assistant-delta", "thinking", "thinking-delta", "code", "ask", "activity":
+		m.gotOutput = true
+	}
+	switch ev.Kind {
 	case "assistant", "assistant-delta":
 		// The model speaks again after seeing its results: the prose
 		// it wrote under the fence BEFORE seeing them ("Done, here's
@@ -1835,6 +1840,7 @@ func (m *model) submit(line string) tea.Cmd {
 	m.vp.GotoBottom()
 	if !m.running {
 		m.turnStart = time.Now()
+		m.gotOutput = false
 	}
 	m.running = true
 	m.lastEnd = ""

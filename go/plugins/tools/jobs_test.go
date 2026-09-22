@@ -27,7 +27,102 @@ func newTestStats(t *testing.T) *Stats {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	return &Stats{jobs: newJobs(ctx)}
+	j := newJobs(ctx)
+	// These suites test the background path itself: no foreground
+	// grace and no settling, so a job is a job from the first call.
+	// The grace and the settle have tests of their own below.
+	j.grace, j.settleFor = 0, 0
+	return &Stats{jobs: j}
+}
+
+// A quick command given a limit is answered in the foreground: its
+// output comes back from the call, and no finish notice wakes a later
+// turn for something the model already has.
+func TestBashLimitAnswersAQuickJob(t *testing.T) {
+	s := newTestStats(t)
+	s.jobs.grace = 5 * time.Second
+	out, err := s.bash("echo quick-one", 60)
+	if err != nil {
+		t.Fatalf("bash: %v", err)
+	}
+	if !strings.Contains(out, "quick-one") || !strings.Contains(out, "finished in") {
+		t.Fatalf("a job that ended within the grace was not answered: %q", out)
+	}
+	select {
+	case <-s.jobs.Wake():
+		t.Fatal("a claimed job must not wake a turn")
+	case <-time.After(300 * time.Millisecond):
+	}
+	if n := s.jobs.Take(); len(n) != 0 {
+		t.Fatalf("a claimed job left a notice: %q", n)
+	}
+	// A failing quick job is a failure of the call, with its output.
+	if _, err := s.bash("echo nope; exit 3", 60); err == nil || !strings.Contains(err.Error(), "exit status 3") || !strings.Contains(err.Error(), "nope") {
+		t.Fatalf("failed quick job err = %v", err)
+	}
+}
+
+// One still running after the grace is handed back as a job, and its
+// finish then notifies as before: the grace is a wait, not a claim.
+func TestBashLimitHandsBackASlowJob(t *testing.T) {
+	s := newTestStats(t)
+	s.jobs.grace = 300 * time.Millisecond
+	start := time.Now()
+	out, err := s.bash("sleep 30", 60)
+	if err != nil {
+		t.Fatalf("bash: %v", err)
+	}
+	if d := time.Since(start); d < 250*time.Millisecond || d > 5*time.Second {
+		t.Fatalf("grace wait was %s", d)
+	}
+	if !strings.Contains(out, "job 1 started") {
+		t.Fatalf("no job handle in %q", out)
+	}
+	if _, err := s.jobs.jobKill(1); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-s.jobs.Wake():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the job handed back did not notify when it ended")
+	}
+	// A watch pattern means the caller wants the match, not the exit: no grace.
+	start = time.Now()
+	if _, err := s.bash("sleep 30", 60, "never"); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 200*time.Millisecond {
+		t.Fatalf("an until job waited %s", d)
+	}
+	_, _ = s.jobs.jobKill(2)
+}
+
+// tools.jobs() and tools.job() settle before answering: asked while a
+// job runs, they wait for its end (up to the settle) rather than
+// reporting "running" for a model turn each time.
+func TestJobsSettlesBeforeAnswering(t *testing.T) {
+	s := newTestStats(t)
+	s.jobs.settleFor = 5 * time.Second
+	if _, err := s.bash("sleep 0.5; echo settled", 60); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	out, err := s.jobs.jobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "running") || time.Since(start) < 300*time.Millisecond {
+		t.Fatalf("jobs() answered before the job ended (%s): %q", time.Since(start), out)
+	}
+	if out, _ := s.jobs.job(1); !strings.Contains(out, "settled") {
+		t.Fatalf("job(1) = %q", out)
+	}
+	// Nothing running: no wait at all.
+	start = time.Now()
+	_, _ = s.jobs.jobs()
+	if time.Since(start) > 100*time.Millisecond {
+		t.Fatal("jobs() waited with nothing running")
+	}
 }
 
 // A limit turns tools.bash into a background job: it returns at once,

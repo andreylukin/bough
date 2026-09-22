@@ -432,6 +432,26 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	// off the plugin's context, not the script's.
 	jctx, cancelJobs := context.WithCancel(context.Background())
 	st.jobs = newJobs(jctx)
+	// job_grace / job_settle: how long tools.bash(cmd, limit) waits in
+	// the foreground before handing back a job, and how long jobs()/
+	// job() wait for a change. "0s" makes every limited call a job at
+	// once (the real-terminal suites want the pure background path).
+	for _, k := range []string{"job_grace", "job_settle"} {
+		v, ok := cfg[k]
+		if !ok {
+			continue
+		}
+		d, err := time.ParseDuration(fmt.Sprint(v))
+		if err != nil || d < 0 {
+			cancelJobs()
+			return fmt.Errorf("tools-basic: %s must be a duration like 20s or 0s, got %v", k, v)
+		}
+		if k == "job_grace" {
+			st.jobs.grace = d
+		} else {
+			st.jobs.settleFor = d
+		}
+	}
 	st.jobs.runCtx = st.runCtx
 	st.jobs.project = st.project
 	st.jobs.stop = cancelJobs
@@ -458,10 +478,10 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if d, ok := reg.(describer); ok {
 		for _, doc := range [][2]string{
 			{"bash", `tools.bash(cmd) -> string: run a shell command, returns its output. Killed after 60 s (the error says so).`},
-			{"bash-bg", `tools.bash(cmd, limit[, until]) -> string: the same command in the BACKGROUND — limit is seconds (or "10m"), the call returns a job id at once, and you are told when it exits or when its output matches the regexp until. Use it for anything longer than the 60 s foreground kill: a test suite, a build, a server you need up while you work.`},
-			{"jobs", `tools.jobs() -> string: the background jobs and their state.`},
-			{"job", `tools.job(id) -> string: one job's status and output so far.`},
-			{"jobWait", `tools.jobWait(id, [seconds]) -> string: block until a job exits.`},
+			{"bash-bg", `tools.bash(cmd, limit[, until]) -> string: the same command with a longer life — limit is seconds (or "10m"). It runs in the foreground for up to 20 s: if it ends by then you get its output right here, like a plain tools.bash. Only a command still running after that becomes a background job: you get its id, and you are told when it exits (or when its output matches the regexp until). Use it for a test suite, a build, a server you need up while you work. Never poll a job in a loop: tools.jobWait(id) blocks until it ends.`},
+			{"jobs", `tools.jobs() -> string: the background jobs and their state (waits up to 10 s for a change first, so calling it in a loop is never the right move).`},
+			{"job", `tools.job(id) -> string: one job's status and output so far (waits up to 10 s if it is still running).`},
+			{"jobWait", `tools.jobWait(id, [seconds]) -> string: block until a job exits — the way to wait for one.`},
 			{"jobKill", `tools.jobKill(id) -> string: stop a job.`},
 			{"view", `tools.view(path, [start, end]) -> string: a file's lines, numbered ("12│text"); optional 1-based inclusive range. An image (png/jpg/gif/webp) is attached so you can see it.`},
 			{"write", `tools.write(path, content) -> string: create or overwrite a whole file (use this for new files and rewrites, never a shell heredoc).`},
@@ -559,6 +579,18 @@ func (s *Stats) bashRun(cmd string, opts ...any) (string, error) {
 		b, err := s.jobs.start(cmd, limit, until)
 		if err != nil {
 			return "", err
+		}
+		// Most "background" commands end in seconds: answer those here,
+		// as a foreground command would, and only hand back a job id
+		// for one still running after the grace.
+		if until == "" {
+			if out, exit, jerr, finished := s.jobs.claim(b); finished {
+				s.exited(exit)
+				if jerr != "" {
+					return "", fmt.Errorf("bash: job %d %s: %s%s", b.id, jerr, firstLine(cmd), tail(out))
+				}
+				return fmt.Sprintf("job %d finished in %s (it ended within the wait, so here is its output):\n%s", b.id, b.elapsed().Round(100*time.Millisecond).String(), out), nil
+			}
 		}
 		msg := fmt.Sprintf("job %d started in the background (limit %s): %s", b.id, limit, firstLine(cmd))
 		if until != "" {

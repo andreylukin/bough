@@ -38,6 +38,12 @@ func (m *model) statusBar(cfg *uiCfg) string {
 		// While it works, the bottom line says what it is doing — the
 		// one thing a transcript of collapsed rows cannot show.
 		left = " ▸ " + m.activity
+	case m.running && !m.gotOutput && m.pendingAsk == "":
+		// Nothing has come back yet. On a reasoning model this silence
+		// is the model thinking, often for 10-25 s with no summary to
+		// stream (OpenAI sends none for some models); a bare title
+		// here read as "stuck" and got the turn cancelled.
+		left = " ▸ waiting for the model (thinking)"
 	case m.title != "":
 		// Once the session has a name it is more use than the app's:
 		// several bough windows are told apart by what they are doing.

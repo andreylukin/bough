@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -716,6 +717,40 @@ func TestReaperStopsQuietOrbsOnly(t *testing.T) {
 	// A second pass finds nothing left to do.
 	if again := f.api.reapIdleOrbs(ctx, 4*time.Hour, now); len(again) != 0 {
 		t.Fatalf("second pass stopped %v", again)
+	}
+
+	// A start that failed after the VM came up leaves it running under a
+	// "failed" state: idle is idle, so it is stopped like any other.
+	seedModeSession(t, f, "half-up", map[string]any{"cwd": "/w", "mode": "project", "project": "app"})
+	if err := f.rt.Start(ctx, container.RunSpec{Name: container.OrbName("half-up"), Image: "img"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(filepath.Join(f.home, ".bough", "history", "half-up.jsonl"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	writeState(t, f.home, orb.State{Session: "half-up", Project: "app", Status: orb.StatusFailed, Error: "resume.sh: exit status 1", UpdatedAt: old})
+	// And a ghost: state says running, the container is long gone. It is
+	// stopped in the record, once, instead of failing every pass forever.
+	seedModeSession(t, f, "ghost", map[string]any{"cwd": "/w", "mode": "project", "project": "app"})
+	if err := os.Chtimes(filepath.Join(f.home, ".bough", "history", "ghost.jsonl"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	writeState(t, f.home, orb.State{Session: "ghost", Project: "app", Status: orb.StatusRunning, UpdatedAt: old})
+	got := f.api.reapIdleOrbs(ctx, 4*time.Hour, now)
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"ghost", "half-up"}) {
+		t.Fatalf("stopped = %v, want [ghost half-up]", got)
+	}
+	if st, _ := f.rt.Inspect(ctx, container.OrbName("half-up")); st != container.StateStopped {
+		t.Errorf("half-up container = %s, want stopped", st)
+	}
+	for _, id := range []string{"half-up", "ghost"} {
+		if st, _ := orb.ReadState(f.home, id); st.Status != orb.StatusStopped {
+			t.Errorf("%s state = %s, want stopped", id, st.Status)
+		}
+	}
+	if again := f.api.reapIdleOrbs(ctx, 4*time.Hour, now); len(again) != 0 {
+		t.Fatalf("third pass stopped %v", again)
 	}
 	// Off is off.
 	for in, want := range map[string]time.Duration{"": DefaultOrbIdle, "0": 0, "off": 0, "90m": 90 * time.Minute} {

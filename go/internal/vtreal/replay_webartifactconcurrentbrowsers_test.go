@@ -63,6 +63,7 @@ func webArtifactConcurrentBrowsersConfig(tape string) string {
 	return cfg + `
 - id: tools
   plugin: tools-basic
+  config: {job_grace: 0s, job_settle: 0s} # these suites test the background path itself
 - id: web
   plugin: web
   config: {addr: "127.0.0.1:0"}

@@ -232,6 +232,7 @@ func TestProjectCancelKillsInsideOrb(t *testing.T) {
 		t.Fatalf("guest kills after a cancelled bash = %d, want 1", n)
 	}
 
+	st.jobs.grace = 0 // the job itself is under test, not the foreground wait
 	if _, err := st.bash("sleep 30", 60); err != nil {
 		t.Fatal(err)
 	}

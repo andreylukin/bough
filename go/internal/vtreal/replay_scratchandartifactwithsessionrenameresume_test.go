@@ -45,6 +45,7 @@ func scratchAndArtifactWithSessionRenameResumeConfig(tape, addr string, titled b
   plugin: codemode
 - id: tools
   plugin: tools-basic
+  config: {job_grace: 0s, job_settle: 0s} # these suites test the background path itself
 - id: scratchpad
   plugin: scratchpad
 - id: commands
