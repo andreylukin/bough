@@ -2440,6 +2440,14 @@ the same names:
 | `plugins/agenttools/stub.go` | W3 | the complete `agent-tools` row |
 | `plugins/engine/stub.go` | W2 | `engine-unreal`, whose Apply fails with `engine-unreal: not built yet (see go/docs/unreal-engine.md)` |
 
+Git merges a stub beside its owner's real file without a conflict, and
+the build then fails on the redeclared names, so the merge that brings
+the owner's package in (W6's, last in the order) deletes the stub in
+the same commit. W3's branch already carries `internal/agenttools/agenttools.go`
+and `plugins/agenttools/agenttools.go`, and its `agent-tools` row and
+comment in `go/bough.yml` match W6's byte for byte, so that hunk
+merges clean.
+
 No stubs were written for the other §3 packages: nothing on W6's branch
 imports them, and each would be one more duplicate declaration to
 delete. The e2e engine suite and the vtreal engine case skip on the

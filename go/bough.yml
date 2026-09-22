@@ -56,9 +56,9 @@
 - id: commands
   plugin: commands
 
-# Native tools: each tool row registers its tools here as well as in
-# codemode, so the engine-unreal loop (below) can offer them as tool
-# calls. The loop never reads it.
+# Native tool registry: each tool row registers its tools here as well
+# as into codemode. Inert under the loop; the engine-unreal row calls
+# them as native tools (docs/unreal-engine.md §6.2).
 - id: agent-tools
   plugin: agent-tools
 
