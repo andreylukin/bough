@@ -1,0 +1,117 @@
+{
+  "max_tokens": 64000,
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "look",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "id": "toolu_p",
+          "input": {
+            "path": "a.png"
+          },
+          "name": "view_image",
+          "type": "tool_use"
+        },
+        {
+          "id": "toolu_q",
+          "input": {
+            "path": "b.jpg"
+          },
+          "name": "view_image",
+          "type": "tool_use"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "content": [
+            {
+              "source": {
+                "data": "iVBORw0KGgo=",
+                "media_type": "image/png",
+                "type": "base64"
+              },
+              "type": "image"
+            }
+          ],
+          "tool_use_id": "toolu_p",
+          "type": "tool_result"
+        },
+        {
+          "cache_control": {
+            "ttl": "1h",
+            "type": "ephemeral"
+          },
+          "content": [
+            {
+              "text": "This call is still running. Its result arrives later.",
+              "type": "text"
+            }
+          ],
+          "tool_use_id": "toolu_q",
+          "type": "tool_result"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "text": "One is here.",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "text": "<tool_result call_id=\"toolu_q\" name=\"view_image\">\nb.jpg\n</tool_result>",
+          "type": "text"
+        },
+        {
+          "cache_control": {
+            "ttl": "1h",
+            "type": "ephemeral"
+          },
+          "source": {
+            "data": "/9j/4AAQ",
+            "media_type": "image/jpeg",
+            "type": "base64"
+          },
+          "type": "image"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "claude-sonnet-5",
+  "output_config": {
+    "effort": "high"
+  },
+  "system": [
+    {
+      "cache_control": {
+        "ttl": "1h",
+        "type": "ephemeral"
+      },
+      "text": "sys",
+      "type": "text"
+    }
+  ],
+  "thinking": {
+    "display": "summarized",
+    "type": "adaptive"
+  }
+}
+--- betas 

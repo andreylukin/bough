@@ -1,0 +1,88 @@
+{
+  "max_tokens": 64000,
+  "messages": [
+    {
+      "content": [
+        {
+          "cache_control": {
+            "ttl": "1h",
+            "type": "ephemeral"
+          },
+          "text": "go",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "id": "toolu_x",
+          "input": {
+            "command": "true"
+          },
+          "name": "bash",
+          "type": "tool_use"
+        },
+        {
+          "id": "toolu_y",
+          "input": {
+            "command": "false"
+          },
+          "name": "bash",
+          "type": "tool_use"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "content": [
+            {
+              "text": "ok",
+              "type": "text"
+            }
+          ],
+          "tool_use_id": "toolu_x",
+          "type": "tool_result"
+        },
+        {
+          "cache_control": {
+            "ttl": "1h",
+            "type": "ephemeral"
+          },
+          "content": [
+            {
+              "text": "No result was recorded for this call.",
+              "type": "text"
+            }
+          ],
+          "is_error": true,
+          "tool_use_id": "toolu_y",
+          "type": "tool_result"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "claude-sonnet-5",
+  "output_config": {
+    "effort": "high"
+  },
+  "system": [
+    {
+      "cache_control": {
+        "ttl": "1h",
+        "type": "ephemeral"
+      },
+      "text": "sys",
+      "type": "text"
+    }
+  ],
+  "thinking": {
+    "display": "summarized",
+    "type": "adaptive"
+  }
+}
+--- betas 

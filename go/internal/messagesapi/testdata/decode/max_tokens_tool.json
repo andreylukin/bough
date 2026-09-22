@@ -1,0 +1,32 @@
+{
+  "Failure": null,
+  "ID": "msg_01Cut",
+  "Output": [
+    {
+      "Data": {
+        "Phase": "",
+        "Role": "assistant",
+        "Text": "Writing the file."
+      },
+      "ProviderID": "",
+      "Type": "message"
+    }
+  ],
+  "Stop": "max_output_tokens",
+  "Usage": {
+    "CacheWriteInputTokens": 0,
+    "CachedInputTokens": 0,
+    "InputTokens": 50,
+    "OutputTokens": 64,
+    "Raw": {
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "input_tokens": 50,
+      "output_tokens": 64
+    },
+    "ReasoningTokens": 0
+  }
+}
+--- deltas
+[text] Writing the file.
+[tool_start write toolu_01Cut]

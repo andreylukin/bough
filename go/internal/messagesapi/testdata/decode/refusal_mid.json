@@ -1,0 +1,35 @@
+{
+  "Failure": {
+    "Code": "refusal:cyber",
+    "Message": "Declined mid-response."
+  },
+  "ID": "msg_01RefuseMid",
+  "Output": [
+    {
+      "Data": {
+        "Phase": "",
+        "Role": "assistant",
+        "Text": "Let me look at the "
+      },
+      "ProviderID": "",
+      "Type": "message"
+    }
+  ],
+  "Stop": "refused",
+  "Usage": {
+    "CacheWriteInputTokens": 0,
+    "CachedInputTokens": 0,
+    "InputTokens": 200,
+    "OutputTokens": 30,
+    "Raw": {
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "input_tokens": 200,
+      "output_tokens": 30
+    },
+    "ReasoningTokens": 0
+  }
+}
+--- deltas
+[text] Let me look at the 
+[tool_start bash toolu_01Refused]

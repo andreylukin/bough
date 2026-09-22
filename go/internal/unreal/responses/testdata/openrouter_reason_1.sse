@@ -1,0 +1,50 @@
+: 
+
+: 
+
+: 
+
+: 
+
+data: {"type":"response.created","response":{"id":"gen-1790113591-EBVTWpjpLLKZCDdNboXi","object":"response","created_at":1790113591,"model":"anthropic/claude-sonnet-5","status":"in_progress","completed_at":null,"output":[],"error":null,"incomplete_details":null,"tools":[],"tool_choice":"auto","parallel_tool_calls":true,"max_output_tokens":null,"temperature":1,"top_p":1,"presence_penalty":0,"frequency_penalty":0,"top_logprobs":0,"max_tool_calls":null,"metadata":{},"background":false,"previous_response_id":null,"service_tier":"auto","truncation":"disabled","store":false,"instructions":null,"text":{"format":{"type":"text"}},"reasoning":{"effort":"high","summary":"auto"},"safety_identifier":null,"prompt_cache_key":null,"prompt_cache_options":null,"usage":null},"sequence_number":0}
+
+data: {"type":"response.in_progress","response":{"id":"gen-1790113591-EBVTWpjpLLKZCDdNboXi","object":"response","created_at":1790113591,"model":"anthropic/claude-sonnet-5","status":"in_progress","completed_at":null,"output":[],"error":null,"incomplete_details":null,"tools":[],"tool_choice":"auto","parallel_tool_calls":true,"max_output_tokens":null,"temperature":1,"top_p":1,"presence_penalty":0,"frequency_penalty":0,"top_logprobs":0,"max_tool_calls":null,"metadata":{},"background":false,"previous_response_id":null,"service_tier":"auto","truncation":"disabled","store":false,"instructions":null,"text":{"format":{"type":"text"}},"reasoning":{"effort":"high","summary":"auto"},"safety_identifier":null,"prompt_cache_key":null,"prompt_cache_options":null,"usage":null},"sequence_number":1}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"rs_tmp_6ukgkwqhdcp","type":"reasoning","status":"in_progress","summary":[]},"sequence_number":2}
+
+data: {"type":"response.content_part.added","output_index":0,"item_id":"rs_tmp_6ukgkwqhdcp","content_index":0,"part":{"type":"reasoning_text","text":""},"sequence_number":3}
+
+data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_6ukgkwqhdcp","content_index":0,"delta":"Setting ","sequence_number":4}
+
+: 
+
+data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_6ukgkwqhdcp","content_index":0,"delta":"ball's price as x, bat as x+1.00, so 2x+1.00=1.10 gives x=0.05 — the ball costs 5 cents.","sequence_number":5}
+
+data: {"type":"response.reasoning_text.delta","output_index":0,"item_id":"rs_tmp_6ukgkwqhdcp","content_index":0,"delta":"\n\n","sequence_number":6}
+
+data: {"type":"response.reasoning_text.done","output_index":0,"item_id":"rs_tmp_6ukgkwqhdcp","content_index":0,"text":"Setting ball's price as x, bat as x+1.00, so 2x+1.00=1.10 gives x=0.05 — the ball costs 5 cents.\n\n","sequence_number":7}
+
+data: {"type":"response.content_part.done","output_index":0,"item_id":"rs_tmp_6ukgkwqhdcp","content_index":0,"part":{"type":"reasoning_text","text":"Setting ball's price as x, bat as x+1.00, so 2x+1.00=1.10 gives x=0.05 — the ball costs 5 cents.\n\n"},"sequence_number":8}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"rs_tmp_6ukgkwqhdcp","type":"reasoning","status":"completed","content":[{"type":"reasoning_text","text":"Setting ball's price as x, bat as x+1.00, so 2x+1.00=1.10 gives x=0.05 — the ball costs 5 cents.\n\n"}],"summary":[],"signature":"EtMCCrABCBIYAipAEOoU3dYuF+r2XxIHSNuOgCRQuTQUBKM/qmH7NdgA7y2/5RlQEEtU1IWMUWtmPjK3/6BW10vQ/RHsFvLtxWzghjIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0YzBmMDQ2Zi0yNWZkLTQ1ZmItYmZiMy1hMDhhOGUyNDljYTd6HnVwcm9mXzAxMUNlZDkxUlQ5WWlURWZxNEJvY2JBUqgBu+7L1QYSDCcgfAXujHSKx9eryhoMDRrDCRgZRk0txlmkIjDdFo3zkBKUzej6p6Z9ZFcriqVJeAMpvJracWcxN1b/r1n+rRGGBwjMxp6NLcdcs38qUJ9IHuHg0DPc6rjDvER6kGbseGQztnu8QBorPl+0sD57tSEflLCvnK0IFc2R798Xlo3IvbcPB/Pogx/GsaDrkyXhb5BT8Sqz/p1wJSDGHp8XGAE=","format":"anthropic-claude-v1"},"sequence_number":9}
+
+data: {"type":"response.output_item.added","output_index":1,"item":{"id":"msg_tmp_g2b3bav7wq","type":"message","status":"in_progress","role":"assistant","content":[]},"sequence_number":10}
+
+data: {"type":"response.content_part.added","output_index":1,"item_id":"msg_tmp_g2b3bav7wq","content_index":0,"part":{"type":"output_text","text":"","annotations":[],"logprobs":[]},"sequence_number":11}
+
+data: {"type":"response.output_text.delta","output_index":1,"item_id":"msg_tmp_g2b3bav7wq","content_index":0,"delta":"**Reasoning:**\n\nLet the ball's cost =","logprobs":[],"sequence_number":12}
+
+data: {"type":"response.output_text.delta","output_index":1,"item_id":"msg_tmp_g2b3bav7wq","content_index":0,"delta":" x dollars.\nThen the bat's cost = x + 1.00 dollars.\n\nTotal cost equation:\nx + (x + 1.00) = 1.10\n\n2x + 1.00 = 1.10\n\n2x = 0.10\n\nx = 0.05\n\n**Answ","logprobs":[],"sequence_number":13}
+
+data: {"type":"response.output_text.delta","output_index":1,"item_id":"msg_tmp_g2b3bav7wq","content_index":0,"delta":"er:** The ball costs $0.05 (5 cents).","logprobs":[],"sequence_number":14}
+
+data: {"type":"response.output_text.done","output_index":1,"item_id":"msg_tmp_g2b3bav7wq","content_index":0,"text":"**Reasoning:**\n\nLet the ball's cost = x dollars.\nThen the bat's cost = x + 1.00 dollars.\n\nTotal cost equation:\nx + (x + 1.00) = 1.10\n\n2x + 1.00 = 1.10\n\n2x = 0.10\n\nx = 0.05\n\n**Answer:** The ball costs $0.05 (5 cents).","logprobs":[],"sequence_number":15}
+
+data: {"type":"response.content_part.done","output_index":1,"item_id":"msg_tmp_g2b3bav7wq","content_index":0,"part":{"type":"output_text","text":"**Reasoning:**\n\nLet the ball's cost = x dollars.\nThen the bat's cost = x + 1.00 dollars.\n\nTotal cost equation:\nx + (x + 1.00) = 1.10\n\n2x + 1.00 = 1.10\n\n2x = 0.10\n\nx = 0.05\n\n**Answer:** The ball costs $0.05 (5 cents).","annotations":[],"logprobs":[]},"sequence_number":16}
+
+data: {"type":"response.output_item.done","output_index":1,"item":{"id":"msg_tmp_g2b3bav7wq","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"**Reasoning:**\n\nLet the ball's cost = x dollars.\nThen the bat's cost = x + 1.00 dollars.\n\nTotal cost equation:\nx + (x + 1.00) = 1.10\n\n2x + 1.00 = 1.10\n\n2x = 0.10\n\nx = 0.05\n\n**Answer:** The ball costs $0.05 (5 cents).","annotations":[],"logprobs":[]}]},"sequence_number":17}
+
+data: {"type":"response.completed","response":{"id":"gen-1790113591-EBVTWpjpLLKZCDdNboXi","object":"response","created_at":1790113591,"model":"anthropic/claude-sonnet-5","status":"completed","completed_at":1790113595,"output":[{"id":"rs_tmp_6ukgkwqhdcp","type":"reasoning","status":"completed","content":[{"type":"reasoning_text","text":"Setting ball's price as x, bat as x+1.00, so 2x+1.00=1.10 gives x=0.05 — the ball costs 5 cents.\n\n"}],"summary":[],"signature":"EtMCCrABCBIYAipAEOoU3dYuF+r2XxIHSNuOgCRQuTQUBKM/qmH7NdgA7y2/5RlQEEtU1IWMUWtmPjK3/6BW10vQ/RHsFvLtxWzghjIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0YzBmMDQ2Zi0yNWZkLTQ1ZmItYmZiMy1hMDhhOGUyNDljYTd6HnVwcm9mXzAxMUNlZDkxUlQ5WWlURWZxNEJvY2JBUqgBu+7L1QYSDCcgfAXujHSKx9eryhoMDRrDCRgZRk0txlmkIjDdFo3zkBKUzej6p6Z9ZFcriqVJeAMpvJracWcxN1b/r1n+rRGGBwjMxp6NLcdcs38qUJ9IHuHg0DPc6rjDvER6kGbseGQztnu8QBorPl+0sD57tSEflLCvnK0IFc2R798Xlo3IvbcPB/Pogx/GsaDrkyXhb5BT8Sqz/p1wJSDGHp8XGAE=","format":"anthropic-claude-v1"},{"id":"msg_tmp_g2b3bav7wq","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"**Reasoning:**\n\nLet the ball's cost = x dollars.\nThen the bat's cost = x + 1.00 dollars.\n\nTotal cost equation:\nx + (x + 1.00) = 1.10\n\n2x + 1.00 = 1.10\n\n2x = 0.10\n\nx = 0.05\n\n**Answer:** The ball costs $0.05 (5 cents).","annotations":[],"logprobs":[]}]}],"error":null,"incomplete_details":null,"tools":[],"tool_choice":"auto","parallel_tool_calls":true,"max_output_tokens":null,"temperature":1,"top_p":1,"presence_penalty":0,"frequency_penalty":0,"top_logprobs":0,"max_tool_calls":null,"metadata":{},"background":false,"previous_response_id":null,"service_tier":"default","truncation":"disabled","store":false,"instructions":null,"text":{"format":{"type":"text"}},"reasoning":{"effort":"high","summary":"auto"},"safety_identifier":null,"prompt_cache_key":null,"prompt_cache_options":null,"usage":{"input_tokens":64,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":164,"output_tokens_details":{"reasoning_tokens":43},"total_tokens":228,"cost":0.001768,"is_byok":false,"cost_details":{"upstream_inference_cost":0.001768,"upstream_inference_input_cost":0.000128,"upstream_inference_output_cost":0.00164}}},"sequence_number":18}
+
+data: [DONE]
+

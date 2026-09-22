@@ -1,0 +1,24 @@
+{
+  "Failure": {
+    "Code": "refusal:cyber",
+    "Message": "This request was declined by a safety classifier."
+  },
+  "ID": "msg_01RefuseEarly",
+  "Output": [],
+  "Stop": "refused",
+  "Usage": {
+    "CacheWriteInputTokens": 0,
+    "CachedInputTokens": 0,
+    "InputTokens": 0,
+    "OutputTokens": 0,
+    "Raw": {
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "input_tokens": 0,
+      "output_tokens": 0
+    },
+    "ReasoningTokens": 0
+  }
+}
+--- deltas
+

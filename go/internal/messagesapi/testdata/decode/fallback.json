@@ -1,0 +1,70 @@
+{
+  "Failure": null,
+  "ID": "msg_01Fallback",
+  "Output": [
+    {
+      "Data": {
+        "Phase": "",
+        "Role": "assistant",
+        "Text": "Partial text kept. "
+      },
+      "ProviderID": "",
+      "Type": "message"
+    },
+    {
+      "Data": {
+        "Raw": {
+          "signature": "sigFallback",
+          "thinking": "Fallback model reasoning.",
+          "type": "thinking"
+        },
+        "Summary": [
+          "Fallback model reasoning."
+        ]
+      },
+      "ProviderID": "",
+      "Type": "reasoning"
+    },
+    {
+      "Data": {
+        "Arguments": "{\"command\":\"echo kept\"}",
+        "CallID": "toolu_01Kept",
+        "Name": "bash"
+      },
+      "ProviderID": "",
+      "Type": "tool_call"
+    }
+  ],
+  "Stop": "complete",
+  "Usage": {
+    "CacheWriteInputTokens": 0,
+    "CachedInputTokens": 0,
+    "InputTokens": 300,
+    "OutputTokens": 80,
+    "Raw": {
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "input_tokens": 300,
+      "iterations": [
+        {
+          "input_tokens": 300,
+          "output_tokens": 20,
+          "type": "message"
+        },
+        {
+          "input_tokens": 320,
+          "output_tokens": 60,
+          "type": "fallback_message"
+        }
+      ],
+      "output_tokens": 80
+    },
+    "ReasoningTokens": 0
+  }
+}
+--- deltas
+[thinking] Declined model reasoning.
+[text] Partial text kept. 
+[tool_start bash toolu_01Dropped]
+[thinking] Fallback model reasoning.
+[tool_start bash toolu_01Kept]

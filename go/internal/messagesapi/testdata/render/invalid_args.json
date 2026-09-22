@@ -1,0 +1,87 @@
+{
+  "max_tokens": 64000,
+  "messages": [
+    {
+      "content": [
+        {
+          "cache_control": {
+            "ttl": "1h",
+            "type": "ephemeral"
+          },
+          "text": "go",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "id": "toolu_i",
+          "input": {
+            "invalid_arguments": "{\"command\": \"echo hi\""
+          },
+          "name": "bash",
+          "type": "tool_use"
+        },
+        {
+          "id": "toolu_j",
+          "input": {
+            "invalid_arguments": "[\"not\",\"an\",\"object\"]"
+          },
+          "name": "bash",
+          "type": "tool_use"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "content": [
+            {
+              "text": "Error: arguments must be a JSON object",
+              "type": "text"
+            }
+          ],
+          "tool_use_id": "toolu_i",
+          "type": "tool_result"
+        },
+        {
+          "cache_control": {
+            "ttl": "1h",
+            "type": "ephemeral"
+          },
+          "content": [
+            {
+              "text": "Error: arguments must be a JSON object",
+              "type": "text"
+            }
+          ],
+          "tool_use_id": "toolu_j",
+          "type": "tool_result"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "claude-sonnet-5",
+  "output_config": {
+    "effort": "high"
+  },
+  "system": [
+    {
+      "cache_control": {
+        "ttl": "1h",
+        "type": "ephemeral"
+      },
+      "text": "sys",
+      "type": "text"
+    }
+  ],
+  "thinking": {
+    "display": "summarized",
+    "type": "adaptive"
+  }
+}
+--- betas 

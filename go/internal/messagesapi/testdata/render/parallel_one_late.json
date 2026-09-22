@@ -1,0 +1,131 @@
+{
+  "max_tokens": 64000,
+  "messages": [
+    {
+      "content": [
+        {
+          "text": "two things",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "signature": "fake",
+          "thinking": "plan both",
+          "type": "thinking"
+        },
+        {
+          "id": "toolu_a",
+          "input": {
+            "command": "ls"
+          },
+          "name": "bash",
+          "type": "tool_use"
+        },
+        {
+          "id": "toolu_b",
+          "input": {
+            "command": "make"
+          },
+          "name": "bash",
+          "type": "tool_use"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "content": [
+            {
+              "text": "a.go b.go",
+              "type": "text"
+            }
+          ],
+          "tool_use_id": "toolu_a",
+          "type": "tool_result"
+        },
+        {
+          "cache_control": {
+            "ttl": "1h",
+            "type": "ephemeral"
+          },
+          "content": [
+            {
+              "text": "This call is still running. Its result arrives later.",
+              "type": "text"
+            }
+          ],
+          "tool_use_id": "toolu_b",
+          "type": "tool_result"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "text": "ls is back, make is running.",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "text": "any news?",
+          "type": "text"
+        },
+        {
+          "cache_control": {
+            "ttl": "1h",
+            "type": "ephemeral"
+          },
+          "text": "<tool_result call_id=\"toolu_b\" name=\"bash\">\nmake: ok\n</tool_result>",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "claude-sonnet-5",
+  "output_config": {
+    "effort": "high"
+  },
+  "system": [
+    {
+      "cache_control": {
+        "ttl": "1h",
+        "type": "ephemeral"
+      },
+      "text": "sys",
+      "type": "text"
+    }
+  ],
+  "thinking": {
+    "display": "summarized",
+    "type": "adaptive"
+  },
+  "tools": [
+    {
+      "description": "Run a command.",
+      "input_schema": {
+        "properties": {
+          "command": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      },
+      "name": "bash"
+    }
+  ]
+}
+--- betas 

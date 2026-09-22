@@ -1,0 +1,18 @@
+[thinking] Setting ball's price as x, bat as x+1.00, so 2x+1.00=1.10 gives x=0.05 — the ball costs 5 cents.
+
+
+[text] **Reasoning:**
+
+Let the ball's cost = x dollars.
+Then the bat's cost = x + 1.00 dollars.
+
+Total cost equation:
+x + (x + 1.00) = 1.10
+
+2x + 1.00 = 1.10
+
+2x = 0.10
+
+x = 0.05
+
+**Answer:** The ball costs $0.05 (5 cents).
