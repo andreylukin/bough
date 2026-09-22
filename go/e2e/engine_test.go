@@ -463,7 +463,9 @@ func TestEngineCancelThenResume(t *testing.T) {
 		t.Skip("no SIGINT to a child on Windows")
 	}
 	a := launchEngine(t, tape(t,
-		`{"want": "go long", "calls": [{"id": "long", "name": "bash", "args": {"command": "sleep 30; echo NEVER_PRINTED"}}]}`,
+		// The sentinel is assembled by the shell, so only the command's
+		// output could carry it: --json echoes the command text itself.
+		`{"want": "go long", "calls": [{"id": "long", "name": "bash", "args": {"command": "sleep 30; echo NEVER_$(echo PRINTED)"}}]}`,
 	), launchOpts{args: []string{"--json"}})
 	a.send("go long")
 	a.waitFor(`"phase":"start"`)
