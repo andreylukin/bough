@@ -139,6 +139,18 @@ type codeRunner interface {
 // files, with the fake server as the only language, and chdirs into it.
 func mountFake(t *testing.T, files map[string]string) (codeRunner, string) {
 	t.Helper()
+	ctx, dir := mountFakeRows(t, files)
+	cm, err := kernel.Get[codeRunner](ctx, "codemode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cm, dir
+}
+
+// mountFakeRows is mountFake with extra rows mounted first, returning
+// the context.
+func mountFakeRows(t *testing.T, files map[string]string, extra ...kernel.Row) (*kernel.Context, string) {
+	t.Helper()
 	dir := t.TempDir()
 	dir, _ = filepath.EvalSymlinks(dir)
 	for name, text := range files {
@@ -154,19 +166,15 @@ func mountFake(t *testing.T, files map[string]string) (codeRunner, string) {
 	t.Cleanup(func() { languages = saved })
 
 	ctx := kernel.NewContext()
-	if err := ctx.Mount([]kernel.Row{
-		{ID: "codemode", Plugin: "codemode"},
-		{ID: "tools", Plugin: "tools-basic"},
-		{ID: "lsp", Plugin: "lsp"},
-	}); err != nil {
+	if err := ctx.Mount(append(extra,
+		kernel.Row{ID: "codemode", Plugin: "codemode"},
+		kernel.Row{ID: "tools", Plugin: "tools-basic"},
+		kernel.Row{ID: "lsp", Plugin: "lsp"},
+	)); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(ctx.Unmount)
-	cm, err := kernel.Get[codeRunner](ctx, "codemode")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return cm, dir
+	return ctx, dir
 }
 
 func run(t *testing.T, cm codeRunner, code string) string {
