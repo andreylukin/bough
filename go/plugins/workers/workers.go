@@ -32,6 +32,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"github.com/andreylukin/bough/internal/agenttools"
 	"github.com/andreylukin/bough/internal/schema"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/history"
@@ -719,6 +720,13 @@ func apply(kctx *kernel.Context, cfg map[string]any, home string) error {
 		d.Describe("agent", `tools.agent(id) -> {status, title, reply, project}: a background agent you started.`)
 		d.Describe("stopAgent", `tools.stopAgent(id) -> "stopped" | "not running": interrupt a background agent you started.`)
 		d.Describe("spawnAll", `tools.spawnAll([task, …]) -> [report, …]: run several children AT ONCE; N tasks take about as long as the slowest.`)
+	}
+	if at, err := kernel.Get[agenttools.Registry](kctx, "agent-tools"); err == nil {
+		off, err := agenttools.RegisterAll(at, w.nativeTools()...)
+		if err != nil {
+			return fmt.Errorf("workers: %w", err)
+		}
+		kctx.Effect(off)
 	}
 	// Optional seam: the loop's prompt-sections registry, so the model
 	// learns tools.spawn exists. Withdrawn on unmount.
