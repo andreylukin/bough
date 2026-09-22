@@ -460,7 +460,8 @@ detail, bash's command line, so a hook matching command text keeps
 matching) and may `deny` or return `args` to replace the arguments;
 `post-result` gets `{code, tool, call, result, error}` and may rewrite
 `result`; `stop` gets `{reply}`, and a `block` reason continues the turn
-once. A hook error is recorded, never fatal.
+once. A hook error is recorded, never fatal. The full engine table is
+[`docs/hooks.md`](docs/hooks.md).
 
 ## Cost (status bar)
 
