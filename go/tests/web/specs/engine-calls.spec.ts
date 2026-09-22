@@ -131,7 +131,7 @@ const tape = JSON.stringify({
 });
 
 test.describe('live engine session', () => {
-  test.use({ overlay: '- id: loop\n  plugin: engine-unreal\n- id: llm\n  plugin: llm-script\n  script: $ROOT/tape.json\n' });
+  test.use({ overlay: '- id: loop\n  plugin: engine-unreal\n- id: llm\n  plugin: llm-script\n  config:\n    script: $ROOT/tape.json\n' });
 
   test('a native call runs as a spinning row with its live tail, then settles into its final row', async ({ page, serve }) => {
     test.skip(!engineMounts(), 'this binary has no engine-unreal row that mounts');
