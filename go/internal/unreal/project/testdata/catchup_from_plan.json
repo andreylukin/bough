@@ -1,0 +1,17 @@
+[
+  {
+    "Kind": "call",
+    "Text": "x.go",
+    "Data": {
+      "add": 1,
+      "del": 1,
+      "hseq": 1,
+      "id": "c9",
+      "ms": 42,
+      "output": "patched x.go",
+      "text": "x.go",
+      "tool": "patch"
+    },
+    "Record": true
+  }
+]

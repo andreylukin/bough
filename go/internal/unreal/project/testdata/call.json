@@ -1,0 +1,35 @@
+[
+  {
+    "Kind": "call",
+    "Text": "go test ./...",
+    "Data": {
+      "id": "c1",
+      "phase": "start",
+      "tool": "bash"
+    },
+    "Record": false
+  },
+  {
+    "Kind": "call-delta",
+    "Text": "ok  pkg\n",
+    "Data": {
+      "id": "c1"
+    },
+    "Record": false
+  },
+  {
+    "Kind": "call",
+    "Text": "go test ./...",
+    "Data": {
+      "cmd": "go test ./...\necho ok",
+      "exit": 1,
+      "hseq": 3,
+      "id": "c1",
+      "ms": 1750,
+      "output": "ok  pkg\nFAIL other\n",
+      "text": "go test ./...",
+      "tool": "bash"
+    },
+    "Record": true
+  }
+]

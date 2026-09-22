@@ -1,0 +1,62 @@
+[
+  {
+    "Kind": "thinking-delta",
+    "Text": "plan",
+    "Data": {},
+    "Record": false
+  },
+  {
+    "Kind": "assistant-delta",
+    "Text": "Hel",
+    "Data": {},
+    "Record": false
+  },
+  {
+    "Kind": "system",
+    "Text": "provider hiccup — retrying…",
+    "Data": {},
+    "Record": false
+  },
+  {
+    "Kind": "delta-reset",
+    "Text": "",
+    "Data": {
+      "seq": 1
+    },
+    "Record": false
+  },
+  {
+    "Kind": "assistant-delta",
+    "Text": "Hello",
+    "Data": {},
+    "Record": false
+  },
+  {
+    "Kind": "activity",
+    "Text": "writing bash call",
+    "Data": {},
+    "Record": false
+  },
+  {
+    "Kind": "delta-reset",
+    "Text": "",
+    "Data": {
+      "seq": 1
+    },
+    "Record": false
+  },
+  {
+    "Kind": "assistant-delta",
+    "Text": "again",
+    "Data": {},
+    "Record": false
+  },
+  {
+    "Kind": "delta-reset",
+    "Text": "",
+    "Data": {
+      "seq": 2
+    },
+    "Record": false
+  }
+]

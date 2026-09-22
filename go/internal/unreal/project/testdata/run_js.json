@@ -1,0 +1,49 @@
+[
+  {
+    "Kind": "code",
+    "Text": "print(1)",
+    "Data": {
+      "hseq": 2,
+      "text": "print(1)"
+    },
+    "Record": true
+  },
+  {
+    "Kind": "code",
+    "Text": "throw 1",
+    "Data": {
+      "hseq": 3,
+      "text": "throw 1"
+    },
+    "Record": true
+  },
+  {
+    "Kind": "result",
+    "Text": "1\n",
+    "Data": {
+      "code": "print(1)",
+      "hseq": 4,
+      "ms": 500,
+      "text": "1\n"
+    },
+    "Record": true
+  },
+  {
+    "Kind": "error",
+    "Text": "Uncaught 1",
+    "Data": {},
+    "Record": false
+  },
+  {
+    "Kind": "result",
+    "Text": "Error: Uncaught 1",
+    "Data": {
+      "code": "throw 1",
+      "error": "Uncaught 1",
+      "hseq": 5,
+      "ms": 500,
+      "text": "Error: Uncaught 1"
+    },
+    "Record": true
+  }
+]
