@@ -16,7 +16,16 @@ type Firer interface {
 	TakeFireRecords() []map[string]any
 }
 
-type Bridge struct{ get func() (Firer, bool) }
+type Bridge struct {
+	get func() (Firer, bool)
+
+	// Session and Notify are W5's (additive to §11.4): the ledger's
+	// session id and the live line for a hook's notice, error or
+	// rewrite. The stub carries them so plugins/engine compiles against
+	// either file.
+	Session string
+	Notify  func(kind, text string)
+}
 
 var _ agenttools.Hooks = (*Bridge)(nil)
 
