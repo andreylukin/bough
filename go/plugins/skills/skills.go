@@ -355,6 +355,39 @@ func (s *Skills) Catalog() []SkillInfo {
 	return out
 }
 
+// Listed is one skill as the engine's prompt catalogue names it.
+type Listed struct{ Name, Description, Path string }
+
+// maxListedDescription bounds one catalogue line. The catalogue sits in
+// every request of a session, and some SKILL.md descriptions run to a
+// thousand characters of trigger phrases.
+const maxListedDescription = 300
+
+// Listing is every skill that is not switched off, sorted by name, with
+// its description and the absolute path of its SKILL.md: the engine
+// lists them in its prompt and the model reads the one it wants with
+// `view`. Manual skills are listed too — `manual: true` stops a mention
+// from injecting the body, not the model from choosing to read it.
+func (s *Skills) Listing() []Listed {
+	skills := s.scan()
+	var out []Listed
+	for _, name := range slices.Sorted(maps.Keys(skills)) {
+		if s.off(name) {
+			continue
+		}
+		path := skills[name].path
+		if abs, err := filepath.Abs(path); err == nil {
+			path = abs
+		}
+		desc := strings.Join(strings.Fields(description(path)), " ")
+		if r := []rune(desc); len(r) > maxListedDescription {
+			desc = string(r[:maxListedDescription-1]) + "…"
+		}
+		out = append(out, Listed{Name: name, Description: desc, Path: path})
+	}
+	return out
+}
+
 // registerPluginCommands adds a "/name" command per Markdown file in
 // the commands/ directory of every active plugin. They behave like
 // prompt templates: dispatching one submits the file's body with

@@ -5,7 +5,9 @@
 // <server/tool> [args]` runs one and prints its text.
 // The model reaches them through the shell, so nothing is injected
 // into its tool surface or prompt beyond a one-line pointer to the
-// CLI (only when servers are configured).
+// CLI (only when servers are configured). The exception is opt-in:
+// config.native_tools lists servers whose tools the engine-unreal row
+// offers as native mcp__<server>__<tool> calls (native.go).
 //
 // Config sources, merged by server name (highest precedence first):
 // row config (config.servers / config.disable) > ./.mcp.json mcpServers
@@ -141,10 +143,14 @@ func (plugin) Name() string     { return "mcp" }
 func (plugin) Inject() []string { return nil }
 
 // Apply only documents the CLI to the model; servers are spawned on
-// demand by the subcommands, never at mount.
+// demand by the subcommands, never at mount — except the ones
+// config.native_tools names, which the engine calls as native tools.
 func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	servers, err := configuredServers(cfg)
 	if err != nil {
+		return err
+	}
+	if err := startNative(ctx, cfg, servers); err != nil {
 		return err
 	}
 	if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
