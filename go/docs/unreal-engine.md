@@ -2427,6 +2427,33 @@ replacement carries the coverage its tests had.
 Every workstream branches from B0. After B0, `go/go.mod` and
 `go/go.sum` belong to W1 alone.
 
+**B0 as it actually ran.** B0 did not run before the fan-out: the base
+branch held only this document. W1 did step 1 and §4.2 (the pin and
+`internal/agentllm`). W6 did steps 3 and 5 and the parts of 2 and 4
+that its own wiring compiles against, each as a `stub.go` that the
+owner deletes at integration because the owner's real file declares
+the same names:
+
+| Stub | Owner | Holds |
+|---|---|---|
+| `internal/agenttools/stub.go` | W3 | §4.1 verbatim, with `NewRegistry` and `ValidName` implemented |
+| `plugins/agenttools/stub.go` | W3 | the complete `agent-tools` row |
+| `plugins/engine/stub.go` | W2 | `engine-unreal`, whose Apply fails with `engine-unreal: not built yet (see go/docs/unreal-engine.md)` |
+
+Git merges a stub beside its owner's real file without a conflict, and
+the build then fails on the redeclared names, so the merge that brings
+the owner's package in (W6's, last in the order) deletes the stub in
+the same commit. W3's branch already carries `internal/agenttools/agenttools.go`
+and `plugins/agenttools/agenttools.go`, and its `agent-tools` row and
+comment in `go/bough.yml` match W6's byte for byte, so that hunk
+merges clean.
+
+No stubs were written for the other §3 packages: nothing on W6's branch
+imports them, and each would be one more duplicate declaration to
+delete. The e2e engine suite and the vtreal engine case skip on the
+stub's error text, found by one `bough rows` probe, so they run
+unchanged once W2's row lands.
+
 ### 18.2 The table
 
 | WS | Scope | Owns (exclusive; nobody else edits these) | Provides (frozen in §4–§5) | Consumes | Done when |

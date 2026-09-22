@@ -176,6 +176,9 @@
   #                           # session is never touched. 0 disables it.
   #                           # Nothing is summarised and the history log
   #                           # is untouched either way.
+# Opt in to the unreal-agent engine in place of the loop with
+# `--set loop.plugin=engine-unreal`: native tool calls that run
+# asynchronously, same keys, same history (docs/unreal-engine.md).
 
 # Language servers on the host (basedpyright/pyright, rust-analyzer,
 # typescript-language-server, gopls — whichever are installed), started

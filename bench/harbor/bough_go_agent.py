@@ -11,6 +11,10 @@ One `bough -headless` process per trial: the task brief goes in as one JSON prom
 loop's events come out as `[kind] text` lines, and the cost row prints `[usage] {...}` after the
 turn. The agent phase is capped by `timeout` (TB 4.0's own limit is 8 h) — one attempt, with
 `-c` continuation available if a second attempt is ever wanted.
+
+`--ak engine=unreal` runs the same tree on the unreal-agent engine instead of the loop (native
+tool calls; go/docs/unreal-engine.md §13), and `--ak tools=both` adds `run_js` there. Those are
+the bench arms that decide whether the engine becomes the default.
 """
 
 from __future__ import annotations
@@ -70,10 +74,10 @@ _CONFIG = """\
   plugin: tools-basic
 - id: todo
   plugin: todo
-- id: loop
-  plugin: loop
+{agent_tools}- id: loop
+  plugin: {loop_plugin}
   config:
-    max_steps: 300{max_cost}{system_prompt}
+    max_steps: 300{max_cost}{system_prompt}{tools}
     # The graded-task brief (find a defect in every module, keep every
     # public interface, hidden checks call the original API). It is
     # bench-only: the daily-driver prompt must not carry it. A file
@@ -120,6 +124,8 @@ class BoughGo(BaseInstalledAgent):
         js_tool: str | None = None,
         prompt: str | None = None,
         guidance: str | None = None,
+        engine: str | None = None,
+        tools: str | None = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -137,6 +143,13 @@ class BoughGo(BaseInstalledAgent):
         # appended to it. An evolve loop edits these; the binary stays.
         self._prompt = Path(prompt).expanduser() if prompt else None
         self._guidance = Path(guidance).expanduser() if guidance else None
+        # engine=unreal swaps the loop row for engine-unreal; tools (native|both) is its tool mode.
+        self._engine = engine
+        self._tools = tools
+        if engine not in (None, "", "loop", "unreal"):
+            raise ValueError(f"--ak engine: loop or unreal, got {engine!r}")
+        if tools and engine != "unreal":
+            raise ValueError("--ak tools needs --ak engine=unreal")
         # An ARM: a whole config tree instead of the default one (prompt/plugin experiments).
         self._config = Path(config).expanduser() if config else None
         if not self._binary or not self._binary.is_file():
@@ -194,9 +207,14 @@ class BoughGo(BaseInstalledAgent):
             js_tool = f"\n    js_tool: {str(self._js_tool).lower() in ('1', 'true', 'yes')}".lower() if self._js_tool else ""
             system_prompt = "\n    system_prompt: " + _block(self._prompt.read_text()) if self._prompt else ""
             task_guidance = _block(self._guidance.read_text()) if self._guidance else "true"
+            unreal = self._engine == "unreal"
             text = _CONFIG.format(
                 plugin=plugin, model=model, small_plugin=small_plugin, small_model=small_model,
                 effort=effort, max_cost=max_cost, js_tool=js_tool, system_prompt=system_prompt, task_guidance=task_guidance,
+                # The engine's native tools live in the agent-tools registry the tool rows fill.
+                agent_tools="- id: agent-tools\n  plugin: agent-tools\n" if unreal else "",
+                loop_plugin="engine-unreal" if unreal else "loop",
+                tools=f"\n    tools: {self._tools}" if self._tools else "",
             )
         local = self.logs_dir / "bough.yml"
         local.parent.mkdir(parents=True, exist_ok=True)
@@ -269,6 +287,8 @@ class BoughGo(BaseInstalledAgent):
             "exit": result.return_code,
             "turns": out.count("[done]"),
             "code_blocks": out.count("[code]"),
+            # engine-unreal: each native call prints a start and an end line.
+            "call_lines": out.count("[call]"),
             "errors": out.count("[error]") + err.count("[error]"),
         }
         if result.return_code not in (0, 1, 124, 130) and not out:
