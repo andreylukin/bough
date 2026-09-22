@@ -78,13 +78,21 @@ func (m *model) replay() {
 			continue
 		}
 		switch e.Kind {
-		case "meta", "origin", "undo", "hook", "turn-summary", "notice", "notice-delivered", "model":
+		case "meta", "origin", "undo", "hook", "turn-summary", "notice", "notice-delivered", "model", "engine":
 			// session bookkeeping (cwd, a /undo's revert record —
 			// its system row follows; a hook fire, the control room's
 			// ledger — any notice it carried was recorded as its own
-			// system row), nothing to render. A live session never
-			// draws hook entries, so a resumed one must not either.
+			// system row; the engine's coordinator build record),
+			// nothing to render. A live session never draws hook
+			// entries, so a resumed one must not either.
 		case "input":
+			if line, ok := wakeLine(e); ok {
+				// An engine turn a finished call started: nobody typed
+				// it, so it is not a ❯ prompt (or an Up-arrow recall).
+				m.blocks = append(m.blocks, block{id: m.nextID, kind: "system", text: line})
+				m.nextID++
+				break
+			}
 			// What was TYPED, not the message that was sent: an
 			// injected skill's whole SKILL.md is appended to the
 			// latter, and replaying showed it as the prompt — which
@@ -803,4 +811,32 @@ func deadJobs(entries []history.Entry) []int {
 		}
 	}
 	return open
+}
+
+// wakeLine is the dim row for an engine wake turn: an input the engine
+// recorded when a call that outlived its turn finished (or a heartbeat
+// fired) with no prompt open. A notice wake keeps the loop's rendering:
+// its text is the same "[background job]" note a loop session records.
+func wakeLine(e history.Entry) (string, bool) {
+	if e.Data["wake"] != true || e.Data["reason"] == "notice" {
+		return "", false
+	}
+	if e.Data["reason"] == "heartbeat" {
+		return "↻ heartbeat: calls still running", true
+	}
+	n := 1
+	switch c := e.Data["calls"].(type) {
+	case []any:
+		n = max(len(c), 1)
+	case []string:
+		n = max(len(c), 1)
+	case float64:
+		n = max(int(c), 1)
+	case int:
+		n = max(c, 1)
+	}
+	if n > 1 {
+		return fmt.Sprintf("↻ %d background calls finished", n), true
+	}
+	return "↻ background call finished", true
 }

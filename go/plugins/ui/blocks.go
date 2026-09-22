@@ -393,6 +393,19 @@ func (m *model) dropLive() {
 	}
 }
 
+// dropStreams discards everything still streaming for the current
+// request, reply and reasoning both: a delta-reset says the text that
+// follows is not its continuation.
+func (m *model) dropStreams() {
+	m.dropLive()
+	for i := len(m.blocks) - 1; i >= 0; i-- {
+		if b := &m.blocks[i]; b.live && b.kind == "thinking" {
+			m.blocks = append(m.blocks[:i], m.blocks[i+1:]...)
+			return
+		}
+	}
+}
+
 // tagStart matches a "<" that could still grow into a tag: the tail of
 // a stream is held back until it is clear which.
 var tagStart = regexp.MustCompile(`<[a-zA-Z/][a-zA-Z0-9_-]*$`)

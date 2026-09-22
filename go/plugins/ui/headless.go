@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -64,6 +65,10 @@ var (
 	// multi-line text never spills onto continuation lines.
 	HeadlessJSON bool
 )
+
+// hlDrain looks up the engine's "drain" key at stdin EOF (nil, or a nil
+// result, when the loop row runs the loop).
+var hlDrain func() func(context.Context) error
 
 // hlStdout is headless stdout. Once a write fails (the reader went
 // away: `bough --headless | head -1`), later writes are dropped so the
@@ -168,7 +173,7 @@ func runHeadless(inputs chan<- string, b *broadcaster, cmds commandsView, hlog h
 // to stderr and marks the run failed; everything else to stdout.
 func hlPrint(ev Event) {
 	switch ev.Kind {
-	case "assistant-delta", "thinking-delta", "activity":
+	case "assistant-delta", "thinking-delta", "activity", "call-delta", "delta-reset":
 		// "activity" is the small model's live label for what the turn is
 		// doing ("" when it ends): a status line, same transport, same rule.
 		// Fragments of a reply that is still forming. Plain headless is
@@ -177,9 +182,16 @@ func hlPrint(ev Event) {
 		// one is its own object, tagged by kind, so `bough serve` can
 		// stream a reply into the browser and a script can ignore them
 		// on kind. They are never history, and the finished reply still
-		// prints once as "[assistant]".
+		// prints once as "[assistant]". An engine call's live output
+		// (call-delta) and a reset of superseded stream text are the same
+		// kind of fragment; they carry the call id / request seq a
+		// reader needs, so their data rides along.
 		if HeadlessJSON {
-			hlLine(hlOut, ev.Kind, ev.Text, nil)
+			var extra map[string]any
+			if ev.Kind == "call-delta" || ev.Kind == "delta-reset" {
+				extra = ev.Data
+			}
+			hlLine(hlOut, ev.Kind, ev.Text, extra)
 		}
 		return
 	}
@@ -252,7 +264,12 @@ func hlPrint(ev Event) {
 					us.InputTokens, us.OutputTokens, us.Cost, us.Priced)
 			}
 		}
-		hlPending.Add(-1)
+		// An engine wake turn (a call that outlived its turn finished)
+		// was never a stdin line: its done pays for nothing, and taking
+		// one off would end the drain before a line that is still running.
+		if ev.Data["wake"] != true {
+			hlPending.Add(-1)
+		}
 	}
 	select {
 	case hlTick <- struct{}{}:
@@ -275,7 +292,50 @@ func headlessPump() {
 	hlEOF.Store(true)
 	hlCancelAsk()
 	drainHeadless()
+	drainEngine()
 	interruptSelf()
+}
+
+// drainEngine waits, on the engine, for calls that outlived their turn
+// and the wake turns they start: a one-shot run would otherwise exit
+// with work the model never saw the end of. The idle guard is
+// drainHeadless's: the wait is given up after BOUGH_HEADLESS_IDLE with
+// no loop event. Background bash jobs are not waited for, as on the
+// loop.
+func drainEngine() {
+	hlMu.Lock()
+	get := hlDrain
+	hlMu.Unlock()
+	if get == nil {
+		return
+	}
+	drain := get()
+	if drain == nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = drain(ctx)
+	}()
+	idle := hlIdleTimeout()
+	t := time.NewTimer(idle)
+	defer t.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-hlTick:
+			t.Reset(idle)
+		case <-t.C:
+			fmt.Fprintf(os.Stderr, "ui: headless: no loop event for %s while the engine drained, giving up (BOUGH_HEADLESS_IDLE)\n", idle)
+			cancel()
+			<-done
+			return
+		}
+	}
 }
 
 // hlLineIn routes one stdin line.

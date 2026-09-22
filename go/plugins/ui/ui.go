@@ -5,6 +5,7 @@ package ui
 import (
 	"github.com/andreylukin/bough/plugins/llm"
 
+	"context"
 	"fmt"
 	"os"
 	"reflect"
@@ -76,6 +77,15 @@ func (p *plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		hlUsage = nil
 		if u, err := kernel.Get[llm.UsageReporter](ctx, "usage"); err == nil {
 			hlUsage = u
+		}
+		// Resolved at EOF, not at mount, like notify below: a Get here
+		// would make ui remount whenever the engine row does.
+		hlDrain = func() func(context.Context) error {
+			d, err := kernel.Get[func(context.Context) error](ctx, "drain")
+			if err != nil {
+				return nil
+			}
+			return d
 		}
 		hlMu.Unlock()
 		// Resolved per notice, not at mount: the tools row may mount

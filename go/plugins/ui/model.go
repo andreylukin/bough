@@ -72,8 +72,11 @@ type block struct {
 
 	// spawn blocks only (see spawn.go): the subagent card's live state;
 	// label is the task, text the child's report.
-	sub  *subState
-	live bool // assistant text still streaming (see addDelta)
+	sub *subState
+	// call blocks only (see call.go): a native call's record; label is
+	// the row's words, text what the call printed.
+	call *callState
+	live bool // assistant text still streaming (see addDelta); a call still running
 }
 
 // collapsible blocks get a disclosure header and can be toggled.
@@ -87,6 +90,9 @@ func (b *block) collapsible() bool {
 	switch b.kind {
 	case "code", "result", "thinking", "spawn", "error", "system", "todo", "job", "context":
 		return true
+	case "call":
+		// A call that printed nothing is one row with nothing behind it.
+		return !b.live && b.text != ""
 	}
 	return false
 }
@@ -771,6 +777,8 @@ func (m *model) render(b *block, cfg *uiCfg) string {
 		return out + m.box(colorDiff(text, th), th["result"], th["border"])
 	case "spawn":
 		return m.renderSpawn(b, th)
+	case "call":
+		return m.renderCall(b, th)
 	case "command":
 		// The dispatched "/" line: a dim echo of what was typed, so
 		// the system block below reads as its answer.
@@ -1128,7 +1136,7 @@ func (m *model) addEvent(ev Event) {
 	id := m.nextID
 	m.nextID++
 	switch ev.Kind {
-	case "assistant", "assistant-delta", "thinking", "thinking-delta", "code", "ask", "activity":
+	case "assistant", "assistant-delta", "thinking", "thinking-delta", "code", "ask", "activity", "call":
 		m.gotOutput = true
 	}
 	switch ev.Kind {
@@ -1197,9 +1205,23 @@ func (m *model) addEvent(ev Event) {
 		}
 		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: text, collapsed: collapsed})
 	case "call", "sub:call":
-		// A block's per-call events are for the web transcript; the
-		// TUI shows the block itself (its code and result rows).
-		return
+		// A loop block's per-call events are for the web transcript;
+		// the TUI shows the block itself (its code and result rows). An
+		// engine call has no block around it: it is the step (call.go).
+		if !nativeCall(ev) {
+			return
+		}
+		if ev.Kind == "sub:call" {
+			m.addSubEvent(ev)
+		} else {
+			m.addCall(id, ev)
+		}
+	case "call-delta":
+		m.addCallDelta(ev)
+	case "delta-reset":
+		// The engine retried the request, or a newer one replaced it:
+		// what streamed so far is not the start of what comes next.
+		m.dropStreams()
 	case "sub:start", "sub:assistant", "sub:code", "sub:result", "sub:error", "sub:done":
 		// A subagent's activity folds into ONE card per worker (spawn.go):
 		// the parent's transcript is the story, the child's is detail
