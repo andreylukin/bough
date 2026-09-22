@@ -635,6 +635,14 @@ func DefaultProject(entries []history.Entry) []llm.Message {
 			msgs = append(msgs, llm.Message{Role: "assistant", Content: text})
 		case "result":
 			msgs = append(msgs, llm.Message{Role: "user", Content: toolOutputPrefix + stripFakeSystem(text), Images: llm.ImageRefs(text)})
+		case "call":
+			// An engine-unreal call row (it carries hseq) is that
+			// engine's tool output. A loop session's call rows are
+			// bookkeeping for the block whose result row already said
+			// it, so they stay out.
+			if _, engine := e.Data["hseq"]; engine {
+				msgs = append(msgs, llm.Message{Role: "user", Content: toolOutputPrefix + stripFakeSystem(engineCall(e.Data))})
+			}
 		case "cancelled":
 			// The user interrupted the turn. Without this the killed
 			// request sits in context looking merely unfinished, and a
@@ -696,6 +704,26 @@ func DefaultProject(entries []history.Entry) []llm.Message {
 		}
 	}
 	return msgs
+}
+
+// engineCall is an engine call row as the model would have read it: the
+// tool and what it ran, then its output or its error.
+func engineCall(d map[string]any) string {
+	tool, _ := d["tool"].(string)
+	detail, _ := d["text"].(string)
+	out, _ := d["output"].(string)
+	head := tool
+	if detail != "" {
+		head += ": " + detail
+	}
+	s := "[" + head + "]"
+	if out != "" {
+		s += "\n" + out
+	}
+	if msg, _ := d["error"].(string); msg != "" {
+		s += "\nError: " + msg
+	}
+	return s
 }
 
 // memHistory is the fallback History when no "history" service is
