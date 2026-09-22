@@ -1358,7 +1358,7 @@ var stopFence = regexp.MustCompile("(?s)```stop[^\n]*\n(.*?)(?:```|$)")
 // after a failed block. Cline's attempt_completion has the same rule —
 // never complete before confirming the previous tool use succeeded —
 // and it is the difference between "done" and "done, apparently".
-const stoppedOnErrorNote = "[unfinished] Your last block FAILED and you stopped on it: the error above is the last thing that happened, so whatever you just claimed is unverified. Fix it, or run the check again, or stop with an honest account of what failed and what you did not do."
+const stoppedOnErrorNote = "[unfinished] Your last block FAILED and you stopped on it: the error above is the last thing that happened, so whatever you just claimed is unverified. Change something and run it once, or stop with an honest account of what failed and what you did not do. Do not re-run the same block unchanged."
 
 // schemaSection tells the model the stop block must be JSON of a
 // given shape. Appended per turn, never baked into the base prompt: a
@@ -1713,6 +1713,17 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 	nudges := 0         // push-backs spent asking for a stop block
 	var ran []string    // this turn's block outputs: a fence quoting one is real
 	lastFailed := false // the previous block errored: a stop on it is unverified
+	// The turn's ledger: what each block did and how it ended, for the
+	// receipt a push-back carries (so the model does not re-verify
+	// what passed), and the failed block's text, so an identical retry
+	// is refused rather than run (see sameBlock).
+	var calls []turnCall
+	var failedCode, failedErr string
+	sameFails := 0
+	// refused: the last thing that happened was a refusal, and the model
+	// was told to report — so a plain reply now IS the honest account,
+	// not a stop on a failure to push back on.
+	refused := false
 	for step := 0; step < maxSteps; step++ {
 		if r.maxCost > 0 && r.usage != nil && r.usage() >= r.maxCost {
 			note("system", fmt.Sprintf("cost budget spent ($%.2f of $%.2f); asking for a final answer", r.usage(), r.maxCost), nil)
@@ -1817,7 +1828,7 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 				why, note0 = "wrote a tool call that was not in a ```js block", meantToRunNote
 			case announcesWork(reply):
 				why, note0 = "announced work it did not do", announcedNote
-			case lastFailed:
+			case lastFailed && !refused:
 				why, note0 = "stopped straight after a failed block", stoppedOnErrorNote
 			case len(r.schema) > 0:
 				// A structured turn ends on a valid answer or not at
@@ -1830,7 +1841,24 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 				why, note0 = "ended the turn with a question", askedInStopNote
 			}
 			if why != "" {
-				if nudges < r.stopRetries {
+				// A push-back earns another model call only when it can
+				// carry something new. A failed block, a cut-off or empty
+				// reply, a misfenced call or a schema miss are objective:
+				// they get the full budget. Announced-but-not-done and a
+				// trailing question are read off the prose, and in a
+				// month of sessions 21 such push-backs recovered no work:
+				// one try, then the reply stands.
+				budget := r.stopRetries
+				if note0 == announcedNote || note0 == askedInStopNote {
+					budget = min(1, r.stopRetries)
+				}
+				// The receipt: what this turn already ran and how it
+				// ended, so the next reply does the one thing left rather
+				// than re-verifying what passed.
+				if note0 == stoppedOnErrorNote || note0 == announcedNote {
+					note0 += receipt(calls)
+				}
+				if nudges < budget {
 					nudges++
 					// The point of refusing a stop-on-failure is to
 					// make the model look again, not to trap it: once
@@ -1868,6 +1896,23 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 				}
 			}
 			note("code", code, nil)
+			// A block identical to the one that just failed, with no
+			// block in between that could have changed anything, fails
+			// the same way: in real sessions the model re-ran the failed
+			// block verbatim 49 times in a month. Refuse it with the
+			// reason, and after a second refusal ask for the report.
+			if lastFailed && sameBlock(code, failedCode) {
+				sameFails++
+				msg := "[not run] This block is identical to the one that just failed (" + firstLineOf(failedErr) + "). Nothing changed in between, so it would fail the same way. Change the approach, or stop and report what failed."
+				if sameFails >= 2 {
+					msg += " That was the third attempt: do not run it again — reply with what failed and what you did not do."
+				}
+				r.hist.Append("result", map[string]any{"text": msg, "code": code, "error": "not run: identical to the block that just failed"})
+				ran = append(ran, msg)
+				refused = true
+				emit("error", msg)
+				break
+			}
 			// Per-block evidence for the result entry: how long the block
 			// took, and — when it ran bash — that block's own exit code.
 			// The done entry only ever carried the turn's LAST exit.
@@ -1930,12 +1975,17 @@ func (r *runner) Run(ctx context.Context, input string, emit func(kind, text str
 			}
 			r.hist.Append("result", result)
 			ran = append(ran, out)
+			refused = false
 			if runErr != nil {
 				lastFailed = true
+				failedCode, failedErr = code, runErr.Error()
+				calls = append(calls, turnCall{head: blockHead(code), err: firstLineOf(runErr.Error())})
 				emit("error", out)
 				break
 			}
 			lastFailed = false
+			sameFails = 0
+			calls = append(calls, turnCall{head: blockHead(code), ok: true})
 			emit("result", out)
 		}
 	}
@@ -2370,4 +2420,72 @@ func (p *plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		}
 	})
 	return nil
+}
+
+// turnCall is one block's outcome this turn: what it was, whether it
+// passed, and the first line of its error when it did not.
+type turnCall struct {
+	head string
+	ok   bool
+	err  string
+}
+
+// blockHead names a block the way a person would: its first bash
+// command when it runs one, else its first non-empty line, cut short.
+func blockHead(code string) string {
+	if m := bashHeadRe.FindStringSubmatch(code); m != nil {
+		return firstLineOf(strings.ReplaceAll(m[1], "\\n", "\n"))
+	}
+	for _, l := range strings.Split(code, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			return cut(l, 70)
+		}
+	}
+	return ""
+}
+
+var bashHeadRe = regexp.MustCompile("tools\\.bash\\(\\s*[\"'`]([^\"'`]{1,200})")
+
+// firstLineOf is a message's first line, cut short.
+func firstLineOf(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return cut(s, 120)
+}
+
+func cut(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-1] + "…"
+}
+
+// sameBlock reports whether two blocks are the same program: whitespace
+// at the ends aside, the model wrote the same thing again.
+func sameBlock(a, b string) bool {
+	return b != "" && strings.TrimSpace(a) == strings.TrimSpace(b)
+}
+
+// receipt is the turn's ledger as a push-back appendix: the last blocks
+// and how each ended, so a re-ask says what passed (leave it) and what
+// failed (the one thing to do), instead of "unfinished" alone.
+func receipt(calls []turnCall) string {
+	if len(calls) == 0 {
+		return ""
+	}
+	if len(calls) > 8 {
+		calls = calls[len(calls)-8:]
+	}
+	var b strings.Builder
+	b.WriteString("\n\nThis turn so far — do not re-run what passed unless you changed its inputs:")
+	for _, c := range calls {
+		if c.ok {
+			b.WriteString("\n- passed: " + c.head)
+		} else {
+			b.WriteString("\n- FAILED: " + c.head + " — " + c.err)
+		}
+	}
+	return b.String()
 }

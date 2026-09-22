@@ -113,7 +113,7 @@ func TestLoopLevelStoppedOnError(t *testing.T) {
 			if strings.Contains(m.Content, "partial\nerror: ReferenceError") {
 				sawErr = true
 			}
-			if m.Content == stoppedOnErrorNote {
+			if strings.HasPrefix(m.Content, stoppedOnErrorNote) {
 				sawNote = true
 			}
 		}
@@ -138,9 +138,11 @@ func TestLoopLevelStoppedOnError(t *testing.T) {
 }
 
 func TestLoopLevelStepBudgetMidFailure(t *testing.T) {
+	// Two DIFFERENT failing blocks: an identical retry would be refused
+	// without running (see TestIdenticalFailedBlockIsRefused).
 	llm := &loopLevelLLM{tape: []loopLevelStep{
 		{reply: loopLevelJS("boom()")},
-		{reply: loopLevelJS("boom()")},
+		{reply: loopLevelJS("boom(2)")},
 		{reply: "Out of steps; boom kept failing.\n" + loopLevelJS("boom()")},
 	}}
 	code := &loopLevelCode{}

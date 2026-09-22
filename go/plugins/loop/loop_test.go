@@ -579,12 +579,14 @@ func TestNoStopIsAskedAgain(t *testing.T) {
 // A model that keeps announcing work it never does costs a bounded
 // number of calls, and the user still gets its last reply.
 func TestStopRetriesAreCapped(t *testing.T) {
+	// Announced work is read off the prose and rarely recovers anything:
+	// one push-back, whatever the budget for objective failures is.
 	llm := &seqLLM{replies: []string{"Let me check the tests first"}}
 	r := &runner{llm: llm, code: &stubCode{}, hist: &memHistory{}, secs: &Sections{}, stopRetries: 2}
 	var kinds, texts []string
 	_ = r.Run(context.Background(), "go", collect(&kinds, &texts))
-	if llm.calls != 3 {
-		t.Fatalf("%d calls, want 3 (the first plus two retries)", llm.calls)
+	if llm.calls != 2 {
+		t.Fatalf("%d calls, want 2 (the first plus one retry)", llm.calls)
 	}
 	if kinds[len(kinds)-1] != "done" {
 		t.Fatalf("the turn never ended: %v", kinds)
