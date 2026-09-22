@@ -56,6 +56,12 @@
 - id: commands
   plugin: commands
 
+# Native tools: each tool row registers its tools here as well as in
+# codemode, so the engine-unreal loop (below) can offer them as tool
+# calls. The loop never reads it.
+- id: agent-tools
+  plugin: agent-tools
+
 # What is true about this session, for plugins: id, title, model and
 # provider, tokens and cost, context fill, turn count. Go rows Get the
 # "session" service and call Info(); init.js reads bough.session().
@@ -168,6 +174,9 @@
   #                           # session is never touched. 0 disables it.
   #                           # Nothing is summarised and the history log
   #                           # is untouched either way.
+# Opt in to the unreal-agent engine in place of the loop with
+# `--set loop.plugin=engine-unreal`: native tool calls that run
+# asynchronously, same keys, same history (docs/unreal-engine.md).
 
 # Language servers on the host (basedpyright/pyright, rust-analyzer,
 # typescript-language-server, gopls — whichever are installed), started
