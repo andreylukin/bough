@@ -53,6 +53,13 @@ example in `plugins/example/`:
 | `palette`  | plugins/theme      | ui (optional)   |
 | `theme`    | plugins/initjs     | ui (optional)   |
 | `keymap`   | plugins/initjs     | ui (optional)   |
+| `agent-tools` | plugins/agenttools | tool rows (register native tools), engine |
+| `engine`   | plugins/engine     | workers (foreground `spawn`), `bough engine` |
+| `drain`    | plugins/engine     | ui (headless, at stdin EOF) |
+
+`runner`, `inputs`, `cancel`, `steer` and `prompt-sections` come from
+whichever plugin the `loop` row runs: `loop`, or `engine-unreal` (below),
+with the same types, so ui, serve and the rest do not change.
 
 The optional seams are resolved at mount time and no-op cleanly when
 their rows are absent; thanks to Get-tracking they also hot-attach when
@@ -143,6 +150,59 @@ The LLM writes JavaScript; the codemode plugin runs it in a goja runtime
 where each registered tool is a JS function. Tool output feeds back to
 the LLM until it's done, and every step is emitted as a `loop/event`
 (`assistant`, `code`, `result`, `error`, `done`) that any UI renders.
+
+## The unreal-agent engine (opt-in)
+
+`--set loop.plugin=engine-unreal` (or an overlay row `- id: loop` /
+`plugin: engine-unreal`) runs the session on
+[unreal-agent](https://github.com/unreallabsai/unreal-agent), pinned by
+SHA in `go.mod`, instead of the codemode loop. The loop stays the
+default; [docs/unreal-engine.md](docs/unreal-engine.md) is the design.
+What changes for the model:
+
+- **Native tool calls** instead of a JS block: `bash`, `view`, `write`,
+  `patch`, `jobs`/`job`/`job_kill`, `ask`, `secret`, `spawn`, `agent`,
+  `stop_agent`, the artifact tools, `portal`, `lsp`, `todo`,
+  `view_image`. Each tool row registers them in the `agent-tools`
+  registry beside its codemode binding, so both engines run one Go
+  implementation. `tools: both` adds `run_js` (a code block on the
+  shared VM).
+- **Calls run asynchronously.** One still running after about a second
+  shows the model a placeholder; it can keep working or end its reply,
+  and the result wakes it. A foreground call idle past `turn_settle`
+  (60s) becomes a numbered job (the job strip and `/jobkill` see it)
+  and the turn ends with `done{running}`; its result opens a wake turn.
+- **The system prompt is frozen per session**
+  (`~/.bough/engine/<sid>.system.md`). A later change to AGENTS.md,
+  MEMORY.md or a prompt section reaches the model as a
+  `<context-update>` block on the next input, which keeps the prompt
+  cache warm.
+
+Row config (`- id: loop`, `plugin: engine-unreal`): `tools`
+(`native`|`both`), `turn_settle`, `heartbeat`, `call_timeout` (10m),
+`max_output`, `row_output`, `max_steps`, `max_cost_usd`,
+`stop_retries`, `steer_interrupts`, `system_prompt`, `task_guidance`,
+`store`, `trace` (request and response bodies, keys redacted, to
+`~/.bough/engine/trace/`).
+
+Providers: the `llm` row stays the source of truth for provider, model
+and effort, and `/model` and `/think` keep working mid-session.
+`llm-anthropic` speaks the native Messages API (streaming, thinking,
+1-hour prompt cache; new keys `cache_ttl`, `thinking_display`,
+`fallbacks`). `llm-openai`, `llm-openrouter` (`late_results`) and the
+new `llm-ollama` (`base_url`) speak the Responses API. `llm-echo` and
+the new `llm-script` (`script: <tape.json>`, a scripted model for
+tests) are deterministic. `llm-cerebras` and init.js providers cannot
+drive the engine and say so.
+
+History keeps its kinds; a native call is a `call` entry (`tool`, `id`,
+`ms`, `exit`, `output`, `add`/`del`, `late`, `canceled`) instead of a
+`code`/`result` pair, and an `engine` entry records the harness session,
+pin and prompt hash. The harness's own store is
+`~/.bough/engine/<sid>.session.jsonl`; bough history stays canonical,
+and `bough engine inspect|reproject|script <id>` reads the store,
+re-projects it into history, or turns a session into an `llm-script`
+tape.
 
 ## History
 
@@ -394,6 +454,14 @@ Events and honored result keys:
 | `stop`               | `{}`                | —                                 |
 | `session-end`        | `{}`                | — (fires at unmount, not from the loop) |
 
+On `engine-unreal` the same files fire per native call:
+`pre-code-exec` gets `{code, tool, args, call}` (`code` is the call's
+detail, bash's command line, so a hook matching command text keeps
+matching) and may `deny` or return `args` to replace the arguments;
+`post-result` gets `{code, tool, call, result, error}` and may rewrite
+`result`; `stop` gets `{reply}`, and a `block` reason continues the turn
+once. A hook error is recorded, never fatal.
+
 ## Cost (status bar)
 
 The `cost` row provides the `usage` service the status bar and `/cost`
@@ -432,6 +500,10 @@ case-insensitive whole word in the human input gets its SKILL.md
 appended to that turn's user message as `[skill: <name>]\n<body>`,
 capped at 3 per turn.
 
+On `engine-unreal` the catalogue (name, description, path) is part of
+the frozen system prompt, mention injection works as above, and the
+model reads a SKILL.md it wants with `view`.
+
 ## Context files
 
 At session start, whichever exist of `./AGENTS.md`, `./CLAUDE.md`,
@@ -448,6 +520,12 @@ first: row `config.servers` > `./.mcp.json` `mcpServers` >
 entries after the merge. Non-stdio (url/http) entries are skipped with
 a log line; a server that fails to connect is skipped, never fails the
 mount.
+
+On `engine-unreal` MCP stays the `bough mcp call …` CLI over `bash` by
+default. `native_tools: [server, …]` on the row also registers that
+server's tools as native tools named `mcp__<server>__<tool>`; opt-in,
+because a server connecting or dropping changes the tool set and so
+restarts the engine at the next idle moment.
 
 ## Hot reload
 
@@ -485,10 +563,17 @@ once per run (or reuses `$BOUGH_BIN`), then each test execs it —
 subcommands (`bough log`, `bough rows`), config hot-reload, and 3
 native-TTY cases on a real PTY (status bar renders, echo roundtrip,
 quit restores the terminal). PTY cases skip on Windows/no-PTY.
+`e2e/engine_test.go` runs the same binary on `engine-unreal`, driven by
+`llm-script` tapes: a step's `want` must appear in what the model was
+sent, so the tape asserts the request contents too.
 
 ```sh
 go test -race ./e2e/
 ```
+
+Live runs are never in `go test`: `scripts/unreal-smoke.sh` runs one
+engine pass per provider whose key is in the environment and skips the
+rest.
 
 **3. Playwright web e2e** (`tests/web/`): real `bough --web` processes,
 a real browser reading the sip/WebTerm buffer.

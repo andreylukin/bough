@@ -16,6 +16,12 @@ the LLM provider, the loop, the tools, the UI, history, MCP,
 hooks, skills — is a row in `bough.yml` that can be swapped, disabled,
 or hot-reloaded while a session runs.
 
+The `loop` row can instead run `engine-unreal`, the
+[unreal-agent](https://github.com/unreallabsai/unreal-agent) harness
+with bough's tools as native tool calls
+([`go/docs/unreal-engine.md`](go/docs/unreal-engine.md)). It is opt-in;
+the loop is the default and code mode the product.
+
 One Go module, `go/`. 35 packages, ~51k lines. No cgo: SQLite is
 `modernc.org/sqlite` and the JS runtime is goja, so one static binary
 cross-compiles to every target from one runner.
@@ -40,7 +46,11 @@ touches no network:
 
 ```sh
 printf 'say CODE! please\n' | go run ./cmd/bough --headless --set llm.plugin=llm-echo
+printf 'say CODE! please\n' | go run ./cmd/bough --headless --set llm.plugin=llm-echo --set loop.plugin=engine-unreal
 ```
+
+`scripts/unreal-smoke.sh` is the live engine pass, one per provider
+key in the environment; it costs tokens and is never part of `go test`.
 
 The browser layer needs Node and a Chromium and is not part of
 `go test`:
@@ -59,6 +69,7 @@ both replace the binary you are testing.
 | `go/kernel/` | services, events, effects, the loader, row lifecycle — the only non-plugin code besides the launcher |
 | `go/cmd/bough/` | the launcher: flags, config discovery, hot reload, subcommands |
 | `go/plugins/` | every behavior, one directory each; `example/` is the worked plugin from [`go/docs/PLUGINS.md`](go/docs/PLUGINS.md) |
+| `go/internal/unreal/`, `go/internal/messagesapi/`, `go/internal/agentllm/`, `go/internal/agenttools/` | the engine: harness adapters, the Anthropic Messages client, the llm-row seam, the native tool vocabulary |
 | `go/e2e/`, `go/internal/` | headless and PTY suites, shared LLM stubs, the real-terminal suite |
 | `go/tests/web/` | Playwright specs against real `bough --web` processes |
 | `go/docs/` | plugin authoring, the init.js API, orbs, secrets, loops, background agents |
@@ -149,6 +160,20 @@ alone.
 **Golden files are generated.** `go test ./plugins/ui -run Golden
 -update` regenerates them. Hand-editing one to match a broken render is
 the failure mode the layer exists to catch.
+
+**Only six places import the harness.** `internal/unreal/boundary_test.go`
+fails when anything outside `internal/unreal/...`, `internal/messagesapi`,
+`internal/agentllm`, `plugins/engine`, `plugins/llm` or `cmd/bough`
+imports unreal-agent or `internal/unreal/...`. A reader of the engine
+reaches it through a service key with plain types (`engine`, `drain`),
+so a harness bump stays inside those packages. The pin is a SHA, and
+`pin_test.go` fails when go.mod moves without `unreal.Pin`.
+
+**The engine's system prompt never changes mid-session.** It is written
+once to `~/.bough/engine/<sid>.system.md`; anything that changes later
+goes to the model as an appended `<context-update>`. Editing the first
+input breaks the prompt cache and, on Opus 5.5 and Fable 5.1, is a 400
+on every later turn.
 
 **Windows is red and does not gate.** 33 tests fail there consistently, plus
 a couple of flaky TUI cases; the job runs `continue-on-error` and the CI log

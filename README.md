@@ -108,7 +108,7 @@ bough is a small kernel of services, events and a row loader, and everything els
     model: openai/gpt-6-astra
 ```
 
-Save it mid-session and only the changed rows and their dependents remount; the conversation survives because context is rebuilt from the session log. `bough rows` shows the live tree. `~/.bough/init.js` adds tools, commands and whole providers in a few lines ([INIT.md](go/docs/INIT.md)); a new row is a Go plugin ([PLUGINS.md](go/docs/PLUGINS.md)).
+Save it mid-session and only the changed rows and their dependents remount; the conversation survives because context is rebuilt from the session log. `bough rows` shows the live tree. The loop is a row too: `--set loop.plugin=engine-unreal` runs a session on [unreal-agent](https://github.com/unreallabsai/unreal-agent) instead, where the model makes native tool calls that run in parallel and wake it as they finish, over the same tools, history and UIs. It is opt-in until a same-task bench says which should be the default ([design](go/docs/unreal-engine.md)). `~/.bough/init.js` adds tools, commands and whole providers in a few lines ([INIT.md](go/docs/INIT.md)); a new row is a Go plugin ([PLUGINS.md](go/docs/PLUGINS.md)).
 
 ## An LLM wiki of your own work
 
