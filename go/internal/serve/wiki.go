@@ -28,6 +28,8 @@ func wikiErr(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusBadRequest, err)
 	case errors.Is(err, wiki.ErrStale):
 		writeErr(w, http.StatusConflict, err)
+	case errors.Is(err, wiki.ErrNoProfile):
+		writeErr(w, http.StatusConflict, err)
 	default:
 		writeErr(w, http.StatusInternalServerError, err)
 	}
@@ -166,6 +168,50 @@ func (a *API) meRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// meTriage is POST /api/me/triage: dismiss, undismiss, pin or unpin one
+// row by its key; a dismissal may also teach a rule, a sentence filed
+// under Not mine in the profile.
+func (a *API) meTriage(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Action string `json:"action"`
+		Key    string `json:"key"`
+		Rule   string `json:"rule"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	st := a.wikiStore()
+	t, err := st.Mark(body.Action, body.Key, time.Now())
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if body.Rule != "" {
+		if err := st.Rule(body.Rule, time.Now()); err != nil {
+			wikiErr(w, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "triage": t})
+}
+
+// meSteer is POST /api/me/steer: a sentence for the brief, filed under
+// Watch or Not mine in the profile; the answer says which.
+func (a *API) meSteer(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Text string `json:"text"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	section, err := a.wikiStore().Steer(body.Text, time.Now())
+	if err != nil {
+		wikiErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "section": section})
 }
 
 // spawnIngest runs `bough wiki run` detached, appending to the same

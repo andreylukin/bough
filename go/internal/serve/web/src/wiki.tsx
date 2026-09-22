@@ -158,6 +158,9 @@ export interface MeSignal {
   title: string;
   note?: string;
   project?: string;
+  /** owner/name and the login, when the source has them: a dismissal can then teach a rule. */
+  repo?: string;
+  author?: string;
   at?: string;
   cite?: string;
   url?: string;
@@ -175,11 +178,18 @@ export interface MeData {
   asOf?: string;
   signals?: MeSignals | null;
   days: string[];
+  /** What the person said about the rows: keys closed, keys pinned. */
+  triage: MeTriage;
 }
+export interface MeTriage { dismissed: Record<string, string>; pinned: string[] }
+export type TriageAction = "dismiss" | "undismiss" | "pin" | "unpin";
 
 export const wikiApi = {
   me: () => req<MeData>("/api/me"),
   refreshMe: () => req<{ ok: true }>("/api/me/refresh", { method: "POST" }).then(() => {}),
+  triage: (action: TriageAction, key: string, rule?: string) =>
+    req<{ ok: true; triage: MeTriage }>("/api/me/triage", { method: "POST", body: JSON.stringify({ action, key, rule }) }).then((r) => r.triage),
+  steer: (text: string) => req<{ ok: true; section: string }>("/api/me/steer", { method: "POST", body: JSON.stringify({ text }) }).then((r) => r.section),
   // One index read at a time for every caller (the nav count and the page):
   // a read still in flight is shared, not queued behind.
   index: () => indexRead ??= req<WikiIndexData>("/api/wiki").finally(() => { indexRead = null; }),

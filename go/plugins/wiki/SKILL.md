@@ -155,6 +155,26 @@ Slack and Linear ids, the repos they own, and what they want left out. No
 profile, no brief — say so and stop. If a profile exists but is thin, use
 what is there; do not invent ids.
 
+**Relevance is the profile's, not yours.** Three sections in it decide
+what is theirs; apply them before writing a single row or sentence:
+
+- `## Mine` — what always counts: work they authored, requests by name,
+  the repos and channels listed.
+- `## Not mine` — what never counts, however it arrived: a team review
+  request to a twenty-person team, a bot's pull request, a repo they
+  listed. A row that matches is not written, and the prose does not
+  mention it.
+- `## Watch` — things to keep in view until they finish: a pull request,
+  a thread, a phrase in a channel. Each appears under Moving or Waiting
+  on, with its citation, until it closes.
+
+Then read `topics/me/triage.json`: `dismissed` is keys the person closed
+(never list them again, in rows or prose, unless the item has since
+become a mention of them by name), `pinned` is keys to list first. A
+row's key is its `cite`, else its `url`, else its `title`. When neither
+section nor the triage decides, a team-wide request is not theirs unless
+the repo is in Mine.
+
 **Gather, in parallel, each source that is available** (a source that is
 not connected or fails is reported in `signals.json` under `sources`, not
 guessed at):
@@ -216,7 +236,7 @@ brief, machine-readable:
   "asOf": "<RFC 3339>",
   "items": [
     {"kind": "needs-you", "source": "gh", "title": "Review comment on the demand-settlement fix",
-     "note": "Priya, on the timeout default", "project": "smart-scheduler",
+     "note": "Priya, on the timeout default", "project": "smart-scheduler", "repo": "asi/uni-nes", "author": "priya",
      "at": "<RFC 3339>", "cite": "gh:asi/uni-nes#7801", "url": "https://github.com/…"},
     {"kind": "moving", "source": "thread", "title": "fix the broken ci on main",
      "project": "git-ai-enrichment", "at": "…", "cite": "<session>#<seq>", "session": "<session>"}
@@ -232,7 +252,10 @@ brief, machine-readable:
 a mention with no reply), `moving` (running or in review by others),
 `waiting` (they wait on someone), `done` (finished since yesterday).
 `project` is a bough project slug when the item belongs to one, else the
-repo name, else omitted. Keep it under forty items; the page is a glance.
+repo name, else omitted. `repo` (owner/name) and `author` (the login or
+person) are set whenever the source has them: a dismissal on the page
+offers "nothing from this repo" and "nothing from this author", and
+those need the names. Keep it under forty items; the page is a glance.
 
 Then `"${BOUGH_BIN:-bough}" wiki check`; fix what it reports. Do not
 touch index.md or log.md for a brief, and do not commit; the scheduler does.

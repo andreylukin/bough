@@ -169,3 +169,44 @@ func TestMeReadsTheBriefAndRefreshStartsOne(t *testing.T) {
 		t.Fatalf("refresh = %d ran=%d", code, ran)
 	}
 }
+
+func TestMeTriageAndSteer(t *testing.T) {
+	f := newAPI(t)
+	f.api.home = f.home
+	me := filepath.Join(f.home, ".bough", "wiki", "topics", "me")
+	if err := os.MkdirAll(me, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Steering before a profile exists is a conflict, not a crash.
+	if code, _ := f.do(t, "POST", "/api/me/steer", `{"text":"watch x"}`); code != http.StatusConflict {
+		t.Fatalf("steer without profile = %d", code)
+	}
+	if err := os.WriteFile(filepath.Join(me, "profile.md"), []byte("# Me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, body := f.do(t, "POST", "/api/me/triage", `{"action":"dismiss","key":"gh:asi/x#1","rule":"nothing from asi/x"}`)
+	if code != http.StatusOK {
+		t.Fatalf("triage = %d %v", code, body)
+	}
+	if code, _ := f.do(t, "POST", "/api/me/triage", `{"action":"pin","key":"gh:asi/y#2"}`); code != http.StatusOK {
+		t.Fatalf("pin = %d", code)
+	}
+	if code, _ := f.do(t, "POST", "/api/me/triage", `{"action":"nope","key":"k"}`); code != http.StatusBadRequest {
+		t.Fatalf("bad action = %d", code)
+	}
+	code, body = f.do(t, "POST", "/api/me/steer", `{"text":"ignore dependabot"}`)
+	if code != http.StatusOK || body["section"] != "Not mine" {
+		t.Fatalf("steer = %d %v", code, body)
+	}
+	_, body = f.do(t, "GET", "/api/me", "")
+	tr, _ := body["triage"].(map[string]any)
+	dis, _ := tr["dismissed"].(map[string]any)
+	pinned, _ := tr["pinned"].([]any)
+	if dis["gh:asi/x#1"] == nil || len(pinned) != 1 {
+		t.Fatalf("me triage = %v", tr)
+	}
+	prof, _ := os.ReadFile(filepath.Join(me, "profile.md"))
+	if !strings.Contains(string(prof), "## Not mine") || !strings.Contains(string(prof), "nothing from asi/x") || !strings.Contains(string(prof), "ignore dependabot") {
+		t.Fatalf("profile = %s", prof)
+	}
+}

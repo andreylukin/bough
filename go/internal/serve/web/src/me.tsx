@@ -4,7 +4,7 @@ import { EmptyState, Pending, useCopied } from "./loading";
 import { Markdown } from "./render";
 import type { Row } from "./types";
 import { hasQuestion, shownStatus } from "./status";
-import { Cites, literalUnderscores, useLoad, wikiApi, type MeData, type MeSignal, type WikiBlock } from "./wiki";
+import { Cites, literalUnderscores, useLoad, wikiApi, type MeData, type MeSignal, type MeTriage, type TriageAction, type WikiBlock } from "./wiki";
 
 /*
  * Me: what the person is doing today, across everything the brief agent
@@ -18,9 +18,30 @@ const KINDS: { kind: MeSignal["kind"]; label: string }[] = [
   { kind: "needs-you", label: "Needs you" }, { kind: "moving", label: "Moving" }, { kind: "waiting", label: "Waiting on others" }, { kind: "done", label: "Done since yesterday" },
 ];
 
-/** The signals by kind, in the page's order; an empty kind is not a group. */
-export function groupSignals(items: MeSignal[]): { kind: MeSignal["kind"]; label: string; items: MeSignal[] }[] {
-  return KINDS.map((k) => ({ ...k, items: items.filter((i) => i.kind === k.kind) })).filter((g) => g.items.length > 0);
+/** A row's identity for triage: its citation, else its address, else its title. Same rule as the skill. */
+export const signalKey = (s: MeSignal): string => s.cite || s.url || s.title;
+
+export type SignalGroup = { kind: MeSignal["kind"] | "pinned"; label: string; items: MeSignal[] };
+
+/**
+ * The signals by kind, in the page's order; an empty kind is not a group.
+ * Triage is applied first: a dismissed row is gone, a pinned one leads
+ * in a group of its own whatever its kind.
+ */
+export function groupSignals(items: MeSignal[], triage?: MeTriage): SignalGroup[] {
+  const dismissed = triage?.dismissed ?? {};
+  const pinned = new Set(triage?.pinned ?? []);
+  const kept = items.filter((i) => !(signalKey(i) in dismissed));
+  const lead = kept.filter((i) => pinned.has(signalKey(i)));
+  const rest = kept.filter((i) => !pinned.has(signalKey(i)));
+  const groups: SignalGroup[] = lead.length ? [{ kind: "pinned", label: "Pinned", items: lead }] : [];
+  return groups.concat(KINDS.map((k) => ({ ...k, items: rest.filter((i) => i.kind === k.kind) })).filter((g) => g.items.length > 0));
+}
+
+/** Where a steering sentence lands, as the server decides it; mirrored here so the confirmation can say so at once. */
+export function steerSection(text: string): "Watch" | "Not mine" {
+  const t = text.trim().toLowerCase().replace(/^[-•*\s]+/, "");
+  return ["ignore", "skip", "hide", "drop", "not ", "no ", "never", "stop showing", "don't", "dont"].some((w) => t.startsWith(w)) ? "Not mine" : "Watch";
 }
 
 /** One line per project from the fleet: what wants a person, what is moving, when it last spoke. */
@@ -58,7 +79,16 @@ export function standupText(blocks: WikiBlock[]): string {
 
 const day = (iso: string) => new Date(iso + "T12:00:00").toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
 
-function Signal({ s, onOpenSession }: { s: MeSignal; onOpenSession?: (id: string) => void }) {
+/**
+ * One row, with what can be said about it: pin, or dismiss — just this
+ * one, or with a rule about its repo or author that the brief reads
+ * from then on. The actions sit beside the row, not inside its link.
+ */
+function Signal({ s, pinned, onOpenSession, onTriage }: {
+  s: MeSignal; pinned?: boolean; onOpenSession?: (id: string) => void;
+  onTriage?: (action: TriageAction, s: MeSignal, rule?: string) => void;
+}) {
+  const [menu, setMenu] = useState(false);
   const body = (
     <>
       <span className="me-sig-src mono">{s.source}</span>
@@ -69,18 +99,90 @@ function Signal({ s, onOpenSession }: { s: MeSignal; onOpenSession?: (id: string
       {s.at && <span className="num me-sig-when">{ago(s.at)}</span>}
     </>
   );
-  if (s.session && onOpenSession) return <button type="button" className="me-sig" onClick={() => onOpenSession(s.session!)}>{body}</button>;
-  if (s.url) return <a className="me-sig" href={s.url} target="_blank" rel="noreferrer">{body}</a>;
-  return <div className="me-sig">{body}</div>;
+  const row = s.session && onOpenSession
+    ? <button type="button" className="me-sig" onClick={() => onOpenSession(s.session!)}>{body}</button>
+    : s.url ? <a className="me-sig" href={s.url} target="_blank" rel="noreferrer">{body}</a>
+    : <div className="me-sig">{body}</div>;
+  if (!onTriage) return row;
+  const rules: { label: string; rule: string }[] = [
+    { label: "Just this one", rule: "" },
+    ...(s.repo ? [{ label: `Nothing from ${s.repo}`, rule: `nothing from ${s.repo}` }] : []),
+    ...(s.author ? [{ label: `Nothing from ${s.author}`, rule: `nothing by ${s.author}` }] : []),
+  ];
+  return (
+    <div className={"me-sig-wrap" + (menu ? " is-open" : "")}>
+      {row}
+      <span className="me-sig-acts">
+        <button type="button" className={"me-act" + (pinned ? " is-on" : "")} title={pinned ? "Unpin" : "Pin: keep it first until it is done"}
+                aria-label={pinned ? `Unpin ${s.title}` : `Pin ${s.title}`} aria-pressed={pinned || false}
+                onClick={() => onTriage(pinned ? "unpin" : "pin", s)}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill={pinned ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l2.6 5.4 5.9.8-4.3 4.1 1.1 5.9L12 16.4 6.7 19.2l1.1-5.9-4.3-4.1 5.9-.8z" /></svg>
+        </button>
+        <button type="button" className="me-act" title="Dismiss" aria-label={`Dismiss ${s.title}`} aria-haspopup="menu" aria-expanded={menu}
+                onClick={() => setMenu((v) => !v)}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </span>
+      {menu && (
+        <div className="me-menu" role="menu" aria-label="Dismiss">
+          {rules.map((r) => (
+            <button key={r.label} type="button" role="menuitem" className="me-menu-item"
+                    onClick={() => { setMenu(false); onTriage("dismiss", s, r.rule || undefined); }}>{r.label}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
-export function MePage({ data, error, rows = [], projectNames = {}, refreshing, onRefresh, onRetry, onOpenSession, onOpenProject, onOpenPage, onBack }: {
+/**
+ * The steering line: a sentence for the brief, filed under Watch or Not
+ * mine in the profile. The reader is the agent, so any wording works;
+ * the confirmation says where it went and that the next brief reads it.
+ */
+function Steer({ onSteer }: { onSteer: (text: string) => Promise<string> }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState("");
+  const [err, setErr] = useState("");
+  const send = async () => {
+    const t = text.trim();
+    if (!t || busy) return;
+    setBusy(true); setErr(""); setSaid("");
+    try { const section = await onSteer(t); setSaid(`Filed under ${section}. The next brief reads it.`); setText(""); }
+    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+  const to = text.trim() ? steerSection(text) : "";
+  return (
+    <form className="me-steer" onSubmit={(e) => { e.preventDefault(); void send(); }}>
+      <input className="field me-steer-box" value={text} aria-label="Tell the brief what to watch or ignore" disabled={busy}
+             placeholder="Tell the brief what to watch or ignore… (“watch Bradley’s provenance PR”, “ignore uni-route-availability”)"
+             onChange={(e) => { setText(e.target.value); setSaid(""); }} />
+      <button type="submit" className="btn btn-sm" disabled={!text.trim() || busy}>{busy ? "Filing…" : to ? `Add to ${to}` : "Add"}</button>
+      {said && <span className="me-steer-said" role="status">{said}</span>}
+      {err && <span className="err me-steer-said" role="alert">{err}</span>}
+    </form>
+  );
+}
+
+export function MePage({ data, error, rows = [], projectNames = {}, refreshing, onRefresh, onRetry, onOpenSession, onOpenProject, onOpenPage, onBack, onTriage, onSteer }: {
   data: MeData | null; error?: string; rows?: Row[]; projectNames?: Record<string, string>;
   refreshing?: boolean; onRefresh?: () => void; onRetry?: () => void;
   onOpenSession?: (id: string) => void; onOpenProject?: (slug: string) => void; onOpenPage?: (path: string) => void; onBack?: () => void;
+  /** Pin or dismiss a row, with a rule for the profile when the dismissal should teach one. */
+  onTriage?: (action: TriageAction, s: MeSignal, rule?: string) => void;
+  /** A sentence for the brief; resolves to the profile section it was filed under. */
+  onSteer?: (text: string) => Promise<string>;
 }) {
   const [copied, copy] = useCopied();
-  const groups = useMemo(() => groupSignals(data?.signals?.items ?? []), [data?.signals]);
+  const groups = useMemo(() => groupSignals(data?.signals?.items ?? [], data?.triage), [data?.signals, data?.triage]);
+  const pinnedKeys = useMemo(() => new Set(data?.triage?.pinned ?? []), [data?.triage]);
+  const dismissedCount = useMemo(() => {
+    const items = data?.signals?.items ?? [];
+    const d = data?.triage?.dismissed ?? {};
+    return items.filter((i) => signalKey(i) in d).length;
+  }, [data?.signals, data?.triage]);
   const projects = useMemo(() => projectLines(rows, projectNames), [rows, projectNames]);
   const [hot, setHot] = useState<number | null>(null);
   if (!data) {
@@ -133,12 +235,14 @@ export function MePage({ data, error, rows = [], projectNames = {}, refreshing, 
               })}
             </article>
           )}
+          {page && onSteer && data.hasProfile && <Steer onSteer={onSteer} />}
           {groups.map((g) => (
             <section key={g.kind} className="me-group" data-kind={g.kind} aria-label={g.label}>
               <h2 className="eyebrow me-group-h">{g.label} <span className="num">{g.items.length}</span></h2>
-              {g.items.map((s, i) => <Signal key={i} s={s} onOpenSession={onOpenSession} />)}
+              {g.items.map((s) => <Signal key={signalKey(s)} s={s} pinned={pinnedKeys.has(signalKey(s))} onOpenSession={onOpenSession} onTriage={onTriage} />)}
             </section>
           ))}
+          {dismissedCount > 0 && <p className="me-dim me-dismissed">{dismissedCount} dismissed {dismissedCount === 1 ? "row" : "rows"} hidden. Rules you taught are in your profile.</p>}
         </div>
       </section>
 
@@ -198,7 +302,15 @@ export function MeView({ rows, projectNames, onOpenSession, onOpenProject, onOpe
     setRefreshing(true);
     try { await wikiApi.refreshMe(); } finally { setTimeout(() => { setRefreshing(false); void me.reload(); }, 20_000); }
   };
-  return <MePage data={me.data} error={me.err} rows={rows} projectNames={projectNames} refreshing={refreshing}
-                 onRefresh={() => { void refresh(); }} onRetry={me.retry}
+  // Triage lands at once: the answer carries the new file, and the page
+  // shows it before the next poll rather than after.
+  const [triage, setTriage] = useState<MeTriage | null>(null);
+  const data = me.data && triage ? { ...me.data, triage } : me.data;
+  const onTriage = (action: TriageAction, s: MeSignal, rule?: string) => {
+    void wikiApi.triage(action, signalKey(s), rule).then(setTriage).then(() => me.reload());
+  };
+  return <MePage data={data} error={me.err} rows={rows} projectNames={projectNames} refreshing={refreshing}
+                 onRefresh={() => { void refresh(); }} onRetry={me.retry} onTriage={onTriage}
+                 onSteer={(text) => wikiApi.steer(text)}
                  onOpenSession={onOpenSession} onOpenProject={onOpenProject} onOpenPage={onOpenPage} onBack={onBack} />;
 }

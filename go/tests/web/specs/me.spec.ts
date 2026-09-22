@@ -16,7 +16,10 @@ const seed: Record<string, string> = {
     '# Brief\n\nToday is about the demand fix. `gh:asi/uni-nes#7801`\n\n## Since yesterday\n\n- Put up the settlement fix. `gh:asi/uni-nes#7801`\n\n## Today\n\n- Chasing the review. `linear:NME-1462`\n',
   '.bough/wiki/topics/me/signals.json': JSON.stringify({
     asOf: new Date().toISOString(),
-    items: [{ kind: 'needs-you', source: 'gh', title: 'Review comment on the demand fix', note: 'Priya', url: 'https://github.com/asi/uni-nes/pull/7801', at: new Date().toISOString() }],
+    items: [
+      { kind: 'needs-you', source: 'gh', title: 'Review comment on the demand fix', note: 'Priya', url: 'https://github.com/asi/uni-nes/pull/7801', at: new Date().toISOString(), cite: 'gh:asi/uni-nes#7801', repo: 'asi/uni-nes', author: 'priya' },
+      { kind: 'moving', source: 'gh', title: 'Team review request in uni-tmi', url: 'https://github.com/asi/uni-tmi/pull/1575', at: new Date().toISOString(), cite: 'gh:asi/uni-tmi#1575', repo: 'asi/uni-tmi', author: 'someone' },
+    ],
     sources: [{ name: 'gh', ok: true }, { name: 'slack', ok: false, error: 'not connected' }],
   }),
   '.bough/wiki/index.md': '# Wiki index\n',
@@ -79,4 +82,37 @@ test('no profile: the page says what to write and never offers Refresh', async (
   await page.goto(serve.url + '/#/me');
   await expect(page.getByText('Tell the brief whose work this is')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Refresh' })).toHaveCount(0);
+});
+
+// Triage and steering are files: a dismissal lands in triage.json and,
+// with a rule, in the profile's Not mine; a sentence lands under Watch
+// or Not mine. The page hides and reorders at once, before any brief.
+test('dismiss, pin and steer write the triage file and the profile, and the page shows it at once', async ({ serve, page }) => {
+  await page.goto(serve.url + '/#/me');
+  const tmi = page.locator('.me-sig-wrap', { hasText: 'Team review request in uni-tmi' });
+  await expect(tmi).toBeVisible();
+  // Dismiss with a rule about the repo.
+  await tmi.hover();
+  await tmi.getByRole('button', { name: 'Dismiss Team review request in uni-tmi' }).click();
+  await page.getByRole('menuitem', { name: 'Nothing from asi/uni-tmi' }).click();
+  await expect(page.getByText('Team review request in uni-tmi')).toHaveCount(0);
+  await expect(page.getByText('1 dismissed row hidden')).toBeVisible();
+  const me = path.join(serve.home, '.bough', 'wiki', 'topics', 'me');
+  await expect.poll(() => JSON.parse(fs.readFileSync(path.join(me, 'triage.json'), 'utf8')).dismissed['gh:asi/uni-tmi#1575']).toBeTruthy();
+  await expect.poll(() => fs.readFileSync(path.join(me, 'profile.md'), 'utf8')).toContain('nothing from asi/uni-tmi');
+
+  // Pin the other: it leads in a Pinned group.
+  const demand = page.locator('.me-sig-wrap', { hasText: 'Review comment on the demand fix' });
+  await demand.hover();
+  await demand.getByRole('button', { name: 'Pin Review comment on the demand fix' }).click();
+  await expect(page.locator('.me-group[data-kind="pinned"]')).toContainText('Review comment on the demand fix');
+  await expect.poll(() => JSON.parse(fs.readFileSync(path.join(me, 'triage.json'), 'utf8')).pinned).toContain('gh:asi/uni-nes#7801');
+
+  // Steer: an exclusion files under Not mine, and the page says so.
+  const box = page.getByRole('textbox', { name: 'Tell the brief what to watch or ignore' });
+  await box.fill('ignore anything in uni-route-availability');
+  await expect(page.getByRole('button', { name: 'Add to Not mine' })).toBeVisible();
+  await page.getByRole('button', { name: 'Add to Not mine' }).click();
+  await expect(page.getByText('Filed under Not mine. The next brief reads it.')).toBeVisible();
+  await expect.poll(() => fs.readFileSync(path.join(me, 'profile.md'), 'utf8')).toContain('ignore anything in uni-route-availability');
 });

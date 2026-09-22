@@ -1,7 +1,7 @@
 import { expect, mock, test } from "bun:test";
 mock.module("dompurify", () => ({ default: { sanitize: (s: string) => s } }));
 import { renderToStaticMarkup } from "react-dom/server";
-import { MePage, groupSignals, projectLines, standupText } from "../src/me";
+import { MePage, groupSignals, projectLines, signalKey, standupText, steerSection } from "../src/me";
 import type { MeData, MeSignal, WikiBlock } from "../src/wiki";
 import type { Row } from "../src/types";
 
@@ -21,7 +21,7 @@ const blocks: WikiBlock[] = [
 
 const signals: MeSignal[] = [
   { kind: "moving", source: "thread", title: "fix the broken ci", project: "git-ai-enrichment", at: at(1), session: "s1" },
-  { kind: "needs-you", source: "gh", title: "Review comment on the demand fix", note: "Priya", project: "smart-scheduler", at: at(2), url: "https://github.com/x" },
+  { kind: "needs-you", source: "gh", title: "Review comment on the demand fix", note: "Priya", project: "smart-scheduler", at: at(2), url: "https://github.com/x", repo: "asi/uni-nes", author: "priya", cite: "gh:asi/uni-nes#7801" },
   { kind: "done", source: "git", title: "Collector release", at: at(20) },
 ];
 
@@ -29,6 +29,7 @@ const data: MeData = {
   date: "2026-09-21", hasProfile: true, path: "topics/me/briefs/2026-09-21.md", asOf: at(0.2), days: ["2026-09-21", "2026-09-18"],
   page: { path: "topics/me/briefs/2026-09-21.md", topic: "me", title: "Brief, Mon Sep 21", summary: "", updated: "", counts: { cited: 3, inferred: 0, uncited: 0, unsupported: 0, superseded: 0 }, blocks, sessions: [], linkedFrom: [], body: "" },
   signals: { asOf: at(0.2), items: signals, sources: [{ name: "gh", ok: true, at: at(0.2) }, { name: "slack", ok: false, error: "not connected" }] },
+  triage: { dismissed: {}, pinned: [] },
 };
 
 const row = (id: string, project: string, over: Partial<Row> = {}): Row =>
@@ -37,7 +38,8 @@ const row = (id: string, project: string, over: Partial<Row> = {}): Row =>
 const noop = () => {};
 const page = (over: Partial<Parameters<typeof MePage>[0]> = {}) =>
   renderToStaticMarkup(<MePage data={data} rows={[row("a", "smart-scheduler", { status: "needs-you" }), row("b", "smart-scheduler", { status: "running", live: true }), row("c", "nas-event-log")]}
-                               projectNames={{ "smart-scheduler": "SMART scheduler", "nas-event-log": "nas-event-log" }} onRefresh={noop} onRetry={noop} onOpenSession={noop} onOpenProject={noop} onOpenPage={noop} {...over} />);
+                               projectNames={{ "smart-scheduler": "SMART scheduler", "nas-event-log": "nas-event-log" }} onRefresh={noop} onRetry={noop} onOpenSession={noop} onOpenProject={noop} onOpenPage={noop}
+                               onTriage={noop} onSteer={async () => "Watch"} {...over} />);
 
 test("the brief is prose first, then the rows by kind, then the projects", () => {
   const html = page();
@@ -84,12 +86,12 @@ test("the rail counts each project from the fleet and names it", () => {
 });
 
 test("no profile: one explanation and no Refresh; a profile and no brief: one sentence", () => {
-  const none = page({ data: { date: "2026-09-21", hasProfile: false, days: [] } });
+  const none = page({ data: { date: "2026-09-21", hasProfile: false, days: [], triage: { dismissed: {}, pinned: [] } } });
   expect(none).toContain("Tell the brief whose work this is");
   expect(none).not.toContain(">Refresh<");
   expect(none).toContain("Write your profile");
   expect(none).toContain("Sources appear after the first brief.");
-  const empty = page({ data: { date: "2026-09-21", hasProfile: true, days: [] } });
+  const empty = page({ data: { date: "2026-09-21", hasProfile: true, days: [], triage: { dismissed: {}, pinned: [] } } });
   expect(empty).toContain("No brief yet today");
   expect(empty).toContain("Write it now");
   expect(empty).not.toContain("me-brief");
@@ -113,4 +115,39 @@ test("groupSignals keeps the page's order and drops empty kinds; projectLines sk
   expect(projectLines([row("a", "p1"), row("d", "gone")], { p1: "One" }).map((l) => l.slug)).toEqual(["p1"]);
   expect(lines[1].error).toBe(1);
   expect(lines[1].running).toBe(0);
+});
+
+// Triage: a dismissed row is gone, a pinned one leads, and both are the
+// person's word in a file — the page only reads it back.
+test("groupSignals drops dismissed rows and leads with pinned ones", () => {
+  const keys = signals.map(signalKey);
+  expect(keys[1]).toBe("gh:asi/uni-nes#7801");
+  expect(keys[0]).toBe("fix the broken ci"); // no cite, no url: the title
+  const gs = groupSignals(signals, { dismissed: { "gh:asi/uni-nes#7801": "2026-09-21" }, pinned: ["fix the broken ci"] });
+  expect(gs.map((g) => g.kind)).toEqual(["pinned", "done"]);
+  expect(gs[0].items[0].title).toBe("fix the broken ci");
+  expect(groupSignals(signals, { dismissed: {}, pinned: [] }).map((g) => g.kind)).toEqual(["needs-you", "moving", "done"]);
+});
+
+test("each row offers pin and dismiss, a dismissal can teach a rule about its repo or author, and hidden rows are counted", () => {
+  const html = page();
+  expect(html).toContain('aria-label="Pin Review comment on the demand fix"');
+  expect(html).toContain('aria-label="Dismiss Review comment on the demand fix"');
+  expect(html).toContain("Tell the brief what to watch or ignore");
+  const hidden = page({ data: { ...data, triage: { dismissed: { "gh:asi/uni-nes#7801": "2026-09-21" }, pinned: ["fix the broken ci"] } } });
+  expect(hidden).not.toContain("Review comment on the demand fix");
+  expect(hidden).toContain("1 dismissed row hidden");
+  expect(hidden).toContain('data-kind="pinned"');
+  expect(hidden).toContain('aria-pressed="true"');
+  // Without the profile there is nothing to steer.
+  const none = page({ data: { ...data, hasProfile: false } });
+  expect(none).not.toContain("Tell the brief what to watch");
+});
+
+test("steerSection files exclusions under Not mine and the rest under Watch", () => {
+  expect(steerSection("ignore anything in uni-route-availability")).toBe("Not mine");
+  expect(steerSection("  Skip dependabot")).toBe("Not mine");
+  expect(steerSection("don't show nm-backend team requests")).toBe("Not mine");
+  expect(steerSection("watch Bradley's provenance change")).toBe("Watch");
+  expect(steerSection("the relay PR until it merges")).toBe("Watch");
 });

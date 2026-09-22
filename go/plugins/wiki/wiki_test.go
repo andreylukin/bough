@@ -2,6 +2,7 @@ package wiki
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -369,5 +370,68 @@ func TestCheckAcceptsExternalCitations(t *testing.T) {
 	probs, _ = Check(p)
 	if len(probs) == 0 || !strings.Contains(probs[len(probs)-1].Msg, "does not exist") {
 		t.Fatalf("unknown source passed: %v", probs)
+	}
+}
+
+func TestTriageAndSteer(t *testing.T) {
+	p := testPaths(t)
+	s := &Store{p: p}
+	now := time.Date(2026, 9, 22, 9, 0, 0, 0, time.UTC)
+	// No file: empty, and marking creates it.
+	if tr := s.Triage(); len(tr.Dismissed) != 0 || len(tr.Pinned) != 0 {
+		t.Fatalf("empty triage = %+v", tr)
+	}
+	if _, err := s.Mark("dismiss", "gh:asi/x#1", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Mark("pin", "gh:asi/y#2", now); err != nil {
+		t.Fatal(err)
+	}
+	tr := s.Triage()
+	if tr.Dismissed["gh:asi/x#1"] != "2026-09-22" || len(tr.Pinned) != 1 || tr.Pinned[0] != "gh:asi/y#2" {
+		t.Fatalf("triage = %+v", tr)
+	}
+	// Pinning a dismissed key undismisses it; dismissing a pinned key unpins it.
+	if _, err := s.Mark("pin", "gh:asi/x#1", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Mark("dismiss", "gh:asi/y#2", now); err != nil {
+		t.Fatal(err)
+	}
+	tr = s.Triage()
+	if _, gone := tr.Dismissed["gh:asi/x#1"]; gone || tr.Dismissed["gh:asi/y#2"] == "" || len(tr.Pinned) != 1 || tr.Pinned[0] != "gh:asi/x#1" {
+		t.Fatalf("after swap = %+v", tr)
+	}
+	if _, err := s.Mark("shrug", "k", now); err == nil {
+		t.Fatal("unknown action accepted")
+	}
+	if _, err := s.Mark("pin", " ", now); err == nil {
+		t.Fatal("empty key accepted")
+	}
+
+	// Steering needs a profile.
+	if _, err := s.Steer("watch the relay PR", now); !errors.Is(err, ErrNoProfile) {
+		t.Fatalf("steer without profile: %v", err)
+	}
+	if err := os.WriteFile(p.profile(), []byte("# Me\n\nSRE.\n\n## Mine\n\n- my repos\n\n## Watch\n\n- old item\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if sec, err := s.Steer("Ignore anything in uni-route-availability", now); err != nil || sec != SectionNotMine {
+		t.Fatalf("steer ignore = %q %v", sec, err)
+	}
+	if sec, err := s.Steer("watch Bradley's provenance change until it merges", now); err != nil || sec != SectionWatch {
+		t.Fatalf("steer watch = %q %v", sec, err)
+	}
+	if err := s.Rule("nothing from dependabot", now); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(p.profile())
+	got := string(b)
+	want := "# Me\n\nSRE.\n\n## Mine\n\n- my repos\n\n## Watch\n\n- old item\n- watch Bradley's provenance change until it merges (added 2026-09-22)\n\n## Not mine\n\n- Ignore anything in uni-route-availability (added 2026-09-22)\n- nothing from dependabot (added 2026-09-22)\n"
+	if got != want {
+		t.Fatalf("profile =\n%s\nwant\n%s", got, want)
+	}
+	if _, err := s.Steer("   ", now); err == nil {
+		t.Fatal("blank steer accepted")
 	}
 }

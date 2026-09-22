@@ -224,6 +224,8 @@ func NewAPI(sup *Supervisor) *API {
 	a.mux.HandleFunc("POST /api/wiki/ingest", a.wikiIngest)
 	a.mux.HandleFunc("GET /api/me", a.me)
 	a.mux.HandleFunc("POST /api/me/refresh", a.meRefresh)
+	a.mux.HandleFunc("POST /api/me/triage", a.meTriage)
+	a.mux.HandleFunc("POST /api/me/steer", a.meSteer)
 	// The UI, on EXACT paths only. A catch-all "GET /" would match a
 	// wrong-method request to a real API route (GET on a POST-only
 	// path), and ServeMux then serves the page instead of the 405 it

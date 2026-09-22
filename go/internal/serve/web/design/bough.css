@@ -4268,4 +4268,20 @@ button.me-sig:hover,a.me-sig:hover{background:var(--hover)}
 .me-src-off .link{font-size:var(--fs-sm)}
 .me-day{display:block;margin:0 0 var(--s-1);font-size:var(--fs-sm)}
 @media (max-width:1080px){.me-rail{display:none}}
+/* Triage: pin and dismiss beside a row, a menu for the rule a dismissal
+   teaches, and the steering line above the groups. */
+.me-sig-wrap{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center}
+.me-sig-acts{display:inline-flex;gap:2px;opacity:0;transition:opacity .12s}
+.me-sig-wrap:hover .me-sig-acts,.me-sig-wrap:focus-within .me-sig-acts,.me-sig-wrap.is-open .me-sig-acts,.me-act.is-on{opacity:1}
+@media (hover:none){.me-sig-acts{opacity:1}}
+.me-act{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:0;border-radius:var(--r-xs);background:none;color:var(--text-3);cursor:pointer}
+.me-act:hover{color:var(--text-1);background:var(--hover)}
+.me-act.is-on{color:var(--amber)}
+.me-menu{position:absolute;right:0;top:100%;z-index:var(--z-pop);min-width:14rem;padding:var(--s-1);background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--r-sm);box-shadow:var(--shadow-pop);display:flex;flex-direction:column}
+.me-menu-item{padding:var(--s-1) var(--s-2);border:0;border-radius:var(--r-xs);background:none;color:var(--text-1);font:var(--fs-md) var(--sans);text-align:start;cursor:pointer}
+.me-menu-item:hover{background:var(--hover)}
+.me-steer{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:var(--s-2);align-items:center;max-width:80ch;margin:0 0 var(--s-4)}
+.me-steer-box{height:32px;padding:0 var(--s-3);font:var(--fs-md)/1 var(--sans)}
+.me-steer-said{grid-column:1/-1;font-size:var(--fs-sm);color:var(--text-3)}
+.me-dismissed{margin:var(--s-2) 0 0}
 /* /ME */

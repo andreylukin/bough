@@ -121,6 +121,8 @@ type Me struct {
 	Signals json.RawMessage `json:"signals,omitempty"`
 	// Days is every brief on disk, newest first, as dates.
 	Days []string `json:"days"`
+	// Triage is what the person said about the rows: dismissed and pinned keys.
+	Triage Triage `json:"triage"`
 }
 
 // Me reads the brief for the page. It never writes.
@@ -151,5 +153,6 @@ func (s *Store) Me(now time.Time) Me {
 	if b, err := os.ReadFile(filepath.Join(s.p.me(), "signals.json")); err == nil && json.Valid(b) {
 		m.Signals = json.RawMessage(b)
 	}
+	m.Triage = s.Triage()
 	return m
 }
