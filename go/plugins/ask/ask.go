@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andreylukin/bough/internal/agenttools"
 	"github.com/andreylukin/bough/internal/projectdef"
 	"github.com/andreylukin/bough/internal/secrets"
 	"github.com/andreylukin/bough/kernel"
@@ -82,8 +83,28 @@ func (a *Asker) ask(question string, options ...string) (string, error) {
 	return a.put(question, false, options...)
 }
 
-// put asks one question; secret marks the answer as a credential.
+// put asks one question from a codemode block; secret marks the answer
+// as a credential.
 func (a *Asker) put(question string, secret bool, options ...string) (string, error) {
+	// The run's context: a cancelled turn (ctrl+c) must release the
+	// blocked call — goja cannot interrupt a Go host call.
+	done := context.Background().Done()
+	if rc, ok := a.code.(interface{ RunContext() context.Context }); ok {
+		done = rc.RunContext().Done()
+	}
+	// Park (codemode) also frees the VM while the user thinks: a
+	// /model swap remounts rows that register tools on it.
+	park := a.code.Pause
+	if p, ok := a.code.(interface{ Park() func() }); ok {
+		park = p.Park
+	}
+	return a.putIn(done, park, question, secret, options...)
+}
+
+// putIn asks one question and blocks until the answer, the timeout, or
+// done. park (nil for a native call, which holds no VM) is released for
+// the wait.
+func (a *Asker) putIn(done <-chan struct{}, park func() func(), question string, secret bool, options ...string) (string, error) {
 	if strings.TrimSpace(question) == "" {
 		return "", fmt.Errorf("ask: question is empty")
 	}
@@ -110,19 +131,9 @@ func (a *Asker) put(question string, secret bool, options ...string) (string, er
 	}
 	a.emit(Event{Kind: "ask", Text: question, ID: id, Options: options, Secret: secret})
 
-	// The run's context: a cancelled turn (ctrl+c) must release the
-	// blocked call — goja cannot interrupt a Go host call.
-	done := context.Background().Done()
-	if rc, ok := a.code.(interface{ RunContext() context.Context }); ok {
-		done = rc.RunContext().Done()
+	if park != nil {
+		defer park()()
 	}
-	// Park (codemode) also frees the VM while the user thinks: a
-	// /model swap remounts rows that register tools on it.
-	park := a.code.Pause
-	if p, ok := a.code.(interface{ Park() func() }); ok {
-		park = p.Park
-	}
-	defer park()()
 	select {
 	case <-done:
 		a.mu.Lock()
@@ -146,6 +157,12 @@ func (a *Asker) put(question string, secret bool, options ...string) (string, er
 // in the keychain and reference it from project.yml. The value is
 // never returned, recorded or put in an error.
 func (a *Asker) askSecret(name, reason string, project ...string) (string, error) {
+	return a.secretVia(func(q string) (string, error) { return a.put(q, true) }, name, reason, project...)
+}
+
+// secretVia is askSecret with the question put through ask: a codemode
+// block's put, or a native call's.
+func (a *Asker) secretVia(ask func(question string) (string, error), name, reason string, project ...string) (string, error) {
 	if !secretName.MatchString(name) {
 		return "", fmt.Errorf("secret: invalid name %q", name)
 	}
@@ -163,7 +180,7 @@ func (a *Asker) askSecret(name, reason string, project ...string) (string, error
 	if _, err := projectdef.Load(home, slug); err != nil {
 		return "", fmt.Errorf("secret: %w", err)
 	}
-	value, err := a.put(fmt.Sprintf("Secret %s for %s: %s", name, slug, reason), true)
+	value, err := ask(fmt.Sprintf("Secret %s for %s: %s", name, slug, reason))
 	if err != nil {
 		return "", fmt.Errorf("secret: %w", err)
 	}
@@ -282,6 +299,13 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	code.RegisterTool("secret", a.askSecret)
 	if d, ok := code.(interface{ Describe(name, line string) }); ok {
 		d.Describe("secret", `tools.secret(name, reason, project?) asks the user for a credential, stores it in the keychain and adds it to project.yml secrets. The value is not returned to you, but commands see it as env, so never print it.`)
+	}
+	if at, err := kernel.Get[agenttools.Registry](ctx, "agent-tools"); err == nil {
+		off, err := agenttools.RegisterAll(at, a.nativeTools()...)
+		if err != nil {
+			return fmt.Errorf("ask: %w", err)
+		}
+		ctx.Effect(off)
 	}
 	ctx.Provide("ask-answers", a)
 	return nil
