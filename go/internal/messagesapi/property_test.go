@@ -14,28 +14,8 @@ import (
 	"pgregory.net/rapid"
 
 	"github.com/andreylukin/bough/internal/unreal/fake"
+	"github.com/andreylukin/bough/internal/unreal/prompt"
 )
-
-// localPlaceholder and localWrap are a copy of prompt.Wrap's two
-// substitutions (W5 owns the real one): the frozen system text in
-// Input[0], and the placeholder text for a still-running result.
-// Replace with prompt.Wrap at integration.
-const localPlaceholder = "This call is still running. Its result arrives later, possibly as a <tool_result call_id=…> block in a user message. Keep working on something independent, or end your reply to wait for it."
-
-func localWrap(r ullm.Request, system string) ullm.Request {
-	in := slices.Clone(r.Input)
-	if len(in) > 0 {
-		in[0] = ullm.Item{Type: ullm.ItemMessage, Data: ullm.Message{Role: ullm.RoleSystem, Text: system}}
-	}
-	for i, it := range in {
-		res, ok := it.Data.(ullm.ToolResult)
-		if ok && len(res.Output) == 1 && res.Output[0].Kind == ullm.ToolResultText && res.Output[0].Value == contextbuilder.ToolCallRunningPayload {
-			in[i] = ullm.Item{Type: ullm.ItemToolResult, Data: ullm.ToolResult{CallID: res.CallID, Output: []ullm.ToolResultOutput{{Kind: ullm.ToolResultText, Value: localPlaceholder}}}}
-		}
-	}
-	r.Input = in
-	return r
-}
 
 // wireMessages is each rendered message as JSON with cache_control
 // stripped: markers move every request by design; nothing else may.
@@ -85,7 +65,7 @@ func blocks(m map[string]any) []string {
 func TestRenderIsAppendOnly(t *testing.T) {
 	t.Parallel()
 	rapid.Check(t, func(rt *rapid.T) {
-		b := contextbuilder.NewBuilder()
+		b := prompt.Wrap(contextbuilder.NewBuilder(), "frozen system prompt", prompt.Placeholder)
 		b.SetModel(ullm.Model{ID: "claude-opus-5-5"})
 		b.AddTool(bash)
 		inputs, calls := 0, 0
@@ -141,7 +121,7 @@ func TestRenderIsAppendOnly(t *testing.T) {
 			if err != nil {
 				rt.Fatal(err)
 			}
-			req := localWrap(built.Request, "frozen system prompt")
+			req := built.Request
 			msgs, raw := wireMessages(rt, req)
 			b.Commit() // the coordinator commits when it records the turn
 
