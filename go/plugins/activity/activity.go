@@ -123,19 +123,33 @@ func (plugin) Apply(kctx *kernel.Context, cfg map[string]any) error {
 		kctx.Emit("loop/event", loop.Event{Kind: "activity", Text: text})
 	}
 	kctx.On("loop/event", func(p any) {
-		ev, ok := p.(loop.Event)
-		if !ok {
-			return
-		}
-		switch ev.Kind {
-		case "code":
-			go a.label(ev.Text)
-		case "done":
-			a.mu.Lock()
-			a.gen++ // a label still in flight must not outlive the turn
-			a.mu.Unlock()
-			a.emit("") // the turn is over; the line goes back to the usual
+		if ev, ok := p.(loop.Event); ok {
+			a.on(ev)
 		}
 	})
 	return nil
+}
+
+// on starts a label for each program (or engine call) the agent starts,
+// and retires the line when the turn ends.
+func (a *Activity) on(ev loop.Event) {
+	switch ev.Kind {
+	case "code":
+		go a.label(ev.Text)
+	case "call":
+		// On the engine a tool call is the step (no code block runs
+		// around it), so its start is what gets a label. Written as
+		// the call it is, the labeller reads it like any program.
+		// A loop block's per-call starts (numeric ids) are inside a
+		// program already labelled.
+		if _, native := ev.Data["id"].(string); native && ev.Data["phase"] == "start" {
+			tool, _ := ev.Data["tool"].(string)
+			go a.label(fmt.Sprintf("tools.%s(%q)", tool, ev.Text))
+		}
+	case "done":
+		a.mu.Lock()
+		a.gen++ // a label still in flight must not outlive the turn
+		a.mu.Unlock()
+		a.emit("") // the turn is over; the line goes back to the usual
+	}
 }

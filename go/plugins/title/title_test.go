@@ -102,6 +102,29 @@ func TestTurns(t *testing.T) {
 	}
 }
 
+// An engine turn has no code blocks: its native calls (string ids) are
+// the steps, named by tool and detail with their exit or error. A loop
+// block's per-call rows (numeric ids) stay out: the block counted.
+func TestTurnsEngineCalls(t *testing.T) {
+	t.Parallel()
+	ts := Turns([]history.Entry{
+		input("fix the build"),
+		e("call", map[string]any{"text": "go build ./...", "id": "c1", "tool": "bash", "exit": 1.0}),
+		e("call", map[string]any{"text": "go/a.go", "id": "c2", "tool": "patch", "add": 1.0}),
+		e("call", map[string]any{"text": "nope.go", "id": "c3", "tool": "view", "error": "no such file"}),
+		e("call", map[string]any{"text": "ls", "id": 1.0, "tool": "bash", "exit": 0.0}),
+		e("assistant", map[string]any{"text": "fixed"}),
+		done(),
+	})
+	if len(ts) != 1 {
+		t.Fatalf("%d turns: %+v", len(ts), ts)
+	}
+	want := "bash: go build ./... → exit 1|patch: go/a.go|view: nope.go → error: no such file"
+	if got := strings.Join(ts[0].Calls, "|"); got != want {
+		t.Fatalf("calls = %q, want %q", got, want)
+	}
+}
+
 func TestTurnInput(t *testing.T) {
 	tr := Turn{Ask: "go", End: "done", Reply: "ok"}
 	for i := range 15 {

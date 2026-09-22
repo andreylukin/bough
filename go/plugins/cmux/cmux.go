@@ -177,7 +177,7 @@ func (n *Namer) Clear() {
 // history's last input entry.
 func (n *Namer) Event(kind, text string, lastPrompt func() string) {
 	switch kind {
-	case "assistant-delta", "thinking-delta", "thinking", "assistant", "code", "result", "steer":
+	case "assistant-delta", "thinking-delta", "thinking", "assistant", "code", "result", "steer", "call":
 		n.mu.Lock()
 		was := n.running
 		n.running = true

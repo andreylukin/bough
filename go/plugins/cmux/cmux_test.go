@@ -105,6 +105,24 @@ func TestEventDrivesPillAndDescription(t *testing.T) {
 	}
 }
 
+// An engine turn can open on a native call with no text or code before
+// it: that call is the first content, and flips the pill to working.
+func TestEventCallStartsWorking(t *testing.T) {
+	r := newRecorder("")
+	prompt := func() string { return "run the tests" }
+	r.Event("call", "go test ./...", prompt)
+	r.Event("done", "", prompt)
+	calls := r.settled(t)
+	want := []string{
+		"set-status bough working --workspace workspace:2 --icon bolt.fill --color #ff9500 --priority 80",
+		"workspace-action --workspace workspace:2 --action set-description --description run the tests",
+		"set-status bough done · waiting for you --workspace workspace:2 --icon checkmark.circle.fill --color #34c759 --priority 80",
+	}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls:\n%s\nwant:\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
+	}
+}
+
 // A question flips the pill to asking; the answer's content brings it
 // back to working. Esc shows stopped.
 func TestEventAskAndCancel(t *testing.T) {
