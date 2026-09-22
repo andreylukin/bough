@@ -38,6 +38,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andreylukin/bough/internal/agenttools"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/web"
@@ -797,6 +798,13 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			code.RegisterTool(n, nil)
 		}
 	})
+	if at, err := kernel.Get[agenttools.Registry](ctx, "agent-tools"); err == nil {
+		off, err := agenttools.RegisterAll(at, s.nativeTools()...)
+		if err != nil {
+			return fmt.Errorf("artifacts: %w", err)
+		}
+		ctx.Effect(off)
+	}
 	if n, err := kernel.Get[notifier](ctx, "job-notices"); err == nil {
 		s.notify = n.Notify
 	}
