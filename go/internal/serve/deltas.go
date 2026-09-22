@@ -27,18 +27,51 @@ import (
 // collapses a burst into a single frame.
 const deltaWindow = 50 * time.Millisecond
 
+// A call-delta is a running native call's live output (the engine's
+// boughcall Progress). It is a fragment the recorded "call" entry
+// supersedes, exactly like reply text, so it takes the same path.
 func isDelta(kind string) bool {
-	return kind == "assistant-delta" || kind == "thinking-delta"
+	return kind == "assistant-delta" || kind == "thinking-delta" || kind == "call-delta"
 }
 
 // deltaRun is one uninterrupted stretch of a single delta kind.
 // Thinking and assistant text interleave within a turn, so the runs
 // are kept in arrival order rather than merged into one buffer per
 // kind — otherwise a flush would reorder the reply against its own
-// reasoning.
+// reasoning. A call-delta run also belongs to one call (call): with
+// several calls running at once their output interleaves, and merged
+// it would land under whichever row the first fragment named.
 type deltaRun struct {
 	kind string
+	call string
 	text strings.Builder
+}
+
+// deltaCall is the call a call-delta belongs to; "" for reply text.
+func deltaCall(kind string, extra map[string]any) string {
+	if kind != "call-delta" {
+		return ""
+	}
+	v, _ := extra["id"].(string)
+	return v
+}
+
+// dropTextDeltasLocked discards buffered reply text that a
+// "delta-reset" says was superseded (a retry, or a newer request): sent
+// now, the browser would draw it only to clear it on the next frame.
+// Call output is unaffected. Caller holds s.mu.
+func (s *Supervisor) dropTextDeltasLocked(id string) {
+	st := s.deltas[id]
+	if st == nil {
+		return
+	}
+	kept := st.runs[:0]
+	for _, r := range st.runs {
+		if r.kind == "call-delta" {
+			kept = append(kept, r)
+		}
+	}
+	st.runs = kept
 }
 
 type deltaState struct {
@@ -48,7 +81,7 @@ type deltaState struct {
 
 // bufferDeltaLocked accumulates a delta and arms the flush. Caller
 // holds s.mu.
-func (s *Supervisor) bufferDeltaLocked(id, kind, text string) {
+func (s *Supervisor) bufferDeltaLocked(id, kind, text string, extra map[string]any) {
 	if text == "" {
 		return
 	}
@@ -57,10 +90,11 @@ func (s *Supervisor) bufferDeltaLocked(id, kind, text string) {
 		st = &deltaState{}
 		s.deltas[id] = st
 	}
-	if n := len(st.runs); n > 0 && st.runs[n-1].kind == kind {
+	call := deltaCall(kind, extra)
+	if n := len(st.runs); n > 0 && st.runs[n-1].kind == kind && st.runs[n-1].call == call {
 		st.runs[n-1].text.WriteString(text)
 	} else {
-		r := &deltaRun{kind: kind}
+		r := &deltaRun{kind: kind, call: call}
 		r.text.WriteString(text)
 		st.runs = append(st.runs, r)
 	}
@@ -93,6 +127,10 @@ func (s *Supervisor) flushDeltasLocked(id string) {
 		// the supervisor's per-session sequence, and writeEvent leaves
 		// the SSE id line off entirely so a reconnecting EventSource
 		// never resumes from a delta.
-		s.fanoutLocked(id, Event{Session: id, Seq: 0, At: now, Kind: r.kind, Text: r.text.String()})
+		ev := Event{Session: id, Seq: 0, At: now, Kind: r.kind, Text: r.text.String()}
+		if r.kind == "call-delta" {
+			ev.Extra = map[string]any{"id": r.call}
+		}
+		s.fanoutLocked(id, ev)
 	}
 }

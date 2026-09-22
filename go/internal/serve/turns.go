@@ -52,9 +52,43 @@ func turnTests(entries []history.Entry) map[int]*TurnTest {
 			if ok && testCmd.MatchString(code) {
 				out[turn] = &TurnTest{Cmd: testCmd.FindString(code), Exit: int(exit)}
 			}
+		default:
+			if cmd, exit, ok := callTest(e); ok {
+				out[turn] = &TurnTest{Cmd: testCmd.FindString(cmd), Exit: exit}
+			}
 		}
 	}
 	return out
+}
+
+// callTest reads a test run off an engine session's native bash call:
+// there is no code block to read the command from, so the call entry
+// carries the full command (cmd) and its exit. Only the engine writes
+// cmd; a loop session's per-call rows are detail inside a block whose
+// code/result pair already counts, and must not count twice.
+func callTest(e history.Entry) (cmd string, exit int, ok bool) {
+	if e.Kind != "call" {
+		return "", 0, false
+	}
+	if tool, _ := e.Data["tool"].(string); tool != "bash" {
+		return "", 0, false
+	}
+	if cmd, _ = e.Data["cmd"].(string); cmd == "" {
+		return "", 0, false
+	}
+	var x float64
+	switch n := e.Data["exit"].(type) {
+	case float64:
+		x = n
+	case int:
+		x = float64(n)
+	default:
+		return "", 0, false
+	}
+	if !testCmd.MatchString(cmd) {
+		return "", 0, false
+	}
+	return cmd, int(x), true
 }
 
 func (a *API) turns(w http.ResponseWriter, r *http.Request) {

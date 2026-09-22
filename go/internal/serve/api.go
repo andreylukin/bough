@@ -692,7 +692,9 @@ func lastModel(entries []history.Entry) string {
 			}
 			continue
 		}
-		if entries[i].Kind != "assistant" {
+		// An engine session names its model on the quiet "engine" entry
+		// it writes at every coordinator build, before any reply.
+		if entries[i].Kind != "assistant" && entries[i].Kind != "engine" {
 			continue
 		}
 		if m, ok := entries[i].Data["model"].(string); ok && m != "" {

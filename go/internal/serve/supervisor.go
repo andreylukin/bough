@@ -755,9 +755,11 @@ func (s *Supervisor) emit(ch *child, kind, text string, extra map[string]any) {
 	case "input", "steer":
 		ch.unread = false
 		s.releaseLocked(ch)
-	case "assistant-delta", "thinking-delta", "assistant", "thinking", "code", "result":
+	case "assistant-delta", "thinking-delta", "assistant", "thinking", "code", "result", "call", "call-delta":
 		// The real headless child never prints "input": its first
-		// output is the sign the prompt became a turn.
+		// output is the sign the prompt became a turn. On the engine a
+		// turn can open on a native call with no code block around it,
+		// and a Stop would otherwise be held while ch.unread is set.
 		if ch.unread {
 			ch.unread = false
 			s.releaseLocked(ch)
@@ -802,7 +804,17 @@ func metaSession(extra map[string]any) string {
 // the armed ask and fans out. Caller holds s.mu.
 func (s *Supervisor) emitLocked(id, kind, text string, extra map[string]any) {
 	if isDelta(kind) {
-		s.bufferDeltaLocked(id, kind, text)
+		s.bufferDeltaLocked(id, kind, text, extra)
+		return
+	}
+	if kind == "delta-reset" {
+		// The engine's reset of streamed text a retry or a newer request
+		// replaced. Live only, like the fragments it clears: it never
+		// enters the ring, or a late joiner would replay a reset of text
+		// it never saw.
+		s.dropTextDeltasLocked(id)
+		s.flushDeltasLocked(id)
+		s.fanoutLocked(id, Event{Session: id, Seq: 0, At: time.Now(), Kind: kind, Text: text, Extra: extra})
 		return
 	}
 	// Anything recorded supersedes the fragments that led to it, so
