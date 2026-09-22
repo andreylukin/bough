@@ -47,6 +47,14 @@
 - id: cost
   plugin: cost
 
+# Native tool registry: each tool row registers its tools here as well
+# as into codemode. Inert under the loop; the engine-unreal row calls
+# them as native tools (docs/unreal-engine.md §6.2). It mounts before
+# codemode, which registers run_js here: a registry landing after it
+# would remount codemode, and a new VM remounts every tool row.
+- id: agent-tools
+  plugin: agent-tools
+
 - id: codemode
   plugin: codemode
 
@@ -55,12 +63,6 @@
 # bough.command.
 - id: commands
   plugin: commands
-
-# Native tool registry: each tool row registers its tools here as well
-# as into codemode. Inert under the loop; the engine-unreal row calls
-# them as native tools (docs/unreal-engine.md §6.2).
-- id: agent-tools
-  plugin: agent-tools
 
 # What is true about this session, for plugins: id, title, model and
 # provider, tokens and cost, context fill, turn count. Go rows Get the
