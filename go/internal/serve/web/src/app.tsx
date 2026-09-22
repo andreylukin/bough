@@ -12,7 +12,7 @@ import { DialogHost, askChoice, askConfirm, askText, showShortcuts } from "./dia
 import { focusComposerKey, isMac, newSessionKey, sheetKey, switchKey, treeKey } from "./keys";
 import { Welcome, welcomeDismissed } from "./welcome";
 import { clampToViewport } from "./popover";
-import { Markdown, programRan, codeLabel, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, cleanError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
+import { Markdown, programRan, codeLabel, callVerb, callFailed, callsHeadline, callStep, isCall, presentTense, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, cleanError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
 import { agentWakeNotes, agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
@@ -1343,6 +1343,7 @@ function AnswerActs({ line, body }: { line: Line; body: string }) {
 export function Entry({ line, codes, nested, until }: { line: Line; codes: string[]; nested?: boolean; /** When the next entry landed: a thinking block's end. */ until?: string }) {
   const footSeq = useContext(FootAnswer);
   const k = line.kind;
+  if (isCall(line)) return <CallRows calls={[line]} nested />;
   if (k === "assistant" || k === "sub:assistant") {
     // The loop's "blocks dropped" marker is a notice about the reply, not part of it.
     const { text: said, note } = splitExecNote(line.text);
@@ -1733,11 +1734,71 @@ export function runSummary(codes: string[], facts: CallFacts[], turnEdits?: Chan
   return { label: `Edited ${names}`, add, del, rest: rest.join(" · ") };
 }
 
-function callFacts(code: Line, result?: Line): CallFacts {
+function callFacts(code: Line, result?: Line, calls: Line[] = []): CallFacts {
   const call = parseCall(code.text);
   const exit = typeof result?.data?.exit === "number" ? (result.data.exit as number) : undefined;
   const ms = typeof result?.data?.ms === "number" ? (result.data.ms as number) : undefined;
-  return { verb: call.verb, gist: gistOf(call.gist), cmd: gistOf(call.target || call.gist), exit, ms, failed: (exit !== undefined && exit !== 0) || Boolean(thrownError(result)) };
+  const failed = (exit !== undefined && exit !== 0) || Boolean(thrownError(result));
+  // Recorded calls name the block by what it actually did; the first one
+  // leads, and " +N" says how many more there were (the gist convention).
+  if (calls.length) {
+    const first = calls[0];
+    const gist = first.text + (calls.length > 1 ? ` +${calls.length - 1}` : "");
+    return { verb: callVerb(String(first.data?.tool ?? "")), gist, cmd: first.text, exit, ms, failed };
+  }
+  return { verb: call.verb, gist: gistOf(call.gist), cmd: gistOf(call.target || call.gist), exit, ms, failed };
+}
+
+/** "+3 −1 · 40ms · exit 1": one call row's evidence, from its record. */
+function CallMeta({ line }: { line: Line }) {
+  const d = line.data ?? {};
+  const ms = typeof d.ms === "number" ? d.ms : undefined;
+  const add = typeof d.add === "number" ? d.add : 0, del = typeof d.del === "number" ? d.del : 0;
+  const exit = typeof d.exit === "number" ? d.exit : undefined;
+  return (
+    <span className="num call-meta">
+      {add > 0 && <span className="rt-add">+{add}</span>}{del > 0 && <span className="rt-del">−{del}</span>}
+      {ms !== undefined && <span>{ms < 1000 ? "<1s" : duration(ms)}</span>}
+      {exit !== undefined && exit !== 0 && <span className="tool-meta-failed">exit {exit}</span>}
+    </span>
+  );
+}
+
+/**
+ * The calls a block made, one row each, as they were recorded: what ran,
+ * what it cost, and for the one that failed, why. While the block runs
+ * the call in flight sits last with a spinner, so progress streams in a
+ * step at a time instead of appearing all at once with the result.
+ */
+export function CallRows({ calls, running, nested }: { calls: Line[]; running?: RunningCall | null; nested?: boolean }) {
+  if (!calls.length && !running) return null;
+  return (
+    <ol className={"call-rows" + (nested ? " call-rows-nested" : "")}>
+      {calls.map((l) => {
+        const failed = callFailed(l);
+        const why = typeof l.data?.error === "string" ? firstLine(cleanError(l.data.error)) : "";
+        return (
+          <li key={l.seq} className={"call-row" + (failed ? " call-row-failed" : "")}>
+            <span className="call-mark" aria-hidden="true">{failed ? "✕" : "✓"}</span>
+            <span className="call-verb">{callVerb(String(l.data?.tool ?? ""))}</span>
+            <span className="mono call-detail" title={l.text}>{l.text}</span>
+            {why && <span className="call-why" title={why}>{why}</span>}
+            <CallMeta line={l} />
+          </li>
+        );
+      })}
+      {running && (
+        <li className="call-row call-row-running">
+          <span className="call-mark" aria-hidden="true">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="spin-mark"><circle cx="12" cy="12" r="8.5" strokeDasharray="40 14" /></svg>
+          </span>
+          <span className="call-verb">{presentTense(callVerb(running.tool))}</span>
+          <span className="mono call-detail" title={running.detail}>{running.detail}</span>
+          <span className="num call-meta"><Elapsed since={running.at} title="Running" /></span>
+        </li>
+      )}
+    </ol>
+  );
 }
 
 /** Fired when a turn starts or output streams in; open output cards close. */
@@ -1907,16 +1968,20 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned, turnEdi
     if (used.has(i)) continue;
     if (l.kind === "code") {
       let result: Line | undefined;
+      // The block's own calls: every call row recorded after it, up to its result.
+      const calls: Line[] = [];
       for (let j = i + 1; j < lines.length; j++) {
         const r = lines[j];
+        if (r.kind === "call" && !used.has(j)) { calls.push(r); used.add(j); continue; }
+        if (r.kind === "code") break;
         if (r.kind !== "result" || used.has(j)) continue;
         const code = str(r.data?.code);
         if (code ? code.trim() === l.text.trim() : j === i + 1) { result = r; used.add(j); break; }
       }
-      const f = callFacts(l, result);
+      const f = callFacts(l, result, calls);
       facts.push(f);
       if (!f.failed) okCodes.push(l.text);
-      rows.push(<ToolCall key={l.seq} code={l} result={result} live={live} stopped={stopped} current={failSeq !== undefined && result?.seq === failSeq} spawned={spawned} />);
+      rows.push(<ToolCall key={l.seq} code={l} result={result} calls={calls} live={live} stopped={stopped} current={failSeq !== undefined && result?.seq === failSeq} spawned={spawned} />);
     } else if (l.kind === "job") {
       // Consecutive job rows share one head.
       let j = i;
@@ -1993,8 +2058,22 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned, turnEdi
  * was done and how much it printed; opened, the program and its output
  * sit together, with the raw call one level further in.
  */
-export function ToolCall({ code, result, live, stopped, current, spawned }: { code: Line; result?: Line; /** Its turn is still running. */ live?: boolean; stopped?: boolean; /** The failure its turn ended on: open, with the diagnosis. */ current?: boolean; /** The subagent card it started, when that has a result. */ spawned?: Worker }) {
+export function ToolCall({ code, result, calls = [], live, stopped, current, spawned }: { code: Line; result?: Line; /** The block's recorded calls, in order. */ calls?: Line[]; /** Its turn is still running. */ live?: boolean; stopped?: boolean; /** The failure its turn ended on: open, with the diagnosis. */ current?: boolean; /** The subagent card it started, when that has a result. */ spawned?: Worker }) {
   const call = useMemo(() => parseCall(code.text), [code.text]);
+  // The call in flight belongs to the block still waiting on its result (a child's call shows under its own card).
+  const inFlight = useContext(RunningCallCtx);
+  const running = live && !result && inFlight && inFlight.kind === "call" ? inFlight : null;
+  // The block is named by its recorded calls when it has them: one call
+  // is that call, several are counted; the regex over the source is the
+  // fallback for older sessions that recorded none.
+  const recorded = calls.length > 0 || Boolean(running);
+  const headline = running ? { label: presentTense(callVerb(running.tool)), detail: running.detail }
+    : calls.length === 1 ? { label: callVerb(String(calls[0].data?.tool ?? "")), detail: calls[0].text }
+    : calls.length > 1 ? { label: callsHeadline(calls), detail: "" } : null;
+  // A block that only edited keeps the edit row (files and counts); any
+  // other recorded block is named by its calls, so a failed command
+  // after an edit never reads "Edit failed".
+  const editsOnly = !running && calls.length > 0 && calls.every((l) => l.data?.tool === "write" || l.data?.tool === "patch");
   // The files it patched or wrote, one row each, read from the call itself.
   const edits = useMemo(() => callEdits(code.text), [code.text]);
   const editAdd = edits.reduce((n, f) => n + f.add, 0), editDel = edits.reduce((n, f) => n + f.del, 0);
@@ -2048,10 +2127,11 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
   const cmdText = call.lang === "bash" ? call.body : call.raw;
   return (
     <>
-    <details className={"block thin toolcall" + (failed ? " block-failed" : "")} data-seq={result?.seq} open={current || undefined} onToggle={(e) => setOpened(e.currentTarget.open)}>
+    <details className={"block thin toolcall" + (failed ? " block-failed" : "")} data-seq={result?.seq} open={current || (recorded && !result && live) || undefined} onToggle={(e) => setOpened(e.currentTarget.open)}>
       <summary role="button" {...handlers}>
-        <span className="block-label">{timedOut ? "Question timed out" : label ?? (edits.length ? (failed ? "Edit failed" : "Edited") : call.verb)}</span>
-        {!label && edits.length > 0 && !timedOut ? <>
+        <span className="block-label">{timedOut ? "Question timed out" : label ?? (headline && !editsOnly ? headline.label : edits.length ? (failed ? "Edit failed" : "Edited") : call.verb)}</span>
+        {!label && headline && !editsOnly && !timedOut ? (headline.detail ? <span className="mono block-detail" title={headline.detail}>{phone ? tailPath(headline.detail) : headline.detail}</span> : null)
+        : !label && edits.length > 0 && !timedOut ? <>
           <span className="mono block-detail edit-detail" title={edits.map((f) => f.path).join("\n")}>{edits.length === 1 ? edits[0].path.split("/").pop() : `${edits.length} files`}</span>
           {!failed && <span className="num edit-counts">{editAdd > 0 && <span className="rt-add">+{editAdd}</span>}{editDel > 0 && <span className="rt-del">−{editDel}</span>}</span>}
         </> : !label && <span className="mono block-detail" title={call.gist}>{timedOut ? timedOut[1] : phone ? tailPath(gistOf(call.gist)) : gistOf(call.gist)}</span>}
@@ -2073,6 +2153,9 @@ export function ToolCall({ code, result, live, stopped, current, spawned }: { co
       </summary>
       {pop}
       <div className="block-body">
+        {/* What the block did, step by step, before what it printed. */}
+        {/* One recorded call is the summary line itself; rows earn their place from the second call, or one in flight. */}
+        {(calls.length > 1 || running) && <CallRows calls={calls} running={running} />}
         {/* Output first; the call that made it is one disclosure, once. */}
         {result && !empty && !(failed && diag.length > 0) && <span className="body-copy"><CopyButton text={out} what="output" /></span>}
         {stopped && !result && !card && <p className="tool-noresult">No result was recorded.</p>}
@@ -2300,6 +2383,10 @@ function TurnFooter({ turn, fail, longest = 0, failedWork = 0, unknownSubs = 0, 
 
 /** The input seq of the turn being drawn: a turn's edits are diffed from its own checkpoint. */
 const TurnSeq = createContext<number | undefined>(undefined);
+
+/** The call in flight: the tools plugin's live "call" start event (never recorded), until its end or the block's result lands. */
+export type RunningCall = { kind: string; tool: string; detail: string; at: string };
+export const RunningCallCtx = createContext<RunningCall | null>(null);
 
 /** The thread's one read of its edits and working tree, shared by the header chip and every turn's files. */
 const unread = { files: null, repo: true, failed: false };
@@ -4600,6 +4687,8 @@ export default function App() {
   // entry always supersedes them.
   const [stream, setStream] = useState<DeltaRun[]>([]);
   const [activity, setActivity] = useState("");
+  // The call in flight, from the tools plugin's live start event: what the turn is doing, from the runtime rather than a guess.
+  const [runningCall, setRunningCall] = useState<RunningCall | null>(null);
   const [query, setQuery] = useState("");
   const [archived, setArchived] = useState(false);
   // Whether the rows on hand were fetched with archived ones included.
@@ -4785,6 +4874,11 @@ export default function App() {
       // The small model's label for what the turn is doing right now. A
       // status, not a record: it changes nothing to catch up on.
       if (ev.kind === "activity") { setActivity(ev.text); return; }
+      if (ev.kind === "call" || ev.kind === "sub:call") {
+        // A start is live only (nothing to catch up on); an end is recorded and refetched below.
+        if (ev.extra?.phase === "start") { setRunningCall({ kind: ev.kind, tool: String(ev.extra.tool ?? ""), detail: ev.text, at: ev.at }); return; }
+        setRunningCall(null);
+      } else if (ev.kind !== "assistant-delta" && ev.kind !== "thinking-delta") setRunningCall(null); // the block moved on
       if (ev.kind === "assistant-delta" || ev.kind === "thinking-delta") {
         setActivity(""); // the program it named is over; its label must not come back
         const kind = ev.kind === "thinking-delta" ? "thinking" : "assistant";
@@ -5267,8 +5361,9 @@ export default function App() {
    * there is not a second, lesser view of it.
    */
   const threadFor = (r: Row) => (
+    <RunningCallCtx.Provider key={r.id} value={runningCall}>
     <Thread key={r.id} row={r} lines={lines} jump={jump?.id === r.id ? jump : null} loading={loadedFor !== r.id} loadError={loadFail ?? undefined} paused={paused}
-      onRetry={() => (loadedFor === r.id ? retryRef.current() : setLoadTry((n) => n + 1))} stream={stream} activity={activity} projects={projects} busy={busy || Boolean(locked[r.id])} onBack={goList}
+      onRetry={() => (loadedFor === r.id ? retryRef.current() : setLoadTry((n) => n + 1))} stream={stream} activity={runningCall ? callStep({ data: { tool: runningCall.tool }, text: runningCall.detail }) : activity} projects={projects} busy={busy || Boolean(locked[r.id])} onBack={goList}
       sending={pending[r.id] ?? []}
       setSending={(f) => setPending((m) => ({ ...m, [r.id]: f(m[r.id] ?? []) }))}
       onSend={(t) => deliverTo(r.id, () => api.prompt(r.id, t))}
@@ -5296,6 +5391,7 @@ export default function App() {
         } catch { /* storage off */ }
         goProject(project, created.id);
       }, "start a project session"); } : undefined} />
+    </RunningCallCtx.Provider>
   );
 
   return (

@@ -693,6 +693,14 @@ func apply(kctx *kernel.Context, cfg map[string]any, home string) error {
 		}
 	})
 
+	// tools asks this per call: a child's block runs on the parent's
+	// tools, so the flag is how its calls get mirrored as "sub:call".
+	kctx.Provide("subagent-active", func() bool {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		return w.inChild
+	})
+
 	cm.RegisterTool("spawn", w.spawn)
 	cm.RegisterTool("spawnAll", w.spawnAll)
 	cm.RegisterTool("agent", w.agent)

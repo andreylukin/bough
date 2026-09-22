@@ -891,6 +891,19 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 /* Output states: empty, running, never recorded. A row that says so, never an empty box. */
 .tool-state{display:flex;align-items:center;gap:8px;min-height:24px;padding:0 4px 0 20px;font-size:var(--fs-sm);line-height:16px;color:var(--text-3)}
 .tool-running{display:inline-flex;align-items:center;gap:6px}
+/* A block's recorded calls, one row each, above its output: what ran, what it cost, why it failed. */
+.call-rows{list-style:none;margin:2px 0 6px;padding:0 0 0 4px;display:flex;flex-direction:column;gap:2px;font-size:var(--fs-sm);line-height:20px;color:var(--text-2)}
+.call-rows-nested{margin:0;padding-left:0}
+.call-row{display:flex;align-items:center;gap:8px;min-width:0}
+.call-mark{flex:none;width:12px;display:inline-flex;justify-content:center;color:var(--text-3)}
+.call-row-failed .call-mark,.call-row-failed .call-why{color:var(--red)}
+.call-row-running .call-mark{color:var(--text-2)}
+.call-verb{flex:none;color:var(--text-2)}
+.call-detail{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-1)}
+.call-why{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.call-meta{margin-left:auto;flex:none;display:inline-flex;gap:8px;color:var(--text-3);white-space:nowrap}
+.call-meta .tool-meta-failed{color:var(--red)}
+@media (prefers-reduced-motion:reduce){.call-row-running .spin-mark{animation:none}}
 .tool-more{font-size:var(--fs-sm);color:var(--text-3)}
 .block.thin>summary .tool-more::before{content:"· "}
 /* The exact command, above what it printed: what Copy command copies, in view. */

@@ -120,7 +120,32 @@ export function scriptHead(script: string): string {
  */
 /** The live row says what is happening now: "Running go test", not "Ran". */
 const PRESENT: Record<string, string> = { Ran: "Running", Wrote: "Writing", Patched: "Patching", Read: "Reading", "Spawned subagents": "Spawning subagents", "Spawned a subagent": "Spawning a subagent", "Asked you": "Asking you" };
-const presentTense = (label: string) => PRESENT[label] ?? label;
+export const presentTense = (label: string) => PRESENT[label] ?? label;
+
+/**
+ * A block's per-call rows: the tools plugin records one "call" entry per
+ * foreground tools.bash/view/write/patch (data.tool, ms, exit, add/del,
+ * error), and announces each as it starts (live only, data.phase "start").
+ * These are what a block did, read from the runtime, not guessed from
+ * its source text.
+ */
+const CALL_VERBS: Record<string, string> = { bash: "Ran", view: "Read", write: "Wrote", patch: "Patched" };
+export const callVerb = (tool: string) => CALL_VERBS[tool] ?? tool.charAt(0).toUpperCase() + tool.slice(1);
+export const isCall = (l: Line) => l.kind === "call" || l.kind === "sub:call";
+export const callFailed = (l: Line) => typeof l.data?.error === "string" || (typeof l.data?.exit === "number" && l.data.exit !== 0);
+/** "Running go test ./...": what a call in flight is doing. */
+export const callStep = (l: { data?: Record<string, unknown>; text: string }) => [presentTense(callVerb(String(l.data?.tool ?? ""))), l.text].filter(Boolean).join(" ");
+
+/** "Ran 2 commands, read 3 files, edited 1 file": a block named by what it did. */
+export function callsHeadline(calls: Line[]): string {
+  const n = (k: (l: Line) => boolean) => calls.filter(k).length;
+  const cmds = n((l) => l.data?.tool === "bash"), reads = n((l) => l.data?.tool === "view");
+  const edits = new Set(calls.filter((l) => l.data?.tool === "write" || l.data?.tool === "patch").map((l) => l.text)).size;
+  const plural = (k: number, w: string) => `${k} ${w}${k === 1 ? "" : "s"}`;
+  const parts = [cmds ? `ran ${plural(cmds, "command")}` : "", reads ? `read ${plural(reads, "file")}` : "", edits ? `edited ${plural(edits, "file")}` : ""].filter(Boolean);
+  if (!parts.length) return calls.length === 1 ? callVerb(String(calls[0].data?.tool ?? "")) : `${calls.length} calls`;
+  return parts.join(", ").replace(/^./, (c) => c.toUpperCase());
+}
 /** R4-D: once its result lands the step reads done: "Running ls" becomes "Ran ls". */
 const pastTense = (step: string) => { for (const [done, now] of Object.entries(PRESENT)) if (step === now || step.startsWith(now + " ")) return done + step.slice(now.length); return step; };
 
@@ -410,7 +435,7 @@ export type Item =
   | { kind: "sub"; seq: number; agents: SubAgent[] }
   | { kind: "tools"; seq: number; lines: Line[] };
 
-const TOOL = new Set(["code", "result", "job"]);
+const TOOL = new Set(["code", "result", "job", "call"]);
 
 /**
  * Several tool calls in a row are one thing the agent did. Shown as a
@@ -660,7 +685,8 @@ export function splitWork(items: Item[], codes: string[], live: boolean): Segmen
       const prev = cur[i - 1];
       const run = (k: (l: Line) => boolean) => it.kind === "line" && k(it.line) && prev?.kind === "line" && k(prev.line);
       // A run of one call is not wrapped: its thought, call and notes are rows of their own.
-      if (it.kind === "tools" && it.lines.filter((l) => l.kind === "code").length < 2) rows += it.lines.filter((l) => l.kind !== "result").length;
+      // A call row lives inside its block's row, so it is not a row of the segment.
+      if (it.kind === "tools" && it.lines.filter((l) => l.kind === "code").length < 2) rows += it.lines.filter((l) => l.kind !== "result" && l.kind !== "call").length;
       else if (!run((l) => l.kind.startsWith("todo/")) && !run((l) => l.kind === "job")) rows++;
       if (it.kind === "sub") {
         actions += it.agents.length;
@@ -673,6 +699,7 @@ export function splitWork(items: Item[], codes: string[], live: boolean): Segmen
       for (const l of ls) {
         lines.push(l);
         if (l.kind === "code") { actions++; const c = codeLabel(l.text); step = [presentTense(c.label), c.detail].filter(Boolean).join(" "); }
+        else if (l.kind === "call") step = callStep(l); // the runtime's word beats the label read off the source
         else if (l.kind === "result") { step = pastTense(step); if ((typeof l.data?.exit === "number" && l.data.exit !== 0) || thrownError(l)) failed++; }
         else if (l.kind === "job") {
           const id = typeof l.data?.id === "number" ? String(l.data.id) : /^job (\d+) /.exec(l.text)?.[1];

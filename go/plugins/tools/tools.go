@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/llm"
+	"github.com/andreylukin/bough/plugins/loop"
 )
 
 // bashTimeout is the tools.bash kill deadline (documented in the loop's
@@ -100,6 +102,12 @@ type Stats struct {
 	// project is set in a project session: bash runs through the orb
 	// and write/patch stay inside its roots. nil = local/host.
 	project *projectMode
+	// callSink receives every foreground call's start and end (see
+	// calls.go); nil = no per-call events. subActive says a subagent's
+	// block is the one calling, so the event is a "sub:call".
+	callSink  callSink
+	subActive func() bool
+	calls     int // per-call event ids, never reset
 }
 
 // projectMode is a project session's routing: orb is resolved at call
@@ -398,6 +406,24 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if rc, ok := reg.(runContexter); ok {
 		st.runCtx = rc.RunContext
 	}
+	// Per-call events: live to whoever renders the loop's events, and
+	// the finished call into the session history (both resolved per
+	// call: the history row remounts under /tree, workers mounts after
+	// this row).
+	st.callSink = func(kind, text string, data map[string]any, record bool) {
+		if record {
+			if rec, err := kernel.Get[func(string, map[string]any)](ctx, "history-record"); err == nil {
+				entry := map[string]any{"text": text}
+				maps.Copy(entry, data)
+				rec(kind, entry)
+			}
+		}
+		ctx.Emit("loop/event", loop.Event{Kind: kind, Text: text, Data: data})
+	}
+	st.subActive = func() bool {
+		f, err := kernel.Get[func() bool](ctx, "subagent-active")
+		return err == nil && f()
+	}
 	// A background job outlives the turn that started it, so it hangs
 	// off the plugin's context, not the script's.
 	jctx, cancelJobs := context.WithCancel(context.Background())
@@ -476,7 +502,24 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 // after bashTimeout; given a limit (seconds, or a duration string) it
 // becomes a background job that outlives the turn, and an optional
 // third argument is a regexp to watch its output for.
+// bash is bashRun with a per-call event around a foreground command
+// (a background one is a job, with rows of its own).
 func (s *Stats) bash(cmd string, opts ...any) (string, error) {
+	if len(opts) > 0 && opts[0] != nil {
+		return s.bashRun(cmd, opts...)
+	}
+	done := s.call("bash", firstLine(cmd))
+	runsBefore, _ := s.Bash()
+	out, err := s.bashRun(cmd, opts...)
+	extra := map[string]any{}
+	if runs, exit := s.Bash(); runs > runsBefore {
+		extra["exit"] = exit
+	}
+	done(err, extra)
+	return out, err
+}
+
+func (s *Stats) bashRun(cmd string, opts ...any) (string, error) {
 	s.mu.Lock()
 	policy := s.policy
 	s.mu.Unlock()
@@ -606,6 +649,21 @@ func tail(out string) string {
 // directories. The plain way to put a whole file down: no heredoc
 // quoting, no shell at all.
 func (s *Stats) write(path, content string) (string, error) {
+	done := s.call("write", path)
+	_, statErr := os.Stat(path)
+	out, err := s.writeFile(path, content)
+	extra := map[string]any{}
+	if err == nil {
+		extra["add"], extra["del"] = diffCounts(out)
+		if statErr != nil { // a new file: every line is added, and there is no diff to count
+			extra["add"] = lineCount(content)
+		}
+	}
+	done(err, extra)
+	return out, err
+}
+
+func (s *Stats) writeFile(path, content string) (string, error) {
 	if err := s.canWrite("write", path); err != nil {
 		return "", err
 	}
@@ -725,6 +783,13 @@ const unchangedNote = "\n[you already read this in this turn and it has not chan
 
 // view is Stats.view: the read, plus the note when it repeats.
 func (s *Stats) view(path string, rng ...int) (string, error) {
+	done := s.call("view", viewDetail(path, rng))
+	out, err := s.viewFile(path, rng...)
+	done(err, nil)
+	return out, err
+}
+
+func (s *Stats) viewFile(path string, rng ...int) (string, error) {
 	// A project session reads only what it may write: the host outside
 	// the orb (a loop's holdout among it) is not the project's.
 	if err := s.project.allowed("view", path); err != nil {
@@ -1002,6 +1067,17 @@ func lockPath(path string) func() {
 // must match exactly once (include more context when it repeats). An
 // empty old creates the file with new when it does not exist yet.
 func (s *Stats) patch(path, old, new string) (string, error) {
+	done := s.call("patch", path)
+	out, err := s.patchFile(path, old, new)
+	extra := map[string]any{}
+	if err == nil {
+		extra["add"], extra["del"] = diffCounts(out)
+	}
+	done(err, extra)
+	return out, err
+}
+
+func (s *Stats) patchFile(path, old, new string) (string, error) {
 	if err := s.canWrite("patch", path); err != nil {
 		return "", err
 	}

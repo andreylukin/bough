@@ -1191,6 +1191,10 @@ func (m *model) addEvent(ev Event) {
 			collapsed = true
 		}
 		m.blocks = append(m.blocks, block{id: id, kind: ev.Kind, text: text, collapsed: collapsed})
+	case "call", "sub:call":
+		// A block's per-call events are for the web transcript; the
+		// TUI shows the block itself (its code and result rows).
+		return
 	case "sub:start", "sub:assistant", "sub:code", "sub:result", "sub:error", "sub:done":
 		// A subagent's activity folds into ONE card per worker (spawn.go):
 		// the parent's transcript is the story, the child's is detail

@@ -224,6 +224,10 @@ func hlPrint(ev Event) {
 		// wiki ingest updated its pages and still exited 1).
 		hlTurnErr.Store(true)
 		hlLine(hlErr, "error", ev.Text, nil)
+	case "call", "sub:call":
+		// The call's record (tool, id, phase, ms, exit, add/del): serve
+		// renders it, so it rides along.
+		hlLine(hlOut, ev.Kind, ev.Text, ev.Data)
 	case "result":
 		// Only a later block that ran counts as recovery; a reply that
 		// just gives up after the failure still ends the turn on it.
