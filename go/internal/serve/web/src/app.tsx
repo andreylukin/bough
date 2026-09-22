@@ -21,6 +21,7 @@ import { SkillPicker } from "./skills";
 import { Mentions, triggerAt, type Trigger } from "./mention";
 import { FireInspection, HooksPage, type Fire, type Load, type Save } from "./hooks";
 import { MeView } from "./me";
+import { RewritePage } from "./rewrite";
 import { ContextPage } from "./context";
 import { ChangesBody, ChangesPage, EditDiff, FileEdit, callEdits, countOf, outputParts, useChanges } from "./changes";
 import { Palette, idTail, isTypingTarget, startFolders, useFullText, usePaletteKey, visit, type Command } from "./palette";
@@ -28,7 +29,7 @@ import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wi
 import { Elapsed, EmptyState, ErrorNote, InlineFail, Pending, RawDetails, Spinner, StateIcon, ago, elapsed, humanError, providerError } from "./loading";
 import { PortalPane } from "./portal";
 
-export type View = "sessions" | "me" | "projects" | "project" | "hooks" | "wiki";
+export type View = "sessions" | "me" | "rewrite" | "projects" | "project" | "hooks" | "wiki";
 
 const POLL_MS = 4000; // sessions we are not streaming still change status
 
@@ -966,7 +967,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   );
 }
 
-const NAV_HREF: Record<View, string> = { sessions: "#/", me: "#/me", projects: "#/projects", project: "#/projects", hooks: "#/hooks", wiki: "#/wiki" };
+const NAV_HREF: Record<View, string> = { sessions: "#/", me: "#/me", rewrite: "#/rewrite", projects: "#/projects", project: "#/projects", hooks: "#/hooks", wiki: "#/wiki" };
 
 /** A label id from before projects were keyed by slug: a UUID, which the
  *  slug pattern also accepts, so the shape has to be tested outright. */
@@ -987,7 +988,7 @@ const PROJECT_SESSION = "A project session lives in its project's orb; start a t
 export function ViewNav({ view, onView, wikiFlags = 0, icons = false, phone = false }: {
   view: View; onView: (v: View) => void; wikiFlags?: number; icons?: boolean; phone?: boolean;
 }) {
-  const items = ([["sessions", "Sessions", ICONS.search], ["me", "Me", ICONS.me], ["projects", "Projects", ICONS.projects], ["hooks", "Hooks", ICONS.hooks], ["wiki", "Wiki", ICONS.wiki]] as const)
+  const items = ([["sessions", "Sessions", ICONS.search], ["me", "Me", ICONS.me], ["rewrite", "Rewrite", ICONS.compose], ["projects", "Projects", ICONS.projects], ["hooks", "Hooks", ICONS.hooks], ["wiki", "Wiki", ICONS.wiki]] as const)
     .filter(([v]) => phone || v !== "sessions");
   return (
     <nav className={phone ? "side-nav phone-nav" : "side-nav" + (icons ? " side-nav-rail" : "")} aria-label="Views">
@@ -4833,6 +4834,7 @@ export default function App() {
       : view === "projects" ? "Projects"
       : view === "hooks" ? "Hooks"
       : view === "me" ? "Me"
+      : view === "rewrite" ? "Rewrite"
       : view === "wiki" ? (wikiRoute.at === "page" ? `${wikiRoute.path.split("/").pop()!.replace(/\.md$/, "")} · Wiki`
         : wikiRoute.at === "review" ? "Review · Wiki" : wikiRoute.at === "activity" ? "Activity · Wiki" : "Wiki")
       : rowName;
@@ -4873,7 +4875,7 @@ export default function App() {
     const read = () => {
       const h = window.location.hash.replace(/^#\/?/, "");
       // A direct link to a page shows that page, on a phone too.
-      if (h === "hooks" || h === "projects" || h === "me") { setLost(null); setView(h); setSub(null); setPane("thread"); if (h === "projects") setOrbOpen(undefined); return; }
+      if (h === "hooks" || h === "projects" || h === "me" || h === "rewrite") { setLost(null); setView(h); setSub(null); setPane("thread"); if (h === "projects") setOrbOpen(undefined); return; }
       const po = /^projects\/([^/]+)\/orb$/.exec(h);
       if (po) {
         setLost(null); setView("projects"); setSub(null); setPane("thread");
@@ -4930,6 +4932,7 @@ export default function App() {
     if (lost !== null) return; // the unknown route stays in the URL it came from
     const want = view === "hooks" ? "#/hooks"
       : view === "me" ? "#/me"
+      : view === "rewrite" ? "#/rewrite"
       : view === "project" ? (projectFocus ? `#/projects/${projectSlug}/t/${projectFocus.id}` : `#/projects/${projectSlug}`)
       : view === "projects" ? (orbOpen ? `#/projects/${orbOpen}/orb` : "#/projects")
       : view === "wiki" ? `#/${wikiHash(wikiRoute)}`
@@ -5339,6 +5342,8 @@ export default function App() {
       ) : view === "wiki" ? (
         <WikiPage route={wikiRoute} onRoute={goWiki} onBack={goList} onOpenSession={openSession}
                   onSearch={(text) => { setPalQuery(text.replace(/\s+/g, " ").slice(0, 60)); setPalette(true); }} />
+      ) : view === "rewrite" ? (
+        <RewritePage onBack={goList} />
       ) : view === "me" ? (
         <MeView rows={rows} projectNames={Object.fromEntries(projects.map((p) => [p.slug, p.name]))} onBack={goList}
                 onOpenSession={openSession} onOpenProject={(slug) => goProject(slug)} onOpenPage={(path) => goWiki({ at: "page", path })} />

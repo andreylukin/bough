@@ -52,6 +52,12 @@ type API struct {
 	setenv func(string, string) error
 	// checkKey asks a provider whether a key is accepted: the HTTP status, or an error when it could not ask.
 	checkKey func(ctx context.Context, provider, key string) (int, error)
+	// note answers the Rewrite page's per-sentence note (modelNote); a
+	// field so a test never mounts a model. notionBase points the Notion
+	// reader at a test server; "" is the real API.
+	note       noter
+	notionBase string
+	noteState
 }
 
 // Row is one session as the wire sees it: what history knows, what the
@@ -158,6 +164,7 @@ func NewAPI(sup *Supervisor) *API {
 	home, _ := os.UserHomeDir()
 	start, _ := os.Getwd()
 	a := &API{sup: sup, mux: http.NewServeMux(), home: home, start: start, getenv: os.Getenv, setenv: os.Setenv, checkKey: checkProviderKey}
+	a.note = a.modelNote
 	a.ingest = a.spawnIngest
 	a.brief = a.spawnBrief
 	a.mux.HandleFunc("GET /api/health", a.health)
@@ -226,6 +233,8 @@ func NewAPI(sup *Supervisor) *API {
 	a.mux.HandleFunc("POST /api/me/refresh", a.meRefresh)
 	a.mux.HandleFunc("POST /api/me/triage", a.meTriage)
 	a.mux.HandleFunc("POST /api/me/steer", a.meSteer)
+	a.mux.HandleFunc("POST /api/rewrite/note", a.rewriteNote)
+	a.mux.HandleFunc("POST /api/rewrite/fetch", a.rewriteFetch)
 	// The UI, on EXACT paths only. A catch-all "GET /" would match a
 	// wrong-method request to a real API route (GET on a POST-only
 	// path), and ServeMux then serves the page instead of the 405 it
