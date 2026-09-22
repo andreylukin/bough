@@ -104,6 +104,13 @@ export const api = {
       body: JSON.stringify(mode === "project" ? { cwd, prompt, mode, project } : { cwd, prompt }),
     }).then((r) => r.session),
 
+  /** A thread the main thread hands work to: a child session of it, in the project, started on prompt. */
+  createThread: (cwd: string, prompt: string, slug: string, spawnedBy: string) =>
+    req<{ session: Row; queued: boolean }>("/api/sessions", {
+      method: "POST",
+      body: JSON.stringify({ cwd, prompt, slug, spawnedBy }),
+    }).then((r) => r.session),
+
   prompt: (id: string, text: string) => post(`/api/sessions/${id}/prompt`, { text }),
   /** Save a pasted image on the server; the path is what a prompt references. */
   attach: async (img: Blob) => {

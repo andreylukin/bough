@@ -4084,6 +4084,12 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 .prj-threads-head{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-2) var(--s-3);border-bottom:1px solid var(--line)}
 .prj-threads-count{margin-inline-end:auto;color:var(--text-3);font-size:var(--fs-sm)}
 .prj-threads-list{flex:1 1 0%;padding-bottom:var(--s-5)}
+/* The fold: a chevron in the column's head, and the rail it folds to (the count under it). Drawers close with Close instead. */
+.prj-threads-fold{padding:0 4px;min-width:24px}
+.prj-threads-folded{width:36px;min-width:36px;align-items:center;padding-top:var(--s-2);gap:var(--s-2)}
+.prj-threads-folded .prj-threads-count{margin:0}
+@media (max-width:1080px){.prj-threads-fold,.prj-threads-folded{display:none}}
+.composer-start-thread{white-space:nowrap}
 /* The main thread is the room, not a peer: it sits above the hairline every other row is under. */
 .prj-main-thread{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:0 var(--s-2);width:100%;
                  padding:var(--s-2) var(--s-3);background:none;border:0;border-bottom:1px solid var(--line);

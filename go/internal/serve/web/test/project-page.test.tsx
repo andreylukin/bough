@@ -198,7 +198,12 @@ test("Files still spins while it is only loading", () => {
 // and every thread with them, while the title bar's toggle stayed live
 // and inert.
 test("both side columns keep a way back at narrow widths", () => {
-  const html = column();
+  // Beside a conversation the panel opens closed unless it was left open: remember it open, so its drawer is drawn.
+  const g = globalThis as { localStorage?: unknown };
+  const prev = g.localStorage;
+  g.localStorage = { getItem: (k: string) => (k === "bough:prj-panel" ? "1" : null), setItem: () => {} };
+  let html = "";
+  try { html = column(); } finally { g.localStorage = prev; }
   // The toggle for the thread list, the scrim that dismisses a drawer,
   // and a Close inside each one. Which of them is visible is the
   // stylesheet's business.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { OrbFile, OrbState, ProjectDetail, Row, Status } from "./types";
 import { api } from "./api";
 import { FileEditor, ORB_AS_STATUS, OrbSessions, confirmStopOrb, orbUp } from "./orb";
@@ -19,6 +19,18 @@ import { Back, useMedia } from "./app";
  * thread reads and behaves identically whether it is opened here or
  * from the sidebar.
  */
+
+/**
+ * Offered to the main thread's conversation: starting a thread of the
+ * project under it, with a task. Only main hands work out (a thread
+ * cannot start threads), so only main's composer carries the button.
+ */
+export const StartThreadCtx = createContext<((prompt: string) => Promise<void>) | null>(null);
+
+/** A remembered page preference; "" when unset or storage is off. */
+const pref = (key: string) => { try { return localStorage.getItem(key) ?? ""; } catch { return ""; } };
+const remember = (key: string, v: string) => { try { localStorage.setItem(key, v); } catch { /* storage off */ } };
+const PANEL_PREF = "bough:prj-panel", THREADS_PREF = "bough:prj-threads-folded";
 
 /** MEMORY.md first: it is the file this page is usually opened to write. */
 export const PROJECT_FILES: readonly OrbFile[] = ["MEMORY.md", "project.yml", "Dockerfile", "setup.sh", "resume.sh"];
@@ -301,7 +313,7 @@ export function ProjectHome({ detail, mainRow, onOpen, onMessage, onNewThread }:
 }
 
 export function ProjectPage({
-  detail, files, error, filesError, conversation, mainRow, open, onOpen, onNewThread, onBack, onSave, onStopOrb, onOpenSession, onMessage, onRetry, titles = {},
+  detail, files, error, filesError, conversation, mainRow, open, onOpen, onNewThread, onStartThread, onBack, onSave, onStopOrb, onOpenSession, onMessage, onRetry, titles = {},
 }: {
   /** Absent until the first read lands. */
   detail?: ProjectDetail;
@@ -320,6 +332,8 @@ export function ProjectPage({
   onOpen: (id: string) => void;
   /** Absent in a story; the page still lists what is there. */
   onNewThread?: () => void;
+  /** Main hands a task to a new thread of the project (the conversation's Start thread button). */
+  onStartThread?: (prompt: string) => Promise<void>;
   onBack?: () => void;
   onSave: (name: OrbFile, text: string) => Promise<void>;
   onStopOrb: (session: string) => void;
@@ -337,13 +351,26 @@ export function ProjectPage({
   // editor and the threads are the whole point of this page.
   const tight = useMedia("(max-width:1080px)");
   const [folded, setFolded] = useState<Set<ThreadGroup>>(() => new Set(CLOSED));
-  const [panel, setPanel] = useState(!tight);
+  // The panel opens closed and stays how it was left: beside the control
+  // room's sidebar and the thread list it was a fourth column, and it
+  // reopened on every visit. The thread list folds to a rail the same
+  // way, remembered too; both only where they are columns, not drawers.
+  // On the home the panel is half the page (MEMORY.md is what the page
+  // is opened to write), so it shows unless it was closed; beside a
+  // conversation it made a fourth column, so it stays closed unless it
+  // was opened. One remembered choice, made by the toggle, not by drawers.
+  const panelWanted = (o: string) => { const p = pref(PANEL_PREF); return p ? p === "1" : !o; };
+  const [panel, setPanel] = useState(() => !tight && panelWanted(open));
+  const [threadsFolded, setThreadsFolded] = useState(() => pref(THREADS_PREF) === "1");
   const [drawer, setDrawer] = useState(false);
   const [tab, setTab] = useState<OrbFile>("MEMORY.md");
   const [filesOpen, setFilesOpen] = useState(true);
   // A drawer covering the conversation must not be what the page opens
-  // with, and a window that grew wide again has room for the panel.
-  useEffect(() => { setPanel(!tight); setDrawer(false); }, [tight]);
+  // with, and a window that grew wide again shows the panel as it was left.
+  const onThread = Boolean(open);
+  useEffect(() => { setPanel(!tight && panelWanted(onThread ? "t" : "")); setDrawer(false); }, [tight, onThread]);
+  const togglePanel = () => setPanel((v) => { if (!tight) remember(PANEL_PREF, v ? "0" : "1"); return !v; });
+  const foldThreads = (v: boolean) => { remember(THREADS_PREF, v ? "1" : "0"); setThreadsFolded(v); };
   const editor = useRef<HTMLTextAreaElement>(null);
   const fold = (g: ThreadGroup) => setFolded((prev) => { const n = new Set(prev); n.has(g) ? n.delete(g) : n.add(g); return n; });
   const groups = useMemo(() => groupThreads(detail?.threads ?? []), [detail?.threads]);
@@ -376,9 +403,20 @@ export function ProjectPage({
       {/* Beside a conversation the column is the way between threads; on
           the home the page itself is the index, and a second copy would
           be noise. */}
-      {open && (
+      {/* Folded, the column is a rail: the chevron and the count, so the
+          way between threads is one click away without the width. */}
+      {open && threadsFolded && !tight && (
+      <aside className="prj-threads prj-threads-folded" aria-label="Threads">
+        <button type="button" className="btn btn-ghost btn-sm prj-threads-fold" aria-expanded={false} aria-label="Show threads" title="Show threads"
+                onClick={() => foldThreads(false)}><Chevron /></button>
+        <span className="num prj-threads-count" title={`${threads.length} threads`}>{threads.length}</span>
+      </aside>
+      )}
+      {open && !(threadsFolded && !tight) && (
       <aside className="prj-threads" aria-label="Threads" data-open={drawer || undefined}>
         <div className="prj-threads-head">
+          <button type="button" className="btn btn-ghost btn-sm prj-threads-fold" aria-expanded={true} aria-label="Hide threads" title="Hide threads"
+                  onClick={() => foldThreads(true)}><Chevron open /></button>
           <span className="eyebrow">Threads</span>
           <span className="num prj-threads-count">{threads.length}</span>
           {onNewThread && <button type="button" className="btn btn-ghost btn-sm" onClick={onNewThread}>New thread</button>}
@@ -434,7 +472,7 @@ export function ProjectPage({
           {open && <button type="button" className="btn btn-sm prj-threads-btn" aria-expanded={drawer}
                   onClick={() => { setDrawer((v) => !v); setPanel(false); }}>Threads</button>}
           <button type="button" className="btn btn-sm prj-panel-btn" aria-expanded={panel}
-                  onClick={() => { setPanel((v) => !v); setDrawer(false); }}>Project</button>
+                  onClick={() => { togglePanel(); setDrawer(false); }}>Project</button>
         </header>
 
         {/* A project.yml that does not parse still has a page: the editor
@@ -449,7 +487,9 @@ export function ProjectPage({
         <div className="prj-conv">
           {!open
             ? <ProjectHome detail={detail} mainRow={mainRow} onOpen={onOpen} onMessage={onMessage} onNewThread={onNewThread} />
-            : conversation ?? <div className="lookup" role="status"><p className="lookup-body">Loading thread…</p></div>}
+            : <StartThreadCtx.Provider value={inMain && onStartThread ? onStartThread : null}>
+                {conversation ?? <div className="lookup" role="status"><p className="lookup-body">Loading thread…</p></div>}
+              </StartThreadCtx.Provider>}
         </div>
       </section>
 
@@ -515,7 +555,7 @@ export function ProjectPage({
  * session that is, so opening a thread here costs the same as opening it
  * from the sidebar.
  */
-export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, onOpenSession, onNewThread, onChanged }: {
+export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, onOpenSession, onNewThread, onStartThread, onChanged }: {
   slug: string;
   /** A thread the page was opened on (a session just started in this project, or a link to one). */
   focus?: { id: string; at: number };
@@ -526,6 +566,8 @@ export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, o
   onOpenSession?: (id: string) => void;
   /** Starts a thread in this project and resolves to its id. */
   onNewThread?: () => Promise<string>;
+  /** Starts a thread under main, on a task: what main's Start thread button does. */
+  onStartThread?: (prompt: string, main: string) => Promise<string>;
   /** Something here changed a session: the fleet the App holds is stale. */
   onChanged?: () => void;
 }) {
@@ -585,6 +627,8 @@ export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, o
       open={open} onOpen={setOpen} onBack={onBack} onOpenSession={onOpenSession} titles={titles}
       onRetry={() => { void load(); void loadFiles(); }}
       onNewThread={onNewThread ? newThread : undefined}
+      // The list reloads so the new thread shows beside main at once; main stays on screen, it is where the reply lands.
+      onStartThread={onStartThread && detail?.main ? async (prompt) => { await onStartThread(prompt, detail.main!); await load(); onChanged?.(); } : undefined}
       onMessage={async (text) => { await api.messageProject(slug, text); const d = await load(); if (d?.main) setOpen(d.main); onChanged?.(); }}
       onSave={async (name, text) => { await api.putOrbFile(slug, name, text); await loadFiles(); await load(); }}
       onStopOrb={(session) => { void (async () => {
@@ -593,5 +637,13 @@ export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, o
         await load();
         onChanged?.();
       })(); }} />
+  );
+}
+
+/** The fold mark: points right folded, down open — the sidebar's own chevron. */
+function Chevron({ open }: { open?: boolean }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+         style={open ? { transform: "rotate(90deg)" } : undefined}><path d="M9 6l6 6-6 6" /></svg>
   );
 }

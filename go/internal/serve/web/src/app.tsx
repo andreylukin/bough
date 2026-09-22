@@ -4,7 +4,7 @@ import { api, subscribe, watchBuild, type Change, type Scope, type TurnLine } fr
 import type { Line, Project, Row } from "./types";
 import { MARKED, STATUS, StatusMark, Working, hasFailure, hasQuestion, orbWord, sessionSignal, statusWord } from "./status";
 import { ProjectsView } from "./projects";
-import { ProjectView } from "./project";
+import { ProjectView, StartThreadCtx } from "./project";
 import { ModeChip, ModePicker, OrbUp, orbsUp, orbsUpLabel, type ModeValue } from "./mode";
 import { OrbFailureBody, confirmFailedBuild, confirmStopOrb, orbUp, type OrbFailureLog } from "./orb";
 import { Select, type Option } from "./select";
@@ -4116,6 +4116,9 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     } catch { /* storage off */ }
   }, [draft, attsKey]);
   const [uploading, setUploading] = useState(0);
+  // Main's Start thread button and what it last said (see StartThreadCtx).
+  const startThread = useContext(StartThreadCtx);
+  const [threadNote, setThreadNote] = useState("");
   const [attachErr, setAttachErr] = useState("");
   const insert = (s: string) => {
     const el = composer.current;
@@ -4566,6 +4569,15 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
               }} />
               <span className="composer-sep" aria-hidden="true" />
               <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" catalogue={catalogue} disabled={failedLoad} />
+              {/* Only the project's main thread hands work out, so only its composer offers it: a thread of the project, on a task, that reports back here. */}
+              {startThread && (
+                <button type="button" className="btn btn-sm composer-start-thread" disabled={failedLoad} onClick={() => { void (async () => {
+                  const t = await askText("Start a thread", { body: "A new thread of the project takes this task; its finish note comes back to this thread.", placeholder: "What should the thread do?", action: "Start" });
+                  if (!t?.trim()) return;
+                  try { await startThread(t.trim()); setThreadNote("Thread started"); }
+                  catch (e) { setThreadNote("Couldn’t start the thread: " + (e instanceof Error ? e.message : String(e))); }
+                })(); }}>Start thread</button>
+              )}
               {row.mode !== "project" && row.writable && (
                 <span className="mode-local mode-badge" title={`File edits are allowed only inside ${row.writable}. The shell runs as you.`}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4z" /></svg><span className="mode-word">Edits {row.writable.split("/").pop()}</span></span>
               )}
@@ -4575,6 +4587,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
               )}
             </div>
             {uploading > 0 && <span className="attach-note" role="status"><span className="attach-spin" aria-hidden="true" />Attaching image…</span>}
+            {threadNote && <span className={"attach-note" + (threadNote.startsWith("Couldn") ? " attach-err" : "")} role="status">{threadNote}</span>}
             {attachErr && <span className="attach-note attach-err" role="alert"><span className="attach-bang" aria-hidden="true">!</span>{attachErr}</span>}
             <div className="composer-actions">
               {/* Beside Send, so it never covers what you are reading. */}
@@ -5463,6 +5476,12 @@ export default function App() {
           onChanged={() => { void refresh(); }}
           onNewThread={home ? async () => {
             const created = await api.create(home, "", "project", projectSlug);
+            markCreated(created.id);
+            await refresh();
+            return created.id;
+          } : undefined}
+          onStartThread={home ? async (prompt, main) => {
+            const created = await api.createThread(home, prompt, projectSlug, main);
             markCreated(created.id);
             await refresh();
             return created.id;
