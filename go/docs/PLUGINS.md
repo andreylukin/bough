@@ -150,6 +150,61 @@ The VM is [goja](https://github.com/dop251/goja), not Node. There is no
 event loop, so a tool function is an ordinary synchronous Go function
 and `async`/`await` are syntax errors on the JS side.
 
+### The same tool, native
+
+The `engine-unreal` loop ([unreal-engine.md](unreal-engine.md)) calls
+tools natively instead of from a code block. A row offers one by
+registering an `agenttools.Tool` in the `agent-tools` registry, next
+to its codemode binding and calling the same Go function:
+
+```go
+if at, err := kernel.Get[agenttools.Registry](ctx, "agent-tools"); err == nil {
+	off, err := at.Register(agenttools.Tool{
+		Name:        "wordcount",
+		Description: "Count the words in some text, most frequent first.",
+		Schema: agenttools.Object([]string{"text"}, map[string]any{
+			"text": agenttools.Prop("string", "the text to count"),
+		}),
+		Call: func(_ context.Context, c agenttools.Call) (agenttools.Result, error) {
+			var args struct{ Text string `json:"text"` }
+			if err := agenttools.Decode("wordcount", c.Args, &args); err != nil {
+				return agenttools.Result{}, err
+			}
+			return agenttools.Result{Text: render(counter.Count(args.Text))}, nil
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("example-wordcount: %w", err)
+	}
+	ctx.Effect(off)
+}
+```
+
+What differs from a codemode tool:
+
+- **Arguments are one JSON object** the schema describes, and the
+  answer is text. A failure the model should read goes in
+  `Result.Error`; a returned `error` fails the call the same way.
+- **The call runs on its own goroutine under `ctx`**, which the engine
+  cancels on Esc and bounds with `call_timeout`. Block on `ctx`, never
+  on codemode's `RunContext` or `Pause`: there is no script.
+- **Calls run concurrently and asynchronously.** The model may start
+  several at once and keep working while one runs, so the function must
+  be safe to call in parallel. `c.Emit(text)` streams output to the
+  call's row while it runs.
+- **`Blocking: true`** is for a call whose wait is on the person
+  (`ask`, `secret`): it holds the turn open instead of becoming a job.
+- **`Detail`** is the call row's one-line text: a command's first line,
+  a path.
+- **Register from session start and keep the set stable.** A change to
+  the tool set restarts the engine's coordinator at the next idle, so a
+  tool that is not usable yet (an orb still starting) registers anyway
+  and answers with an error until it is.
+
+Native tool names match `^[a-zA-Z0-9_-]{1,64}$` (`job_kill`, not
+`jobKill`); `agenttools.RegisterAll` registers several and undoes them
+all on a clash.
+
 ## Adding a slash command
 
 ```go

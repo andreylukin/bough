@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/andreylukin/bough/internal/agenttools"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/history"
@@ -182,6 +183,13 @@ func oneLine(text string) string {
 
 // Add appends an open item and returns its id.
 func (t *Todos) Add(text string) (int, error) {
+	return t.add(text, nil)
+}
+
+// add is Add with the writer given (a native call names its own agent,
+// since calls from several agents run at once) or, when nil, the
+// Writer set for the codemode block in flight.
+func (t *Todos) add(text string, agent *string) (int, error) {
 	text = oneLine(text)
 	if text == "" {
 		return 0, fmt.Errorf("todo: empty text")
@@ -189,8 +197,12 @@ func (t *Todos) Add(text string) (int, error) {
 	t.mu.Lock()
 	_, id := t.derive()
 	data := map[string]any{"id": id, "text": text}
-	if t.writer != "" {
-		data["agent"] = t.writer
+	who := t.writer
+	if agent != nil {
+		who = *agent
+	}
+	if who != "" {
+		data["agent"] = who
 	}
 	t.hist.Append("todo/add", data)
 	t.mu.Unlock()
@@ -337,6 +349,14 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		}
 		t.hasTools = true
 		ctx.Effect(func() { cm.RegisterTool("todo", nil) })
+	}
+
+	if at, err := kernel.Get[agenttools.Registry](ctx, "agent-tools"); err == nil {
+		off, err := at.Register(t.nativeTool())
+		if err != nil {
+			return fmt.Errorf("todo: %w", err)
+		}
+		ctx.Effect(off)
 	}
 
 	info := commands.CommandInfo{Name: "todo", Usage: "[add <text> | done <id> | clear]", Summary: "manage the TODO list"}

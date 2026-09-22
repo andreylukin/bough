@@ -19,11 +19,13 @@
 package example
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 	"unicode"
 
+	"github.com/andreylukin/bough/internal/agenttools"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
 )
@@ -78,6 +80,33 @@ func (p plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		// and at exit. A plugin that registers something is
 		// responsible for removing it.
 		ctx.Effect(func() { cm.RegisterTool("wordcount", nil) })
+	}
+
+	// The same function as a NATIVE tool, for an engine that calls tools
+	// directly rather than from a code block. It takes JSON arguments
+	// and returns text; a failure goes in Result.Error, which the model
+	// reads as the call failing. Optional like codemode: absent, skip it.
+	if at, err := kernel.Get[agenttools.Registry](ctx, "agent-tools"); err == nil {
+		off, err := at.Register(agenttools.Tool{
+			Name:        "wordcount",
+			Description: "Count the words in some text, most frequent first.",
+			Schema: agenttools.Object([]string{"text"}, map[string]any{
+				"text": agenttools.Prop("string", "the text to count"),
+			}),
+			Call: func(_ context.Context, c agenttools.Call) (agenttools.Result, error) {
+				var args struct {
+					Text string `json:"text"`
+				}
+				if err := agenttools.Decode("wordcount", c.Args, &args); err != nil {
+					return agenttools.Result{}, err
+				}
+				return agenttools.Result{Text: render(counter.Count(args.Text))}, nil
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("example-wordcount: %w", err)
+		}
+		ctx.Effect(off)
 	}
 
 	if reg, err := kernel.Get[*commands.Registry](ctx, "commands"); err == nil {
