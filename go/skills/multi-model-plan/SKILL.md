@@ -36,8 +36,9 @@ Slug the task (`fix-flaky-tests`). Work in `$BOUGH_SCRATCH/plans/<slug>/`.
 Write the brief to `brief.md` (the task, the relevant paths, constraints).
 `<model>` in file names is the model with `/` replaced by `-`.
 
-Run the three drafts in parallel with `tools.bash` background jobs, one per
-model, each a fresh process:
+Run the three drafts in parallel as background shell jobs (`bash` with
+`background: true`, or `tools.bash` in a js block), one per model, each a
+fresh process:
 
 ```sh
 cd "$BOUGH_SCRATCH/plans/<slug>" &&
@@ -58,10 +59,11 @@ plans: wrong assumptions, missing steps, risks. Name the draft for each point."
 ## 4. Interview
 
 Read the drafts and critiques. Find 2-4 real disagreements between drafts
-(approach, scope, order, tooling). For each, call
-`tools.ask(question, option1, option2, ...)`, with options taken from the
-drafts. One question per disagreement; no questions about things all drafts
-agree on.
+(approach, scope, order, tooling). For each, ask the user
+(the `ask` tool with `question` and `options`, or
+`tools.ask(question, option1, option2, ...)` in a js block), with options
+taken from the drafts. One question per disagreement; no questions about
+things all drafts agree on.
 
 ## 5. Merge
 
