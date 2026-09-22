@@ -20,6 +20,7 @@ import (
 	"github.com/andreylukin/bough/internal/schema"
 	"github.com/andreylukin/bough/kernel"
 	_ "github.com/andreylukin/bough/plugins/activity"
+	_ "github.com/andreylukin/bough/plugins/agenttools"
 	_ "github.com/andreylukin/bough/plugins/artifacts"
 	_ "github.com/andreylukin/bough/plugins/ask"
 	_ "github.com/andreylukin/bough/plugins/cmux"

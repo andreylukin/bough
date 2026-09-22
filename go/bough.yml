@@ -56,6 +56,12 @@
 - id: commands
   plugin: commands
 
+# Native tool registry: each tool row registers its tools here as well
+# as into codemode. Inert under the loop; the engine-unreal row calls
+# them as native tools (docs/unreal-engine.md §6.2).
+- id: agent-tools
+  plugin: agent-tools
+
 # What is true about this session, for plugins: id, title, model and
 # provider, tokens and cost, context fill, turn count. Go rows Get the
 # "session" service and call Info(); init.js reads bough.session().
