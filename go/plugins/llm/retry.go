@@ -56,11 +56,19 @@ func retryableStatus(code int) bool {
 // retryable is retryableErr plus the status of a typed SDK error: the
 // anthropic client returns *anthropic.Error, whose 429/5xx is worth
 // another try but whose 400/401/404 is not.
+//
+// The type is read before the status: an overloaded_error that arrives
+// inside a stream is an *anthropic.Error with StatusCode 200, and the
+// status alone called it final, so an overload mid-reply failed the turn.
 func retryable(err error) bool {
 	if err == nil {
 		return false
 	}
 	if apiErr, ok := errors.AsType[*anthropic.Error](err); ok {
+		switch apiErr.Type() {
+		case "overloaded_error", "rate_limit_error", "api_error":
+			return true
+		}
 		return retryableStatus(apiErr.StatusCode)
 	}
 	return retryableErr(err)

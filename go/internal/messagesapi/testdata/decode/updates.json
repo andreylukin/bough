@@ -1,0 +1,59 @@
+{
+  "Failure": null,
+  "ID": "msg_01Updates",
+  "Output": [
+    {
+      "Data": {
+        "Raw": {
+          "signature": "sigHiddenReasoning",
+          "type": "thinking"
+        }
+      },
+      "ProviderID": "",
+      "Type": "reasoning"
+    },
+    {
+      "Data": {
+        "Raw": {
+          "signature": "sigProgress",
+          "thinking": "Checking the build before the tests.",
+          "type": "thinking"
+        },
+        "Summary": [
+          "Checking the build before the tests."
+        ]
+      },
+      "ProviderID": "",
+      "Type": "reasoning"
+    },
+    {
+      "Data": {
+        "Arguments": "{\"command\":\"go build ./...\"}",
+        "CallID": "toolu_01Build",
+        "Name": "bash"
+      },
+      "ProviderID": "",
+      "Type": "tool_call"
+    }
+  ],
+  "Stop": "complete",
+  "Usage": {
+    "CacheWriteInputTokens": 0,
+    "CachedInputTokens": 0,
+    "InputTokens": 900,
+    "OutputTokens": 120,
+    "Raw": {
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "input_tokens": 900,
+      "output_tokens": 120,
+      "output_tokens_details": {
+        "thinking_tokens": 90
+      }
+    },
+    "ReasoningTokens": 90
+  }
+}
+--- deltas
+[thinking] Checking the build before the tests.
+[tool_start bash toolu_01Build]

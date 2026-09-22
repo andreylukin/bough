@@ -1,0 +1,63 @@
+{
+  "max_tokens": 64000,
+  "messages": [
+    {
+      "content": [
+        {
+          "cache_control": {
+            "ttl": "1h",
+            "type": "ephemeral"
+          },
+          "text": "hi",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "data": "EmwKAhgB",
+          "type": "redacted_thinking"
+        },
+        {
+          "text": "hello",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "cache_control": {
+            "ttl": "1h",
+            "type": "ephemeral"
+          },
+          "text": "again",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "claude-sonnet-5",
+  "output_config": {
+    "effort": "high"
+  },
+  "system": [
+    {
+      "cache_control": {
+        "ttl": "1h",
+        "type": "ephemeral"
+      },
+      "text": "sys",
+      "type": "text"
+    }
+  ],
+  "thinking": {
+    "display": "summarized",
+    "type": "adaptive"
+  }
+}
+--- betas 

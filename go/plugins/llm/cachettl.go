@@ -26,3 +26,25 @@ func CacheTTL(model string) time.Duration {
 	}
 	return 5 * time.Minute
 }
+
+// AgentTTLer is the optional seam an llm row exposes when the adapter it
+// builds for the engine writes cache entries with a TTL of its own
+// (llm-anthropic's cache_ttl, 1h by default). The loop's requests keep
+// the provider default, which is what CacheTTL answers.
+type AgentTTLer interface {
+	AgentCacheTTL() time.Duration
+}
+
+// AgentCacheTTL is how long an engine session's prompt cache lives on
+// the llm service l: the row's own answer when it has one, else what the
+// provider keeps by default. The engine writes it into done.usage as
+// ttl, so serve's cache chip and the title timer read the right window.
+func AgentCacheTTL(l any) time.Duration {
+	if t, ok := l.(AgentTTLer); ok {
+		return t.AgentCacheTTL()
+	}
+	if m, ok := l.(LLM); ok {
+		return CacheTTL(Name(m))
+	}
+	return CacheTTL("")
+}

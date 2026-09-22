@@ -1,0 +1,41 @@
+{
+  "Failure": null,
+  "ID": "msg_01Redacted",
+  "Output": [
+    {
+      "Data": {
+        "Raw": {
+          "data": "EmwKAhgBEgy3va3pzix/LafPsn4aDFIT2Xlxh0L5L8rLVyIwxtE3rAFBa8cr3qpPkNRj2YfWXGmKDxH4mPnZ5sQ7vB5URj2pabPnB+WeHCrE",
+          "type": "redacted_thinking"
+        }
+      },
+      "ProviderID": "",
+      "Type": "reasoning"
+    },
+    {
+      "Data": {
+        "Phase": "",
+        "Role": "assistant",
+        "Text": "Done."
+      },
+      "ProviderID": "",
+      "Type": "message"
+    }
+  ],
+  "Stop": "complete",
+  "Usage": {
+    "CacheWriteInputTokens": 0,
+    "CachedInputTokens": 0,
+    "InputTokens": 12,
+    "OutputTokens": 20,
+    "Raw": {
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "input_tokens": 12,
+      "output_tokens": 20
+    },
+    "ReasoningTokens": 0
+  }
+}
+--- deltas
+[text] Done.

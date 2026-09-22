@@ -1,0 +1,51 @@
+{
+  "Failure": null,
+  "ID": "msg_01ToolUse",
+  "Output": [
+    {
+      "Data": {
+        "Phase": "",
+        "Role": "assistant",
+        "Text": "Listing the files."
+      },
+      "ProviderID": "",
+      "Type": "message"
+    },
+    {
+      "Data": {
+        "Arguments": "{\"command\": \"ls -la\", \"background\": false}",
+        "CallID": "toolu_01A",
+        "Name": "bash"
+      },
+      "ProviderID": "",
+      "Type": "tool_call"
+    },
+    {
+      "Data": {
+        "Arguments": "{\"path\":\"go.mod\"}",
+        "CallID": "toolu_01B",
+        "Name": "view"
+      },
+      "ProviderID": "",
+      "Type": "tool_call"
+    }
+  ],
+  "Stop": "complete",
+  "Usage": {
+    "CacheWriteInputTokens": 0,
+    "CachedInputTokens": 0,
+    "InputTokens": 400,
+    "OutputTokens": 60,
+    "Raw": {
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "input_tokens": 400,
+      "output_tokens": 60
+    },
+    "ReasoningTokens": 0
+  }
+}
+--- deltas
+[text] Listing the files.
+[tool_start bash toolu_01A]
+[tool_start view toolu_01B]

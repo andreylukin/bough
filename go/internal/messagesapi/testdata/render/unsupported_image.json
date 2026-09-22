@@ -1,0 +1,69 @@
+{
+  "max_tokens": 64000,
+  "messages": [
+    {
+      "content": [
+        {
+          "cache_control": {
+            "ttl": "1h",
+            "type": "ephemeral"
+          },
+          "text": "look",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "id": "toolu_w",
+          "input": {
+            "path": "a.webp"
+          },
+          "name": "view_image",
+          "type": "tool_use"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "cache_control": {
+            "ttl": "1h",
+            "type": "ephemeral"
+          },
+          "content": [
+            {
+              "text": "[image omitted: unsupported image/webp]",
+              "type": "text"
+            }
+          ],
+          "tool_use_id": "toolu_w",
+          "type": "tool_result"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "claude-sonnet-5",
+  "output_config": {
+    "effort": "high"
+  },
+  "system": [
+    {
+      "cache_control": {
+        "ttl": "1h",
+        "type": "ephemeral"
+      },
+      "text": "sys",
+      "type": "text"
+    }
+  ],
+  "thinking": {
+    "display": "summarized",
+    "type": "adaptive"
+  }
+}
+--- betas 

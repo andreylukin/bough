@@ -47,6 +47,11 @@ func (p *openaiPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if b, ok := cfg["base_url"].(string); ok && b != "" {
 		o.base = strings.TrimRight(b, "/")
 	}
+	n, err := attempts(cfg, "llm-openai")
+	if err != nil {
+		return err
+	}
+	o.maxAttempts = n
 	ctx.Provide(serviceKey(cfg), o)
 	return nil
 }
@@ -55,6 +60,9 @@ type openaiLLM struct {
 	model  string
 	effort string
 	base   string
+	// maxAttempts bounds the engine adapter's retries (0 = the
+	// harness default); the loop's path keeps its own schedule.
+	maxAttempts int
 
 	once sync.Once
 	key  string

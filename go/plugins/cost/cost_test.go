@@ -228,6 +228,32 @@ func TestCachedInputIsPricedAsCached(t *testing.T) {
 	}
 }
 
+// The engine writes its cache markers with a one-hour TTL, which bills
+// at 2x input instead of the 5-minute 1.25x; the tally's 1h share is
+// priced as such, and only that share.
+func TestOneHourWritesArePricedAtTwiceInput(t *testing.T) {
+	t.Parallel()
+	l := &stubLLM{model: "claude-opus-5", u: llm.Usage{
+		InputTokens: 100_000, OutputTokens: 1_000,
+		CacheReadTokens: 90_000, CacheCreationTokens: 5_000, CacheWrite1hTokens: 4_000,
+	}}
+	s := &Service{rep: l, model: l.Model, plugin: func() string { return "llm-anthropic" }, table: Table{}}
+	got := s.Usage().Cost
+	// opus-5: 5 in, 25 out, 0.5 read, 6.25 5m write, 10 1h write (2x in).
+	want := 5_000*5.0/1e6 + 90_000*0.5/1e6 + 1_000*6.25/1e6 + 4_000*10.0/1e6 + 1_000*25.0/1e6
+	if math.Abs(got-want) > 1e-9 {
+		t.Fatalf("cost = %f, want %f", got, want)
+	}
+	// The mount subtracts and the base adds the 1h count like the others.
+	start := llm.Usage{CacheWrite1hTokens: 1_000}
+	if d := since(l.u, start); d.CacheWrite1hTokens != 3_000 {
+		t.Errorf("since: %d", d.CacheWrite1hTokens)
+	}
+	if b := withBase(llm.Usage{CacheWrite1hTokens: 2}, llm.Usage{CacheWrite1hTokens: 3}); b.CacheWrite1hTokens != 5 {
+		t.Errorf("withBase: %d", b.CacheWrite1hTokens)
+	}
+}
+
 // A resumed session's bar carries on from what the file says it spent;
 // the live request size wins once there is one.
 func TestUsageCarriesTheBaseOn(t *testing.T) {

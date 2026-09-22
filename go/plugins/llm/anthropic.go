@@ -38,7 +38,21 @@ func (p *anthropicPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		}
 		maxTokens = int64(n)
 	}
-	ctx.Provide(serviceKey(cfg), &anthropicLLM{model: model, maxTokens: maxTokens})
+	a := &anthropicLLM{model: model, maxTokens: maxTokens}
+	_, a.maxTokensSet = cfg["max_tokens"]
+	if e, ok := cfg["effort"]; ok {
+		level, ok := e.(string)
+		if !ok || !ValidEffort(level) {
+			return fmt.Errorf("llm-anthropic: effort must be one of off, low, medium, high, xhigh or max, got %v", e)
+		}
+		a.effort = level
+	}
+	agent, err := parseAgentAnthropic(cfg)
+	if err != nil {
+		return err
+	}
+	a.agent = agent
+	ctx.Provide(serviceKey(cfg), a)
 	return nil
 }
 
@@ -46,15 +60,19 @@ func (p *anthropicPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 const defaultMaxTokens = 16384
 
 type anthropicLLM struct {
-	model     string
-	maxTokens int64
+	model        string
+	maxTokens    int64
+	maxTokensSet bool
+	agent        agentAnthropic // the engine's keys; see agent.go
 
 	once   sync.Once
+	key    string
 	client anthropic.Client
 	err    error
 
-	mu    sync.Mutex
-	usage Usage
+	mu     sync.Mutex
+	usage  Usage
+	effort string
 }
 
 // Usage implements UsageReporter: token counts only (no price table
@@ -68,6 +86,25 @@ func (a *anthropicLLM) Usage() Usage {
 	return a.usage
 }
 
+// Effort implements Efforter: the level /think set, "" for the model's
+// own default.
+func (a *anthropicLLM) Effort() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.effort
+}
+
+// SetEffort changes it for the next request.
+func (a *anthropicLLM) SetEffort(level string) error {
+	if !ValidEffort(level) {
+		return fmt.Errorf("llm-anthropic: unknown thinking level %q", level)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.effort = level
+	return nil
+}
+
 // Ready reports whether this provider is configured (see llm.Ready):
 // init() is idempotent, so asking early costs nothing.
 func (a *anthropicLLM) Ready() error { return a.init() }
@@ -79,6 +116,7 @@ func (a *anthropicLLM) init() error {
 			a.err = MissingKey("llm-anthropic", "ANTHROPIC_API_KEY")
 			return
 		}
+		a.key = key
 		// The shared client: bounded dial, TLS and response-header
 		// waits, so a connection that opens and goes quiet cannot hang
 		// the turn (see httpclient.go).
@@ -91,6 +129,11 @@ func (a *anthropicLLM) params(system string, messages []Message) anthropic.Messa
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(a.model),
 		MaxTokens: a.maxTokens,
+	}
+	// Only a level someone set is sent, so a row that never touched
+	// /think sends exactly what it always sent.
+	if e := loopEffort(a.model, a.Effort()); e != "" {
+		params.OutputConfig.Effort = anthropic.OutputConfigEffort(e)
 	}
 	if system != "" {
 		// cache_control on the system prompt lets Anthropic reuse it

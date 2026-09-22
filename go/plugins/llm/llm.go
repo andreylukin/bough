@@ -62,9 +62,16 @@ type Transcriber interface {
 // the provider for no reasoning at all and "" restores its default.
 var Efforts = []string{"off", "low", "medium", "high", "xhigh"}
 
+// EffortMax is the level above xhigh that Anthropic's adaptive models
+// and some OpenAI ones take. It is accepted by /think and the rows but
+// left out of Efforts, the shift+tab cycle: appending it there would
+// change what every loop session cycles through, and the loop's own
+// provider paths send whatever level they are given.
+const EffortMax = "max"
+
 // ValidEffort reports whether level is one Efforter accepts.
 func ValidEffort(level string) bool {
-	return level == "" || slices.Contains(Efforts, level)
+	return level == "" || level == EffortMax || slices.Contains(Efforts, level)
 }
 
 // serviceKey is the service a provider row publishes under: "llm" (the
@@ -119,8 +126,12 @@ type Usage struct {
 	LastInputTokens     int
 	CacheReadTokens     int
 	CacheCreationTokens int
-	Cost                float64
-	Priced              bool
+	// CacheWrite1hTokens is the part of CacheCreationTokens written with
+	// the one-hour TTL, which Anthropic bills at twice the input rate
+	// instead of 1.25x. Only the engine's adapter writes 1h entries.
+	CacheWrite1hTokens int
+	Cost               float64
+	Priced             bool
 }
 
 // Modeler is the optional seam naming the model an llm service runs;

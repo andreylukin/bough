@@ -188,6 +188,7 @@ func since(now, start llm.Usage) llm.Usage {
 	now.OutputTokens -= start.OutputTokens
 	now.CacheReadTokens -= start.CacheReadTokens
 	now.CacheCreationTokens -= start.CacheCreationTokens
+	now.CacheWrite1hTokens -= start.CacheWrite1hTokens
 	if now.Priced && start.Priced {
 		now.Cost -= start.Cost
 	}
@@ -237,8 +238,10 @@ func (s *Service) Usage() llm.Usage {
 			// Tiered rates by input size (gpt-5.6-sol doubles above 272k),
 			// and the prompt cache priced as a cache: a cached read is a
 			// tenth of the input rate, so billing it as fresh input would
-			// hide the saving caching exists for.
-			u.Cost = m.CostCached(u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheCreationTokens)
+			// hide the saving caching exists for. A one-hour write costs
+			// 2x input, not the 5-minute 1.25x, and the engine's markers
+			// are 1h by default.
+			u.Cost = m.CostCached1h(u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheCreationTokens, u.CacheWrite1hTokens)
 			u.Priced = true
 		}
 	}
@@ -254,6 +257,7 @@ func withBase(u, base llm.Usage) llm.Usage {
 	u.OutputTokens += base.OutputTokens
 	u.CacheReadTokens += base.CacheReadTokens
 	u.CacheCreationTokens += base.CacheCreationTokens
+	u.CacheWrite1hTokens += base.CacheWrite1hTokens
 	if u.LastInputTokens == 0 {
 		u.LastInputTokens = base.LastInputTokens
 	}

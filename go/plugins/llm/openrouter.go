@@ -33,15 +33,26 @@ func (p *openrouterPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error 
 	}
 	effort, _ := cfg["effort"].(string) // "" = the provider's default
 	switch effort {
-	case "", "off", "low", "medium", "high", "xhigh":
+	case "", "off", "low", "medium", "high", "xhigh", EffortMax:
 	default:
-		return fmt.Errorf("llm-openrouter: effort must be off, low, medium, high or xhigh, got %q", effort)
+		return fmt.Errorf("llm-openrouter: effort must be off, low, medium, high, xhigh or max, got %q", effort)
 	}
 	jsTool := strings.HasPrefix(model, "google/")
 	if v, ok := cfg["js_tool"].(bool); ok {
 		jsTool = v
 	}
-	ctx.Provide(serviceKey(cfg), &openrouterLLM{model: model, effort: effort, jsTool: jsTool})
+	o := &openrouterLLM{model: model, effort: effort, jsTool: jsTool}
+	var err error
+	if o.lateResults, err = oneOf(cfg, "llm-openrouter", "late_results", "auto", "auto", "text", "native"); err != nil {
+		return err
+	}
+	if o.cacheTTL, err = oneOf(cfg, "llm-openrouter", "cache_ttl", "1h", "1h", "5m"); err != nil {
+		return err
+	}
+	if o.maxAttempts, err = attempts(cfg, "llm-openrouter"); err != nil {
+		return err
+	}
+	ctx.Provide(serviceKey(cfg), o)
 	return nil
 }
 
@@ -49,6 +60,11 @@ type openrouterLLM struct {
 	model    string
 	effort   string // reasoning effort sent as {"reasoning": {"effort": …}}; "" omits it
 	endpoint string // tests point this at a local server; "" = OpenRouter
+	// The engine's keys (agent.go); the loop reads none of them.
+	lateResults string // "auto" | "text" | "native"
+	cacheTTL    string // "1h" | "5m"
+	maxAttempts int
+	agentBase   string // tests point the engine adapter here; "" = OpenRouter
 	// jsTool declares one native function, js(code), and turns the
 	// model's call into the ```js fence the loop reads. Gemini plans a
 	// function call in its thinking and, with no function to call,

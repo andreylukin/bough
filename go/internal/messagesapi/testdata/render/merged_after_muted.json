@@ -1,0 +1,77 @@
+{
+  "max_tokens": 64000,
+  "messages": [
+    {
+      "content": [
+        {
+          "cache_control": {
+            "ttl": "1h",
+            "type": "ephemeral"
+          },
+          "text": "start",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "id": "toolu_m",
+          "input": {
+            "command": "sleep 60"
+          },
+          "name": "bash",
+          "type": "tool_use"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "content": [
+            {
+              "text": "This call is still running. Its result arrives later.",
+              "type": "text"
+            }
+          ],
+          "tool_use_id": "toolu_m",
+          "type": "tool_result"
+        },
+        {
+          "text": "steer: also check the logs",
+          "type": "text"
+        },
+        {
+          "cache_control": {
+            "ttl": "1h",
+            "type": "ephemeral"
+          },
+          "text": "<tool_result call_id=\"toolu_m\" name=\"bash\">\nslept\n</tool_result>",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "model": "claude-sonnet-5",
+  "output_config": {
+    "effort": "high"
+  },
+  "system": [
+    {
+      "cache_control": {
+        "ttl": "1h",
+        "type": "ephemeral"
+      },
+      "text": "sys",
+      "type": "text"
+    }
+  ],
+  "thinking": {
+    "display": "summarized",
+    "type": "adaptive"
+  }
+}
+--- betas 
