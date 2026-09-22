@@ -914,6 +914,11 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .call-meta{margin-left:auto;flex:none;display:inline-flex;gap:8px;color:var(--text-3);white-space:nowrap}
 .call-meta .tool-meta-failed{color:var(--red)}
 @media (prefers-reduced-motion:reduce){.call-row-running .spin-mark{animation:none}}
+/* An engine session's native call is a row of its own; a badge says it ran on as a job, or reached the model late. */
+.call-badge{flex:none;padding:0 6px;border:1px solid var(--line);border-radius:999px;font-size:var(--fs-sm);line-height:16px;color:var(--text-3)}
+/* A running call's last three lines of output: enough to see it is alive, never a scrolling log. */
+.call-tail{margin:0;padding:6px 12px;font-size:var(--fs-sm);line-height:18px;color:var(--text-3);white-space:pre-wrap;overflow-wrap:anywhere;max-height:66px;overflow:hidden}
+.turn-running{color:var(--text-2);text-decoration:underline}
 .tool-more{font-size:var(--fs-sm);color:var(--text-3)}
 .block.thin>summary .tool-more::before{content:"· "}
 /* The exact command, above what it printed: what Copy command copies, in view. */

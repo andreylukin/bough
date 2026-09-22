@@ -129,10 +129,24 @@ func (m *model) addSubEvent(ev Event) {
 		b = m.spawnCard(worker)
 	}
 	s := b.sub
-	if kind != "start" && kind != "done" {
-		s.log = append(s.log, Event{Kind: kind, Text: strings.TrimRight(ev.Text, "\n")})
+	start := kind == "call" && evStr(ev.Data, "phase") == "start"
+	if kind != "start" && kind != "done" && !start {
+		// A native call's words and evidence are in its data, so the
+		// log keeps it: the overlay renders the row from it.
+		s.log = append(s.log, Event{Kind: kind, Text: strings.TrimRight(ev.Text, "\n"), Data: ev.Data})
 	}
 	switch kind {
+	case "call":
+		// Only an engine child's calls reach here (model.go): they are
+		// its steps, as a loop child's code blocks are. Counted once,
+		// at the end; the start is the card's "doing now".
+		if start {
+			s.last, s.lastOut = presentVerb(callRowLabel(ev)), ""
+			break
+		}
+		s.calls++
+		s.last = callRowLabel(ev)
+		s.lastOut = line(evStr(ev.Data, "output"), 200)
 	case "code":
 		s.calls++
 		s.last = codeLabel(ev.Text)
@@ -342,8 +356,12 @@ func (m *model) subTranscript(b *block, cfg *uiCfg) string {
 	sb.WriteString(xansi.Truncate(th["accent"].Render(fmt.Sprintf("subagent %d", s.worker))+" "+th["dim"].Render("· "+line(b.label, 200)), max(m.width, 10), "…") + "\n")
 	for _, ev := range s.log {
 		tmp := block{id: -1, kind: ev.Kind, text: ev.Text}
-		if ev.Kind == "result" {
+		switch ev.Kind {
+		case "result":
 			tmp.text = resultText(ev.Text)
+		case "call":
+			tmp.call, tmp.label, tmp.collapsed = callStateOf(ev), callRowLabel(ev), true
+			tmp.text = strings.TrimRight(evStr(ev.Data, "output"), "\n")
 		}
 		sb.WriteString("\n" + stripMarks(m.render(&tmp, cfg)))
 	}

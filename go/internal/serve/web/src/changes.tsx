@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type Change, type Scope } from "./api";
 import { Back } from "./app";
-import { changedPath, sessionTitle } from "./render";
+import { changedPath, callFailed, callRunning, isNativeCall, sessionTitle } from "./render";
 import { CopyCommand } from "./work-ui";
 import { toolCalls } from "./code";
 import { InlineFail, Pending } from "./loading";
-import type { Row } from "./types";
+import type { Line, Row } from "./types";
 
 // Two scopes, always named: what this session's turns changed (the
 // default, from its checkpoints) and the working tree (everything
@@ -157,6 +157,27 @@ export interface FileChange { path: string; add: number; del: number; hunks: Hun
  * (numbered from 1); a patch is its old text against its new, where in
  * the file it sits unknown until the checkpoint diff says.
  */
+/**
+ * The files an engine session's native write/patch calls changed, from
+ * their records: the call carries its path and counts, not its text, so
+ * there is no diff to draw here (the Changes review has the checkpoint's).
+ * A call that failed or still runs changed nothing yet.
+ */
+export function nativeEdits(lines: Line[]): FileChange[] {
+  const by = new Map<string, FileChange>();
+  for (const l of lines) {
+    const tool = l.data?.tool;
+    if (!isNativeCall(l) || (tool !== "write" && tool !== "patch") || callRunning(l) || callFailed(l)) continue;
+    const path = typeof l.data?.path === "string" && l.data.path ? l.data.path : l.text;
+    if (!path) continue;
+    const f = by.get(path) ?? { path, add: 0, del: 0, hunks: [] };
+    f.add += typeof l.data?.add === "number" ? l.data.add : 0;
+    f.del += typeof l.data?.del === "number" ? l.data.del : 0;
+    by.set(path, f);
+  }
+  return [...by.values()];
+}
+
 export function callEdits(code: string): FileChange[] {
   const by = new Map<string, FileChange>();
   for (const c of toolCalls(code)) {

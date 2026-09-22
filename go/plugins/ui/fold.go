@@ -52,6 +52,11 @@ func (m *model) foldable(i int) bool {
 	switch b.kind {
 	case "code", "result", "thinking":
 		return b.collapsed && !m.keepRow[b.id]
+	case "call":
+		// An engine call row is a step of its own (call.go). A finished
+		// one is a single line whether or not it has output behind it;
+		// a running one is what the user is watching and never folds.
+		return !b.live && (b.text == "" || b.collapsed) && !m.keepRow[b.id]
 	case "assistant":
 		return !b.live && !strings.Contains(b.text, "\n") && m.leadsIntoStep(i)
 	}
@@ -65,7 +70,7 @@ func (m *model) leadsIntoStep(i int) bool {
 		if m.blocks[j].kind == "thinking" {
 			continue
 		}
-		return m.blocks[j].kind == "code"
+		return m.blocks[j].kind == "code" || m.blocks[j].kind == "call"
 	}
 	return false
 }
@@ -136,11 +141,12 @@ func (m *model) runs() []foldRun {
 	return out
 }
 
-// stepsIn counts the code blocks in [from, to).
+// stepsIn counts the steps in [from, to): code blocks, and an engine
+// turn's call rows.
 func (m *model) stepsIn(from, to int) int {
 	n := 0
 	for i := from; i < to; i++ {
-		if m.blocks[i].kind == "code" {
+		if k := m.blocks[i].kind; k == "code" || k == "call" {
 			n++
 		}
 	}
@@ -165,11 +171,17 @@ func (m *model) renderFold(r foldRun, th theme) string {
 	n := map[string]int{}
 	steps := 0
 	for i := r.from; i < r.to; i++ {
-		if m.blocks[i].kind != "code" {
+		b := &m.blocks[i]
+		if b.kind == "call" && b.call != nil {
+			steps++
+			n[b.call.tool]++
+			continue
+		}
+		if b.kind != "code" {
 			continue
 		}
 		steps++
-		for call, c := range countCalls(m.blocks[i].text) {
+		for call, c := range countCalls(b.text) {
 			n[call] += c
 		}
 	}

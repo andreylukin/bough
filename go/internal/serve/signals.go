@@ -145,7 +145,13 @@ func lastTestFailed(entries []history.Entry) bool {
 // it failed and when its result was written (zero when there is none).
 // The web view ages test status from this, never from the last entry.
 func lastTest(entries []history.Entry) (bool, time.Time) {
-	for i := len(entries) - 1; i > 0; i-- {
+	for i := len(entries) - 1; i >= 0; i-- {
+		if _, exit, ok := callTest(entries[i]); ok {
+			return exit != 0, entries[i].At
+		}
+		if i == 0 {
+			break
+		}
 		r, c := entries[i], entries[i-1]
 		if r.Kind != "result" || c.Kind != "code" {
 			continue
@@ -187,10 +193,32 @@ func LastCache(entries []history.Entry, model string) *Cache {
 		if !ok {
 			continue
 		}
-		c := Cache{At: e.At, TTL: int(llm.CacheTTL(model) / time.Second), Read: int(num(u["cache_read"])), Write: int(num(u["cache_write"])), In: int(num(u["in"]))}
+		c := Cache{At: e.At, TTL: int(usageTTL(u, model) / time.Second), Read: int(num(u["cache_read"])), Write: int(num(u["cache_write"])), In: int(num(u["in"]))}
 		if c.Read+c.Write > 0 {
 			return &c
 		}
 	}
 	return nil
+}
+
+// usageTTL is how long the turn's cache writes stay warm. An engine turn
+// records the TTL it actually asked for (usage.ttl: "1h", "5m", or
+// seconds), which the model's default cannot know: the engine writes
+// one-hour entries on models whose default is five minutes.
+func usageTTL(u map[string]any, model string) time.Duration {
+	switch v := u["ttl"].(type) {
+	case string:
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	case float64:
+		if v > 0 {
+			return time.Duration(v) * time.Second
+		}
+	case int:
+		if v > 0 {
+			return time.Duration(v) * time.Second
+		}
+	}
+	return llm.CacheTTL(model)
 }

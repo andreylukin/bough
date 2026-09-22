@@ -106,6 +106,8 @@ export interface WorkCtx {
   review: ReturnType<typeof useReviewed>;
   stops: Record<string, StopEntry>;
   requestStop: (w: Worker, fromWork?: boolean) => void;
+  /** Opens the Work dialog: a turn footer's "calls still running" leads there. */
+  openWork?: () => void;
 }
 
 export const WorkContext = createContext<WorkCtx | null>(null);

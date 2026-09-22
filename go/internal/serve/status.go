@@ -98,6 +98,13 @@ func StatusOf(entries []history.Entry, childAlive bool) (Status, *Ask) {
 			// answer, and without this the session said "Waiting for
 			// you" with live buttons for a question nobody was waiting on.
 			pending = nil
+		case "call":
+			// The engine's native ask is a call, not a block: its end is
+			// the same signal a result is above (answered, timed out or
+			// cancelled), and a timeout records no ask/answer.
+			if str(e.Data["tool"]) == "ask" {
+				pending = nil
+			}
 		case "done", "cancelled":
 			// The loop writes a done after every cancel. With the turn
 			// already closed by the cancel, that done is bookkeeping, not

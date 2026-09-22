@@ -132,6 +132,14 @@ export const presentTense = (label: string) => PRESENT[label] ?? label;
 const CALL_VERBS: Record<string, string> = { bash: "Ran", view: "Read", write: "Wrote", patch: "Patched" };
 export const callVerb = (tool: string) => CALL_VERBS[tool] ?? tool.charAt(0).toUpperCase() + tool.slice(1);
 export const isCall = (l: Line) => l.kind === "call" || l.kind === "sub:call";
+/**
+ * An engine session's call is a row of its own, not a detail of a code
+ * block: the model called the tool directly. Its id is the provider's
+ * call id (a string); the loop's per-block calls number theirs.
+ */
+export const isNativeCall = (l: Line) => isCall(l) && typeof l.data?.id === "string";
+/** A native call still running: the live start, never recorded. */
+export const callRunning = (l: Line) => l.data?.phase === "start";
 export const callFailed = (l: Line) => typeof l.data?.error === "string" || (typeof l.data?.exit === "number" && l.data.exit !== 0);
 /** "Running go test ./...": what a call in flight is doing. */
 export const callStep = (l: { data?: Record<string, unknown>; text: string }) => [presentTense(callVerb(String(l.data?.tool ?? ""))), l.text].filter(Boolean).join(" ");
@@ -347,7 +355,7 @@ export function hasOwnTitle(r: { title?: string; summary?: string }): boolean {
   return Boolean(plainTitle(r.title ?? "") || (r.summary ?? "").trim());
 }
 
-const QUIET = new Set(["job", "hook", "usage", "system", "nudge", "command", "meta", "origin", "title", "turn-summary", "undo", "model"]);
+const QUIET = new Set(["job", "hook", "usage", "system", "nudge", "command", "meta", "origin", "title", "turn-summary", "undo", "model", "engine"]);
 
 /** Kinds that are bookkeeping, not conversation. */
 export function isQuiet(kind: string): boolean {
@@ -373,9 +381,14 @@ export function groupTurns(lines: Line[]): Turn[] {
   let cur: Turn | null = null;
   for (const l of lines) {
     // Turn summaries live in the sidebar's turn log, not the transcript.
-    if (l.kind === "meta" || l.kind === "origin" || l.kind === "title" || l.kind === "turn-summary" || l.kind === "model") continue;
+    // The engine entry is the coordinator's build record: provenance for tools, not conversation.
+    if (l.kind === "meta" || l.kind === "origin" || l.kind === "title" || l.kind === "turn-summary" || l.kind === "model" || l.kind === "engine") continue;
     // R3-C: a steer the open turn took belongs to that turn, not a new one.
     if (l.kind === "input" && l.data?.steer && cur?.prompt) { cur.body.push(l); continue; }
+    // A background call's end is recorded between turns, just before the
+    // wake turn it starts: that call is what the wake turn is about, so it
+    // opens that turn rather than standing alone above it.
+    if (l.kind === "input" && l.data?.wake && cur && !cur.prompt && !cur.done) { cur.prompt = l; cur.seq = Math.min(cur.seq, l.seq); continue; }
     if (l.kind === "input") {
       if (cur) turns.push(cur);
       cur = { seq: l.seq, prompt: l, body: [], done: null };
@@ -452,7 +465,7 @@ export function groupTools(items: Item[], codes: string[]): Item[] {
   const flush = () => {
     // Even a single call is emitted as a run: the renderer pairs a call
     // with its output, and only wraps runs of two or more in a header.
-    if (run.some((l) => l.kind === "code")) out.push({ kind: "tools", seq: run[0].seq, lines: run });
+    if (run.some((l) => l.kind === "code" || isNativeCall(l))) out.push({ kind: "tools", seq: run[0].seq, lines: run });
     else for (const l of run) out.push({ kind: "line", seq: l.seq, line: l });
     run = [];
   };
@@ -686,7 +699,8 @@ export function splitWork(items: Item[], codes: string[], live: boolean): Segmen
       const run = (k: (l: Line) => boolean) => it.kind === "line" && k(it.line) && prev?.kind === "line" && k(prev.line);
       // A run of one call is not wrapped: its thought, call and notes are rows of their own.
       // A call row lives inside its block's row, so it is not a row of the segment.
-      if (it.kind === "tools" && it.lines.filter((l) => l.kind === "code").length < 2) rows += it.lines.filter((l) => l.kind !== "result" && l.kind !== "call").length;
+      // An engine's native call is a row of its own, as a block is.
+      if (it.kind === "tools" && it.lines.filter((l) => l.kind === "code" || isNativeCall(l)).length < 2) rows += it.lines.filter((l) => l.kind !== "result" && (l.kind !== "call" || isNativeCall(l))).length;
       else if (!run((l) => l.kind.startsWith("todo/")) && !run((l) => l.kind === "job")) rows++;
       if (it.kind === "sub") {
         actions += it.agents.length;
@@ -699,7 +713,12 @@ export function splitWork(items: Item[], codes: string[], live: boolean): Segmen
       for (const l of ls) {
         lines.push(l);
         if (l.kind === "code") { actions++; const c = codeLabel(l.text); step = [presentTense(c.label), c.detail].filter(Boolean).join(" "); }
-        else if (l.kind === "call") step = callStep(l); // the runtime's word beats the label read off the source
+        else if (isNativeCall(l)) {
+          // No block around it: the call is the action, and its own record says whether it failed.
+          actions++;
+          if (callFailed(l)) failed++;
+          step = callRunning(l) ? callStep(l) : pastTense(callStep(l));
+        } else if (l.kind === "call") step = callStep(l); // the runtime's word beats the label read off the source
         else if (l.kind === "result") { step = pastTense(step); if ((typeof l.data?.exit === "number" && l.data.exit !== 0) || thrownError(l)) failed++; }
         else if (l.kind === "job") {
           const id = typeof l.data?.id === "number" ? String(l.data.id) : /^job (\d+) /.exec(l.text)?.[1];

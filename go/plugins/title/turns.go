@@ -89,6 +89,21 @@ func Turns(entries []history.Entry) []Turn {
 			}
 			cur.Calls = append(cur.Calls, call)
 			pending = ""
+		case "call":
+			// An engine turn's tool call is its own step, with no code
+			// block to name it; a loop block's per-call rows (numeric
+			// ids) are detail its code/result pair already counted.
+			if _, native := e.Data["id"].(string); !native {
+				break
+			}
+			tool, _ := e.Data["tool"].(string)
+			call := tool + ": " + cut(text, 140)
+			if exit, ok := e.Data["exit"]; ok && exit != nil {
+				call += fmt.Sprintf(" → exit %v", exit)
+			} else if msg, _ := e.Data["error"].(string); msg != "" {
+				call += " → error: " + cut(msg, 140)
+			}
+			cur.Calls = append(cur.Calls, call)
 		case "assistant":
 			if strings.TrimSpace(text) != "" {
 				cur.Reply = text
