@@ -1,0 +1,76 @@
+[
+  {
+    "Kind": "call",
+    "Text": "a.go",
+    "Data": {
+      "id": "cw",
+      "phase": "start",
+      "tool": "write"
+    },
+    "Record": false
+  },
+  {
+    "Kind": "call",
+    "Text": "nope.go",
+    "Data": {
+      "id": "cf",
+      "phase": "start",
+      "tool": "view"
+    },
+    "Record": false
+  },
+  {
+    "Kind": "call",
+    "Text": "sleep 100",
+    "Data": {
+      "id": "ck",
+      "phase": "start",
+      "tool": "bash"
+    },
+    "Record": false
+  },
+  {
+    "Kind": "call",
+    "Text": "a.go",
+    "Data": {
+      "add": 1,
+      "del": 0,
+      "hseq": 5,
+      "id": "cw",
+      "ms": 750,
+      "output": "wrote a.go (+1 −0)",
+      "text": "a.go",
+      "tool": "write"
+    },
+    "Record": true
+  },
+  {
+    "Kind": "call",
+    "Text": "nope.go",
+    "Data": {
+      "error": "open nope.go: no such file",
+      "hseq": 6,
+      "id": "cf",
+      "ms": 750,
+      "output": "Error: open nope.go: no such file",
+      "text": "nope.go",
+      "tool": "view"
+    },
+    "Record": true
+  },
+  {
+    "Kind": "call",
+    "Text": "sleep 100",
+    "Data": {
+      "canceled": true,
+      "error": "cancelled by the user",
+      "hseq": 7,
+      "id": "ck",
+      "ms": 750,
+      "output": "Cancelled: cancelled by the user",
+      "text": "sleep 100",
+      "tool": "bash"
+    },
+    "Record": true
+  }
+]

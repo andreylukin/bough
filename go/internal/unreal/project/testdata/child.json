@@ -1,0 +1,37 @@
+[
+  {
+    "Kind": "sub:assistant",
+    "Text": "Reading.",
+    "Data": {
+      "hseq": 1,
+      "text": "Reading.",
+      "worker": 2
+    },
+    "Record": true
+  },
+  {
+    "Kind": "sub:call",
+    "Text": "README.md",
+    "Data": {
+      "id": "c1",
+      "phase": "start",
+      "tool": "view",
+      "worker": 2
+    },
+    "Record": false
+  },
+  {
+    "Kind": "sub:call",
+    "Text": "README.md",
+    "Data": {
+      "hseq": 3,
+      "id": "c1",
+      "ms": 250,
+      "output": "# bough\n",
+      "text": "README.md",
+      "tool": "view",
+      "worker": 2
+    },
+    "Record": true
+  }
+]

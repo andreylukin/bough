@@ -1,0 +1,27 @@
+[
+  {
+    "Kind": "call",
+    "Text": "seq 1000",
+    "Data": {
+      "id": "c1",
+      "phase": "start",
+      "tool": "bash"
+    },
+    "Record": false
+  },
+  {
+    "Kind": "call",
+    "Text": "seq 1000",
+    "Data": {
+      "exit": 0,
+      "hseq": 3,
+      "id": "c1",
+      "ms": 250,
+      "output": "\nx\nxx\nxxx\nxxxx\nxx\n…\nx\nxxxxx\nxxxxxx\n\nx\n",
+      "text": "seq 1000",
+      "tool": "bash",
+      "truncated": true
+    },
+    "Record": true
+  }
+]

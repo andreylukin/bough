@@ -1,0 +1,12 @@
+[
+  {
+    "Kind": "system",
+    "Text": "3 calls still running",
+    "Data": {
+      "heartbeat": true,
+      "hseq": 3,
+      "text": "3 calls still running"
+    },
+    "Record": true
+  }
+]

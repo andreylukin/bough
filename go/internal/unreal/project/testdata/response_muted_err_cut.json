@@ -1,0 +1,21 @@
+[
+  {
+    "Kind": "assistant",
+    "Text": "and then the",
+    "Data": {
+      "hseq": 3,
+      "model": "m",
+      "text": "and then the"
+    },
+    "Record": true
+  },
+  {
+    "Kind": "system",
+    "Text": "reply cut off at max_tokens; raise the llm row's max_tokens if this keeps happening",
+    "Data": {
+      "hseq": 3,
+      "text": "reply cut off at max_tokens; raise the llm row's max_tokens if this keeps happening"
+    },
+    "Record": true
+  }
+]
