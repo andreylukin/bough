@@ -7,6 +7,7 @@ package serve
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/andreylukin/bough/internal/models"
@@ -70,7 +71,10 @@ func (a *API) models(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, ProviderInfo{Plugin: name, Models: ms})
 	}
-	resp := map[string]any{"providers": out, "efforts": llm.Efforts}
+	// max is offered beside the shift+tab cycle, not in it: the rows
+	// accept it (clamped per model), and a model with its own list says
+	// whether it has it.
+	resp := map[string]any{"providers": out, "efforts": append(slices.Clone(llm.Efforts), llm.EffortMax)}
 	if a.defaults != nil {
 		if d := a.defaults(); d.Model != "" {
 			resp["default"] = d

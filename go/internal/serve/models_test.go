@@ -31,6 +31,10 @@ func TestModelCatalogue(t *testing.T) {
 	if len(efforts) == 0 {
 		t.Error("no reasoning levels offered")
 	}
+	// max is not in the shift+tab cycle (llm.Efforts), but the picker offers it.
+	if len(efforts) > 0 && efforts[len(efforts)-1] != "max" {
+		t.Errorf("efforts = %v, want max last", efforts)
+	}
 	provs, _ := body["providers"].([]any)
 	if len(provs) == 0 {
 		t.Fatal("no providers offered")
