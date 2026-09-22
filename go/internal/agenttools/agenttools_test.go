@@ -125,3 +125,25 @@ func TestCallEmitNilSafe(t *testing.T) {
 		t.Fatalf("Emit = %q", got)
 	}
 }
+
+func TestRegisterAllUndoesOnClash(t *testing.T) {
+	t.Parallel()
+	r := NewRegistry()
+	if _, err := r.Register(Tool{Name: "patch", Call: noop}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RegisterAll(r, Tool{Name: "bash", Call: noop}, Tool{Name: "patch", Call: noop}); err == nil || !strings.Contains(err.Error(), `"patch"`) {
+		t.Fatalf("clash err = %v", err)
+	}
+	if _, ok := r.Lookup("bash"); ok {
+		t.Fatal("a failed RegisterAll left bash registered")
+	}
+	off, err := RegisterAll(r, Tool{Name: "bash", Call: noop}, Tool{Name: "view", Call: noop})
+	if err != nil {
+		t.Fatal(err)
+	}
+	off()
+	if got := len(r.Tools()); got != 1 {
+		t.Fatalf("after unregister, %d tools remain, want only patch", got)
+	}
+}

@@ -19,6 +19,7 @@ import (
 	"github.com/dop251/goja"
 
 	"encoding/json"
+	"github.com/andreylukin/bough/internal/agenttools"
 	"github.com/andreylukin/bough/internal/hookmeta"
 	"github.com/andreylukin/bough/kernel"
 	"reflect"
@@ -482,7 +483,18 @@ func (plugin) Name() string     { return "codemode" }
 func (plugin) Inject() []string { return nil }
 
 func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
-	ctx.Provide("codemode", New(StepTimeout()))
+	cm := New(StepTimeout())
+	// bough.yml mounts agent-tools before this row: read here after it,
+	// its arrival would remount codemode, and a new VM remounts every
+	// row that registered a tool into the old one.
+	if at, err := kernel.Get[agenttools.Registry](ctx, "agent-tools"); err == nil {
+		off, err := at.Register(cm.nativeRunJS())
+		if err != nil {
+			return fmt.Errorf("codemode: %w", err)
+		}
+		ctx.Effect(off)
+	}
+	ctx.Provide("codemode", cm)
 	return nil
 }
 

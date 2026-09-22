@@ -31,6 +31,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/andreylukin/bough/internal/agenttools"
 	"github.com/andreylukin/bough/kernel"
 )
 
@@ -1061,6 +1062,13 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		"diagnostics": m.diagnosticsTool,
 	})
 	ctx.Effect(func() { reg.RegisterTool("lsp", nil) })
+	if at, err := kernel.Get[agenttools.Registry](ctx, "agent-tools"); err == nil {
+		off, err := at.Register(m.nativeTool())
+		if err != nil {
+			return fmt.Errorf("lsp: %w", err)
+		}
+		ctx.Effect(off)
+	}
 	if d, ok := reg.(interface{ Describe(name, line string) }); ok {
 		d.Describe("lsp", `tools.lsp.def|refs|hover(path, symbol, [line]), tools.lsp.outline(path), tools.lsp.symbols(query), tools.lsp.diagnostics(path) -> string: language-server navigation; see "Code intelligence".`)
 	}

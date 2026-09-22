@@ -1,0 +1,84 @@
+package ask
+
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/andreylukin/bough/internal/agenttools"
+)
+
+// nativeTools are ask and secret for an engine that calls tools
+// natively. Both are Blocking: the wait is on the person, so the call
+// holds its turn with no settle and no call timeout, as tools.ask
+// holds its block. The history entries are the codemode path's.
+func (a *Asker) nativeTools() []agenttools.Tool {
+	return []agenttools.Tool{
+		{
+			Name:        "ask",
+			Description: "Ask the USER a question and wait for the answer. Give options when the answer is one of a few choices; they render as buttons.",
+			Schema: agenttools.Object([]string{"question"}, map[string]any{
+				"question": agenttools.Prop("string", "what to ask"),
+				"options":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "choices to offer"},
+			}),
+			Blocking: true,
+			Detail: func(args json.RawMessage) string {
+				var v struct{ Question string }
+				_ = json.Unmarshal(args, &v)
+				return v.Question
+			},
+			Call: func(ctx context.Context, c agenttools.Call) (agenttools.Result, error) {
+				var v struct {
+					Question string   `json:"question"`
+					Options  []string `json:"options"`
+				}
+				if err := agenttools.Decode("ask", c.Args, &v); err != nil {
+					return agenttools.Result{}, err
+				}
+				out, err := a.putIn(ctx.Done(), nil, v.Question, false, v.Options...)
+				if err != nil {
+					return agenttools.Result{Error: err.Error()}, nil
+				}
+				return agenttools.Result{Text: out}, nil
+			},
+		},
+		{
+			Name:        "secret",
+			Description: "Ask the user for a credential, store it in the keychain and add it to the project's secrets. You never see the value; commands get it as an environment variable, so never print it.",
+			Schema: agenttools.Object([]string{"name", "question"}, map[string]any{
+				"name":     agenttools.Prop("string", "the environment variable name, e.g. STRIPE_KEY"),
+				"question": agenttools.Prop("string", "why it is needed, shown to the user"),
+				"project":  agenttools.Prop("string", "project slug; defaults to this session's project"),
+			}),
+			Blocking: true,
+			Detail: func(args json.RawMessage) string {
+				var v struct{ Name string }
+				_ = json.Unmarshal(args, &v)
+				return v.Name
+			},
+			Call: func(ctx context.Context, c agenttools.Call) (agenttools.Result, error) {
+				var v struct {
+					Name     string `json:"name"`
+					Question string `json:"question"`
+					Project  string `json:"project"`
+				}
+				if err := agenttools.Decode("secret", c.Args, &v); err != nil {
+					return agenttools.Result{}, err
+				}
+				var project []string
+				if v.Project != "" {
+					project = []string{v.Project}
+				}
+				// The value goes from the answer straight to the keychain
+				// inside secretVia; only "stored NAME as REF" comes back,
+				// so it never reaches the op state, the store or the model.
+				out, err := a.secretVia(func(q string) (string, error) {
+					return a.putIn(ctx.Done(), nil, q, true)
+				}, v.Name, v.Question, project...)
+				if err != nil {
+					return agenttools.Result{Error: err.Error()}, nil
+				}
+				return agenttools.Result{Text: out}, nil
+			},
+		},
+	}
+}

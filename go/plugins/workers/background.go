@@ -39,16 +39,26 @@ func (w *Workers) spawnBackground(task string, opts map[string]any) (any, error)
 		// {background: false} is a plain blocking spawn with no schema.
 		return w.spawn(task)
 	}
+	slug, _ := opts["project"].(string)
+	model, _ := opts["model"].(string)
+	m, err := w.startAgent(w.turnCtx(), task, slug, model)
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// startAgent asks serve for a background agent under parent (the
+// block's turn, or a native call's context).
+func (w *Workers) startAgent(parent context.Context, task, slug, model string) (map[string]any, error) {
 	if strings.TrimSpace(task) == "" {
 		return nil, fmt.Errorf("workers: spawn needs a non-empty task")
 	}
 	if w.spawnedBy() != "" {
 		return nil, fmt.Errorf("workers: a background agent cannot start agents (depth 1)")
 	}
-	slug, _ := opts["project"].(string)
 	// The child runs on this session's model unless told otherwise: the
 	// config default may be a provider this person has no key for.
-	model, _ := opts["model"].(string)
 	if model == "" {
 		model = w.currentModel()
 	}
@@ -57,7 +67,7 @@ func (w *Workers) spawnBackground(task string, opts map[string]any) (any, error)
 		return nil, err
 	}
 	cwd, _ := os.Getwd()
-	ctx, cancel := context.WithTimeout(w.turnCtx(), serveTimeout)
+	ctx, cancel := context.WithTimeout(parent, serveTimeout)
 	defer cancel()
 	resp, err := c.CreateChild(ctx, serveclient.ChildRequest{
 		Cwd: cwd, Prompt: task, Slug: slug, Model: model, SpawnedBy: c.Parent,
@@ -103,11 +113,15 @@ func (w *Workers) currentModel() string {
 
 // agent is tools.agent(id).
 func (w *Workers) agent(id string) (map[string]any, error) {
+	return w.agentIn(w.turnCtx(), id)
+}
+
+func (w *Workers) agentIn(parent context.Context, id string) (map[string]any, error) {
 	c, err := w.client()
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(w.turnCtx(), serveTimeout)
+	ctx, cancel := context.WithTimeout(parent, serveTimeout)
 	defer cancel()
 	st, err := c.Agent(ctx, id)
 	if err != nil {
@@ -118,11 +132,15 @@ func (w *Workers) agent(id string) (map[string]any, error) {
 
 // stopAgent is tools.stopAgent(id).
 func (w *Workers) stopAgent(id string) (string, error) {
+	return w.stopAgentIn(w.turnCtx(), id)
+}
+
+func (w *Workers) stopAgentIn(parent context.Context, id string) (string, error) {
 	c, err := w.client()
 	if err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(w.turnCtx(), serveTimeout)
+	ctx, cancel := context.WithTimeout(parent, serveTimeout)
 	defer cancel()
 	was, err := c.Stop(ctx, id)
 	if err != nil {

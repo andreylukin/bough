@@ -181,3 +181,25 @@ func Object(required []string, props map[string]any) map[string]any {
 func Prop(typ, description string) map[string]any {
 	return map[string]any{"type": typ, "description": description}
 }
+
+// RegisterAll registers a row's tools and returns one func that
+// unregisters them all, for the row's Effect. A failure undoes the ones
+// already registered: an Apply that errors must leave the registry as
+// it found it, or the row's retry clashes with its own half-mount.
+func RegisterAll(r Registry, tools ...Tool) (func(), error) {
+	var offs []func()
+	undo := func() {
+		for i := len(offs) - 1; i >= 0; i-- {
+			offs[i]()
+		}
+	}
+	for _, t := range tools {
+		off, err := r.Register(t)
+		if err != nil {
+			undo()
+			return nil, err
+		}
+		offs = append(offs, off)
+	}
+	return undo, nil
+}

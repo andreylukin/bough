@@ -66,6 +66,14 @@ type job struct {
 	err     string
 	ended   time.Time
 	cancel  context.CancelFunc
+
+	// An adopted job is a native call the engine already runs (Adopt):
+	// no process of ours, killed through kill, its output read from the
+	// call's live tail when it has one.
+	call   string
+	kill   func()
+	live   *callOut
+	killed bool
 }
 
 // write appends output, keeping the head and a bounded tail.
@@ -120,6 +128,9 @@ func (j *job) openSpill() {
 
 // output is everything kept, with the dropped middle marked.
 func (j *job) output() string {
+	if j.live != nil {
+		return j.live.text()
+	}
 	if j.cut == 0 {
 		return string(j.head) + string(j.tail)
 	}
@@ -141,6 +152,8 @@ func (j *job) status() string {
 	switch {
 	case !j.done:
 		return "running"
+	case j.killed:
+		return "killed"
 	case j.stopped:
 		return "stopped with the orb"
 	case j.err != "":
@@ -208,7 +221,8 @@ type Jobs struct {
 	next    int
 	list    []*job
 	pending []notice
-	wake    chan struct{} // buffered 1: a signal, not a queue
+	wake    chan struct{}       // buffered 1: a signal, not a queue
+	calls   map[string]*callOut // running native bash calls' output, by call id (see Adopt)
 
 	running sync.WaitGroup // one per job until its Wait returns
 }
@@ -476,6 +490,9 @@ func (j *Jobs) recordJob(b *job, event string, exit int) {
 	// The whole command: the web row derives its title and shows it all when
 	// opened. Only the loop's text notice keeps the one-line "first …" form.
 	data := map[string]any{"id": b.id, "event": event, "cmd": b.cmd}
+	if b.call != "" {
+		data["call"] = b.call
+	}
 	if b.until != nil {
 		data["until"] = b.until.String()
 	}
@@ -520,10 +537,14 @@ func tailLines(s string, n int) string {
 
 // jobs lists this session's background jobs.
 func (j *Jobs) jobs() (string, error) {
+	return j.jobsIn(j.turnDone(), j.pause)
+}
+
+func (j *Jobs) jobsIn(turn <-chan struct{}, pause func() func()) (string, error) {
 	// A poll while something runs waits for a change first: asked in a
 	// tight loop, this answered "running" every 14 s for a model turn
 	// each time, when one blocking call would have carried the finish.
-	j.settle(nil)
+	j.settleIn(turn, pause, nil)
 	j.mu.Lock()
 	list := append([]*job(nil), j.list...)
 	j.mu.Unlock()
@@ -541,11 +562,15 @@ func (j *Jobs) jobs() (string, error) {
 
 // job returns one job's status and everything it has printed.
 func (j *Jobs) job(id int) (string, error) {
+	return j.jobIn(j.turnDone(), j.pause, id)
+}
+
+func (j *Jobs) jobIn(turn <-chan struct{}, pause func() func(), id int) (string, error) {
 	b := j.find(id)
 	if b == nil {
 		return "", fmt.Errorf("no job %d (tools.jobs() lists them)", id)
 	}
-	j.settle(b)
+	j.settleIn(turn, pause, b)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.line() + "\n" + b.output(), nil
@@ -596,20 +621,39 @@ func (j *Jobs) jobKill(id int) (string, error) {
 		return "", fmt.Errorf("no job %d (tools.jobs() lists them)", id)
 	}
 	b.mu.Lock()
-	done, cancel := b.done, b.cancel
+	done, cancel, kill := b.done, b.cancel, b.kill
+	if !done && kill != nil {
+		b.killed = true
+	}
 	b.mu.Unlock()
 	if done {
 		return fmt.Sprintf("job %d already finished", id), nil
 	}
-	cancel()
+	if kill != nil {
+		kill() // an adopted call: the engine cancels it and reports the finish
+	} else {
+		cancel()
+	}
 	return fmt.Sprintf("job %d killed", id), nil
 }
 
-// settle waits up to j.wait for a running job to end (the one given,
-// or any when nil), with the script timeout paused, so a status call
-// made while something runs carries the finish instead of "running".
-// It returns at once when nothing is running.
-func (j *Jobs) settle(only *job) {
+// turnDone is the running script's Done channel; nil when none.
+func (j *Jobs) turnDone() <-chan struct{} {
+	if j.runCtx != nil {
+		if rc := j.runCtx(); rc != nil {
+			return rc.Done()
+		}
+	}
+	return nil
+}
+
+// settleIn waits up to j.settleFor for a running job to end (the one
+// given, or any when nil), so a status call made while something runs
+// carries the finish instead of "running". It returns at once when
+// nothing is running, and early when turn closes. pause stops the
+// script timeout meanwhile: codemode's for a binding, nil for a native
+// call, whose own context is turn.
+func (j *Jobs) settleIn(turn <-chan struct{}, pause func() func(), only *job) {
 	running := func() bool {
 		j.mu.Lock()
 		defer j.mu.Unlock()
@@ -629,14 +673,8 @@ func (j *Jobs) settle(only *job) {
 	if j.settleFor <= 0 || !running() {
 		return
 	}
-	if j.pause != nil {
-		defer j.pause()()
-	}
-	var turn <-chan struct{}
-	if j.runCtx != nil {
-		if rc := j.runCtx(); rc != nil {
-			turn = rc.Done()
-		}
+	if pause != nil {
+		defer pause()()
 	}
 	deadline := time.Now().Add(j.settleFor)
 	for running() && time.Now().Before(deadline) {

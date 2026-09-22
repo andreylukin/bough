@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/andreylukin/bough/internal/agenttools"
 	"github.com/andreylukin/bough/internal/hookmeta"
 	iorb "github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/kernel"
@@ -139,6 +140,27 @@ func (s *Stats) pause() func() func() {
 	return s.jobs.pause
 }
 
+// turnCtx is the running script's context, or Background: what a
+// codemode binding runs under. A native call brings its own instead.
+func (s *Stats) turnCtx() context.Context {
+	if s.runCtx != nil {
+		if c := s.runCtx(); c != nil {
+			return c
+		}
+	}
+	return context.Background()
+}
+
+// pauseFor is the script-timeout pause for a call running under ctx:
+// none for a native call, which has no script timer of its own, and
+// pausing codemode's would stop an unrelated run_js block's clock.
+func (s *Stats) pauseFor(ctx context.Context) func() func() {
+	if isNative(ctx) {
+		return nil
+	}
+	return s.pause()
+}
+
 // wait holds a project session's tool until its container is up. The
 // orb row mounts before its container is running (the start runs on its
 // own goroutine so the ui is not dead for an image build), and a turn
@@ -246,15 +268,11 @@ func (p *projectMode) allowed(tool, path string) error {
 // canWrite confines write and patch: to the orb in a project session, to
 // the write roots in a local session that has them. A local session
 // without roots never registers either tool.
-func (s *Stats) canWrite(tool, path string) error {
+func (s *Stats) canWrite(ctx context.Context, tool, path string) error {
 	if s.project != nil || len(s.writeRoots) == 0 {
 		if s.project != nil {
 			// The worktree the path must land in exists once the orb is up.
-			parent := context.Background()
-			if s.runCtx != nil {
-				parent = s.runCtx()
-			}
-			if err := s.project.wait(parent, s.pause()); err != nil {
+			if err := s.project.wait(ctx, s.pauseFor(ctx)); err != nil {
 				return fmt.Errorf("%s: %w", tool, err)
 			}
 		}
@@ -518,6 +536,15 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		reg.RegisterTool("patch", st.patch)
 		reg.RegisterTool("write", st.write)
 	}
+	// The same tools for an engine that calls them natively; inert
+	// under the loop, which never reads the registry.
+	if at, err := kernel.Get[agenttools.Registry](ctx, "agent-tools"); err == nil {
+		off, err := agenttools.RegisterAll(at, st.nativeTools(!local || len(st.writeRoots) > 0)...)
+		if err != nil {
+			return fmt.Errorf("tools-basic: %w", err)
+		}
+		ctx.Effect(off)
+	}
 	ctx.Provide("turn-stats", st)
 	return nil
 }
@@ -600,32 +627,11 @@ func (s *Stats) bashRun(cmd string, opts ...any) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(parent, bashTimeout)
 	defer cancel()
-	// The script goes in a file, not as an argument: a heredoc'd file
-	// or a long one-liner is not bounded by ARG_MAX, and a stray NUL
-	// byte no longer makes exec fail with "invalid argument". Not on
-	// stdin either: a stdin reader (cat, read, ssh) would eat the rest
-	// of the script. stdin is /dev/null.
-	// $BOUGH_SCRATCH (the scratchpad row) is promised to the command
-	// as a usable directory; it is made lazily and may have been
-	// removed since, so make sure it exists before the command runs.
-	if d := os.Getenv("BOUGH_SCRATCH"); d != "" {
-		_ = os.MkdirAll(d, 0o755)
-	}
-	script, err := project.script(cmd)
+	c, cleanup, err := project.shell(ctx, cmd)
 	if err != nil {
 		return "", err
 	}
-	defer os.Remove(script)
-	c, err := project.command(ctx, script)
-	if err != nil {
-		return "", fmt.Errorf("bash: %w", err)
-	}
-	// Its own process group, killed as a group: `sh -c` execs or forks
-	// the command, and killing sh alone leaves a sleep, a server, a
-	// build running after the turn was cancelled.
-	ownProcessGroup(c)
-	c.Cancel = project.cancel(c)
-	c.WaitDelay = 2 * time.Second
+	defer cleanup()
 	out, err := c.CombinedOutput()
 	if r := project.redactor(); r != nil {
 		out = []byte(r.String(string(out)))
@@ -687,7 +693,7 @@ func tail(out string) string {
 func (s *Stats) write(path, content string) (string, error) {
 	done := s.call("write", path)
 	_, statErr := os.Stat(path)
-	out, err := s.writeFile(path, content)
+	out, err := s.writeFile(s.turnCtx(), path, content)
 	extra := map[string]any{}
 	if err == nil {
 		extra["add"], extra["del"] = diffCounts(out)
@@ -699,8 +705,8 @@ func (s *Stats) write(path, content string) (string, error) {
 	return out, err
 }
 
-func (s *Stats) writeFile(path, content string) (string, error) {
-	if err := s.canWrite("write", path); err != nil {
+func (s *Stats) writeFile(ctx context.Context, path, content string) (string, error) {
+	if err := s.canWrite(ctx, "write", path); err != nil {
 		return "", err
 	}
 	before, hadFile := os.ReadFile(path)
@@ -1104,7 +1110,7 @@ func lockPath(path string) func() {
 // empty old creates the file with new when it does not exist yet.
 func (s *Stats) patch(path, old, new string) (string, error) {
 	done := s.call("patch", path)
-	out, err := s.patchFile(path, old, new)
+	out, err := s.patchFile(s.turnCtx(), path, old, new)
 	extra := map[string]any{}
 	if err == nil {
 		extra["add"], extra["del"] = diffCounts(out)
@@ -1113,8 +1119,8 @@ func (s *Stats) patch(path, old, new string) (string, error) {
 	return out, err
 }
 
-func (s *Stats) patchFile(path, old, new string) (string, error) {
-	if err := s.canWrite("patch", path); err != nil {
+func (s *Stats) patchFile(ctx context.Context, path, old, new string) (string, error) {
+	if err := s.canWrite(ctx, "patch", path); err != nil {
 		return "", err
 	}
 	// Every Stats (one per agent) shares this lock, so the
@@ -1175,6 +1181,39 @@ func (s *Stats) patchFile(path, old, new string) (string, error) {
 	s.wrote(path)
 	return fmt.Sprintf("patched %s (%+d lines)", path,
 		strings.Count(new, "\n")-strings.Count(old, "\n")) + lineDiff(old, new) + s.edited(path), nil
+}
+
+// shell builds the process for a foreground command: `sh script`, on
+// the host or in the orb, in its own process group. cleanup removes the
+// script once the command is done.
+func (p *projectMode) shell(ctx context.Context, cmd string) (c *exec.Cmd, cleanup func(), err error) {
+	// The script goes in a file, not as an argument: a heredoc'd file
+	// or a long one-liner is not bounded by ARG_MAX, and a stray NUL
+	// byte no longer makes exec fail with "invalid argument". Not on
+	// stdin either: a stdin reader (cat, read, ssh) would eat the rest
+	// of the script. stdin is /dev/null.
+	// $BOUGH_SCRATCH (the scratchpad row) is promised to the command
+	// as a usable directory; it is made lazily and may have been
+	// removed since, so make sure it exists before the command runs.
+	if d := os.Getenv("BOUGH_SCRATCH"); d != "" {
+		_ = os.MkdirAll(d, 0o755)
+	}
+	script, err := p.script(cmd)
+	if err != nil {
+		return nil, nil, err
+	}
+	c, err = p.command(ctx, script)
+	if err != nil {
+		os.Remove(script)
+		return nil, nil, fmt.Errorf("bash: %w", err)
+	}
+	// Its own process group, killed as a group: `sh -c` execs or forks
+	// the command, and killing sh alone leaves a sleep, a server, a
+	// build running after the turn was cancelled.
+	ownProcessGroup(c)
+	c.Cancel = p.cancel(c)
+	c.WaitDelay = 2 * time.Second
+	return c, func() { os.Remove(script) }, nil
 }
 
 // script writes cmd for `sh <file>`. In a project session the file goes

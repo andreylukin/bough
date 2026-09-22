@@ -4,8 +4,11 @@ package example
 // else: a walkthrough whose code does not run teaches the wrong thing.
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 
+	"github.com/andreylukin/bough/internal/agenttools"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
 )
@@ -91,6 +94,33 @@ func TestRegistersAndCleansUp(t *testing.T) {
 	}
 	if _, err := reg.Run("wordcount", "x"); err == nil {
 		t.Error("unmount should remove the command")
+	}
+}
+
+// With agent-tools mounted the same count is a native tool, and
+// unmounting unregisters it.
+func TestNativeToolRegistersAndCleansUp(t *testing.T) {
+	t.Parallel()
+	ctx := kernel.NewContext()
+	at := agenttools.NewRegistry()
+	ctx.Provide("agent-tools", at)
+	if err := (plugin{}).Apply(ctx, map[string]any{"min_length": 4}); err != nil {
+		t.Fatal(err)
+	}
+	tl, ok := at.Lookup("wordcount")
+	if !ok {
+		t.Fatal("the native tool should be registered")
+	}
+	r, err := tl.Call(context.Background(), agenttools.Call{Args: json.RawMessage(`{"text":"alpha alpha beta the"}`)})
+	if err != nil || r.Text != "   2  alpha\n   1  beta" {
+		t.Fatalf("wordcount = %+v, %v", r, err)
+	}
+	if _, err := tl.Call(context.Background(), agenttools.Call{Args: json.RawMessage(`{"text":3}`)}); err == nil {
+		t.Error("a malformed argument should fail the call")
+	}
+	ctx.Unmount()
+	if _, ok := at.Lookup("wordcount"); ok {
+		t.Error("unmount should remove the native tool")
 	}
 }
 
