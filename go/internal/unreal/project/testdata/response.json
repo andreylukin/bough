@@ -1,0 +1,43 @@
+[
+  {
+    "Kind": "thinking",
+    "Text": "Looking at the tree.\n\nThen the tests.",
+    "Data": {
+      "hseq": 1,
+      "text": "Looking at the tree.\n\nThen the tests."
+    },
+    "Record": true
+  },
+  {
+    "Kind": "assistant",
+    "Text": "I'll run the tests.",
+    "Data": {
+      "hseq": 1,
+      "model": "claude-opus-5-5",
+      "provider": "anthropic",
+      "text": "I'll run the tests."
+    },
+    "Record": true
+  },
+  {
+    "Kind": "assistant",
+    "Text": "Half a rep",
+    "Data": {
+      "hseq": 2,
+      "model": "gpt-5.6-sol",
+      "partial": true,
+      "provider": "openai",
+      "text": "Half a rep"
+    },
+    "Record": true
+  },
+  {
+    "Kind": "assistant",
+    "Text": "no meta",
+    "Data": {
+      "hseq": 3,
+      "text": "no meta"
+    },
+    "Record": true
+  }
+]

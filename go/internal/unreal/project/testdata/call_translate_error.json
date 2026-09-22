@@ -1,0 +1,36 @@
+[
+  {
+    "Kind": "call",
+    "Text": "nope",
+    "Data": {
+      "error": "tool \"nope\" is not available in this session",
+      "hseq": 2,
+      "id": "c1",
+      "ms": 0,
+      "text": "nope",
+      "tool": "nope"
+    },
+    "Record": true
+  },
+  {
+    "Kind": "code",
+    "Text": "tools.nope()",
+    "Data": {
+      "hseq": 3,
+      "text": "tools.nope()"
+    },
+    "Record": true
+  },
+  {
+    "Kind": "result",
+    "Text": "Error: arguments must be a JSON object",
+    "Data": {
+      "code": "tools.nope()",
+      "error": "arguments must be a JSON object",
+      "hseq": 3,
+      "ms": 0,
+      "text": "Error: arguments must be a JSON object"
+    },
+    "Record": true
+  }
+]

@@ -1,0 +1,29 @@
+[
+  {
+    "Kind": "call",
+    "Text": "make build",
+    "Data": {
+      "id": "c1",
+      "phase": "start",
+      "tool": "bash"
+    },
+    "Record": false
+  },
+  {
+    "Kind": "call",
+    "Text": "make build",
+    "Data": {
+      "adopted": true,
+      "exit": 0,
+      "hseq": 4,
+      "id": "c1",
+      "job": 3,
+      "late": true,
+      "ms": 500,
+      "output": "built",
+      "text": "make build",
+      "tool": "bash"
+    },
+    "Record": true
+  }
+]
