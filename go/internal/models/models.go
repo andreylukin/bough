@@ -29,6 +29,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 )
 
@@ -67,12 +68,17 @@ type Model struct {
 	// is a tenth of the input price on Anthropic, a write a little
 	// over. Without them a cached turn is billed as if nothing were
 	// cached, which is the opposite of the truth.
-	CacheRead  float64  `json:"cr,omitempty"`
-	CacheWrite float64  `json:"cw,omitempty"`
-	Tiers      []Tier   `json:"t,omitempty"` // price steps by context size
-	Context    int      `json:"c,omitempty"` // context window in tokens
-	Release    string   `json:"r,omitempty"` // release date, "YYYY-MM-DD"
-	Efforts    []string `json:"e,omitempty"` // reasoning levels it accepts
+	CacheRead  float64 `json:"cr,omitempty"`
+	CacheWrite float64 `json:"cw,omitempty"`
+	// CacheWrite1h is the one-hour-TTL write rate, which Anthropic bills
+	// at twice the input rate where the 5-minute one is 1.25x. models.dev
+	// does not carry it; Load fills it in for Anthropic models, and
+	// CostCached1h falls back to 2x input when it is still zero.
+	CacheWrite1h float64  `json:"cw1,omitempty"`
+	Tiers        []Tier   `json:"t,omitempty"` // price steps by context size
+	Context      int      `json:"c,omitempty"` // context window in tokens
+	Release      string   `json:"r,omitempty"` // release date, "YYYY-MM-DD"
+	Efforts      []string `json:"e,omitempty"` // reasoning levels it accepts
 }
 
 // Tier is a price that applies once a request's input passes Over
@@ -103,22 +109,40 @@ func Provider(plugin string) string {
 }
 
 var (
-	once   sync.Once
-	mu     sync.RWMutex
+	once sync.Once
+	mu   sync.RWMutex
+	// base is the catalogue as fetched, which is what the cache file
+	// holds; loaded is base with the overrides applied, which is what
+	// callers read. Keeping them apart means a dropped override stops
+	// applying at once instead of lingering in the cache for a day.
+	base   Catalogue
 	loaded Catalogue
 )
 
 // Load returns the catalogue, reading the cache (or the embedded
 // snapshot) once and starting a background refresh when the cache is
 // missing or stale. Never blocks on the network.
+//
+// In a test binary it is the embedded snapshot alone, never refreshed:
+// the suite may not reach the network or read and write the real
+// ~/.bough, and every package whose code prices or clamps by model
+// reaches this.
 func Load() Catalogue {
 	once.Do(func() {
+		if testing.Testing() {
+			mu.Lock()
+			base = fromSnapshot()
+			loaded = withOverrides(base)
+			mu.Unlock()
+			return
+		}
 		c, age := fromCache()
 		if c == nil {
 			c = fromSnapshot()
 		}
 		mu.Lock()
-		loaded = c
+		base = c
+		loaded = withOverrides(c)
 		mu.Unlock()
 		if age < 0 || age > maxAge {
 			go refresh()
@@ -164,24 +188,39 @@ func (m Model) Cost(in, out int) float64 {
 // applies and charged at their own. A model with no cache rates falls
 // back to the input rate, which is what was charged before caching.
 func (m Model) CostCached(in, out, read, write int) float64 {
+	return m.CostCached1h(in, out, read, write, 0)
+}
+
+// CostCached1h is CostCached where write1h of the write tokens went to
+// the one-hour cache. write1h is counted inside write, as Anthropic's
+// usage reports it (cache_creation splits cache_creation_input_tokens).
+// Pricing the whole write at the 5-minute rate under-reports a session
+// on the engine, whose markers are 1h by default, by 0.75x input on
+// every write.
+func (m Model) CostCached1h(in, out, read, write, write1h int) float64 {
 	inRate, outRate := m.Input, m.Output
 	for _, t := range m.Tiers {
 		if in >= t.Over && t.Input > 0 {
 			inRate, outRate = t.Input, t.Output
 		}
 	}
-	readRate, writeRate := m.CacheRead, m.CacheWrite
+	readRate, writeRate, hourRate := m.CacheRead, m.CacheWrite, m.CacheWrite1h
 	if readRate == 0 {
 		readRate = inRate
 	}
 	if writeRate == 0 {
 		writeRate = inRate
 	}
+	if hourRate == 0 {
+		hourRate = 2 * inRate
+	}
+	write1h = min(max(write1h, 0), max(write, 0))
 	full := in - read - write
 	if full < 0 {
 		full = 0
 	}
-	return (float64(full)*inRate + float64(read)*readRate + float64(write)*writeRate + float64(out)*outRate) / 1e6
+	return (float64(full)*inRate + float64(read)*readRate + float64(write-write1h)*writeRate +
+		float64(write1h)*hourRate + float64(out)*outRate) / 1e6
 }
 
 // List is a provider's model ids, newest first (undated ones last,
@@ -261,8 +300,9 @@ func refresh() {
 		return
 	}
 	mu.Lock()
-	loaded = merge(loaded, c)
-	out := loaded
+	base = merge(base, c)
+	loaded = withOverrides(base)
+	out := base
 	mu.Unlock()
 	writeCache(out)
 }
@@ -424,10 +464,12 @@ func Refresh() (Catalogue, error) {
 		return nil, errors.New("models: the catalogue came back empty")
 	}
 	mu.Lock()
-	loaded = merge(loaded, c)
+	base = merge(base, c)
+	loaded = withOverrides(base)
 	out := loaded
+	cached := base
 	mu.Unlock()
-	writeCache(out)
+	writeCache(cached)
 	return out, nil
 }
 
