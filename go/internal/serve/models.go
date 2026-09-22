@@ -31,6 +31,15 @@ type ModelInfo struct {
 }
 
 // ProviderInfo groups a provider's models.
+// ModelDefault is what a session runs as when nobody picked: the llm
+// row of the config serve started with. The picker names it instead of
+// saying "Default", which named nothing.
+type ModelDefault struct {
+	Plugin string `json:"plugin"`
+	Model  string `json:"model"`
+	Effort string `json:"effort,omitempty"` // "" = the provider's own default
+}
+
 type ProviderInfo struct {
 	Plugin string      `json:"plugin"`
 	Models []ModelInfo `json:"models"`
@@ -61,8 +70,19 @@ func (a *API) models(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, ProviderInfo{Plugin: name, Models: ms})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"providers": out, "efforts": llm.Efforts})
+	resp := map[string]any{"providers": out, "efforts": llm.Efforts}
+	if a.defaults != nil {
+		if d := a.defaults(); d.Model != "" {
+			resp["default"] = d
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
+
+// SetDefaults wires the configured model and effort into /api/models.
+// A func, read per request: the launcher re-reads bough.yml, so an
+// edit shows on the next load without restarting serve.
+func (a *API) SetDefaults(f func() ModelDefault) { a.defaults = f }
 
 func (a *API) setModel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

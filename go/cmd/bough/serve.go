@@ -296,6 +296,7 @@ func serveForeground(home, addr string, insecure bool, host string) error {
 		return fmt.Errorf("serve: listen %s: %w", addr, err)
 	}
 	api := serve.NewAPI(sup)
+	api.SetDefaults(configuredModel)
 	srv := &http.Server{Addr: addr, Handler: serve.Guard(api, token, remote && insecure, host)}
 	// Shutdown waits for in-flight requests, and an event stream is in
 	// flight for as long as a tab is open: every restart used to sit out
@@ -349,4 +350,25 @@ func serveForeground(home, addr string, insecure bool, host string) error {
 	// sup.Close (kill + reap every child) runs on the deferred call
 	// above, after Shutdown has drained the API.
 	return nil
+}
+
+// configuredModel is the llm row as a session would mount it now: the
+// same resolution a child does (./bough.yml, else ~/.bough/bough.yml,
+// else the embedded default routed to whichever provider has a key).
+// Empty when the config does not load; the picker then says nothing
+// rather than something wrong.
+func configuredModel() serve.ModelDefault {
+	rows, err := resolveConfig(false, "").load()
+	if err != nil {
+		return serve.ModelDefault{}
+	}
+	for _, r := range rows {
+		if r.ID != "llm" || r.Disabled {
+			continue
+		}
+		model, _ := r.Config["model"].(string)
+		effort, _ := r.Config["effort"].(string)
+		return serve.ModelDefault{Plugin: r.Plugin, Model: model, Effort: effort}
+	}
+	return serve.ModelDefault{}
 }

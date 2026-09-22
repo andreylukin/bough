@@ -3131,7 +3131,7 @@ if (typeof window !== "undefined" && window.visualViewport) {
   vv.addEventListener("resize", fit);
 }
 
-type Catalogue = { providers: ProviderInfo[]; efforts: string[] };
+type Catalogue = { providers: ProviderInfo[]; efforts: string[]; /** The configured llm row: what a session runs as until a pick. */ default?: { plugin: string; model: string; effort?: string } };
 
 /** GET /api/models, once per caller; `enabled` false reads nothing (the caller was handed one). */
 function useCatalogue(enabled = true) {
@@ -3164,7 +3164,12 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only, cat
   // one running a model the catalogue does not list still shows it.
   // "Default" can only be where a session starts: the supervisor has no
   // way back to it, so once a model is set it is not offered.
-  const models: Option[] = row.model ? [] : [{ value: "", label: "Default model" }];
+  // The configured model is named, not called "Default": that word named
+  // nothing, and a session that has not answered yet still runs as something.
+  const dflt = cat?.default;
+  const models: Option[] = row.model ? [] : [dflt?.model
+    ? { value: "", label: dflt.model, short: dflt.model.split("/").pop(), group: "Configured", detail: "default" }
+    : { value: "", label: "Default model" }];
   for (const p of cat?.providers ?? []) {
     for (const m of p.models ?? []) {
       // The group already names the provider; the trigger drops it too.
@@ -3178,8 +3183,12 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only, cat
 
   // Effort is offered for what the chosen model supports; a model the
   // catalogue does not describe falls back to every level it knows.
-  const chosen = cat?.providers.flatMap((p) => p.models ?? []).find((m) => m.id === row.model);
+  const runsAs = row.model || dflt?.model;
+  const chosen = cat?.providers.flatMap((p) => p.models ?? []).find((m) => m.id === runsAs);
   const efforts = chosen?.efforts?.length ? chosen.efforts : (cat?.efforts ?? []);
+  // Likewise the effort: the configured level, or the provider's own when the config sets none.
+  const effortDefault: Option = dflt?.effort ? { value: "", label: `${effortLabel(dflt.effort)} · default`, short: effortLabel(dflt.effort) }
+    : dflt ? { value: "", label: "Provider default", short: "Default" } : { value: "", label: "Default effort" };
 
   return (
     <div className="controls">
@@ -3202,7 +3211,7 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only, cat
           <span className="ctl-label ctl-field ctl-effort">Effort</span>
           <Select label="Next turn effort" value={row.effort ?? ""} align="end" onChange={(v) => (v ? onEffort(v) : undefined)}
                   disabled={efforts.length === 0} placeholder={catFailed ? "Unavailable" : cat ? "Not offered" : "Loading"}
-                  options={efforts.length ? [...(row.effort ? [] : [{ value: "", label: "Default effort" }]), ...efforts.map((e) => ({ value: e, label: effortLabel(e) }))] : []} />
+                  options={efforts.length ? [...(row.effort ? [] : [effortDefault]), ...efforts.map((e) => ({ value: e, label: effortLabel(e) }))] : []} />
           {catFailed && <button className="btn" onClick={retryCat}>Models unavailable · Retry</button>}
         </div>
       )}

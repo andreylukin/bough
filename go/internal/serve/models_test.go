@@ -49,6 +49,29 @@ func TestModelCatalogue(t *testing.T) {
 	}
 }
 
+// The picker names the configured model and effort instead of
+// "Default": a session that has not answered yet still runs as
+// something, and the person should see what.
+func TestModelCatalogueNamesTheDefault(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	f.api.SetDefaults(func() ModelDefault {
+		return ModelDefault{Plugin: "llm-openrouter", Model: "openai/gpt-6-astra", Effort: "medium"}
+	})
+	_, body := f.do(t, "GET", "/api/models", "")
+	d, _ := body["default"].(map[string]any)
+	if d["plugin"] != "llm-openrouter" || d["model"] != "openai/gpt-6-astra" || d["effort"] != "medium" {
+		t.Errorf("default = %v", body["default"])
+	}
+	// No configured model known: the key is absent, never an empty name.
+	g := newAPI(t)
+	g.api.SetDefaults(func() ModelDefault { return ModelDefault{} })
+	_, body = g.do(t, "GET", "/api/models", "")
+	if _, ok := body["default"]; ok {
+		t.Errorf("an unknown default was reported: %v", body["default"])
+	}
+}
+
 // An unknown level must be refused BEFORE anything is written to a
 // child: a typo should not reach the session as a bare prompt.
 func TestSetEffortRejectsUnknownLevel(t *testing.T) {

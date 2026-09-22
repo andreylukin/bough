@@ -32,7 +32,14 @@ func callsRunner(t *testing.T) (cm *codemode.CodeMode, events func() []loop.Even
 		}
 		recs = append(recs, d)
 	})
-	ctx.Provide("subagent-active", func() bool { mu.Lock(); defer mu.Unlock(); return sub })
+	ctx.Provide("subagent-worker", func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		if sub {
+			return 3
+		}
+		return 0
+	})
 	ctx.On("loop/event", func(p any) {
 		if ev, ok := p.(loop.Event); ok {
 			mu.Lock()
@@ -139,7 +146,7 @@ func TestCallEventsInSubagent(t *testing.T) {
 	if _, err := cm.Run(`tools.bash("true")`); err != nil {
 		t.Fatal(err)
 	}
-	if recs := recorded(); len(recs) != 1 || recs[0]["kind"] != "sub:call" {
+	if recs := recorded(); len(recs) != 1 || recs[0]["kind"] != "sub:call" || recs[0]["worker"] != 3 {
 		t.Errorf("recorded: %v", recs)
 	}
 	for _, ev := range events() {

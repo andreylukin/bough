@@ -103,10 +103,11 @@ type Stats struct {
 	// and write/patch stay inside its roots. nil = local/host.
 	project *projectMode
 	// callSink receives every foreground call's start and end (see
-	// calls.go); nil = no per-call events. subActive says a subagent's
-	// block is the one calling, so the event is a "sub:call".
+	// calls.go); nil = no per-call events. subWorker names the subagent
+	// whose block is calling (0 = the parent), so the event is that
+	// worker's "sub:call".
 	callSink  callSink
-	subActive func() bool
+	subWorker func() int
 	calls     int // per-call event ids, never reset
 }
 
@@ -420,9 +421,12 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		}
 		ctx.Emit("loop/event", loop.Event{Kind: kind, Text: text, Data: data})
 	}
-	st.subActive = func() bool {
-		f, err := kernel.Get[func() bool](ctx, "subagent-active")
-		return err == nil && f()
+	st.subWorker = func() int {
+		f, err := kernel.Get[func() int](ctx, "subagent-worker")
+		if err != nil {
+			return 0
+		}
+		return f()
 	}
 	// A background job outlives the turn that started it, so it hangs
 	// off the plugin's context, not the script's.

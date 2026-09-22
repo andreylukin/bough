@@ -157,6 +157,7 @@ type Workers struct {
 	maxSteps  int
 	spawns    int  // spawns this parent turn; reset on the loop's "done"
 	inChild   bool // a child run is active: no nested spawns
+	running   int  // the child whose block is running now; 0 = the parent's
 	nextID    int  // worker numbering, monotonic per session
 
 	// Background agents (background.go): serve sessions, not children
@@ -251,6 +252,13 @@ func (w *Workers) turnCtx() context.Context {
 // child that asked for it so anything it writes to the shared
 // scratchpad says where it came from.
 func (w *Workers) runBlock(ctx context.Context, id int, code string) (string, error) {
+	// tools asks which child is running (subagent-worker) so the calls
+	// a child's block makes are mirrored as its own, numbered like the
+	// rest of its sub:* entries.
+	w.mu.Lock()
+	w.running = id
+	w.mu.Unlock()
+	defer func() { w.mu.Lock(); w.running = 0; w.mu.Unlock() }()
 	if w.pad != nil {
 		w.pad.Writer(fmt.Sprintf("subagent %d", id))
 		defer w.pad.Writer("")
@@ -694,11 +702,12 @@ func apply(kctx *kernel.Context, cfg map[string]any, home string) error {
 	})
 
 	// tools asks this per call: a child's block runs on the parent's
-	// tools, so the flag is how its calls get mirrored as "sub:call".
-	kctx.Provide("subagent-active", func() bool {
+	// tools, so the number is how its calls get mirrored as that
+	// worker's "sub:call"; 0 means the parent itself is calling.
+	kctx.Provide("subagent-worker", func() int {
 		w.mu.Lock()
 		defer w.mu.Unlock()
-		return w.inChild
+		return w.running
 	})
 
 	cm.RegisterTool("spawn", w.spawn)

@@ -39,14 +39,23 @@ func (s *Stats) call(tool, detail string) callEnd {
 	s.calls++
 	id := s.calls
 	s.mu.Unlock()
-	kind := "call"
-	if s.subActive != nil && s.subActive() {
-		kind = "sub:call"
+	kind, worker := "call", 0
+	if s.subWorker != nil {
+		if worker = s.subWorker(); worker > 0 {
+			kind = "sub:call"
+		}
 	}
 	started := time.Now()
-	s.callSink(kind, detail, map[string]any{"tool": tool, "id": id, "phase": "start"}, false)
+	start := map[string]any{"tool": tool, "id": id, "phase": "start"}
+	if worker > 0 {
+		start["worker"] = worker
+	}
+	s.callSink(kind, detail, start, false)
 	return func(err error, extra map[string]any) {
 		data := map[string]any{"tool": tool, "id": id, "ms": time.Since(started).Milliseconds()}
+		if worker > 0 {
+			data["worker"] = worker
+		}
 		for k, v := range extra {
 			data[k] = v
 		}

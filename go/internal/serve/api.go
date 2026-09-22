@@ -37,6 +37,8 @@ type API struct {
 	// ingest starts a wiki ingest (spawnIngest). A field so a test can
 	// see the call without running a model.
 	ingest func(only string) error
+	// defaults names the configured model and effort (SetDefaults); nil = unknown.
+	defaults func() ModelDefault
 	// brief writes today's brief now (spawnBrief); a field for the same reason.
 	brief func() error
 	// running is the runtime's running containers as of runningAt, the
