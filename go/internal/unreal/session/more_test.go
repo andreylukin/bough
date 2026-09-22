@@ -363,6 +363,58 @@ func TestRestartFailsAwaitingCallAsInterrupted(t *testing.T) {
 	c.waitFor("the reply", func() bool { return c.count("assistant") >= 1 })
 }
 
+// A process that dies after the cancel, before the muted request took
+// the cancelled call's result, leaves that result pending in the store.
+// The next process parks it again, so the result reaches the model with
+// the next input and never in a request of its own: the tape's one
+// remaining step must see both.
+func TestReopenAfterCancelKeepsCallsParked(t *testing.T) {
+	t.Parallel()
+	r := newRig(t,
+		fake.Step{Want: "long", Output: []ullmItem{fake.Call("h7", "hold", `{"text":"forever"}`)}},
+		fake.Step{Want: "go on", Match: func(req ullmRequest) error {
+			if !strings.Contains(fake.Render(req), "interrupted") {
+				return errf("the interrupted result is not in the request")
+			}
+			return nil
+		}, Output: []ullmItem{fake.Text("carrying on")}},
+	)
+	r.rt.Submit("long thing")
+	r.waitFor("the call to start", func() bool {
+		r.kit.mu.Lock()
+		defer r.kit.mu.Unlock()
+		return slices.Contains(r.kit.calls, "hold")
+	})
+	r.waitFor("the store to hold the op as awaiting", func() bool {
+		b, _ := os.ReadFile(r.rt.StorePath())
+		return strings.Contains(string(b), `"Status":"awaiting"`)
+	})
+	r.rt.q.close()
+	r.rt.cancel()
+	<-r.rt.exited
+	// What the history row writes when it opens a turn a dead process
+	// left open.
+	r.hist.Append("cancelled", map[string]any{"interrupted": true})
+	h, err := history.OpenExisting(r.hist.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &rig{t: t, dir: r.dir, hist: h, evs: &events{}, kit: newTestkit(t), fake: r.fake}
+	c.open()
+	c.rt.gate.mu.Lock()
+	muted := c.rt.gate.parked && c.rt.gate.covered([]string{"call:h7"})
+	c.rt.gate.mu.Unlock()
+	if !muted {
+		t.Fatal("a request answering only the cancelled call would reach the model")
+	}
+	c.rt.Submit("go on")
+	c.waitFor("the reply", func() bool { return c.count("assistant") >= 1 })
+	c.stays("no request of its own", 300*time.Millisecond, func() bool { return len(c.fake.Requests()) == 2 })
+	if a := c.last("assistant"); a.Data["text"] != "carrying on" {
+		t.Fatalf("history\n%s", c.dump())
+	}
+}
+
 func writeEntries(t *testing.T, path string, es []history.Entry) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

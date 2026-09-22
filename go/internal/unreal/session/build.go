@@ -170,7 +170,35 @@ func (r *Runtime) open(ctx context.Context) error {
 		return fmt.Errorf("engine-unreal: catch up %s: %w", r.sid, err)
 	}
 	a.caught = n
+	// The process that cancelled the last turn parked its calls (§9.7)
+	// and may have exited before the muted request consumed their
+	// results. This process starts unparked, and the coordinator built
+	// at the next input would send those results on their own, ahead of
+	// that input: the model answering an Esc'd call by itself.
+	if cancelledLast(entries) {
+		r.gate.Park(r.sync.calls(), nil)
+	}
 	return nil
+}
+
+// cancelledLast: the last turn in history closed as cancelled, by Esc,
+// SIGINT, or history closing a turn a dead process left open.
+func cancelledLast(entries []history.Entry) bool {
+	for i := len(entries) - 1; i >= 0; i-- {
+		switch e := entries[i]; e.Kind {
+		case "cancelled":
+			return true
+		case "call":
+			// A cancelled call that reported after the 1s wait lands
+			// after the close (§9.7 step 3); it is still that turn's.
+			if e.Data["canceled"] != true {
+				return false
+			}
+		case "input", "assistant", "error", "system":
+			return false
+		}
+	}
+	return false
 }
 
 // replay seeds both mirrors and the projector from every store item.

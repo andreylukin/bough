@@ -1044,6 +1044,10 @@ func (a *actorState) checkCancel() {
 		}
 	}
 	a.cancelling = nil
+	// The cancelled calls' post-result fires land before the marker:
+	// readers take "cancelled" then "done" as one close, as the loop
+	// writes it (§9.7 step 4).
+	a.drainHooks()
 	if cs.stop == "" {
 		a.note("cancelled", "", nil)
 	} else {
@@ -1053,7 +1057,6 @@ func (a *actorState) checkCancel() {
 		}
 		a.note("system", text, nil)
 	}
-	a.drainHooks()
 	a.note("done", "", a.doneData(0, cs.stop))
 	a.open, a.wake = false, false
 }

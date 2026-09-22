@@ -1,6 +1,7 @@
 package session
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -123,6 +124,23 @@ func (s *syncMirror) apply(it sessionstore.Item) {
 	s.mu.Lock()
 	s.m.Apply(it)
 	s.mu.Unlock()
+}
+
+// calls is every call whose result the model has not had: still
+// running, or finished and waiting for the next request.
+func (s *syncMirror) calls() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var ids []string
+	for id := range s.m.Outstanding {
+		ids = append(ids, id)
+	}
+	for _, r := range s.m.Reasons {
+		if kind, id, _ := strings.Cut(r, ":"); kind == "call" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 func (s *syncMirror) turnReasons() []string {
