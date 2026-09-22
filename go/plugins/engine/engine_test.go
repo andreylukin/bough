@@ -26,9 +26,10 @@ import (
 // the echo llm and the loop row on this plugin. Everything lives in
 // the test's temp dirs; nothing reads $HOME.
 type rig struct {
-	t    *testing.T
-	ctx  *kernel.Context
-	path string
+	t     *testing.T
+	ctx   *kernel.Context
+	path  string
+	store string
 
 	mu  sync.Mutex
 	evs []loop.Event
@@ -37,7 +38,7 @@ type rig struct {
 func newRig(t *testing.T, before func(*kernel.Context)) *rig {
 	t.Helper()
 	dir := t.TempDir()
-	r := &rig{t: t, ctx: kernel.NewContext(), path: filepath.Join(dir, "01TEST.jsonl")}
+	r := &rig{t: t, ctx: kernel.NewContext(), path: filepath.Join(dir, "01TEST.jsonl"), store: filepath.Join(dir, "engine")}
 	r.ctx.On("loop/event", func(p any) {
 		if ev, ok := p.(loop.Event); ok {
 			r.mu.Lock()
@@ -53,7 +54,7 @@ func newRig(t *testing.T, before func(*kernel.Context)) *rig {
 		{ID: "commands", Plugin: "commands"},
 		{ID: "agent-tools", Plugin: "agent-tools"},
 		{ID: "llm", Plugin: "llm-echo"},
-		{ID: "loop", Plugin: name, Config: map[string]any{"store": filepath.Join(dir, "engine")}},
+		{ID: "loop", Plugin: name, Config: map[string]any{"store": r.store}},
 	})
 	if err != nil {
 		t.Fatalf("mount: %v", err)
@@ -203,6 +204,18 @@ func TestTextTurnThroughInputs(t *testing.T) {
 // which is where tools-basic registers the real one.
 func TestEchoSmokeRunsANativeCall(t *testing.T) {
 	t.Parallel()
+	r := smoke(t)
+	if got := r.lastAssistant(); got != "ran: hi from codemode" {
+		t.Fatalf("assistant = %q; history: %v", got, kinds(r.entries()))
+	}
+	if r.count("call") != 1 {
+		t.Fatalf("want one recorded call row, history: %v", kinds(r.entries()))
+	}
+}
+
+// smoke is one CODE! turn on a test bash, done.
+func smoke(t *testing.T) *rig {
+	t.Helper()
 	r := newRig(t, nil)
 	reg, err := kernel.Get[agenttools.Registry](r.ctx, "agent-tools")
 	if err != nil {
@@ -224,12 +237,7 @@ func TestEchoSmokeRunsANativeCall(t *testing.T) {
 	}
 	r.send("CODE! please")
 	r.waitDone(1)
-	if got := r.lastAssistant(); got != "ran: hi from codemode" {
-		t.Fatalf("assistant = %q; history: %v", got, kinds(r.entries()))
-	}
-	if r.count("call") != 1 {
-		t.Fatalf("want one recorded call row, history: %v", kinds(r.entries()))
-	}
+	return r
 }
 
 // A remount of the history row (same file, new Store) remounts this
