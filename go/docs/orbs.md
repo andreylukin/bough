@@ -464,6 +464,16 @@ own shell; it only isolates file changes.
   args to `$BOUGH_HOST/bough/exec` on the proxy; the host runs its own
   bough (only the `mcp` and `project` subcommands) and returns stdout, stderr and exit.
 
+### Idle orbs are stopped (area: serve-reaper)
+
+An orb is a VM. serve stops the container of any running orb whose
+session has been quiet — no history written, no state change — for
+`BOUGH_ORB_IDLE` (default `4h`; `0`/`off` disables), checked every five
+minutes (`internal/serve/reaper.go`). The stop is a `Stop orb` click:
+state.json says stopped, the worktrees stay, and the session's next
+command starts the container again. A running turn writes history as it
+goes and is never quiet.
+
 ## 2. Session mode (area: session-mode)
 
 ### Choosing the mode

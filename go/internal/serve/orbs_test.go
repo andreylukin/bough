@@ -671,3 +671,59 @@ func TestContainerUpIsOneListPerSnapshot(t *testing.T) {
 		t.Fatalf("f2 still up after stop: %v", o)
 	}
 }
+
+// A session quiet for longer than the idle limit loses its container;
+// one that wrote history recently, or whose orb changed recently, keeps
+// it. The stop is the same as a Stop orb click: state.json says stopped.
+func TestReaperStopsQuietOrbsOnly(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	ctx := context.Background()
+	f.rt.Build(ctx, container.BuildSpec{Tag: "img"}, nil)
+	now := time.Now()
+	old := now.Add(-6 * time.Hour)
+	for _, id := range []string{"quiet", "busy", "fresh-orb", "stopped"} {
+		seedModeSession(t, f, id, map[string]any{"cwd": "/w", "mode": "project", "project": "app"})
+		if err := f.rt.Start(ctx, container.RunSpec{Name: container.OrbName(id), Image: "img"}); err != nil {
+			t.Fatal(err)
+		}
+		// The history file's mtime is the session's last word.
+		if err := os.Chtimes(filepath.Join(f.home, ".bough", "history", id+".jsonl"), old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeState(t, f.home, orb.State{Session: "quiet", Project: "app", Status: orb.StatusRunning, UpdatedAt: old})
+	writeState(t, f.home, orb.State{Session: "busy", Project: "app", Status: orb.StatusRunning, UpdatedAt: old})
+	writeState(t, f.home, orb.State{Session: "fresh-orb", Project: "app", Status: orb.StatusRunning, UpdatedAt: now.Add(-time.Minute)})
+	writeState(t, f.home, orb.State{Session: "stopped", Project: "app", Status: orb.StatusStopped, UpdatedAt: old})
+	// busy wrote history a minute ago.
+	if err := os.Chtimes(filepath.Join(f.home, ".bough", "history", "busy.jsonl"), now, now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	stopped := f.api.reapIdleOrbs(ctx, 4*time.Hour, now)
+	if len(stopped) != 1 || stopped[0] != "quiet" {
+		t.Fatalf("stopped = %v, want [quiet]", stopped)
+	}
+	for id, want := range map[string]container.State{"quiet": container.StateStopped, "busy": container.StateRunning, "fresh-orb": container.StateRunning} {
+		if st, _ := f.rt.Inspect(ctx, container.OrbName(id)); st != want {
+			t.Errorf("%s container = %s, want %s", id, st, want)
+		}
+	}
+	if st, _ := orb.ReadState(f.home, "quiet"); st.Status != orb.StatusStopped {
+		t.Errorf("quiet state = %s, want stopped", st.Status)
+	}
+	// A second pass finds nothing left to do.
+	if again := f.api.reapIdleOrbs(ctx, 4*time.Hour, now); len(again) != 0 {
+		t.Fatalf("second pass stopped %v", again)
+	}
+	// Off is off.
+	for in, want := range map[string]time.Duration{"": DefaultOrbIdle, "0": 0, "off": 0, "90m": 90 * time.Minute} {
+		if got, err := OrbIdleFromEnv(in); err != nil || got != want {
+			t.Errorf("OrbIdleFromEnv(%q) = %v %v", in, got, err)
+		}
+	}
+	if _, err := OrbIdleFromEnv("soon"); err == nil {
+		t.Error("a bad duration should be an error")
+	}
+}

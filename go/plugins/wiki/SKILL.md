@@ -17,6 +17,12 @@ bough keeps two levels of record:
 Nothing from the wiki is ever put into a prompt automatically. It is read on
 demand — by this skill, or by an agent that greps it like any other file.
 
+## Headless
+
+Ingests and briefs run with nobody at the keyboard. Never call
+`tools.ask`: it waits minutes for an answer that cannot come. Decide,
+and write the assumption into the page as `*Inference:*`.
+
 ## Running `bough wiki`
 
 Always call it as `"${BOUGH_BIN:-bough}" wiki …`: the scheduler sets

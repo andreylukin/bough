@@ -314,6 +314,15 @@ func serveForeground(home, addr string, insecure bool, host string) error {
 	if err := api.StartWatchers(watchCtx, addr); err != nil {
 		fmt.Fprintln(os.Stderr, "bough serve: watchers off:", err)
 	}
+	// Idle orbs are stopped on a timer: a VM per quiet thread is what
+	// ran a laptop out of file descriptors. BOUGH_ORB_IDLE tunes it.
+	idle, err := serve.OrbIdleFromEnv(os.Getenv("BOUGH_ORB_IDLE"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "bough serve: reaper off:", err)
+	} else if idle > 0 {
+		api.StartReaper(watchCtx, idle)
+		fmt.Printf("bough serve: idle orbs are stopped after %s (BOUGH_ORB_IDLE)\n", idle)
+	}
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
