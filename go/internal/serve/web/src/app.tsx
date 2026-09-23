@@ -2,9 +2,9 @@ import { Fragment, createContext, memo, useCallback, useContext, useEffect, useI
 import { createPortal } from "react-dom";
 import { api, subscribe, watchBuild, type Change, type Scope, type TurnLine } from "./api";
 import type { Event as LiveEvent, Line, Project, Row } from "./types";
-import { MARKED, STATUS, StatusMark, Working, hasFailure, hasQuestion, orbWord, sessionSignal, statusWord } from "./status";
+import { MARKED, STATUS, StatusMark, UnseenDot, Working, hasFailure, hasQuestion, isUnseen, orbWord, rowNote, sessionSignal, statusWord } from "./status";
 import { ProjectsView } from "./projects";
-import { ProjectView, StartThreadCtx } from "./project";
+import { DRAG_SESSION, ProjectView, StartThreadCtx, byThread, projectOf } from "./project";
 import { ModeChip, ModePicker, OrbUp, orbsUp, orbsUpLabel, type ModeValue } from "./mode";
 import { OrbFailureBody, confirmFailedBuild, confirmStopOrb, orbUp, type OrbFailureLog } from "./orb";
 import { Select, type Option } from "./select";
@@ -18,6 +18,7 @@ import { lastTestRun } from "./runs";
 import { agentWakeNotes, agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
 import { ExecNote, JobLines, JobRow, LIFE_WORD, WorkButton, WorkContext, WorkDialog, WorkGlyph, WorkState, agentReports, jobIdOf, spokenDuration, splitExecNote, stateText, useChildren, useStopStore, useWork, useWorkAnnouncer, type WorkCtx } from "./work-ui";
 import { SkillPicker } from "./skills";
+import { AttChip, PromptWords, foldPastes, parsePrompt, promptNodes, wrapPaste } from "./prompt";
 import { Mentions, triggerAt, type Trigger } from "./mention";
 import { FireInspection, HooksPage, type Fire, type Load, type Save } from "./hooks";
 import { MeView } from "./me";
@@ -101,6 +102,13 @@ const ARRIVAL_MS = 24 * 3_600_000;
 const FRESH_MIN = 3;
 /** Quiet for 72h and nothing waiting on you: folded under its group. */
 const isOld = (r: Row, now: number) => sessionSignal(r) >= 2 && now - Date.parse(r.lastAt) >= INACTIVE_MS;
+/**
+ * Folded under its group's foot: old, or a project thread nobody typed
+ * into (the page's Empty group, which starts closed there too). Only a
+ * project keeps its empty rows at all; elsewhere they are not listed.
+ */
+const isTucked = (r: Row, now: number, selected: string | null) =>
+  isOld(r, now) || (sessionSignal(r) >= 2 && Boolean(r.empty) && !r.live && r.id !== selected);
 
 /** Where a session ran, as the sidebar names it: the repo, else the folder. */
 function workspaceOf(r: Row): string {
@@ -127,7 +135,7 @@ function getSearchMatch(r: Row, q: string): { field: "title" | "branch" | "repo"
 }
 
 /** The title a row shows: the ask when it says what the session is, else the title. */
-function displayTitle(r: Row): string {
+export function displayTitle(r: Row): string {
   const name = plainTitle(r.title);
   return r.ask && name && askSaysTitle(r.ask.text, name) ? plainTitle(r.ask.text) : name;
 }
@@ -159,6 +167,21 @@ export function useMedia(query: string): boolean {
 /** A group key: the project a session belongs to, else its checkout. */
 const groupKey = (r: Row) => (r.project ? `project:${r.project}` : r.repo || r.cwd);
 
+/**
+ * What dropping a session on a sidebar group does: the slug to move it
+ * into, "" to take it out of its project, or undefined when the group is
+ * no place for it. A project session lives in its project's orb and cannot
+ * move (serve refuses). A folder group takes a project's session only when
+ * it is the folder the session would list under once out: dropped on any
+ * other folder it would not have landed where it was put.
+ */
+export function dropProject(r: Row, group: Row[], key: string): string | undefined {
+  if (r.mode === "project") return undefined;
+  const to = group[0]?.project;
+  if (to) return r.project === to ? undefined : to;
+  return r.project && (r.repo || r.cwd) === key ? "" : undefined;
+}
+
 function byWorkspace(rows: Row[], projectNames: Map<string, string> = new Map()): [string, Row[], string][] {
   // A session in a project groups under the project, whichever repo it ran
   // in; the rest group by the whole path, so two checkouts named alike stay
@@ -180,7 +203,8 @@ function byWorkspace(rows: Row[], projectNames: Map<string, string> = new Map())
   const latest = (list: Row[]) => Math.max(...list.map((r) => Date.parse(r.lastAt)));
   const signal = (list: Row[]) => Math.min(...list.map(sessionSignal));
   return [...out.entries()]
-    .map(([k, list]) => [label(list[0]), list.sort(byUrgency), k] as [string, Row[], string])
+    // A project's group is ordered as its page orders its threads.
+    .map(([k, list]) => [label(list[0]), list.sort(list[0].project ? byThread : byUrgency), k] as [string, Row[], string])
     .sort((a, b) => signal(a[1]) - signal(b[1]) || latest(b[1]) - latest(a[1]));
 }
 
@@ -279,7 +303,7 @@ export function sidebarSelected(view: View, lost: string | null, selected: strin
   return view !== "sessions" || lost !== null ? null : selected ?? lastId;
 }
 
-export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, saidElsewhere, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry, onOpenProject }: {
+export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, saidElsewhere, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry, onOpenProject, onMove }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
   /** Project labels, so a project group is headed by its name. */
   projects?: Project[];
@@ -312,6 +336,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   reveal?: { id: string; at: number } | null;
   /** Open a project's page: what a project group's name does. */
   onOpenProject?: (slug: string) => void;
+  /** Move a session into a project ("" takes it out): what dropping a row on a group does. */
+  onMove?: (id: string, project: string) => void;
 }) {
   // Status lives in the glyphs and the order; the sections are only
   // where a session ran, and whether it is still recent.
@@ -326,7 +352,10 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     const byId = new Map(rows.map((r) => [r.id, r]));
     const kids = new Map<string, Row[]>();
     for (const r of rows) {
-      const parent = r.spawnedBy ? byId.get(r.spawnedBy) : undefined;
+      // A project's thread is listed in its project's group, whoever
+      // started it and however empty: the project page lists the same set.
+      const member = projectOf(r);
+      const parent = !member && r.spawnedBy ? byId.get(r.spawnedBy) : undefined;
       if (parent) {
         kids.set(parent.id, [...(kids.get(parent.id) ?? []), r]);
         continue;
@@ -338,18 +367,20 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
       // but hiding it would swallow the failure and the prompt it lost.
       // An archived one always lists: it was archived on purpose, and hiding it
       // left it reachable only by URL.
-      if (r.empty && !r.live && !r.archived && r.orb?.status !== "failed" && r.id !== selected && !query) continue;
+      if (!member && r.empty && !r.live && !r.archived && r.orb?.status !== "failed" && r.id !== selected && !query) continue;
       if (r.archived) archived.push(r);
-      else if (r.background) background.push(r);
+      else if (r.background && !member) background.push(r);
       // Old sessions stay in their project's group, folded under "older".
       else recent.push(r);
     }
     // Each session lists once: what needs you pins on top and leaves its
-    // group; the group's head counts what went up.
+    // group; the group's head counts what went up. A project's thread is
+    // pinned and stays too: its group is the project page's list, and an
+    // errored thread missing from it was the two disagreeing.
     const needIds = new Set(query ? [] : [...recent, ...background].filter((r) => sessionSignal(r) === 0).map((r) => r.id));
     const lifted = new Map<string, number>();
     const groups = byWorkspace(recent, projectNames).flatMap(([ws, list, gk]): [string, Row[], string][] => {
-      const rest = list.filter((r) => !needIds.has(r.id));
+      const rest = list.filter((r) => !needIds.has(r.id) || projectOf(r));
       if (rest.length < list.length) lifted.set(gk, list.length - rest.length);
       return rest.length ? [[ws, rest, gk]] : [];
     });
@@ -510,6 +541,10 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   // A hairline under the toolbar once the list has scrolled under it.
   const [scrolled, setScrolled] = useState(false);
 
+  // The row being dragged onto a group, and the group it is over.
+  const [dragging, setDragging] = useState<Row | null>(null);
+  const [dropAt, setDropAt] = useState<string | null>(null);
+
   // A long log shows its last turns; the rest wait behind one line.
   const [allTurns, setAllTurns] = useState<Set<string>>(() => new Set());
 
@@ -558,7 +593,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     const path = r.repo || r.cwd;
     setWsFolded((cur) => { const next = new Set([...cur].filter((k) => !k.endsWith(":" + path))); writeSet("bough:ws-folded", next); return next; });
     // An old session sits folded under its group's "older" line.
-    const sec = r.background ? "background" : isOld(r, Date.now()) ? `older:recent:${groupKey(r)}` : "";
+    const sec = r.background && !projectOf(r) ? "background" : isTucked(r, Date.now(), null) ? `older:recent:${groupKey(r)}` : "";
     if (sec) setUnfolded((cur) => { const next = new Set(cur).add(sec); writeSet("bough:unfolded", next); return next; });
     requestAnimationFrame(() => {
       const el = document.querySelector<HTMLElement>(`.sidebar button.row[data-id="${r.id}"]`);
@@ -645,13 +680,12 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     const log = logs[r.id];
     const name = plainTitle(r.title);
     const on = r.id === selected;
-    // A recorded failure outranks the lifecycle: finished is not fine.
-    const failed = r.trouble || (r.testsFailed ? "tests failed" : "") || (hasFailure(r) ? "failed" : "");
     // A failure and a pending ask are both news: say both.
-    const asking = hasQuestion(r);
+    const note = rowNote(r);
+    const { failed, asking } = note;
     const why = failed
       ? `${capital(failed)}${asking ? "; waiting for your answer" : failed === "tests failed" ? `; agent ${(STATUS[r.status]?.label ?? r.status).toLowerCase()}` : ""}`
-      : STATUS[r.status]?.label ?? r.status;
+      : (STATUS[r.status]?.label ?? r.status) + (isUnseen(r) ? ", not seen yet" : "");
     // Where the query hit, kept on screen: a late title hit shifts the
     // title, a hit elsewhere gets its own line centred on it.
     const hit = getSearchMatch(r, q);
@@ -668,7 +702,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     // Done is what the check mark already says; the row keeps only the age then.
     // A background agent says its own lifecycle once, in its words; a parent says what its agents are doing.
     const life = child ? agentsFromRows({ ...r, id: r.spawnedBy ?? "" }, [r])[0]?.life ?? "unknown" : undefined;
-    const label = child ? "" : failed ? capital(failed) + (asking ? "; waiting for you" : "") : r.status === "done" ? "" : STATUS[r.status]?.label ?? r.status;
+    const label = child ? "" : note.label;
     const lines = log?.lines && !allTurns.has(r.id) && log.lines.length > 3 ? log.lines.slice(-3) : log?.lines;
     const children = kids.get(r.id);
     const bg = children ? workCounts(agentsFromRows(r, children)) : null;
@@ -679,14 +713,18 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     // A second line only when it says more than the glyph: a failure's
     // reason, a question, a background life or a setup failure. Plain
     // running, waiting and done rows stay one line.
-    const plain = !failed && !asking && (r.status === "running" || r.status === "needs-you" || r.status === "done");
+    const plain = note.plain;
     // A child's glyph says running, finished and stopped; only a failure or a wait takes a second line.
     const stacked = Boolean((label && !plain) || life === "failed" || life === "queued" || setup);
+    const movable = Boolean(onMove) && r.mode !== "project";
     return (
       <Fragment key={r.id}>
       <div className={"session" + (child ? " session-child" : "")}>
         <div className={"row-wrap" + (open ? " row-open" : "")}>
           <button role="treeitem" onClick={() => onSelect(r.id)} data-id={r.id}
+                  draggable={movable || undefined}
+                  onDragStart={movable ? (e) => { e.dataTransfer.setData(DRAG_SESSION, r.id); e.dataTransfer.effectAllowed = "move"; unpeek(); setDragging(r); } : undefined}
+                  onDragEnd={movable ? () => { setDragging(null); setDropAt(null); } : undefined}
                   onMouseEnter={(e) => peek(r, e.currentTarget)} onMouseLeave={unpeek}
                   onBlur={unpeek}
                   aria-describedby={card?.id === r.id ? "row-card" : undefined}
@@ -700,7 +738,9 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
                 ? (life === "finished" || life === "stopped" || life === "unknown" ? null : <WorkGlyph life={life} />)
                 : failed
                 ? <span className="status"><svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{STATUS.error.glyph}</svg><span className="visually-hidden">{why}</span></span>
-                : MARKED.has(r.status) ? <StatusMark status={r.status} size={16} bare /> : null}
+                : MARKED.has(r.status) ? <StatusMark status={r.status} size={16} bare />
+                // The open row is being looked at; its ack is already on the way.
+                : isUnseen(r) && !on ? <UnseenDot /> : null}
             </span>
             {/* Status metadata goes under the title, so a chip never cuts the name. */}
             <span className={stacked ? "row-stack" : "row-line"}>
@@ -778,8 +818,15 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     const seen = new Map<string, number>();
     const nameKey = (r: Row) => titleKey(displayTitle(r) || sessionTitle(r));
     for (const r of list) seen.set(nameKey(r), (seen.get(nameKey(r)) ?? 0) + 1);
+    const to = dragging && onMove ? dropProject(dragging, list, gk) : undefined;
+    const drop = to === undefined ? {} : {
+      "data-drop": dropAt === key ? "over" : "ok",
+      onDragOver: (e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDropAt(key); },
+      onDragLeave: (e: React.DragEvent<HTMLDivElement>) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropAt((k) => (k === key ? null : k)); },
+      onDrop: (e: React.DragEvent) => { e.preventDefault(); const id = dragging!.id; setDragging(null); setDropAt(null); onMove!(id, to); },
+    };
     return (
-      <div key={key} className="ws">
+      <div key={key} className="ws" {...drop}>
         {/* A project's name opens its page and its chevron folds the group,
             like every project sidebar; a folder's whole head folds, since a
             folder has no page. The arrow keys fold through .ws-fold. */}
@@ -799,17 +846,26 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
           {/* Rows pinned to Needs you leave the group; its head says where they went. */}
           {sec === "recent" && lifted.get(gk) ? <span className="ws-lifted" title="Listed under Needs you">{lifted.get(gk)} need{lifted.get(gk) === 1 ? "s" : ""} you ↑</span> : null}
         </button>
+        {/* Over a group, say what the drop does: taking a session out of its project is not obvious from a folder. */}
+        {to !== undefined && dropAt === key && <p className="ws-drop-hint">{to ? `Move to ${ws}` : "Take it out of its project"}</p>}
         {/* Folded, what needs you stays in view. */}
         {!open && urgent.length > 0 && <div role="group">{urgent.map((r) => session(r, (seen.get(nameKey(r)) ?? 0) > 1))}</div>}
         {open && (() => {
           // Sessions quiet for 72h fold under one line at the group's foot;
           // a search shows them all.
           const now = Date.now();
-          const fresh = list.filter((r) => !isOld(r, now)), older = list.filter((r) => isOld(r, now));
+          const fresh = list.filter((r) => !isTucked(r, now, selected)), older = list.filter((r) => isTucked(r, now, selected));
           // A group leads with a few rows whatever their age: on a laptop
           // where last week's work is the work, one row and "57 older"
-          // per group left the sidebar saying nothing.
-          while (fresh.length < FRESH_MIN && older.length) fresh.push(older.shift()!);
+          // per group left the sidebar saying nothing. An empty thread is
+          // not a row worth leading with.
+          while (fresh.length < FRESH_MIN) {
+            const i = older.findIndex((r) => !r.empty);
+            if (i < 0) break;
+            fresh.push(...older.splice(i, 1));
+          }
+          // Recent empty threads are not older, only folded.
+          const more = older.every((r) => isOld(r, now)) ? "older" : "more";
           const olderKey = `older:${key}`;
           const olderOpen = foldOpen(olderKey, unfolded.has(olderKey));
           const dup = (r: Row) => (seen.get(nameKey(r)) ?? 0) > 1;
@@ -819,7 +875,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
               {older.length > 0 && (
                 <button type="button" className="ws-older" role="treeitem" aria-expanded={olderOpen}
                         onClick={foldToggle(olderKey, () => toggleFold(olderKey))}>
-                  <Icon d={ICONS.chevron} size={12} />{olderOpen ? `Hide ${older.length} older` : `${older.length} older`}
+                  <Icon d={ICONS.chevron} size={12} />{olderOpen ? `Hide ${older.length} ${more}` : `${older.length} ${more}`}
                 </button>
               )}
               {olderOpen && older.map((r) => session(r, dup(r)))}
@@ -827,7 +883,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
               {olderOpen && older.length > 8 && (
                 <button type="button" className="ws-older" role="treeitem" aria-expanded={olderOpen}
                         onClick={foldToggle(olderKey, () => toggleFold(olderKey))}>
-                  <Icon d={ICONS.chevron} size={12} />Hide older
+                  <Icon d={ICONS.chevron} size={12} />{`Hide ${more}`}
                 </button>
               )}
             </div>
@@ -1405,7 +1461,7 @@ export function Entry({ line, codes, nested, until }: { line: Line; codes: strin
             <path d="M12 3v6.5M12 14.5V21M3 12h6.5M14.5 12H21" />
           </svg>
         </span>
-        <p className="prompt-bubble steer-bubble">{line.text}</p>
+        <p className="prompt-bubble steer-bubble"><PromptWords text={line.text} /></p>
       </div>
     );
   }
@@ -2980,14 +3036,8 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
     // codes is derived from turn.body on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [turn.body]);
-  // The loop appends "[skill: name]\n<SKILL.md>" blocks to the prompt a
-  // skill was invoked from. What you typed is the part before them.
-  // An @file is attached the same way, as "[file: path]\n<contents>":
-  // pasted source is context, not the words of the prompt.
-  const [raw, ...skills] = (turn.prompt?.text ?? "").split(/\n+(?=\[(?:skill|file): [^\]\n]+\]\n)/);
-  // A pasted image rides as "[Image #N: path]": show the tag and the picture, not the path.
-  const images = [...raw.matchAll(/\[Image #\d+: ([^\]\n]+)\]/g)].map((m) => m[1]);
-  const said = raw.replace(/\[Image (#\d+): [^\]\n]+\]/g, "[Image $1]");
+  // Skills, @files and big pastes ride along with the prompt: each is a chip (see parsePrompt).
+  const { raw, said, plain, images, atts } = parsePrompt(turn.prompt?.text ?? "");
   // A turn a finished background job started is not something you typed:
   // its prompt is the loop's instruction to the model plus the job notes.
   const wakeJobs = useMemo(() => {
@@ -3019,7 +3069,6 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
   // A turn the engine opened itself: a background call finished, or it checked on its running calls.
   const wake = turn.prompt?.data?.wake === true;
   const [full, setFull] = useState(false);
-  const [opened, setOpened] = useState<number | null>(null);
   // R3-F: the turn's checkpoint diff, read once it is done, so its group and footer count what the header counts.
   const [turnEdits, setTurnEdits] = useState<Change[] | null>(null);
   const hasFiles = Array.isArray(turn.done?.data?.files) && (turn.done!.data!.files as string[]).length > 0;
@@ -3029,36 +3078,8 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
     api.edits(ctx.session, turn.prompt.seq).then((r) => { if (live) setTurnEdits(r.files); }, () => {});
     return () => { live = false; };
   }, [hasFiles, ctx?.session, turn.prompt?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
-  const long = said.length > 420 || said.split("\n").length > 4;
-  // Each attachment is named once: as a chip where the prompt mentions
-  // it (/exa, @go/serve.go), else in a strip below. Its contents open
-  // under the prompt, one at a time.
-  const atts = skills.map((s) => {
-    const [head, ...body] = s.split("\n");
-    const m = /^\[(skill|file): (.+)\]$/.exec(head.trim());
-    const isFile = m?.[1] === "file";
-    const token = (isFile ? "@" : "/") + (m?.[2] ?? head);
-    let at = -1;
-    for (let i = said.indexOf(token); i >= 0; i = said.indexOf(token, i + 1)) {
-      if (i === 0 || /\s/.test(said[i - 1])) { at = i; break; }
-    }
-    return { isFile, token, body: body.join("\n"), at };
-  });
-  const chip = (i: number) => (
-    <button key={"att" + i} type="button" className="mono prompt-chip" aria-expanded={opened === i}
-            title={atts[i].isFile ? "Attached file" : "Skill"} onClick={() => setOpened((v) => (v === i ? null : i))}>
-      {atts[i].token}
-    </button>
-  );
-  const said2: React.ReactNode[] = [];
-  let pos = 0;
-  for (const i of atts.map((_, i) => i).filter((i) => atts[i].at >= 0).sort((a, b) => atts[a].at - atts[b].at)) {
-    if (atts[i].at < pos) { atts[i].at = -1; continue; }
-    said2.push(said.slice(pos, atts[i].at), chip(i));
-    pos = atts[i].at + atts[i].token.length;
-  }
-  said2.push(said.slice(pos));
-  const loose = atts.map((_, i) => i).filter((i) => atts[i].at < 0);
+  const long = plain.length > 420 || plain.split("\n").length > 4;
+  const { nodes: said2, loose } = promptNodes(said, atts);
   // No done and nothing live to write one (the session stopped, or a later
   // turn began): the turn was cut off, and its open rows stop ticking.
   // A slash command (/model) writes no done: it was never a turn to cut off.
@@ -3150,10 +3171,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
                 ))}
               </div>
             )}
-            {loose.length > 0 && <div className="prompt-atts">{loose.map(chip)}</div>}
-            {opened !== null && atts[opened] && (
-              <pre className={"prompt-att" + (atts[opened].isFile ? " prompt-att-file" : "")}>{atts[opened].body}</pre>
-            )}
+            {loose.length > 0 && <div className="prompt-atts">{loose.map((a, i) => <AttChip key={i} att={a} />)}</div>}
           </div>
           <div className="msg-acts prompt-acts">
             <span className="num prompt-time" title={new Date(turn.prompt.at).toLocaleString()}>{when(turn.prompt.at)}</span>
@@ -3614,7 +3632,7 @@ function SendingPrompt({ p, accepted = false, clamp = true, onClip, clipped, onT
     <section className={"turn" + (accepted ? "" : " turn-sending")}>
       <div className="prompt">
         <div className="prompt-text prompt-bubble">
-          <p className={clamp ? "prompt-clamp" : ""} ref={(el) => { if (el) onClip?.(el); }}>{p.text}</p>
+          <p className={clamp ? "prompt-clamp" : ""} ref={(el) => { if (el) onClip?.(el); }}><PromptWords text={p.text} /></p>
           {clipped && <button className="link" onClick={onToggle}>{clamp ? "Show full prompt" : "Show less"}</button>}
         </div>
         {/* The recorded prompt's action row keeps its height here, so the body does not drop when it lands. */}
@@ -3831,7 +3849,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   }, [draft, draftAsk, askKey]);
   const blank = !draft.trim();
   const deliverRef = useRef<(t: string) => void>(() => {});
-  const editPrompt = useMemo(() => ({ busy: !blank, edit: (t: string) => { setDraft(t); setDraftAsk(""); composer.current?.focus(); }, retry: (t: string) => deliverRef.current(t) }), [blank]);
+  const editPrompt = useMemo(() => ({ busy: !blank, edit: (t: string) => { toDraft(t); setDraftAsk(""); composer.current?.focus(); }, retry: (t: string) => deliverRef.current(t) }), [blank]);
   useEffect(() => { if (blank) setDraftAsk(row.ask?.id ?? ""); }, [blank, row.ask?.id]);
   const askChanged = !blank && draftAsk !== (row.ask?.id ?? "");
   const [trigger, setTrigger] = useState<Trigger | null>(null);
@@ -4274,7 +4292,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     const t = stoppedPrompt(lines);
     if (!t) return;
     restoreOnStop.current = false;
-    if (!draft.trim()) setDraft(t);
+    if (!draft.trim()) toDraft(t);
   }, [running, loading, newest]); // eslint-disable-line react-hooks/exhaustive-deps
   // Stopped before any reply: the prompt comes back to an empty composer.
   const restoreOnStop = useRef(false);
@@ -4358,7 +4376,9 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   };
   const expand = (t: string) => t
     .replace(/\[(Image|File) #(\d+)\]/g, (m, k, i) => (images.current[i - 1] ? `[${k} #${i}: ${images.current[i - 1]}]` : m))
-    .replace(/\[Pasted text #(\d+) \+\d+ lines\]/g, (m, i) => pastes.current[i - 1] ?? m);
+    .replace(/\[Pasted text #(\d+) \+(\d+) lines\]/g, (m, i, n) => (pastes.current[i - 1] === undefined ? m : wrapPaste(pastes.current[i - 1], +n)));
+  // A sent message back in the composer: its pastes are tags again, as when they were pasted.
+  const toDraft = (t: string) => setDraft(foldPastes(t, (body) => pastes.current.push(body)));
 
   deliverRef.current = (t: string) => { void deliver(t, false); };
   const send = async () => {
@@ -4662,7 +4682,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
               <button className="btn" disabled={busy} onClick={() => deliver(failed.text, failed.answer, failed.ask, failed)}>Retry</button>
               {/* Edit never lands on a newer draft: two prompts glued together is a third nobody wrote. */}
               <button className="btn composer-edit" disabled={Boolean(draft.trim())} title={draft.trim() ? "Send or clear the current draft first" : undefined}
-                onClick={() => { setDraft(failed.text); setDraftAsk(failed.answer ? failed.ask ?? "" : ""); drop(failed); composer.current?.focus(); }}><span className="edit-word">Edit</span>{draft.trim() && <span className="edit-why">Clear the draft to edit</span>}</button>
+                onClick={() => { toDraft(failed.text); setDraftAsk(failed.answer ? failed.ask ?? "" : ""); drop(failed); composer.current?.focus(); }}><span className="edit-word">Edit</span>{draft.trim() && <span className="edit-why">Clear the draft to edit</span>}</button>
             </span>
           </div>
         ))}
@@ -4677,7 +4697,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                 <span className="queued-text">{m.text}</span>
                 {/* Edit never lands on a newer draft, as with a failed send. */}
                 <button className="link composer-edit" disabled={Boolean(draft.trim())} title={draft.trim() ? "Send or clear the current draft first" : undefined}
-                  onClick={() => { setDraft(m.text); setQueued((q) => q.filter((x) => x.id !== m.id)); composer.current?.focus(); }}><span className="edit-word">Edit</span>{draft.trim() && <span className="edit-why">Clear the draft to edit</span>}</button>
+                  onClick={() => { toDraft(m.text); setQueued((q) => q.filter((x) => x.id !== m.id)); composer.current?.focus(); }}><span className="edit-word">Edit</span>{draft.trim() && <span className="edit-why">Clear the draft to edit</span>}</button>
                 <button className="link" onClick={() => setQueued((q) => q.filter((x) => x.id !== m.id))}>Remove</button>
               </li>
             ))}
@@ -4883,6 +4903,7 @@ export default function App() {
   // and the read is tried again until it lands.
   const created = useRef(new Map<string, number>());
   const [starting, setStarting] = useState(false);
+  const startingFor = useRef<string | null>(null);
   const STARTING_MS = 120_000;
   const [paused, setPaused] = useState<number | undefined>(undefined);
   const [loadTry, setLoadTry] = useState(0);
@@ -5004,12 +5025,17 @@ export default function App() {
     setLines([]);
     setLoadedFor(null);
     lastSeq.current = 0; // the cursor belongs to the session just left
-    setLoadFail(null); setPaused(undefined); setMissing(false); setStarting(false);
+    // Starting holds across its own retries: a thread that is booting is
+    // listed already, and clearing this on each try flashed its row's
+    // "Loading transcript…" between them.
+    setLoadFail(null); setPaused(undefined); setMissing(false);
+    if (startingFor.current !== selected) setStarting(false);
     let retry: ReturnType<typeof setTimeout> | undefined;
     // Its failure is the transcript's own state, with a retry, not a toast.
     api.session(selected).then((r) => {
       if (!live) return;
       created.current.delete(selected);
+      setStarting(false);
       setLines(r.entries);
       setLoadedFor(selected);
       setLooked(r.session);
@@ -5019,10 +5045,12 @@ export default function App() {
       const gone = (e as { status?: number }).status === 404;
       const since = created.current.get(selected);
       if (gone && since !== undefined && Date.now() - since < STARTING_MS) {
+        startingFor.current = selected;
         setStarting(true);
         retry = setTimeout(() => setLoadTry((n) => n + 1), 1000);
         return;
       }
+      setStarting(false);
       setLoadFail(e instanceof Error ? e.message : String(e)); setMissing(gone);
     });
 
@@ -5258,6 +5286,15 @@ export default function App() {
 
   usePaletteKey(useCallback(() => { setPalMode("all"); setPalette(true); }, []));
   const narrow = useMedia("(max-width:720px)");
+  // A finish is seen once its transcript is on screen: the ack is the
+  // same one "Mark seen" sends, so it survives a reload. A hidden tab has
+  // seen nothing; loadedAt re-runs this on the read that coming back makes.
+  const viewing = row && (view === "project" || (view === "sessions" && (!sub || sub === "portal"))) && (!narrow || pane === "thread") ? row.id : "";
+  const viewingUnseen = Boolean(viewing && row?.unseen);
+  useEffect(() => {
+    if (!viewingUnseen || document.hidden) return;
+    api.ack(viewing).then(() => refresh(), () => {});
+  }, [viewing, viewingUnseen, loadedAt, refresh]);
   const onView = (v: View) => {
     setLost(null);
     if (v === "wiki") goWiki({ at: "index" });
@@ -5639,6 +5676,7 @@ export default function App() {
                archivedState={!archived || rowsAll ? "ready" : loadErr ? "failed" : "loading"} onRetryArchived={() => void refresh()}
                onAck={(id) => act(() => api.ack(id), "mark it seen")}
                onShowList={() => setPane("list")} reveal={reveal} onOpenProject={goProject}
+               onMove={(id, p) => act(() => api.assign(id, p), "move the session")}
                loadedAt={loadedAt} loadErr={loadErr} onRetry={() => void refresh()} />
       <main className="app-main">
       {lost !== null && view === "sessions" && !selected ? (
@@ -5673,17 +5711,18 @@ export default function App() {
           orbOpen={orbOpen} onOrbOpen={setOrbOpen} onOrbChanged={() => refresh()}
           onNewSession={home ? async (p) => { if (await confirmFailedBuild(p)) void start(home, "", { mode: "project", project: p.slug }); } : undefined} />
       ) : view === "project" ? (
-        <ProjectView slug={projectSlug} rows={rows} conversation={row ? threadFor(row) : selected && starting ? <StartingThread /> : undefined} focus={projectFocus}
+        <ProjectView slug={projectSlug} rows={rows} conversation={selected && starting ? <StartingThread /> : row ? threadFor(row) : undefined} focus={projectFocus}
           onShow={showProjectSession} onBack={goList} onOpenSession={openSession}
           onChanged={() => { void refresh(); }}
+          onSeen={(id) => act(() => api.ack(id), "mark it seen")}
           onNewThread={home ? async () => {
             const created = await api.create(home, "", "project", projectSlug);
             markCreated(created.id);
             await refresh();
             return created.id;
           } : undefined}
-          onStartThread={home ? async (prompt, main) => {
-            const created = await api.createThread(home, prompt, projectSlug, main);
+          onStartThread={home ? async (prompt) => {
+            const created = await api.createThread(prompt, projectSlug);
             markCreated(created.id);
             await refresh();
             return created.id;
@@ -5692,10 +5731,11 @@ export default function App() {
         <ChangesPage row={row} tick={lines.length} onBack={() => setSub(null)} />
       ) : row && context ? (
         <ContextPage session={row.id} model={row.model} used={loadedFor === row.id ? sessionUsage(lines)?.lastIn : undefined} onBack={() => setSub(null)} />
+      ) : selected && starting ? (
+        // Before the row: serve lists a booting child, so it has one.
+        <StartingThread />
       ) : row ? (
         threadFor(row)
-      ) : selected && starting ? (
-        <StartingThread />
       ) : selected && pending[selected]?.length && !missing && !loadFail ? (
         <PendingThread sending={pending[selected]} />
       ) : (

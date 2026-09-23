@@ -92,6 +92,9 @@ type Row struct {
 	// Trouble is why this session needs a person ("failed",
 	// "interrupted", "tests failed"), or "" once marked seen.
 	Trouble string `json:"trouble,omitempty"`
+	// Unseen marks a web session whose last turn finished cleanly after
+	// it was last marked seen; opening it marks it seen.
+	Unseen bool `json:"unseen,omitempty"`
 	// TestsFailed is the last test run's recorded non-zero exit; unlike
 	// Trouble it outlives being marked seen, since seen is not fixed.
 	TestsFailed bool `json:"testsFailed,omitempty"`
@@ -266,7 +269,9 @@ func (a *API) listSessions(w http.ResponseWriter, r *http.Request) {
 	all := r.URL.Query().Get("all") == "1"
 	cwd := r.URL.Query().Get("cwd")
 	rows := make([]Row, 0, len(infos))
+	seen := map[string]bool{}
 	for _, in := range infos {
+		seen[in.ID] = true
 		if cwd != "" && in.Cwd != cwd {
 			continue
 		}
@@ -276,11 +281,10 @@ func (a *API) listSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = append(rows, row)
 	}
-	// Queued children have no history file yet, so List cannot see them.
+	// Queued and booting children have no history file yet, so List
+	// cannot see them.
 	if cwd == "" {
-		for _, id := range a.sup.queuedIDs() {
-			rows = append(rows, a.queuedRow(id))
-		}
+		rows = append(rows, a.pendingRows(seen)...)
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Modified.After(rows[j].Modified) })
 	writeJSONTagged(w, r, map[string]any{"sessions": rows})
@@ -631,6 +635,8 @@ func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 			}
 		}
 	}
+	now := time.Now()
+	trouble := d.troubled(st, meta.Ack, now, in.Background)
 	return Row{
 		ID:       in.ID,
 		Title:    title,
@@ -650,7 +656,8 @@ func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 		Project:  project,
 		Jobs:     jobs,
 		Cache:    d.cacheFor(model),
-		Trouble:  d.troubled(st, meta.Ack, time.Now(), in.Background),
+		Trouble:  trouble,
+		Unseen:   d.unseen(st, trouble, meta.Ack, now, in.Origin),
 
 		TestsFailed: d.testsFailed,
 		TestsAt:     d.testsAt,

@@ -811,3 +811,41 @@ func TestMigrateAdoptsItsOwnLeftover(t *testing.T) {
 		t.Errorf("session filed under %q, want bough", got)
 	}
 }
+
+// The page and the sidebar list one set: a project's threads are the
+// /api/sessions rows filed under it. Being main's child is not enough —
+// a local child of main nests under main in the sidebar, and a child
+// that died before writing history is in no list — and neither may
+// show up on the page as a phantom running thread.
+func TestProjectDetailMatchesTheSessionList(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	slug := mkProject(t, f, "Omni")
+	if code, body := f.do(t, "POST", "/api/sessions", `{"mode":"project","project":"`+slug+`"}`); code != http.StatusCreated {
+		t.Fatalf("create thread = %d %v", code, body)
+	}
+	main := f.sup.MainID(slug)
+	seedSession(t, f, "local-kid")
+	f.sup.mu.Lock()
+	f.sup.meta["local-kid"] = SessionMeta{SpawnedBy: main}
+	f.sup.meta["died-early"] = SessionMeta{SpawnedBy: main, Project: slug}
+	f.sup.mu.Unlock()
+
+	_, list := f.do(t, "GET", "/api/sessions", "")
+	want := map[string]bool{}
+	for _, raw := range list["sessions"].([]any) {
+		row := raw.(map[string]any)
+		id, _ := row["id"].(string)
+		if row["project"] == slug && id != main {
+			want[id] = true
+		}
+	}
+	_, detail := f.do(t, "GET", "/api/projects/"+slug, "")
+	got := map[string]bool{}
+	for _, raw := range detail["threads"].([]any) {
+		got[raw.(map[string]any)["id"].(string)] = true
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) || len(got) != 1 {
+		t.Errorf("page threads = %v, sidebar's project rows = %v; want the one real thread in both", got, want)
+	}
+}

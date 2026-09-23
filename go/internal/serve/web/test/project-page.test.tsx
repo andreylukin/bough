@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ProjectPage, countsLine, groupThreads, lineCount, threadCounts, threadGroup, threadNote } from "../src/project";
+import { ProjectPage, countsLine, groupThreads, lineCount, threadCounts, threadGroup } from "../src/project";
+import { rowNote } from "../src/status";
 import type { OrbFile, OrbState, ProjectDetail, Row } from "../src/types";
 
 const at = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
@@ -52,9 +53,12 @@ test("the groups are in urgency order and an empty one is not rendered", () => {
   expect(html).not.toContain('prj-group-count">0<');
 });
 
-test("a status is a dot, never a pill, in the threads column; the conversation's header wears the pill", () => {
+test("a status is the sidebar's row mark, never a pill, in the threads column; the conversation's header wears the pill", () => {
   const html = column();
-  expect(html.split("prj-dot").length - 1).toBeGreaterThan(2);
+  // The sidebar's 16px mark column, on every thread row; glyphs only for the states a list marks.
+  expect(html.split('class="row-mark"').length - 1).toBeGreaterThan(2);
+  expect(html).toContain('width="16"');
+  expect(html).not.toContain("prj-dot");
   expect(html).not.toContain("prj-pill");
   // The word still reaches a screen reader, through the row's label.
   expect(html).toContain("Waiting for you");
@@ -158,10 +162,25 @@ test("groupThreads drops empty groups and keeps the urgency order", () => {
   expect(groupThreads([row("z", "z")]).map((g) => g.group)).toEqual(["idle"]);
 });
 
-test("a thread's second line says what it is waiting on, not its id", () => {
-  expect(threadNote(threads[1])).toBe("Staging first?");
-  expect(threadNote(row("x", "x", { trouble: "tests failed" }))).toBe("tests failed");
-  expect(threadNote(row("x", "x"))).toBe("");
+// A thread's second line is the sidebar's: its failure or its wait, and
+// nothing for a plain running or done row. The page used to show the
+// agent's summary there and the sidebar did not, so one thread read two ways.
+test("a thread's second line is the sidebar's, and twins carry the sidebar's id tail", () => {
+  expect(rowNote(row("x", "x", { trouble: "tests failed" })).label).toBe("Tests failed");
+  expect(rowNote(threads[1]).plain).toBe(false);
+  expect(rowNote(row("x", "x", { status: "done" })).label).toBe("");
+  const html = page({ detail: { ...detail, threads: [
+    row("01a0d068-126d-7000-8000-00000038b900", "echo: Running log", { status: "done" }),
+    row("01a0d068-2277-7000-8000-0000003c1297", "echo: Running log", { status: "done" }),
+    row("t3", "SIGPIPE on closed stdout", { status: "error", lastAt: at(1) }),
+    row("t7", "Orb thread", { status: "done", orb: { session: "t7", project: "bough", status: "running", up: true, updatedAt: at(2) } }),
+  ] } });
+  // The tail, not the UUIDv7 time prefix every sibling shares.
+  expect(html).toContain(">38b900<");
+  expect(html).toContain(">3c1297<");
+  expect(html).not.toContain(">01a0d0");
+  expect(html).toContain(">Failed<");
+  expect(html).toContain("Orb running");
 });
 
 test("lines are counted the way an editor counts them", () => {
@@ -225,7 +244,8 @@ test("the home is the composer, then main, then the queue; no transcript and no 
   expect(html).not.toContain("prj-threads-list");
   expect(html.indexOf("prj-first-box")).toBeLessThan(html.indexOf("prj-main-row"));
   expect(html.indexOf("prj-main-row")).toBeLessThan(html.indexOf("prj-group-head"));
-  expect(html).toContain("the one the composer talks to");
+  // Main by its own name, as the sidebar lists it, tagged as the main thread.
+  expect(html).toMatch(/prj-main-row[\s\S]*?Main thread[\s\S]*?· Main thread/);
   // The header line reads the queue's own numbers.
   expect(html).toContain("1 needs you · 1 error · 1 running · 6 threads");
   // Done and idle are on the page up to a cap; nothing is folded away for six threads.
@@ -247,7 +267,7 @@ test("done threads past eight fold behind one line, empty ones fold entirely, th
 });
 
 test("threadCounts and countsLine read the same vocabulary as the column", () => {
-  expect(threadCounts(threads)).toEqual({ "needs-you": 1, error: 1, running: 1, interrupted: 1, done: 1, idle: 1, empty: 0 });
+  expect(threadCounts(threads)).toEqual({ "needs-you": 1, error: 1, running: 1, interrupted: 1, unseen: 0, done: 1, idle: 1, empty: 0 });
   expect(countsLine([])).toBe("0 threads");
   expect(countsLine([row("a", "a", { status: "error" }), row("b", "b")])).toBe("1 error · 2 threads");
 });

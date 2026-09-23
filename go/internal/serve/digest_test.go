@@ -87,6 +87,37 @@ func TestDigestTroubleStillExpires(t *testing.T) {
 	}
 }
 
+// A clean finish is unseen until acked; a title written after the ack
+// does not bring it back, and trouble, terminals and old finishes never
+// count.
+func TestDigestUnseen(t *testing.T) {
+	now := time.Now().UTC()
+	entries := []history.Entry{
+		{Seq: 1, Kind: "input", At: now, Data: map[string]any{"text": "hi"}},
+		{Seq: 2, Kind: "done", At: now},
+		{Seq: 3, Kind: "title", At: now, Data: map[string]any{"text": "t"}},
+	}
+	d := digestOf(entries, now)
+	if !d.unseen(StatusDone, "", 0, now, "web") {
+		t.Fatal("fresh web finish: want unseen")
+	}
+	if d.unseen(StatusDone, "", 2, now, "web") {
+		t.Fatal("acked at the done, title after: want seen")
+	}
+	if d.unseen(StatusDone, "tests failed", 0, now, "web") {
+		t.Fatal("troubled finish: want trouble's mark, not unseen")
+	}
+	if d.unseen(StatusDone, "", 0, now, "tui") {
+		t.Fatal("terminal session: want seen")
+	}
+	if d.unseen(StatusDone, "", 0, now.Add(troubleWindow), "web") {
+		t.Fatal("finish past the window: want seen")
+	}
+	if d.unseen(StatusRunning, "", 0, now, "web") {
+		t.Fatal("next turn running: want not unseen")
+	}
+}
+
 // LastCache reads the same entry whatever the model; only the TTL is the
 // model's. A model meta names but no turn ran must still get the chip.
 func TestDigestCacheKeepsItsChipForAnyModel(t *testing.T) {

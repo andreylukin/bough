@@ -65,6 +65,11 @@ type SessionMeta struct {
 	// SpawnedBy is the parent of a background agent, persisted so the
 	// tree survives a serve restart for children that ran.
 	SpawnedBy string `json:"spawnedBy,omitempty"`
+	// Thread marks a session a person started from the project page. It
+	// is parented to main only so its finish lands there; it is a
+	// top-level agent and may start agents of its own, where a child an
+	// agent started may not (depth 1).
+	Thread bool `json:"thread,omitempty"`
 	// Queued is derived from Task on load.
 	Queued bool `json:"-"`
 	// Task is a queued child's pending start, persisted so the queue
@@ -112,6 +117,7 @@ type CreateOptions struct {
 	Env                     []string // extra env
 	Origin                  string   // BOUGH_ORIGIN override; "" = web
 	Model                   string   // background agent: "plugin/model" to start on; "" = config
+	Thread                  bool     // a person's project thread: SpawnedBy is main for notices only
 }
 
 // Options configures a Supervisor. Every path is explicit so tests can
@@ -693,6 +699,9 @@ func (s *Supervisor) projectEnv(id string) []string {
 	// tells it what it is.
 	if s.isMain(id) {
 		env = append(env, "BOUGH_PROJECT_MAIN=1")
+	}
+	if s.Meta(id).Thread {
+		env = append(env, "BOUGH_PROJECT_THREAD=1")
 	}
 	return env
 }

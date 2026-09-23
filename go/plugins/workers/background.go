@@ -54,7 +54,9 @@ func (w *Workers) startAgent(parent context.Context, task, slug, model string) (
 	if strings.TrimSpace(task) == "" {
 		return nil, fmt.Errorf("workers: spawn needs a non-empty task")
 	}
-	if w.spawnedBy() != "" {
+	// A person's project thread has a parent (main, for its report) and
+	// is still a top-level agent; serve applies the same rule.
+	if w.spawnedBy() != "" && !w.thread() {
 		return nil, fmt.Errorf("workers: a background agent cannot start agents (depth 1)")
 	}
 	// The child runs on this session's model unless told otherwise: the
@@ -193,6 +195,17 @@ func (w *Workers) sessionID() string {
 		return ""
 	}
 	return strings.TrimSuffix(filepath.Base(p.Path()), ".jsonl")
+}
+
+// thread is whether this session is a thread a person started from the
+// project page. serve says so at every start, from its meta.json, so a
+// resumed thread knows it too.
+func (w *Workers) thread() bool {
+	if w.kctx == nil {
+		return false
+	}
+	v, _ := kernel.Get[bool](w.kctx, "session-thread")
+	return v
 }
 
 // spawnedBy is this session's parent: the launcher's value for a fresh

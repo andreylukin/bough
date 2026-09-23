@@ -414,6 +414,7 @@ func main() {
 	spawnedBy, sessionID := takeSessionEnv()
 	sessProjectDir := takeProjectDirEnv()
 	sessMain := takeMainEnv()
+	sessThread := takeThreadEnv()
 	sessMode, sessProject, err := chooseMode(*projectF, *localF, sets)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "bough:", err)
@@ -454,6 +455,9 @@ func main() {
 	// talks to, and the parent of every other session in the project.
 	ctx.Provide("session-main", sessMain)
 	ctx.Provide("session-spawned-by", spawnedBy)
+	// True on a thread a person started from the project page: parented
+	// to main for its report, yet a top-level agent that may delegate.
+	ctx.Provide("session-thread", sessThread)
 	ctx.Provide("session-id", sessionID)
 	// A dev install running a build older than its checkout: say so
 	// where a person will see it (the ui shows the "notice" service as

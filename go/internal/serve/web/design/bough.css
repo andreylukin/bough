@@ -11,6 +11,8 @@
   --hover:color-mix(in srgb,var(--text-1) 6%,transparent);
   --text-1:#e3eae4; --text-2:#b1b8b2; --text-3:#939b94;
   --accent:#82cb9b; --amber:#eabc6e; --red:#ed756e;
+  /* Unread, and nothing else: green is live work, so a finish nobody has seen needs its own hue. */
+  --blue:#7fb3f5;
   --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Helvetica,sans-serif;
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   /* type: eyebrow/kbd · meta/chips · dense rows · ui labels · prose · large/phone inputs · h2 · h1 */
@@ -158,6 +160,11 @@ body{margin:0;background:var(--bg);color:var(--text-1);font:var(--fs-base)/1.5 v
 .ws-older[aria-expanded="true"] svg{transform:rotate(90deg)}
 .ws-older:hover{color:var(--text-1);background:var(--hover)}
 .ws-older:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+/* Drag a row onto a group: every group that takes it is outlined faintly, the one under the pointer in accent. */
+.ws[data-drop],.prj-group[data-drop]{border-radius:var(--r-sm);outline:1px dashed var(--line-strong);outline-offset:-1px}
+.ws[data-drop="over"],.prj-group[data-drop="over"]{outline:2px solid var(--accent);outline-offset:-2px;background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.ws-drop-hint,.prj-drop-hint{margin:0;padding:2px 10px 6px;font:var(--fs-sm)/var(--lh-row) var(--sans);color:var(--accent)}
+.ws-drop-hint{padding-inline-start:36px}
 .ws-head,.sec-fold{display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;color:var(--text-3);font:var(--fs-md) var(--sans)}
 .ws-head{width:100%;height:var(--row-sm);gap:6px;background:none;border:0;border-radius:var(--r-sm);cursor:pointer;text-align:start;font:500 var(--fs-sm)/var(--lh-row) var(--sans)}
 .ws-head:hover{color:var(--text-1);background:var(--hover)}
@@ -2771,6 +2778,12 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
 .prompt p{font-size:var(--fs-base);font-weight:400;line-height:1.55;color:var(--text-1);overflow-wrap:anywhere}
 .prompt-chip{height:20px;padding:0 6px;border:0;border-radius:var(--r-xs);background:var(--sel);box-shadow:inset 0 -1px 0 var(--line);font:500 var(--fs-sm)/20px var(--mono);color:var(--text-2)}
 .prompt-chip:hover,.prompt-chip[aria-expanded="true"]{color:var(--text-1)}
+/* A paste, skill or @file behind its chip: shown on hover or focus, pinned by a click. */
+.prompt-pop{position:fixed;z-index:var(--z-pop);width:max-content;max-width:min(560px,calc(100vw - 16px));overflow:auto;
+  padding:10px 14px;background:var(--raised);border-radius:var(--r-md);box-shadow:var(--shadow-pop)}
+.prompt-pop.pinned{box-shadow:var(--shadow-pop),0 0 0 1px var(--line-strong)}
+.prompt-pop pre{margin:0;font:var(--fs-sm)/1.6 var(--mono);color:var(--text-2);white-space:pre-wrap;overflow-wrap:anywhere}
+.prompt-pop.prompt-att-file pre{white-space:pre;overflow-wrap:normal}
 .prompt-time,.say-time{order:-1;align-self:center;font-size:var(--fs-sm);line-height:16px;color:var(--text-3);font-variant-numeric:tabular-nums;white-space:nowrap;margin-inline-end:6px}
 @media (max-width:720px){.prompt-bubble{max-width:88%}}
 /* prose */
@@ -3848,6 +3861,7 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 
 /* The quiet states keep the column's width so titles stay aligned. */
 .row-mark:empty{width:16px}
+.unseen-dot{width:8px;height:8px;border-radius:50%;background:var(--blue)}
 
 /* Orb state and age read as one dim phrase at the right edge, not as a
    status chip plus a number. */
@@ -4109,28 +4123,24 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 .prj-main-slug{grid-column:1;font-size:var(--fs-sm);color:var(--text-3)}
 .prj-main-st{grid-row:1/span 2;grid-column:2}
 .prj-none{margin:var(--s-2) var(--s-3);color:var(--text-3);font-size:var(--fs-sm)}
-.prj-group-head{display:flex;align-items:center;gap:var(--s-2);width:100%;padding:var(--s-2) var(--s-3) var(--s-1);
-                background:none;border:0;color:var(--text-3);font:500 var(--fs-sm)/var(--lh-tight) var(--sans);cursor:pointer;text-align:start}
+/* Rows and group heads wear the sidebar's own measures (.row, .ws-head):
+   a thread looks the same in the sidebar's project group and here. */
+.prj-group-head{display:flex;align-items:center;gap:6px;width:100%;height:var(--row-sm);padding:0 10px;
+                background:none;border:0;color:var(--text-3);font:500 var(--fs-sm)/var(--lh-row) var(--sans);cursor:pointer;text-align:start}
 .prj-group-label{flex:1 1 auto}
-.prj-thread{display:grid;grid-template-columns:12px minmax(0,1fr) auto;align-items:center;gap:0 var(--s-2);width:100%;
-            min-height:var(--row-sm);padding:var(--s-1) var(--s-3);background:none;border:0;color:inherit;text-align:start;cursor:pointer;font:inherit}
+.prj-thread{display:grid;grid-template-columns:16px minmax(0,1fr) auto;align-items:center;gap:0 10px;width:100%;
+            min-height:var(--row);padding:var(--s-1) 10px;background:none;border:0;border-radius:var(--r-sm);color:inherit;text-align:start;cursor:pointer;font:inherit}
 .prj-thread:hover{background:var(--hover)}
 .prj-thread.is-on{background:var(--sel)}
 .prj-thread-main{min-width:0;display:flex;flex-direction:column}
-.prj-thread-title{font-size:var(--fs-md);line-height:var(--lh-row);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.prj-thread-note,.prj-thread-when{font-size:var(--fs-sm);color:var(--text-3)}
-.prj-threads .prj-thread-when{font-size:var(--fs-xs)}
-.prj-thread-id{color:var(--text-3);font-weight:400}
+.prj-thread-name{display:flex;align-items:baseline;gap:6px;min-width:0}
+.prj-thread-title{min-width:0;font-size:var(--fs-md);line-height:var(--lh-row);color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prj-thread-when{font-size:var(--fs-sm);color:var(--text-3)}
+/* The second line is the sidebar's .row-meta: its size and colour. */
+.prj-thread-note{font-size:var(--fs-sm);line-height:16px;color:var(--text-2)}
+.prj-thread-note .mode-chip{margin-inline-end:6px}
+.prj-thread-when{font-variant-numeric:tabular-nums;white-space:nowrap}
 .prj-thread-note{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-/* A 6px dot, not a pill: the column is too narrow for a word, and the
-   word is on the row for a screen reader anyway. Interrupted is hollow —
-   stopped, not failed — and a failure wears the triangle instead. */
-.prj-dot{width:6px;height:6px;border-radius:50%;background:currentColor;justify-self:center}
-.prj-dot[data-status="interrupted"]{width:7px;height:7px;background:none;border:1px solid currentColor}
-.prj-dot[data-status="running"]{animation:prj-pulse 1.8s var(--ease) infinite}
-@keyframes prj-pulse{0%,100%{opacity:1}50%{opacity:.3}}
-@media (prefers-reduced-motion:reduce){.prj-dot[data-status="running"]{animation:none}}
-.prj-tri{justify-self:center;color:var(--red)}
 
 /* col C: the conversation */
 .prj-main{flex:1 1 0%;display:flex;flex-direction:column;min-width:0}
@@ -4159,10 +4169,9 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 .prj-queue-head{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-2) 0;border-bottom:1px solid var(--line)}
 /* A group is a section, not a row: a small caps label with its count beside it, and room above. */
 .prj-home .prj-group{margin-top:var(--s-3)}
-.prj-home .prj-group-head{padding:var(--s-1) 0;cursor:default;font:600 var(--fs-xs)/1.2 var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--text-2)}
+.prj-home .prj-group-head{cursor:default}
 .prj-home .prj-group-label{flex:0 0 auto}
 .prj-home .prj-group-count{color:var(--text-3);font-weight:400}
-.prj-home .prj-thread{padding-inline:var(--s-2);border-radius:var(--r-sm)}
 .prj-main-row{border-bottom:1px solid var(--line);border-radius:0 !important;padding-block:var(--s-2)}
 .prj-main-row .prj-thread-title{font-weight:600}
 .prj-main-row .prj-dim{font-weight:400;font-size:var(--fs-sm)}

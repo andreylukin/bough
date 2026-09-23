@@ -104,6 +104,8 @@ export interface Row {
   cache?: Cache;
   /** Why this session needs you ("failed", "interrupted", "tests failed"); absent once marked seen. */
   trouble?: string;
+  /** Its last turn finished cleanly after it was last marked seen; opening it marks it seen. */
+  unseen?: boolean;
   /** The last test run exited non-zero; stays after Seen, which is not a fix. */
   testsFailed?: boolean;
   /** When that last test run's result was recorded: test status is aged from this. */

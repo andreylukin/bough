@@ -21,11 +21,12 @@ import (
 const StatusQueued Status = "queued"
 
 var (
-	// ErrDepth refuses a spawned session starting sessions of its own.
-	// The wording is the model's: inside a project every session but the
-	// main thread is a thread, and a thread that wants more work started
-	// asks main rather than branching a tree nothing reports up.
-	ErrDepth = errors.New("serve: supervisor: a project thread cannot start threads; ask the main thread (depth 1)")
+	// ErrDepth refuses a session an agent spawned starting sessions of
+	// its own. The wording is the model's: a background agent that wants
+	// more work started asks the session that started it rather than
+	// branching a tree nothing reports up. A thread a person started is
+	// not one (SessionMeta.Thread).
+	ErrDepth = errors.New("serve: supervisor: a background agent cannot start agents; ask the session that started it (depth 1)")
 	// ErrAgentLimit is a parent past its agent budget.
 	ErrAgentLimit = errors.New("serve: supervisor: background agent limit reached")
 )
@@ -94,7 +95,10 @@ func (s *Supervisor) CreateChild(opt CreateOptions, maxPerSession, maxRunning in
 	if !ok {
 		return "", false, fmt.Errorf("serve: supervisor: parent %s: %w", parent, ErrUnknownSession)
 	}
-	if pinfo.SpawnedBy != "" || s.Meta(parent).SpawnedBy != "" {
+	// A person's project thread has main as its parent only so its
+	// report lands there: it is a top-level agent, and refusing it here
+	// left every thread started from the web unable to delegate.
+	if pm := s.Meta(parent); (pinfo.SpawnedBy != "" || pm.SpawnedBy != "") && !pm.Thread {
 		return "", false, ErrDepth
 	}
 	// A project's main thread lives for as long as the project does, so
@@ -131,6 +135,10 @@ func (s *Supervisor) CreateChild(opt CreateOptions, maxPerSession, maxRunning in
 	// the parent; cmd/bough clears both vars so the child's own shell
 	// commands never inherit them.
 	q.extra = append(q.extra, "BOUGH_SESSION_ID="+q.id, "BOUGH_SPAWNED_BY="+parent)
+	if opt.Thread {
+		// projectEnv says it again at every later start, from meta.json.
+		q.extra = append(q.extra, "BOUGH_PROJECT_THREAD=1")
+	}
 
 	s.mu.Lock()
 	if s.closed {
@@ -152,7 +160,7 @@ func (s *Supervisor) CreateChild(opt CreateOptions, maxPerSession, maxRunning in
 	// The last request's cap wins: every session reads the same bough.yml
 	// in practice, and a lowered setting should take effect.
 	s.maxRunning = maxRunning
-	m := SessionMeta{SpawnedBy: parent}
+	m := SessionMeta{SpawnedBy: parent, Thread: opt.Thread}
 	// The slug IS the membership now: no label to look up.
 	m.Project = slug
 	if len(s.running) >= s.maxRunning {
@@ -577,6 +585,30 @@ func (s *Supervisor) queuedIDs() []string {
 	for i, q := range s.queue {
 		out[i] = q.id
 	}
+	return out
+}
+
+// startingIDs are children with a live process and no history file
+// yet: a thread main just spawned is booting (its orb can take a while)
+// and must show, or the spawn looks like it did nothing. One whose
+// process died before writing is not listed — it would otherwise sit in
+// the lists as running forever.
+func (s *Supervisor) startingIDs() []string {
+	s.mu.Lock()
+	var ids []string
+	for id := range s.kids {
+		if s.meta[id].SpawnedBy != "" {
+			ids = append(ids, id)
+		}
+	}
+	s.mu.Unlock()
+	out := ids[:0]
+	for _, id := range ids {
+		if !s.historyExists(id) {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
 	return out
 }
 

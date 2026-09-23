@@ -71,7 +71,7 @@ Both calls are synchronous — no await. Limits: at most %d spawns per turn and 
 Background agents — for work that should keep going while you continue:
 - tools.spawn(task, {background: true}) starts a SEPARATE session under bough serve and returns {session, status: "running" | "queued"} at once. Add project: "<name>" to run it in that project's container, where it can write. When its turn ends you get a note "[agent <title> · <id> finished] <reply>" and a turn to act on it; do not poll.
 - tools.agent(id) -> {status, title, reply, project} reads one; tools.stopAgent(id) interrupts it.
-- A background agent cannot start agents of its own: a project thread cannot start threads, so ask the main thread. Past the per-session limit spawn throws: do the rest yourself.`
+- A background agent an agent started cannot start agents of its own: ask the session that started it. A thread a person started from the project page is not one and can. Past the per-session limit spawn throws: do the rest yourself.`
 
 // nativePromptSection is promptSection for the engine: spawn is a
 // native call that runs in the background like any other, so several
@@ -88,7 +88,7 @@ Limits: at most %d spawns per turn and %d steps per child, so scope each child's
 Background agents — for work that should keep going while you continue:
 - spawn with background: true starts a SEPARATE session under bough serve and returns {session, status: "running" | "queued"} at once. Add project: "<name>" to run it in that project's container, where it can write. When its turn ends you get a note "[agent <title> · <id> finished] <reply>" and a turn to act on it; do not poll.
 - agent(id) -> {status, title, reply, project} reads one; stop_agent(id) interrupts it.
-- A background agent cannot start agents of its own: a project thread cannot start threads, so ask the main thread. Past the per-session limit spawn fails: do the rest yourself.`
+- A background agent an agent started cannot start agents of its own: ask the session that started it. A thread a person started from the project page is not one and can. Past the per-session limit spawn fails: do the rest yourself.`
 
 // sections is the slice of the loop's "prompt-sections" service we need:
 // Set to advertise tools.spawn to the parent, Text to hand the child the

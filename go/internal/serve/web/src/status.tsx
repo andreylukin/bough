@@ -29,9 +29,39 @@ export function shownStatus(r: Row): Status {
   return hasFailure(r) && !hasQuestion(r) ? "error" : r.status;
 }
 
+/**
+ * Blue: a turn finished cleanly since the session was last looked at.
+ * Done is otherwise unmarked, so without this a finish reads the same
+ * as a thread that went quiet an hour ago with nobody watching.
+ */
+export function isUnseen(r: Row): boolean {
+  return Boolean(r.unseen) && shownStatus(r) === "done";
+}
+
+/** The unread dot, in the mark column of a list row; the row's label says it in words. */
+export function UnseenDot() {
+  return <span className="unseen-dot" aria-hidden="true" />;
+}
+
 /** Amber: the session is waiting on an answer. */
 export function hasQuestion(r: Row): boolean {
   return r.status === "needs-you" || Boolean(r.ask);
+}
+
+/**
+ * A row's second line, read the same by the sidebar and a project's page
+ * so a thread says the same thing in both: a failure's reason, a wait, or
+ * a state its mark does not carry. `plain` rows (running, waiting, done
+ * with nothing wrong) keep one line, the mark already saying it.
+ */
+export function rowNote(r: Row): { failed: string; asking: boolean; label: string; plain: boolean } {
+  // A recorded failure outranks the lifecycle: finished is not fine.
+  const failed = r.trouble || (r.testsFailed ? "tests failed" : "") || (hasFailure(r) ? "failed" : "");
+  const asking = hasQuestion(r);
+  const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+  const label = failed ? capital(failed) + (asking ? "; waiting for you" : "") : r.status === "done" ? "" : STATUS[r.status]?.label ?? r.status;
+  const plain = !failed && !asking && (r.status === "running" || r.status === "needs-you" || r.status === "done");
+  return { failed, asking, label, plain };
 }
 
 /**

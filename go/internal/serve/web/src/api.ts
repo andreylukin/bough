@@ -104,11 +104,14 @@ export const api = {
       body: JSON.stringify(mode === "project" ? { cwd, prompt, mode, project } : { cwd, prompt }),
     }).then((r) => r.session),
 
-  /** A thread the main thread hands work to: a child session of it, in the project, started on prompt. */
-  createThread: (cwd: string, prompt: string, slug: string, spawnedBy: string) =>
+  /** A thread the main thread hands work to: a child session of it, in the project, started on prompt.
+   *  Posted as mode project, not as spawnedBy main: serve parents it to main itself and marks it a
+   *  thread, so it is a full agent. A bare spawnedBy is how an agent starts a background child,
+   *  which is held at depth 1 and told it cannot start agents. */
+  createThread: (prompt: string, slug: string) =>
     req<{ session: Row; queued: boolean }>("/api/sessions", {
       method: "POST",
-      body: JSON.stringify({ cwd, prompt, slug, spawnedBy }),
+      body: JSON.stringify({ prompt, mode: "project", project: slug }),
     }).then((r) => r.session),
 
   prompt: (id: string, text: string) => post(`/api/sessions/${id}/prompt`, { text }),

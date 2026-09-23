@@ -48,6 +48,11 @@ type rowDigest struct {
 	lastSeq     int64
 	lastEntryAt time.Time
 	empty       bool
+	// The last turn's close. Unseen compares the ack against it rather
+	// than the last entry, since a title or a notice written after the
+	// person looked must not bring the dot back.
+	doneSeq int64
+	doneAt  time.Time
 }
 
 func digestOf(entries []history.Entry, fallback time.Time) *rowDigest {
@@ -70,6 +75,12 @@ func digestOf(entries []history.Entry, fallback time.Time) *rowDigest {
 	}
 	if n := len(entries); n > 0 {
 		d.lastSeq, d.lastEntryAt = entries[n-1].Seq, entries[n-1].At
+	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Kind == "done" {
+			d.doneSeq, d.doneAt = entries[i].Seq, entries[i].At
+			break
+		}
 	}
 	d.cacheBase = LastCache(entries, "")
 	return d
@@ -104,6 +115,18 @@ func (d *rowDigest) troubled(st Status, ack int64, now time.Time, background boo
 		return "tests failed"
 	}
 	return ""
+}
+
+// unseen reports a turn that finished cleanly after the person last
+// marked the session seen: "done" alone does not say whether anyone saw
+// it end. Only web sessions: serve is where a person watches those, and a
+// terminal session ended in front of whoever ran it. Trouble has its own
+// marks, so a failed or interrupted finish is never also unseen; the
+// window is trouble's, so the first load after this shipped does not
+// flag every finish ever recorded.
+func (d *rowDigest) unseen(st Status, trouble string, ack int64, now time.Time, origin string) bool {
+	return origin == "web" && st == StatusDone && trouble == "" &&
+		d.doneSeq > ack && now.Sub(d.doneAt) < troubleWindow
 }
 
 // digests holds one digest per session, valid while the file it was read

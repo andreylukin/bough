@@ -67,3 +67,18 @@ func TestTakeMainEnvClears(t *testing.T) {
 		t.Fatal("unset takeMainEnv is true")
 	}
 }
+
+// BOUGH_PROJECT_THREAD marks a person's project thread, and is cleared
+// like the rest: a `bough -p` the thread runs from its shell is not one.
+func TestTakeThreadEnvClears(t *testing.T) {
+	t.Setenv("BOUGH_PROJECT_THREAD", "1")
+	if !takeThreadEnv() {
+		t.Fatal("takeThreadEnv did not read the flag")
+	}
+	if _, set := os.LookupEnv("BOUGH_PROJECT_THREAD"); set {
+		t.Fatal("BOUGH_PROJECT_THREAD still set after take")
+	}
+	if takeThreadEnv() {
+		t.Fatal("unset takeThreadEnv is true")
+	}
+}

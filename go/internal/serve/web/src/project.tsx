@@ -1,12 +1,14 @@
-import { createContext, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type HTMLAttributes, type ReactNode } from "react";
 import type { OrbFile, OrbState, ProjectDetail, Row, Status } from "./types";
 import { api } from "./api";
 import { FileEditor, ORB_AS_STATUS, OrbSessions, confirmStopOrb, orbUp } from "./orb";
-import { STATUS, StatusMark, TESTS_FAILED_GLYPH, hasQuestion, orbWord, shownStatus, statusWord } from "./status";
+import { MARKED, STATUS, StatusMark, UnseenDot, hasQuestion, isUnseen, orbWord, rowNote, shownStatus, statusWord } from "./status";
 import { ErrorNote, Pending, ago, humanError } from "./loading";
-import { sessionTitle } from "./render";
+import { hasOwnTitle, sessionTitle, titleKey } from "./render";
+import { idTail } from "./palette";
+import { ModeChip } from "./mode";
 import { LONG, TOO_LONG } from "./context";
-import { Back, useMedia } from "./app";
+import { Back, displayTitle, useMedia } from "./app";
 
 /*
  * One project: the main thread's conversation, the threads beside it,
@@ -46,12 +48,12 @@ const clock = (iso: string) =>
  * vocabulary: the group comes from the same hasQuestion/shownStatus the
  * sidebar and the overview read.
  */
-export type ThreadGroup = "needs-you" | "error" | "running" | "interrupted" | "done" | "idle" | "empty";
+export type ThreadGroup = "needs-you" | "error" | "running" | "interrupted" | "unseen" | "done" | "idle" | "empty";
 
-export const GROUP_ORDER: readonly ThreadGroup[] = ["needs-you", "error", "running", "interrupted", "done", "idle", "empty"];
+export const GROUP_ORDER: readonly ThreadGroup[] = ["needs-you", "error", "running", "interrupted", "unseen", "done", "idle", "empty"];
 
 export const GROUP_LABEL: Record<ThreadGroup, string> = {
-  "needs-you": "Needs you", error: "Error", running: "Running", interrupted: "Interrupted", done: "Done", idle: "Idle", empty: "Empty",
+  "needs-you": "Needs you", error: "Error", running: "Running", interrupted: "Interrupted", unseen: "Finished — unseen", done: "Done", idle: "Idle", empty: "Empty",
 };
 
 /** Done is most of a busy project; empty is nothing at all. Both start closed. */
@@ -66,8 +68,27 @@ export function threadGroup(r: Row): ThreadGroup {
   if (s === "interrupted") return "interrupted";
   // A session nobody typed into is not idle work, it is nothing: last, and folded.
   if (r.empty) return "empty";
+  // A finish nobody has looked at yet is news, not history: above Done.
+  if (isUnseen(r)) return "unseen";
   if (s === "done") return "done";
   return "idle";
+}
+
+/**
+ * The project a session is a thread of: the one membership rule, shared
+ * by the sidebar's project group and this page (serve's projectDetail
+ * files threads by the same `project` field). A thread main started, a
+ * background run and a thread nobody typed into are all members. The
+ * sidebar used to fold main's children into main's row, move background
+ * runs to their own section and drop empty ones, so the page listed
+ * running threads the sidebar's project group never showed.
+ */
+export const projectOf = (r: Row): string | undefined => (r.archived ? undefined : r.project || undefined);
+
+/** Group order, then newest first: how both lists of a project's threads are ordered. */
+export function byThread(a: Row, b: Row): number {
+  const when = (r: Row) => Date.parse(r.lastAt || r.modified) || 0;
+  return GROUP_ORDER.indexOf(threadGroup(a)) - GROUP_ORDER.indexOf(threadGroup(b)) || when(b) - when(a) || (a.id < b.id ? 1 : -1);
 }
 
 /** The threads in group order, newest first inside each. An empty group is not a group. */
@@ -78,19 +99,53 @@ export function groupThreads(rows: Row[]): { group: ThreadGroup; rows: Row[] }[]
     if (!m.has(g)) m.set(g, []);
     m.get(g)!.push(r);
   }
-  const when = (r: Row) => Date.parse(r.lastAt || r.modified) || 0;
   return GROUP_ORDER.filter((g) => m.has(g))
-    .map((g) => ({ group: g, rows: m.get(g)!.sort((a, b) => when(b) - when(a) || (a.id < b.id ? 1 : -1)) }));
+    .map((g) => ({ group: g, rows: m.get(g)!.sort(byThread) }));
 }
 
 /**
- * The dim line under a thread's title: what it is waiting on, what broke,
- * or what it is about. Never its id — the title already names the work.
+ * Whether a thread dragged onto a group lands there. Only Done takes one:
+ * the other groups are states the agent puts a thread in (a question, an
+ * error, a run), not ones a person can. Done is "I have seen it", the one
+ * change a person makes, so only a finish nobody has looked at moves. An
+ * errored or interrupted thread keeps its status once seen, so a drop on
+ * Done would have looked like it did nothing.
  */
-export function threadNote(r: Row): string {
-  const t = r.ask?.text || r.trouble || r.error || r.summary || "";
-  return t.split("\n")[0].trim().slice(0, 120);
+export function threadDrop(r: Row, to: ThreadGroup): boolean {
+  return to === "done" && threadGroup(r) === "unseen";
 }
+
+/** The session a drag carries; a type of its own, so a text field never takes the drop. */
+export const DRAG_SESSION = "application/x-bough-session";
+
+/**
+ * Dragging a thread between groups. `row` makes a thread draggable when
+ * some group would take it; `group` makes a group a drop target while a
+ * thread it takes is in the air, and `withTargets` adds that group when it is
+ * empty, since an empty group is otherwise not drawn to drop on.
+ */
+function useThreadDrag(onSeen?: (id: string) => void) {
+  const [drag, setDrag] = useState<Row | null>(null);
+  const [over, setOver] = useState<ThreadGroup | null>(null);
+  const end = () => { setDrag(null); setOver(null); };
+  const row = (r: Row): ButtonHTMLAttributes<HTMLButtonElement> => !onSeen || !GROUP_ORDER.some((g) => threadDrop(r, g)) ? {} : {
+    draggable: true,
+    onDragStart: (e) => { e.dataTransfer.setData(DRAG_SESSION, r.id); e.dataTransfer.effectAllowed = "move"; setDrag(r); },
+    onDragEnd: end,
+  };
+  const group = (g: ThreadGroup): HTMLAttributes<HTMLDivElement> & { "data-drop"?: string } => !drag || !onSeen || !threadDrop(drag, g) ? {} : {
+    "data-drop": over === g ? "over" : "ok",
+    onDragOver: (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setOver(g); },
+    onDragLeave: (e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver((o) => (o === g ? null : o)); },
+    onDrop: (e) => { e.preventDefault(); const id = drag.id; end(); onSeen(id); },
+  };
+  const withTargets = (list: { group: ThreadGroup; rows: Row[] }[]) => !drag || !onSeen ? list
+    : GROUP_ORDER.flatMap((g) => { const hit = list.find((x) => x.group === g); return hit ? [hit] : threadDrop(drag, g) ? [{ group: g, rows: [] as Row[] }] : []; });
+  return { row, group, withTargets, hint: (g: ThreadGroup) => Boolean(drag && onSeen && threadDrop(drag, g)) };
+}
+
+/** Said inside a group a dragged thread can land in. */
+const DROP_HINT = <p className="prj-drop-hint">Drop to mark it seen</p>;
 
 /** Lines as an editor counts them: a trailing newline ends the last line, it does not start one. */
 export function lineCount(text: string): number {
@@ -104,62 +159,87 @@ export function lineTone(n: number): string {
 }
 
 /**
- * A thread's state in a column too narrow for a word: a 6px dot in the
- * status colour, except a failure, which wears the triangle the rest of
- * the UI gives a failed test so it survives greyscale. The word itself
- * rides along for screen readers on the row.
+ * A thread's state as the sidebar marks a row: the glyph at the same size
+ * in the same 16px column, and only for the states a list marks (MARKED);
+ * the resting ones keep the column empty. A thread looks the same here
+ * and in the sidebar's project group. The word rides along for screen
+ * readers on the row.
  */
-function Dot({ status }: { status: Status }) {
-  if (status === "error") {
-    return (
-      <svg className="prj-tri" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
-           strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{TESTS_FAILED_GLYPH}</svg>
-    );
-  }
-  return <span className="prj-dot" data-status={status} style={{ color: STATUS[status]?.tone }} aria-hidden="true" />;
+function Mark({ status, unseen }: { status?: Status; unseen?: boolean }) {
+  return <span className="row-mark">{status && MARKED.has(status) ? <StatusMark status={status} size={16} bare /> : unseen ? <UnseenDot /> : null}</span>;
 }
 
-/** The rows of one group, each told apart from the row above it when the titles are the same. */
-function rowsOf(rows: Row[], on: string, onOpen: (id: string) => void) {
-  return rows.map((r, i) => (
-    <ThreadRow key={r.id} row={r} on={on === r.id} onOpen={onOpen}
-               twin={i > 0 && sessionTitle(rows[i - 1]) === sessionTitle(r)} />
+/** The rows of one group; rows whose titles read the same each carry their id tail, as in the sidebar. */
+function rowsOf(rows: Row[], on: string, onOpen: (id: string) => void, drag?: (r: Row) => ButtonHTMLAttributes<HTMLButtonElement>) {
+  const key = (r: Row) => titleKey(displayTitle(r) || sessionTitle(r));
+  const seen = new Map<string, number>();
+  for (const r of rows) seen.set(key(r), (seen.get(key(r)) ?? 0) + 1);
+  return rows.map((r) => (
+    <ThreadRow key={r.id} row={r} on={on === r.id} onOpen={onOpen} twin={(seen.get(key(r)) ?? 0) > 1} drag={drag?.(r)} />
   ));
 }
 
-function ThreadRow({ row, on, onOpen, twin }: { row: Row; on: boolean; onOpen: (id: string) => void; twin?: boolean }) {
+/**
+ * One thread, said as the sidebar's project group says it: the same
+ * title, id tail, mark, second line (rowNote) and orb chip beside the
+ * age, so the row reads the same in both lists. `tag` names the main
+ * thread, which the page pins apart.
+ */
+function ThreadRow({ row, on, onOpen, twin, tag, className = "", drag }: {
+  row: Row; on: boolean; onOpen: (id: string) => void; twin?: boolean; tag?: string; className?: string;
+  /** Makes the row draggable onto a group that takes it. */
+  drag?: ButtonHTMLAttributes<HTMLButtonElement>;
+}) {
   const st = shownStatus(row);
   const at = row.lastAt || row.modified;
-  // The title already names the work; the note is only worth a line when it says something else.
-  const note0 = threadNote(row);
-  const title = sessionTitle(row);
-  const note = note0 && !title.startsWith(note0.slice(0, 40)) && !note0.startsWith(title.slice(0, 40)) ? note0 : "";
+  const own = displayTitle(row);
+  const title = own || sessionTitle(row);
+  const chip = twin || (!hasOwnTitle(row) && !own);
+  const { failed, asking, label, plain } = rowNote(row);
+  // The open thread is being looked at; its ack is already on the way.
+  const unseen = isUnseen(row) && !on;
+  // The project's environment failed to set up: said on the second line, as the sidebar does.
+  const setup = row.mode === "project" && row.orb?.status === "failed" ? row.orb.project : "";
+  const note = (label && !plain) || setup ? label : "";
   return (
-    <button type="button" className={"prj-thread" + (on ? " is-on" : "")} aria-current={on || undefined}
-            onClick={() => onOpen(row.id)} aria-label={[title, note, statusWord(st), ago(at)].filter(Boolean).join(", ")}>
-      <Dot status={st} />
+    <button type="button" {...drag} className={"prj-thread" + (on ? " is-on" : "") + (className ? " " + className : "")} aria-current={on || undefined}
+            onClick={() => onOpen(row.id)} aria-label={[title, tag, note || statusWord(st), unseen && "not seen yet", setup && `${setup}: setup failed`, ago(at)].filter(Boolean).join(", ")}>
+      <Mark status={failed ? "error" : st} unseen={unseen} />
       <span className="prj-thread-main">
-        <span className="prj-thread-title" title={title}>{title}</span>
-        {note && <span className="prj-thread-note" title={note}>{note}</span>}
+        <span className="prj-thread-name">
+          <span className="prj-thread-title" title={title}>{title}</span>
+          {chip && <span className="mono row-id" title={`Session id ending ${idTail(row.id)}`}>{idTail(row.id)}</span>}
+          {tag && <span className="prj-dim">· {tag}</span>}
+        </span>
+        {note || setup ? (
+          <span className={"num prj-thread-note" + (failed ? " row-meta-bad" : asking ? " row-meta-ask" : "")} title={note}>
+            <ModeChip row={row} bare name={setup} />{note}
+          </span>
+        ) : null}
       </span>
-      {/* A twin of the row above is told apart by its id tail, where the ellipsis cannot eat it. */}
-      <span className="num prj-thread-when" title={clock(at)}>{twin && <span className="mono prj-thread-id">{row.id.slice(0, 6)} · </span>}{ago(at)}</span>
+      <span className="num prj-thread-when row-when" title={clock(at)}>
+        {!note && !setup && <ModeChip row={row} bare />}
+        {!note && !setup && row.mode === "project" && row.orb && row.orb.status !== "failed" && row.orb.status !== "stopped" && row.orb.status !== "" && <span className="row-when-sep" aria-hidden="true">·</span>}
+        {ago(failed === "tests failed" && row.testsAt ? row.testsAt : at)}
+      </span>
     </button>
   );
 }
 
 /** One status group: its label, its count flush right, its rows under it. */
-function Group({ group, rows, open, folded, onFold, onOpen }: {
+function Group({ group, rows, open, folded, onFold, onOpen, dnd }: {
   group: ThreadGroup; rows: Row[]; open: string; folded: boolean;
   onFold: (g: ThreadGroup) => void; onOpen: (id: string) => void;
+  dnd: ReturnType<typeof useThreadDrag>;
 }) {
   return (
-    <div className="prj-group">
+    <div className="prj-group" {...dnd.group(group)}>
       <button type="button" className="prj-group-head" aria-expanded={!folded} onClick={() => onFold(group)}>
         <span className="prj-group-label">{GROUP_LABEL[group]}</span>
         <span className="num prj-group-count">{rows.length}</span>
       </button>
-      {!folded && rowsOf(rows, open, onOpen)}
+      {dnd.hint(group) && DROP_HINT}
+      {!folded && rowsOf(rows, open, onOpen, dnd.row)}
     </div>
   );
 }
@@ -193,7 +273,7 @@ function OrbLine({ orb, messaged, onStop }: { orb?: OrbState; messaged: boolean;
 
 /** How many threads are in each state; the header line and the queue read the same numbers. */
 export function threadCounts(rows: Row[]): Record<ThreadGroup, number> {
-  const n: Record<ThreadGroup, number> = { "needs-you": 0, error: 0, running: 0, interrupted: 0, done: 0, idle: 0, empty: 0 };
+  const n: Record<ThreadGroup, number> = { "needs-you": 0, error: 0, running: 0, interrupted: 0, unseen: 0, done: 0, idle: 0, empty: 0 };
   for (const r of rows) n[threadGroup(r)]++;
   return n;
 }
@@ -262,13 +342,15 @@ function ProjectComposer({ onMessage, line, autoFocus }: { onMessage: (text: str
  * Main is pinned first as the thread the composer talks to; the rest sit
  * under their state, most urgent first, with idle capped behind a line.
  */
-export function ProjectHome({ detail, mainRow, onOpen, onMessage, onNewThread }: {
+export function ProjectHome({ detail, mainRow, onOpen, onMessage, onNewThread, onSeen }: {
   detail: ProjectDetail; mainRow?: Row; onOpen: (id: string) => void;
   onMessage: (text: string) => Promise<void>; onNewThread?: () => void;
+  /** Mark a thread seen: what dropping it on Done does. */
+  onSeen?: (id: string) => void;
 }) {
   const [shownAll, setShownAll] = useState<Set<ThreadGroup>>(() => new Set());
-  const groups = useMemo(() => groupThreads(detail.threads), [detail.threads]);
-  const mainNote = mainRow ? threadNote(mainRow) : "";
+  const dnd = useThreadDrag(onSeen);
+  const groups = dnd.withTargets(useMemo(() => groupThreads(detail.threads), [detail.threads]));
   return (
     <div className="scroll prj-home">
       <ProjectComposer onMessage={onMessage} autoFocus
@@ -279,17 +361,15 @@ export function ProjectHome({ detail, mainRow, onOpen, onMessage, onNewThread }:
           <span className="num prj-threads-count">{detail.threads.length}</span>
           {onNewThread && <button type="button" className="btn btn-ghost btn-sm" onClick={onNewThread}>New thread</button>}
         </div>
-        {detail.main && (
-          <button type="button" className="prj-thread prj-main-row" onClick={() => onOpen(detail.main!)}
-                  aria-label={["Main thread", mainNote, mainRow ? statusWord(shownStatus(mainRow)) : "", mainRow ? ago(mainRow.lastAt || mainRow.modified) : ""].filter(Boolean).join(", ")}>
-            {mainRow ? <Dot status={shownStatus(mainRow)} /> : <span className="prj-dot" data-status="idle" aria-hidden="true" />}
-            <span className="prj-thread-main">
-              <span className="prj-thread-title">Main thread <span className="prj-dim">· the one the composer talks to</span></span>
-              {mainNote && <span className="prj-thread-note" title={mainNote}>{mainNote}</span>}
-            </span>
-            {mainRow && <span className="num prj-thread-when" title={clock(mainRow.lastAt || mainRow.modified)}>{ago(mainRow.lastAt || mainRow.modified)}</span>}
-          </button>
-        )}
+        {/* Main by its own name, as the sidebar lists it; the tag says which thread it is. */}
+        {detail.main && (mainRow
+          ? <ThreadRow row={mainRow} on={false} onOpen={onOpen} tag="Main thread" className="prj-main-row" />
+          : (
+            <button type="button" className="prj-thread prj-main-row" onClick={() => onOpen(detail.main!)} aria-label="Main thread">
+              <Mark />
+              <span className="prj-thread-main"><span className="prj-thread-title">Main thread</span></span>
+            </button>
+          ))}
         {detail.threads.length === 0 && <p className="prj-none">No threads yet. Ask the main thread to start work, or create one.</p>}
         {groups.map((g) => {
           const all = shownAll.has(g.group);
@@ -297,12 +377,13 @@ export function ProjectHome({ detail, mainRow, onOpen, onMessage, onNewThread }:
           const capped = !all && g.rows.length > limit;
           const rows = capped ? g.rows.slice(0, limit) : g.rows;
           return (
-            <div key={g.group} className="prj-group" data-group={g.group}>
+            <div key={g.group} className="prj-group" data-group={g.group} {...dnd.group(g.group)}>
               <div className="prj-group-head">
                 <span className="prj-group-label">{GROUP_LABEL[g.group]}</span>
                 <span className="num prj-group-count">{g.rows.length}</span>
               </div>
-              {rowsOf(rows, "", onOpen)}
+              {dnd.hint(g.group) && DROP_HINT}
+              {rowsOf(rows, "", onOpen, dnd.row)}
               {capped && <button type="button" className="link prj-more" onClick={() => setShownAll((prev) => new Set(prev).add(g.group))}>Show all {g.rows.length}</button>}
             </div>
           );
@@ -313,7 +394,7 @@ export function ProjectHome({ detail, mainRow, onOpen, onMessage, onNewThread }:
 }
 
 export function ProjectPage({
-  detail, files, error, filesError, conversation, mainRow, open, onOpen, onNewThread, onStartThread, onBack, onSave, onStopOrb, onOpenSession, onMessage, onRetry, titles = {},
+  detail, files, error, filesError, conversation, mainRow, open, onOpen, onNewThread, onStartThread, onBack, onSave, onStopOrb, onOpenSession, onMessage, onRetry, onSeen, titles = {},
 }: {
   /** Absent until the first read lands. */
   detail?: ProjectDetail;
@@ -342,6 +423,8 @@ export function ProjectPage({
   /** The first message, which is what creates the main thread. */
   onMessage: (text: string) => Promise<void>;
   onRetry: () => void;
+  /** Mark a thread seen: what dropping it on Done does. Absent, nothing drags. */
+  onSeen?: (id: string) => void;
   /** Session id to title, for the orb rows. */
   titles?: Record<string, string>;
 }) {
@@ -373,7 +456,8 @@ export function ProjectPage({
   const foldThreads = (v: boolean) => { remember(THREADS_PREF, v ? "1" : "0"); setThreadsFolded(v); };
   const editor = useRef<HTMLTextAreaElement>(null);
   const fold = (g: ThreadGroup) => setFolded((prev) => { const n = new Set(prev); n.has(g) ? n.delete(g) : n.add(g); return n; });
-  const groups = useMemo(() => groupThreads(detail?.threads ?? []), [detail?.threads]);
+  const dnd = useThreadDrag(onSeen);
+  const groups = dnd.withTargets(useMemo(() => groupThreads(detail?.threads ?? []), [detail?.threads]));
 
   if (!detail) {
     return (
@@ -438,7 +522,7 @@ export function ProjectPage({
           {threads.length === 0
             ? <p className="prj-none">No threads yet. Ask the main thread to start work, or create one.</p>
             : groups.map((g) => (
-              <Group key={g.group} group={g.group} rows={g.rows} open={open} folded={folded.has(g.group)}
+              <Group key={g.group} group={g.group} rows={g.rows} open={open} folded={folded.has(g.group)} dnd={dnd}
                      onFold={fold} onOpen={onOpen} />
             ))}
         </div>
@@ -486,7 +570,7 @@ export function ProjectPage({
 
         <div className="prj-conv">
           {!open
-            ? <ProjectHome detail={detail} mainRow={mainRow} onOpen={onOpen} onMessage={onMessage} onNewThread={onNewThread} />
+            ? <ProjectHome detail={detail} mainRow={mainRow} onOpen={onOpen} onMessage={onMessage} onNewThread={onNewThread} onSeen={onSeen} />
             : <StartThreadCtx.Provider value={inMain && onStartThread ? onStartThread : null}>
                 {conversation ?? <div className="lookup" role="status"><p className="lookup-body">Loading thread…</p></div>}
               </StartThreadCtx.Provider>}
@@ -555,7 +639,7 @@ export function ProjectPage({
  * session that is, so opening a thread here costs the same as opening it
  * from the sidebar.
  */
-export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, onOpenSession, onNewThread, onStartThread, onChanged }: {
+export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, onOpenSession, onNewThread, onStartThread, onChanged, onSeen }: {
   slug: string;
   /** A thread the page was opened on (a session just started in this project, or a link to one). */
   focus?: { id: string; at: number };
@@ -570,6 +654,8 @@ export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, o
   onStartThread?: (prompt: string, main: string) => Promise<string>;
   /** Something here changed a session: the fleet the App holds is stale. */
   onChanged?: () => void;
+  /** Marks a session seen, saying so when it could not; the page rereads after. */
+  onSeen?: (id: string) => Promise<unknown>;
 }) {
   const [detail, setDetail] = useState<ProjectDetail>();
   const [files, setFiles] = useState<Partial<Record<OrbFile, string>>>();
@@ -626,6 +712,7 @@ export function ProjectView({ slug, rows, conversation, focus, onShow, onBack, o
       detail={detail} files={files} error={err} filesError={filesErr} conversation={conversation} mainRow={mainRow}
       open={open} onOpen={setOpen} onBack={onBack} onOpenSession={onOpenSession} titles={titles}
       onRetry={() => { void load(); void loadFiles(); }}
+      onSeen={onSeen ? (id) => { void onSeen(id).then(() => load()); } : undefined}
       onNewThread={onNewThread ? newThread : undefined}
       // The list reloads so the new thread shows beside main at once; main stays on screen, it is where the reply lands.
       onStartThread={onStartThread && detail?.main ? async (prompt) => { await onStartThread(prompt, detail.main!); await load(); onChanged?.(); } : undefined}

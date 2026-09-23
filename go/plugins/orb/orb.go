@@ -217,12 +217,13 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		}
 	}
 	// Which session in the project this is. serve sets
-	// BOUGH_PROJECT_MAIN on the main thread and BOUGH_SPAWNED_BY on
-	// the threads it starts; a session started from the CLI is
-	// neither and is told neither.
+	// BOUGH_PROJECT_MAIN on the main thread, BOUGH_PROJECT_THREAD on a
+	// thread a person started and BOUGH_SPAWNED_BY on the threads main
+	// starts; a session started from the CLI is none and is told none.
 	isMain, _ := kernel.Get[bool](ctx, "session-main")
+	isThread, _ := kernel.Get[bool](ctx, "session-thread")
 	parent, _ := kernel.Get[string](ctx, "session-spawned-by")
-	r := projectRole{main: isMain, parent: parent}
+	r := projectRole{main: isMain, thread: isThread, parent: parent}
 	secs, _ := kernel.Get[sections](ctx, "prompt-sections")
 	uiMode := uiModeOf(ctx)
 	// gone is this Apply's lifetime: a watcher from before a reload must
@@ -511,6 +512,7 @@ func addressSection(b *strings.Builder, st iorb.State) {
 // one of the threads it started, or neither.
 type projectRole struct {
 	main   bool   // this session is the project's main thread
+	thread bool   // a person started this thread from the project page
 	parent string // the session that spawned this one; "" when nothing did
 }
 
@@ -522,8 +524,13 @@ func roleLine(r projectRole, slug string) string {
 	switch {
 	case r.main:
 		return fmt.Sprintf("You are the MAIN THREAD of %s: one long-lived session, the one the user types to on the project page, and the parent of every other session in the project. Answer questions and do small edits here, in this conversation. For work that runs long or can run on its own, start a thread — tools.spawn(task, {background: true}) — which gets a container of its own in this project and reports back here when it finishes or fails. Say what you handed off; do not poll for it.\n", slug)
+	case r.thread:
+		// Parented to main only so its report lands there. Told it was a
+		// thread that "cannot start threads", the model read that as no
+		// delegation at all and never used a subagent.
+		return fmt.Sprintf("You are a THREAD of %s, started by the user from the project page. Your last reply reaches the project's main thread when your turn ends. You are a full agent: delegate to subagents and start background agents as any session would; they report back to you.\n", slug)
 	case r.parent != "":
-		return fmt.Sprintf("You are a THREAD of %s, started by its main thread (%s). Finish the task you were given in this container and say what you did: your last reply is what reaches the main thread. You cannot start threads of your own — if the work needs splitting or a decision, say so in your reply and the main thread takes it from there.\n", slug, r.parent)
+		return fmt.Sprintf("You are a THREAD of %s, started as a background agent by session %s (its main thread, or a thread the user started). Finish the task you were given in this container and say what you did: your last reply is what reaches that session. You cannot start threads of your own — if the work needs splitting or a decision, say so in your reply and that session takes it from there.\n", slug, r.parent)
 	}
 	return ""
 }

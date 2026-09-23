@@ -155,6 +155,20 @@ func TestBackgroundSpawnErrors(t *testing.T) {
 		t.Fatalf("meta depth = %s", got)
 	}
 
+	// A thread a person started from the project page has main as its
+	// parent, fresh or resumed, and still delegates: serve decides.
+	thread := bgMount(t, true, func(k *kernel.Context) { k.Provide("session-spawned-by", "p0"); k.Provide("session-thread", true) }, map[string]any{"spawned_by": "p0"})
+	thread.serve.codes["/api/sessions"] = 201
+	thread.serve.reply["/api/sessions"] = `{"session":{"id":"c1"},"queued":false}`
+	if got := thread.run(t, `tools.spawn("t", {background: true})`); !sameJSON(got, `{"session":"c1","status":"running"}`) {
+		t.Fatalf("thread spawn = %s", got)
+	}
+	thread.serve.codes["/api/sessions"] = 409
+	thread.serve.reply["/api/sessions"] = `{"error":"depth"}`
+	if got := thread.run(t, `tools.spawn("t", {background: true})`); got != "THREW workers: a background agent cannot start agents (depth 1)" {
+		t.Fatalf("serve depth = %s", got)
+	}
+
 	r := bgMount(t, true, nil, nil)
 	if got := r.run(t, `tools.spawn("t", {background: true, type: "object"})`); got != "THREW workers: a background agent reports text; drop the schema" {
 		t.Fatalf("schema = %s", got)

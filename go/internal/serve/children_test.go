@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -348,6 +349,51 @@ func TestProjectThreadReportsToMain(t *testing.T) {
 	}
 	if f.sup.Live(main) {
 		t.Error("the report restarted main")
+	}
+}
+
+// A thread a person started from the project page is parented to main
+// only so its report lands there: it may start background agents of its
+// own, while those, and the threads main's model starts, stay at depth 1.
+// Refusing the person's thread left every web thread unable to delegate.
+func TestProjectThreadIsATopLevelAgent(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t, envTurns+"=1")
+	slug := mkProject(t, f, "Delegating")
+	main, err := f.sup.Main(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, body := f.do(t, "POST", "/api/sessions", `{"mode":"project","project":"`+slug+`","prompt":"HANG"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("create thread = %d %v", code, body)
+	}
+	thread, _ := rowOf(t, body)["id"].(string)
+	if m := f.sup.Meta(thread); m.SpawnedBy != main || !m.Thread {
+		t.Fatalf("thread meta = %+v, want spawnedBy %q and thread", m, main)
+	}
+	if env := f.sup.projectEnv(thread); !slices.Contains(env, "BOUGH_PROJECT_THREAD=1") {
+		t.Errorf("a restarted thread starts with %v, want BOUGH_PROJECT_THREAD", env)
+	}
+	waitFor(t, "the thread's history", func() bool { _, ok := f.sup.infoOf(thread); return ok })
+	kid, _, err := f.sup.CreateChild(CreateOptions{Prompt: "HANG", SpawnedBy: thread}, 0, 0)
+	if err != nil {
+		t.Fatalf("the person's thread could not start an agent: %v", err)
+	}
+	if m := f.sup.Meta(kid); m.SpawnedBy != thread || m.Thread {
+		t.Fatalf("agent meta = %+v, want an agent of %q", m, thread)
+	}
+	waitFor(t, "the agent's history", func() bool { _, ok := f.sup.infoOf(kid); return ok })
+	if _, _, err := f.sup.CreateChild(CreateOptions{Prompt: "x", SpawnedBy: kid}, 0, 0); !errors.Is(err, ErrDepth) {
+		t.Fatalf("the thread's agent started one = %v, want ErrDepth", err)
+	}
+	byMain, _, err := f.sup.CreateChild(CreateOptions{Prompt: "HANG", SpawnedBy: main}, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "main's agent's history", func() bool { _, ok := f.sup.infoOf(byMain); return ok })
+	if _, _, err := f.sup.CreateChild(CreateOptions{Prompt: "x", SpawnedBy: byMain}, 0, 0); !errors.Is(err, ErrDepth) {
+		t.Fatalf("a thread main's model started started one = %v, want ErrDepth", err)
 	}
 }
 

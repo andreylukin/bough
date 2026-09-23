@@ -78,6 +78,28 @@ func (a *API) queuedRow(id string) Row {
 	}
 }
 
+// pendingRows are the sessions history.List cannot see yet — queued
+// children, and live ones still booting — skipping ids in seen. Both
+// /api/sessions and a project's page add exactly these, so the sidebar
+// and the page never disagree about a thread that has not written yet.
+func (a *API) pendingRows(seen map[string]bool) []Row {
+	var rows []Row
+	for _, id := range a.sup.queuedIDs() {
+		if !seen[id] {
+			rows = append(rows, a.queuedRow(id))
+		}
+	}
+	for _, id := range a.sup.startingIDs() {
+		if seen[id] || a.sup.Meta(id).Archived {
+			continue
+		}
+		row := a.queuedRow(id)
+		row.Queued, row.Status, row.Live = false, StatusRunning, true
+		rows = append(rows, row)
+	}
+	return rows
+}
+
 func (a *API) agentCount(id string) *AgentCount {
 	running, queued, total := a.sup.agentCounts(id)
 	if total == 0 {

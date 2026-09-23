@@ -14,7 +14,10 @@ edit another area's files (section 8). Builds on `docs/orbs.md`
 - The child's first `meta` history entry records `spawned_by: <parent id>`.
   The supervisor also passes `BOUGH_SPAWNED_BY=<parent id>` in the child's
   env. A session with `spawned_by` cannot background-spawn (depth 1), and
-  the supervisor refuses it too.
+  the supervisor refuses it too. The exception is a thread a person starts
+  from the project page: it has main as its parent only so its report lands
+  there, carries `thread: true` in meta.json and `BOUGH_PROJECT_THREAD=1`
+  at every start, and may spawn like any top-level session.
 - When a child's turn ends, the supervisor calls
   `Supervisor.Notify(parent, "[agent <title> · <id> finished] <reply…>")`
   exactly once per child turn. A live parent gets a stdin line
@@ -328,7 +331,8 @@ project, so a lifetime tally would refuse every thread after a few
 months. `CreateChild` counts only its non-terminal children — queued,
 running, or holding a question open — against `maxPerSession`. The global
 `maxRunning` queue is unchanged. `ErrDepth`'s text now reads
-`a project thread cannot start threads; ask the main thread (depth 1)`.
+`a background agent cannot start agents; ask the session that started it
+(depth 1)`, and does not apply to a person's thread (`SessionMeta.Thread`).
 
 Response 201: the usual row plus `"queued": true|false`. A queued child has
 no id from a process yet, so the supervisor mints it: see 3c.

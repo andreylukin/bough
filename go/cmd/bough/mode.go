@@ -103,6 +103,16 @@ func takeMainEnv() bool {
 	return main
 }
 
+// takeThreadEnv reads and clears BOUGH_PROJECT_THREAD: serve sets it on
+// a thread a person started from the project page, which has main as its
+// parent for notices but is not a background agent, so it may delegate.
+// Cleared for the same reason as BOUGH_PROJECT_MAIN.
+func takeThreadEnv() bool {
+	thread := os.Getenv("BOUGH_PROJECT_THREAD") != ""
+	os.Unsetenv("BOUGH_PROJECT_THREAD")
+	return thread
+}
+
 // takeSessionEnv reads and clears BOUGH_SPAWNED_BY/BOUGH_SESSION_ID,
 // which serve sets on a background agent: left in the environment, a
 // `bough -p` the agent runs through tools.bash would nest under the

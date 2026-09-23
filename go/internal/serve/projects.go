@@ -39,13 +39,27 @@ type ProjectDetail struct {
 	Threads []Row `json:"threads"`
 }
 
+// inProject is the one membership rule, and the web's projectOf is its
+// mirror: the page lists /api/projects/{slug}'s threads and the sidebar
+// groups /api/sessions rows, and when the two rules differed the page
+// showed threads the sidebar did not (main's children of another mode
+// forced to running, children that died before writing history).
+//
+// row.Project is the slug the session's history recorded for a project
+// session, and the one a person filed it under for a local one — both
+// are membership. Parentage is not: a local child of main nests under
+// main in the sidebar, not in the project. Archived threads are folded
+// away, as listSessions hides them too.
+func inProject(r Row, slug string) bool {
+	return !r.Archived && r.Project == slug
+}
+
 // projectDetail is GET /api/projects/{slug}.
 //
-// Threads are the UNION of main's children and everything else filed
-// under the project: a session started with `bough --project <slug>`,
-// or one from before the project had a main thread, has no parent and
-// would otherwise be missing from its own project's page. Those send no
-// finish notices (see docs/orbs.md); they are still the person's work.
+// Threads are every session inProject, parented to main or not: a
+// session started with `bough --project <slug>`, or one from before the
+// project had a main thread, has no parent and is still the person's
+// work, though it sends no finish notices (see docs/orbs.md).
 func (a *API) projectDetail(w http.ResponseWriter, r *http.Request) {
 	p, ok := a.projectOr404(w, r.PathValue("slug"))
 	if !ok {
@@ -68,37 +82,13 @@ func (a *API) projectDetail(w http.ResponseWriter, r *http.Request) {
 		if seen[in.ID] {
 			continue
 		}
-		row := a.row(in)
-		// row.Project is the slug the session's history recorded for a
-		// project session, and the one a person filed it under for a
-		// local one — both are membership in this project.
-		if row.Project != p.Slug {
-			continue
-		}
-		// Archived threads are folded away, as they are everywhere else
-		// (listSessions hides them too): archiving one from its own
-		// conversation, or archiving the whole project, has to be
-		// visible on the surface it was invoked from.
-		if row.Archived {
-			seen[in.ID] = true
-			continue
-		}
 		seen[in.ID] = true
-		d.Threads = append(d.Threads, row)
+		if row := a.row(in); inProject(row, p.Slug) {
+			d.Threads = append(d.Threads, row)
+		}
 	}
-	// Children main started that have no history file yet (queued, or
-	// still booting) are threads too, and the page has to show them or
-	// a spawn looks like it did nothing.
-	if d.Main != "" {
-		for _, c := range a.sup.Children(d.Main) {
-			if seen[c.ID] || a.sup.Meta(c.ID).Archived {
-				continue
-			}
-			seen[c.ID] = true
-			row := a.queuedRow(c.ID)
-			if !c.Queued {
-				row.Queued, row.Status, row.Live = false, StatusRunning, a.sup.Live(c.ID)
-			}
+	for _, row := range a.pendingRows(seen) {
+		if inProject(row, p.Slug) {
 			d.Threads = append(d.Threads, row)
 		}
 	}

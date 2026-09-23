@@ -35,6 +35,19 @@ func TestPromptSectionSaysWhichSessionThisIs(t *testing.T) {
 		t.Errorf("a thread was told it is the main thread:\n%s", thread)
 	}
 
+	// A thread a person started from the project page has main as its
+	// parent only for its report: it was told it "cannot start threads"
+	// and so never delegated at all.
+	person := promptSection("/r", "/p/MEMORY.md", st, projectdef.Def{}, nil, projectRole{thread: true, parent: "sess-main"})
+	for _, want := range []string{"THREAD of web", "project page", "subagents", "background agents"} {
+		if !strings.Contains(person, want) {
+			t.Errorf("a person's thread's section lacks %q:\n%s", want, person)
+		}
+	}
+	if strings.Contains(person, "cannot start") || strings.Contains(person, "MAIN THREAD") {
+		t.Errorf("a person's thread was told it cannot delegate, or is main:\n%s", person)
+	}
+
 	// A session started from the CLI is neither, and is told neither.
 	plain := promptSection("/r", "/p/MEMORY.md", st, projectdef.Def{}, nil, projectRole{})
 	if strings.Contains(plain, "MAIN THREAD") || strings.Contains(plain, "THREAD of web") {
