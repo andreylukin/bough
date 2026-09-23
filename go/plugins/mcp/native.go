@@ -45,16 +45,18 @@ func nativeServers(cfg map[string]any) ([]string, error) {
 type native struct {
 	reg     agenttools.Registry
 	servers map[string]ServerConfig
-	connect func(ServerConfig) (*sdk.ClientSession, error)
+	host    *Host // the row's sessions, shared with tools.mcp and the trio
 
-	mu       sync.Mutex
-	sessions map[string]*sdk.ClientSession
-	unreg    []func()
-	closed   bool
+	mu     sync.Mutex
+	unreg  []func()
+	closed bool
 }
 
-func newNative(reg agenttools.Registry, servers map[string]ServerConfig) *native {
-	return &native{reg: reg, servers: servers, connect: connect, sessions: map[string]*sdk.ClientSession{}}
+func newNative(reg agenttools.Registry, servers map[string]ServerConfig, host *Host) *native {
+	if host == nil {
+		host = newHost(servers, catalog{})
+	}
+	return &native{reg: reg, servers: servers, host: host}
 }
 
 // start connects to each listed server and registers its tools. It runs
@@ -126,46 +128,14 @@ func (n *native) register(server string, t *sdk.Tool, taken map[string]bool) {
 	n.unreg = append(n.unreg, unreg)
 }
 
-// session is the server's open session, connecting on first use. The
-// connect runs unlocked: it can take seconds, and neither a call to
-// another server nor the row's unmount should wait on it.
 func (n *native) session(server string) (*sdk.ClientSession, error) {
 	n.mu.Lock()
-	s, closed := n.sessions[server], n.closed
+	closed := n.closed
 	n.mu.Unlock()
 	if closed {
 		return nil, fmt.Errorf("the mcp row was unmounted")
 	}
-	if s != nil {
-		return s, nil
-	}
-	s, err := n.connect(n.servers[server])
-	if err != nil {
-		return nil, fmt.Errorf("connect: %w", err)
-	}
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if n.closed {
-		s.Close()
-		return nil, fmt.Errorf("the mcp row was unmounted")
-	}
-	if had := n.sessions[server]; had != nil {
-		s.Close() // a concurrent call connected first; keep one session
-		return had, nil
-	}
-	n.sessions[server] = s
-	return s, nil
-}
-
-// forget drops a session a call failed on, so the next call reconnects:
-// a stdio server that exited must not fail every later call.
-func (n *native) forget(server string, s *sdk.ClientSession) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if n.sessions[server] == s {
-		delete(n.sessions, server)
-		s.Close()
-	}
+	return n.host.session(server)
 }
 
 func (n *native) call(ctx context.Context, server, tool string, args json.RawMessage) (agenttools.Result, error) {
@@ -179,7 +149,7 @@ func (n *native) call(ctx context.Context, server, tool string, args json.RawMes
 	res, err := s.CallTool(ctx, &sdk.CallToolParams{Name: tool, Arguments: args})
 	if err != nil {
 		if ctx.Err() == nil {
-			n.forget(server, s)
+			n.host.forget(server, s)
 		}
 		return agenttools.Result{}, fmt.Errorf("mcp: %s/%s: %w", server, tool, err)
 	}
@@ -199,15 +169,13 @@ func (n *native) call(ctx context.Context, server, tool string, args json.RawMes
 func (n *native) close() {
 	n.mu.Lock()
 	n.closed = true
-	unreg, sessions := n.unreg, n.sessions
-	n.unreg, n.sessions = nil, map[string]*sdk.ClientSession{}
+	unreg := n.unreg
+	n.unreg = nil
 	n.mu.Unlock()
 	for _, u := range unreg {
 		u()
 	}
-	for _, s := range sessions {
-		s.Close()
-	}
+	n.host.Close()
 }
 
 // nativeName is mcp__<server>__<tool> in the bytes every provider
@@ -269,7 +237,7 @@ func detailOf(args json.RawMessage) string {
 // startNative registers native tools for the servers config.native_tools
 // names, when it names any. Nothing is read or connected otherwise, so
 // a session without the key mounts exactly as before.
-func startNative(ctx *kernel.Context, cfg map[string]any, servers map[string]ServerConfig) error {
+func startNative(ctx *kernel.Context, cfg map[string]any, servers map[string]ServerConfig, host *Host) error {
 	names, err := nativeServers(cfg)
 	if err != nil || len(names) == 0 {
 		return err
@@ -278,7 +246,7 @@ func startNative(ctx *kernel.Context, cfg map[string]any, servers map[string]Ser
 	if err != nil {
 		return fmt.Errorf("mcp: native_tools needs the agent-tools row: %w", err)
 	}
-	n := newNative(reg, servers)
+	n := newNative(reg, servers, host)
 	ctx.Effect(n.close)
 	go n.start(slices.Clone(names))
 	return nil

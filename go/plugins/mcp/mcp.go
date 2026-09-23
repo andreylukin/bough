@@ -69,8 +69,15 @@ type catalog struct {
 
 type catalogTool struct {
 	Name string `json:"name"`
-	Desc string `json:"desc"`
+	Desc string `json:"desc"` // first line
+	// The rest, kept since the host's search and describe read them:
+	// a schema is what lets code call a tool without a second lookup.
+	Full   string         `json:"full,omitempty"`
+	Schema map[string]any `json:"schema,omitempty"`
+	Output map[string]any `json:"output,omitempty"`
 }
+
+func now() time.Time { return time.Now() }
 
 func catalogPath() string {
 	home, err := os.UserHomeDir()
@@ -105,33 +112,52 @@ func saveCatalog(c catalog) error {
 	return os.WriteFile(p, data, 0o644)
 }
 
-// promptSection is the model's MCP context: how to reach servers from
-// the shell, plus the cached tool catalog for the configured servers
-// (one "server/tool  description" line each). A configured server
-// missing from the cache is named with a hint to run `bough mcp list`.
-// Empty when no server is configured.
+// promptSection is the model's MCP context: the programmatic surface
+// (tools.mcp in code mode, mcp_search/mcp_describe/mcp_call as native
+// tools) and the servers, with their tools inline while the catalog is
+// small enough to read and a search otherwise. Empty when no server is
+// configured.
 func promptSection(servers map[string]ServerConfig, cat catalog) string {
 	if len(servers) == 0 {
 		return ""
 	}
 	names := slices.Sorted(maps.Keys(servers))
+	total := 0
+	for _, n := range names {
+		total += len(cat.Servers[n])
+	}
 	var b strings.Builder
-	b.WriteString("MCP servers are reachable from the shell, not as tools: " +
-		"tools.bash(\"bough mcp call <server/tool> '<json args or plain text>'\") runs one " +
-		"(plain text binds to the tool's first required argument); bough mcp search <query> finds a tool, bough mcp tools [server] refreshes this catalog.\n")
+	b.WriteString("MCP servers are callable from code, as values, not through the shell. " +
+		"tools.mcp.search(\"words\") returns [{server, tool, signature, description}] ranked; " +
+		"tools.mcp.describe(server, tool) returns {jsdoc, inputSchema, outputSchema}; " +
+		"tools.mcp.<server>.<tool>({...args}) (or tools.mcp.call(server, tool, args)) returns " +
+		"{ok, value, text, content, isError, error}: value is the server's structured result (JSON parsed for you), " +
+		"ok false with error.message when the tool itself failed, and a thrown exception when the server could not be reached. " +
+		"Filter and join results in the same block and print only what matters. " +
+		"Under native tools the same three are mcp_search, mcp_describe and mcp_call.\n")
 	for _, n := range names {
 		tools := cat.Servers[n]
-		if len(tools) == 0 {
-			fmt.Fprintf(&b, "- %s: tools not listed yet, run bough mcp tools %s\n", n, n)
-			continue
-		}
-		fmt.Fprintf(&b, "- %s (%d tools):\n", n, len(tools))
-		for _, t := range tools {
-			fmt.Fprintf(&b, "  %s/%s  %s\n", n, t.Name, t.Desc)
+		switch {
+		case servers[n].Disabled:
+			fmt.Fprintf(&b, "- %s: off (%s)\n", n, servers[n].Note)
+		case len(tools) == 0:
+			fmt.Fprintf(&b, "- %s: tools not listed yet; tools.mcp.search lists them\n", n)
+		case total > promptCatalogMax:
+			fmt.Fprintf(&b, "- %s (%d tools; search to find one)\n", n, len(tools))
+		default:
+			fmt.Fprintf(&b, "- %s (%d tools):\n", n, len(tools))
+			for _, t := range tools {
+				sig, _ := signature(n, t.Name, t.Schema)
+				fmt.Fprintf(&b, "  %s  %s\n", sig, t.Desc)
+			}
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
+
+// promptCatalogMax is how many tools the prompt lists by signature; past
+// it the model searches, as it would with hundreds.
+const promptCatalogMax = 40
 
 type plugin struct{}
 
@@ -150,11 +176,21 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if err != nil {
 		return err
 	}
-	if err := startNative(ctx, cfg, servers); err != nil {
+	host := newHost(servers, loadCatalog())
+	ctx.Effect(host.Close)
+	if err := startNative(ctx, cfg, servers, host); err != nil {
 		return err
 	}
+	if len(servers) > 0 && programmatic(cfg) {
+		bindCodeMode(ctx, host)
+		registerTrio(ctx, host)
+	}
 	if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
-		s.Set("mcp", promptSection(servers, loadCatalog()))
+		if programmatic(cfg) {
+			s.Set("mcp", promptSection(servers, loadCatalog()))
+		} else {
+			s.Set("mcp", shellPromptSection(servers, loadCatalog()))
+		}
 		ctx.Effect(func() { s.Set("mcp", "") })
 	}
 	// /connect shows server health next to the providers. Config is
@@ -603,7 +639,19 @@ func listTools(session *sdk.ClientSession) ([]catalogTool, error) {
 			return out, err
 		}
 		desc, _, _ := strings.Cut(strings.TrimSpace(tool.Description), "\n")
-		out = append(out, catalogTool{Name: tool.Name, Desc: desc})
+		ct := catalogTool{Name: tool.Name, Desc: desc, Full: strings.TrimSpace(tool.Description)}
+		if ct.Full == ct.Desc {
+			ct.Full = ""
+		}
+		if m := schemaOf(tool.InputSchema); len(m) > 1 {
+			ct.Schema = m
+		}
+		if tool.OutputSchema != nil {
+			if m := schemaOf(tool.OutputSchema); len(m) > 1 {
+				ct.Output = m
+			}
+		}
+		out = append(out, ct)
 	}
 	return out, nil
 }
@@ -633,6 +681,13 @@ func callOn(session *sdk.ClientSession, tool, query string) (string, error) {
 	}
 	if res.IsError {
 		return "", fmt.Errorf("mcp: %s: %s", tool, b.String())
+	}
+	// A server with structured output prints it as JSON: the shell
+	// caller gets the same value code mode does, not a rendering.
+	if res.StructuredContent != nil && b.Len() == 0 {
+		if raw, err := json.MarshalIndent(res.StructuredContent, "", "  "); err == nil {
+			return string(raw), nil
+		}
 	}
 	return b.String(), nil
 }

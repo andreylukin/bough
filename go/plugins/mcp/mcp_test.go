@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -100,7 +101,7 @@ func inMemorySession(t *testing.T) *sdk.ClientSession {
 func TestListAndCall(t *testing.T) {
 	cs := inMemorySession(t)
 	tools, err := listTools(cs)
-	if err != nil || len(tools) != 1 || tools[0] != (catalogTool{Name: "greet", Desc: "say hi"}) {
+	if err != nil || len(tools) != 1 || tools[0].Name != "greet" || tools[0].Desc != "say hi" {
 		t.Fatalf("listTools = %v, %v", tools, err)
 	}
 	out, err := callOn(cs, "greet", "you")
@@ -143,13 +144,29 @@ func TestPromptSectionCarriesCatalog(t *testing.T) {
 	servers := map[string]ServerConfig{"b": {}, "a": {}}
 	cat := catalog{Servers: map[string][]catalogTool{"a": {{Name: "greet", Desc: "say hi"}}}}
 	sec := promptSection(servers, cat)
-	for _, want := range []string{"bough mcp call", "- a (1 tools):", "a/greet  say hi", "- b: tools not listed yet, run bough mcp tools b"} {
+	for _, want := range []string{"tools.mcp.search(", "- a (1 tools):", "tools.mcp.a.greet({})  say hi", "- b: tools not listed yet; tools.mcp.search lists them", "mcp_search, mcp_describe and mcp_call"} {
 		if !strings.Contains(sec, want) {
 			t.Fatalf("section missing %q:\n%s", want, sec)
 		}
 	}
-	if strings.Contains(sec, "tools.mcp_") {
-		t.Fatalf("no codemode tool names: %s", sec)
+	if strings.Contains(sec, "bough mcp call") {
+		t.Fatalf("the shell path is not the way in: %s", sec)
+	}
+	// The shell surface stays behind programmatic: false.
+	if old := shellPromptSection(servers, cat); !strings.Contains(old, "bough mcp call") || !strings.Contains(old, "a/greet  say hi") {
+		t.Fatalf("shell section:\n%s", old)
+	}
+	if !programmatic(map[string]any{}) || programmatic(map[string]any{"programmatic": false}) {
+		t.Fatal("programmatic defaults on and reads false")
+	}
+	// Past promptCatalogMax tools the prompt says search instead of listing.
+	var many []catalogTool
+	for i := range promptCatalogMax + 1 {
+		many = append(many, catalogTool{Name: fmt.Sprintf("t%d", i)})
+	}
+	big := promptSection(map[string]ServerConfig{"a": {}}, catalog{Servers: map[string][]catalogTool{"a": many}})
+	if !strings.Contains(big, "search to find one") || strings.Contains(big, "t7") {
+		t.Fatalf("big catalog:\n%s", big)
 	}
 }
 

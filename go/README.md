@@ -539,11 +539,27 @@ entries after the merge. Non-stdio (url/http) entries are skipped with
 a log line; a server that fails to connect is skipped, never fails the
 mount.
 
-On `engine-unreal` MCP stays the `bough mcp call …` CLI over `bash` by
-default. `native_tools: [server, …]` on the row also registers that
+The model calls MCP from code, as values. In code mode `tools.mcp` is
+bound by the row: `tools.mcp.search("words"[, limit])` ranks tools by
+name, parameter names and description and returns callable signatures;
+`tools.mcp.describe(server, tool)` returns the schema and a JSDoc;
+`tools.mcp.<server>.<tool>({…})` (or `tools.mcp.call(server, tool,
+args)`) returns `{ok, value, text, content, isError, error}`, where
+`value` is the server's `structuredContent` (or its text, parsed when
+it is JSON), `ok` is false with `error.message` when the tool itself
+failed, and a server that cannot be reached throws. One session per
+server stays open across calls; the catalog on disk keeps each tool's
+schema, so a search needs no server. The prompt lists signatures while
+the catalog is 40 tools or fewer and says to search past that. On
+`engine-unreal` the same host is three native tools that never change
+mid-session, `mcp_search`, `mcp_describe` and `mcp_call`, so the tool
+set (and the prompt cache) holds still while the model explores.
+`native_tools: [server, …]` on the row additionally registers a
 server's tools as native tools named `mcp__<server>__<tool>`; opt-in,
 because a server connecting or dropping changes the tool set and so
-restarts the engine at the next idle moment.
+restarts the engine at the next idle moment. `programmatic: false` on
+the row goes back to the shell-only surface (`bough mcp call` over
+`bash`) for an A/B; `scripts/mcp-eval.sh` runs one.
 
 ## Hot reload
 

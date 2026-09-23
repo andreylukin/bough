@@ -54,10 +54,10 @@ func TestNativeServersConfig(t *testing.T) {
 	}
 	// Without native_tools the row reads nothing more: no agent-tools
 	// lookup, so a loop session mounts as it always has.
-	if err := startNative(kernel.NewContext(), map[string]any{}, nil); err != nil {
+	if err := startNative(kernel.NewContext(), map[string]any{}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := startNative(kernel.NewContext(), map[string]any{"native_tools": []any{"s"}}, nil); err == nil || !strings.Contains(err.Error(), "agent-tools") {
+	if err := startNative(kernel.NewContext(), map[string]any{"native_tools": []any{"s"}}, nil, nil); err == nil || !strings.Contains(err.Error(), "agent-tools") {
 		t.Fatalf("missing registry: %v", err)
 	}
 }
@@ -115,7 +115,7 @@ func TestNativeToolsRegisterCallAndUnmount(t *testing.T) {
 	t.Cleanup(ctx.Unmount) // before the server's Close, which waits on open sessions
 	ctx.Provide("agent-tools", reg)
 	servers := map[string]ServerConfig{"srv": {URL: url}, "off": {URL: url, Disabled: true}}
-	if err := startNative(ctx, map[string]any{"native_tools": []any{"srv", "off", "missing"}}, servers); err != nil {
+	if err := startNative(ctx, map[string]any{"native_tools": []any{"srv", "off", "missing"}}, servers, nil); err != nil {
 		t.Fatal(err)
 	}
 	tools := waitTools(t, reg, 2)
@@ -171,7 +171,7 @@ func TestNativeToolsAvoidTakenNames(t *testing.T) {
 	ctx := kernel.NewContext()
 	t.Cleanup(ctx.Unmount)
 	ctx.Provide("agent-tools", reg)
-	if err := startNative(ctx, map[string]any{"native_tools": []any{"srv"}}, map[string]ServerConfig{"srv": {URL: url}}); err != nil {
+	if err := startNative(ctx, map[string]any{"native_tools": []any{"srv"}}, map[string]ServerConfig{"srv": {URL: url}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	tools := waitTools(t, reg, 3)
