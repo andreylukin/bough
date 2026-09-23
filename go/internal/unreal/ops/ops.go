@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package ops is the session-lifetime operation manager every
 // coordinator of one bough session shares (go/docs/unreal-engine.md
 // §5.5).

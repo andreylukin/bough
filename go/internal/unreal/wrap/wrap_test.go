@@ -1,3 +1,5 @@
+//go:build !windows
+
 package wrap_test
 
 import (

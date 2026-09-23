@@ -179,7 +179,12 @@ on every later turn.
 a couple of flaky TUI cases; the job runs `continue-on-error` and the CI log
 is the todo list — see the Windows section of [`README.md`](README.md). Do not "fix" a Windows failure by
 loosening an assertion that is correct on the platforms bough ships for;
-most of what fails is a test that hardcoded a POSIX path.
+most of what fails is a test that hardcoded a POSIX path. The engine is
+not built there at all: the harness is Unix-only at the pin, so its
+packages carry `//go:build !windows` and `engine-unreal` is a stub row
+that fails with the reason. A new file that imports the harness, or a
+test that imports an engine package, needs the same tag, or the gating
+`cross` job's Windows build and vet go red.
 
 **Embedded files are compared byte for byte.** `.gitattributes` forces
 LF checkout because a CRLF rewrite changes the bytes of files bough

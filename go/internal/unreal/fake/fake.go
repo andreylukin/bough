@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package fake is a scripted harness adapter: a FIFO tape of steps,
 // each the response to one model request. Engine tests drive a real
 // coordinator with it, and the llm-script row links it into the binary

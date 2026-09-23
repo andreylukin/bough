@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package session is one bough session on the unreal-agent harness
 // (go/docs/unreal-engine.md §2, §9, §12): the store, the operation
 // manager, the coordinator, the Gate the coordinator sees as its model,

@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package responses builds the harness Responses API adapter for the
 // llm rows that speak it: OpenAI, OpenRouter and Ollama. bough builds
 // the adapter itself rather than through the harness clients because

@@ -1,3 +1,5 @@
+//go:build !windows
+
 package responses
 
 // Probes P5-P7 of go/docs/unreal-engine.md §15.3 on the Responses side.

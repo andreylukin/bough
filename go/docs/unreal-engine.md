@@ -2355,6 +2355,17 @@ Each run asserts:
   `google/uuid` is already present. All are pure Go, with no cgo and no
   GOEXPERIMENT; stdlib `uuid` and `encoding/json/v2` are baseline in
   go1.27.
+- **The harness is Unix-only at the pin.** `harness/primitives/process.go`
+  has no build tag and calls `syscall.Kill`, `SysProcAttr.Setpgid` and
+  `unix.Open`, and every harness package but `llm`, `session` and `inbox`
+  depends on it. So the engine carries `//go:build !windows`:
+  `internal/unreal/{boughcall,contract,fake,ops,project,prompt,responses,session,toolreg}`,
+  `plugins/engine`, `internal/unreal/wrap/strip.go`, and
+  `plugins/llm/{agent,ollama,script}.go`. On Windows
+  `plugins/engine/stub_windows.go` and `plugins/llm/engine_windows.go`
+  register `engine-unreal`, `llm-ollama` and `llm-script` as rows whose
+  Apply fails with the reason, and the loop builds and vets as it did
+  (the CI `cross` job). A build-tag PR upstream would lift this.
 - B0 records `go build -ldflags='-s -w' ./cmd/bough` size before and
   after in its commit body.
 - **No vendoring** (bough does not vendor); go.sum and GOSUMDB are the

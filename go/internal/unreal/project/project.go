@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package project turns what the harness recorded into what bough's
 // readers already understand. The store is the engine's truth; history
 // entries are the truth for serve, the web, the TUI, title, cost and

@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package boughcall runs bough.call remote jobs: the in-process
 // operation.RemoteJobHandler behind every native tool call. It is the
 // one place a call touches the world — hooks, the tool's Go function,
