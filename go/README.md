@@ -138,6 +138,19 @@ waits for it to exit, and relaunches `--web` on the same addr detached
 (output appends to `~/.bough/web.log`). With no running web session
 both just note that sessions pick up the new binary on next launch.
 
+On macOS the control room runs under launchd. `bough serve` installs
+`~/Library/LaunchAgents/com.bough.server.plist` (`bough serve --run
+<addr>` from your home, kept alive, logging to `~/.bough/serve.log`) and
+loads it in your login session, so it starts at login, survives the
+shell that started it, restarts after a crash, and reads its keys from
+`~/.bough/env` rather than whatever the shell had exported. `bough
+update` and `bough restart` rewrite the agent for the new binary and
+reload it, and adopt a control room that was started by hand.
+`bough serve stop` unloads and removes the agent, so a stopped control
+room stays stopped through the next login. `BOUGH_NO_LAUNCHD=1` keeps
+the old detached daemon. Linux keeps the detached daemon; a proxied
+install runs under systemd.
+
 A dev install (the binary inside its own checkout, e.g. a symlink to
 `go/bough`) that falls behind — a newer HEAD, or sources newer than the
 binary — says so at launch (first row of the TUI, stderr headless) and

@@ -209,12 +209,21 @@ func runServe(args []string) {
 		return
 	case "stop":
 		w, ok := runningServe(home)
+		if launchdServes() && serveManaged(home) {
+			// Unloading is the stop: KeepAlive would otherwise bring it
+			// straight back, and RunAtLoad at the next login.
+			if err := removeServeAgent(home); err != nil && !ok {
+				fatal(err)
+			}
+		}
 		if !ok {
 			fmt.Println("bough serve: not running")
 			return
 		}
-		if err := interrupt(w.pid); err != nil {
-			fatal(fmt.Errorf("serve: signal pid %d: %w", w.pid, err))
+		if alive(w.pid) {
+			if err := interrupt(w.pid); err != nil {
+				fatal(fmt.Errorf("serve: signal pid %d: %w", w.pid, err))
+			}
 		}
 		// SIGINT so the daemon can kill and reap its children before
 		// exiting; a child left running would keep a session lease.
@@ -241,6 +250,18 @@ func runServe(args []string) {
 		}
 		return
 	}
+	if launchdServes() {
+		if err := installServeAgent(home, resolveExe(), addr, insecure, host); err != nil {
+			fatal(err)
+		}
+		w, err := waitServe(home, addr)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Printf("bough serve: http://%s (pid %d, launchd agent %s, log %s)\n", addr, w.pid, serveAgentID, filepath.Join(home, ".bough", "serve.log"))
+		fmt.Printf("  open it in a browser; it comes back at login; stop it with: bough serve stop\n")
+		return
+	}
 	pid, logPath, err := launchServe(home, resolveExe(), addr, insecure, host)
 	if err != nil {
 		fatal(err)
@@ -262,6 +283,23 @@ func runServe(args []string) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	fatal(fmt.Errorf("serve: daemon (pid %d) did not open %s; see %s", pid, addr, logPath))
+}
+
+// waitServe waits up to 10s for a serve launched by launchd to open addr
+// and write its pidfile, so a failed start is reported here with its
+// log rather than discovered on the first request.
+func waitServe(home, addr string) (webSession, error) {
+	for range 100 {
+		if c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond); err == nil {
+			c.Close()
+			if w, ok := runningServe(home); ok {
+				return w, nil
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return webSession{}, fmt.Errorf("serve: launchd agent %s did not open %s; see %s and `launchctl print %s/%s`",
+		serveAgentID, addr, filepath.Join(home, ".bough", "serve.log"), launchdDomain(), serveAgentID)
 }
 
 // serveForeground is the daemon body: supervisor + API on addr until

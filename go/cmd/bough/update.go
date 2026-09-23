@@ -90,29 +90,48 @@ func runUpdate(args []string) {
 // Silent when none is running: not everyone runs the control room.
 func restartServe(home, bin string, out io.Writer) error {
 	cur, ok := runningServe(home)
-	if !ok {
+	managed := launchdServes() && serveManaged(home)
+	if !ok && !managed {
 		return nil
 	}
-	fmt.Fprintf(out, "bough: stopping control room (pid %d)…\n", cur.pid)
-	if err := interrupt(cur.pid); err != nil {
-		return fmt.Errorf("signal pid %d: %w", cur.pid, err)
-	}
-	deadline := time.Now().Add(10 * time.Second)
-	for alive(cur.pid) {
-		if time.Now().After(deadline) {
-			return fmt.Errorf("control room (pid %d) did not exit within 10s", cur.pid)
+	addr, insecure := defaultServeAddr, false
+	if ok {
+		addr, insecure = cur.addr, watch.CheckLoopback(cur.addr) != nil
+		fmt.Fprintf(out, "bough: stopping control room (pid %d)…\n", cur.pid)
+		if err := interrupt(cur.pid); err != nil {
+			return fmt.Errorf("signal pid %d: %w", cur.pid, err)
 		}
-		time.Sleep(50 * time.Millisecond)
+		deadline := time.Now().Add(10 * time.Second)
+		for alive(cur.pid) {
+			if time.Now().After(deadline) {
+				return fmt.Errorf("control room (pid %d) did not exit within 10s", cur.pid)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		os.Remove(servePidfile(home)) // best-effort; the exiting process usually removed it
 	}
-	os.Remove(servePidfile(home)) // best-effort; the exiting process usually removed it
 
+	// On macOS the restart goes through launchd, which also adopts a
+	// control room that was started by hand: from here on it comes
+	// back at login and after a crash, on this binary.
+	if launchdServes() {
+		if err := installServeAgent(home, bin, addr, insecure, ""); err != nil {
+			return err
+		}
+		w, err := waitServe(home, addr)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "bough: restarted control room on %s (pid %d, launchd agent %s)\n", addr, w.pid, serveAgentID)
+		return nil
+	}
 	// The pidfile does not record a --host; a proxied install runs
 	// under a supervisor (systemd) that restarts serve itself.
-	pid, logPath, err := launchServe(home, bin, cur.addr, watch.CheckLoopback(cur.addr) != nil, "")
+	pid, logPath, err := launchServe(home, bin, addr, insecure, "")
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "bough: restarted control room on %s (pid %d, log %s)\n", cur.addr, pid, logPath)
+	fmt.Fprintf(out, "bough: restarted control room on %s (pid %d, log %s)\n", addr, pid, logPath)
 	return nil
 }
 
