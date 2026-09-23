@@ -161,6 +161,11 @@ func (r *Runtime) open(ctx context.Context) error {
 	a.fork = nil
 	max := int64(0) // sequences start at 1: a history with no hseq yet takes every row
 	for _, e := range entries {
+		// A subagent's rows carry its own store's sequences: counted
+		// here, one past this store's latest would skip parent rows.
+		if strings.HasPrefix(e.Kind, "sub:") {
+			continue
+		}
 		if h, ok := toInt(e.Data["hseq"]); ok && int64(h) > max {
 			max = int64(h)
 		}

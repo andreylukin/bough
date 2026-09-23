@@ -141,6 +141,9 @@ func TestDoneAccountingProperty(t *testing.T) {
 		}()
 
 		submits := 0
+		// A steer Steer accepted can still find its turn closed by the
+		// time the actor takes it; it then runs as an input of its own.
+		accepted := map[string]bool{}
 		ops := rapid.SliceOfN(rapid.SampledFrom([]string{
 			"text", "hold", "echo", "fail", "slow", "steer", "cancel", "release", "notice", "wait",
 		}), 1, 10).Draw(rt, "ops")
@@ -155,6 +158,8 @@ func TestDoneAccountingProperty(t *testing.T) {
 				if !r.Steer(line + " steer") {
 					r.Submit(line + " steer")
 					submits++
+				} else {
+					accepted[line+" steer"] = true
 				}
 			case "cancel":
 				r.Cancel()
@@ -212,7 +217,9 @@ func TestDoneAccountingProperty(t *testing.T) {
 					wakes++
 				default:
 					pending++
-					inputs++
+					if !accepted[fmt.Sprint(e.Data["text"])] {
+						inputs++
+					}
 				}
 			case "done":
 				if e.Data["wake"] == true {

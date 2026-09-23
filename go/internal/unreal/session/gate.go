@@ -44,13 +44,18 @@ type Gate struct {
 	maxSteps int
 	maxCost  float64
 
-	mu        sync.Mutex
-	seq       uint64
-	parked    bool
-	pCalls    map[string]bool
-	pInputs   map[string]bool
-	inflight  context.CancelFunc
-	inSeq     uint64
+	mu       sync.Mutex
+	seq      uint64
+	parked   bool
+	pCalls   map[string]bool
+	pInputs  map[string]bool
+	inflight context.CancelFunc
+	inSeq    uint64
+	// starting is a request past the park check that has not yet set
+	// inflight (resolve() runs between, and builds an adapter on the
+	// first request or after /model). A cancel then has no request to
+	// stop, so it latches userStop on this seq for Respond to honour.
+	starting  uint64
 	userStop  uint64 // the seq Cancel stopped; its partial text is kept
 	pSeq      uint64
 	pAttempt  int
@@ -97,9 +102,12 @@ func (g *Gate) Park(calls, inputs []string) {
 func (g *Gate) CancelInflight() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.inflight != nil {
+	switch {
+	case g.inflight != nil:
 		g.userStop = g.inSeq
 		g.inflight()
+	case g.starting != 0:
+		g.userStop = g.starting
 	}
 }
 
@@ -158,7 +166,15 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 		return g.stopBudget(seq, "max_cost"), nil
 	}
 	g.steps++
+	g.starting = seq
 	g.mu.Unlock()
+	defer func() {
+		g.mu.Lock()
+		if g.starting == seq {
+			g.starting = 0
+		}
+		g.mu.Unlock()
+	}()
 
 	ad, prov, err := g.resolve()
 	if err != nil {
@@ -177,13 +193,23 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 	defer cancel()
 	g.mu.Lock()
 	g.inflight, g.inSeq = cancel, seq
+	g.starting = 0
 	g.pSeq, g.pAttempt = seq, 0
 	g.partial.Reset()
+	latched := g.userStop == seq
 	g.mu.Unlock()
-	if g.sink != nil {
-		g.sink(agentllm.Delta{Seq: seq, Attempt: 1, Kind: agentllm.DeltaStart})
+	var resp ullm.Response
+	if latched {
+		// Esc landed while this request was being set up: it never
+		// reaches the provider, so no call it would make runs after Esc.
+		cancel()
+		err = context.Canceled
+	} else {
+		if g.sink != nil {
+			g.sink(agentllm.Delta{Seq: seq, Attempt: 1, Kind: agentllm.DeltaStart})
+		}
+		resp, err = ad.Respond(child, req, o)
 	}
-	resp, err := ad.Respond(child, req, o)
 
 	g.mu.Lock()
 	stopped := g.userStop == seq

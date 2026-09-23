@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/unreallabsai/unreal-agent/harness/operation"
@@ -214,6 +215,12 @@ type Runtime struct {
 	ctxMu   sync.Mutex
 	ctxText string // /context, refreshed by the actor at each build
 
+	// steerable mirrors "a turn is open and not cancelling" for Steer,
+	// which must answer without waiting on the actor; submits counts
+	// Submit lines posted and not yet taken.
+	steerable atomic.Bool
+	submits   atomic.Int64
+
 	closeOnce sync.Once
 }
 
@@ -298,22 +305,32 @@ func (r *Runtime) StorePath() string {
 // Submit is one line from the inputs chan: a turn of its own, queued
 // behind the turn in flight like the loop's serial input.
 func (r *Runtime) Submit(line string) {
-	r.post(func() { r.a.submit(line) })
+	r.submits.Add(1)
+	if !r.post(func() { r.submits.Add(-1); r.a.submit(line) }) {
+		r.submits.Add(-1)
+	}
 }
 
 // Steer hands text to the bough turn in flight; false when none is open
-// (the ui then sends the line as input).
+// or about to be (the ui then sends the line as input).
+//
+// It answers from a flag and never waits on the actor: the ui calls it
+// inside Update on Enter, and the actor runs hooks and git snapshots
+// that would freeze the terminal meanwhile (the loop's Steer only
+// enqueues too). A submit still on its way counts as a turn about to
+// open, so a steer sent right after one lands on it, as it did when
+// Steer queued behind the submit. A steer that finds the turn already
+// closed when the actor gets to it becomes an input, which is what the
+// ui would have done with a false.
 func (r *Runtime) Steer(text string) bool {
-	reply := make(chan bool, 1)
-	if !r.post(func() { reply <- r.a.steer(text) }) {
+	if !r.steerable.Load() && r.submits.Load() == 0 {
 		return false
 	}
-	select {
-	case ok := <-reply:
-		return ok
-	case <-r.exited:
-		return false
-	}
+	return r.post(func() {
+		if !r.a.steer(text) {
+			r.a.submit(text)
+		}
+	})
 }
 
 // Cancel is Esc / ctrl+c / SIGINT: the turn in flight ends with
@@ -415,6 +432,7 @@ func (r *Runtime) loop() {
 		for _, f := range fs {
 			f()
 			r.a.evaluate()
+			r.steerable.Store(r.a.open && r.a.cancelling == nil && !r.a.closed)
 		}
 	}
 }

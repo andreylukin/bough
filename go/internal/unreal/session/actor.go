@@ -109,10 +109,14 @@ type actorState struct {
 	wake      bool
 	turnStart time.Time
 	turnTree  string
+	adoptBase string // the tree the last turn closed on, while adopted calls run
 	reported  llm.Usage
-	lastReply string
-	stopUsed  bool
-	tries     int
+	// usageSeeded: reported holds the tally as of this Runtime's first
+	// turn, not zero.
+	usageSeeded bool
+	lastReply   string
+	stopUsed    bool
+	tries       int
 
 	inputs     []string          // every input id sent this session (a cancel parks them)
 	unobserved map[string]queued // sent, not yet recorded by the coordinator
@@ -121,6 +125,9 @@ type actorState struct {
 	notes      []string
 	pending    []string // lines that arrived while a turn was open
 	cancelAt   time.Time
+	// noticeWaits: job news arrived while a cancel was closing; it is
+	// taken once the cancel's done is written.
+	noticeWaits bool
 
 	adopted    map[string]*adoption
 	turnCalls  map[string]bool
@@ -269,6 +276,10 @@ func (a *actorState) response(mr sessionstore.ModelResponse, meta project.Meta) 
 	if meta.Muted {
 		return
 	}
+	// "model is thinking" and "writing bash call" were about the
+	// request, which has answered; left up, the label named a five
+	// minute build "writing bash call" in the status bar and the web.
+	a.live("activity", "", nil)
 	if meta.Err != "" {
 		a.providerError(meta.Err)
 		return
@@ -510,6 +521,18 @@ func (a *actorState) payload(text string) string {
 }
 
 func (a *actorState) openTurn(tree string, wake bool) {
+	if !a.usageSeeded {
+		// The cost row starts a resumed session from what its history
+		// says it spent; a delta from zero would charge the first turn
+		// the whole earlier session again, and compound through every
+		// later sum (the loop seeds at mount: loop.go r.reported). Read
+		// here, not at Open, which runs inside the row's Apply, where a
+		// Get would make the usage row a remount edge.
+		a.usageSeeded = true
+		if a.r.d.Usage != nil {
+			a.reported = a.r.d.Usage()
+		}
+	}
 	a.open, a.wake = true, wake
 	a.turnStart = time.Now()
 	a.turnTree = tree
@@ -586,8 +609,14 @@ func (a *actorState) openWake() {
 	if cp := a.checkpoints(); cp != nil && tree != "" {
 		cp.Pin(e.Seq, tree)
 	}
-	a.live("job", text, nil)
+	a.live("job", text, map[string]any{"wake": true})
 	a.openTurn(tree, true)
+	if a.adoptBase != "" {
+		// What an adopted call wrote after its turn closed is this
+		// wake's, but the snapshot above already holds it: diff from
+		// the tree its turn closed on instead.
+		a.turnTree = a.adoptBase
+	}
 	a.r.gate.mu.Lock()
 	a.r.gate.steps = 1 // this request already went out
 	a.r.gate.mu.Unlock()
@@ -603,13 +632,20 @@ func (a *actorState) notice() {
 	if j == nil {
 		return
 	}
+	if a.cancelling != nil {
+		// A [notice] input now would be an input the cancel did not
+		// park: the Gate would unpark and the model carry on after Esc.
+		// The news waits in Jobs until the cancel has closed.
+		a.noticeWaits = true
+		return
+	}
 	news := j.Take()
 	if len(news) == 0 {
 		return
 	}
 	text := strings.Join(news, "\n\n")
-	if !a.open && a.cancelling == nil {
-		a.live("job", text, nil)
+	if !a.open {
+		a.live("job", text, map[string]any{"wake": true})
 		id := newInputID()
 		tree := a.snapshot()
 		data := map[string]any{"text": jobWake + text, "wake": true, "reason": "notice", "input_id": id}
@@ -879,6 +915,21 @@ func (a *actorState) closeTurn(running int, stop string) {
 	a.note("done", "", a.doneData(running, stop))
 	a.open, a.wake = false, false
 	a.disarm()
+	a.markAdoptBase()
+}
+
+// markAdoptBase remembers the tree a turn closed on while adopted calls
+// still run. Their writes land after this turn's diff and before the
+// next turn's snapshot, so without it they are in no turn's done.files
+// and neither /undo nor Changes shows them.
+func (a *actorState) markAdoptBase() {
+	a.adoptBase = ""
+	for id, ad := range a.adopted {
+		if _, running := a.m.Outstanding[id]; running && !ad.ended {
+			a.adoptBase = a.snapshot()
+			return
+		}
+	}
 }
 
 // doneData is loop.doneData plus the engine keys.
@@ -1075,6 +1126,11 @@ func (a *actorState) checkCancel() {
 	}
 	a.note("done", "", a.doneData(0, cs.stop))
 	a.open, a.wake = false, false
+	a.markAdoptBase()
+	if a.noticeWaits {
+		a.noticeWaits = false
+		a.notice()
+	}
 }
 
 func (a *actorState) cancelCall(callID string) error {

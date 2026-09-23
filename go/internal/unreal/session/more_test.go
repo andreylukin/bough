@@ -323,7 +323,9 @@ func TestCatchUp(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = r.rt.Close(ctx)
-	// The "crashed" history: everything but the assistant row.
+	// The "crashed" history: everything but the assistant row, plus a
+	// subagent row stamped with its own store's (higher) sequence, which
+	// must not count as how far this store's rows reached.
 	dir2 := filepath.Join(t.TempDir(), "history")
 	var keep []history.Entry
 	for _, e := range r.entries() {
@@ -331,6 +333,7 @@ func TestCatchUp(t *testing.T) {
 			keep = append(keep, e)
 		}
 	}
+	keep = append(keep, history.Entry{Seq: keep[len(keep)-1].Seq + 1, Kind: "sub:assistant", Data: map[string]any{"text": "child", "worker": 1, "hseq": 999}})
 	path := filepath.Join(dir2, "s1.jsonl")
 	writeEntries(t, path, keep)
 	h, err := history.OpenExisting(path)
