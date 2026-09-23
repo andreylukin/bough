@@ -27,30 +27,6 @@ import (
 	"github.com/andreylukin/bough/internal/unreal"
 )
 
-// engineProbe runs once per test binary: while the engine-unreal row is
-// still the bootstrap stub, the suite skips with the stub's own text
-// instead of failing every case on a row that cannot mount.
-var engineProbe struct {
-	once sync.Once
-	skip string
-}
-
-func needEngine(t *testing.T) {
-	t.Helper()
-	engineProbe.once.Do(func() {
-		home, cwd, _ := sandbox(t, launchOpts{})
-		out, _ := runCLI(t, home, cwd, "rows", "--config", "bough.yml",
-			"--set", "llm.plugin=llm-echo", "--set", "loop.plugin=engine-unreal")
-		if i := strings.Index(out, "engine-unreal: not built yet"); i >= 0 {
-			line, _, _ := strings.Cut(out[i:], "\n")
-			engineProbe.skip = "the engine-unreal row is the bootstrap stub: " + line
-		}
-	})
-	if engineProbe.skip != "" {
-		t.Skip(engineProbe.skip)
-	}
-}
-
 // tape writes an llm-script tape from raw JSON steps.
 func tape(t *testing.T, steps ...string) string {
 	t.Helper()
@@ -64,7 +40,6 @@ func tape(t *testing.T, steps ...string) string {
 // launchEngine is launchHeadless on the engine; script "" keeps llm-echo.
 func launchEngine(t *testing.T, script string, o launchOpts) *bough {
 	t.Helper()
-	needEngine(t)
 	sets := []string{"loop.plugin=engine-unreal"}
 	if script != "" {
 		sets = append(sets, "llm.plugin=llm-script", "llm.script="+script)
