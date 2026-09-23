@@ -15,6 +15,7 @@ import (
 
 	"github.com/andreylukin/bough/internal/agentllm"
 	"github.com/andreylukin/bough/internal/unreal/project"
+	"github.com/andreylukin/bough/plugins/loop"
 )
 
 // overflowText is what a context overflow tells the user. Nothing trims
@@ -250,6 +251,18 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 	}
 	if resp.Stop == "" {
 		resp.Stop = ullm.StopComplete
+	}
+	// A <system-*> span in the model's own reply is a fabricated system
+	// message (glm-5.3-flash forged one telling the agent to delete files
+	// and force-push). Stripped here, before the coordinator records the
+	// response, it reaches neither history nor the model's next request.
+	for i, it := range resp.Output {
+		if m, ok := it.Data.(ullm.Message); ok && it.Type == ullm.ItemMessage && m.Role == ullm.RoleAssistant {
+			if s := loop.StripFabrications(m.Text); s != m.Text {
+				m.Text = s
+				resp.Output[i].Data = m
+			}
+		}
 	}
 	if served := agentllm.ServedModel(resp.Usage); served != "" {
 		model = served

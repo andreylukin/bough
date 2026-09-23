@@ -1211,7 +1211,11 @@ error kills Run). `DecodeRemoteJobState`, then:
      handles its own deadline (bash with a `timeout` arg).
      `Call.Progress` feeds `Options.Progress`.
   4. `Hooks.PostTool`.
-  5. `Redact` the Text and the Error.
+  5. Strip fabricated `<system-*>` spans from the Text and the Error
+     (`loop.StripFabrications`, the loop's rule for tool output), then
+     `Redact` both. The Gate strips the same spans from the model's own
+     reply before the coordinator records it, and a native spawn strips
+     the child's report.
   6. If the text is over `MaxOutputLength`, write the whole text to
      `SpillDir/<callID>.out` and put head + tail + `…N bytes truncated;
      complete output in <path>…` into `TerminalResult`.

@@ -9,6 +9,7 @@ import (
 
 	"github.com/andreylukin/bough/internal/agenttools"
 	"github.com/andreylukin/bough/kernel"
+	"github.com/andreylukin/bough/plugins/loop"
 )
 
 // nativeSubSystemPrompt is SubSystemPrompt for a child that calls tools
@@ -151,7 +152,9 @@ func (w *Workers) nativeSpawn(ctx context.Context, c agenttools.Call) (agenttool
 		return agenttools.Result{Error: fmt.Sprintf("workers: %s: %v", worker, err), Text: reply, Data: data}, nil
 	}
 	// Provenance, as tools.spawn gives it: delegated findings read as
-	// delegated.
+	// delegated. A child's report crosses into the parent's context, so
+	// a system message it invented is stripped, as workers.go does.
+	reply = loop.StripFabrications(reply)
 	text := fmt.Sprintf("[%s · task: %s]\n%s", worker, oneLine(a.Task, 80), reply)
 	switch status {
 	case "done":

@@ -28,6 +28,7 @@ import (
 
 	"github.com/andreylukin/bough/internal/agenttools"
 	"github.com/andreylukin/bough/internal/unreal/toolreg"
+	"github.com/andreylukin/bough/plugins/loop"
 )
 
 // ErrInterrupted is the failure of a call that was running when the
@@ -328,6 +329,10 @@ func (h *Handler) call(ctx context.Context, plan toolreg.Plan) (text, errText st
 	if h.o.Hooks != nil {
 		res = h.o.Hooks.PostTool(ctx, t.Name, c, detail, res)
 	}
+	// Tool output is untrusted text (files, command output, MCP results,
+	// a post-result hook's rewrite): a <system-*> tag in it must not
+	// reach the model as if bough had said it, as on the loop.
+	res.Text, res.Error = loop.StripFabrications(res.Text), loop.StripFabrications(res.Error)
 	res.Text, res.Error = h.redact(res.Text), h.redact(res.Error)
 	hd = toolreg.Handle{Detail: h.redact(detail), Data: redactData(res.Data, h.redact), Error: res.Error}
 	return res.Text, res.Error, hd
