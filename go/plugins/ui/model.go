@@ -957,14 +957,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case eventMsg:
+		was := m.running
 		m.addEvent(Event(msg))
 		if Event(msg).Kind == "done" {
 			return m, tea.Batch(m.waitEvent(), m.cacheTick(), m.refreshWhere())
+		}
+		if !was && m.running {
+			// A turn the engine opened on its own: the spinner stopped
+			// with the last one.
+			return m, tea.Batch(m.waitEvent(), m.spin.Tick)
 		}
 		return m, m.waitEvent()
 
 	case eventsMsg:
 		done := false
+		was := m.running
 		for i, ev := range msg {
 			// A delta followed by more events skips its render: the
 			// last event of the batch renders the lot.
@@ -975,6 +982,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.deferRefresh = false
 		if done {
 			return m, tea.Batch(m.waitEvent(), m.cacheTick(), m.refreshWhere())
+		}
+		if !was && m.running {
+			return m, tea.Batch(m.waitEvent(), m.spin.Tick)
 		}
 		return m, m.waitEvent()
 
@@ -1150,6 +1160,15 @@ func (m *model) addEvent(ev Event) {
 		// the model's last word, so it shows. Mid-turn events (code,
 		// results, subagent activity, todo updates) keep it held.
 		m.flushTrailing()
+	}
+	if ev.Kind == "job" && ev.Data["wake"] == true && !m.running {
+		// The engine opened a turn on its own (an adopted call finished,
+		// job news while idle): it runs like a submitted one, so Esc
+		// stops it and a line typed meanwhile queues behind it.
+		m.running = true
+		m.turnStart = time.Now()
+		m.gotOutput = false
+		m.lastEnd = ""
 	}
 	switch ev.Kind {
 	case "done":

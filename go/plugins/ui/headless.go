@@ -238,7 +238,12 @@ func hlPrint(ev Event) {
 		hlLine(hlErr, "error", ev.Text, nil)
 	case "call", "sub:call":
 		// The call's record (tool, id, phase, ms, exit, add/del): serve
-		// renders it, so it rides along.
+		// renders it, so it rides along. Plain output prints a call once,
+		// at its recorded end: the live start carries the same text, and
+		// the two lines could not be told apart.
+		if !HeadlessJSON && ev.Data["phase"] == "start" {
+			return
+		}
 		hlLine(hlOut, ev.Kind, ev.Text, ev.Data)
 	case "result":
 		// Only a later block that ran counts as recovery; a reply that

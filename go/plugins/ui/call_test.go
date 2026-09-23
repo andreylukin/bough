@@ -234,3 +234,47 @@ func TestProgramEngineCallRow(t *testing.T) {
 	tm.Send(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	tm.WaitFinished(t, teatest.WithFinalTimeout(waitBudget))
 }
+
+// A call still running when its turn ends (adopted as a job, or
+// cancelled and not yet reported) keeps its running row: settled at the
+// done it read as a finished ✔, and its recorded end drew a second row.
+func TestEngineCallOutlivesItsTurn(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.m.running = true
+	d.event("user", "serve it")
+	startCall(d, "c1", "bash", "sleep 30")
+	d.event("assistant", "started it")
+	d.ev("done", "", map[string]any{"running": 1.0})
+	if p := d.plain(); strings.Contains(p, "✔ Ran sleep 30") || !strings.Contains(p, "Running sleep 30") {
+		t.Fatalf("a running call shows as finished at the done:\n%s", p)
+	}
+	d.ev("call-delta", "tick\n", map[string]any{"id": "c1"})
+	d.ev("call", "sleep 30", map[string]any{"id": "c1", "tool": "bash", "ms": 30000.0, "exit": 0.0, "adopted": true})
+	n := 0
+	for _, b := range d.m.blocks {
+		if b.kind == "call" {
+			n++
+		}
+	}
+	if p := d.plain(); n != 1 || !strings.Contains(p, "✔ Ran sleep 30 · 30s (bg)") {
+		t.Fatalf("%d call rows, want the one row closed in place:\n%s", n, p)
+	}
+}
+
+// A turn the engine opens on its own runs like a submitted one: Esc
+// stops it, and a line typed meanwhile queues behind it.
+func TestEngineWakeTurnRuns(t *testing.T) {
+	t.Parallel()
+	d := defaultDrv(t)
+	d.ev("job", "[background] job 3 finished: make", map[string]any{"wake": true})
+	if !d.m.running {
+		t.Fatal("a wake turn left the TUI idle")
+	}
+	d.ev("job", "job 4: go test (still running; you will be told when it finishes)", map[string]any{"id": 4.0, "event": "started"})
+	d.event("assistant", "the build passed")
+	d.ev("done", "", map[string]any{"wake": true})
+	if d.m.running {
+		t.Fatal("the wake's done did not end it")
+	}
+}
