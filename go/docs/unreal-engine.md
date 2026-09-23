@@ -1022,8 +1022,12 @@ Not retried:
 - 400 naming an unknown `anthropic-beta` value → drop that beta for
   the process and retry once.
 - 400 "thinking … bound to a different conversation" or "Invalid
-  signature" → strip every thinking and redacted_thinking block for
-  this adapter instance (sticky) and retry once.
+  signature" → strip every thinking and redacted_thinking block that
+  request carried and retry once. Those blocks stay out of later
+  requests; blocks the model produces afterwards are bound to the
+  stripped history and are replayed. This case is tested before the
+  beta case: without the binding-controls header the message ends by
+  naming the `anthropic-beta` header.
 - Any other 400 → error.
 - 401 → the `keyRejected` message from `plugins/llm/anthropic.go`
   `wrapErr`.

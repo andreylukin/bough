@@ -44,8 +44,14 @@ const defaultIdleTimeout = 5 * time.Minute
 type adapter struct {
 	c Config
 
+	// stale is the thinking blocks a binding 400 condemned, by their
+	// raw bytes. Only those are stripped from later requests: a block
+	// the model produces after the strip was bound against the
+	// stripped history, stays valid, and is the interleaved reasoning
+	// the rest of the session would otherwise lose (the API calls
+	// strip-and-retry a one-time recovery, not a steady state).
 	mu    sync.Mutex
-	strip bool // a binding 400 stripped thinking; sticky for this adapter
+	stale map[string]bool
 
 	// wait and now are the adapter's only clock; tests replace them so
 	// a retry schedule is checked without sleeping through it.
@@ -115,10 +121,39 @@ func sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func (a *adapter) stripped() bool {
+// withoutStale drops the thinking blocks an earlier binding 400
+// condemned and keeps every other item.
+func (a *adapter) withoutStale(in []ullm.Item) []ullm.Item {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.strip
+	if len(a.stale) == 0 {
+		return in
+	}
+	out := make([]ullm.Item, 0, len(in))
+	for _, it := range in {
+		if d, ok := it.Data.(ullm.Reasoning); ok && it.Type == ullm.ItemReasoning && a.stale[string(d.Raw)] {
+			continue
+		}
+		out = append(out, it)
+	}
+	return out
+}
+
+// condemn marks every thinking block in a request the API refused as
+// bound to another conversation. The error names only the first bad
+// block, and the API drops that one and every later one anyway, so
+// all of the request's blocks go.
+func (a *adapter) condemn(in []ullm.Item) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.stale == nil {
+		a.stale = map[string]bool{}
+	}
+	for _, it := range in {
+		if d, ok := it.Data.(ullm.Reasoning); ok && it.Type == ullm.ItemReasoning {
+			a.stale[string(d.Raw)] = true
+		}
+	}
 }
 
 // Respond renders, streams and decodes, retrying what is worth retrying.
@@ -145,9 +180,7 @@ func (a *adapter) Respond(ctx context.Context, r ullm.Request, _ ullm.RequestOpt
 		if spec.Display == "updates" && a.betaDropped(anthropic.AnthropicBetaThinkingDisplayUpdates2026_08_18) {
 			spec.Display = "summarized"
 		}
-		if a.stripped() {
-			req.Input = withoutReasoning(req.Input)
-		}
+		req.Input = a.withoutStale(req.Input)
 		params, err := Render(req, spec, a.c.CacheTTL)
 		if err != nil {
 			return ullm.Response{}, fmt.Errorf("llm-anthropic: %w", err)
@@ -184,9 +217,7 @@ func (a *adapter) Respond(ctx context.Context, r ullm.Request, _ ullm.RequestOpt
 				return ullm.Response{}, f.final(model)
 			}
 			retriedBinding = true
-			a.mu.Lock()
-			a.strip = true
-			a.mu.Unlock()
+			a.condemn(req.Input)
 			continue
 		case overflow, fatal:
 			return ullm.Response{}, f.final(model)
@@ -312,16 +343,6 @@ func (a *adapter) trace(params anthropic.BetaMessageNewParams, attempt, status i
 		ex.Err = err.Error()
 	}
 	fn(ex)
-}
-
-func withoutReasoning(in []ullm.Item) []ullm.Item {
-	out := make([]ullm.Item, 0, len(in))
-	for _, it := range in {
-		if it.Type != ullm.ItemReasoning {
-			out = append(out, it)
-		}
-	}
-	return out
 }
 
 // watch is the idle watchdog on one response body.

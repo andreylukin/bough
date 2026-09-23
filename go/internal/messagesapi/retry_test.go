@@ -196,23 +196,69 @@ func thinkingRequest() ullm.Request {
 	}}
 }
 
+// bindingNoHeader is the binding 400 as the API sends it when the
+// request carried no thinking-binding-controls beta: its last sentence
+// names the anthropic-beta header, which once read as a bad beta.
+const bindingNoHeader = "messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation. Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` to \"drop_block\". That setting requires the `thinking-binding-controls-2026-08-01` value in the `anthropic-beta` header."
+
 // A thinking block the API says belongs to another conversation is
-// stripped, the request retried once, and the strip sticks for the
-// adapter: the rest of the session's blocks would fail the same way.
+// stripped, the request retried once, and the stripped block stays out
+// of later requests: it would fail the same way.
 func TestBindingErrorStripsThinking(t *testing.T) {
 	t.Parallel()
 	ta := newTestAdapter(t, Config{},
-		reply{status: 400, body: apiErr("invalid_request_error", "messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.")},
+		reply{status: 400, body: apiErr("invalid_request_error", bindingNoHeader)},
 		reply{sse: "thinking_text.sse"},
 		reply{sse: "thinking_text.sse"})
 	mustRespond(t, ta, thinkingRequest())
 	mustRespond(t, ta, thinkingRequest())
+	if ta.s.requests() != 3 {
+		t.Fatalf("requests = %d, want the refused one, its retry and the next", ta.s.requests())
+	}
 	if !strings.Contains(ta.s.bodies[0], "sigOld") {
 		t.Fatal("the first request should carry the old thinking block")
 	}
 	for i := 1; i < 3; i++ {
 		if strings.Contains(ta.s.bodies[i], "sigOld") {
 			t.Errorf("request %d still carries the stripped block", i+1)
+		}
+	}
+}
+
+// A block the model produces after the strip was bound against the
+// stripped history, so it is replayed: stripping it too would cost the
+// rest of the session its interleaved reasoning.
+func TestBindingStripKeepsLaterBlocks(t *testing.T) {
+	t.Parallel()
+	ta := newTestAdapter(t, Config{},
+		reply{status: 400, body: apiErr("invalid_request_error", bindingNoHeader)},
+		reply{sse: "thinking_text.sse"},
+		reply{sse: "thinking_text.sse"})
+	resp := mustRespond(t, ta, thinkingRequest())
+	next := thinkingRequest()
+	next.Input = append(next.Input, resp.Output...)
+	next.Input = append(next.Input, userText("three"))
+	mustRespond(t, ta, next)
+	last := ta.s.bodies[2]
+	if strings.Contains(last, "sigOld") {
+		t.Error("the condemned block came back")
+	}
+	if !strings.Contains(last, "EqQBCgIYAhIMsig1") {
+		t.Errorf("the block produced after the strip was dropped:\n%s", last)
+	}
+}
+
+func TestClassifyBindingBeforeBeta(t *testing.T) {
+	t.Parallel()
+	for _, msg := range []string{
+		bindingNoHeader,
+		"messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation. Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` to \"drop_block\".",
+	} {
+		ta := newTestAdapter(t, Config{},
+			reply{status: 400, body: apiErr("invalid_request_error", msg)},
+			reply{sse: "thinking_text.sse"})
+		if _, err := ta.Respond(agentllm.WithSeq(t.Context(), 1), thinkingRequest(), ullm.RequestOptions{}); err != nil {
+			t.Errorf("%q: Respond = %v, want the strip-and-retry to answer", msg, err)
 		}
 	}
 }
