@@ -451,7 +451,7 @@ func TestRetryableReadsTheErrorType(t *testing.T) {
 	defer srv.Close()
 	a := &anthropicLLM{model: "claude-sonnet-5", maxTokens: 10}
 	a.client = anthropicClient(srv.URL)
-	_, err := a.stream(context.Background(), "s", []Message{{Role: "user", Content: "x"}}, func(string) {})
+	_, err := a.stream(context.Background(), "s", []Message{{Role: "user", Content: "x"}}, func(string) {}, nil)
 	var apiErr *anthropic.Error
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != 200 {
 		t.Fatalf("want an in-stream API error on a 200, got %v", err)

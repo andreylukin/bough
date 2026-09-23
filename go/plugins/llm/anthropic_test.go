@@ -63,7 +63,7 @@ func TestAnthropicStreamUsageCache(t *testing.T) {
 		option.WithAPIKey("test"),
 		option.WithBaseURL(srv.URL),
 	)
-	out, err := a.stream(context.Background(), "be brief", []Message{{Role: "user", Content: "hi"}}, func(string) {})
+	out, err := a.stream(context.Background(), "be brief", []Message{{Role: "user", Content: "hi"}}, func(string) {}, nil)
 	if err != nil {
 		t.Fatalf("stream: %v", err)
 	}
@@ -120,3 +120,60 @@ func TestMaxTokensConfig(t *testing.T) {
 }
 
 type llmAny = any
+
+// Under /think the model thinks by default and thinking counts against
+// max_tokens: the thinking streams out as it happens, a cap spent
+// entirely on thinking is an error naming the cap, and an unset cap
+// grows with the effort.
+func TestAnthropicThinkingStreamAndCap(t *testing.T) {
+	sse := strings.Join([]string{
+		"event: message_start",
+		"data: " + `{"type":"message_start","message":{"usage":{"input_tokens":10}}}`,
+		"",
+		"event: content_block_delta",
+		"data: " + `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm "}}`,
+		"",
+		"event: content_block_delta",
+		"data: " + `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"more"}}`,
+		"",
+		"event: message_delta",
+		"data: " + `{"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":16384}}`,
+		"",
+		"event: message_stop",
+		"data: " + `{"type":"message_stop"}`,
+		"",
+	}, "\n")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(sse))
+	}))
+	defer srv.Close()
+	a := &anthropicLLM{model: "claude-opus-5-5", maxTokens: defaultMaxTokens}
+	a.client = anthropic.NewClient(option.WithAPIKey("test"), option.WithBaseURL(srv.URL))
+	var thought strings.Builder
+	_, err := a.stream(context.Background(), "", []Message{{Role: "user", Content: "hi"}}, func(string) {}, func(s string) { thought.WriteString(s) })
+	if err == nil || !strings.Contains(err.Error(), "max_tokens (16384) while thinking") {
+		t.Fatalf("thinking-only max_tokens: %v", err)
+	}
+	if thought.String() != "hmm more" {
+		t.Fatalf("thinking not streamed: %q", thought.String())
+	}
+	if _, err := a.stream(context.Background(), "", nil, func(string) {}, nil); err == nil {
+		t.Fatal("a nil onThink must still report the cut")
+	}
+	// Text that was cut is kept, marked.
+	if out, err := a.cut("partial", "max_tokens", 5); err != nil || out != MarkTruncated("partial") {
+		t.Fatalf("cut text: %q %v", out, err)
+	}
+	if out, err := a.cut("", "end_turn", 5); err != nil || out != "" {
+		t.Fatalf("a real empty reply stays empty: %q %v", out, err)
+	}
+	for effort, want := range map[string]int64{"": defaultMaxTokens, "low": defaultMaxTokens, "high": 32768, "xhigh": 65536, "max": 65536} {
+		if got := capFor(effort, false, defaultMaxTokens); got != want {
+			t.Errorf("capFor(%q) = %d, want %d", effort, got, want)
+		}
+	}
+	if got := capFor("max", true, 4096); got != 4096 {
+		t.Errorf("a set max_tokens wins: %d", got)
+	}
+}

@@ -125,10 +125,28 @@ func (a *anthropicLLM) init() error {
 	return a.err
 }
 
+// capFor is the reply cap for an effort level when the row set none.
+// Opus 5.5 and its peers think by default under output_config.effort,
+// and thinking counts against max_tokens: at /think max a 16k cap was
+// spent entirely on thinking, twice, and the loop read two empty
+// replies as a provider hiccup after five silent minutes.
+func capFor(effort string, set bool, base int64) int64 {
+	if set {
+		return base
+	}
+	switch effort {
+	case "high":
+		return 32768
+	case "xhigh", "max":
+		return 65536
+	}
+	return base
+}
+
 func (a *anthropicLLM) params(system string, messages []Message) anthropic.MessageNewParams {
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(a.model),
-		MaxTokens: a.maxTokens,
+		MaxTokens: capFor(a.Effort(), a.maxTokensSet, a.maxTokens),
 	}
 	// Only a level someone set is sent, so a row that never touched
 	// /think sends exactly what it always sent.
@@ -172,6 +190,13 @@ func (a *anthropicLLM) wrapErr(err error) error {
 // Stream implements Streamer over the SDK's SSE stream: text_delta
 // events feed onDelta; message_start/message_delta carry the usage.
 func (a *anthropicLLM) Stream(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
+	return a.StreamThinking(ctx, system, messages, onDelta, nil)
+}
+
+// StreamThinking is Stream with the model's thinking shown as it
+// streams (onThink may be nil): under /think the model can think for
+// minutes before its first word, and a silent turn read as a hang.
+func (a *anthropicLLM) StreamThinking(ctx context.Context, system string, messages []Message, onDelta, onThink func(string)) (string, error) {
 	if err := a.init(); err != nil {
 		return "", err
 	}
@@ -179,16 +204,18 @@ func (a *anthropicLLM) Stream(ctx context.Context, system string, messages []Mes
 	// would see the reply twice.
 	delivered := false
 	return withRetries(ctx, func() (string, bool, error) {
-		out, err := a.stream(ctx, system, messages, func(d string) { delivered = true; onDelta(d) })
+		out, err := a.stream(ctx, system, messages, func(d string) { delivered = true; onDelta(d) }, onThink)
 		return out, err != nil && !delivered && retryable(err), err
 	})
 }
 
-func (a *anthropicLLM) stream(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
-	stream := a.client.Messages.NewStreaming(ctx, a.params(system, messages))
+func (a *anthropicLLM) stream(ctx context.Context, system string, messages []Message, onDelta, onThink func(string)) (string, error) {
+	params := a.params(system, messages)
+	stream := a.client.Messages.NewStreaming(ctx, params)
 	defer stream.Close()
 	var out strings.Builder
 	var in, outTok, cacheRead, cacheCreate int
+	var stop string
 	for stream.Next() {
 		switch ev := stream.Current().AsAny().(type) {
 		case anthropic.MessageStartEvent:
@@ -199,10 +226,20 @@ func (a *anthropicLLM) stream(ctx context.Context, system string, messages []Mes
 			cacheCreate += int(ev.Message.Usage.CacheCreationInputTokens)
 		case anthropic.MessageDeltaEvent:
 			outTok += int(ev.Usage.OutputTokens)
+			if ev.Delta.StopReason != "" {
+				stop = string(ev.Delta.StopReason)
+			}
 		case anthropic.ContentBlockDeltaEvent:
-			if d, ok := ev.Delta.AsAny().(anthropic.TextDelta); ok && d.Text != "" {
-				out.WriteString(d.Text)
-				onDelta(d.Text)
+			switch d := ev.Delta.AsAny().(type) {
+			case anthropic.TextDelta:
+				if d.Text != "" {
+					out.WriteString(d.Text)
+					onDelta(d.Text)
+				}
+			case anthropic.ThinkingDelta:
+				if onThink != nil && d.Thinking != "" {
+					onThink(d.Thinking)
+				}
 			}
 		}
 	}
@@ -216,7 +253,21 @@ func (a *anthropicLLM) stream(ctx context.Context, system string, messages []Mes
 	a.usage.CacheReadTokens += cacheRead
 	a.usage.CacheCreationTokens += cacheCreate
 	a.mu.Unlock()
-	return out.String(), nil
+	return a.cut(out.String(), stop, params.MaxTokens)
+}
+
+// cut applies the stop reason: a reply cut at max_tokens is marked
+// truncated, and one cut before any text (the cap went to thinking) is
+// an error that says what to change, never an empty reply the loop
+// retries in silence.
+func (a *anthropicLLM) cut(text, stop string, cap int64) (string, error) {
+	if stop != "max_tokens" {
+		return text, nil
+	}
+	if strings.TrimSpace(text) == "" {
+		return "", fmt.Errorf("llm-anthropic: the reply hit max_tokens (%d) while thinking, before any text — raise max_tokens on the llm row, or lower /think", cap)
+	}
+	return MarkTruncated(text), nil
 }
 
 func (a *anthropicLLM) Complete(ctx context.Context, system string, messages []Message) (string, error) {
@@ -230,7 +281,8 @@ func (a *anthropicLLM) Complete(ctx context.Context, system string, messages []M
 }
 
 func (a *anthropicLLM) complete(ctx context.Context, system string, messages []Message) (string, error) {
-	resp, err := a.client.Messages.New(ctx, a.params(system, messages))
+	params := a.params(system, messages)
+	resp, err := a.client.Messages.New(ctx, params)
 	if err != nil {
 		return "", a.wrapErr(err)
 	}
@@ -248,9 +300,5 @@ func (a *anthropicLLM) complete(ctx context.Context, system string, messages []M
 			out.WriteString(b.Text)
 		}
 	}
-	// Cut off at max_tokens: the text is real but it is not an answer.
-	if resp.StopReason == "max_tokens" {
-		return MarkTruncated(out.String()), nil
-	}
-	return out.String(), nil
+	return a.cut(out.String(), string(resp.StopReason), params.MaxTokens)
 }
