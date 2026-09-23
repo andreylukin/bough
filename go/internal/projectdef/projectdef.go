@@ -222,7 +222,7 @@ func Parse(b []byte) (Def, error) {
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(d.Env)) {
-		if reservedEnv(name) {
+		if ReservedEnvName(name) {
 			return Def{}, fmt.Errorf("projectdef: %s: env.%s: reserved env name (set by every exec)", FileYAML, name)
 		}
 	}
@@ -305,7 +305,8 @@ var ReservedEnv = []string{"HOME", "TERM", "PATH", "BOUGH_SCRATCH", "BOUGH_HOST"
 	"SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE",
 	"AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION"}
 
-func reservedEnv(name string) bool {
+// ReservedEnvName reports whether name is in ReservedEnv or under a reserved prefix.
+func ReservedEnvName(name string) bool {
 	return slices.Contains(ReservedEnv, name) || strings.HasPrefix(name, "BOUGH_") || strings.HasPrefix(name, "GIT_CONFIG_")
 }
 
@@ -353,7 +354,7 @@ func checkSecret(name, ref string) error {
 	if !envNameRE.MatchString(name) {
 		return fmt.Errorf("secrets.%s: bad env name", name)
 	}
-	if reservedEnv(name) {
+	if ReservedEnvName(name) {
 		return fmt.Errorf("secrets.%s: reserved env name (set by every exec)", name)
 	}
 	scheme, service, ok := strings.Cut(ref, ":")
@@ -512,6 +513,7 @@ var skeletonYAML = skeletonHeader + `repos:
 checks:
   fast: ""
   full: ""
+identity: [gh]
 # caches: [/root/.cache/go-build]
 # env: {GOFLAGS: -mod=mod}
 `
@@ -566,7 +568,7 @@ func CreateEmpty(home, slug, name string) (Project, error) {
 	if n := strings.TrimSpace(name); n != "" {
 		text += nameLine(n) + "\n"
 	}
-	text += "repos: []\n"
+	text += "repos: []\nidentity: [gh]\n"
 	if err := atomicWrite(filepath.Join(dir, FileYAML), []byte(text), 0o644); err != nil {
 		return Project{}, fmt.Errorf("projectdef: create %s: %w", slug, err)
 	}
