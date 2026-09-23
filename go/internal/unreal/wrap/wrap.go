@@ -184,6 +184,13 @@ func reasoning400(err error) bool {
 	if !errors.As(err, &api) || api.StatusCode != http.StatusBadRequest {
 		return false
 	}
+	// A reasoning setting the model refuses (reasoning.effort=low on a
+	// model that takes only high) names reasoning too, but no replayed
+	// item caused it: stripping cannot fix it, and the sticky strip
+	// would cost the session its reasoning for nothing.
+	if strings.HasPrefix(api.Param, "reasoning.") || api.Code == "unsupported_value" {
+		return false
+	}
 	m := strings.ToLower(api.Message + " " + api.Param + " " + api.Code)
 	for _, w := range []string{"reasoning", "thinking", "signature", "encrypted"} {
 		if strings.Contains(m, w) {

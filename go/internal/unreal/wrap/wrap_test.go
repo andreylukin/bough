@@ -203,6 +203,27 @@ func TestStripReasoningOn400(t *testing.T) {
 	if _, err := wrap.StripReasoningOn400(other).Respond(t.Context(), req, ullm.RequestOptions{}); err == nil || len(other.seen) != 1 {
 		t.Errorf("an unrelated 400 is not retried: err %v, %d requests", err, len(other.seen))
 	}
+
+	// A refused reasoning setting names reasoning but is not about a
+	// replayed item: no strip, so later requests keep their reasoning.
+	effort := &stub{prov: "openai", fn: func(n int, r ullm.Request) (ullm.Response, error) {
+		if n == 1 {
+			return ullm.Response{}, fmt.Errorf("create response: %w", &responsesapi.APIError{StatusCode: http.StatusBadRequest,
+				Message: "Unsupported value: 'low' is not supported with the 'gpt-5-pro' model. Supported values are: 'high'.",
+				Param:   "reasoning.effort", Code: "unsupported_value"})
+		}
+		return ullm.Response{Stop: ullm.StopComplete}, nil
+	}}
+	ea := wrap.StripReasoningOn400(effort)
+	if _, err := ea.Respond(t.Context(), req, ullm.RequestOptions{}); err == nil {
+		t.Error("the effort 400 should come back as is")
+	}
+	if _, err := ea.Respond(t.Context(), req, ullm.RequestOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(effort.seen) != 2 || countReasoning(effort.seen[1].Input) != 1 {
+		t.Errorf("an effort 400 must not strip reasoning: %d requests", len(effort.seen))
+	}
 }
 
 func TestObserveSeesSuccessOnly(t *testing.T) {

@@ -9,6 +9,7 @@ package llm
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -116,8 +117,38 @@ func duration(v any) (time.Duration, error) {
 // clampEffort fits a bough level to what the model's catalogue entry
 // accepts, when it lists any: max on a model that stops at xhigh asks
 // for xhigh rather than a 400. Unknown models pass through.
+//
+// off is the Messages adapter's to map (it can disable thinking). The
+// Responses API has no "none", so there off asks for low; on a model
+// whose catalogue has no low (gpt-5-pro takes only high) that is a 400
+// on every request, so off becomes the least level the model lists.
 func clampEffort(plugin, model, level string) string {
-	if level == "" || level == "off" {
+	if level == "" || (level == "off" && plugin == "llm-anthropic") {
+		return level
+	}
+	m, ok := models.Lookup(plugin, model)
+	if !ok || len(m.Efforts) == 0 {
+		return level
+	}
+	if level == "off" {
+		if slices.Contains(m.Efforts, "low") {
+			return level
+		}
+		return messagesapi.Clamp("low", m.Efforts)
+	}
+	if c := messagesapi.Clamp(level, m.Efforts); c != "" {
+		return c
+	}
+	return level
+}
+
+// loopLevel is the level the loop's OpenAI, OpenRouter and Cerebras
+// paths send. They send every other level as they always have; max is
+// newer than they are, so it is fitted to the model's catalogue entry,
+// and on a model the catalogue does not know it asks for xhigh, the
+// most any of those paths sent before max existed.
+func loopLevel(plugin, model, level string) string {
+	if level != EffortMax {
 		return level
 	}
 	if m, ok := models.Lookup(plugin, model); ok && len(m.Efforts) > 0 {
@@ -125,7 +156,7 @@ func clampEffort(plugin, model, level string) string {
 			return c
 		}
 	}
-	return level
+	return "xhigh"
 }
 
 // loopEffort is the output_config.effort the loop's Anthropic path

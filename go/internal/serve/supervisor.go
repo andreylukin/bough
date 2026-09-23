@@ -1553,7 +1553,7 @@ func (s *Supervisor) SetModel(id, plugin, model string) error {
 func (s *Supervisor) SetEffort(id, level string) error {
 	level = strings.ToLower(strings.TrimSpace(level))
 	if level == "" || !llm.ValidEffort(level) {
-		return fmt.Errorf("serve: supervisor: %q is not a reasoning level (have %s)", level, strings.Join(llm.Efforts, ", "))
+		return fmt.Errorf("serve: supervisor: %q is not a reasoning level (have %s)", level, strings.Join(llm.Levels(), ", "))
 	}
 	if err := s.Send(id, "/think "+level); err != nil {
 		return err

@@ -373,6 +373,12 @@ func TestClampEffortByTheCatalogue(t *testing.T) {
 		{"llm-anthropic", "claude-opus-5-5", "off", "off"}, // off and "" are the adapter's to map
 		{"llm-anthropic", "claude-opus-5-5", "", ""},
 		{"llm-openai", "a-model-nobody-has", "max", "max"},
+		// The Responses API has no "none": off asks for low, so a model
+		// without low gets the least level it lists instead of a 400.
+		{"llm-openai", "gpt-5-pro", "off", "high"},
+		{"llm-openai", "gpt-5.2-chat-latest", "off", "medium"},
+		{"llm-openai", "gpt-5.5", "off", "off"},
+		{"llm-openai", "a-model-nobody-has", "off", "off"},
 	} {
 		if got := clampEffort(tc.plugin, tc.model, tc.level); got != tc.want {
 			t.Errorf("clampEffort(%s, %s, %q) = %q, want %q", tc.plugin, tc.model, tc.level, got, tc.want)
@@ -380,6 +386,36 @@ func TestClampEffortByTheCatalogue(t *testing.T) {
 	}
 	if AgentCacheTTL(echoLLM{}) != CacheTTL("") {
 		t.Error("a row without its own TTL answers the provider default")
+	}
+}
+
+// The loop's own paths send every level main sent unchanged; max, newer
+// than they are, is fitted to the model or falls back to xhigh.
+func TestLoopLevelFitsMax(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ plugin, model, level, want string }{
+		{"llm-cerebras", "gpt-oss-120b", "max", "high"},
+		{"llm-openai", "gpt-5.5", "max", "xhigh"},
+		{"llm-openai", "gpt-5.6-sol", "max", "max"},
+		{"llm-openrouter", "someone/unknown-model", "max", "xhigh"},
+		{"llm-cerebras", "gpt-oss-120b", "xhigh", "xhigh"},
+		{"llm-openai", "gpt-5-pro", "off", "off"},
+		{"llm-openai", "gpt-5.5", "", ""},
+	} {
+		if got := loopLevel(tc.plugin, tc.model, tc.level); got != tc.want {
+			t.Errorf("loopLevel(%s, %s, %q) = %q, want %q", tc.plugin, tc.model, tc.level, got, tc.want)
+		}
+	}
+}
+
+// /think max on a loop session reaches the wire as a level the model
+// accepts.
+func TestLoopOpenAISendsFittedMax(t *testing.T) {
+	t.Parallel()
+	o := &openaiLLM{model: "gpt-5.5", effort: EffortMax}
+	b := o.body("", nil, false, false)
+	if r, _ := b["reasoning"].(map[string]any); r["effort"] != "xhigh" {
+		t.Errorf("reasoning = %v, want effort xhigh", b["reasoning"])
 	}
 }
 

@@ -141,7 +141,7 @@ func (c *cerebrasLLM) call(ctx context.Context, system string, messages []Messag
 	if onDelta != nil {
 		payload["stream_options"] = map[string]any{"include_usage": true}
 	}
-	if e := c.Effort(); e != "" && e != "off" {
+	if e := loopLevel("llm-cerebras", c.model, c.Effort()); e != "" && e != "off" {
 		payload["reasoning_effort"] = e
 	}
 	body, err := json.Marshal(payload)

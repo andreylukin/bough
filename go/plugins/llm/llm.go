@@ -66,9 +66,14 @@ var Efforts = []string{"off", "low", "medium", "high", "xhigh"}
 // EffortMax is the level above xhigh that Anthropic's adaptive models
 // and some OpenAI ones take. It is accepted by /think and the rows but
 // left out of Efforts, the shift+tab cycle: appending it there would
-// change what every loop session cycles through, and the loop's own
-// provider paths send whatever level they are given.
+// change what every loop session cycles through. Most models do not
+// take it, so every path fits it to the model (loopLevel, clampEffort)
+// rather than sending it as is.
 const EffortMax = "max"
+
+// Levels is every level /think and the rows accept: the shift+tab
+// cycle, then max.
+func Levels() []string { return append(slices.Clone(Efforts), EffortMax) }
 
 // ValidEffort reports whether level is one Efforter accepts.
 func ValidEffort(level string) bool {

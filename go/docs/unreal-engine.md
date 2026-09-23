@@ -133,6 +133,16 @@ byte-for-byte as it does on ce6f5c23. Every reader change is an
 additive branch. Old history files still render, still resume on the
 loop, and still resume on the engine through the seed path (§12.2).
 
+Two deliberate exceptions, both in the llm rows the loop shares with
+the engine. `max` is a level for `/think` and every row's `effort`; the
+loop's OpenAI, OpenRouter and Cerebras paths fit it to the model's
+catalogue entry and send xhigh where the catalogue does not know the
+model, so no level main refused reaches a model that rejects it. And
+`llm-anthropic` takes `effort` and answers `/think`: the loop's path
+sends `output_config.effort` only once a level is set, so a row that
+never sets one sends the bytes it sent on ce6f5c23, and an `effort`
+value that is not a level fails the row, as it does on the others.
+
 ## 2. Topology and lifetimes
 
 ```
