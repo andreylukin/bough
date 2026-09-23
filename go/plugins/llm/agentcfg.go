@@ -245,4 +245,3 @@ func addFallbackUsage(u *Usage, r ullm.Usage, row string) {
 		}
 	}
 }
-
