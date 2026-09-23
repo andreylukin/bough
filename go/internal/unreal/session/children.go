@@ -66,8 +66,15 @@ func (c children) Run(ctx context.Context, req ChildRequest) (ChildResult, error
 			data[k] = v
 		}
 		r.d.History.Append("sub:"+kind, data)
-		delete(data, "text")
-		r.d.Emit("sub:"+kind, text, data)
+		// The live event carries the text beside the data, not in it; a
+		// store that keeps the map by reference must not lose the text.
+		live := make(map[string]any, len(data))
+		for k, v := range data {
+			if k != "text" {
+				live[k] = v
+			}
+		}
+		r.d.Emit("sub:"+kind, text, live)
 	}
 	note("start", req.Task, nil)
 
@@ -175,6 +182,11 @@ loop:
 		status = "error"
 		reply = runErr.Error()
 		note("error", runErr.Error(), nil)
+	}
+	// The card reads its failure off a sub:error: a child stopped at its
+	// budget had none, so it read "Failure details not recorded".
+	if status == "budget" {
+		note("error", fmt.Sprintf("subagent gave up after %d steps without a report", steps), nil)
 	}
 	note("done", "", map[string]any{"status": cardStatus(status, reply), "steps": steps})
 	return ChildResult{Reply: reply, Status: status, Steps: steps}, nil
