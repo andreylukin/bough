@@ -71,6 +71,17 @@ type Gate struct {
 	adapter   agentllm.Adapter
 	prov      string
 	lastModel string
+	// locked: the turn in progress took the llm row at its first request
+	// and keeps that adapter; unlock at the turn's close reads it again.
+	locked bool
+}
+
+// unlock lets the next request read the llm row again: the turn that
+// held the model is over.
+func (g *Gate) unlock() {
+	g.mu.Lock()
+	g.locked = false
+	g.mu.Unlock()
 }
 
 func newGate(r *Runtime, worker string, sink func(agentllm.Delta)) *Gate {
@@ -347,20 +358,28 @@ func (g *Gate) onDelta(d agentllm.Delta) {
 	}
 }
 
-// resolve returns the adapter for the llm row as it is now. The row is
-// read per request: /model and /think change it mid-session without a
-// coordinator restart, and a swapped row is a new service value, so a
-// new adapter.
+// resolve returns the adapter for the llm row. The row is read once per
+// turn: /model and /think mid-turn used to swap the adapter under a
+// request in flight and remount the tools mid-call. The first request
+// of a turn takes the row as it is then, and the turn keeps it; the
+// next turn reads the row again.
 func (g *Gate) resolve() (agentllm.Adapter, string, error) {
 	if g.r.d.LLM == nil {
 		return nil, "", errors.New("engine-unreal: no llm row")
 	}
+	g.mu.Lock()
+	if g.locked && g.adapter != nil {
+		defer g.mu.Unlock()
+		return g.adapter, g.prov, nil
+	}
+	g.mu.Unlock()
 	src, prov, err := g.r.d.LLM()
 	if err != nil {
 		return nil, "", err
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	g.locked = true
 	if g.adapter != nil && same(g.src, src) {
 		return g.adapter, g.prov, nil
 	}

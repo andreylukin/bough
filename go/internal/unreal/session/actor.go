@@ -954,6 +954,9 @@ func (a *actorState) closeTurn(running int, stop string) {
 	a.drainHooks()
 	a.note("done", "", a.doneData(running, stop))
 	a.open, a.wake = false, false
+	if a.r.gate != nil {
+		a.r.gate.unlock()
+	}
 	a.disarm()
 	a.markAdoptBase()
 }
@@ -1183,6 +1186,9 @@ func (a *actorState) checkCancel() {
 	}
 	a.note("done", "", a.doneData(0, cs.stop))
 	a.open, a.wake = false, false
+	if a.r.gate != nil {
+		a.r.gate.unlock()
+	}
 	a.markAdoptBase()
 	if a.noticeWaits {
 		a.noticeWaits = false

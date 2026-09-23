@@ -484,3 +484,61 @@ func writeEntries(t *testing.T, path string, es []history.Entry) {
 		t.Fatal(err)
 	}
 }
+
+// /model mid-turn: the turn keeps the adapter it started on. The swap
+// lands with the next turn.
+func TestModelLockedForTheTurn(t *testing.T) {
+	t.Parallel()
+	r := newRig(t,
+		fake.Step{Want: "first", Output: []ullmItem{fake.Call("h1", "hold", `{"text":"wait"}`)}},
+		fake.Step{Want: "held and released", Output: []ullmItem{fake.Text("from A")}},
+	)
+	b := fake.New(t, fake.Step{Output: []ullmItem{fake.Text("from B")}})
+	var mu sync.Mutex
+	cur := fakeSource{r.fake}
+	r.rt.d.LLM = func() (agentllm.Source, string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return cur, "fake", nil
+	}
+	r.rt.Submit("first")
+	// The swap comes in while the first request's call is still running.
+	r.waitFor("the hold call", func() bool { r.kit.mu.Lock(); defer r.kit.mu.Unlock(); return slices.Contains(r.kit.calls, "hold") })
+	mu.Lock()
+	cur = fakeSource{b}
+	mu.Unlock()
+	close(r.kit.release)
+	r.waitDone(1)
+	if r.last("assistant").Data["text"] != "from A" {
+		t.Fatalf("the turn changed model mid-way\n%s", r.dump())
+	}
+	r.rt.Submit("second")
+	r.waitDone(2)
+	if r.last("assistant").Data["text"] != "from B" {
+		t.Fatalf("the next turn did not take the swap\n%s", r.dump())
+	}
+}
+
+// A child that runs out of steps says so on a sub:error: the card reads
+// its failure off that line.
+func TestSubagentBudgetSaysWhy(t *testing.T) {
+	t.Parallel()
+	r := newRig(t,
+		fake.Step{Output: []ullmItem{fake.Call("x1", "echo", `{"text":"a"}`)}},
+		fake.Step{Output: []ullmItem{fake.Call("x2", "echo", `{"text":"b"}`)}},
+		fake.Step{Output: []ullmItem{fake.Call("x3", "echo", `{"text":"c"}`)}},
+	)
+	res, err := r.rt.Children().Run(context.Background(), ChildRequest{Task: "loop forever", Worker: "1", MaxSteps: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "budget" {
+		t.Fatalf("status %q\n%s", res.Status, r.dump())
+	}
+	if e := r.last("sub:error"); e.Kind == "" || !strings.Contains(fmt.Sprint(e.Data["text"]), "gave up after 2 steps") {
+		t.Fatalf("no sub:error naming the budget\n%s", r.dump())
+	}
+	if r.last("sub:done").Data["status"] != "error" {
+		t.Fatalf("sub:done status %v\n%s", r.last("sub:done").Data["status"], r.dump())
+	}
+}
