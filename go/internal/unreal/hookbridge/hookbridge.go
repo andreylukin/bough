@@ -132,12 +132,12 @@ func (b *Bridge) Drain() []map[string]any {
 }
 
 // PreTool fires pre-code-exec before a native call. "code" carries the
-// call's detail (bash's command line), so a hook matching command text
+// call's whole text (see codeOf), so a hook matching command text
 // matches native calls too. A "deny" reason refuses the call; an
 // "args" object replaces its arguments.
 func (b *Bridge) PreTool(ctx context.Context, tool string, c agenttools.Call, detail string) (json.RawMessage, string) {
 	res := b.fire(ctx, "pre-code-exec", map[string]any{
-		"code": detail, "tool": tool, "args": argsObject(c.Args), "call": c.ID,
+		"code": codeOf(tool, c.Args, detail), "tool": tool, "args": argsObject(c.Args), "call": c.ID,
 	})
 	if d, ok := res["deny"].(string); ok {
 		if d == "" {
@@ -157,12 +157,47 @@ func (b *Bridge) PreTool(ctx context.Context, tool string, c agenttools.Call, de
 // replaces what the model reads.
 func (b *Bridge) PostTool(ctx context.Context, tool string, c agenttools.Call, detail string, r agenttools.Result) agenttools.Result {
 	res := b.fire(ctx, "post-result", map[string]any{
-		"code": detail, "tool": tool, "call": c.ID, "result": r.Text, "error": r.Error,
+		"code": codeOf(tool, c.Args, detail), "tool": tool, "call": c.ID, "result": r.Text, "error": r.Error,
 	})
 	if s, ok := res["result"].(string); ok {
 		r.Text = s
 	}
 	return r
+}
+
+// codeOf is what a hook reads as "code": on the loop it is the whole JS
+// block, so a deny matching "git push" sees every line of it. The row's
+// detail is only the first line, cut at 80 bytes, and a deny hook
+// matched against it let "true\ngit push" or a tools.bash on a block's
+// second line through. So bash gives its whole command and run_js its
+// whole program; write and patch give the path, as before, then the
+// text they put in the file. Any other tool keeps its detail.
+func codeOf(tool string, raw json.RawMessage, detail string) string {
+	var a struct {
+		Command string `json:"command"`
+		Code    string `json:"code"`
+		Path    string `json:"path"`
+		Content string `json:"content"`
+		New     string `json:"new"`
+	}
+	if json.Unmarshal(raw, &a) != nil {
+		return detail
+	}
+	switch tool {
+	case "bash":
+		if a.Command != "" {
+			return a.Command
+		}
+	case "run_js":
+		if a.Code != "" {
+			return a.Code
+		}
+	case "write":
+		return a.Path + "\n" + a.Content
+	case "patch":
+		return a.Path + "\n" + a.New
+	}
+	return detail
 }
 
 // argsObject is the call's arguments as a JS-visible object; a hook

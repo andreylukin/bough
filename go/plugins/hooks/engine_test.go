@@ -57,6 +57,22 @@ func TestEnginePreToolThroughJSHooks(t *testing.T) {
 	if len(recs) != 5 {
 		t.Fatalf("want 5 fire records, got %d", len(recs))
 	}
+
+	// The row's detail is the first line cut at 80 bytes; a deny hook
+	// must see the whole command, as it sees the whole block on the loop.
+	writeHook(t, ".", "pre-code-exec", "c-anywhere.js", `
+		if (event.code.indexOf("git push") >= 0) return {deny: "push found"};
+		return null;`)
+	long := strings.Repeat("x", 90) + "; git push"
+	for _, tc := range []struct{ tool, args, detail string }{
+		{"bash", `{"command":"true\ngit push"}`, "true …"},
+		{"bash", `{"command":"` + long + `"}`, long[:80]},
+		{"run_js", `{"code":"const a = 1;\nawait tools.bash(\"git push\")"}`, "const a = 1;"},
+	} {
+		if _, deny := b.PreTool(ctx, tc.tool, agenttools.Call{ID: "m", Args: json.RawMessage(tc.args)}, tc.detail); deny != "push found" {
+			t.Errorf("%s %s: deny = %q, want the hook to see the whole text", tc.tool, tc.args, deny)
+		}
+	}
 	if recs[0]["decision"] != "denied" || recs[0]["event"] != "pre-code-exec" {
 		t.Fatalf("first record %v", recs[0])
 	}
