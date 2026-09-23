@@ -2963,7 +2963,9 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
   const hooks = useMemo(() => turn.body.filter(isHookLine), [turn.body]);
   const items = useMemo<Item[]>(
     // A finished turn's usage line is the footer's to say, on its one line.
-    () => groupTools(groupSubs(foldModelSwitch(foldRetries(turn.body.filter((l) => !isHookLine(l) && !(turn.done && l.kind === "usage"))))), codes),
+    // An engine's spawn call that went fine is told by the subagent card it made; its own row would say the task twice.
+    () => groupTools(groupSubs(foldModelSwitch(foldRetries(turn.body.filter((l) => !isHookLine(l) && !(turn.done && l.kind === "usage")
+      && !(isNativeCall(l) && l.data?.tool === "spawn" && !callFailed(l) && !callRunning(l) && turn.body.some((s) => s.kind === "sub:start")))))), codes),
     // codes is derived from turn.body on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [turn.body]);

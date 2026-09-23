@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 // No DOM under bun: markdown sanitising is not what these assert.
 mock.module("dompurify", () => ({ default: { sanitize: (s: string) => s } }));
 const { NativeCall, ToolRun, TurnView, liveNative, streamAfter, withRunningCalls, wakeLabel } = await import("../src/app");
-const { groupTools, groupTurns, splitWork, isNativeCall, isQuiet } = await import("../src/render");
+const { groupTools, groupTurns, splitWork, isNativeCall, isQuiet, workHeadline } = await import("../src/render");
 const { nativeEdits } = await import("../src/changes");
 import type { Line } from "../src/types";
 
@@ -158,4 +158,54 @@ test("ER: native edits come from the records, skipping failed and running calls"
   const running = { ...call(10, 3, "write", "c.go"), data: { id: "x", tool: "write", phase: "start" } };
   expect(nativeEdits([view, patch, failed, running, call(11, 4, "write", "new.go", { add: 5, path: "/w/new.go" })]))
     .toEqual([{ path: "a.go", add: 2, del: 1, hunks: [] }, { path: "/w/new.go", add: 5, del: 0, hunks: [] }]);
+});
+
+test("ER: a subagent that outlives its turn reports back to the card that spawned it", () => {
+  const lines: Line[] = [
+    input,
+    { seq: 2, at: at(1), kind: "sub:start", text: "Find the news coverage", data: { worker: 4 } },
+    { seq: 3, at: at(2), kind: "sub:start", text: "Build a timeline", data: { worker: 5 } },
+    { seq: 4, at: at(3), kind: "sub:done", text: "", data: { worker: 4, status: "ok", steps: 6 } },
+    { seq: 5, at: at(4), kind: "assistant", text: "One subagent still running." },
+    { seq: 6, at: at(5), kind: "done", text: "", data: { exit: 0, running: 1 } },
+    { seq: 7, at: at(9), kind: "sub:call", text: "ls", data: { worker: 5, id: "toolu_7", tool: "bash", ms: 10, exit: 0 } },
+    { seq: 8, at: at(10), kind: "sub:done", text: "", data: { worker: 5, status: "error", steps: 20 } },
+    { seq: 9, at: at(11), kind: "input", text: "[background] job 1 finished", data: { wake: true, reason: "call", calls: ["toolu_1"] } },
+    { seq: 10, at: at(12), kind: "assistant", text: "The timeline subagent failed." },
+    { seq: 11, at: at(13), kind: "done", text: "", data: { exit: 0, wake: true } },
+  ];
+  const turns = groupTurns(lines);
+  expect(turns.length).toBe(2);
+  // The later steps and finish went home: the wake turn holds none of the subagent.
+  expect(turns[1].body.some((l) => l.kind.startsWith("sub:"))).toBe(false);
+  expect(turns[0].body.filter((l) => l.kind === "sub:done").length).toBe(2);
+  const html = renderToStaticMarkup(<TurnView turn={turns[0]} />);
+  expect(html).not.toContain("task not recorded");
+  expect(html).not.toContain("unknown");
+  expect(html).toContain("Build a timeline");
+  // The cards stand on their own, never inside a "Worked for" fold.
+  expect(html).not.toContain("work-seg");
+  const wake = renderToStaticMarkup(<TurnView turn={turns[1]} />);
+  expect(wake).not.toContain("Untitled subagent");
+});
+
+test("ER: a work fold says what its calls did, not how many there were", () => {
+  const [seg] = splitWork(groupTools([view, patch, test1].map((l) => ({ kind: "line" as const, seq: l.seq, line: l })), []), [], false);
+  if (seg.kind !== "work") throw new Error("want a work segment");
+  expect(seg.what).toBe("ran 1 command · read 1 file · edited 1 file");
+  expect(workHeadline(seg)).toBe("Worked for 8s · ran 1 command · read 1 file · edited 1 file");
+});
+
+test("ER: an engine's successful spawn call is told by its subagent card, not a row of its own", () => {
+  const spawn = call(2, 1, "spawn", "Find the news coverage", { output: "job 1", job: 1 });
+  const lines: Line[] = [input, spawn,
+    { seq: 3, at: at(2), kind: "sub:start", text: "Find the news coverage", data: { worker: 4 } },
+    { seq: 4, at: at(3), kind: "sub:done", text: "", data: { worker: 4, status: "ok", steps: 6 } },
+    { seq: 5, at: at(4), kind: "done", text: "", data: { exit: 0 } }];
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns(lines)[0]} />);
+  expect(html).not.toContain("Spawned");
+  expect(html).toContain('class="sub-task"');
+  // A failed spawn keeps its row: the card cannot say why it never started.
+  const bad = renderToStaticMarkup(<TurnView turn={groupTurns([input, call(2, 1, "spawn", "x", { error: "queue full" }), { seq: 5, at: at(4), kind: "done", text: "" }])[0]} />);
+  expect(bad).toContain("Spawned");
 });

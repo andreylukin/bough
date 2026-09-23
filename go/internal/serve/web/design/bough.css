@@ -1509,7 +1509,7 @@ input[type="checkbox"]:checked::before{transform:scale(1)}
 .sub{background:none;border-radius:0;overflow:hidden;border-bottom:1px solid var(--line)}
 /* Chevron, id, task, state, timing: fixed columns so a stack of cards
    lines up; the task stays one line open or shut. */
-.sub>summary{display:grid;grid-template-columns:16px 24px minmax(0,1fr) 128px 128px;align-items:center;column-gap:8px;
+.sub>summary{display:grid;grid-template-columns:16px 24px minmax(0,1fr) auto auto;align-items:center;column-gap:8px;
              padding:6px 12px;cursor:pointer;list-style:none;min-height:40px}
 .sub>summary::-webkit-details-marker{display:none}
 .sub>summary::before{content:"\203a";color:var(--text-3);font-family:var(--mono);width:8px}

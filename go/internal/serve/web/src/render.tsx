@@ -129,7 +129,7 @@ export const presentTense = (label: string) => PRESENT[label] ?? label;
  * These are what a block did, read from the runtime, not guessed from
  * its source text.
  */
-const CALL_VERBS: Record<string, string> = { bash: "Ran", view: "Read", write: "Wrote", patch: "Patched" };
+const CALL_VERBS: Record<string, string> = { bash: "Ran", view: "Read", write: "Wrote", patch: "Patched", spawn: "Spawned" };
 export const callVerb = (tool: string) => CALL_VERBS[tool] ?? tool.charAt(0).toUpperCase() + tool.slice(1);
 export const isCall = (l: Line) => l.kind === "call" || l.kind === "sub:call";
 /**
@@ -398,8 +398,23 @@ export function groupTurns(lines: Line[]): Turn[] {
     const ids = new Set(t.body.filter((b) => b.kind === "job" && b.data?.event === "started" && typeof b.data?.call === "string").map((b) => String(b.data!.call)));
     ranOn.push({ turn: t, ids, ended: new Set() });
   };
+  // The turn each subagent lane started in. On the engine a subagent
+  // runs on past its parent's done, so its steps and finish are recorded
+  // in a later turn; shown there they are an untitled agent, and the turn
+  // that spawned it never learns how it ended. They go back to its card.
+  const lanes = new Map<string, Turn>();
   for (const l of lines) {
     settle(l);
+    if (l.kind.startsWith("sub:")) {
+      const worker = readStr(l.data?.worker) || "1";
+      const home = lanes.get(worker);
+      if (l.kind === "sub:start") { if (cur) lanes.set(worker, cur); }
+      else if (home && home !== cur) {
+        home.body.push(l);
+        if (l.kind === "sub:done") lanes.delete(worker);
+        continue;
+      } else if (l.kind === "sub:done") lanes.delete(worker);
+    }
     // Turn summaries live in the sidebar's turn log, not the transcript.
     // The engine entry is the coordinator's build record: provenance for tools, not conversation.
     if (l.kind === "meta" || l.kind === "origin" || l.kind === "title" || l.kind === "turn-summary" || l.kind === "model" || l.kind === "engine") continue;
@@ -665,6 +680,8 @@ export type Segment =
       from: string; to: string;
       /** The latest thing it did, for a running row. */
       step: string;
+      /** "ran 2 commands · read 1 file": what the row holds, counted from native calls. */
+      what?: string;
       /** No reply follows it in the turn. */
       last: boolean };
 
@@ -758,7 +775,7 @@ export function splitWork(items: Item[], codes: string[], live: boolean): Segmen
     out.push({
       kind: "work", seq: cur[0].seq, items: cur, seqs: lines.map((l) => l.seq), rows, actions, failed, thinkingOnly,
       from: ats.length ? iso(Math.min(...ats)) : "", to: ats.length ? iso(Math.max(...ats)) : "",
-      step: step.length > 80 ? step.slice(0, 79) + "…" : step, last: false,
+      step: step.length > 80 ? step.slice(0, 79) + "…" : step, last: false, what: nativeWhat(lines) || undefined,
     });
     cur = [];
   };
@@ -778,7 +795,14 @@ export function splitWork(items: Item[], codes: string[], live: boolean): Segmen
       out.push({ kind: "reply", item: it });
       continue;
     }
-    if (live && it.kind === "sub" && it.agents.some((a) => !a.status)) { flush(); out.push({ kind: "pinned", item: it }); continue; }
+    // Subagents are the work worth seeing: a run still going, or one the
+    // engine started (no program of the parent's to fold under), stands
+    // on its own. A loop's spawn stays with the program that made it,
+    // which reads its outcome off the card.
+    if (it.kind === "sub") {
+      const prev = cur.at(-1), prevLine = prev?.kind === "tools" ? prev.lines.at(-1) : prev?.kind === "line" ? prev.line : undefined;
+      if ((live && it.agents.some((a) => !a.status)) || prevLine?.kind !== "code") { flush(); out.push({ kind: "pinned", item: it }); continue; }
+    }
     if (it.kind === "line" && isAgentNotice(it.line)) { flush(); out.push({ kind: "notice", item: it }); continue; }
     // A steer is something you said: it ends the work it interrupted and
     // stays in view, never folded into a "Worked for" row.
@@ -800,14 +824,29 @@ export function splitWork(items: Item[], codes: string[], live: boolean): Segmen
   return out;
 }
 
-/** "Worked for 12s · 6 actions", "Thought for 9s": a finished segment's row. */
-export function workHeadline(s: { actions: number; thinkingOnly: boolean; from: string; to: string }): string {
+/** "ran 2 commands · read 1 file · edited 2 files": an engine segment's calls, counted by what they did. */
+export function nativeWhat(lines: Line[]): string {
+  const n = { bash: 0, view: 0, edit: 0, job: 0 };
+  for (const l of lines) {
+    if (!isNativeCall(l) || callRunning(l)) continue;
+    const tool = String(l.data?.tool ?? "");
+    if (tool === "bash") n.bash++;
+    else if (tool === "view") n.view++;
+    else if (tool === "patch" || tool === "write") n.edit++;
+  }
+  const one = (k: number, sing: string, plural: string) => k ? `${k} ${k === 1 ? sing : plural}` : "";
+  return [n.bash ? "ran " + one(n.bash, "command", "commands") : "", n.view ? "read " + one(n.view, "file", "files") : "",
+    n.edit ? "edited " + one(n.edit, "file", "files") : ""].filter(Boolean).join(" · ");
+}
+
+/** "Worked for 12s · 6 actions", "Worked for 12s · ran 2 commands", "Thought for 9s": a finished segment's row. */
+export function workHeadline(s: { actions: number; thinkingOnly: boolean; from: string; to: string; what?: string }): string {
   const ms = s.from && s.to ? Date.parse(s.to) - Date.parse(s.from) : 0;
   // Under a second is not a fact worth a slot ("Worked for 0s").
   const took = ms >= 1000 ? ` for ${duration(ms)}` : "";
   if (s.thinkingOnly) return "Thought" + took;
   // MB-TR: never a bare "Worked": no duration leaves the count alone.
-  const count = s.actions ? `${s.actions} ${s.actions === 1 ? "action" : "actions"}` : "";
+  const count = s.what || (s.actions ? `${s.actions} ${s.actions === 1 ? "action" : "actions"}` : "");
   if (!took) return count || "Worked briefly";
   return "Worked" + took + (count ? " · " + count : "");
 }
