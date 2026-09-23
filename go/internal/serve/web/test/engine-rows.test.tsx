@@ -64,6 +64,9 @@ test("ER: a finished call opens onto its output; its evidence and what happened 
   expect(html).toContain('<span class="tool-meta-failed">exit 1</span>');
   expect(html).toContain("--- FAIL: TestA");
   expect(html).toContain(`data-seq="${test1.seq}"`);
+  // The full command is in the open body: the summary clips a long one-liner.
+  const long = renderToStaticMarkup(<NativeCall line={call(9, 1, "bash", "printf '%s' '{\"query\":\"open source…", { cmd: "printf '%s' '{\"query\":\"open source structured LLM output library\"}' | curl -s -d @- https://api.example/search", output: "{}" })} />);
+  expect(long).toContain('<pre class="mono call-cmd">printf &#x27;%s&#x27; &#x27;{&quot;query&quot;:&quot;open source structured LLM output library&quot;}&#x27; | curl -s -d @- https://api.example/search</pre>');
   const bg = renderToStaticMarkup(<NativeCall line={call(7, 1, "bash", "make serve", { job: 3, adopted: true, late: true, output: "up", truncated: true })} />);
   expect(bg).toContain(">Job 3</span>");
   expect(bg).toContain(">Late</span>");

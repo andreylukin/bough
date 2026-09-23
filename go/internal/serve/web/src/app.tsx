@@ -1838,6 +1838,9 @@ export function NativeCall({ line, current }: { line: Line; /** The failure its 
   const output = str(d.output);
   const tail = running ? tailLines(str(d.tail)) : [];
   const job = typeof d.job === "number" ? d.job : undefined;
+  // The summary shows one clipped line of the command; the open row
+  // shows all of it, so a long one-liner can actually be read.
+  const cmd = str(d.cmd) || line.text;
   return (
     <details className={"block thin toolcall call-native" + (failed ? " block-failed" : "")} data-seq={running ? undefined : line.seq}
              open={current || (running && tail.length > 0) || undefined}>
@@ -1859,6 +1862,7 @@ export function NativeCall({ line, current }: { line: Line; /** The failure its 
         {output && <CopyButton text={output} what="output" />}
       </summary>
       <div className="block-body">
+        {cmd && <pre className="mono call-cmd">{cmd}</pre>}
         {running ? (tail.length > 0 && <pre className="mono call-tail" aria-live="off">{tail.join("\n")}</pre>)
           : output.trim() ? <div className="tool-output"><Code text={output} lang={tool === "view" ? langForPath(line.text) : ""} /></div>
           : <p className="tool-noresult">No output.</p>}
