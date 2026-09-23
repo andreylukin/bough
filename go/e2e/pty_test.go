@@ -30,7 +30,8 @@ func launchTUI(t *testing.T, opts launchOpts) *tuiProc {
 	t.Helper()
 	home, cwd, _ := sandbox(t, opts)
 
-	args := append([]string{"--config", "bough.yml", "--set", "llm.plugin=llm-echo"}, opts.args...)
+	// The PTY suite is the code-mode loop's, like the headless one.
+	args := append([]string{"--config", "bough.yml", "--set", "llm.plugin=llm-echo", "--set", "loop.plugin=loop"}, opts.args...)
 	cmd := exec.Command(boughBin, args...)
 	cmd.Dir = cwd
 	cmd.Env = append(env(home), "TERM=xterm-256color")

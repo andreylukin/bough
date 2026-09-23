@@ -117,7 +117,7 @@ func saveCatalog(c catalog) error {
 // tools) and the servers, with their tools inline while the catalog is
 // small enough to read and a search otherwise. Empty when no server is
 // configured.
-func promptSection(servers map[string]ServerConfig, cat catalog) string {
+func promptSection(servers map[string]ServerConfig, cat catalog, native bool) string {
 	if len(servers) == 0 {
 		return ""
 	}
@@ -127,14 +127,36 @@ func promptSection(servers map[string]ServerConfig, cat catalog) string {
 		total += len(cat.Servers[n])
 	}
 	var b strings.Builder
+	if native {
+		b.WriteString("MCP servers are three native tools. mcp_search(query) returns [{server, tool, signature, description}] ranked; " +
+			"mcp_describe(server, tool) returns {jsdoc, inputSchema, outputSchema}; mcp_call(server, tool, args) returns " +
+			"{ok, value, text, content, isError, error}: value is the server's structured result, ok false with error.message when the tool itself failed, " +
+			"and an error when the server could not be reached. Independent calls run at once: issue them together.\n")
+		for _, n := range names {
+			tools := cat.Servers[n]
+			switch {
+			case servers[n].Disabled:
+				fmt.Fprintf(&b, "- %s: off (%s)\n", n, servers[n].Note)
+			case len(tools) == 0:
+				fmt.Fprintf(&b, "- %s: tools not listed yet; mcp_search lists them\n", n)
+			case total > promptCatalogMax:
+				fmt.Fprintf(&b, "- %s (%d tools; search to find one)\n", n, len(tools))
+			default:
+				fmt.Fprintf(&b, "- %s (%d tools):\n", n, len(tools))
+				for _, t := range tools {
+					fmt.Fprintf(&b, "  %s/%s  %s\n", n, t.Name, t.Desc)
+				}
+			}
+		}
+		return strings.TrimRight(b.String(), "\n")
+	}
 	b.WriteString("MCP servers are callable from code, as values, not through the shell. " +
 		"tools.mcp.search(\"words\") returns [{server, tool, signature, description}] ranked; " +
 		"tools.mcp.describe(server, tool) returns {jsdoc, inputSchema, outputSchema}; " +
 		"tools.mcp.<server>.<tool>({...args}) (or tools.mcp.call(server, tool, args)) returns " +
 		"{ok, value, text, content, isError, error}: value is the server's structured result (JSON parsed for you), " +
 		"ok false with error.message when the tool itself failed, and a thrown exception when the server could not be reached. " +
-		"Filter and join results in the same block and print only what matters. " +
-		"Under native tools the same three are mcp_search, mcp_describe and mcp_call.\n")
+		"Filter and join results in the same block and print only what matters.\n")
 	for _, n := range names {
 		tools := cat.Servers[n]
 		switch {
@@ -187,7 +209,8 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	}
 	if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
 		if programmatic(cfg) {
-			s.Set("mcp", promptSection(servers, loadCatalog()))
+			_, native := kernel.Get[any](ctx, "engine")
+			s.Set("mcp", promptSection(servers, loadCatalog(), native == nil))
 		} else {
 			s.Set("mcp", shellPromptSection(servers, loadCatalog()))
 		}

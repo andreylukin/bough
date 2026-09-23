@@ -264,7 +264,7 @@ func TestRowsCommand(t *testing.T) {
 	mustContain(t, out, "ID", "PLUGIN", "STATE")
 	for _, re := range []string{
 		`llm\s+llm-echo\s+active`,
-		`loop\s+loop\s+active`,
+		`loop\s+engine-unreal\s+active`,
 		`ui\s+ui\s+active`,
 		`history\s+history\s+active`,
 	} {

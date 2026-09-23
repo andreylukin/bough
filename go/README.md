@@ -164,14 +164,14 @@ where each registered tool is a JS function. Tool output feeds back to
 the LLM until it's done, and every step is emitted as a `loop/event`
 (`assistant`, `code`, `result`, `error`, `done`) that any UI renders.
 
-## The unreal-agent engine (opt-in)
+## The unreal-agent engine (the default)
 
-`--set loop.plugin=engine-unreal` (or an overlay row `- id: loop` /
-`plugin: engine-unreal`) runs the session on
+The `loop` row runs `engine-unreal`: the session runs on
 [unreal-agent](https://github.com/unreallabsai/unreal-agent), pinned by
-SHA in `go.mod`, instead of the codemode loop. The loop stays the
-default; [docs/unreal-engine.md](docs/unreal-engine.md) is the design.
-What changes for the model:
+SHA in `go.mod`. `--set loop.plugin=loop` (or `plugin: loop` on the
+row) runs the codemode loop instead, on the same keys and history;
+[docs/unreal-engine.md](docs/unreal-engine.md) is the design. What the
+engine changes for the model:
 
 - **Native tool calls** instead of a JS block: `bash`, `view`, `write`,
   `patch`, `jobs`/`job`/`job_kill`, `ask`, `secret`, `spawn`, `agent`,

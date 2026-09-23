@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -163,6 +164,12 @@ func launchHeadless(t *testing.T, opts launchOpts) *bough {
 	home, cwd, config := sandbox(t, opts)
 
 	args := []string{"--config", "bough.yml", "--set", "llm.plugin=llm-echo"}
+	// The headless suite is the code-mode loop's: its parrot providers
+	// answer in fenced blocks and its assertions read code entries. The
+	// engine suite (engine_test.go) names its own loop.plugin.
+	if !slices.ContainsFunc(opts.sets, func(s string) bool { return strings.HasPrefix(s, "loop.plugin=") }) {
+		args = append(args, "--set", "loop.plugin=loop")
+	}
 	for _, s := range opts.sets {
 		args = append(args, "--set", s)
 	}

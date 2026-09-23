@@ -8,19 +8,20 @@ part that is easy to get wrong from reading the code alone.
 
 ## What this is
 
-bough is a coding agent for the terminal. The model is given one tool:
-it writes a JavaScript program, bough runs it in an in-process goja VM
-where every `tools.*` call is a normal function, and whatever the
-program prints goes back to the model. Everything above the kernel —
-the LLM provider, the loop, the tools, the UI, history, MCP,
-hooks, skills — is a row in `bough.yml` that can be swapped, disabled,
-or hot-reloaded while a session runs.
-
-The `loop` row can instead run `engine-unreal`, the
+bough is a coding agent for the terminal. The `loop` row runs
+`engine-unreal`: the
 [unreal-agent](https://github.com/unreallabsai/unreal-agent) harness
-with bough's tools as native tool calls
-([`go/docs/unreal-engine.md`](go/docs/unreal-engine.md)). It is opt-in;
-the loop is the default and code mode the product.
+with bough's tools as native tool calls that run asynchronously and in
+parallel ([`go/docs/unreal-engine.md`](go/docs/unreal-engine.md)).
+Everything above the kernel — the LLM provider, the engine, the tools,
+the UI, history, MCP, hooks, skills — is a row in `bough.yml` that can
+be swapped, disabled, or hot-reloaded while a session runs.
+
+The code-mode loop is still a row: `plugin: loop` on the `loop` row (or
+`--set loop.plugin=loop`) gives the model one tool, a JavaScript program
+that runs in an in-process goja VM where every `tools.*` call is a
+normal function. Both engines run the same Go tool implementations and
+write the same history; a session on either resumes on the other.
 
 One Go module, `go/`. 71 packages, ~179k lines (~73k outside tests). No cgo: SQLite is
 `modernc.org/sqlite` and the JS runtime is goja, so one static binary
@@ -46,7 +47,7 @@ touches no network:
 
 ```sh
 printf 'say CODE! please\n' | go run ./cmd/bough --headless --set llm.plugin=llm-echo
-printf 'say CODE! please\n' | go run ./cmd/bough --headless --set llm.plugin=llm-echo --set loop.plugin=engine-unreal
+printf 'say CODE! please\n' | go run ./cmd/bough --headless --set llm.plugin=llm-echo --set loop.plugin=loop
 ```
 
 `scripts/unreal-smoke.sh` is the live engine pass, one per provider
@@ -77,8 +78,8 @@ both replace the binary you are testing.
 
 ## Conventions this codebase follows
 
-**Behavior attaches as a row, never as a change to the loop.** If a
-change needs the kernel or the loop to know something new, that is a
+**Behavior attaches as a row, never as a change to the engine.** If a
+change needs the kernel or the engine to know something new, that is a
 design discussion before it is a diff. Read
 [`go/plugins/example/example.go`](go/plugins/example/example.go) first;
 it is deliberately short and shows the four things a plugin does.
@@ -184,7 +185,9 @@ loosening an assertion that is correct on the platforms bough ships for;
 most of what fails is a test that hardcoded a POSIX path. The engine is
 not built there at all: the harness is Unix-only at the pin, so its
 packages carry `//go:build !windows` and `engine-unreal` is a stub row
-that fails with the reason. A new file that imports the harness, or a
+that fails with the reason — and since it is the default `loop` row, a
+Windows build needs `--set loop.plugin=loop` (or that row in its
+config) to run a session at all. A new file that imports the harness, or a
 test that imports an engine package, needs the same tag, or the gating
 `cross` job's Windows build and vet go red.
 

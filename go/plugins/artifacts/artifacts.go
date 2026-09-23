@@ -716,6 +716,25 @@ Example:
   ask = Buttons([Button("Keep SQLite"), Button("Try DuckDB")])
 The page talks back: a button, a form submit or a follow-up reaches you as a notice while you work or wait (tools.artifactAnswers(name) has the form state), and so do the renderer's errors — fix those with tools.artifactPatch(name, statements) (same-named statements replace, new ones add, "name = null" removes) rather than resending the page. When you need the user to choose, publish and end your turn; the answer wakes you. Reply with the URL and one line on what the page shows. Only real data on a page, never invented numbers.`
 
+// NativePromptSection is PromptSection for the engine, where the page
+// tools are native calls (artifact, artifact_patch, artifact_answers,
+// artifact_guide), not tools.* functions.
+var NativePromptSection = strings.NewReplacer(
+	"tools.artifact(name, code) -> URL", "the artifact tool (name, code) -> URL",
+	"call tools.artifactGuide()", "call artifact_guide",
+	"tools.artifactAnswers(name) has the form state", "artifact_answers(name) has the form state",
+	"tools.artifactPatch(name, statements)", "artifact_patch(name, statements)",
+).Replace(PromptSection)
+
+// promptFor is the section for the engine the session runs on: the
+// "engine" key is provided only by engine-unreal.
+func promptFor(ctx *kernel.Context) string {
+	if _, err := kernel.Get[any](ctx, "engine"); err == nil {
+		return NativePromptSection
+	}
+	return PromptSection
+}
+
 type plugin struct{}
 
 func init() {
@@ -813,7 +832,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	ctx.Effect(func() { close(stop) })
 
 	if sec, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
-		sec.Set("artifacts", PromptSection)
+		sec.Set("artifacts", promptFor(ctx))
 		ctx.Effect(func() { sec.Set("artifacts", "") })
 	}
 	if reg, err := kernel.Get[*commands.Registry](ctx, "commands"); err == nil {

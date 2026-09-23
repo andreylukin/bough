@@ -323,6 +323,13 @@ const PromptSection = `Scratchpad — your own directory and memory, at %s (also
 - tools.scratch.file(name) -> an absolute path in the scratchpad. EVERY throwaway file goes there: probe scripts, copies to diff against, downloaded archives. Never write a temporary file into the user's repository.
 - tools.scratch.keys(), tools.scratch.notes(), tools.scratch.drop(name), tools.scratch.dir().`
 
+// NativePromptSection is PromptSection for the engine, where there are
+// no code blocks to carry values between: the directory and the notes
+// file are what remain, reached with write, view and bash.
+const NativePromptSection = `Scratchpad — your own directory, at %s (also $BOUGH_SCRATCH in bash):
+- EVERY throwaway file goes there: probe scripts, copies to diff against, downloaded archives, a result you will read back in pieces. Never write a temporary file into the user's repository.
+- notes.md in it is your memory across this conversation: append findings, decisions and dead ends as you go — the conversation is finite and the file is not.`
+
 type plugin struct{}
 
 func init() {
@@ -392,7 +399,11 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	ctx.Effect(func() { code.RegisterTool("scratch", nil) })
 
 	if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
-		s.Set("scratch", fmt.Sprintf(PromptSection, pad.Dir()))
+		if _, err := kernel.Get[any](ctx, "engine"); err == nil {
+			s.Set("scratch", fmt.Sprintf(NativePromptSection, pad.Dir()))
+		} else {
+			s.Set("scratch", fmt.Sprintf(PromptSection, pad.Dir()))
+		}
 		ctx.Effect(func() { s.Set("scratch", "") })
 	}
 	if reg, err := kernel.Get[*commands.Registry](ctx, "commands"); err == nil {

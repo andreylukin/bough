@@ -13,7 +13,7 @@ import (
 // tools row that looked up prompt-sections at Apply would reload when
 // the loop provides them, re-provide turn-stats, and reload the loop and
 // ui mid-startup (headless lost its input and never exited).
-const LocalPromptSection = `Session mode: local. This session is read-only on local files: tools.write and tools.patch do not exist, and you must not change files with the shell either.
+const LocalPromptSection = `Session mode: local. This session is read-only on local files: the write and patch tools do not exist, and you must not change files with the shell either.
 Use the shell freely to read and to act on remote systems (gh, kubectl, curl, cloud CLIs).
 Throwaway files go only under $BOUGH_SCRATCH.
 Project definitions (repos, checks, env, resume.sh) are the one thing you may change, and only with "bough project" (run it with no args for usage); it validates every change.
@@ -40,12 +40,12 @@ func LocalWriteRoots() []string {
 }
 
 // LocalPromptSectionFor is LocalPromptSection, or, when the session has
-// write roots, the note that says where tools.write and tools.patch work.
+// write roots, the note that says where write and patch work.
 func LocalPromptSectionFor(roots []string) string {
 	if len(roots) == 0 {
 		return LocalPromptSection
 	}
-	return fmt.Sprintf(`Session mode: local, with write access to %s only. tools.write and tools.patch work there and refuse any other path; everything else is read-only, and you must not change files outside those directories with the shell either.
+	return fmt.Sprintf(`Session mode: local, with write access to %s only. the write and patch tools work there and refuse any other path; everything else is read-only, and you must not change files outside those directories with the shell either.
 Use the shell freely to read and to act on remote systems (gh, kubectl, curl, cloud CLIs).
 Throwaway files go only under $BOUGH_SCRATCH.`, strings.Join(roots, ", "))
 }

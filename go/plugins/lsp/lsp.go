@@ -1024,6 +1024,24 @@ const PromptSection = `Code intelligence — tools.lsp, real language servers (P
 - tools.lsp.diagnostics(path) -> the file's type errors and warnings.
 For a NAMED thing in code — a function, class, method, type, constant — use these before grep: they follow imports, and skip comments, strings and look-alike names. Keep grep for text that is not a symbol (log lines, config values, prose). Read a large file as outline, then tools.view(path, start, end) on the ranges you need; never page through it with sed -n or cat. tools.patch and tools.write end with the file's errors ("[lsp] …"): fix the ones your edit caused before moving on.`
 
+// NativePromptSection is PromptSection for the engine: one native lsp
+// tool with an op, not six tools.lsp functions.
+const NativePromptSection = `Code intelligence — the lsp tool, real language servers (Python, Rust, TypeScript/JavaScript, Go, when installed): op is one of
+- def, refs, hover (path, symbol, [line]) -> where symbol, as written in path (on or near line), is defined; every use of it across the project; its type, signature and docs.
+- outline (path) -> the file's classes and functions with their line ranges.
+- symbols (query, [path]) -> project symbols whose name matches query.
+- diagnostics (path) -> the file's type errors and warnings.
+For a NAMED thing in code — a function, class, method, type, constant — use these before grep: they follow imports, and skip comments, strings and look-alike names. Keep grep for text that is not a symbol (log lines, config values, prose). Read a large file as outline, then view the range you need.`
+
+// promptFor is the section for the engine the session runs on: the
+// "engine" key is provided only by engine-unreal.
+func promptFor(ctx *kernel.Context) string {
+	if _, err := kernel.Get[any](ctx, "engine"); err == nil {
+		return NativePromptSection
+	}
+	return PromptSection
+}
+
 // statsHooks is the slice of the tools row's "turn-stats" service used.
 type statsHooks interface {
 	SetAfterEdit(fn func(path string) string)
@@ -1078,7 +1096,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		ctx.Effect(func() { st.SetAfterEdit(nil); st.SetBashNote(nil) })
 	}
 	if s, err := kernel.Get[sections](ctx, "prompt-sections"); err == nil {
-		s.Set("lsp", PromptSection)
+		s.Set("lsp", promptFor(ctx))
 		ctx.Effect(func() { s.Set("lsp", "") })
 	}
 	ctx.Provide("lsp", m)

@@ -138,13 +138,13 @@ func TestArgsFor(t *testing.T) {
 // and points at the CLI; a server missing from the cache is named with
 // the refresh hint; no servers, no section.
 func TestPromptSectionCarriesCatalog(t *testing.T) {
-	if promptSection(nil, catalog{}) != "" {
+	if promptSection(nil, catalog{}, false) != "" {
 		t.Fatal("no servers should mean no section")
 	}
 	servers := map[string]ServerConfig{"b": {}, "a": {}}
 	cat := catalog{Servers: map[string][]catalogTool{"a": {{Name: "greet", Desc: "say hi"}}}}
-	sec := promptSection(servers, cat)
-	for _, want := range []string{"tools.mcp.search(", "- a (1 tools):", "tools.mcp.a.greet({})  say hi", "- b: tools not listed yet; tools.mcp.search lists them", "mcp_search, mcp_describe and mcp_call"} {
+	sec := promptSection(servers, cat, false)
+	for _, want := range []string{"tools.mcp.search(", "- a (1 tools):", "tools.mcp.a.greet({})  say hi", "- b: tools not listed yet; tools.mcp.search lists them"} {
 		if !strings.Contains(sec, want) {
 			t.Fatalf("section missing %q:\n%s", want, sec)
 		}
@@ -156,6 +156,9 @@ func TestPromptSectionCarriesCatalog(t *testing.T) {
 	if old := shellPromptSection(servers, cat); !strings.Contains(old, "bough mcp call") || !strings.Contains(old, "a/greet  say hi") {
 		t.Fatalf("shell section:\n%s", old)
 	}
+	if nat := promptSection(servers, cat, true); !strings.Contains(nat, "mcp_search(query)") || strings.Contains(nat, "tools.mcp") || !strings.Contains(nat, "a/greet  say hi") {
+		t.Fatalf("native section:\n%s", nat)
+	}
 	if !programmatic(map[string]any{}) || programmatic(map[string]any{"programmatic": false}) {
 		t.Fatal("programmatic defaults on and reads false")
 	}
@@ -164,7 +167,7 @@ func TestPromptSectionCarriesCatalog(t *testing.T) {
 	for i := range promptCatalogMax + 1 {
 		many = append(many, catalogTool{Name: fmt.Sprintf("t%d", i)})
 	}
-	big := promptSection(map[string]ServerConfig{"a": {}}, catalog{Servers: map[string][]catalogTool{"a": many}})
+	big := promptSection(map[string]ServerConfig{"a": {}}, catalog{Servers: map[string][]catalogTool{"a": many}}, false)
 	if !strings.Contains(big, "search to find one") || strings.Contains(big, "t7") {
 		t.Fatalf("big catalog:\n%s", big)
 	}

@@ -73,6 +73,23 @@ Background agents — for work that should keep going while you continue:
 - tools.agent(id) -> {status, title, reply, project} reads one; tools.stopAgent(id) interrupts it.
 - A background agent cannot start agents of its own: a project thread cannot start threads, so ask the main thread. Past the per-session limit spawn throws: do the rest yourself.`
 
+// nativePromptSection is promptSection for the engine: spawn is a
+// native call that runs in the background like any other, so several
+// issued in one reply run at once; there is no spawnAll.
+const nativePromptSection = `Subagents — when to delegate:
+- Exploring a codebase with too many files to read yourself to answer a broad question ("how does X work across the repo") is the case delegation exists for: split it into independent areas and issue one spawn call per area IN THE SAME REPLY. The children read the files; only their reports reach you, so a wide survey costs you a few hundred lines instead of tens of thousands.
+- A question a few files answer (a README, one package, a small repo) is faster done yourself: read them and reply in prose, no subagents.
+- A needle lookup you can do in one command — a known path, a single grep — is faster done yourself. Do not delegate a shell command.
+- Spawn calls run in parallel like every other call: N children issued together take about as long as the slowest one. Do not wait for one before starting the next.
+- Give each child one self-contained brief: what to find out, where to look, and what to report. It cannot see this conversation and cannot spawn.
+- Pass a JSON Schema in the schema argument when you want a VALUE rather than a paragraph: the child's report must then match it, is checked before it counts as finished, and comes back as JSON you can index.
+Limits: at most %d spawns per turn and %d steps per child, so scope each child's task to fit and do small things yourself.
+
+Background agents — for work that should keep going while you continue:
+- spawn with background: true starts a SEPARATE session under bough serve and returns {session, status: "running" | "queued"} at once. Add project: "<name>" to run it in that project's container, where it can write. When its turn ends you get a note "[agent <title> · <id> finished] <reply>" and a turn to act on it; do not poll.
+- agent(id) -> {status, title, reply, project} reads one; stop_agent(id) interrupts it.
+- A background agent cannot start agents of its own: a project thread cannot start threads, so ask the main thread. Past the per-session limit spawn fails: do the rest yourself.`
+
 // sections is the slice of the loop's "prompt-sections" service we need:
 // Set to advertise tools.spawn to the parent, Text to hand the child the
 // same tool documentation the parent has.
@@ -732,7 +749,11 @@ func apply(kctx *kernel.Context, cfg map[string]any, home string) error {
 	// learns tools.spawn exists. Withdrawn on unmount.
 	if s, err := kernel.Get[sections](kctx, "prompt-sections"); err == nil {
 		w.secs = s
-		s.Set("workers", fmt.Sprintf(promptSection, maxSpawns, maxSteps))
+		if _, err := kernel.Get[any](kctx, "engine"); err == nil {
+			s.Set("workers", fmt.Sprintf(nativePromptSection, maxSpawns, maxSteps))
+		} else {
+			s.Set("workers", fmt.Sprintf(promptSection, maxSpawns, maxSteps))
+		}
 		kctx.Effect(func() { s.Set("workers", "") })
 	}
 	return nil

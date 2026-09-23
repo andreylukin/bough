@@ -164,7 +164,7 @@ func TestLoopVerdictReplay(t *testing.T) {
 	} {
 		tape := filepath.Join(t.TempDir(), "tape.jsonl")
 		writeTape(t, tape, c.reply)
-		out, code := runCLIEnv(t, home, cwd, extra, "loop", "run", "pipeline.yml", "--set", "llm.plugin=replay", "--set", "llm.file="+tape)
+		out, code := runCLIEnv(t, home, cwd, extra, "loop", "run", "pipeline.yml", "--set", "loop.plugin=loop", "--set", "llm.plugin=replay", "--set", "llm.file="+tape)
 		if code != c.code {
 			t.Errorf("tape %q: exit %d, want %d\n%s", c.reply, code, c.code, out)
 		}
