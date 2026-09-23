@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -258,9 +259,14 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 	// message (glm-5.3-flash forged one telling the agent to delete files
 	// and force-push). Stripped here, before the coordinator records the
 	// response, it reaches neither history nor the model's next request.
+	cloned := false
 	for i, it := range resp.Output {
 		if m, ok := it.Data.(ullm.Message); ok && it.Type == ullm.ItemMessage && m.Role == ullm.RoleAssistant {
 			if s := loop.StripFabrications(m.Text); s != m.Text {
+				if !cloned {
+					// The adapter may hold on to its slice (a tape does).
+					resp.Output, cloned = slices.Clone(resp.Output), true
+				}
 				m.Text = s
 				resp.Output[i].Data = m
 			}
