@@ -238,7 +238,7 @@ kills the child.
 | `go/internal/unreal` (`doc.go`, `pin_test.go`, `boundary_test.go`) | pin + import-boundary tests | W6 | yes |
 | `go/plugins/agenttools` | row `agent-tools`, provides the Registry | W3 | no |
 | `go/plugins/engine` | row plugin `engine-unreal`: kernel glue, keys, config, handoff, `/context`, stored notices | W2 | yes |
-| `go/cmd/bough/enginecmd.go` | `bough engine inspect\|reproject\|script` | W2 | yes |
+| `go/plugins/engine/cli.go` | `bough engine inspect\|reproject\|script`, a plugin command (`Commands()`) that reads the store and history without mounting anything | W2 | yes |
 | `go/plugins/llm/{agent,script,ollama}.go` | `AgentAdapter` on the llm rows, `llm-script`, `llm-ollama` | W1 | yes |
 
 `internal/unreal/*` never imports another plugin to reach a service.
@@ -1698,7 +1698,7 @@ mode**:
 A kill -9 between a store append and a history write therefore loses
 nothing and duplicates nothing.
 
-The CLI, in `cmd/bough/enginecmd.go`:
+The CLI, a plugin command in `plugins/engine/cli.go`:
 - `bough engine inspect <sid|history-id>` prints the store items, one
   line each.
 - `bough engine reproject <id> [--dry-run]` re-runs the whole store
@@ -2378,16 +2378,18 @@ Each run asserts:
   `v0.1.1`. `internal/unreal.Pin = "v0.1.1"` and
   `PinSHA = "b7c9bf1c…"` are the constants the `engine` entry writes.
 - **Import boundary** (`internal/unreal/boundary_test.go`, W6):
-  `go list -f '{{.ImportPath}} {{join .Imports " "}}' ./...`, which lists
-  direct imports. Only these may import
-  `github.com/unreallabsai/unreal-agent/...` or `internal/unreal/...`
-  directly:
+  `go list` of every package's direct imports and its test imports.
+  Only these may import `github.com/unreallabsai/unreal-agent/...` or
+  `internal/unreal/...` directly:
   - `internal/unreal/...`;
   - `internal/messagesapi`;
   - `internal/agentllm`;
   - `plugins/engine`;
-  - `plugins/llm`;
-  - `cmd/bough`.
+  - `plugins/llm`.
+
+  From their tests only, so a harness bump can break them too:
+  `e2e`, `plugins/contextmd`, `plugins/skills` (the prompt pieces) and
+  `plugins/hooks`, `plugins/rules` (the hook bridge).
 - **Imported harness packages** are public only: `harness/{coordinator,
   inbox, session, sessionstore, sessionstore/localfile, contextbuilder,
   llm, llm/responsesapi, tool, tool/viewimage, operation, primitives}`.
@@ -2497,7 +2499,7 @@ unchanged once W2's row lands.
 | WS | Scope | Owns (exclusive; nobody else edits these) | Provides (frozen in §4–§5) | Consumes | Done when |
 |---|---|---|---|---|---|
 | **W1** dependency + adapters | pin upkeep; Anthropic Messages adapter (streaming, tool_use, thinking, cache_control, retries, late-result render); Responses adapters for openai/openrouter/ollama with the SSE tap; envelope/late/strip/observe wrappers; provider selection and effort mapping in the llm rows; model catalogue bridge; fake (Load, FromStore) + echo + llm-script + llm-ollama; 1h cache pricing; retry.go `Type()` fix; probes P1–P7 | `go/go.mod`, `go/go.sum` (after B0); `go/internal/agentllm/**`; `go/internal/messagesapi/**`; `go/internal/unreal/{responses,wrap,fake,echo}/**`; `go/plugins/llm/**`; `go/internal/models/**`; `go/plugins/cost/**` | `agentllm.Source` on llm-anthropic / llm-openai / llm-openrouter / llm-ollama / llm-echo / llm-script; `messagesapi.New/Render/Decode/Spec`; `responses.New`; `wrap.*`; `fake.*`; `echo.New`; `llm.Usage.CacheWrite1hTokens`; `llm.Efforts` + `max` | `prompt.Wrap` (W5), for the property test only; a local copy until W5 merges | §15.1 W1 green, including the rapid property test; probe results (or a "skipped: no key" line each) in the messagesapi package doc; gates green on touched packages |
-| **W2** engine row + session | coordinator per session; inbox wiring for input, steer, notices and ask answers; Gate (cancel, park, errors, budgets); ops.Manager with Latest replay; mirror + actor + the done/settle/wake rules; the loop's keys + `engine` + `drain`; store choice and paths; resume, seed, hseq catch-up, fork, subagents (Children); usage → `done.usage`; `/context`; stored notices; `bough engine inspect\|reproject\|script`; contract tests | `go/internal/unreal/{ops,session,contract}/**`; `go/plugins/engine/**`; `go/cmd/bough/enginecmd.go`; in `go/plugins/loop/loop.go` only `DefaultProject` (additive `call` folding, §12.2) | the `engine-unreal` row with prompt-sections, runner, inputs, cancel, steer, engine, drain; `session.Runtime`; `session.Children`; `ops.Manager` | everything in §5 via B0 stubs; `tool.NewRegistry` + harness bash for interim tests; real W1/W3/W4/W5 at integration | §15.1 W2 scenarios, §9.11 property test and §15.2 contract tests green; the echo smoke prints `ran: hi from codemode` on `engine-unreal` |
+| **W2** engine row + session | coordinator per session; inbox wiring for input, steer, notices and ask answers; Gate (cancel, park, errors, budgets); ops.Manager with Latest replay; mirror + actor + the done/settle/wake rules; the loop's keys + `engine` + `drain`; store choice and paths; resume, seed, hseq catch-up, fork, subagents (Children); usage → `done.usage`; `/context`; stored notices; `bough engine inspect\|reproject\|script`; contract tests | `go/internal/unreal/{ops,session,contract}/**`; `go/plugins/engine/**` (the CLI is its `cli.go`); in `go/plugins/loop/loop.go` only `DefaultProject` (additive `call` folding, §12.2) | the `engine-unreal` row with prompt-sections, runner, inputs, cancel, steer, engine, drain; `session.Runtime`; `session.Children`; `ops.Manager` | everything in §5 via B0 stubs; `tool.NewRegistry` + harness bash for interim tests; real W1/W3/W4/W5 at integration | §15.1 W2 scenarios, §9.11 property test and §15.2 contract tests green; the echo smoke prints `ran: hi from codemode` on `engine-unreal` |
 | **W3** tools + orbs | native registration of every bough tool; `toolreg` (translators, tombstones, view_image, Render); `boughcall` (hooks at the op boundary, timeout, spill, redaction); `Jobs.Adopt`; `run_js`; orb exec through the existing seam; secrets contract; portal/artifacts/lsp/todo/example; ask/secret as blocking calls; spawn via the `engine` key's `Spawn` + background agents | `go/internal/agenttools/**` (after B0); `go/plugins/agenttools/**`; `go/internal/unreal/{toolreg,boughcall}/**`; `go/plugins/{tools,ask,workers,artifacts,lsp,todo,example,codemode}/**`; `go/plugins/orb/portal.go`; `go/docs/PLUGINS.md` | `toolreg.New/Render/Hash`, `toolreg.Handle`, `boughcall.New`; native tools in `agent-tools`; `Jobs.Adopt`; `run_js` | `engine` key (W2) for foreground spawn; `agenttools.Hooks` impl (W5) | §15.1 W3 green; the loop's existing tests in the touched plugins stay green unchanged (codemode bindings byte-identical) |
 | **W4** history + web + TUI | the projector (the §10.1 mapping table); every reader change in §10.4; call rows, call-delta, delta-reset, wake line, adopted rows in TUI and web; headless wake-done accounting, call-delta forwarding, drain at EOF; title/activity/cmux on `call`; bun tests, Playwright spec, `dist/app.js` rebuild | `go/internal/unreal/project/**`; `go/plugins/ui/**`; `go/internal/serve/**` (Go, `web/src`, `web/dist`, CSS via `dist/index.html` then `bun run design:sync`); `go/plugins/{title,activity,cmux}/**`; `go/tests/web/**` (new spec only) | `project.New/Meta/Item/Delta/Progress/Call`, `project.Out` | `toolreg.Render` + `Handle` (W3); `drain` key (W2); `llm-script` (W1) for Playwright | §15.1 W4 green; `bun test` + `bun run typecheck` green; goldens regenerated with `-update`; loop-session rendering unchanged (existing goldens untouched) |
 | **W5** hooks + MCP + skills + context-md + rules | frozen prompt composition and drift reminders; `engine.md`; the contextbuilder decorator; hookbridge for all six events; skills catalogue + mention inject on the engine; AGENTS.md/MEMORY.md via context-md parts; rules gating inside bash/write/patch (tests); opt-in native MCP tools | `go/internal/unreal/{prompt,hookbridge}/**`; `go/plugins/{hooks,skills,contextmd,rules,mcp}/**`; `go/skills/multi-model-plan/SKILL.md`; hook docs in `go/docs/*.md` other than PLUGINS.md and this file | `prompt.Parts/Compose/Hash/Reminder/Wrap/Placeholder`; `hookbridge.New` (implements `agenttools.Hooks` + `session.Lifecycle`); `mcp__*` tools | agent-tools registry (B0); `session.Lifecycle` shape (§5.7) | §15.1 W5 green; a reminder round trip visible in a W2 session test once merged |

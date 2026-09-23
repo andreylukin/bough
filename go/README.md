@@ -54,7 +54,7 @@ example in `plugins/example/`:
 | `theme`    | plugins/initjs     | ui (optional)   |
 | `keymap`   | plugins/initjs     | ui (optional)   |
 | `agent-tools` | plugins/agenttools | tool rows (register native tools), engine |
-| `engine`   | plugins/engine     | workers (foreground `spawn`), `bough engine` |
+| `engine`   | plugins/engine     | workers (foreground `spawn`) |
 | `drain`    | plugins/engine     | ui (headless, at stdin EOF) |
 
 `runner`, `inputs`, `cancel`, `steer` and `prompt-sections` come from
