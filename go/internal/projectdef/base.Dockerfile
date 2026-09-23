@@ -46,3 +46,9 @@ RUN set -e; A=$(dpkg --print-architecture); \
     echo "$S  /tmp/go.tgz" | sha256sum -c -; \
     tar -xzf /tmp/go.tgz -C /usr/local; rm /tmp/go.tgz; \
     ln -s /usr/local/go/bin/go /usr/local/go/bin/gofmt /usr/local/bin/
+
+# parallel-cli: tools and their python outside /root, so no mount or cache hides them.
+ARG PARALLEL=0.9.3
+RUN UV_TOOL_DIR=/opt/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin UV_PYTHON_INSTALL_DIR=/opt/uv-python \
+      uv tool install --python 3.13 "parallel-web-tools[cli]==$PARALLEL" \
+ && parallel-cli --version
