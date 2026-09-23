@@ -421,6 +421,13 @@ across chunks is still caught), in every history entry (the orb row sets
 `Store.SetRedact`), and in resume.log. `redact: false` in project.yml turns
 it off. The command text the model wrote is recorded as written.
 
+Host shell env (`internal/orb/zshrc.go`): what the host's `~/.zshrc`
+exports beyond a bare zsh (`zsh -ic` vs `zsh -fc`, both from a clean env)
+joins the resolved secrets, so it travels and is redacted the same way.
+Project env and resolved secrets of the same name win. Reserved names,
+values naming host paths (`$HOME`, `/opt/homebrew`) and host-only exports
+(`shellEnvSkip`) are dropped. The result is cached for five minutes.
+
 ### 1d. Identity, tools and egress
 
 A project session acts as the user, with the same permissions as their
@@ -430,9 +437,10 @@ own shell; it only isolates file changes.
   built as `projectdef.BaseTag()` = `bough-orb/base:<sha12>` by
   `orb.EnsureBase` before any setup-script project whose `base` is empty.
   It carries gh, aws, kubectl, helm, helmfile, sops, just, gcx, argocd,
-  uv and python3. `ImageHash` hashes the base tag, so editing the base
+  go, uv and python3. `ImageHash` hashes the base tag, so editing the base
   rebuilds every project on it.
-- **Host identity (opt-in)**: nothing from the host is lent by default.
+- **Host identity (opt-in)**: nothing from the host is lent by default,
+  except that `bough project create` writes `identity: [gh]`.
   A project lists what it needs in `identity:` (`bough project
   add-identity <slug> gh|.aws|.kube:rw`). `gh` passes the host's
   `gh auth token` as `GH_TOKEN` (cached 5 min, per exec, never in run env)

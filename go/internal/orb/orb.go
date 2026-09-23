@@ -343,14 +343,20 @@ func (o *Orb) secretEnv() []string {
 }
 
 // secretValues is secretEnv plus the redactor over the same values: nil
-// when project.yml says `redact: false` or nothing is long enough.
+// when project.yml says `redact: false` or nothing is long enough. The
+// host's ~/.zshrc exports come first (cachedShellEnv); project env and
+// resolved secrets win over them.
 func (o *Orb) secretValues() ([]string, *Redactor) {
 	def := o.project.Def
 	if p, err := projectdef.Load(o.home, o.project.Slug); err == nil {
 		def = p.Def
 	}
-	var env []string
 	vals := map[string]string{}
+	for k, v := range cachedShellEnv() {
+		if _, ok := def.Env[k]; !ok {
+			vals[k] = v
+		}
+	}
 	for _, name := range slices.Sorted(maps.Keys(def.Secrets)) {
 		val, err := secrets.Resolve(def.Secrets[name])
 		if err != nil {
@@ -359,8 +365,11 @@ func (o *Orb) secretValues() ([]string, *Redactor) {
 			}
 			continue
 		}
-		env = append(env, name+"="+val)
 		vals[name] = val
+	}
+	var env []string
+	for _, name := range slices.Sorted(maps.Keys(vals)) {
+		env = append(env, name+"="+vals[name])
 	}
 	if def.Redact != nil && !*def.Redact {
 		return env, nil
