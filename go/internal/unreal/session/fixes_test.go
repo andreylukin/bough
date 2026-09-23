@@ -409,3 +409,30 @@ func TestViewImageInsideLoadsAndFiresPostResult(t *testing.T) {
 		return slices.Contains(hooks.post, "view_image ok.png")
 	})
 }
+
+// A secret in what the user sent is redacted before the harness store
+// writes the input, as history redacts it: the store file and the
+// model hold the placeholder, never the value.
+func TestInputIsRedactedBeforeTheStore(t *testing.T) {
+	t.Parallel()
+	const secret = "sk-live-4242424242"
+	r := newRigWith(t, []rigOpt{func(d *Deps) {
+		d.Redact = func(s string) string { return strings.ReplaceAll(s, secret, "[redacted]") }
+	}},
+		fake.Step{Want: "check", Match: func(req ullmRequest) error {
+			if s := fake.Render(req); strings.Contains(s, secret) {
+				return errf("the model got the secret:\n%s", s)
+			}
+			return nil
+		}, Output: []ullmItem{fake.Text("looks fine")}},
+	)
+	r.rt.Submit("check this key " + secret)
+	r.waitDone(1)
+	b, err := os.ReadFile(r.rt.StorePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), secret) || !strings.Contains(string(b), "[redacted]") {
+		t.Fatalf("the store holds the secret:\n%s", b)
+	}
+}

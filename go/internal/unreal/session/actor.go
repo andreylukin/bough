@@ -563,7 +563,16 @@ func (a *actorState) send(q queued) {
 }
 
 func (a *actorState) deliver(q queued) {
-	payload, _ := json.Marshal(q.payload)
+	text := q.payload
+	if a.r.d.Redact != nil {
+		// History redacts the input it records (the orb row's redactor);
+		// the harness store writes the payload to disk as sent, and an
+		// @.env expansion or a pasted key would otherwise sit there, and
+		// in `bough engine inspect`, in the clear. The model reads the
+		// redacted text, as it reads the loop's redacted history.
+		text = a.r.d.Redact(text)
+	}
+	payload, _ := json.Marshal(text)
 	in := inbox.Input{ID: inbox.ID(q.id), Kind: inbox.InputExternal, Payload: jsontext.Value(payload)}
 	if err := a.run.inbox.Submit(a.r.ctx, in); err != nil {
 		a.note("error", "engine: "+err.Error(), nil)
