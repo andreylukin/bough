@@ -294,7 +294,7 @@ func (s *Supervisor) drainQueue() {
 
 // childEventLocked keeps the running count and triggers the report.
 // Caller holds s.mu.
-func (s *Supervisor) childEventLocked(id, kind string) {
+func (s *Supervisor) childEventLocked(id, kind string, extra map[string]any) {
 	m, ok := s.meta[id]
 	if !ok || m.SpawnedBy == "" {
 		return
@@ -303,6 +303,14 @@ func (s *Supervisor) childEventLocked(id, kind string) {
 	case "input":
 		s.running[id] = true
 	case "done", "cancelled", "exit":
+		if kind == "done" && num(extra["running"]) > 0 {
+			// The engine closed the turn with calls adopted as jobs: the
+			// agent is still working, and their wake turn's done is the
+			// one that finishes it. Reporting now handed the parent an
+			// interim reply and let the queue start another agent past
+			// the running cap.
+			return
+		}
 		// Not "error": the loop writes it MID-turn, several per turn.
 		delete(s.running, id)
 		go s.report(id, m.SpawnedBy, kind)

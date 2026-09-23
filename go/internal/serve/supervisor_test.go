@@ -183,6 +183,18 @@ func fakeTurn(path, line string) {
 		say(map[string]any{"kind": "cancelled"})
 		rec("done", nil)
 		say(map[string]any{"kind": "done"})
+	case strings.HasPrefix(line, "ADOPT"):
+		// The engine's shape: the turn closes with a call still running,
+		// and the call's end wakes a turn of its own.
+		rec("assistant", map[string]any{"text": "started the build"})
+		rec("done", map[string]any{"running": 1})
+		say(map[string]any{"kind": "done", "running": 1})
+		time.Sleep(400 * time.Millisecond)
+		rec("input", map[string]any{"text": "[background] job 1000 finished: make", "wake": true})
+		say(map[string]any{"kind": "input", "text": "[background] job 1000 finished: make"})
+		rec("assistant", map[string]any{"text": "echo " + line})
+		rec("done", map[string]any{"wake": true})
+		say(map[string]any{"kind": "done", "wake": true})
 	case strings.HasPrefix(line, "RACE"):
 		say(map[string]any{"kind": "done"})
 		time.Sleep(300 * time.Millisecond)

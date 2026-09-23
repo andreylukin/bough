@@ -838,7 +838,7 @@ func (s *Supervisor) emitLocked(id, kind, text string, extra map[string]any) {
 		// ask nobody is waiting on any more.
 		delete(s.asks, id)
 	}
-	s.childEventLocked(id, kind)
+	s.childEventLocked(id, kind, extra)
 
 	s.fanoutLocked(id, ev)
 }
