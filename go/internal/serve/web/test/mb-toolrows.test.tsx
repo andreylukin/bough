@@ -42,7 +42,7 @@ test("MB-TR: an inline edit diff has a sign gutter and an Unchanged lines strip"
   expect(html).toContain("Unchanged lines");
 });
 
-test("MB-TR: a steer note is word then text, with no mark column", () => {
+test("MB-TR: a steer note is yours: a labelled bubble on the right", () => {
   const lines = [
     { seq: 1, at: at(0), kind: "input", text: "hi" },
     { seq: 2, at: at(3), kind: "input", text: "say hi", data: { steer: true } },
@@ -50,7 +50,7 @@ test("MB-TR: a steer note is word then text, with no mark column", () => {
     { seq: 4, at: at(5), kind: "done", text: "" },
   ] as Line[];
   const html = renderToStaticMarkup(<TurnView turn={groupTurns(lines)[0]} />);
-  expect(html).toContain('<p class="steer-note"><span class="steer-word">Steer</span>');
+  expect(html).toContain('<div class="steer-note"><span class="steer-word">Steer</span><p class="prompt-bubble steer-bubble">say hi</p></div>');
 });
 
 test("MB-TR: a stopped turn's foot is neutral with the square", () => {

@@ -2919,8 +2919,9 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
 .dl-n{min-width:4ch;padding:0 8px;text-align:right;font-size:var(--fs-sm);font-variant-numeric:tabular-nums;color:var(--text-3);user-select:none}
 .dl-body>.dl-hunk,.edit-rows>.dl-hunk{min-height:24px;align-items:center}
 /* T7 steer note */
-.steer-note{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:8px;align-items:baseline;margin:4px 0;max-width:78ch;font-size:var(--fs-md);color:var(--text-2);white-space:pre-wrap;overflow-wrap:anywhere}
-.steer-word{margin-inline-start:20px;font-size:var(--fs-sm);font-weight:500;color:var(--text-3);white-space:nowrap}
+.steer-note{display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin:8px 0}
+.steer-word{font-size:var(--fs-sm);font-weight:500;color:var(--text-3);white-space:nowrap;padding-inline-end:14px}
+.steer-bubble{margin:0;font-size:var(--fs-base);line-height:1.55;color:var(--text-1);white-space:pre-wrap;overflow-wrap:anywhere}
 /* T8 turn foot */
 .turn-foot{align-items:center;min-height:28px;margin-top:8px;font-variant-numeric:tabular-nums}
 .turn-foot>.turn-outcome.turn-failed{font-weight:500}

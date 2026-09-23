@@ -1396,7 +1396,8 @@ export function Entry({ line, codes, nested, until }: { line: Line; codes: strin
   }
   if (k === "input") {
     // R3-C: a steer the running turn took, inside that turn.
-    return <p className="steer-note"><span className="steer-word">Steer</span>{line.text}</p>;
+    // Yours, so it sits where your prompts do: a bubble on the right, labelled.
+    return <div className="steer-note"><span className="steer-word">Steer</span><p className="prompt-bubble steer-bubble">{line.text}</p></div>;
   }
   if (k === "model-switch") {
     // A /model switch records the command and the loop's echo: one line, the record inside.
