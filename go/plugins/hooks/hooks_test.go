@@ -301,3 +301,34 @@ func TestOffAppliesToGoHooks(t *testing.T) {
 		t.Fatalf("an off go hook ran: %v", res)
 	}
 }
+
+// Two sessions firing in one process (the engine's parent and a
+// subagent) each record and drain their own fires, whatever SetSession
+// last named.
+func TestFireAsKeepsSessionsApart(t *testing.T) {
+	s := fixture(t)
+	cwd, _ := os.Getwd()
+	s.SetSession("other")
+	writeHook(t, cwd, "post-result", "noop.js", `return null`)
+	for _, id := range []string{"parent", "parent-w1"} {
+		if _, err := s.FireAs(context.Background(), id, "post-result", map[string]any{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	child := s.TakeFireRecordsFor("parent-w1")
+	if len(child) != 1 {
+		t.Fatalf("child drained %v", child)
+	}
+	parent := s.TakeFireRecordsFor("parent")
+	if len(parent) != 1 {
+		t.Fatalf("parent drained %v", parent)
+	}
+	if rest := s.TakeFireRecords(); rest != nil {
+		t.Fatalf("left over %v", rest)
+	}
+	for _, f := range s.Fires(0) {
+		if f.Session == "other" {
+			t.Fatalf("a fire was recorded under SetSession's name: %+v", f)
+		}
+	}
+}

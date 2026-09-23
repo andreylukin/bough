@@ -24,9 +24,17 @@ type Firer interface {
 	TakeFireRecords() []map[string]any
 }
 
-// sessionNamer is the hooks ledger's seam: every fire is recorded
-// under the session named before it.
+// sessionNamer is the hooks ledger's older seam: every fire is recorded
+// under the session named before it. It is process-wide, so it is the
+// fallback when the service cannot take the session per call.
 type sessionNamer interface{ SetSession(id string) }
+
+// sessionFirer fires and drains under a named session: the parent and
+// its subagents share one hooks service and fire concurrently.
+type sessionFirer interface {
+	FireAs(ctx context.Context, session, event string, payload map[string]any) (map[string]any, error)
+	TakeFireRecordsFor(session string) []map[string]any
+}
 
 // Bridge adapts a Firer to the engine's hook points.
 type Bridge struct {
@@ -67,10 +75,16 @@ func (b *Bridge) fire(ctx context.Context, event string, payload map[string]any)
 	if !ok || h == nil {
 		return nil
 	}
-	if n, ok := h.(sessionNamer); ok && b.Session != "" {
-		n.SetSession(b.Session)
+	var res map[string]any
+	var err error
+	if sf, ok := h.(sessionFirer); ok && b.Session != "" {
+		res, err = sf.FireAs(ctx, b.Session, event, payload)
+	} else {
+		if n, ok := h.(sessionNamer); ok && b.Session != "" {
+			n.SetSession(b.Session)
+		}
+		res, err = h.Fire(ctx, event, payload)
 	}
-	res, err := h.Fire(ctx, event, payload)
 	if err != nil {
 		b.notify("error", "hook "+event+": "+err.Error())
 	}
@@ -127,6 +141,9 @@ func (b *Bridge) Drain() []map[string]any {
 	h, ok := b.get()
 	if !ok || h == nil {
 		return nil
+	}
+	if sf, ok := h.(sessionFirer); ok && b.Session != "" {
+		return sf.TakeFireRecordsFor(b.Session)
 	}
 	return h.TakeFireRecords()
 }

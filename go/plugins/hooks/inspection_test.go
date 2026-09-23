@@ -171,7 +171,7 @@ func TestInspectionConcurrentLedger(t *testing.T) {
 				f := Fire{}
 				f.captureInput(map[string]any{"n": 1})
 				f.captureOutput(nil)
-				s.record(f)
+				s.record(f, "")
 				s.Fires(2)
 				s.TakeFireRecords()
 			}

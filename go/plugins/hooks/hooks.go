@@ -91,11 +91,15 @@ func (s *Service) SetSession(id string) {
 	s.session = id
 }
 
-// record appends one fire to the ring and to the undrained queue.
-func (s *Service) record(f Fire) {
+// record appends one fire to the ring and to the undrained queue,
+// under session; "" means the one SetSession named.
+func (s *Service) record(f Fire, session string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	f.Session = s.session
+	if session == "" {
+		session = s.session
+	}
+	f.Session = session
 	s.fires = append(s.fires, f)
 	s.pending = append(s.pending, f)
 	if len(s.fires) > fireRing {
@@ -113,7 +117,29 @@ func (s *Service) record(f Fire) {
 // consumes this and must not import this package: the in-package test
 // here imports the loop, so the pair would be a cycle.
 func (s *Service) TakeFireRecords() []map[string]any {
-	fires := s.TakeFires()
+	return fireRecords(s.TakeFires())
+}
+
+// TakeFireRecordsFor drains only the fires recorded under session,
+// leaving the others queued: the engine runs a parent and its subagents
+// in one process, each with its own history, and a drain of everything
+// wrote a child's fires into whichever session drained first.
+func (s *Service) TakeFireRecordsFor(session string) []map[string]any {
+	s.mu.Lock()
+	var mine, rest []Fire
+	for _, f := range s.pending {
+		if f.Session == session {
+			mine = append(mine, cloneFire(f))
+		} else {
+			rest = append(rest, f)
+		}
+	}
+	s.pending = rest
+	s.mu.Unlock()
+	return fireRecords(mine)
+}
+
+func fireRecords(fires []Fire) []map[string]any {
 	out := make([]map[string]any, 0, len(fires))
 	for _, f := range fires {
 		rec := map[string]any{
@@ -314,6 +340,17 @@ func (s *Service) AddWithDescription(event, name, description string, fn func(pa
 // the user has turned off in off.yml does not run at all.
 // No hook files, or none returning anything, is a nil result.
 func (s *Service) Fire(ctx context.Context, event string, payload map[string]any) (map[string]any, error) {
+	return s.fire(ctx, "", event, payload)
+}
+
+// FireAs is Fire with the fires recorded under session, whatever
+// SetSession last named: two sessions firing at once in one process
+// (the engine's parent and its subagents) cannot share one setting.
+func (s *Service) FireAs(ctx context.Context, session, event string, payload map[string]any) (map[string]any, error) {
+	return s.fire(ctx, session, event, payload)
+}
+
+func (s *Service) fire(ctx context.Context, session, event string, payload map[string]any) (map[string]any, error) {
 	var merged map[string]any
 	s.mu.Lock()
 	gohs := append([]goHook(nil), s.gohs[event]...)
@@ -330,7 +367,7 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 		f.At, f.Ms = start, time.Since(start).Milliseconds()
 		f.Decision, f.Notice, f.Truncated = decision(payload, res), notice(res), cut
 		f.captureOutput(res)
-		s.record(f)
+		s.record(f, session)
 		if res == nil {
 			continue
 		}
@@ -371,7 +408,7 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 		if err != nil {
 			f.At, f.Ms, f.Error = start, time.Since(start).Milliseconds(), err.Error()
 			f.captureOutput(nil)
-			s.record(f)
+			s.record(f, session)
 			failed = append(failed, fmt.Errorf("%s: %w", path, err))
 			continue
 		}
@@ -383,7 +420,7 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 		if err != nil {
 			f.At, f.Ms, f.Error = start, time.Since(start).Milliseconds(), err.Error()
 			f.captureOutput(nil)
-			s.record(f)
+			s.record(f, session)
 			failed = append(failed, fmt.Errorf("%s: %w", path, err))
 			continue
 		}
@@ -391,7 +428,7 @@ func (s *Service) Fire(ctx context.Context, event string, payload map[string]any
 		f.At, f.Ms = start, time.Since(start).Milliseconds()
 		f.Decision, f.Notice, f.Truncated = decision(payload, res), notice(res), cut
 		f.captureOutput(res)
-		s.record(f)
+		s.record(f, session)
 		if res == nil {
 			continue
 		}

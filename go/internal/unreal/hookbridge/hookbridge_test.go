@@ -192,3 +192,43 @@ func TestArgsObject(t *testing.T) {
 		t.Fatalf("non-object args = %#v", got)
 	}
 }
+
+// sessionFirer is preferred over SetSession: fires go out and come back
+// under the bridge's own session, and Drain leaves other sessions' fires.
+type sessFirer struct {
+	firer
+	fired   []string
+	pending map[string][]map[string]any
+}
+
+func (f *sessFirer) FireAs(ctx context.Context, session, event string, payload map[string]any) (map[string]any, error) {
+	f.fired = append(f.fired, session+":"+event)
+	if f.pending == nil {
+		f.pending = map[string][]map[string]any{}
+	}
+	f.pending[session] = append(f.pending[session], map[string]any{"event": event})
+	return nil, nil
+}
+
+func (f *sessFirer) TakeFireRecordsFor(session string) []map[string]any {
+	r := f.pending[session]
+	delete(f.pending, session)
+	return r
+}
+
+func TestBridgeFiresAndDrainsUnderItsOwnSession(t *testing.T) {
+	f := &sessFirer{firer: firer{answers: map[string]map[string]any{}}}
+	b := New(func() (Firer, bool) { return f, true })
+	b.Session = "parent-w1"
+	f.pending = map[string][]map[string]any{"parent": {{"event": "stop"}}}
+	b.SessionStart(context.Background())
+	if !slices.Equal(f.fired, []string{"parent-w1:session-start"}) || f.session != "" {
+		t.Fatalf("fired %v, SetSession %q", f.fired, f.session)
+	}
+	if got := b.Drain(); len(got) != 1 || got[0]["event"] != "session-start" {
+		t.Fatalf("drained %v", got)
+	}
+	if len(f.pending["parent"]) != 1 {
+		t.Fatal("the parent's fires were drained by the child")
+	}
+}
