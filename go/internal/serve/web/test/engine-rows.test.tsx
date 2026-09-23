@@ -122,8 +122,16 @@ test("ER: a wake turn opens on a quiet line, holding the call that finished, not
   expect(html).not.toContain("prompt-bubble");
   expect(html).toContain("make build");
   expect(wakeLabel({ ...wake, data: { wake: true, reason: "heartbeat" } })).toBe("The agent checked on its running calls");
-  // The turn that left the call running says so on its footer.
-  expect(renderToStaticMarkup(<TurnView turn={turns[0]} />)).toContain("1 call still running");
+  // The call has since reported, so the turn that left it running no
+  // longer says it still runs.
+  expect(renderToStaticMarkup(<TurnView turn={turns[0]} />)).not.toContain("still running");
+  // Until it reports, the footer says so; its job line names the call.
+  const job: Line = { seq: 2, at: at(1), kind: "job", text: "job 1: make build", data: { id: 1, event: "started", cmd: "make build", call: "toolu_20" } };
+  const early = groupTurns([input, job, { seq: 3, at: at(2), kind: "done", text: "", data: { running: 1 } }]);
+  expect(renderToStaticMarkup(<TurnView turn={early[0]} />)).toContain("1 call still running");
+  const later = groupTurns([input, job, { seq: 3, at: at(2), kind: "done", text: "", data: { running: 1 } }, bg]);
+  expect(later[0].settled).toBe(1);
+  expect(renderToStaticMarkup(<TurnView turn={later[0]} />)).not.toContain("still running");
 });
 
 test("ER: a turn that ended on a failed native call opens it and names it in the footer", () => {
