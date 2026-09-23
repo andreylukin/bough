@@ -35,3 +35,14 @@ RUN set -e; A=$(dpkg --print-architecture); \
     curl -fsSL https://raw.githubusercontent.com/grafana/gcx/main/scripts/install.sh | GCX_VERSION=$GCX GCX_INSTALL_DIR=/usr/local/bin sh; \
     curl -fsSL https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh; \
     rm -rf /tmp/linux-$A
+
+# go: official tarball, checksum per arch.
+ARG GO=1.27.0
+ARG GO_SHA_ARM64=51798d2c42d0e1c6ed7fd9f48728b4193abac9e8aad6dbac2fe96a81f5909bda
+ARG GO_SHA_AMD64=675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685
+RUN set -e; A=$(dpkg --print-architecture); \
+    case "$A" in arm64) S=$GO_SHA_ARM64 ;; amd64) S=$GO_SHA_AMD64 ;; *) echo "no go for $A" >&2; exit 1 ;; esac; \
+    curl -fsSL --retry 3 "https://go.dev/dl/go$GO.linux-$A.tar.gz" -o /tmp/go.tgz; \
+    echo "$S  /tmp/go.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/go.tgz -C /usr/local; rm /tmp/go.tgz; \
+    ln -s /usr/local/go/bin/go /usr/local/go/bin/gofmt /usr/local/bin/
