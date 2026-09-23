@@ -1,0 +1,36 @@
+go/internal/orb/zshrc.go
+  417bd3b1fc9fbff6 1-94
+go/docs/orbs.md
+  417bd3b1fc9fbff6 424-430,440,442-443
+go/internal/orb/orb.go
+  417bd3b1fc9fbff6 346-348,355-359,370-372
+go/internal/orb/zshrc_test.go
+  417bd3b1fc9fbff6 1-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.5",
+  "base_commit_sha": "20a78e9ebd5c348c240ba2f4965681a6d62b7327",
+  "prompts": {
+    "417bd3b1fc9fbff6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "17efcc81-ac6e-44dc-a7c2-44535ae271bd",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Andrey Lukin",
+      "messages": [],
+      "total_additions": 198,
+      "total_deletions": 5,
+      "accepted_lines": 198,
+      "overriden_lines": 0,
+      "messages_url": "https://uni-git-ai-cas.sre.aws.ai-internal.com//cas/2e101ea8d7cfcf1e15382d8653e10af3ac6b51cab8389bbeb556a65016d24b65",
+      "context_window_samples": [
+        {
+          "used_tokens": 126510,
+          "timestamp": "2026-09-23T17:10:28.030Z"
+        }
+      ]
+    }
+  }
+}
