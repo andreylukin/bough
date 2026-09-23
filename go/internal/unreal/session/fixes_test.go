@@ -1,8 +1,11 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"slices"
@@ -285,4 +288,124 @@ func TestCancelBeforeInflightIsLatched(t *testing.T) {
 	if len(resp.Output) != 0 || !slices.Equal(metas, []string{"partial"}) {
 		t.Fatalf("response %+v metas %v, want an empty stopped answer", resp, metas)
 	}
+}
+
+// guardStats is turn-stats with a project session's read rule: only
+// paths under root.
+type guardStats struct {
+	fakeStats
+	root string
+}
+
+func (g *guardStats) ReadAllowed(path string) error {
+	if rel, err := filepath.Rel(g.root, path); err != nil || strings.HasPrefix(rel, "..") {
+		return errf("view_image: %s is outside this project session", path)
+	}
+	return nil
+}
+
+// recHooks records the native-call hooks and denies what deny names.
+type recHooks struct {
+	mu   sync.Mutex
+	pre  []string
+	post []string
+	deny string
+}
+
+func (h *recHooks) PreTool(_ context.Context, tool string, c agenttools.Call, detail string) (json.RawMessage, string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.pre = append(h.pre, tool+" "+detail)
+	if h.deny != "" && strings.Contains(detail, h.deny) {
+		return nil, "no images from " + h.deny
+	}
+	return nil, ""
+}
+
+func (h *recHooks) PostTool(_ context.Context, tool string, c agenttools.Call, detail string, r agenttools.Result) agenttools.Result {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.post = append(h.post, tool+" "+detail)
+	return r
+}
+
+// view_image is a harness op, not a bough.call: it gets the project
+// session's read rule and the pre-code-exec hook all the same.
+func TestViewImageIsConfinedAndHooked(t *testing.T) {
+	t.Parallel()
+	stats := &guardStats{}
+	hooks := &recHooks{deny: "private"}
+	r := newRigWith(t, []rigOpt{func(d *Deps) {
+		stats.root = d.Cwd
+		d.Stats = func() TurnStats { return stats }
+		d.Hooks = func() agenttools.Hooks { return hooks }
+	}},
+		fake.Step{Want: "look", Output: []ullmItem{
+			fake.Call("v1", "view_image", `{"path":"/etc/host-secret.png"}`),
+			fake.Call("v2", "view_image", `{"path":"../outside.png"}`),
+			fake.Call("v3", "view_image", `{"path":"private/shot.png"}`),
+		}},
+		fake.Step{Match: func(req ullmRequest) error {
+			s := fake.Render(req)
+			for _, want := range []string{
+				"result v1 text:Error: view_image: /etc/host-secret.png is outside this project session",
+				"is outside this project session", // v2, resolved against the session dir
+				"result v3 text:Error: blocked by hook: no images from private",
+			} {
+				if !strings.Contains(s, want) {
+					return errf("want %q in:\n%s", want, s)
+				}
+			}
+			if strings.Count(s, "outside this project session") != 2 {
+				return errf("both host paths must be refused:\n%s", s)
+			}
+			return nil
+		}, Output: []ullmItem{fake.Text("cannot see them")}},
+	)
+	r.rt.Submit("look at these")
+	r.waitDone(1)
+	if r.last("assistant").Data["text"] != "cannot see them" {
+		t.Fatalf("history\n%s", r.dump())
+	}
+	hooks.mu.Lock()
+	defer hooks.mu.Unlock()
+	if len(hooks.pre) != 3 || !strings.HasPrefix(hooks.pre[0], "view_image ") {
+		t.Fatalf("pre-code-exec fired %v", hooks.pre)
+	}
+}
+
+// An image the session may read loads, and post-result sees the call.
+func TestViewImageInsideLoadsAndFiresPostResult(t *testing.T) {
+	t.Parallel()
+	stats := &guardStats{}
+	hooks := &recHooks{}
+	var cwd string
+	r := newRigWith(t, []rigOpt{func(d *Deps) {
+		cwd, stats.root = d.Cwd, d.Cwd
+		d.Stats = func() TurnStats { return stats }
+		d.Hooks = func() agenttools.Hooks { return hooks }
+	}},
+		fake.Step{Want: "look", Output: []ullmItem{fake.Call("v1", "view_image", `{"path":"ok.png"}`)}},
+		fake.Step{Match: func(req ullmRequest) error {
+			if s := fake.Render(req); !strings.Contains(s, "result v1 image:data:image/png;base64,") {
+				return errf("the image did not load:\n%s", s)
+			}
+			return nil
+		}, Output: []ullmItem{fake.Text("a dot")}},
+	)
+	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	var b bytes.Buffer
+	if err := png.Encode(&b, img); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "ok.png"), b.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.rt.Submit("look at it")
+	r.waitDone(1)
+	r.waitFor("post-result for view_image", func() bool {
+		hooks.mu.Lock()
+		defer hooks.mu.Unlock()
+		return slices.Contains(hooks.post, "view_image ok.png")
+	})
 }

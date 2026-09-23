@@ -831,6 +831,13 @@ func (s *Stats) view(path string, rng ...int) (string, error) {
 	return out, err
 }
 
+// ReadAllowed is the project session's read rule for a reader outside
+// this row: the engine's view_image, a harness op that never passes
+// through viewFile. The engine finds it on turn-stats.
+func (s *Stats) ReadAllowed(path string) error {
+	return s.project.allowed("view_image", path)
+}
+
 func (s *Stats) viewFile(path string, rng ...int) (string, error) {
 	// A project session reads only what it may write: the host outside
 	// the orb (a loop's holdout among it) is not the project's.

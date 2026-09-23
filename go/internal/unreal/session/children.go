@@ -17,7 +17,6 @@ import (
 	"github.com/unreallabsai/unreal-agent/harness/session"
 	"github.com/unreallabsai/unreal-agent/harness/sessionstore"
 	"github.com/unreallabsai/unreal-agent/harness/sessionstore/localfile"
-	"github.com/unreallabsai/unreal-agent/harness/tool/viewimage"
 
 	"github.com/andreylukin/bough/internal/agenttools"
 	"github.com/andreylukin/bough/internal/unreal/ops"
@@ -108,7 +107,7 @@ func (c children) Run(ctx context.Context, req ChildRequest) (ChildResult, error
 	}
 
 	tools := childTools(r.snapshot(), req.Allow)
-	reg := toolreg.New(toolreg.Config{Tools: tools, ViewImage: viewimage.New(viewimage.Config{Directory: r.d.Cwd}), MaxOutput: r.cfg.MaxOutput})
+	reg := toolreg.New(toolreg.Config{Tools: tools, ViewImage: r.viewImage(r.d.Cwd), MaxOutput: r.cfg.MaxOutput})
 	b := prompt.Wrap(contextbuilder.NewBuilder(), childSystem(r, req.System), prompt.Placeholder)
 	model, _ := r.gate.Model()
 	b.SetModel(ullm.Model{ID: orDefault(model, "engine")})

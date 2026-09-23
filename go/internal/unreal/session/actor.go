@@ -263,6 +263,7 @@ func (a *actorState) item(it sessionstore.Item) {
 		}
 		if _, still := a.m.Outstanding[st.CallID]; before[st.CallID] && !still {
 			a.ended(st)
+			a.viewedImage(st)
 		}
 		return
 	}

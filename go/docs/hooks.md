@@ -33,6 +33,12 @@ does against the loop's whole block, and the payload also names the tool.
   output without the `Error:` line.
 - A `code` rewrite from `pre-code-exec` is ignored on the engine. Return `args`
   instead.
+- `view_image` is the harness's own tool, not a bough call, and gets the same
+  two events: `pre-code-exec` with the path as `code` (a `deny` refuses it),
+  and `post-result` once the image has loaded or failed. Its `result` is not
+  rewritten, since what the model reads is the image. In a project session it
+  reads only what `view` may: the orb, the scratchpad and the project's own
+  directory.
 - The loop ignores what `stop` returns. The engine honours `block` there, so a
   stop hook written for the loop that returns `block` starts doing something
   on the engine.

@@ -21,7 +21,6 @@ import (
 	"github.com/unreallabsai/unreal-agent/harness/session"
 	"github.com/unreallabsai/unreal-agent/harness/sessionstore"
 	"github.com/unreallabsai/unreal-agent/harness/tool"
-	"github.com/unreallabsai/unreal-agent/harness/tool/viewimage"
 
 	"github.com/andreylukin/bough/internal/agenttools"
 	"github.com/andreylukin/bough/internal/unreal"
@@ -361,7 +360,7 @@ func (a *actorState) ensureRun() error {
 		}
 		reg = toolreg.New(toolreg.Config{
 			Tools:     snap,
-			ViewImage: viewimage.New(viewimage.Config{Directory: dir}),
+			ViewImage: r.viewImage(dir),
 			MaxOutput: r.cfg.MaxOutput,
 		})
 	}
