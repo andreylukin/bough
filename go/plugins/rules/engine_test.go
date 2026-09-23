@@ -105,8 +105,10 @@ func TestEngineScopedRuleOnNativeWrite(t *testing.T) {
 	ctx := engineTree(t)
 	b := bridgeOf(t, ctx)
 	call := agenttools.Call{ID: "w1", Args: json.RawMessage(`{"path":"src/api/users.ts","content":"x"}`)}
+	// The hook's code is the call's path and text, read from its args.
+	web := agenttools.Call{ID: "w0", Args: json.RawMessage(`{"path":"src/web/app.ts","content":"x"}`)}
 
-	r := b.PostTool(context.Background(), "write", call, "src/web/app.ts", agenttools.Result{Text: "wrote src/web/app.ts"})
+	r := b.PostTool(context.Background(), "write", web, "src/web/app.ts", agenttools.Result{Text: "wrote src/web/app.ts"})
 	if r.Text != "wrote src/web/app.ts" {
 		t.Fatalf("unrelated path got a rule: %q", r.Text)
 	}
