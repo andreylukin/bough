@@ -3,9 +3,32 @@ package ask
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/andreylukin/bough/internal/agenttools"
 )
+
+// oneAtATime waits until no other native ask or secret is open. The
+// engine runs every call in a reply at once, so an ask and a secret can
+// be up together, but every UI keeps one answer slot and the last ask
+// event wins it: the line typed for the first question answered the
+// second, and a credential typed for a secret could land in a plain
+// ask, unmasked and recorded. A codemode block asks one question at a
+// time by construction, so the loop's path is left as it was.
+func (a *Asker) oneAtATime(done <-chan struct{}) (release func(), err error) {
+	a.mu.Lock()
+	if a.native == nil {
+		a.native = make(chan struct{}, 1)
+	}
+	turn := a.native
+	a.mu.Unlock()
+	select {
+	case turn <- struct{}{}:
+		return func() { <-turn }, nil
+	case <-done:
+		return nil, fmt.Errorf("ask: cancelled with no answer")
+	}
+}
 
 // nativeTools are ask and secret for an engine that calls tools
 // natively. Both are Blocking: the wait is on the person, so the call
@@ -34,6 +57,11 @@ func (a *Asker) nativeTools() []agenttools.Tool {
 				if err := agenttools.Decode("ask", c.Args, &v); err != nil {
 					return agenttools.Result{}, err
 				}
+				release, err := a.oneAtATime(ctx.Done())
+				if err != nil {
+					return agenttools.Result{Error: err.Error()}, nil
+				}
+				defer release()
 				out, err := a.putIn(ctx.Done(), nil, v.Question, false, v.Options...)
 				if err != nil {
 					return agenttools.Result{Error: err.Error()}, nil
@@ -68,6 +96,11 @@ func (a *Asker) nativeTools() []agenttools.Tool {
 				if v.Project != "" {
 					project = []string{v.Project}
 				}
+				release, err := a.oneAtATime(ctx.Done())
+				if err != nil {
+					return agenttools.Result{Error: "secret: " + err.Error()}, nil
+				}
+				defer release()
 				// The value goes from the answer straight to the keychain
 				// inside secretVia; only "stored NAME as REF" comes back,
 				// so it never reaches the op state, the store or the model.

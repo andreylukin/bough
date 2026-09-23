@@ -57,6 +57,9 @@ type Asker struct {
 	mu      sync.Mutex
 	seq     int64
 	pending map[string]pend
+	// native lets one native ask or secret be open at a time; see
+	// oneAtATime.
+	native  chan struct{}
 	timeout time.Duration
 	code    codemode
 	emit    func(Event)
