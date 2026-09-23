@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -113,8 +114,17 @@ func relayExec(w http.ResponseWriter, r *http.Request) {
 			stderr.WriteString("orb relay: " + err.Error() + "\n")
 		}
 	}
+	// The shim reads the body as three lines. Go chunks a response it
+	// cannot size (anything past 2KB written before the handler returns),
+	// and the shim then read a chunk-size line as the exit code, the
+	// exit code as stdout ("base64: invalid input") and stdout as
+	// stderr, with exit 1: every MCP result over 2KB failed in an orb.
+	// Sizing the body keeps it one unframed stream.
+	var framed bytes.Buffer
+	writeRelayBody(&framed, stdout.String(), stderr.String(), exit)
 	w.Header().Set("Content-Type", "text/plain")
-	writeRelayBody(w, stdout.String(), stderr.String(), exit)
+	w.Header().Set("Content-Length", strconv.Itoa(framed.Len()))
+	_, _ = w.Write(framed.Bytes())
 }
 
 // relaySessionHeader carries the guest's session id, so a relayed

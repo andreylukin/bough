@@ -51,7 +51,7 @@ func TestRelayRunsOnlyMCPOnHost(t *testing.T) {
 		if resp.StatusCode != 200 {
 			return resp, "", "", 0
 		}
-		lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+		lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
 		if len(lines) != 3 {
 			t.Fatalf("relay body: %q", raw)
 		}
@@ -75,6 +75,16 @@ func TestRelayRunsOnlyMCPOnHost(t *testing.T) {
 	// browser is relayed too, so an orb can drive the host's browser.
 	if resp, _, _, _ := post(frame("", "browser", "snapshot")); resp.StatusCode != 200 {
 		t.Fatalf("browser not relayed: %d", resp.StatusCode)
+	}
+	// A result past Go's 2KB chunking threshold is still one sized body:
+	// the shim reads three lines, and a chunked response put a chunk
+	// size where the exit code goes (every big MCP result failed in an
+	// orb with "base64: invalid input" and exit 1).
+	big := strings.Repeat("x", 70_000)
+	os.WriteFile(fake, []byte("#!/bin/sh\nprintf '%s' \""+big+"\"\n"), 0o755)
+	resp, out, _, exit = post(frame("", "mcp", "call", "s/t"))
+	if len(resp.TransferEncoding) != 0 || resp.ContentLength <= 0 || out != big || exit != 0 {
+		t.Fatalf("big relay: te=%v len=%d out=%d exit=%d", resp.TransferEncoding, resp.ContentLength, len(out), exit)
 	}
 }
 
