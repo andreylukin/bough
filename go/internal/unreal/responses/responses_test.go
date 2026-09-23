@@ -334,3 +334,33 @@ func (r *slowReader) Read(p []byte) (int, error) {
 	r.i += n
 	return n, nil
 }
+
+// An outgrown window must reach the Gate as the overflow sentinel, the
+// one way it learns to stop resending the whole history every turn.
+func TestOverflowIsTyped(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		`{"error":{"message":"Your input exceeds the context window of this model.","type":"invalid_request_error","code":"context_length_exceeded","param":"input"}}`,
+		`{"error":{"message":"This endpoint's maximum context length is 200000 tokens. However, you requested about 250000 tokens.","code":400}}`,
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			io.Copy(io.Discard, r.Body)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			io.WriteString(w, body)
+		}))
+		a, err := New(Config{
+			Kind: "openai", APIKey: func() (string, error) { return "k", nil }, BaseURL: srv.URL,
+			Model: func() string { return "gpt-5.6-sol" }, HTTP: srv.Client(), MaxAttempts: 1,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := ullm.Request{Input: []ullm.Item{{Type: ullm.ItemMessage, Data: ullm.Message{Role: ullm.RoleUser, Text: "x"}}}}
+		_, err = a.Respond(t.Context(), req, ullm.RequestOptions{})
+		srv.Close()
+		if !errors.Is(err, agentllm.ErrContextOverflow) || !strings.HasPrefix(err.Error(), "llm-openai: ") {
+			t.Errorf("%s: err = %v, want ErrContextOverflow naming the row", body, err)
+		}
+	}
+}

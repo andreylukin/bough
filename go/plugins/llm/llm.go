@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/andreylukin/bough/internal/agentllm"
 	"github.com/andreylukin/bough/kernel"
 )
 
@@ -206,20 +207,6 @@ func MarkTruncated(reply string) string {
 	return reply + Truncated
 }
 
-// overflowMarks are how the providers say the conversation no longer
-// fits. They disagree on the wording, and none of them uses a code the
-// HTTP status distinguishes from any other 400.
-var overflowMarks = []string{
-	"maximum context length",
-	"context_length_exceeded",
-	"context length exceeded",
-	"prompt is too long",
-	"too many tokens",
-	"exceeds the maximum",
-	"reduce the length of the messages",
-	"input length and `max_tokens` exceed",
-}
-
 // IsOverflow reports whether err is the conversation outgrowing the
 // model's context window.
 //
@@ -228,16 +215,7 @@ var overflowMarks = []string{
 // fails the same way. Without recognising it the session is simply
 // bricked, and the user is left reading a provider's token arithmetic.
 func IsOverflow(err error) bool {
-	if err == nil {
-		return false
-	}
-	s := strings.ToLower(err.Error())
-	for _, m := range overflowMarks {
-		if strings.Contains(s, strings.ToLower(m)) {
-			return true
-		}
-	}
-	return false
+	return err != nil && agentllm.IsOverflowText(err.Error())
 }
 
 // OverflowHelp is what to do about it. bough does not compact a

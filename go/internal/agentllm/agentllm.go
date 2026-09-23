@@ -5,6 +5,7 @@ package agentllm
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	ullm "github.com/unreallabsai/unreal-agent/harness/llm"
@@ -80,3 +81,31 @@ func SeqOf(ctx context.Context) uint64 {
 // ErrContextOverflow is wrapped by adapters when the provider says the
 // prompt no longer fits. The Gate makes it sticky until the model changes.
 var ErrContextOverflow = errors.New("context window exceeded")
+
+// overflowMarks are how the providers say the conversation no longer
+// fits. They disagree on the wording, and none of them uses a code the
+// HTTP status distinguishes from any other 400. The loop (llm.IsOverflow)
+// and the engine's adapters read the same list, so a provider both
+// recognise is recognised by both.
+var overflowMarks = []string{
+	"maximum context length",
+	"context_length_exceeded",
+	"context length exceeded",
+	"prompt is too long",
+	"too many tokens",
+	"exceeds the maximum",
+	"reduce the length of the messages",
+	"input length and `max_tokens` exceed",
+}
+
+// IsOverflowText reports whether a provider's error text says the
+// conversation outgrew the model's context window.
+func IsOverflowText(s string) bool {
+	s = strings.ToLower(s)
+	for _, m := range overflowMarks {
+		if strings.Contains(s, strings.ToLower(m)) {
+			return true
+		}
+	}
+	return false
+}
