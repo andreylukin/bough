@@ -1,0 +1,30 @@
+go/internal/projectdef/base.Dockerfile
+  417bd3b1fc9fbff6 38-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.5",
+  "base_commit_sha": "3f7d600d847336946ce46132d6a349383452bcba",
+  "prompts": {
+    "417bd3b1fc9fbff6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "17efcc81-ac6e-44dc-a7c2-44535ae271bd",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Andrey Lukin",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 8350,
+      "accepted_lines": 11,
+      "overriden_lines": 0,
+      "messages_url": "https://uni-git-ai-cas.sre.aws.ai-internal.com//cas/2786ac3bfa676b9ab25800634a2d9f7af099bc881068b3f2a9862bfbe1e5dec0",
+      "context_window_samples": [
+        {
+          "used_tokens": 125703,
+          "timestamp": "2026-09-23T17:10:24.179Z"
+        }
+      ]
+    }
+  }
+}
