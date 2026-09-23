@@ -378,7 +378,7 @@ func (a *actorState) ensureRun() error {
 		SessionID:             sid,
 		Inbox:                 in,
 		Restored:              restored,
-		Sessions:              r.store,
+		Sessions:              r.sessions(ctx, sid),
 		ContextBuilder:        b,
 		LLM:                   r.gate,
 		Tools:                 reg,

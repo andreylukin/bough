@@ -1964,6 +1964,15 @@ first build the engine does one of two things:
   `store.Fork(childSid, parentSid, done.engine_turn)` and records
   `engine {…, forked_from: parentSid, fork_turn}`.
 
+The harness fork also strips the operations off every inherited call
+status, and a coordinator replaying a status without them adds no
+result, so every earlier call would reach the child's model without an
+answer. Every coordinator of a forked session therefore reads its
+history through `forkedStore` (`session/fork.go`), which puts back the
+operations from the parent's file (and its parent's, for a fork of a
+fork) by sequence, which a fork keeps. The replay renders each result
+as the parent did, and the fork item that follows clears them.
+
 ### 12.4 Subagents (`session/children.go`)
 
 `Children.Run` builds a child coordinator. The child has:
