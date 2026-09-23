@@ -217,6 +217,39 @@ func TestToolSetChangeRestartsAtIdle(t *testing.T) {
 	r.waitDone(2)
 }
 
+// A /model swap remounts the rows that read the llm, and their tools
+// unregister and register again: a set that comes back as it was is not
+// a change, so the coordinator keeps running and no error is recorded.
+func TestToolSetBlipDoesNotRestart(t *testing.T) {
+	t.Parallel()
+	r := newRig(t,
+		fake.Step{Want: "first", Output: []ullmItem{fake.Text("ok")}},
+		fake.Step{Want: "second", Output: []ullmItem{fake.Text("ok again")}},
+	)
+	r.rt.Submit("first")
+	r.waitDone(1)
+	echo, ok := r.kit.reg.Lookup("echo")
+	if !ok {
+		t.Fatal("no echo tool")
+	}
+	// Three blips, each a tool that appears and is gone 20ms later.
+	for range 3 {
+		off, err := r.kit.reg.Register(agenttools.Tool{Name: "echo_blip", Description: echo.Description,
+			Schema: echo.Schema, Call: echo.Call})
+		if err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(20 * time.Millisecond)
+		off()
+	}
+	r.stays("no restart", toolSettle+500*time.Millisecond, func() bool { return r.count("engine") == 1 })
+	r.rt.Submit("second")
+	r.waitDone(2)
+	if r.count("engine") != 1 || r.count("error") != 0 {
+		t.Fatalf("history\n%s", r.dump())
+	}
+}
+
 // A subagent runs on a child coordinator and writes sub:* rows.
 func TestSubagent(t *testing.T) {
 	t.Parallel()

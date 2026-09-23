@@ -35,6 +35,13 @@ const jobWake = "[background job] A command you started in the background has fi
 // and done has to be on disk inside it.
 const cancelWait = time.Second
 
+// toolSettle is how long a changed tool set must stay changed before the
+// coordinator restarts for it. A /model swap remounts every row that
+// reads the llm, and their tools unregister and register again within
+// one command; restarting on the first signal rebuilt the coordinator
+// mid-cascade, and again once the set came back unchanged.
+const toolSettle = 500 * time.Millisecond
+
 // progressEvery and progressMax coalesce a call's live output: at most
 // one call-delta per call per 100 ms, never more than 4 KiB held back.
 const (
@@ -62,6 +69,9 @@ type coord struct {
 	cancel context.CancelFunc
 	inbox  *inbox.Inbox
 	hash   string
+	// stopped: the actor cancelled Run to restart it, so whatever Run
+	// returns is that cancel, however the harness words it.
+	stopped bool
 }
 
 type cancelState struct {
@@ -92,6 +102,7 @@ type actorState struct {
 	run      *coord
 	gen      int
 	restart  bool
+	toolsAt  time.Time // the last tool-set change signal
 	rebuilds int
 
 	open      bool
@@ -719,8 +730,13 @@ func (a *actorState) evaluate() {
 		a.submit(line)
 		return
 	}
-	if a.restart && !a.m.Inflight && a.m.Pending == 0 {
-		a.restartRun()
+	if a.restart && !a.m.Inflight && a.m.Pending == 0 && len(a.unobserved) == 0 &&
+		time.Since(a.toolsAt) >= toolSettle {
+		if a.run != nil && a.r.toolsHash() == a.run.hash {
+			a.restart = false // the set came back as it was
+		} else {
+			a.restartRun()
+		}
 	}
 	if len(a.drains) > 0 && a.idle() {
 		for _, f := range a.drains {
@@ -1081,10 +1097,11 @@ func (a *actorState) runExit(gen int, err error) {
 	if a.run == nil || a.run.gen != gen {
 		return
 	}
+	stopped := a.run.stopped
 	a.run = nil
 	restarting := a.restart
 	a.restart = false
-	if err != nil && !errors.Is(err, context.Canceled) {
+	if err != nil && !stopped && !errors.Is(err, context.Canceled) {
 		a.note("error", "engine: "+err.Error(), nil)
 		if a.open && a.cancelling == nil {
 			a.closeTurn(0, "error")
@@ -1107,11 +1124,16 @@ func (a *actorState) toolsChanged() {
 	}
 	if h := a.r.toolsHash(); h != a.run.hash {
 		a.restart = true
+		a.toolsAt = time.Now()
+		// evaluate runs after every posted func: this one is the
+		// re-check once the set has had toolSettle to stop moving.
+		time.AfterFunc(toolSettle, func() { a.r.post(func() {}) })
 	}
 }
 
 func (a *actorState) restartRun() {
 	if a.run != nil {
+		a.run.stopped = true
 		a.run.cancel()
 	}
 }
