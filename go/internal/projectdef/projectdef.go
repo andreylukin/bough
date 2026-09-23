@@ -513,10 +513,19 @@ var skeletonYAML = skeletonHeader + `repos:
 checks:
   fast: ""
   full: ""
-identity: [gh]
 # caches: [/root/.cache/go-build]
 # env: {GOFLAGS: -mod=mod}
 `
+
+// defaultIdentity is the identity line a new project starts with: gh, and
+// the Parallel CLI's OAuth dir (rewritten on refresh) when the host has it.
+func defaultIdentity(home string) string {
+	ids := []string{IdentityGitHub}
+	if fi, err := os.Stat(filepath.Join(home, ".config", "parallel-web-tools")); err == nil && fi.IsDir() {
+		ids = append(ids, ".config/parallel-web-tools:rw")
+	}
+	return "identity: [" + strings.Join(ids, ", ") + "]\n"
+}
 
 const skeletonSetup = `#!/bin/sh
 # Runs once on the base image; the result is snapshotted as the orb image.
@@ -539,7 +548,7 @@ func Create(home, slug string) (Project, error) {
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		return Project{}, fmt.Errorf("projectdef: create %s: %w", slug, err)
 	}
-	if err := atomicWrite(filepath.Join(dir, FileYAML), []byte(skeletonYAML), 0o644); err != nil {
+	if err := atomicWrite(filepath.Join(dir, FileYAML), []byte(skeletonYAML+defaultIdentity(home)), 0o644); err != nil {
 		return Project{}, fmt.Errorf("projectdef: create %s: %w", slug, err)
 	}
 	if err := atomicWrite(filepath.Join(dir, FileSetup), []byte(skeletonSetup), 0o755); err != nil {
@@ -568,7 +577,7 @@ func CreateEmpty(home, slug, name string) (Project, error) {
 	if n := strings.TrimSpace(name); n != "" {
 		text += nameLine(n) + "\n"
 	}
-	text += "repos: []\nidentity: [gh]\n"
+	text += "repos: []\n" + defaultIdentity(home)
 	if err := atomicWrite(filepath.Join(dir, FileYAML), []byte(text), 0o644); err != nil {
 		return Project{}, fmt.Errorf("projectdef: create %s: %w", slug, err)
 	}

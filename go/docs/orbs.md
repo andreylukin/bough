@@ -437,10 +437,12 @@ own shell; it only isolates file changes.
   built as `projectdef.BaseTag()` = `bough-orb/base:<sha12>` by
   `orb.EnsureBase` before any setup-script project whose `base` is empty.
   It carries gh, aws, kubectl, helm, helmfile, sops, just, gcx, argocd,
-  go, uv and python3. `ImageHash` hashes the base tag, so editing the base
+  go, parallel-cli, uv and python3. `ImageHash` hashes the base tag, so editing the base
   rebuilds every project on it.
 - **Host identity (opt-in)**: nothing from the host is lent by default,
-  except that `bough project create` writes `identity: [gh]`.
+  except that `bough project create` writes
+  `identity: [gh, .config/parallel-web-tools:rw]` (the Parallel CLI's
+  OAuth file, rewritten on refresh).
   A project lists what it needs in `identity:` (`bough project
   add-identity <slug> gh|.aws|.kube:rw`). `gh` passes the host's
   `gh auth token` as `GH_TOKEN` (cached 5 min, per exec, never in run env)
