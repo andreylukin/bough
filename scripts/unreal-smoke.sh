@@ -158,10 +158,17 @@ smoke() { # PLUGIN MODEL
 	echo "== $plugin $model"
 	runs=$((runs + 1))
 
+	# The second line waits for the first done: piped together, it steers
+	# the first turn instead of starting its own (headless.go).
 	d="$scratch/$tag-plain"
 	sandbox "$tag-plain" "$plugin" "$model"
 	out="$d/out.jsonl"
-	printf 'Reply with exactly: pong\nReply with exactly: pong again\n' | bough_in "$d" >"$out" 2>&1
+	background "$d" "$out" 'Reply with exactly: pong'
+	if wait_for "$out" '"kind":"done"' 120; then
+		printf 'Reply with exactly: pong again\n' >&3
+	fi
+	exec 3>&-
+	wait "$bg_pid"
 	code=$?
 	expect plain "$d" "$out" $code 0 2
 	if [ "$plugin" = llm-anthropic ]; then
@@ -242,9 +249,8 @@ smoke() { # PLUGIN MODEL
 		echo "  skip switch: no second provider key"
 		return
 	fi
-	# One line at a time: piped together, /model is dispatched before the
-	# first request and "two" steers the first turn (headless.go), so
-	# nothing would switch mid-session.
+	# One turn at a time, as in plain: piped together, /model is
+	# dispatched before the first request, so nothing switches mid-session.
 	d="$scratch/$tag-switch"
 	sandbox "$tag-switch" "$plugin" "$model"
 	out="$d/out.jsonl"
