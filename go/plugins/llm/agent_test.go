@@ -3,8 +3,10 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +21,7 @@ import (
 	ullm "github.com/unreallabsai/unreal-agent/harness/llm"
 
 	"github.com/andreylukin/bough/internal/agentllm"
+	"github.com/andreylukin/bough/internal/models"
 	"github.com/andreylukin/bough/kernel"
 )
 
@@ -458,5 +461,41 @@ func TestRetryableReadsTheErrorType(t *testing.T) {
 	_ = json.Unmarshal([]byte(`{"type":"error","error":{"type":"invalid_request_error","message":"no"}}`), bad)
 	if retryable(bad) {
 		t.Error("a 400 is not retryable")
+	}
+}
+
+// A Fable row that a server-side fallback served from Opus is priced at
+// Opus's rates for that attempt, and the declined attempt's billed
+// partial output, which only usage.iterations carries, is counted.
+func TestFallbackUsageIsPricedAtTheServingModel(t *testing.T) {
+	t.Parallel()
+	raw := `{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,
+		"iterations":[
+			{"type":"message","model":"claude-fable-5-1","input_tokens":1000,"output_tokens":0},
+			{"type":"message","model":"claude-fable-5-1","input_tokens":1000,"output_tokens":50},
+			{"type":"fallback_message","model":"claude-opus-5","input_tokens":1000,"output_tokens":200}]}`
+	r := ullm.Usage{InputTokens: 1000, OutputTokens: 200, Raw: jsontext.Value(raw)}
+	var u Usage
+	addAgentUsage(&u, r)
+	addFallbackUsage(&u, r, "claude-fable-5-1")
+	if u.InputTokens != 2000 || u.OutputTokens != 250 {
+		t.Errorf("tally in %d out %d, want 2000 and 250 (the unbilled decline left out)", u.InputTokens, u.OutputTokens)
+	}
+	fable, _ := models.Lookup("llm-anthropic", "claude-fable-5-1")
+	opus, _ := models.Lookup("llm-anthropic", "claude-opus-5")
+	want := opus.Cost(1000, 200) - fable.Cost(1000, 200)
+	if want >= 0 || math.Abs(u.FallbackCost-want) > 1e-12 {
+		t.Errorf("FallbackCost = %v, want %v", u.FallbackCost, want)
+	}
+	if got := agentllm.ServedModel(r); got != "claude-opus-5" {
+		t.Errorf("ServedModel = %q", got)
+	}
+
+	var plain Usage
+	one := ullm.Usage{InputTokens: 10, OutputTokens: 2, Raw: jsontext.Value(`{"input_tokens":10,"output_tokens":2,"iterations":[{"type":"message","model":"claude-fable-5-1","input_tokens":10,"output_tokens":2}]}`)}
+	addAgentUsage(&plain, one)
+	addFallbackUsage(&plain, one, "claude-fable-5-1")
+	if plain.InputTokens != 10 || plain.OutputTokens != 2 || plain.FallbackCost != 0 || agentllm.ServedModel(one) != "" {
+		t.Errorf("a response the row's model served changes nothing: %+v", plain)
 	}
 }

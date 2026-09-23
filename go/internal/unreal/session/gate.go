@@ -225,6 +225,9 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 	if resp.Stop == "" {
 		resp.Stop = ullm.StopComplete
 	}
+	if served := agentllm.ServedModel(resp.Usage); served != "" {
+		model = served
+	}
 	g.emitMeta(project.Meta{ResponseID: resp.ID, Model: model, Provider: prov})
 	return resp, nil
 }

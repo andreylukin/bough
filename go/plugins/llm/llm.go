@@ -136,8 +136,13 @@ type Usage struct {
 	// the one-hour TTL, which Anthropic bills at twice the input rate
 	// instead of 1.25x. Only the engine's adapter writes 1h entries.
 	CacheWrite1hTokens int
-	Cost               float64
-	Priced             bool
+	// FallbackCost is what attempts another model served (an Anthropic
+	// server-side fallback) cost beyond the same tokens at the row's
+	// model rates. The counts above include those tokens; a tally
+	// priced at the row's model adds this to be right.
+	FallbackCost float64
+	Cost         float64
+	Priced       bool
 }
 
 // Modeler is the optional seam naming the model an llm service runs;

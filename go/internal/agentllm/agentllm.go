@@ -4,6 +4,7 @@ package agentllm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -81,6 +82,33 @@ func SeqOf(ctx context.Context) uint64 {
 // ErrContextOverflow is wrapped by adapters when the provider says the
 // prompt no longer fits. The Gate makes it sticky until the model changes.
 var ErrContextOverflow = errors.New("context window exceeded")
+
+// ServedModel is the model that produced a response when it is not the
+// one asked for, "" otherwise. An Anthropic server-side fallback names
+// it in a fallback_message entry of usage.iterations, and sticky
+// routing keeps serving later turns from it for about an hour, so
+// history labels a turn by it rather than by the row's model.
+func ServedModel(u ullm.Usage) string {
+	if len(u.Raw) == 0 {
+		return ""
+	}
+	var raw struct {
+		Iterations []struct {
+			Type  string `json:"type"`
+			Model string `json:"model"`
+		} `json:"iterations"`
+	}
+	if json.Unmarshal(u.Raw, &raw) != nil {
+		return ""
+	}
+	served := ""
+	for _, it := range raw.Iterations {
+		if it.Type == "fallback_message" {
+			served = it.Model
+		}
+	}
+	return served
+}
 
 // overflowMarks are how the providers say the conversation no longer
 // fits. They disagree on the wording, and none of them uses a code the

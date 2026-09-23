@@ -206,6 +206,60 @@ func addAgentUsage(u *Usage, r ullm.Usage) {
 	}
 }
 
+// addFallbackUsage folds in what an Anthropic server-side fallback bills
+// beyond the top-level usage, which covers only the attempt that
+// produced the message: a declined attempt's partial output is only in
+// usage.iterations, and every attempt bills at the rates of the model
+// that ran it. With sticky routing a Fable row can be served by Opus
+// for an hour, so pricing it all at the row's model shows twice the
+// real cost. The difference goes to FallbackCost, which the cost row
+// adds to its row-model pricing; an unpriced model adds nothing.
+func addFallbackUsage(u *Usage, r ullm.Usage, row string) {
+	if len(r.Raw) == 0 {
+		return
+	}
+	var raw struct {
+		Iterations []struct {
+			Type          string `json:"type"`
+			Model         string `json:"model"`
+			In            int    `json:"input_tokens"`
+			Out           int    `json:"output_tokens"`
+			Read          int    `json:"cache_read_input_tokens"`
+			Write         int    `json:"cache_creation_input_tokens"`
+			CacheCreation struct {
+				OneHour int `json:"ephemeral_1h_input_tokens"`
+			} `json:"cache_creation"`
+		} `json:"iterations"`
+	}
+	if json.Unmarshal(r.Raw, &raw) != nil {
+		return
+	}
+	rowM, rowOK := models.Lookup("llm-anthropic", row)
+	last := len(raw.Iterations) - 1
+	for i, it := range raw.Iterations {
+		in := it.In + it.Read + it.Write
+		if i < last {
+			// The last attempt is the top-level usage, already counted.
+			// One declined before any output is reported, not billed.
+			if it.Out == 0 {
+				continue
+			}
+			u.InputTokens += in
+			u.OutputTokens += it.Out
+			u.CacheReadTokens += it.Read
+			u.CacheCreationTokens += it.Write
+			u.CacheWrite1hTokens += it.CacheCreation.OneHour
+		}
+		if it.Model == "" || it.Model == row || !rowOK {
+			continue
+		}
+		if m, ok := models.Lookup("llm-anthropic", it.Model); ok && m.Input > 0 {
+			u.FallbackCost += m.CostCached1h(in, it.Out, it.Read, it.Write, it.CacheCreation.OneHour) -
+				rowM.CostCached1h(in, it.Out, it.Read, it.Write, it.CacheCreation.OneHour)
+		}
+	}
+}
+
 // AgentAdapter implements agentllm.Source over the Messages API.
 func (a *anthropicLLM) AgentAdapter(o agentllm.Options) (agentllm.Adapter, error) {
 	if err := a.init(); err != nil {
@@ -238,6 +292,7 @@ func (a *anthropicLLM) AgentAdapter(o agentllm.Options) (agentllm.Adapter, error
 	return wrap.Observe(wrap.Envelope(inner), func(r ullm.Response) {
 		a.mu.Lock()
 		addAgentUsage(&a.usage, r.Usage)
+		addFallbackUsage(&a.usage, r.Usage, a.Model())
 		a.mu.Unlock()
 	}), nil
 }

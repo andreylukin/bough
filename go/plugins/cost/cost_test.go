@@ -254,6 +254,21 @@ func TestOneHourWritesArePricedAtTwiceInput(t *testing.T) {
 	}
 }
 
+// Attempts a fallback model served carry their price difference from
+// the row's model; the priced tally adds it, and a remount subtracts
+// the process tally's share like every other count.
+func TestFallbackCostIsAdded(t *testing.T) {
+	t.Parallel()
+	l := &stubLLM{model: "claude-opus-5", u: llm.Usage{InputTokens: 1_000_000, FallbackCost: -2}}
+	s := &Service{rep: l, model: l.Model, plugin: func() string { return "llm-anthropic" }, table: Table{}}
+	if got := s.Usage().Cost; math.Abs(got-3) > 1e-9 {
+		t.Errorf("cost = %f, want 5 at opus-5 input less the 2 the fallback saved", got)
+	}
+	if d := since(l.u, llm.Usage{FallbackCost: -0.5}); d.FallbackCost != -1.5 {
+		t.Errorf("since: %f", d.FallbackCost)
+	}
+}
+
 // A resumed session's bar carries on from what the file says it spent;
 // the live request size wins once there is one.
 func TestUsageCarriesTheBaseOn(t *testing.T) {
