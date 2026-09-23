@@ -240,6 +240,24 @@ test("R3-C: a steer recorded while the turn ran stays inside that turn", () => {
   expect(html).not.toContain("Interrupted");
 });
 
+test("R3-C: a steer between an engine's calls is not folded into the Worked-for row", () => {
+  const call = (seq: number, s: number, text: string): Line =>
+    ({ seq, at: at(s), kind: "call", text, data: { id: "toolu_" + seq, tool: "bash", ms: 900, exit: 0, output: "ok" } });
+  const lines = [
+    { seq: 1, at: at(0), kind: "input", text: "run the checks" },
+    call(2, 1, "go vet ./..."), call(3, 2, "go build ./..."),
+    { seq: 4, at: at(3), kind: "input", text: "also say hello", data: { steer: true } },
+    call(5, 4, "go test ./..."), call(6, 5, "ls"),
+    { seq: 7, at: at(6), kind: "assistant", text: "Hello. All green." },
+    { seq: 8, at: at(7), kind: "done", text: "" },
+  ] as Line[];
+  const html = renderToStaticMarkup(<TurnView turn={groupTurns(lines)[0]} />);
+  // The steer note is outside any <details>: the folds close around it.
+  const open = html.split('class="steer-note"')[0];
+  expect((open.match(/<details/g) ?? []).length).toBe((open.match(/<\/details>/g) ?? []).length);
+  expect(html).toContain("also say hello");
+});
+
 test("R3-C: a cut-off turn uses the same stop word and duration as a stopped one", () => {
   const html = renderToStaticMarkup(<TurnView turn={groupTurns([live[0], live[1]])[0]} superseded />);
   expect(html).toContain("Stopped");

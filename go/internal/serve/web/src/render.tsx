@@ -780,6 +780,9 @@ export function splitWork(items: Item[], codes: string[], live: boolean): Segmen
     }
     if (live && it.kind === "sub" && it.agents.some((a) => !a.status)) { flush(); out.push({ kind: "pinned", item: it }); continue; }
     if (it.kind === "line" && isAgentNotice(it.line)) { flush(); out.push({ kind: "notice", item: it }); continue; }
+    // A steer is something you said: it ends the work it interrupted and
+    // stays in view, never folded into a "Worked for" row.
+    if (it.kind === "line" && it.line.kind === "input") { flush(); out.push({ kind: "notice", item: it }); continue; }
     // The error that ended the turn is the turn's outcome, not one of its actions: keep its card in view.
     const before = cur.at(-1), last = before?.kind === "tools" ? before.lines.at(-1) : before?.kind === "line" ? before.line : undefined;
     const blockFailed = last?.kind === "result" && ((typeof last.data?.exit === "number" && last.data.exit !== 0) || thrownError(last));
