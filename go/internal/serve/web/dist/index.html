@@ -2219,7 +2219,7 @@ a.rt-link{text-decoration:none}
 /* Job and subagent rows share one grid and one right edge: chevron, id,
    what, state, time. A stoppable job adds its action column. */
 @container (min-width:521px){
-  .sub>summary{grid-template-columns:16px 24px minmax(0,1fr) 140px 64px}
+  .sub>summary{grid-template-columns:16px 24px minmax(0,1fr) 120px auto}
   /* Status sits beside its duration: [chevron][Job N][cmd][status + time]. */
   .job-summary,.block.job>.job-summary{grid-template-columns:16px 80px minmax(0,1fr) auto auto;column-gap:var(--s-2)}
   .job-summary:has(.job-action[data-stop]){grid-template-columns:16px 80px minmax(0,1fr) auto auto 112px}
