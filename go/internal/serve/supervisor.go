@@ -838,7 +838,7 @@ func (s *Supervisor) emitLocked(id, kind, text string, extra map[string]any) {
 		// ask nobody is waiting on any more.
 		delete(s.asks, id)
 	}
-	s.childEventLocked(id, kind)
+	s.childEventLocked(id, kind, extra)
 
 	s.fanoutLocked(id, ev)
 }
@@ -1553,7 +1553,7 @@ func (s *Supervisor) SetModel(id, plugin, model string) error {
 func (s *Supervisor) SetEffort(id, level string) error {
 	level = strings.ToLower(strings.TrimSpace(level))
 	if level == "" || !llm.ValidEffort(level) {
-		return fmt.Errorf("serve: supervisor: %q is not a reasoning level (have %s)", level, strings.Join(llm.Efforts, ", "))
+		return fmt.Errorf("serve: supervisor: %q is not a reasoning level (have %s)", level, strings.Join(llm.Levels(), ", "))
 	}
 	if err := s.Send(id, "/think "+level); err != nil {
 		return err

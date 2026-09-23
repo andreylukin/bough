@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package prompt composes the engine's system prompt and the reminders
 // that carry later changes to it.
 //

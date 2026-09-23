@@ -163,3 +163,24 @@ func TestDrainEngineIdleGivesUp(t *testing.T) {
 	hlMu.Unlock()
 	drainEngine()
 }
+
+// Plain output prints a native call once, at its recorded end; --json
+// keeps the live start, which serve renders as the running row.
+func TestHeadlessPlainPrintsACallOnce(t *testing.T) {
+	var out bytes.Buffer
+	oldOut, oldJSON := hlOut, HeadlessJSON
+	hlOut, HeadlessJSON = &out, false
+	defer func() { hlOut, HeadlessJSON = oldOut, oldJSON }()
+
+	hlPrint(Event{Kind: "call", Text: "count CHILDTASK files", Data: map[string]any{"id": "c1", "tool": "bash", "phase": "start"}})
+	hlPrint(Event{Kind: "call", Text: "count CHILDTASK files", Data: map[string]any{"id": "c1", "tool": "bash", "ms": 5}})
+	if n := strings.Count(out.String(), "count CHILDTASK files"); n != 1 {
+		t.Fatalf("plain printed the call %d times:\n%s", n, out.String())
+	}
+	out.Reset()
+	HeadlessJSON = true
+	hlPrint(Event{Kind: "call", Text: "x", Data: map[string]any{"id": "c1", "tool": "bash", "phase": "start"}})
+	if !strings.Contains(out.String(), `"phase":"start"`) {
+		t.Fatalf("--json dropped the start: %q", out.String())
+	}
+}

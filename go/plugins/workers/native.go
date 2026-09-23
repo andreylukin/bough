@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/andreylukin/bough/internal/agenttools"
 	"github.com/andreylukin/bough/kernel"
+	"github.com/andreylukin/bough/plugins/loop"
 )
 
 // nativeSubSystemPrompt is SubSystemPrompt for a child that calls tools
@@ -141,13 +143,18 @@ func (w *Workers) nativeSpawn(ctx context.Context, c agenttools.Call) (agenttool
 	id := w.nextID
 	w.mu.Unlock()
 	worker := fmt.Sprintf("subagent %d", id)
-	reply, status, steps, err := eng.Spawn(ctx, a.Task, worker, nativeSubSystemPrompt, w.maxSteps)
+	// The child's rows carry the number, as the loop's do: the TUI and
+	// the web key a subagent's card by a numeric worker, and a label
+	// read as 0 folded every child into one card.
+	reply, status, steps, err := eng.Spawn(ctx, a.Task, strconv.Itoa(id), nativeSubSystemPrompt, w.maxSteps)
 	data := map[string]any{"worker": id, "status": status, "steps": steps}
 	if err != nil {
 		return agenttools.Result{Error: fmt.Sprintf("workers: %s: %v", worker, err), Text: reply, Data: data}, nil
 	}
 	// Provenance, as tools.spawn gives it: delegated findings read as
-	// delegated.
+	// delegated. A child's report crosses into the parent's context, so
+	// a system message it invented is stripped, as workers.go does.
+	reply = loop.StripFabrications(reply)
 	text := fmt.Sprintf("[%s · task: %s]\n%s", worker, oneLine(a.Task, 80), reply)
 	switch status {
 	case "done":

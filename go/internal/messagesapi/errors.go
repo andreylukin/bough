@@ -91,11 +91,16 @@ func classify(err error, now time.Time) failure {
 		switch {
 		case strings.Contains(m, "prompt is too long") || strings.Contains(m, "context window") || strings.Contains(m, "input length and `max_tokens` exceed"):
 			f.class = overflow
+		// Binding before beta: without the binding-controls header the
+		// binding 400 ends by naming that header ("That setting requires
+		// the `thinking-binding-controls-2026-08-01` value in the
+		// `anthropic-beta` header."), and read as a bad beta it names
+		// nothing to drop and fails the turn instead of stripping.
+		case strings.Contains(m, "bound to a different conversation") || strings.Contains(m, "invalid `signature`") || strings.Contains(m, "invalid signature"):
+			f.class = binding
 		case strings.Contains(m, "anthropic-beta"):
 			f.class = badBeta
 			f.betas = namedBetas(f.msg)
-		case strings.Contains(m, "bound to a different conversation") || strings.Contains(m, "invalid `signature`") || strings.Contains(m, "invalid signature"):
-			f.class = binding
 		}
 	}
 	return f

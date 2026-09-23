@@ -1,3 +1,5 @@
+//go:build !windows
+
 package session
 
 import (
@@ -305,6 +307,65 @@ func TestFork(t *testing.T) {
 		t.Fatalf("engine entry %v\n%s", eng.Data, c.dump())
 	}
 	if c.last("assistant").Data["text"] != "gamma answer" {
+		t.Fatalf("history\n%s", c.dump())
+	}
+}
+
+// A forked session's model reads the calls it inherited with their
+// results: the harness fork strips their operations, and without them
+// every earlier call reached the model as a call that never answered.
+func TestForkKeepsInheritedResults(t *testing.T) {
+	t.Parallel()
+	r := newRig(t,
+		fake.Step{Want: "alpha", Output: []ullmItem{fake.Call("e1", "echo", `{"text":"PARENTRESULT"}`)}},
+		fake.Step{Want: "echoed PARENTRESULT", Output: []ullmItem{fake.Text("alpha answer")}},
+		fake.Step{Want: "gamma", Match: func(req ullmRequest) error {
+			s := fake.Render(req)
+			if !strings.Contains(s, "result e1 text:echoed PARENTRESULT") {
+				return errf("the inherited call has no result:\n%s", s)
+			}
+			return nil
+		}, Output: []ullmItem{fake.Text("gamma answer")}},
+		fake.Step{Want: "delta", Match: func(req ullmRequest) error {
+			if s := fake.Render(req); !strings.Contains(s, "result e1 text:echoed PARENTRESULT") {
+				return errf("a reopened fork lost the inherited result:\n%s", s)
+			}
+			return nil
+		}, Output: []ullmItem{fake.Text("delta answer")}},
+	)
+	r.rt.Submit("alpha")
+	r.waitDone(1)
+	var first int64
+	for _, e := range r.entries() {
+		if e.Kind == "input" {
+			first = e.Seq
+			break
+		}
+	}
+	child := filepath.Join(r.dir, "history", "s2.jsonl")
+	if err := history.Fork(r.hist.Path(), first, child); err != nil {
+		t.Fatal(err)
+	}
+	h, err := history.OpenExisting(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &rig{t: t, dir: r.dir, hist: h, evs: &events{}, kit: r.kit, fake: r.fake}
+	c.open()
+	c.rt.Submit("gamma")
+	c.waitDone(2)
+	if c.last("assistant").Data["text"] != "gamma answer" {
+		t.Fatalf("history\n%s", c.dump())
+	}
+	// A new Runtime on the fork builds its coordinator from the store
+	// again, which strips the inherited operations again.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = c.rt.Close(ctx)
+	c.open()
+	c.rt.Submit("delta")
+	c.waitDone(3)
+	if c.last("assistant").Data["text"] != "delta answer" {
 		t.Fatalf("history\n%s", c.dump())
 	}
 }

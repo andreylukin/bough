@@ -1,3 +1,5 @@
+//go:build !windows
+
 package fake_test
 
 import (

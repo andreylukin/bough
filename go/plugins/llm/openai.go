@@ -127,7 +127,7 @@ func (o *openaiLLM) body(system string, messages []Message, stream, think bool) 
 	if system != "" {
 		b["instructions"] = system
 	}
-	if e := o.Effort(); e != "" && e != "off" {
+	if e := loopLevel("llm-openai", o.model, o.Effort()); e != "" && e != "off" {
 		r := map[string]any{"effort": e}
 		if think {
 			r["summary"] = "auto"

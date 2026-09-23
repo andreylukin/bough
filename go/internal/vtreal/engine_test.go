@@ -1,9 +1,6 @@
 package vtreal
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -41,19 +38,6 @@ const engineConfig = `
 // its row shows the command, and the reply to its result lands.
 func TestEngineCallRowOnRealTerminal(t *testing.T) {
 	t.Parallel()
-	home := t.TempDir()
-	cfg := filepath.Join(home, "bough.yml")
-	if err := os.WriteFile(cfg, []byte(engineConfig), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	rows := exec.Command(bin, "rows", "-config", cfg)
-	rows.Dir = home
-	rows.Env = append(os.Environ(), "HOME="+home)
-	out, _ := rows.CombinedOutput()
-	if strings.Contains(string(out), "engine-unreal: not built yet") {
-		t.Skip("the engine-unreal row is the bootstrap stub")
-	}
-
 	a := startCfg(t, 100, 30, engineConfig)
 	a.typeText("CODE!")
 	a.key(uv.KeyEnter, 0)

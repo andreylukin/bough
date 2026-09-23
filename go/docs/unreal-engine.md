@@ -133,6 +133,16 @@ byte-for-byte as it does on ce6f5c23. Every reader change is an
 additive branch. Old history files still render, still resume on the
 loop, and still resume on the engine through the seed path (§12.2).
 
+Two deliberate exceptions, both in the llm rows the loop shares with
+the engine. `max` is a level for `/think` and every row's `effort`; the
+loop's OpenAI, OpenRouter and Cerebras paths fit it to the model's
+catalogue entry and send xhigh where the catalogue does not know the
+model, so no level main refused reaches a model that rejects it. And
+`llm-anthropic` takes `effort` and answers `/think`: the loop's path
+sends `output_config.effort` only once a level is set, so a row that
+never sets one sends the bytes it sent on ce6f5c23, and an `effort`
+value that is not a level fails the row, as it does on the others.
+
 ## 2. Topology and lifetimes
 
 ```
@@ -228,7 +238,7 @@ kills the child.
 | `go/internal/unreal` (`doc.go`, `pin_test.go`, `boundary_test.go`) | pin + import-boundary tests | W6 | yes |
 | `go/plugins/agenttools` | row `agent-tools`, provides the Registry | W3 | no |
 | `go/plugins/engine` | row plugin `engine-unreal`: kernel glue, keys, config, handoff, `/context`, stored notices | W2 | yes |
-| `go/cmd/bough/enginecmd.go` | `bough engine inspect\|reproject\|script` | W2 | yes |
+| `go/plugins/engine/cli.go` | `bough engine inspect\|reproject\|script`, a plugin command (`Commands()`) that reads the store and history without mounting anything | W2 | yes |
 | `go/plugins/llm/{agent,script,ollama}.go` | `AgentAdapter` on the llm rows, `llm-script`, `llm-ollama` | W1 | yes |
 
 `internal/unreal/*` never imports another plugin to reach a service.
@@ -1022,8 +1032,12 @@ Not retried:
 - 400 naming an unknown `anthropic-beta` value → drop that beta for
   the process and retry once.
 - 400 "thinking … bound to a different conversation" or "Invalid
-  signature" → strip every thinking and redacted_thinking block for
-  this adapter instance (sticky) and retry once.
+  signature" → strip every thinking and redacted_thinking block that
+  request carried and retry once. Those blocks stay out of later
+  requests; blocks the model produces afterwards are bound to the
+  stripped history and are replayed. This case is tested before the
+  beta case: without the binding-controls header the message ends by
+  naming the `anthropic-beta` header.
 - Any other 400 → error.
 - 401 → the `keyRejected` message from `plugins/llm/anthropic.go`
   `wrapErr`.
@@ -1197,7 +1211,11 @@ error kills Run). `DecodeRemoteJobState`, then:
      handles its own deadline (bash with a `timeout` arg).
      `Call.Progress` feeds `Options.Progress`.
   4. `Hooks.PostTool`.
-  5. `Redact` the Text and the Error.
+  5. Strip fabricated `<system-*>` spans from the Text and the Error
+     (`loop.StripFabrications`, the loop's rule for tool output), then
+     `Redact` both. The Gate strips the same spans from the model's own
+     reply before the coordinator records it, and a native spawn strips
+     the child's report.
   6. If the text is over `MaxOutputLength`, write the whole text to
      `SpillDir/<callID>.out` and put head + tail + `…N bytes truncated;
      complete output in <path>…` into `TerminalResult`.
@@ -1680,7 +1698,7 @@ mode**:
 A kill -9 between a store append and a history write therefore loses
 nothing and duplicates nothing.
 
-The CLI, in `cmd/bough/enginecmd.go`:
+The CLI, a plugin command in `plugins/engine/cli.go`:
 - `bough engine inspect <sid|history-id>` prints the store items, one
   line each.
 - `bough engine reproject <id> [--dry-run]` re-runs the whole store
@@ -1949,6 +1967,15 @@ first build the engine does one of two things:
 - Otherwise it calls
   `store.Fork(childSid, parentSid, done.engine_turn)` and records
   `engine {…, forked_from: parentSid, fork_turn}`.
+
+The harness fork also strips the operations off every inherited call
+status, and a coordinator replaying a status without them adds no
+result, so every earlier call would reach the child's model without an
+answer. Every coordinator of a forked session therefore reads its
+history through `forkedStore` (`session/fork.go`), which puts back the
+operations from the parent's file (and its parent's, for a fork of a
+fork) by sequence, which a fork keeps. The replay renders each result
+as the parent did, and the fork item that follows clears them.
 
 ### 12.4 Subagents (`session/children.go`)
 
@@ -2328,6 +2355,17 @@ Each run asserts:
   `google/uuid` is already present. All are pure Go, with no cgo and no
   GOEXPERIMENT; stdlib `uuid` and `encoding/json/v2` are baseline in
   go1.27.
+- **The harness is Unix-only at the pin.** `harness/primitives/process.go`
+  has no build tag and calls `syscall.Kill`, `SysProcAttr.Setpgid` and
+  `unix.Open`, and every harness package but `llm`, `session` and `inbox`
+  depends on it. So the engine carries `//go:build !windows`:
+  `internal/unreal/{boughcall,contract,fake,ops,project,prompt,responses,session,toolreg}`,
+  `plugins/engine`, `internal/unreal/wrap/strip.go`, and
+  `plugins/llm/{agent,ollama,script}.go`. On Windows
+  `plugins/engine/stub_windows.go` and `plugins/llm/engine_windows.go`
+  register `engine-unreal`, `llm-ollama` and `llm-script` as rows whose
+  Apply fails with the reason, and the loop builds and vets as it did
+  (the CI `cross` job). A build-tag PR upstream would lift this.
 - B0 records `go build -ldflags='-s -w' ./cmd/bough` size before and
   after in its commit body.
 - **No vendoring** (bough does not vendor); go.sum and GOSUMDB are the
@@ -2340,16 +2378,18 @@ Each run asserts:
   `v0.1.1`. `internal/unreal.Pin = "v0.1.1"` and
   `PinSHA = "b7c9bf1c…"` are the constants the `engine` entry writes.
 - **Import boundary** (`internal/unreal/boundary_test.go`, W6):
-  `go list -f '{{.ImportPath}} {{join .Imports " "}}' ./...`, which lists
-  direct imports. Only these may import
-  `github.com/unreallabsai/unreal-agent/...` or `internal/unreal/...`
-  directly:
+  `go list` of every package's direct imports and its test imports.
+  Only these may import `github.com/unreallabsai/unreal-agent/...` or
+  `internal/unreal/...` directly:
   - `internal/unreal/...`;
   - `internal/messagesapi`;
   - `internal/agentllm`;
   - `plugins/engine`;
-  - `plugins/llm`;
-  - `cmd/bough`.
+  - `plugins/llm`.
+
+  From their tests only, so a harness bump can break them too:
+  `e2e`, `plugins/contextmd`, `plugins/skills` (the prompt pieces) and
+  `plugins/hooks`, `plugins/rules` (the hook bridge).
 - **Imported harness packages** are public only: `harness/{coordinator,
   inbox, session, sessionstore, sessionstore/localfile, contextbuilder,
   llm, llm/responsesapi, tool, tool/viewimage, operation, primitives}`.
@@ -2459,7 +2499,7 @@ unchanged once W2's row lands.
 | WS | Scope | Owns (exclusive; nobody else edits these) | Provides (frozen in §4–§5) | Consumes | Done when |
 |---|---|---|---|---|---|
 | **W1** dependency + adapters | pin upkeep; Anthropic Messages adapter (streaming, tool_use, thinking, cache_control, retries, late-result render); Responses adapters for openai/openrouter/ollama with the SSE tap; envelope/late/strip/observe wrappers; provider selection and effort mapping in the llm rows; model catalogue bridge; fake (Load, FromStore) + echo + llm-script + llm-ollama; 1h cache pricing; retry.go `Type()` fix; probes P1–P7 | `go/go.mod`, `go/go.sum` (after B0); `go/internal/agentllm/**`; `go/internal/messagesapi/**`; `go/internal/unreal/{responses,wrap,fake,echo}/**`; `go/plugins/llm/**`; `go/internal/models/**`; `go/plugins/cost/**` | `agentllm.Source` on llm-anthropic / llm-openai / llm-openrouter / llm-ollama / llm-echo / llm-script; `messagesapi.New/Render/Decode/Spec`; `responses.New`; `wrap.*`; `fake.*`; `echo.New`; `llm.Usage.CacheWrite1hTokens`; `llm.Efforts` + `max` | `prompt.Wrap` (W5), for the property test only; a local copy until W5 merges | §15.1 W1 green, including the rapid property test; probe results (or a "skipped: no key" line each) in the messagesapi package doc; gates green on touched packages |
-| **W2** engine row + session | coordinator per session; inbox wiring for input, steer, notices and ask answers; Gate (cancel, park, errors, budgets); ops.Manager with Latest replay; mirror + actor + the done/settle/wake rules; the loop's keys + `engine` + `drain`; store choice and paths; resume, seed, hseq catch-up, fork, subagents (Children); usage → `done.usage`; `/context`; stored notices; `bough engine inspect\|reproject\|script`; contract tests | `go/internal/unreal/{ops,session,contract}/**`; `go/plugins/engine/**`; `go/cmd/bough/enginecmd.go`; in `go/plugins/loop/loop.go` only `DefaultProject` (additive `call` folding, §12.2) | the `engine-unreal` row with prompt-sections, runner, inputs, cancel, steer, engine, drain; `session.Runtime`; `session.Children`; `ops.Manager` | everything in §5 via B0 stubs; `tool.NewRegistry` + harness bash for interim tests; real W1/W3/W4/W5 at integration | §15.1 W2 scenarios, §9.11 property test and §15.2 contract tests green; the echo smoke prints `ran: hi from codemode` on `engine-unreal` |
+| **W2** engine row + session | coordinator per session; inbox wiring for input, steer, notices and ask answers; Gate (cancel, park, errors, budgets); ops.Manager with Latest replay; mirror + actor + the done/settle/wake rules; the loop's keys + `engine` + `drain`; store choice and paths; resume, seed, hseq catch-up, fork, subagents (Children); usage → `done.usage`; `/context`; stored notices; `bough engine inspect\|reproject\|script`; contract tests | `go/internal/unreal/{ops,session,contract}/**`; `go/plugins/engine/**` (the CLI is its `cli.go`); in `go/plugins/loop/loop.go` only `DefaultProject` (additive `call` folding, §12.2) | the `engine-unreal` row with prompt-sections, runner, inputs, cancel, steer, engine, drain; `session.Runtime`; `session.Children`; `ops.Manager` | everything in §5 via B0 stubs; `tool.NewRegistry` + harness bash for interim tests; real W1/W3/W4/W5 at integration | §15.1 W2 scenarios, §9.11 property test and §15.2 contract tests green; the echo smoke prints `ran: hi from codemode` on `engine-unreal` |
 | **W3** tools + orbs | native registration of every bough tool; `toolreg` (translators, tombstones, view_image, Render); `boughcall` (hooks at the op boundary, timeout, spill, redaction); `Jobs.Adopt`; `run_js`; orb exec through the existing seam; secrets contract; portal/artifacts/lsp/todo/example; ask/secret as blocking calls; spawn via the `engine` key's `Spawn` + background agents | `go/internal/agenttools/**` (after B0); `go/plugins/agenttools/**`; `go/internal/unreal/{toolreg,boughcall}/**`; `go/plugins/{tools,ask,workers,artifacts,lsp,todo,example,codemode}/**`; `go/plugins/orb/portal.go`; `go/docs/PLUGINS.md` | `toolreg.New/Render/Hash`, `toolreg.Handle`, `boughcall.New`; native tools in `agent-tools`; `Jobs.Adopt`; `run_js` | `engine` key (W2) for foreground spawn; `agenttools.Hooks` impl (W5) | §15.1 W3 green; the loop's existing tests in the touched plugins stay green unchanged (codemode bindings byte-identical) |
 | **W4** history + web + TUI | the projector (the §10.1 mapping table); every reader change in §10.4; call rows, call-delta, delta-reset, wake line, adopted rows in TUI and web; headless wake-done accounting, call-delta forwarding, drain at EOF; title/activity/cmux on `call`; bun tests, Playwright spec, `dist/app.js` rebuild | `go/internal/unreal/project/**`; `go/plugins/ui/**`; `go/internal/serve/**` (Go, `web/src`, `web/dist`, CSS via `dist/index.html` then `bun run design:sync`); `go/plugins/{title,activity,cmux}/**`; `go/tests/web/**` (new spec only) | `project.New/Meta/Item/Delta/Progress/Call`, `project.Out` | `toolreg.Render` + `Handle` (W3); `drain` key (W2); `llm-script` (W1) for Playwright | §15.1 W4 green; `bun test` + `bun run typecheck` green; goldens regenerated with `-update`; loop-session rendering unchanged (existing goldens untouched) |
 | **W5** hooks + MCP + skills + context-md + rules | frozen prompt composition and drift reminders; `engine.md`; the contextbuilder decorator; hookbridge for all six events; skills catalogue + mention inject on the engine; AGENTS.md/MEMORY.md via context-md parts; rules gating inside bash/write/patch (tests); opt-in native MCP tools | `go/internal/unreal/{prompt,hookbridge}/**`; `go/plugins/{hooks,skills,contextmd,rules,mcp}/**`; `go/skills/multi-model-plan/SKILL.md`; hook docs in `go/docs/*.md` other than PLUGINS.md and this file | `prompt.Parts/Compose/Hash/Reminder/Wrap/Placeholder`; `hookbridge.New` (implements `agenttools.Hooks` + `session.Lifecycle`); `mcp__*` tools | agent-tools registry (B0); `session.Lifecycle` shape (§5.7) | §15.1 W5 green; a reminder round trip visible in a W2 session test once merged |

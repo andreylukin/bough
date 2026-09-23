@@ -40,7 +40,7 @@ func TestThinkShowsCurrentLevelAndChoices(t *testing.T) {
 	if !strings.Contains(out, "thinking: high") {
 		t.Errorf("bare /think should report the level, got %q", out)
 	}
-	for _, lvl := range []string{"off", "low", "medium", "high", "xhigh"} {
+	for _, lvl := range []string{"off", "low", "medium", "high", "xhigh", "max"} {
 		if !strings.Contains(out, lvl) {
 			t.Errorf("bare /think should list %q: %s", lvl, out)
 		}

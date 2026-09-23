@@ -54,7 +54,7 @@ example in `plugins/example/`:
 | `theme`    | plugins/initjs     | ui (optional)   |
 | `keymap`   | plugins/initjs     | ui (optional)   |
 | `agent-tools` | plugins/agenttools | tool rows (register native tools), engine |
-| `engine`   | plugins/engine     | workers (foreground `spawn`), `bough engine` |
+| `engine`   | plugins/engine     | workers (foreground `spawn`) |
 | `drain`    | plugins/engine     | ui (headless, at stdin EOF) |
 
 `runner`, `inputs`, `cancel`, `steer` and `prompt-sections` come from
@@ -187,6 +187,10 @@ Row config (`- id: loop`, `plugin: engine-unreal`): `tools`
 
 Providers: the `llm` row stays the source of truth for provider, model
 and effort, and `/model` and `/think` keep working mid-session.
+`/think` and the rows' `effort` take off, low, medium, high, xhigh and
+max; max is fitted to what the model's catalogue entry lists (xhigh
+when the catalogue does not know the model), and `llm-anthropic` now
+takes `effort` too.
 `llm-anthropic` speaks the native Messages API (streaming, thinking,
 1-hour prompt cache; new keys `cache_ttl`, `thinking_display`,
 `fallbacks`). `llm-openai`, `llm-openrouter` (`late_results`) and the

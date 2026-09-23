@@ -100,3 +100,46 @@ func TestNativeSecretNeverReturnsTheValue(t *testing.T) {
 		t.Fatalf("no project = %+v", r)
 	}
 }
+
+// Two asks from one reply run at once on the engine: the second is not
+// put to the user until the first is answered, so the one answer slot
+// every UI keeps always belongs to the question on screen.
+func TestParallelAsksTakeTurns(t *testing.T) {
+	t.Parallel()
+	reg, a, _, _ := mountNative(t)
+	tl, _ := reg.Lookup("ask")
+	asked := make(chan Event, 4)
+	a.emit = func(ev Event) { asked <- ev }
+	type res struct {
+		q, text string
+	}
+	out := make(chan res, 2)
+	for _, q := range []string{"FIRST_Q", "SECOND_Q"} {
+		go func() {
+			r, _ := tl.Call(context.Background(), agenttools.Call{ID: q, Args: json.RawMessage(fmt.Sprintf(`{"question":%q}`, q))})
+			out <- res{q, r.Text}
+		}()
+	}
+	first := <-asked
+	select {
+	case ev := <-asked:
+		t.Fatalf("%q was put to the user while %q was open", ev.Text, first.Text)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if err := a.Answer(first.ID, "ANS_"+first.Text); err != nil {
+		t.Fatal(err)
+	}
+	second := <-asked
+	if second.Text == first.Text {
+		t.Fatalf("the same question twice: %q", second.Text)
+	}
+	if err := a.Answer(second.ID, "ANS_"+second.Text); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		r := <-out
+		if r.text != "ANS_"+r.q {
+			t.Errorf("%s got %q", r.q, r.text)
+		}
+	}
+}

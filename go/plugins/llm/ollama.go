@@ -1,3 +1,5 @@
+//go:build !windows
+
 package llm
 
 // llm-ollama: a local model behind Ollama's Responses endpoint. Config:

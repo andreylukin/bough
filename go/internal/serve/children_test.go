@@ -76,6 +76,9 @@ func TestChildReportWords(t *testing.T) {
 		{"EXIT now", "stopped", ""},
 		// The done event arrives before the entries: the report waits.
 		{"RACE now", "finished", "echo RACE now"},
+		// A turn that closes with calls adopted is not the end: the
+		// report is the wake turn's, once.
+		{"ADOPT now", "finished", "echo ADOPT now"},
 	} {
 		t.Run(tc.word+"/"+tc.prompt, func(t *testing.T) {
 			t.Parallel()

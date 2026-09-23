@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package toolreg is the harness tool.Registry an engine coordinator
 // sees: every agent-tools tool becomes a translator that submits ONE
 // remote job (plan bough.call v1), which boughcall runs in-process with

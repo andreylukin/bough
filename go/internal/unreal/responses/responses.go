@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package responses builds the harness Responses API adapter for the
 // llm rows that speak it: OpenAI, OpenRouter and Ollama. bough builds
 // the adapter itself rather than through the harness clients because
@@ -172,6 +174,12 @@ func (a *adapter) Respond(ctx context.Context, r ullm.Request, o ullm.RequestOpt
 	ctx = context.WithValue(ctx, attemptKey{}, new(atomic.Int32))
 	resp, err := a.inner.Respond(ctx, r, o)
 	if err != nil {
+		// The Gate knows overflow only by the sentinel; unwrapped, an
+		// outgrown session resends its whole history every turn and
+		// shows the provider's 400 instead of the way out.
+		if agentllm.IsOverflowText(err.Error()) {
+			return resp, fmt.Errorf("llm-%s: %w: %w", a.c.Kind, err, agentllm.ErrContextOverflow)
+		}
 		return resp, fmt.Errorf("llm-%s: %w", a.c.Kind, err)
 	}
 	return resp, nil

@@ -374,12 +374,32 @@ export interface Turn {
   done: Line | null;
   /** Ended by a cancel; `done` is then the loop's trailing record when it came. */
   stopped?: boolean;
+  /** Of the calls its done left running (done.running), how many have reported since. */
+  settled?: number;
 }
 
 export function groupTurns(lines: Line[]): Turn[] {
   const turns: Turn[] = [];
   let cur: Turn | null = null;
+  // Turns whose done left calls running, with the call ids their job
+  // lines named and the ones whose end has since been recorded: the
+  // footer's "still running" must stop once they report.
+  const ranOn: { turn: Turn; ids: Set<string>; ended: Set<string> }[] = [];
+  const settle = (l: Line) => {
+    const id = l.kind === "call" ? l.data?.id : l.kind === "job" && l.data?.event === "finished" ? l.data?.call : undefined;
+    if (typeof id !== "string") return;
+    const owner = ranOn.find((r) => r.ids.has(id))
+      // An adopted end whose turn named no ids goes to the latest turn still waiting on one.
+      ?? (l.data?.adopted ? [...ranOn].reverse().find((r) => r.ids.size === 0 && r.ended.size < Number(r.turn.done?.data?.running)) : undefined);
+    if (owner) { owner.ended.add(id); owner.turn.settled = owner.ended.size; }
+  };
+  const track = (t: Turn) => {
+    if (!(Number(t.done?.data?.running) > 0)) return;
+    const ids = new Set(t.body.filter((b) => b.kind === "job" && b.data?.event === "started" && typeof b.data?.call === "string").map((b) => String(b.data!.call)));
+    ranOn.push({ turn: t, ids, ended: new Set() });
+  };
   for (const l of lines) {
+    settle(l);
     // Turn summaries live in the sidebar's turn log, not the transcript.
     // The engine entry is the coordinator's build record: provenance for tools, not conversation.
     if (l.kind === "meta" || l.kind === "origin" || l.kind === "title" || l.kind === "turn-summary" || l.kind === "model" || l.kind === "engine") continue;
@@ -408,6 +428,7 @@ export function groupTurns(lines: Line[]): Turn[] {
     if (l.kind === "done" || l.kind === "cancelled") {
       cur.done = l;
       turns.push(cur);
+      track(cur);
       cur = null;
       continue;
     }

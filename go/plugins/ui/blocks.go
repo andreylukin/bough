@@ -555,8 +555,14 @@ var toolCallRe = regexp.MustCompile(`\btools\.\w+\s*\(`)
 func (m *model) finishTurn(id int, ev Event) {
 	// A cancelled or failed turn never sends the final "assistant" or
 	// "thinking": keep what streamed, but settle every live block so the
-	// cursor and "thinking…" go and it can fold.
+	// cursor and "thinking…" go and it can fold. Not an engine call row:
+	// a done can leave its call running (adopted as a job, or cancelled
+	// and not yet reported), and settled here it read as a finished ✔
+	// until its end drew a second row beside it.
 	for i := range m.blocks {
+		if m.blocks[i].kind == "call" && m.blocks[i].call != nil {
+			continue
+		}
 		m.blocks[i].live = false
 	}
 	if !turnHasReply(m.blocks) {

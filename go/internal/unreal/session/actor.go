@@ -1,3 +1,5 @@
+//go:build !windows
+
 package session
 
 import (
@@ -109,10 +111,14 @@ type actorState struct {
 	wake      bool
 	turnStart time.Time
 	turnTree  string
+	adoptBase string // the tree the last turn closed on, while adopted calls run
 	reported  llm.Usage
-	lastReply string
-	stopUsed  bool
-	tries     int
+	// usageSeeded: reported holds the tally as of this Runtime's first
+	// turn, not zero.
+	usageSeeded bool
+	lastReply   string
+	stopUsed    bool
+	tries       int
 
 	inputs     []string          // every input id sent this session (a cancel parks them)
 	unobserved map[string]queued // sent, not yet recorded by the coordinator
@@ -121,6 +127,9 @@ type actorState struct {
 	notes      []string
 	pending    []string // lines that arrived while a turn was open
 	cancelAt   time.Time
+	// noticeWaits: job news arrived while a cancel was closing; it is
+	// taken once the cancel's done is written.
+	noticeWaits bool
 
 	adopted    map[string]*adoption
 	turnCalls  map[string]bool
@@ -256,6 +265,7 @@ func (a *actorState) item(it sessionstore.Item) {
 		}
 		if _, still := a.m.Outstanding[st.CallID]; before[st.CallID] && !still {
 			a.ended(st)
+			a.viewedImage(st)
 		}
 		return
 	}
@@ -269,6 +279,10 @@ func (a *actorState) response(mr sessionstore.ModelResponse, meta project.Meta) 
 	if meta.Muted {
 		return
 	}
+	// "model is thinking" and "writing bash call" were about the
+	// request, which has answered; left up, the label named a five
+	// minute build "writing bash call" in the status bar and the web.
+	a.live("activity", "", nil)
 	if meta.Err != "" {
 		a.providerError(meta.Err)
 		return
@@ -510,7 +524,20 @@ func (a *actorState) payload(text string) string {
 }
 
 func (a *actorState) openTurn(tree string, wake bool) {
+	if !a.usageSeeded {
+		// The cost row starts a resumed session from what its history
+		// says it spent; a delta from zero would charge the first turn
+		// the whole earlier session again, and compound through every
+		// later sum (the loop seeds at mount: loop.go r.reported). Read
+		// here, not at Open, which runs inside the row's Apply, where a
+		// Get would make the usage row a remount edge.
+		a.usageSeeded = true
+		if a.r.d.Usage != nil {
+			a.reported = a.r.d.Usage()
+		}
+	}
 	a.open, a.wake = true, wake
+	a.r.openSteers()
 	a.turnStart = time.Now()
 	a.turnTree = tree
 	a.lastReply = ""
@@ -539,7 +566,16 @@ func (a *actorState) send(q queued) {
 }
 
 func (a *actorState) deliver(q queued) {
-	payload, _ := json.Marshal(q.payload)
+	text := q.payload
+	if a.r.d.Redact != nil {
+		// History redacts the input it records (the orb row's redactor);
+		// the harness store writes the payload to disk as sent, and an
+		// @.env expansion or a pasted key would otherwise sit there, and
+		// in `bough engine inspect`, in the clear. The model reads the
+		// redacted text, as it reads the loop's redacted history.
+		text = a.r.d.Redact(text)
+	}
+	payload, _ := json.Marshal(text)
 	in := inbox.Input{ID: inbox.ID(q.id), Kind: inbox.InputExternal, Payload: jsontext.Value(payload)}
 	if err := a.run.inbox.Submit(a.r.ctx, in); err != nil {
 		a.note("error", "engine: "+err.Error(), nil)
@@ -586,8 +622,14 @@ func (a *actorState) openWake() {
 	if cp := a.checkpoints(); cp != nil && tree != "" {
 		cp.Pin(e.Seq, tree)
 	}
-	a.live("job", text, nil)
+	a.live("job", text, map[string]any{"wake": true})
 	a.openTurn(tree, true)
+	if a.adoptBase != "" {
+		// What an adopted call wrote after its turn closed is this
+		// wake's, but the snapshot above already holds it: diff from
+		// the tree its turn closed on instead.
+		a.turnTree = a.adoptBase
+	}
 	a.r.gate.mu.Lock()
 	a.r.gate.steps = 1 // this request already went out
 	a.r.gate.mu.Unlock()
@@ -603,13 +645,20 @@ func (a *actorState) notice() {
 	if j == nil {
 		return
 	}
+	if a.cancelling != nil {
+		// A [notice] input now would be an input the cancel did not
+		// park: the Gate would unpark and the model carry on after Esc.
+		// The news waits in Jobs until the cancel has closed.
+		a.noticeWaits = true
+		return
+	}
 	news := j.Take()
 	if len(news) == 0 {
 		return
 	}
 	text := strings.Join(news, "\n\n")
-	if !a.open && a.cancelling == nil {
-		a.live("job", text, nil)
+	if !a.open {
+		a.live("job", text, map[string]any{"wake": true})
 		id := newInputID()
 		tree := a.snapshot()
 		data := map[string]any{"text": jobWake + text, "wake": true, "reason": "notice", "input_id": id}
@@ -626,6 +675,18 @@ func (a *actorState) notice() {
 	}
 	a.note("job", text, nil)
 	a.steerOrQueue(queued{id: newInputID(), payload: "[notice] " + text}, &a.noticeQ)
+}
+
+// landSteers admits the steers Steer queued. The gate closes with the
+// turn, taking the queue first, so a queued steer finds its turn open;
+// only a steer sent while a submit was still on its way can find none
+// (the submit was blocked by a hook), and it runs as that input would.
+func (a *actorState) landSteers() {
+	for _, text := range a.r.takeSteers(false) {
+		if !a.steer(text) {
+			a.submit(text)
+		}
+	}
 }
 
 // steer lands a mid-turn message (§9.5).
@@ -790,6 +851,11 @@ func (a *actorState) settleFired(gen int) {
 	if len(fg) == 0 || slices.ContainsFunc(fg, a.blocking) {
 		return
 	}
+	if a.landQueued(false) {
+		// Something new was said: the turn is not idle after all, and
+		// its calls stay foreground rather than become jobs.
+		return
+	}
 	for _, c := range fg {
 		a.adopt(c)
 	}
@@ -852,6 +918,11 @@ func (a *actorState) closeTurn(running int, stop string) {
 	if !a.open {
 		return
 	}
+	// A steer queued while this turn was ending is the turn's: landed,
+	// it asks the model again, and the turn goes on.
+	if a.landQueued(false) {
+		return
+	}
 	if running == 0 && stop == "" {
 		if lc := a.lifecycle(); lc != nil && !a.stopUsed {
 			cont := lc.Stop(a.r.ctx, a.lastReply)
@@ -875,10 +946,41 @@ func (a *actorState) closeTurn(running int, stop string) {
 			}
 		}
 	}
+	// The gate shuts with the done; a steer that slipped in since the
+	// take above lands instead of the done.
+	if a.landQueued(true) {
+		return
+	}
 	a.drainHooks()
 	a.note("done", "", a.doneData(running, stop))
 	a.open, a.wake = false, false
 	a.disarm()
+	a.markAdoptBase()
+}
+
+// landQueued lands the steers Steer queued into the open turn, and
+// reports whether there were any. closing also shuts the gate when
+// there were none, in the same step as the take.
+func (a *actorState) landQueued(closing bool) bool {
+	texts := a.r.takeSteers(closing)
+	for _, text := range texts {
+		a.steer(text)
+	}
+	return len(texts) > 0
+}
+
+// markAdoptBase remembers the tree a turn closed on while adopted calls
+// still run. Their writes land after this turn's diff and before the
+// next turn's snapshot, so without it they are in no turn's done.files
+// and neither /undo nor Changes shows them.
+func (a *actorState) markAdoptBase() {
+	a.adoptBase = ""
+	for id, ad := range a.adopted {
+		if _, running := a.m.Outstanding[id]; running && !ad.ended {
+			a.adoptBase = a.snapshot()
+			return
+		}
+	}
 }
 
 // doneData is loop.doneData plus the engine keys.
@@ -994,6 +1096,12 @@ func (a *actorState) cancelTurn(stop string) {
 	if a.cancelling != nil {
 		return
 	}
+	// Steers queued before the cancel land first, while the turn is
+	// still open, so they are recorded and reach the model with the
+	// next input like the steers already waiting (below); the gate
+	// shuts once the queue is empty.
+	for a.landQueued(true) {
+	}
 	a.disarm()
 	parked := map[string]bool{}
 	for id := range a.turnCalls {
@@ -1075,6 +1183,11 @@ func (a *actorState) checkCancel() {
 	}
 	a.note("done", "", a.doneData(0, cs.stop))
 	a.open, a.wake = false, false
+	a.markAdoptBase()
+	if a.noticeWaits {
+		a.noticeWaits = false
+		a.notice()
+	}
 }
 
 func (a *actorState) cancelCall(callID string) error {

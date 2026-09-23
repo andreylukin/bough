@@ -1,3 +1,5 @@
+//go:build !windows
+
 package session
 
 import (
@@ -7,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/andreylukin/bough/internal/agentllm"
 	"github.com/andreylukin/bough/internal/unreal/project"
+	"github.com/andreylukin/bough/plugins/loop"
 )
 
 // overflowText is what a context overflow tells the user. Nothing trims
@@ -44,13 +48,18 @@ type Gate struct {
 	maxSteps int
 	maxCost  float64
 
-	mu        sync.Mutex
-	seq       uint64
-	parked    bool
-	pCalls    map[string]bool
-	pInputs   map[string]bool
-	inflight  context.CancelFunc
-	inSeq     uint64
+	mu       sync.Mutex
+	seq      uint64
+	parked   bool
+	pCalls   map[string]bool
+	pInputs  map[string]bool
+	inflight context.CancelFunc
+	inSeq    uint64
+	// starting is a request past the park check that has not yet set
+	// inflight (resolve() runs between, and builds an adapter on the
+	// first request or after /model). A cancel then has no request to
+	// stop, so it latches userStop on this seq for Respond to honour.
+	starting  uint64
 	userStop  uint64 // the seq Cancel stopped; its partial text is kept
 	pSeq      uint64
 	pAttempt  int
@@ -97,9 +106,12 @@ func (g *Gate) Park(calls, inputs []string) {
 func (g *Gate) CancelInflight() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.inflight != nil {
+	switch {
+	case g.inflight != nil:
 		g.userStop = g.inSeq
 		g.inflight()
+	case g.starting != 0:
+		g.userStop = g.starting
 	}
 }
 
@@ -158,7 +170,15 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 		return g.stopBudget(seq, "max_cost"), nil
 	}
 	g.steps++
+	g.starting = seq
 	g.mu.Unlock()
+	defer func() {
+		g.mu.Lock()
+		if g.starting == seq {
+			g.starting = 0
+		}
+		g.mu.Unlock()
+	}()
 
 	ad, prov, err := g.resolve()
 	if err != nil {
@@ -177,13 +197,23 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 	defer cancel()
 	g.mu.Lock()
 	g.inflight, g.inSeq = cancel, seq
+	g.starting = 0
 	g.pSeq, g.pAttempt = seq, 0
 	g.partial.Reset()
+	latched := g.userStop == seq
 	g.mu.Unlock()
-	if g.sink != nil {
-		g.sink(agentllm.Delta{Seq: seq, Attempt: 1, Kind: agentllm.DeltaStart})
+	var resp ullm.Response
+	if latched {
+		// Esc landed while this request was being set up: it never
+		// reaches the provider, so no call it would make runs after Esc.
+		cancel()
+		err = context.Canceled
+	} else {
+		if g.sink != nil {
+			g.sink(agentllm.Delta{Seq: seq, Attempt: 1, Kind: agentllm.DeltaStart})
+		}
+		resp, err = ad.Respond(child, req, o)
 	}
-	resp, err := ad.Respond(child, req, o)
 
 	g.mu.Lock()
 	stopped := g.userStop == seq
@@ -224,6 +254,26 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 	}
 	if resp.Stop == "" {
 		resp.Stop = ullm.StopComplete
+	}
+	// A <system-*> span in the model's own reply is a fabricated system
+	// message (glm-5.3-flash forged one telling the agent to delete files
+	// and force-push). Stripped here, before the coordinator records the
+	// response, it reaches neither history nor the model's next request.
+	cloned := false
+	for i, it := range resp.Output {
+		if m, ok := it.Data.(ullm.Message); ok && it.Type == ullm.ItemMessage && m.Role == ullm.RoleAssistant {
+			if s := loop.StripFabrications(m.Text); s != m.Text {
+				if !cloned {
+					// The adapter may hold on to its slice (a tape does).
+					resp.Output, cloned = slices.Clone(resp.Output), true
+				}
+				m.Text = s
+				resp.Output[i].Data = m
+			}
+		}
+	}
+	if served := agentllm.ServedModel(resp.Usage); served != "" {
+		model = served
 	}
 	g.emitMeta(project.Meta{ResponseID: resp.ID, Model: model, Provider: prov})
 	return resp, nil

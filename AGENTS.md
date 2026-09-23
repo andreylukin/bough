@@ -22,7 +22,7 @@ with bough's tools as native tool calls
 ([`go/docs/unreal-engine.md`](go/docs/unreal-engine.md)). It is opt-in;
 the loop is the default and code mode the product.
 
-One Go module, `go/`. 35 packages, ~51k lines. No cgo: SQLite is
+One Go module, `go/`. 71 packages, ~179k lines (~73k outside tests). No cgo: SQLite is
 `modernc.org/sqlite` and the JS runtime is goja, so one static binary
 cross-compiles to every target from one runner.
 
@@ -161,12 +161,14 @@ alone.
 -update` regenerates them. Hand-editing one to match a broken render is
 the failure mode the layer exists to catch.
 
-**Only six places import the harness.** `internal/unreal/boundary_test.go`
+**Only five packages import the harness.** `internal/unreal/boundary_test.go`
 fails when anything outside `internal/unreal/...`, `internal/messagesapi`,
-`internal/agentllm`, `plugins/engine`, `plugins/llm` or `cmd/bough`
-imports unreal-agent or `internal/unreal/...`. A reader of the engine
-reaches it through a service key with plain types (`engine`, `drain`),
-so a harness bump stays inside those packages. The pin is a SHA, and
+`internal/agentllm`, `plugins/engine` or `plugins/llm` imports unreal-agent
+or `internal/unreal/...`. A reader of the engine reaches it through a
+service key with plain types (`engine`, `drain`), so a harness bump stays
+inside those packages and the tests of five more that the boundary test
+names (`e2e`, `plugins/contextmd`, `plugins/skills`, `plugins/hooks`,
+`plugins/rules`). The pin is a SHA, and
 `pin_test.go` fails when go.mod moves without `unreal.Pin`.
 
 **The engine's system prompt never changes mid-session.** It is written
@@ -179,7 +181,12 @@ on every later turn.
 a couple of flaky TUI cases; the job runs `continue-on-error` and the CI log
 is the todo list — see the Windows section of [`README.md`](README.md). Do not "fix" a Windows failure by
 loosening an assertion that is correct on the platforms bough ships for;
-most of what fails is a test that hardcoded a POSIX path.
+most of what fails is a test that hardcoded a POSIX path. The engine is
+not built there at all: the harness is Unix-only at the pin, so its
+packages carry `//go:build !windows` and `engine-unreal` is a stub row
+that fails with the reason. A new file that imports the harness, or a
+test that imports an engine package, needs the same tag, or the gating
+`cross` job's Windows build and vet go red.
 
 **Embedded files are compared byte for byte.** `.gitattributes` forces
 LF checkout because a CRLF rewrite changes the bytes of files bough

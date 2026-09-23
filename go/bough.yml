@@ -13,7 +13,7 @@
     model: claude-sonnet-5
     # max_tokens: 16384   # cap on one reply; raise it if long patches
     #                     # come back cut off (the loop says when they do)
-    # effort: medium      # reasoning effort (openai, openrouter, cerebras):
+    # effort: medium      # reasoning effort (anthropic, openai, openrouter, cerebras):
     #                     # lower it when the model over-explores; "" = provider default
 
 # Swap the provider by replacing the row above with:

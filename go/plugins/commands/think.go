@@ -23,7 +23,7 @@ func registerThink(r *Registry, ctx *kernel.Context) error {
 	return r.Register(
 		CommandInfo{
 			Name:    "think",
-			Usage:   "[" + strings.Join(llm.Efforts, " | ") + "]",
+			Usage:   "[" + strings.Join(llm.Levels(), " | ") + "]",
 			Summary: "how hard the model thinks; bare /think shows the current level",
 		},
 		func(args string) (string, error) { return runThink(ctx, args) },
@@ -43,10 +43,10 @@ func runThink(ctx *kernel.Context, args string) (string, error) {
 		if cur == "" {
 			cur = "the provider's default"
 		}
-		return fmt.Sprintf("thinking: %s\nlevels: %s", cur, strings.Join(llm.Efforts, ", ")), nil
+		return fmt.Sprintf("thinking: %s\nlevels: %s", cur, strings.Join(llm.Levels(), ", ")), nil
 	}
 	if !llm.ValidEffort(level) {
-		return "", fmt.Errorf("think: %q is not a level (have %s)", level, strings.Join(llm.Efforts, ", "))
+		return "", fmt.Errorf("think: %q is not a level (have %s)", level, strings.Join(llm.Levels(), ", "))
 	}
 	if err := e.SetEffort(level); err != nil {
 		return "", fmt.Errorf("think: %w", err)

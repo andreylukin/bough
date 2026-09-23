@@ -93,7 +93,7 @@ func TestNativeSpawnRunsTheEngineChild(t *testing.T) {
 	}
 	eng.mu.Lock()
 	defer eng.mu.Unlock()
-	if strings.Join(eng.calls, ",") != "subagent 1,subagent 2,subagent 3,subagent 4" {
+	if strings.Join(eng.calls, ",") != "1,2,3,4" {
 		t.Fatalf("workers = %v", eng.calls)
 	}
 }

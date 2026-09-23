@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/andreylukin/bough/internal/agentllm"
 	"github.com/andreylukin/bough/kernel"
 )
 
@@ -65,9 +66,14 @@ var Efforts = []string{"off", "low", "medium", "high", "xhigh"}
 // EffortMax is the level above xhigh that Anthropic's adaptive models
 // and some OpenAI ones take. It is accepted by /think and the rows but
 // left out of Efforts, the shift+tab cycle: appending it there would
-// change what every loop session cycles through, and the loop's own
-// provider paths send whatever level they are given.
+// change what every loop session cycles through. Most models do not
+// take it, so every path fits it to the model (loopLevel, clampEffort)
+// rather than sending it as is.
 const EffortMax = "max"
+
+// Levels is every level /think and the rows accept: the shift+tab
+// cycle, then max.
+func Levels() []string { return append(slices.Clone(Efforts), EffortMax) }
 
 // ValidEffort reports whether level is one Efforter accepts.
 func ValidEffort(level string) bool {
@@ -130,8 +136,13 @@ type Usage struct {
 	// the one-hour TTL, which Anthropic bills at twice the input rate
 	// instead of 1.25x. Only the engine's adapter writes 1h entries.
 	CacheWrite1hTokens int
-	Cost               float64
-	Priced             bool
+	// FallbackCost is what attempts another model served (an Anthropic
+	// server-side fallback) cost beyond the same tokens at the row's
+	// model rates. The counts above include those tokens; a tally
+	// priced at the row's model adds this to be right.
+	FallbackCost float64
+	Cost         float64
+	Priced       bool
 }
 
 // Modeler is the optional seam naming the model an llm service runs;
@@ -206,20 +217,6 @@ func MarkTruncated(reply string) string {
 	return reply + Truncated
 }
 
-// overflowMarks are how the providers say the conversation no longer
-// fits. They disagree on the wording, and none of them uses a code the
-// HTTP status distinguishes from any other 400.
-var overflowMarks = []string{
-	"maximum context length",
-	"context_length_exceeded",
-	"context length exceeded",
-	"prompt is too long",
-	"too many tokens",
-	"exceeds the maximum",
-	"reduce the length of the messages",
-	"input length and `max_tokens` exceed",
-}
-
 // IsOverflow reports whether err is the conversation outgrowing the
 // model's context window.
 //
@@ -228,16 +225,7 @@ var overflowMarks = []string{
 // fails the same way. Without recognising it the session is simply
 // bricked, and the user is left reading a provider's token arithmetic.
 func IsOverflow(err error) bool {
-	if err == nil {
-		return false
-	}
-	s := strings.ToLower(err.Error())
-	for _, m := range overflowMarks {
-		if strings.Contains(s, strings.ToLower(m)) {
-			return true
-		}
-	}
-	return false
+	return err != nil && agentllm.IsOverflowText(err.Error())
 }
 
 // OverflowHelp is what to do about it. bough does not compact a

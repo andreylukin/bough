@@ -234,7 +234,7 @@ func (o *openrouterLLM) call(ctx context.Context, system string, messages []Mess
 			payload["tools"] = []any{jsToolDecl}
 			payload["tool_choice"] = "auto"
 		}
-		switch effort := o.Effort(); effort {
+		switch effort := loopLevel("llm-openrouter", o.model, o.Effort()); effort {
 		case "":
 		case "off":
 			payload["reasoning"] = map[string]any{"exclude": true, "enabled": false}

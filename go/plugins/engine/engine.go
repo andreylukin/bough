@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package engine is the engine-unreal row (go/docs/unreal-engine.md
 // §6.1): the loop row's plugin swapped for one unreal-agent coordinator
 // per bough session. It is kernel glue only. The session itself —

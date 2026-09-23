@@ -1,3 +1,5 @@
+//go:build !windows
+
 package llm
 
 // llm-script: a deterministic model read from a JSON tape

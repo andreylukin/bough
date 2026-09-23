@@ -1,3 +1,5 @@
+//go:build !windows
+
 package session
 
 import (
@@ -268,8 +270,21 @@ func TestSubagent(t *testing.T) {
 		t.Fatalf("kinds %v, want %v\n%s", got, want, r.dump())
 	}
 	for _, e := range r.entries() {
-		if w, _ := toInt(e.Data["worker"]); w != 1 {
-			t.Fatalf("%s has worker %v", e.Kind, e.Data["worker"])
+		if w, ok := e.Data["worker"].(int); !ok || w != 1 {
+			t.Fatalf("%s has worker %#v, want the number 1", e.Kind, e.Data["worker"])
+		}
+	}
+	if st := r.last("sub:done").Data["status"]; st != "ok" {
+		t.Fatalf("sub:done status %v, want ok as the loop writes it", st)
+	}
+	for in, want := range map[[2]string]string{
+		{"done", "Status: failed\nFindings: none"}: "failed",
+		{"done", "**Status:** ok"}:                 "ok",
+		{"budget", ""}:                             "error",
+		{"cancelled", ""}:                          "cancelled",
+	} {
+		if got := cardStatus(in[0], in[1]); got != want {
+			t.Errorf("cardStatus(%q, %q) = %q, want %q", in[0], in[1], got, want)
 		}
 	}
 	for _, rq := range r.fake.Requests() {
@@ -323,7 +338,9 @@ func TestCatchUp(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = r.rt.Close(ctx)
-	// The "crashed" history: everything but the assistant row.
+	// The "crashed" history: everything but the assistant row, plus a
+	// subagent row stamped with its own store's (higher) sequence, which
+	// must not count as how far this store's rows reached.
 	dir2 := filepath.Join(t.TempDir(), "history")
 	var keep []history.Entry
 	for _, e := range r.entries() {
@@ -331,6 +348,7 @@ func TestCatchUp(t *testing.T) {
 			keep = append(keep, e)
 		}
 	}
+	keep = append(keep, history.Entry{Seq: keep[len(keep)-1].Seq + 1, Kind: "sub:assistant", Data: map[string]any{"text": "child", "worker": 1, "hseq": 999}})
 	path := filepath.Join(dir2, "s1.jsonl")
 	writeEntries(t, path, keep)
 	h, err := history.OpenExisting(path)

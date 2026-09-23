@@ -189,6 +189,7 @@ func since(now, start llm.Usage) llm.Usage {
 	now.CacheReadTokens -= start.CacheReadTokens
 	now.CacheCreationTokens -= start.CacheCreationTokens
 	now.CacheWrite1hTokens -= start.CacheWrite1hTokens
+	now.FallbackCost -= start.FallbackCost
 	if now.Priced && start.Priced {
 		now.Cost -= start.Cost
 	}
@@ -241,7 +242,7 @@ func (s *Service) Usage() llm.Usage {
 			// hide the saving caching exists for. A one-hour write costs
 			// 2x input, not the 5-minute 1.25x, and the engine's markers
 			// are 1h by default.
-			u.Cost = m.CostCached1h(u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheCreationTokens, u.CacheWrite1hTokens)
+			u.Cost = m.CostCached1h(u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheCreationTokens, u.CacheWrite1hTokens) + u.FallbackCost
 			u.Priced = true
 		}
 	}

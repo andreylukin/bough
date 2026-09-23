@@ -1,10 +1,14 @@
+//go:build !windows
+
 package llm
 
 import (
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +23,7 @@ import (
 	ullm "github.com/unreallabsai/unreal-agent/harness/llm"
 
 	"github.com/andreylukin/bough/internal/agentllm"
+	"github.com/andreylukin/bough/internal/models"
 	"github.com/andreylukin/bough/kernel"
 )
 
@@ -373,6 +378,12 @@ func TestClampEffortByTheCatalogue(t *testing.T) {
 		{"llm-anthropic", "claude-opus-5-5", "off", "off"}, // off and "" are the adapter's to map
 		{"llm-anthropic", "claude-opus-5-5", "", ""},
 		{"llm-openai", "a-model-nobody-has", "max", "max"},
+		// The Responses API has no "none": off asks for low, so a model
+		// without low gets the least level it lists instead of a 400.
+		{"llm-openai", "gpt-5-pro", "off", "high"},
+		{"llm-openai", "gpt-5.2-chat-latest", "off", "medium"},
+		{"llm-openai", "gpt-5.5", "off", "off"},
+		{"llm-openai", "a-model-nobody-has", "off", "off"},
 	} {
 		if got := clampEffort(tc.plugin, tc.model, tc.level); got != tc.want {
 			t.Errorf("clampEffort(%s, %s, %q) = %q, want %q", tc.plugin, tc.model, tc.level, got, tc.want)
@@ -380,6 +391,36 @@ func TestClampEffortByTheCatalogue(t *testing.T) {
 	}
 	if AgentCacheTTL(echoLLM{}) != CacheTTL("") {
 		t.Error("a row without its own TTL answers the provider default")
+	}
+}
+
+// The loop's own paths send every level main sent unchanged; max, newer
+// than they are, is fitted to the model or falls back to xhigh.
+func TestLoopLevelFitsMax(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ plugin, model, level, want string }{
+		{"llm-cerebras", "gpt-oss-120b", "max", "high"},
+		{"llm-openai", "gpt-5.5", "max", "xhigh"},
+		{"llm-openai", "gpt-5.6-sol", "max", "max"},
+		{"llm-openrouter", "someone/unknown-model", "max", "xhigh"},
+		{"llm-cerebras", "gpt-oss-120b", "xhigh", "xhigh"},
+		{"llm-openai", "gpt-5-pro", "off", "off"},
+		{"llm-openai", "gpt-5.5", "", ""},
+	} {
+		if got := loopLevel(tc.plugin, tc.model, tc.level); got != tc.want {
+			t.Errorf("loopLevel(%s, %s, %q) = %q, want %q", tc.plugin, tc.model, tc.level, got, tc.want)
+		}
+	}
+}
+
+// /think max on a loop session reaches the wire as a level the model
+// accepts.
+func TestLoopOpenAISendsFittedMax(t *testing.T) {
+	t.Parallel()
+	o := &openaiLLM{model: "gpt-5.5", effort: EffortMax}
+	b := o.body("", nil, false, false)
+	if r, _ := b["reasoning"].(map[string]any); r["effort"] != "xhigh" {
+		t.Errorf("reasoning = %v, want effort xhigh", b["reasoning"])
 	}
 }
 
@@ -422,5 +463,41 @@ func TestRetryableReadsTheErrorType(t *testing.T) {
 	_ = json.Unmarshal([]byte(`{"type":"error","error":{"type":"invalid_request_error","message":"no"}}`), bad)
 	if retryable(bad) {
 		t.Error("a 400 is not retryable")
+	}
+}
+
+// A Fable row that a server-side fallback served from Opus is priced at
+// Opus's rates for that attempt, and the declined attempt's billed
+// partial output, which only usage.iterations carries, is counted.
+func TestFallbackUsageIsPricedAtTheServingModel(t *testing.T) {
+	t.Parallel()
+	raw := `{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,
+		"iterations":[
+			{"type":"message","model":"claude-fable-5-1","input_tokens":1000,"output_tokens":0},
+			{"type":"message","model":"claude-fable-5-1","input_tokens":1000,"output_tokens":50},
+			{"type":"fallback_message","model":"claude-opus-5","input_tokens":1000,"output_tokens":200}]}`
+	r := ullm.Usage{InputTokens: 1000, OutputTokens: 200, Raw: jsontext.Value(raw)}
+	var u Usage
+	addAgentUsage(&u, r)
+	addFallbackUsage(&u, r, "claude-fable-5-1")
+	if u.InputTokens != 2000 || u.OutputTokens != 250 {
+		t.Errorf("tally in %d out %d, want 2000 and 250 (the unbilled decline left out)", u.InputTokens, u.OutputTokens)
+	}
+	fable, _ := models.Lookup("llm-anthropic", "claude-fable-5-1")
+	opus, _ := models.Lookup("llm-anthropic", "claude-opus-5")
+	want := opus.Cost(1000, 200) - fable.Cost(1000, 200)
+	if want >= 0 || math.Abs(u.FallbackCost-want) > 1e-12 {
+		t.Errorf("FallbackCost = %v, want %v", u.FallbackCost, want)
+	}
+	if got := agentllm.ServedModel(r); got != "claude-opus-5" {
+		t.Errorf("ServedModel = %q", got)
+	}
+
+	var plain Usage
+	one := ullm.Usage{InputTokens: 10, OutputTokens: 2, Raw: jsontext.Value(`{"input_tokens":10,"output_tokens":2,"iterations":[{"type":"message","model":"claude-fable-5-1","input_tokens":10,"output_tokens":2}]}`)}
+	addAgentUsage(&plain, one)
+	addFallbackUsage(&plain, one, "claude-fable-5-1")
+	if plain.InputTokens != 10 || plain.OutputTokens != 2 || plain.FallbackCost != 0 || agentllm.ServedModel(one) != "" {
+		t.Errorf("a response the row's model served changes nothing: %+v", plain)
 	}
 }
