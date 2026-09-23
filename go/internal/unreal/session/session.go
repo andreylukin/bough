@@ -217,10 +217,14 @@ type Runtime struct {
 	ctxMu   sync.Mutex
 	ctxText string // /context, refreshed by the actor at each build
 
-	// steerable mirrors "a turn is open and not cancelling" for Steer,
-	// which must answer without waiting on the actor; submits counts
-	// Submit lines posted and not yet taken.
-	steerable atomic.Bool
+	// The steer gate, as the loop's turns keeps it (cancel.go): Steer
+	// queues under steerMu while steerable, and the actor takes the queue
+	// and shuts the gate in one step when a turn closes, so a steer is
+	// either landed in its turn or refused, never stranded. submits
+	// counts Submit lines posted and not yet taken.
+	steerMu   sync.Mutex
+	steerable bool
+	steerIn   []string
 	submits   atomic.Int64
 
 	closeOnce sync.Once
@@ -316,23 +320,43 @@ func (r *Runtime) Submit(line string) {
 // Steer hands text to the bough turn in flight; false when none is open
 // or about to be (the ui then sends the line as input).
 //
-// It answers from a flag and never waits on the actor: the ui calls it
-// inside Update on Enter, and the actor runs hooks and git snapshots
-// that would freeze the terminal meanwhile (the loop's Steer only
-// enqueues too). A submit still on its way counts as a turn about to
-// open, so a steer sent right after one lands on it, as it did when
-// Steer queued behind the submit. A steer that finds the turn already
-// closed when the actor gets to it becomes an input, which is what the
-// ui would have done with a false.
+// It only enqueues and never waits on the actor: the ui calls it inside
+// Update on Enter, and the actor runs hooks and git snapshots that
+// froze the terminal meanwhile (the loop's Steer only enqueues too).
+// The actor admits the queue (landSteers), and a turn that closes takes
+// what is queued first (takeSteers). A submit still on its way counts
+// as a turn about to open, so a steer sent right after one lands on it,
+// as it did when Steer queued behind the submit.
 func (r *Runtime) Steer(text string) bool {
-	if !r.steerable.Load() && r.submits.Load() == 0 {
+	r.steerMu.Lock()
+	if !r.steerable && r.submits.Load() == 0 {
+		r.steerMu.Unlock()
 		return false
 	}
-	return r.post(func() {
-		if !r.a.steer(text) {
-			r.a.submit(text)
-		}
-	})
+	r.steerIn = append(r.steerIn, text)
+	r.steerMu.Unlock()
+	return r.post(func() { r.a.landSteers() })
+}
+
+// takeSteers hands the actor every steer queued since it last looked.
+// closing shuts the gate in the same instant when there are none: the
+// turn is about to end, and a steer from now on must be refused (the
+// ui then sends it as input) rather than land after its done.
+func (r *Runtime) takeSteers(closing bool) []string {
+	r.steerMu.Lock()
+	defer r.steerMu.Unlock()
+	s := r.steerIn
+	r.steerIn = nil
+	if closing && len(s) == 0 {
+		r.steerable = false
+	}
+	return s
+}
+
+func (r *Runtime) openSteers() {
+	r.steerMu.Lock()
+	r.steerable = true
+	r.steerMu.Unlock()
 }
 
 // Cancel is Esc / ctrl+c / SIGINT: the turn in flight ends with
@@ -434,7 +458,6 @@ func (r *Runtime) loop() {
 		for _, f := range fs {
 			f()
 			r.a.evaluate()
-			r.steerable.Store(r.a.open && r.a.cancelling == nil && !r.a.closed)
 		}
 	}
 }

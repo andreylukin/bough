@@ -537,6 +537,7 @@ func (a *actorState) openTurn(tree string, wake bool) {
 		}
 	}
 	a.open, a.wake = true, wake
+	a.r.openSteers()
 	a.turnStart = time.Now()
 	a.turnTree = tree
 	a.lastReply = ""
@@ -674,6 +675,18 @@ func (a *actorState) notice() {
 	}
 	a.note("job", text, nil)
 	a.steerOrQueue(queued{id: newInputID(), payload: "[notice] " + text}, &a.noticeQ)
+}
+
+// landSteers admits the steers Steer queued. The gate closes with the
+// turn, taking the queue first, so a queued steer finds its turn open;
+// only a steer sent while a submit was still on its way can find none
+// (the submit was blocked by a hook), and it runs as that input would.
+func (a *actorState) landSteers() {
+	for _, text := range a.r.takeSteers(false) {
+		if !a.steer(text) {
+			a.submit(text)
+		}
+	}
 }
 
 // steer lands a mid-turn message (§9.5).
@@ -838,6 +851,11 @@ func (a *actorState) settleFired(gen int) {
 	if len(fg) == 0 || slices.ContainsFunc(fg, a.blocking) {
 		return
 	}
+	if a.landQueued(false) {
+		// Something new was said: the turn is not idle after all, and
+		// its calls stay foreground rather than become jobs.
+		return
+	}
 	for _, c := range fg {
 		a.adopt(c)
 	}
@@ -900,6 +918,11 @@ func (a *actorState) closeTurn(running int, stop string) {
 	if !a.open {
 		return
 	}
+	// A steer queued while this turn was ending is the turn's: landed,
+	// it asks the model again, and the turn goes on.
+	if a.landQueued(false) {
+		return
+	}
 	if running == 0 && stop == "" {
 		if lc := a.lifecycle(); lc != nil && !a.stopUsed {
 			cont := lc.Stop(a.r.ctx, a.lastReply)
@@ -923,11 +946,27 @@ func (a *actorState) closeTurn(running int, stop string) {
 			}
 		}
 	}
+	// The gate shuts with the done; a steer that slipped in since the
+	// take above lands instead of the done.
+	if a.landQueued(true) {
+		return
+	}
 	a.drainHooks()
 	a.note("done", "", a.doneData(running, stop))
 	a.open, a.wake = false, false
 	a.disarm()
 	a.markAdoptBase()
+}
+
+// landQueued lands the steers Steer queued into the open turn, and
+// reports whether there were any. closing also shuts the gate when
+// there were none, in the same step as the take.
+func (a *actorState) landQueued(closing bool) bool {
+	texts := a.r.takeSteers(closing)
+	for _, text := range texts {
+		a.steer(text)
+	}
+	return len(texts) > 0
 }
 
 // markAdoptBase remembers the tree a turn closed on while adopted calls
@@ -1056,6 +1095,12 @@ func (a *actorState) cancelTurn(stop string) {
 	}
 	if a.cancelling != nil {
 		return
+	}
+	// Steers queued before the cancel land first, while the turn is
+	// still open, so they are recorded and reach the model with the
+	// next input like the steers already waiting (below); the gate
+	// shuts once the queue is empty.
+	for a.landQueued(true) {
 	}
 	a.disarm()
 	parked := map[string]bool{}
