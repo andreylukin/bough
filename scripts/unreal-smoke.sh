@@ -242,10 +242,18 @@ smoke() { # PLUGIN MODEL
 		echo "  skip switch: no second provider key"
 		return
 	fi
+	# One line at a time: piped together, /model is dispatched before the
+	# first request and "two" steers the first turn (headless.go), so
+	# nothing would switch mid-session.
 	d="$scratch/$tag-switch"
 	sandbox "$tag-switch" "$plugin" "$model"
 	out="$d/out.jsonl"
-	printf 'Reply with exactly: one\n/model %s\nReply with exactly: two\n' "$sw" | bough_in "$d" >"$out" 2>&1
+	background "$d" "$out" 'Reply with exactly: one'
+	if wait_for "$out" '"kind":"done"' 120; then
+		printf '/model %s\nReply with exactly: two\n' "$sw" >&3
+	fi
+	exec 3>&-
+	wait "$bg_pid"
 	code=$?
 	expect "switch to ${sw% *}" "$d" "$out" $code 0 2
 }
