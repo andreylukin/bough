@@ -50,7 +50,9 @@ test("MB-TR: a steer note is yours: a labelled bubble on the right", () => {
     { seq: 4, at: at(5), kind: "done", text: "" },
   ] as Line[];
   const html = renderToStaticMarkup(<TurnView turn={groupTurns(lines)[0]} />);
-  expect(html).toContain('<div class="steer-note"><span class="steer-word">Steer</span><p class="prompt-bubble steer-bubble">say hi</p></div>');
+  expect(html).toContain('<div class="steer-note"><span class="steer-word" title="Sent while the turn ran" aria-label="Steer"><svg');
+  expect(html).toContain('<p class="prompt-bubble steer-bubble">say hi</p></div>');
+  expect(html).not.toContain(">Steer<");
 });
 
 test("MB-TR: a stopped turn's foot is neutral with the square", () => {
