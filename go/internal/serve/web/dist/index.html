@@ -2798,7 +2798,9 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
 .say .md a:hover{text-decoration-color:var(--text-2)}
 /* hover actions: no reserved band; 24px ghost icons */
 .msg-acts{display:flex;align-items:center;gap:2px;height:24px;min-height:0;margin:0;opacity:0;transition:opacity 80ms var(--ease-in)}
-.say>.msg-acts{margin-top:0}
+/* A mid-turn reply's actions overlay its corner: shown on hover, they must not hold a 24px row open under every line of prose. */
+.say{position:relative}
+.say>.msg-acts{position:absolute;right:0;bottom:0;margin:0;padding-inline-start:8px;background:var(--bg);border-radius:var(--r-sm)}
 .prompt-acts{justify-content:flex-end}
 .turn:hover .msg-acts,.turn:focus-within .msg-acts,.msg-acts:focus-within{opacity:1;transition:opacity var(--dur-fast) var(--ease-out)}
 .msg-acts .copy-btn{width:24px;height:24px;min-height:0;padding:0;border:0;border-radius:var(--r-sm);background:none;color:var(--text-3);
@@ -2919,7 +2921,7 @@ button.pal-op:hover .pal-op-v{color:var(--text-1)}
 .dl-n{min-width:4ch;padding:0 8px;text-align:right;font-size:var(--fs-sm);font-variant-numeric:tabular-nums;color:var(--text-3);user-select:none}
 .dl-body>.dl-hunk,.edit-rows>.dl-hunk{min-height:24px;align-items:center}
 /* T7 steer note */
-.steer-note{display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin:8px 0}
+.steer-note{display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin:0}
 .steer-word{font-size:var(--fs-sm);font-weight:500;color:var(--text-3);white-space:nowrap;padding-inline-end:14px}
 .steer-bubble{margin:0;font-size:var(--fs-base);line-height:1.55;color:var(--text-1);white-space:pre-wrap;overflow-wrap:anywhere}
 /* T8 turn foot */
