@@ -268,8 +268,21 @@ func TestSubagent(t *testing.T) {
 		t.Fatalf("kinds %v, want %v\n%s", got, want, r.dump())
 	}
 	for _, e := range r.entries() {
-		if w, _ := toInt(e.Data["worker"]); w != 1 {
-			t.Fatalf("%s has worker %v", e.Kind, e.Data["worker"])
+		if w, ok := e.Data["worker"].(int); !ok || w != 1 {
+			t.Fatalf("%s has worker %#v, want the number 1", e.Kind, e.Data["worker"])
+		}
+	}
+	if st := r.last("sub:done").Data["status"]; st != "ok" {
+		t.Fatalf("sub:done status %v, want ok as the loop writes it", st)
+	}
+	for in, want := range map[[2]string]string{
+		{"done", "Status: failed\nFindings: none"}: "failed",
+		{"done", "**Status:** ok"}:                 "ok",
+		{"budget", ""}:                             "error",
+		{"cancelled", ""}:                          "cancelled",
+	} {
+		if got := cardStatus(in[0], in[1]); got != want {
+			t.Errorf("cardStatus(%q, %q) = %q, want %q", in[0], in[1], got, want)
 		}
 	}
 	for _, rq := range r.fake.Requests() {

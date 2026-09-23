@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/andreylukin/bough/internal/agenttools"
@@ -141,7 +142,10 @@ func (w *Workers) nativeSpawn(ctx context.Context, c agenttools.Call) (agenttool
 	id := w.nextID
 	w.mu.Unlock()
 	worker := fmt.Sprintf("subagent %d", id)
-	reply, status, steps, err := eng.Spawn(ctx, a.Task, worker, nativeSubSystemPrompt, w.maxSteps)
+	// The child's rows carry the number, as the loop's do: the TUI and
+	// the web key a subagent's card by a numeric worker, and a label
+	// read as 0 folded every child into one card.
+	reply, status, steps, err := eng.Spawn(ctx, a.Task, strconv.Itoa(id), nativeSubSystemPrompt, w.maxSteps)
 	data := map[string]any{"worker": id, "status": status, "steps": steps}
 	if err != nil {
 		return agenttools.Result{Error: fmt.Sprintf("workers: %s: %v", worker, err), Text: reply, Data: data}, nil

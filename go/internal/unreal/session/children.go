@@ -175,8 +175,31 @@ loop:
 		reply = runErr.Error()
 		note("error", runErr.Error(), nil)
 	}
-	note("done", "", map[string]any{"status": status, "steps": steps})
+	note("done", "", map[string]any{"status": cardStatus(status, reply), "steps": steps})
 	return ChildResult{Reply: reply, Status: status, Steps: steps}, nil
+}
+
+// cardStatus is a child's end in the words the loop's sub:done uses and
+// the TUI and web cards read: ok or failed by the report's own Status
+// line, error for a step budget (the loop's "gave up"), cancelled as is.
+// "done" was none of them, so a child that finished read as an error.
+func cardStatus(status, reply string) string {
+	switch status {
+	case "done":
+		for ln := range strings.SplitSeq(reply, "\n") {
+			ln = strings.ToLower(strings.TrimSpace(strings.TrimLeft(ln, "*#- ")))
+			if v, ok := strings.CutPrefix(ln, "status:"); ok {
+				if strings.HasPrefix(strings.TrimSpace(strings.Trim(v, "*` ")), "fail") {
+					return "failed"
+				}
+				break
+			}
+		}
+		return "ok"
+	case "budget":
+		return "error"
+	}
+	return status
 }
 
 func control(mode inbox.ControlMode, reason string) inbox.Input {
