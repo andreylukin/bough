@@ -212,6 +212,18 @@ func fakeTurn(path, line string) {
 		rec("assistant", map[string]any{"text": "echo " + line})
 		rec("done", map[string]any{"wake": true})
 		say(map[string]any{"kind": "done", "wake": true})
+	case strings.HasPrefix(line, "WAITJOB"):
+		// ADOPT without the wake: the call is still running, so the
+		// agent waits on its job for as long as the test needs.
+		rec("job", map[string]any{"id": 1, "event": "started", "cmd": "make"})
+		rec("assistant", map[string]any{"text": "started the build"})
+		rec("done", map[string]any{"running": 1})
+		say(map[string]any{"kind": "done", "running": 1})
+	case strings.HasPrefix(line, "BESIDE"):
+		// A turn that finishes while an earlier turn's job still runs.
+		rec("assistant", map[string]any{"text": "echo " + line})
+		rec("done", map[string]any{"jobs": 1})
+		say(map[string]any{"kind": "done", "jobs": 1})
 	case strings.HasPrefix(line, "RACE"):
 		say(map[string]any{"kind": "done"})
 		time.Sleep(300 * time.Millisecond)

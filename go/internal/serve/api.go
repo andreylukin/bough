@@ -617,6 +617,12 @@ func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 	var jobs []Job
 	if live {
 		st, ask, jobs = d.statusLive, d.askLive, d.jobsLive
+		// A background agent whose turn closed with its calls adopted as
+		// jobs still holds its running slot: it is working, and a row
+		// that said done offered no Stop for an agent serve counts.
+		if st == StatusDone && a.sup.holdsSlot(in.ID) {
+			st = StatusRunning
+		}
 	}
 	title := meta.Title
 	if title == "" {
