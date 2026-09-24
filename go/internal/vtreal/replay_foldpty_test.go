@@ -459,13 +459,14 @@ func TestFoldPtyHistoryTapes(t *testing.T) {
 					return
 				}
 			}
-			a.key(uv.KeyEscape, 0)
+			// A bare esc waits in the input parser for its next byte, so
+			// the chord's ctrl+x arrived glued to it, the leader hint never
+			// showed and foldPtyChord waited out 2 s every run.
+			subagentsEsc(a)
 
 			foldPtyChord(a, 'e')
-			a.settled()
 			foldPtyFrame(a, "expand_all")
 			foldPtyChord(a, 'c')
-			a.settled()
 			foldPtyFrame(a, "collapse_all")
 			for _, y := range foldPtyHeaders(a, "▾") {
 				t.Errorf("collapse_all left an open header on row %d:\n%s", y, a.text())
