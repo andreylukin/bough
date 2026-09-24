@@ -5215,14 +5215,17 @@ export default function App() {
         // A link minted when projects were labels names an id nothing
         // resolves; the project list is where it meant to go.
         setOrbOpen(OLD_PROJECT_ID.test(po[1]) ? undefined : po[1]);
-        if (OLD_PROJECT_ID.test(po[1])) window.location.hash = "#/projects";
+        // In place: assigning location.hash pushed, so Back landed on the
+        // old link and was redirected forward again.
+        if (OLD_PROJECT_ID.test(po[1])) window.history.replaceState(null, "", "#/projects");
         return;
       }
       const ps = /^projects\/([^/]+)(?:\/t\/([^/]+))?$/.exec(h);
       if (ps) {
         // A label id from before the re-key, or anything that is not a
         // slug, names no project: the list is where that link meant to go.
-        if (OLD_PROJECT_ID.test(ps[1]) || !SLUG.test(ps[1])) { window.location.hash = "#/projects"; return; }
+        // Replaced, not pushed (see the orb link above); replaceState fires no hashchange, so read again.
+        if (OLD_PROJECT_ID.test(ps[1]) || !SLUG.test(ps[1])) { window.history.replaceState(null, "", "#/projects"); read(); return; }
         // The page picks the session it shows (main, or a thread) once it
         // has read the project; whatever was open elsewhere is not it.
         setLost(null); setView("project"); setProjectSlug(ps[1]); setSelected(null); setSub(null); setPane("thread");
