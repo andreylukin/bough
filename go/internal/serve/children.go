@@ -145,6 +145,14 @@ func (s *Supervisor) CreateChild(opt CreateOptions, maxPerSession, maxRunning in
 		s.mu.Unlock()
 		return "", false, fmt.Errorf("serve: supervisor: closed")
 	}
+	// An archived parent is dead or dying: a spawn it sent before the
+	// kill would start an agent after "Stop and archive" listed the
+	// children to end. A person's thread from the project page is not
+	// the parent's own spawn.
+	if s.meta[parent].Archived && !opt.Thread {
+		s.mu.Unlock()
+		return "", false, fmt.Errorf("serve: supervisor: parent %s: %w", parent, ErrArchived)
+	}
 	n := busy
 	if !perSessionLive {
 		for _, m := range s.meta {
