@@ -64,10 +64,16 @@ func searchDuringStreamReply(s string) []string {
 
 // searchDuringStreamRun streams the reply with a draft typed on the
 // first delta, runs during() while the tail is still coming, then
-// waits for the turn to finish.
+// waits for the turn to finish. The golden run (during == nil) has
+// nothing to do mid-stream, so it streams unpaced: it runs before the
+// other two can start, and pacing it cost them 5 s of waiting.
 func searchDuringStreamRun(t *testing.T, during func(a *app)) (a *app, final string) {
 	t.Helper()
-	a = startCfg(t, 100, 60, cancelConfig(searchDuringStreamTape(t), 40))
+	delay := 40
+	if during == nil {
+		delay = 0
+	}
+	a = startCfg(t, 100, 60, cancelConfig(searchDuringStreamTape(t), delay))
 	a.typeText("stream something")
 	a.key(uv.KeyEnter, 0)
 	a.waitFor("w001")
