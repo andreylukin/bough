@@ -84,11 +84,14 @@ const day = (iso: string) => new Date(iso + "T12:00:00").toLocaleDateString([], 
  * one, or with a rule about its repo or author that the brief reads
  * from then on. The actions sit beside the row, not inside its link.
  */
-function Signal({ s, pinned, onOpenSession, onTriage }: {
+function Signal({ s, pinned, menu, setMenu, onOpenSession, onTriage }: {
   s: MeSignal; pinned?: boolean; onOpenSession?: (id: string) => void;
+  /** The Dismiss menu is open. Kept by the page, not the row: a pin moves
+   *  the row into another group, which remounts it, and the menu the
+   *  person opened must still be there. */
+  menu: boolean; setMenu: (open: boolean) => void;
   onTriage?: (action: TriageAction, s: MeSignal, rule?: string) => void;
 }) {
-  const [menu, setMenu] = useState(false);
   const body = (
     <>
       <span className="me-sig-src mono">{s.source}</span>
@@ -119,7 +122,7 @@ function Signal({ s, pinned, onOpenSession, onTriage }: {
           <svg width="14" height="14" viewBox="0 0 24 24" fill={pinned ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l2.6 5.4 5.9.8-4.3 4.1 1.1 5.9L12 16.4 6.7 19.2l1.1-5.9-4.3-4.1 5.9-.8z" /></svg>
         </button>
         <button type="button" className="me-act" title="Dismiss" aria-label={`Dismiss ${s.title}`} aria-haspopup="menu" aria-expanded={menu}
-                onClick={() => setMenu((v) => !v)}>
+                onClick={() => setMenu(!menu)}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>
       </span>
@@ -187,6 +190,7 @@ export function MePage({ data, error, notice, rows = [], projectNames = {}, refr
   }, [data?.signals, data?.triage]);
   const projects = useMemo(() => projectLines(rows, projectNames), [rows, projectNames]);
   const [hot, setHot] = useState<number | null>(null);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
   if (!data) {
     return <div className="thread me-loading">{error ? <EmptyState glyph="search" title="Couldn’t read the brief" primary={false} action={onRetry ? { label: "Retry", onClick: onRetry } : undefined}>{error}</EmptyState> : <Pending what="Brief" />}</div>;
   }
@@ -243,7 +247,8 @@ export function MePage({ data, error, notice, rows = [], projectNames = {}, refr
           {groups.map((g) => (
             <section key={g.kind} className="me-group" data-kind={g.kind} aria-label={g.label}>
               <h2 className="eyebrow me-group-h">{g.label} <span className="num">{g.items.length}</span></h2>
-              {g.items.map((s) => <Signal key={signalKey(s)} s={s} pinned={pinnedKeys.has(signalKey(s))} onOpenSession={onOpenSession} onTriage={onTriage} />)}
+              {g.items.map((s) => <Signal key={signalKey(s)} s={s} pinned={pinnedKeys.has(signalKey(s))}
+                                     menu={menuFor === signalKey(s)} setMenu={(open) => setMenuFor(open ? signalKey(s) : null)} onOpenSession={onOpenSession} onTriage={onTriage} />)}
             </section>
           ))}
           {dismissedCount > 0 && <p className="me-dim me-dismissed">{dismissedCount} dismissed {dismissedCount === 1 ? "row" : "rows"} hidden. Rules you taught are in your profile.</p>}
