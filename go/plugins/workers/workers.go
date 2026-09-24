@@ -174,6 +174,7 @@ type Workers struct {
 	maxSpawns int
 	maxSteps  int
 	spawns    int  // spawns this parent turn; reset on the loop's "done"
+	live      int  // native spawns still running: a turn's "done" leaves them counted
 	inChild   bool // a child run is active: no nested spawns
 	running   int  // the child whose block is running now; 0 = the parent's
 	nextID    int  // worker numbering, monotonic per session
@@ -407,6 +408,13 @@ func (w *Workers) spawnAll(tasks []string, shape ...map[string]any) ([]any, erro
 			}
 			reply, err := w.runChild(tctx, tasks[i], ids[i], run, true, sch)
 			if err != nil {
+				// A child the provider killed never got to work: its slot
+				// goes back, as tools.spawn gives it back.
+				if strings.Contains(err.Error(), "subagent llm:") {
+					w.mu.Lock()
+					w.spawns--
+					w.mu.Unlock()
+				}
 				reports[i] = fmt.Sprintf("[subagent %d · task: %s]\nStatus: failed\n%v", ids[i], oneLine(tasks[i], 80), err)
 				return
 			}
@@ -710,11 +718,13 @@ func apply(kctx *kernel.Context, cfg map[string]any, home string) error {
 		kctx.Emit("loop/event", loop.Event{Kind: kind, Text: text, Data: data})
 	}
 	// The loop emits "done" at the end of every turn (all end paths);
-	// that is the per-wake reset for the spawn counter.
+	// that is the per-wake reset for the spawn counter. A native spawn
+	// still running then (the engine adopted it as a job) keeps its slot:
+	// zeroed, the wake turn could start max_spawns more beside it.
 	kctx.On("loop/event", func(p any) {
 		if ev, ok := p.(loop.Event); ok && ev.Kind == "done" {
 			w.mu.Lock()
-			w.spawns = 0
+			w.spawns = w.live
 			w.mu.Unlock()
 		}
 	})

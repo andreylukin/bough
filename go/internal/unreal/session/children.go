@@ -92,7 +92,16 @@ func (c children) Run(ctx context.Context, req ChildRequest) (ChildResult, error
 	gate.maxSteps = req.MaxSteps
 	metas := map[string]project.Meta{}
 	stopped := ""
-	gate.meta = func(m project.Meta) { q.push(func() { metas[m.ResponseID] = m; proj.Meta(m) }) }
+	llmErr := "" // the last model response's provider error
+	gate.meta = func(m project.Meta) {
+		q.push(func() {
+			metas[m.ResponseID] = m
+			proj.Meta(m)
+			if !m.Muted {
+				llmErr = m.Err
+			}
+		})
+	}
 	gate.budget = func(string) { q.push(func() { stopped = "budget" }) }
 	defer gate.close()
 
@@ -182,6 +191,15 @@ loop:
 		status = "error"
 		reply = runErr.Error()
 		note("error", runErr.Error(), nil)
+	}
+	// A child whose last model call failed stopped there with nothing to
+	// report (the Gate answered the failure with an empty response): it
+	// is an error, named as the loop names one, so the parent is not
+	// handed an empty report as a finished child and workers gives the
+	// slot back.
+	if llmErr != "" && status == "done" {
+		status = "error"
+		reply = "subagent llm: " + llmErr
 	}
 	// The card reads its failure off a sub:error: a child stopped at its
 	// budget had none, so it read "Failure details not recorded".
