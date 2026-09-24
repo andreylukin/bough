@@ -88,7 +88,10 @@ func (s *Store) worktreeOK(ctx context.Context) bool {
 
 func (s *Store) create(ctx context.Context, commit string) error {
 	work := s.workDir()
-	_, _ = git(ctx, s.Repo.Top, nil, "worktree", "prune")
+	// No `worktree prune`: it would also drop the registration of any of
+	// the user's own worktrees whose dir is missing right now (one on an
+	// unmounted volume). A stale registration of this path is what the
+	// `add -f` retry below is for.
 	if err := os.RemoveAll(work); err != nil {
 		return fmt.Errorf("ci: remove stale worktree %s: %w", work, err)
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/andreylukin/bough/internal/ci/ciflags"
 )
 
 // The guest has no usable bough: the host binary is a macOS build, and
@@ -32,7 +35,10 @@ import (
 // commands come from .bough/ci.yml, a file the agent in the orb can
 // write, and running them on the host would put agent-written shell
 // outside the container that confines the session's file changes — and
-// on the host's toolchain rather than the project image's.
+// on the host's toolchain rather than the project image's. So an orb
+// session's checks run only when a person runs `bough ci` on the host
+// in its worktree; running them in the container, against a CI worktree
+// the orb mounts, is the missing half (docs/orbs.md).
 var relayedCommands = map[string]bool{"mcp": true, "project": true, "browser": true, "ci": true}
 
 const relayTimeout = 10 * time.Minute
@@ -151,24 +157,36 @@ const relayCwdHeader = "X-Bough-Cwd"
 // check (--no-wait, or `ci log`), only from inside the orb's dir, and
 // without --dir (which would point it elsewhere on the host). It returns
 // the host directory to run in.
+//
+// The args are parsed with the host's own flag set, so what is checked
+// is what the host binary will do: flag lets the last --no-wait win, and
+// a scan that only ever turned read-only on let `--no-wait
+// --no-wait=false` run agent-written checks on the host.
 func (p *proxy) ciRelayCheck(args []string, cwd string) (string, error) {
-	readOnly := len(args) > 0 && args[0] == "log"
-	for _, a := range args {
-		if !strings.HasPrefix(a, "-") {
-			continue
+	var fs *flag.FlagSet
+	if len(args) > 0 && args[0] == "log" {
+		fs, _ = ciflags.NewLogFlagSet("")
+		fs.SetOutput(io.Discard)
+		if _, err := ciflags.ParseInterleaved(fs, args[1:]); err != nil {
+			return "", fmt.Errorf("`bough ci log`: %v", err)
 		}
-		name, val, hasVal := strings.Cut(strings.TrimLeft(a, "-"), "=")
-		switch name {
-		case "dir":
-			return "", errors.New("`bough ci --dir` is not relayed: run it from the worktree")
-		case "no-wait":
-			if on, err := strconv.ParseBool(val); !hasVal || err == nil && on {
-				readOnly = true
-			}
+	} else {
+		var fl *ciflags.RunFlags
+		fs, fl = ciflags.NewRunFlagSet("")
+		fs.SetOutput(io.Discard)
+		if err := fs.Parse(args); err != nil {
+			return "", fmt.Errorf("`bough ci`: %v", err)
+		}
+		if fs.NArg() > 0 {
+			return "", fmt.Errorf("`bough ci`: unexpected argument %q", fs.Arg(0))
+		}
+		if !*fl.NoWait {
+			return "", errors.New("`bough ci` cannot run checks from an orb: they run on the host only, and only when a person runs `bough ci` there for this worktree. " +
+				"`bough ci --no-wait` reports the results stored for this tree, `bough ci log <check>` a stored log")
 		}
 	}
-	if !readOnly {
-		return "", errors.New("`bough ci` runs checks only on the host; from an orb use `bough ci --no-wait` (stored results) or `bough ci log <check>`")
+	if ciflags.FlagSet(fs, "dir") {
+		return "", errors.New("`bough ci --dir` is not relayed: run it from the worktree")
 	}
 	if p.root == "" || cwd == "" || !filepath.IsAbs(cwd) {
 		return "", fmt.Errorf("ci cwd %q is outside the orb", cwd)

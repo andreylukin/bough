@@ -43,10 +43,42 @@ func git(ctx context.Context, dir string, stdin []byte, args ...string) (string,
 	return strings.TrimSpace(string(out)), err
 }
 
+// repoLocatingVars are what `git rev-parse --local-env-vars` lists,
+// less the config ones (a `git -c` the caller passed is still theirs):
+// the variables that tell git which repository, index and object store
+// to use instead of finding them from the working directory. A git hook
+// runs with some of them set, so `bough ci` from a pre-commit hook
+// inherited GIT_INDEX_FILE: a relative one made every read-tree in the
+// CI worktree fail, and under `commit -a` an absolute one pointed at
+// the index being committed, and checkout wrote the snapshot, untracked
+// files included, into the user's commit.
+var repoLocatingVars = map[string]bool{
+	"GIT_DIR": true, "GIT_WORK_TREE": true, "GIT_IMPLICIT_WORK_TREE": true,
+	"GIT_INDEX_FILE": true, "GIT_COMMON_DIR": true, "GIT_PREFIX": true,
+	"GIT_OBJECT_DIRECTORY": true, "GIT_ALTERNATE_OBJECT_DIRECTORIES": true,
+	"GIT_QUARANTINE_PATH": true, "GIT_NAMESPACE": true, "GIT_CEILING_DIRECTORIES": true,
+	"GIT_GRAFT_FILE": true, "GIT_SHALLOW_FILE": true,
+	"GIT_NO_REPLACE_OBJECTS": true, "GIT_REPLACE_REF_BASE": true,
+}
+
+// cleanEnv is this process's environment without repoLocatingVars. Every
+// git call here runs in it, and so does every check: a check that runs
+// git itself (web-dist's `git diff`) must be about the CI worktree.
+func cleanEnv() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if !repoLocatingVars[k] {
+			env = append(env, kv)
+		}
+	}
+	return env
+}
+
 func gitRaw(ctx context.Context, dir string, stdin []byte, args ...string) ([]byte, error) {
 	c := exec.CommandContext(ctx, "git", args...)
 	c.Dir = dir
-	c.Env = append(os.Environ(), gitEnv...)
+	c.Env = append(cleanEnv(), gitEnv...)
 	if stdin != nil {
 		c.Stdin = bytes.NewReader(stdin)
 	}
@@ -109,7 +141,7 @@ func repoName(common string) string {
 // latest edits.
 func (r Repo) Resolve(ctx context.Context, treeish string) (string, error) {
 	if treeish == "" {
-		t, err := history.SnapshotContext(ctx, r.Top)
+		t, err := history.SnapshotEnv(ctx, r.Top, cleanEnv())
 		if err != nil {
 			return "", fmt.Errorf("ci: snapshot %s: %w", r.Top, err)
 		}

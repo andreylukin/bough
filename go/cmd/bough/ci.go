@@ -13,12 +13,12 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"github.com/andreylukin/bough/internal/ci"
+	"github.com/andreylukin/bough/internal/ci/ciflags"
 )
 
 func runCI(args []string) {
@@ -40,12 +40,6 @@ func runCI(args []string) {
 	os.Exit(code)
 }
 
-// stringList is a repeatable string flag.
-type stringList []string
-
-func (s *stringList) String() string     { return strings.Join(*s, ",") }
-func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
-
 const ciUsage = `usage: bough ci [--no-wait] [--check <name>]... [--tree <tree-ish>] [--rerun] [--json] [--dir <path>]
        bough ci log <check> [--tree <tree-ish>] [--dir <path>]
 
@@ -59,16 +53,9 @@ func ciMain(ctx context.Context, args []string, stdout, stderr io.Writer, home, 
 	if len(args) > 0 && args[0] == "log" {
 		return ciLog(ctx, args[1:], stdout, stderr, home, cwd)
 	}
-	fs := flag.NewFlagSet("ci", flag.ContinueOnError)
+	fs, fl := ciflags.NewRunFlagSet(cwd)
 	fs.SetOutput(stderr)
 	fs.Usage = func() { fmt.Fprint(stderr, ciUsage); fs.PrintDefaults() }
-	var checks stringList
-	fs.Var(&checks, "check", "run only this check, manual ones included (repeatable)")
-	noWait := fs.Bool("no-wait", false, "report stored results only; never run a check")
-	tree := fs.String("tree", "", "tree-ish to check (a commit, refs/bough/turns/<sid>/<seq>, a tree id); default: the working tree now")
-	rerun := fs.Bool("rerun", false, "ignore stored results for the selected checks")
-	asJSON := fs.Bool("json", false, "print the report as JSON")
-	dir := fs.String("dir", cwd, "a directory inside the checkout")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -80,24 +67,27 @@ func ciMain(ctx context.Context, args []string, stdout, stderr io.Writer, home, 
 		fs.Usage()
 		return 2
 	}
-	if *noWait && *rerun {
+	if *fl.NoWait && *fl.Rerun {
 		fmt.Fprintln(stderr, "bough ci: --no-wait and --rerun contradict each other")
 		return 2
 	}
 	rep, err := ci.Run(ctx, ci.Options{
-		Home: home, Dir: *dir, Tree: *tree, Checks: checks,
-		NoWait: *noWait, Rerun: *rerun, Progress: stderr,
+		Home: home, Dir: *fl.Dir, Tree: *fl.Tree, Checks: fl.Checks,
+		NoWait: *fl.NoWait, Rerun: *fl.Rerun, Progress: stderr,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, "bough", err)
 		return 2
 	}
-	if *asJSON {
+	if *fl.JSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		enc.Encode(rep)
 	} else {
 		printCIReport(stdout, rep, home, time.Now())
+	}
+	if rep.NothingSelected() {
+		fmt.Fprintln(stderr, "bough ci: every check is manual, so nothing ran; name one with --check")
 	}
 	return rep.ExitCode()
 }
@@ -160,30 +150,21 @@ func ago(d time.Duration) string {
 // ciLog copies a check's stored log for the tree to stdout. The check
 // name may come before or after the flags.
 func ciLog(ctx context.Context, args []string, stdout, stderr io.Writer, home, cwd string) int {
-	fs := flag.NewFlagSet("ci log", flag.ContinueOnError)
+	fs, fl := ciflags.NewLogFlagSet(cwd)
 	fs.SetOutput(stderr)
 	fs.Usage = func() { fmt.Fprint(stderr, ciUsage); fs.PrintDefaults() }
-	tree := fs.String("tree", "", "tree-ish whose result to show; default: the working tree now")
-	dir := fs.String("dir", cwd, "a directory inside the checkout")
-	var pos []string
-	for {
-		if err := fs.Parse(args); err != nil {
-			if err == flag.ErrHelp {
-				return 0
-			}
-			return 2
+	pos, err := ciflags.ParseInterleaved(fs, args)
+	if err != nil {
+		if err == flag.ErrHelp {
+			return 0
 		}
-		if fs.NArg() == 0 {
-			break
-		}
-		pos = append(pos, fs.Arg(0))
-		args = fs.Args()[1:]
+		return 2
 	}
 	if len(pos) != 1 {
 		fmt.Fprintln(stderr, "usage: bough ci log <check> [--tree <tree-ish>] [--dir <path>]")
 		return 2
 	}
-	path, res, err := ci.Log(ctx, ci.Options{Home: home, Dir: *dir, Tree: *tree}, pos[0])
+	path, res, err := ci.Log(ctx, ci.Options{Home: home, Dir: *fl.Dir, Tree: *fl.Tree}, pos[0])
 	if err != nil {
 		fmt.Fprintln(stderr, "bough", err)
 		return 2

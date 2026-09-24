@@ -391,8 +391,14 @@ func TestRelayCIRejectsRunsAndCwdOutsideRoot(t *testing.T) {
 		args []string
 		want string
 	}{
-		{root, []string{"ci"}, "runs checks only on the host"},
-		{root, []string{"ci", "--no-wait=false"}, "runs checks only on the host"},
+		{root, []string{"ci"}, "cannot run checks from an orb"},
+		{root, []string{"ci", "--no-wait=false"}, "cannot run checks from an orb"},
+		{root, []string{"ci", "--no-wait", "--no-wait=false"}, "cannot run checks from an orb"},
+		{root, []string{"ci", "--no-wait", "-no-wait=0"}, "cannot run checks from an orb"},
+		{root, []string{"ci", "--no-wait", "--no-wait=bogus"}, "invalid boolean"},
+		{root, []string{"ci", "--no-wait", "--bogus"}, "not defined"},
+		{root, []string{"ci", "log", "vet", "--dir", "/"}, "--dir"},
+		{root, []string{"ci", "log", "vet", "-dir=/"}, "--dir"},
 		{root, []string{"ci", "--no-wait", "--dir", "/"}, "--dir"},
 		{t.TempDir(), []string{"ci", "--no-wait"}, "outside the orb"},
 		{filepath.Join(root, ".."), []string{"ci", "--no-wait"}, "outside the orb"},

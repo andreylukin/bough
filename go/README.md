@@ -290,7 +290,12 @@ bough ci log web             # the stored output of web for this tree
 
 - **Keys.** A check with `inputs` (repo-relative globs, `**` spans
   directories) is keyed on its `run`, `dir` and the mode, blob id and
-  path of every matching file. Any other check — `go_cache: true` says
+  path of every matching file. Each `/`-separated segment matches on
+  its own, so unlike gitignore a pattern without `/` matches only at
+  the repo root: `*.go` is the root's Go files, `**/*.go` all of them.
+  `./web/**` and `web/` are read as `web/**`. Inputs that match no
+  file in the tree are an error (exit 2), not a key over nothing that
+  would pass once and stay cached forever. Any other check — `go_cache: true` says
   so on purpose — is keyed on the whole tree id: a key over every
   tracked file would hash what the tree id already hashes. Such a check
   reruns on any change, cheaply, because go's own build and test cache
@@ -309,17 +314,33 @@ bough ci log web             # the stored output of web for this tree
   `~/.bough/ci/<repo>-<hash>/lock` serialises concurrent calls; the
   second finds the first's results instead of running again. Checks run
   one at a time, as `sh -c` with `BOUGH_CI_TREE` and `BOUGH_CI_CHECK`
-  set; ^C kills the check's process group and stores nothing.
+  set, and without the variables that point git at a repository
+  (`GIT_DIR`, `GIT_INDEX_FILE`, ...), so `bough ci` works from a git
+  hook and a check's own git is about the CI worktree. ^C kills the
+  check's process group and stores nothing; so does a check killed by
+  a signal (the OOM killer), and whatever a check left in the
+  background is killed when it exits. The check inherits the lock: if
+  `bough ci` itself is killed (a bash-tool timeout), the next call
+  waits for the orphaned check to end instead of moving the worktree
+  under it.
 - **Results** are `results/<check>/<key>.json` with the `.log` beside
   it, never garbage-collected in this version.
 - **Exit codes.** 0 every selected check passed, 1 any failed, 2
   anything unsettled (`unknown`, or `running` under another call's
   lock) and usage or config errors. Manual checks not asked for show as
-  `manual` and do not count.
+  `manual` and do not count; when every check is manual nothing ran,
+  and that is 2 too.
 - **In an orb** the guest's `bough` relays `ci --no-wait` and `ci log`
-  to the host, from the shell's cwd inside the orb. Running checks is
-  not relayed: the commands come from a file the agent can write, and
-  the host is outside the container that confines the session.
+  to the host, from the shell's cwd inside the orb; the relay parses the
+  args with the host's own flag set, so no spelling of `--no-wait`
+  sneaks a run through. Running checks is not relayed: the commands
+  come from a file the agent can write, and the host is outside the
+  container that confines the session. **Known gap:** nothing runs
+  checks for an orb session yet. An agent in an orb only ever sees
+  results a person produced by running `bough ci` on the host in that
+  worktree; otherwise it gets `unknown`. Running checks inside the
+  container (in the project image, against a CI worktree the orb
+  mounts) is the fix, and needs the orb to mount one.
 
 ## init.js
 

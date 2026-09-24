@@ -1,7 +1,9 @@
 package ci
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +12,59 @@ import (
 	"testing"
 	"time"
 )
+
+// TestMain keeps the host's git config out of every git the tests run,
+// the package's own included: a core.hooksPath ran the user's hooks on
+// the fixture's commits, and a core.excludesFile could drop fixture
+// files from a snapshot. Production still reads the global config —
+// the user's excludes are theirs to apply — so this is set here, for
+// the process, rather than in gitEnv. It also serves as the helper
+// process for the tests that need bough ci in another process.
+func TestMain(m *testing.M) {
+	os.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	if home := os.Getenv("BOUGH_CI_TEST_HELPER_HOME"); home != "" {
+		os.Exit(helperRun(home))
+	}
+	os.Exit(m.Run())
+}
+
+// helperRun is `bough ci` in the helper process, from its cwd.
+func helperRun(home string) int {
+	dir, _ := os.Getwd()
+	rep, err := Run(context.Background(), Options{Home: home, Dir: dir})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 3
+	}
+	return rep.ExitCode()
+}
+
+// helper is this test binary as a separate `bough ci` in f.repo, with
+// extra env.
+func (f *fixture) helper(env ...string) *exec.Cmd {
+	c := exec.Command(os.Args[0], "-test.run=^$")
+	c.Dir = f.repo
+	c.Env = append(append(os.Environ(), "BOUGH_CI_TEST_HELPER_HOME="+f.home), env...)
+	return c
+}
+
+// waitFor polls cond without t: it runs off the test goroutine, where
+// t.Fatal is not allowed.
+func waitFor(cond func() bool) bool {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
+}
+
+func (f *fixture) exists(name string) func() bool {
+	return func() bool { _, err := os.Stat(filepath.Join(f.counters, name)); return err == nil }
+}
 
 // fixture is a temp repo with a temp HOME. Checks append to counter
 // files, so a test can tell a run from a cache hit.
@@ -261,11 +316,11 @@ func TestNoWaitReportsRunningWhileLocked(t *testing.T) {
 	}
 	dir := StateDir(f.home, r)
 	os.MkdirAll(dir, 0o755)
-	unlock, held, err := lock(filepath.Join(dir, "lock"), true)
+	lf, held, err := lock(filepath.Join(dir, "lock"), true)
 	if err != nil || !held {
 		t.Fatal(err)
 	}
-	defer unlock()
+	defer lf.Close()
 	o := f.opts()
 	o.NoWait = true
 	rep := f.run(o)
@@ -467,6 +522,7 @@ func TestParseRejectsBadConfig(t *testing.T) {
 		{"both keys", "checks:\n  a:\n    run: x\n    inputs: [a]\n    go_cache: true\n", "pick one"},
 		{"no checks", "", "no checks"},
 		{"bad glob", "checks:\n  a:\n    run: x\n    inputs: ['[']\n", "input"},
+		{"escaping glob", "checks:\n  a:\n    run: x\n    inputs: ['../x/**']\n", "inside the repository"},
 	} {
 		_, err := Parse([]byte(tc.yml))
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -522,10 +578,9 @@ func TestInterruptedCheckIsNotStored(t *testing.T) {
 	t.Parallel()
 	f := newRepo(t, "checks:\n  hang:\n    run: echo x >> $C/hang; sleep 30\n")
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	go func() {
-		for f.count("hang") == 0 {
-			time.Sleep(10 * time.Millisecond)
-		}
+		waitFor(f.exists("hang"))
 		cancel()
 	}()
 	start := time.Now()
@@ -535,9 +590,104 @@ func TestInterruptedCheckIsNotStored(t *testing.T) {
 	if time.Since(start) > 10*time.Second {
 		t.Fatal("cancel did not kill the check's process group")
 	}
+	if f.count("hang") != 1 {
+		t.Fatalf("the check never started: count %d", f.count("hang"))
+	}
 	o := f.opts()
 	o.NoWait = true
 	if rep := f.run(o); state(rep, "hang").State != StateUnknown {
 		t.Fatalf("interrupted run was stored: %+v", rep.Checks)
+	}
+}
+
+// A check killed from outside says nothing about the tree: no result.
+func TestKilledCheckIsNotStored(t *testing.T) {
+	t.Parallel()
+	for _, run := range []string{"kill -KILL $$", "sh -c 'kill -KILL $$'; exit $?"} {
+		f := newRepo(t, "checks:\n  oom:\n    run: \""+run+"\"\n")
+		if _, err := Run(context.Background(), f.opts()); err == nil || !strings.Contains(err.Error(), "killed") {
+			t.Fatalf("%s: %v", run, err)
+		}
+		o := f.opts()
+		o.NoWait = true
+		if rep := f.run(o); state(rep, "oom").State != StateUnknown {
+			t.Fatalf("%s: killed run was stored: %+v", run, rep.Checks)
+		}
+	}
+}
+
+// bough ci from a git hook: git exports GIT_INDEX_FILE (relative in a
+// plain commit, the absolute index.lock under commit -a) and may export
+// GIT_DIR. None of it may reach the CI worktree or the user's index,
+// and the check must not see it either.
+func TestCallerGitEnvDoesNotLeak(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		env  func(repo string) []string
+	}{
+		{"relative", func(string) []string { return []string{"GIT_INDEX_FILE=.git/index", "GIT_DIR=.git"} }},
+		{"absolute", func(repo string) []string {
+			return []string{"GIT_INDEX_FILE=" + filepath.Join(repo, ".git", "index"), "GIT_DIR=" + filepath.Join(repo, ".git"), "GIT_WORK_TREE=" + repo}
+		}},
+	} {
+		f := newRepo(t, "checks:\n  env:\n    run: test -z \"$GIT_INDEX_FILE$GIT_DIR$GIT_WORK_TREE\" && test -z \"$(git status --porcelain)\" && echo x >> $C/env\n")
+		f.write("untracked.txt", "u\n")
+		index := filepath.Join(f.repo, ".git", "index")
+		before, err := os.ReadFile(index)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out, err := f.helper(tc.env(f.repo)...).CombinedOutput(); err != nil {
+			t.Fatalf("%s: bough ci: %v\n%s", tc.name, err, out)
+		}
+		if after, _ := os.ReadFile(index); !bytes.Equal(before, after) {
+			t.Fatalf("%s: the caller's index was rewritten", tc.name)
+		}
+		if ls := f.git("ls-files"); strings.Contains(ls, "untracked.txt") {
+			t.Fatalf("%s: untracked file landed in the index: %q", tc.name, ls)
+		}
+		if f.count("env") != 1 {
+			t.Fatalf("%s: check did not pass in a clean env", tc.name)
+		}
+	}
+}
+
+func TestInputsAreNormalisedAndMustMatch(t *testing.T) {
+	t.Parallel()
+	c, err := Parse([]byte("checks:\n  a:\n    run: x\n    inputs: ['./src/**', 'web/', 'a//b/./c', './']\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(c.Checks["a"].Inputs, " "); got != "src/** web/** a/b/c **" {
+		t.Fatalf("normalised inputs: %q", got)
+	}
+	if _, err := Parse([]byte("checks:\n  a:\n    run: x\n    inputs: ['src/../../x']\n")); err == nil || !strings.Contains(err.Error(), "inside the repository") {
+		t.Fatalf("escaping input: %v", err)
+	}
+
+	f := newRepo(t, "checks:\n  dot:\n    run: echo x >> $C/dot\n    inputs: ['./src/']\n")
+	f.run(f.opts())
+	f.write("src/a.txt", "changed\n")
+	f.run(f.opts())
+	if f.count("dot") != 2 {
+		t.Fatalf("./src/ did not key on src: count %d", f.count("dot"))
+	}
+
+	f = newRepo(t, "checks:\n  typo:\n    run: echo x >> $C/typo\n    inputs: ['scr/**']\n")
+	if _, err := Run(context.Background(), f.opts()); err == nil || !strings.Contains(err.Error(), "match no file") {
+		t.Fatalf("inputs matching nothing: %v", err)
+	}
+	if f.count("typo") != 0 {
+		t.Fatal("a check keyed on nothing ran")
+	}
+}
+
+func TestOnlyManualChecksIsUnsettled(t *testing.T) {
+	t.Parallel()
+	f := newRepo(t, "checks:\n  slow:\n    run: echo x >> $C/slow\n    manual: true\n")
+	rep := f.run(f.opts())
+	if !rep.NothingSelected() || rep.ExitCode() != 2 || f.count("slow") != 0 {
+		t.Fatalf("all-manual config: %+v exit %d", rep.Checks, rep.ExitCode())
 	}
 }

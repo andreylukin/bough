@@ -11,9 +11,9 @@ import (
 // lock takes an exclusive flock on path. The kernel drops it when the
 // holder dies, so a killed `bough ci` never wedges the next one the way
 // a stale O_EXCL lockfile would. With wait false it never blocks and
-// held reports whether the lock was taken.
-func lock(path string, wait bool) (unlock func(), held bool, err error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+// held reports whether the lock was taken. Closing f lets it go.
+func lock(path string, wait bool) (f *os.File, held bool, err error) {
+	f, err = os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, false, err
 	}
@@ -34,5 +34,5 @@ func lock(path string, wait bool) (unlock func(), held bool, err error) {
 		}
 		return nil, false, err
 	}
-	return func() { f.Close() }, true, nil
+	return f, true, nil
 }

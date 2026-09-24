@@ -28,7 +28,11 @@ func TestCIMainExitCodesAndOutput(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+	// The host's git config stays out: a core.excludesFile could hide
+	// the fixture from the snapshot.
+	gi := exec.Command("git", "-C", repo, "init", "-q")
+	gi.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	if out, err := gi.CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v %s", err, out)
 	}
 	write("src/a.txt", "a\n")

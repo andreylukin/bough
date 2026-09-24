@@ -474,7 +474,12 @@ own shell; it only isolates file changes.
   args to `$BOUGH_HOST/bough/exec` on the proxy; the host runs its own
   bough (only the `mcp`, `project` and `browser` subcommands, and `ci`
   read-only: `--no-wait` and `log`, in the guest's cwd) and returns
-  stdout, stderr and exit.
+  stdout, stderr and exit. Nothing runs `bough ci` checks for an orb
+  session: running them on the host would put agent-written shell
+  outside the container, and the container does not mount a CI
+  worktree. An agent in an orb sees only results a person stored by
+  running `bough ci` on the host in the same worktree; this is a known
+  gap, not the intended end state.
 
 ### Idle orbs are stopped (area: serve-reaper)
 

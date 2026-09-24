@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -57,9 +58,13 @@ type Report struct {
 // ExitCode is `bough ci`'s: 0 when every selected check passed, 1 when
 // any failed (a failure is news even while others are pending), 2 when
 // anything is unsettled. Manual checks that were not asked for do not
-// count.
+// count — but when they are all there is, nothing passed, and 0 would
+// read as all green: that is 2 as well.
 func (r Report) ExitCode() int {
 	code := 0
+	if r.NothingSelected() {
+		return 2
+	}
 	for _, c := range r.Checks {
 		switch c.State {
 		case StateFail:
@@ -69,6 +74,16 @@ func (r Report) ExitCode() int {
 		}
 	}
 	return code
+}
+
+// NothingSelected is true when every check in the report is manual.
+func (r Report) NothingSelected() bool {
+	for _, c := range r.Checks {
+		if c.State != StateManual {
+			return false
+		}
+	}
+	return true
 }
 
 // prepared is the part of a call shared by Run and Log.
@@ -134,6 +149,11 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	var pending []int // indexes into rep.Checks
 	for _, n := range p.names() {
 		ch := p.cfg.Checks[n]
+		if len(ch.Inputs) > 0 && !p.files.anyMatch(ch.Inputs) {
+			// Keyed on nothing, the check would pass once and be
+			// cached for good, whatever later changed.
+			return Report{}, fmt.Errorf("ci: check %q: inputs %q match no file in tree %s (a pattern without \"/\" matches only at the repo root; \"**\" spans directories)", n, ch.Inputs, short(p.tree))
+		}
 		st := CheckStatus{Name: n, Key: cacheKey(ch, p.files)}
 		if len(o.Checks) > 0 && !selected[n] || len(o.Checks) == 0 && ch.Manual {
 			st.State = StateManual
@@ -169,12 +189,12 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	if o.NoWait {
 		// Only to tell "someone is on it" from "nobody is": a free lock
 		// is let go at once, and nothing runs.
-		unlock, held, err := lock(lockPath, false)
+		lf, held, err := lock(lockPath, false)
 		if err != nil {
 			return Report{}, fmt.Errorf("ci: lock %s: %w", lockPath, err)
 		}
 		if held {
-			unlock()
+			lf.Close()
 		} else {
 			for _, i := range pending {
 				rep.Checks[i].State = StateRunning
@@ -184,11 +204,19 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	}
 	// One lock per repo, held from moving the worktree through storing
 	// the last result: every check runs in the one shared worktree.
-	unlock, _, err := lock(lockPath, true)
+	lf, held, err := lock(lockPath, false)
+	if err == nil && !held {
+		if o.Progress != nil {
+			// Also what a check orphaned by a killed bough ci looks
+			// like: it holds the lock until it ends (see inheritLock).
+			fmt.Fprintf(o.Progress, "ci: waiting for another bough ci, or a check it left running (lock %s)…\n", lockPath)
+		}
+		lf, _, err = lock(lockPath, true)
+	}
 	if err != nil {
 		return Report{}, fmt.Errorf("ci: lock %s: %w", lockPath, err)
 	}
-	defer unlock()
+	defer lf.Close()
 	for _, i := range pending {
 		st := &rep.Checks[i]
 		if !o.Rerun {
@@ -202,7 +230,7 @@ func Run(ctx context.Context, o Options) (Report, error) {
 				continue
 			}
 		}
-		res, err := p.runOne(ctx, st.Name, st.Key, o.Progress)
+		res, err := p.runOne(ctx, st.Name, st.Key, o.Progress, lf)
 		if err != nil {
 			return rep, err
 		}
@@ -213,7 +241,7 @@ func Run(ctx context.Context, o Options) (Report, error) {
 
 // runOne moves the worktree to the tree (again, per check: the previous
 // check may have written into it) and runs the check there.
-func (p *prepared) runOne(ctx context.Context, name, key string, progress io.Writer) (*Result, error) {
+func (p *prepared) runOne(ctx context.Context, name, key string, progress io.Writer, lockFile *os.File) (*Result, error) {
 	ch := p.cfg.Checks[name]
 	if progress != nil {
 		fmt.Fprintf(progress, "ci: running %s on %s…\n", name, short(p.tree))
@@ -231,12 +259,13 @@ func (p *prepared) runOne(ctx context.Context, name, key string, progress io.Wri
 	} else {
 		c := exec.Command("sh", "-c", ch.Run)
 		c.Dir = wd
-		c.Env = append(os.Environ(), "BOUGH_CI_TREE="+p.tree, "BOUGH_CI_CHECK="+name)
+		c.Env = append(cleanEnv(), "BOUGH_CI_TREE="+p.tree, "BOUGH_CI_CHECK="+name)
 		c.Stdout, c.Stderr = &log, &log
 		// A check that leaves a daemon holding stdout must not hang the
 		// report: the pipes close this long after sh itself exits.
 		c.WaitDelay = 2 * time.Second
 		ownProcessGroup(c)
+		inheritLock(c, lockFile)
 		if err := c.Start(); err != nil {
 			fmt.Fprintf(&log, "ci: check %s: start: %v\n", name, err)
 			res.ExitCode = -1
@@ -245,6 +274,9 @@ func (p *prepared) runOne(ctx context.Context, name, key string, progress io.Wri
 			go func() { done <- c.Wait() }()
 			select {
 			case err = <-done:
+				// Whatever sh left in the background would still be
+				// writing when the next check moves the worktree.
+				_ = killProcessGroup(c)
 			case <-ctx.Done():
 				_ = killProcessGroup(c)
 				<-done
@@ -256,6 +288,13 @@ func (p *prepared) runOne(ctx context.Context, name, key string, progress io.Wri
 				res.ExitCode = -1
 				if ee, ok := errors.AsType[*exec.ExitError](err); ok {
 					res.ExitCode = ee.ExitCode()
+					// Killed from outside — the OOM killer, a person, a
+					// timeout that reached the check — says nothing
+					// about the tree either, so it is not stored. sh
+					// reports a killed child as 128+9.
+					if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() || res.ExitCode == 128+int(syscall.SIGKILL) {
+						return nil, fmt.Errorf("ci: check %s was killed (%s); nothing stored, run bough ci again", name, ee.ProcessState)
+					}
 				} else {
 					fmt.Fprintf(&log, "ci: check %s: %v\n", name, err)
 				}

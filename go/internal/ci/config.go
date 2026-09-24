@@ -24,7 +24,9 @@ type Check struct {
 	Dir string `yaml:"dir,omitempty" json:"dir,omitempty"`
 	// Inputs are repo-relative globs ("**" spans directories). A check
 	// with inputs is keyed on only the files they match, so an edit
-	// elsewhere reuses its last result.
+	// elsewhere reuses its last result. Each "/"-separated segment is
+	// matched on its own, so unlike gitignore "*.go" is the root's .go
+	// files only; "**/*.go" is every one.
 	Inputs []string `yaml:"inputs,omitempty" json:"inputs,omitempty"`
 	// GoCache marks a check keyed on the whole tree that leans on go's
 	// own build and test cache for speed. It is spelled out (rather than
@@ -58,11 +60,39 @@ func Parse(b []byte) (Config, error) {
 		return Config{}, fmt.Errorf("ci: %s: no checks defined", ConfigPath)
 	}
 	for name, ch := range c.Checks {
+		ins, err := normInputs(name, ch.Inputs)
+		if err != nil {
+			return Config{}, fmt.Errorf("ci: %s: %w", ConfigPath, err)
+		}
+		ch.Inputs = ins
 		if err := validate(name, ch); err != nil {
 			return Config{}, fmt.Errorf("ci: %s: %w", ConfigPath, err)
 		}
+		c.Checks[name] = ch
 	}
 	return c, nil
+}
+
+// normInputs rewrites globs into the one spelling matchGlob compares
+// segment by segment. "./web/**" and "web/" read as obvious, but a "."
+// segment or an empty last one never matches a path: the check was
+// keyed on nothing and its first result stood forever.
+func normInputs(name string, globs []string) ([]string, error) {
+	var out []string
+	for _, g := range globs {
+		orig := g
+		if strings.HasSuffix(g, "/") {
+			g += "**"
+		}
+		if g != "" && !strings.HasPrefix(g, "/") {
+			g = path.Clean(g)
+		}
+		if g == "." || g == ".." || strings.HasPrefix(g, "../") {
+			return nil, fmt.Errorf("check %q: input %q must name files inside the repository", name, orig)
+		}
+		out = append(out, g)
+	}
+	return out, nil
 }
 
 func validate(name string, ch Check) error {

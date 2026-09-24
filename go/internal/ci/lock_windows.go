@@ -11,9 +11,9 @@ import (
 
 // lock takes an exclusive LockFileEx lock on path; Windows releases it
 // when the handle's process dies. With wait false it fails immediately
-// and held reports whether it was taken.
-func lock(path string, wait bool) (unlock func(), held bool, err error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+// and held reports whether it was taken. Closing f lets it go.
+func lock(path string, wait bool) (f *os.File, held bool, err error) {
+	f, err = os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, false, err
 	}
@@ -29,5 +29,5 @@ func lock(path string, wait bool) (unlock func(), held bool, err error) {
 		}
 		return nil, false, err
 	}
-	return func() { f.Close() }, true, nil
+	return f, true, nil
 }

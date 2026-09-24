@@ -49,6 +49,18 @@ func (tf *treeFiles) find(p string) (entry, bool) {
 	return entry{}, false
 }
 
+// anyMatch reports whether any file in the tree matches one of globs.
+func (tf *treeFiles) anyMatch(globs []string) bool {
+	for _, e := range tf.entries {
+		for _, g := range globs {
+			if matchGlob(g, e.path) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // cacheKey is what a check's result is stored under. It covers the
 // check's definition (run and dir: an edited command must rerun) and
 // then either

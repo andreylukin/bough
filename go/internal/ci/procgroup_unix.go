@@ -8,9 +8,24 @@ package ci
 // plugins/tools, which internal code does not import.
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 )
+
+// inheritLock hands the check the repo's lock fd. An flock belongs to
+// the open file, not the process, so it is held until every copy is
+// closed: when bough ci itself is SIGKILLed (the bash tool's timeout
+// kills its own process group, and the check is in another one), the
+// check it started keeps the lock, and the next bough ci waits for it
+// instead of moving the worktree under a build that is still writing.
+// Matching on a pgid saved in the lock file would do the same, but a
+// recycled pgid would get an unrelated process group killed.
+func inheritLock(c *exec.Cmd, f *os.File) {
+	if f != nil {
+		c.ExtraFiles = append(c.ExtraFiles, f)
+	}
+}
 
 func ownProcessGroup(c *exec.Cmd) {
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

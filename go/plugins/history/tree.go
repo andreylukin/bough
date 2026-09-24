@@ -34,9 +34,14 @@ func git(dir string, env []string, args ...string) (string, error) {
 }
 
 func gitCtx(ctx context.Context, dir string, env []string, args ...string) (string, error) {
+	return gitBase(ctx, dir, os.Environ(), env, args...)
+}
+
+// gitBase is gitCtx over base instead of this process's environment.
+func gitBase(ctx context.Context, dir string, base, env []string, args ...string) (string, error) {
 	c := exec.CommandContext(ctx, "git", args...)
 	c.Dir = dir
-	c.Env = append(os.Environ(), env...)
+	c.Env = append(slices.Clip(base), env...)
 	var out, stderr bytes.Buffer
 	c.Stdout, c.Stderr = &out, &stderr
 	if err := c.Run(); err != nil {
@@ -55,7 +60,17 @@ func Snapshot(dir string) (string, error) { return SnapshotContext(context.Backg
 // SnapshotContext is Snapshot bounded by ctx: `git add -A` over a huge
 // tree is the slow part of reading a session's edits.
 func SnapshotContext(ctx context.Context, dir string) (string, error) {
-	git := func(dir string, env []string, args ...string) (string, error) { return gitCtx(ctx, dir, env, args...) }
+	return SnapshotEnv(ctx, dir, os.Environ())
+}
+
+// SnapshotEnv is SnapshotContext with git run in base rather than this
+// process's environment. `bough ci` passes one without the variables
+// that locate a repository: run from a git hook, it inherited the
+// hook's GIT_INDEX_FILE and GIT_DIR and snapshotted the wrong index.
+func SnapshotEnv(ctx context.Context, dir string, base []string) (string, error) {
+	git := func(dir string, env []string, args ...string) (string, error) {
+		return gitBase(ctx, dir, base, env, args...)
+	}
 	index, err := git(dir, nil, "rev-parse", "--git-path", "index")
 	if err != nil {
 		return "", err

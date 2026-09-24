@@ -7,6 +7,7 @@ package ci
 // exists so the package builds there.
 
 import (
+	"os"
 	"os/exec"
 	"strconv"
 	"syscall"
@@ -23,3 +24,6 @@ func killProcessGroup(c *exec.Cmd) error {
 	}
 	return nil
 }
+
+// inheritLock is a no-op: os/exec cannot pass extra handles on Windows.
+func inheritLock(c *exec.Cmd, f *os.File) {}
