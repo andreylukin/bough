@@ -536,3 +536,25 @@ func TestControlCalls(t *testing.T) {
 		t.Fatalf("the bash call did not run: %q %v\n%s", b, err, out)
 	}
 }
+
+// A taken turn leaves the request it answered as <name>.req, so a test
+// can tell what reached the model: a notice that lands inside a running
+// turn has no history entry of its own at the moment it is sent.
+func TestControlRecordsRequest(t *testing.T) {
+	t.Parallel()
+	r := start(t)
+	Queue(t, r.dir(), "001", Turn{Mode: "ok", Text: "noted"})
+	r.send("the marker 7f3e")
+	r.waitFor("[assistant] noted")
+	code, out := r.finish()
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	b, err := os.ReadFile(filepath.Join(r.dir(), "001.req"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "the marker 7f3e") {
+		t.Fatalf("001.req does not carry the prompt:\n%s", b)
+	}
+}
