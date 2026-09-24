@@ -339,8 +339,9 @@ func TestSupervisorCreateAndPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if id != "sess-create" {
-		t.Fatalf("id = %q, want sess-create", id)
+	// Minted by serve, not the child's own pick: see Create.
+	if id == "" || id == "sess-create" {
+		t.Fatalf("id = %q, want one serve minted", id)
 	}
 	if !f.sup.Live(id) {
 		t.Error("session is not live after Create")
@@ -372,7 +373,8 @@ func TestSupervisorCreateAndPrompt(t *testing.T) {
 func TestSupervisorCreatePrefersMetaID(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, envNewID+"=sess-meta", envMetaID+"=1")
-	id, err := f.sup.Create(CreateOptions{Cwd: f.home})
+	// Only a project child picks its own id; a local one is minted.
+	id, err := f.sup.Create(CreateOptions{Mode: "project", Slug: "app"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

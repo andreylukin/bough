@@ -319,24 +319,26 @@ func TestAPICreateAndPromptAndAsk(t *testing.T) {
 		t.Fatalf("create = %d %v", code, body)
 	}
 	row := rowOf(t, body)
-	if row["id"] != "created" || row["live"] != true {
+	// The id is serve's, minted before the spawn: never the child's pick.
+	id, _ := row["id"].(string)
+	if id == "" || id == "created" || row["live"] != true {
 		t.Fatalf("created row = %v", row)
 	}
 
-	waitFor(t, "the ask to arm", func() bool { return f.sup.PendingAsk("created") != nil })
+	waitFor(t, "the ask to arm", func() bool { return f.sup.PendingAsk(id) != nil })
 	// A prompt now would be eaten as the answer.
-	if code, _ := f.do(t, "POST", "/api/sessions/created/prompt", `{"text":"x"}`); code != http.StatusConflict {
+	if code, _ := f.do(t, "POST", "/api/sessions/"+id+"/prompt", `{"text":"x"}`); code != http.StatusConflict {
 		t.Errorf("prompt with an armed ask = %d, want 409", code)
 	}
 	// An answer written for another question is refused, not delivered.
-	if code, _ := f.do(t, "POST", "/api/sessions/created/answer", `{"text":"a","ask":"not-this-one"}`); code != http.StatusConflict {
+	if code, _ := f.do(t, "POST", "/api/sessions/"+id+"/answer", `{"text":"a","ask":"not-this-one"}`); code != http.StatusConflict {
 		t.Errorf("answer to an expired question = %d, want 409", code)
 	}
-	if code, body := f.do(t, "POST", "/api/sessions/created/answer", `{"text":"a","ask":"`+f.sup.PendingAsk("created").ID+`"}`); code != http.StatusOK {
+	if code, body := f.do(t, "POST", "/api/sessions/"+id+"/answer", `{"text":"a","ask":"`+f.sup.PendingAsk(id).ID+`"}`); code != http.StatusOK {
 		t.Fatalf("answer = %d %v", code, body)
 	}
 	waitFor(t, "the answer to land", func() bool {
-		for _, e := range f.sup.Recent("created") {
+		for _, e := range f.sup.Recent(id) {
 			if e.Text == "answered:a" {
 				return true
 			}
@@ -344,13 +346,13 @@ func TestAPICreateAndPromptAndAsk(t *testing.T) {
 		return false
 	})
 	// With the ask cleared, prompting works again and reuses the child.
-	if code, body := f.do(t, "POST", "/api/sessions/created/prompt", `{"text":"more"}`); code != http.StatusOK {
+	if code, body := f.do(t, "POST", "/api/sessions/"+id+"/prompt", `{"text":"more"}`); code != http.StatusOK {
 		t.Fatalf("prompt = %d %v", code, body)
 	}
 	if n := f.startCount(t); n != 1 {
 		t.Errorf("started %d children, want 1", n)
 	}
-	if code, body := f.do(t, "POST", "/api/sessions/created/interrupt", ""); code != http.StatusOK {
+	if code, body := f.do(t, "POST", "/api/sessions/"+id+"/interrupt", ""); code != http.StatusOK {
 		t.Fatalf("interrupt = %d %v", code, body)
 	}
 }

@@ -1,7 +1,7 @@
 {
   "paths": [
     {
-      "target": 49,
+      "target": 51,
       "links": [
         0,
         3,
@@ -9,7 +9,8 @@
         31,
         39,
         46,
-        49
+        49,
+        51
       ],
       "trace": [
         {
@@ -97,21 +98,35 @@
           }
         },
         {
-          "action": "Create#0.Timeout",
+          "action": "Create#0.Claim",
           "state": {
             "create": "role Create#0",
-            "Create#0.child": "none",
+            "Create#0.child": "live",
             "Create#0.first": "text",
             "Create#0.hist": true,
             "Create#0.other": true,
             "Create#0.query": "none",
             "Create#0.recorded": false,
-            "Create#0.sending": false,
-            "Create#0.ui": "failed"
+            "Create#0.sending": true,
+            "Create#0.ui": "opened"
           }
         },
         {
-          "action": "Create#0.Dismiss",
+          "action": "Create#0.Land",
+          "state": {
+            "create": "role Create#0",
+            "Create#0.child": "live",
+            "Create#0.first": "text",
+            "Create#0.hist": true,
+            "Create#0.other": true,
+            "Create#0.query": "none",
+            "Create#0.recorded": true,
+            "Create#0.sending": false,
+            "Create#0.ui": "opened"
+          }
+        },
+        {
+          "action": "Create#0.Close",
           "state": {
             "create": "role Create#0",
             "Create#0.child": "none",
@@ -718,21 +733,21 @@
           }
         },
         {
-          "action": "Create#0.Timeout",
+          "action": "Create#0.Claim",
           "state": {
             "create": "role Create#0",
-            "Create#0.child": "none",
+            "Create#0.child": "live",
             "Create#0.first": "empty",
             "Create#0.hist": true,
             "Create#0.other": true,
             "Create#0.query": "none",
             "Create#0.recorded": false,
             "Create#0.sending": false,
-            "Create#0.ui": "failed"
+            "Create#0.ui": "opened"
           }
         },
         {
-          "action": "Create#0.Dismiss",
+          "action": "Create#0.Close",
           "state": {
             "create": "role Create#0",
             "Create#0.child": "none",
@@ -2217,13 +2232,13 @@
   ],
   "coverage": {
     "states": {
-      "covered": 23,
-      "total": 23,
+      "covered": 24,
+      "total": 24,
       "uncovered": []
     },
     "transitions": {
-      "covered": 51,
-      "total": 51,
+      "covered": 52,
+      "total": 52,
       "uncovered": []
     }
   }

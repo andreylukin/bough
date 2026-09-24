@@ -6,9 +6,11 @@
 # Client: app.tsx start() -> POST /api/sessions {cwd, prompt}; on 201
 # markCreated + setPending (only for a non-empty prompt) + openSession.
 # Server: api.go createSession checks cwd is a directory (400), then
-# supervisor.go Create spawns `bough --headless --json` and waits for
-# exactly one new history file (newSessionID's diff) before claim, or
-# kills the child at createTimeout (10 s), or reports the child's exit.
+# supervisor.go Create mints the id, spawns `bough --headless --json`
+# with BOUGH_SESSION_ID set and waits for that one history file before
+# claim, or kills the child at createTimeout (10 s), or reports the
+# child's exit. (It used to diff the history directory instead; see
+# OtherWrites.)
 #
 # Where the code disagrees with the mapped model this was written from:
 # - Cmd/Alt+N opens the palette with palCwd "" (home); only the New
@@ -18,8 +20,8 @@
 #   rows, and picking it sends the path as the first message. So the
 #   claim is "only an explicit Start pick sends text", not "a path is
 #   never a prompt".
-# - A local create never reaches StartingRetry: the id comes from the
-#   directory diff, so the history file exists before the 201 and the
+# - A local create never reaches StartingRetry: Create waits for the
+#   minted id's history file, so it exists before the 201 and the
 #   first GET /api/sessions/<id> cannot 404. The "starting" retry is
 #   for project sessions (and a child that volunteers its id on a meta
 #   line before writing history, which the current build never does).
@@ -121,22 +123,25 @@ role Create:
         require self.child == "spawned" and not self.hist
         self.hist = True
 
-    # An unrelated bough writes a history file while Create diffs the
-    # directory: newSessionID sees two new ids and returns "" every poll.
+    # An unrelated bough writes a history file while Create waits. With
+    # discovery by directory diff this either timed out (two new ids) or,
+    # landing before the child's file, claimed the unrelated session as
+    # the new one; the minted id makes it irrelevant, which Claim and
+    # Timeout now say by not reading it.
     atomic action OtherWrites:
         require self.child == "spawned" and not self.other
         self.other = True
 
-    # One new file: claim, write the prompt line, 201, open #/s/<id>.
+    # The child's file: claim, write the prompt line, 201, open #/s/<id>.
     atomic fair action Claim:
-        require self.child == "spawned" and self.hist and not self.other
+        require self.child == "spawned" and self.hist
         self.child = "live"
         self.ui = "opened" if self.hist else "starting"
         self.sending = self.first == "text"
 
-    # createTimeout with no unique new id: the child is killed, 500.
+    # createTimeout with no history file: the child is killed, 500.
     atomic fair action Timeout:
-        require self.child == "spawned" and (not self.hist or self.other)
+        require self.child == "spawned" and not self.hist
         self.child = "none"
         self.ui = "failed"
 
