@@ -1,0 +1,211 @@
+# The Hooks page (#/hooks) as the control room shows it: the list polled
+# every 5 s, one hook's file opened, edited, saved and dry-run, the hook's
+# off switch, and the API callers that must be refused. Recipe:
+# go/tests/model/README.md.
+#
+# Code this is checked against:
+#   web/src/hooks.tsx  HooksPage (poll), Source (open/edit/save/dry run),
+#                      OffToggle (off switch)
+#   serve/hooks.go     hooks, hookFile, putHookFile, dryrun, poolPath
+#   serve/off.go       setOff
+#
+# Where this model differs from the flow as first mapped:
+# - The first read failing is not "Stale": HooksPage has no data yet and
+#   shows Waiting with the error ("error" below). Stale needs last data.
+#   The 5 s interval keeps running without data, so "error" recovers on
+#   the next good poll; Waiting's Retry is only an earlier poll.
+# - Save and Dry run are one request each and the page shows nothing
+#   between request and answer that anyone acts on (Save only disables
+#   the buttons), so they are atomic: Saving/DryRunning are not states.
+# - Hide file keeps the buffer and reopening does not re-read (Source's
+#   expand skips read() once body is set), so hiding changes nothing and
+#   is left out: a file once opened stays open here.
+# - The dry run reads the file from disk (hooks.go dryrun: os.ReadFile),
+#   never the buffer. DryRun's outcome follows disk, not buffer. See the
+#   KNOWN GAP at the bottom.
+#
+# The file's contents are two versions, "ok" (a hook that returns) and
+# "broken" (one that throws), so a dry run's outcome says which version
+# it ran: disk is what is saved, buffer is what the textarea holds.
+#
+# Keeping it small: every generated path is one browser test, so an
+# action whose effect does not depend on the file panel (PollFail, Fire,
+# Toggle) is modelled with the file closed, and the API refusals, which
+# do not depend on the page at all, are checked in one state.
+#
+# All state lives in the Page role (fizzbee-mbt compares role state).
+
+role Page:
+    action Init:
+        # list: "loading" (no data yet), "error" (no data, the read
+        # failed: Waiting shows it), "loaded", "stale" (the last refresh
+        # failed; the last data stays on screen with the error).
+        self.list = "loading"
+        # A hook fired and the server's ledger has it, but the page has
+        # not read it yet.
+        self.unshown = False
+        # file: "closed", "loading", "error" (the read failed or hung
+        # past 15 s: message + Retry), "open" (textarea shown).
+        self.file = "closed"
+        self.disk = "ok"
+        self.buffer = "ok"
+        # note: what Source says after the last action: "" | "saved" |
+        # "ran" (Dry run finished) | "failed" (Dry run error).
+        self.note = ""
+        # off.yml holds "hook:<event>/<name>"; the row's word follows it.
+        self.hook_off = False
+        # What API callers outside the page managed to write. Both must
+        # stay False: serve refuses them.
+        self.wrote_outside = False
+        self.wrote_bad_kind = False
+
+    # --- the list -------------------------------------------------------
+
+    atomic fair action Poll:
+        # GET /api/hooks answered (200, or 304 when nothing changed):
+        # the page shows the ledger as it is now, fires included. With a
+        # file panel up the list is already "loaded" and no fire waits
+        # (Open and Fire both need the panel closed and the ledger
+        # shown), so a poll there is a self-loop and left out. Loosening
+        # either require breaks FireShows: fizz found Fire, Open with
+        # the poll gone never shows the fire.
+        require self.file == "closed"
+        self.list = "loaded"
+        self.unshown = False
+
+    atomic action PollFail:
+        # refresh() keeps err set until a read succeeds.
+        require self.file == "closed"
+        if self.list in ("loading", "error"):
+            self.list = "error"
+        else:
+            self.list = "stale"
+
+    atomic action Fire:
+        # A hook or watcher fires in some session; the loop writes a
+        # "hook" history entry that the next GET /api/hooks returns.
+        require self.file == "closed"
+        require not self.unshown
+        self.unshown = True
+
+    # --- the file -------------------------------------------------------
+
+    atomic action Open:
+        # "Open definition" on a hook row: rows exist only with data. A
+        # stale list shows the same rows, so "loaded" stands for both. An
+        # off hook's file opens the same way; the switch and the file are
+        # independent, so opening is modelled on the row that is on.
+        # Likewise opened with no fire waiting for the next poll.
+        require self.list == "loaded"
+        require not self.hook_off
+        require not self.unshown
+        require self.file == "closed"
+        self.file = "loading"
+
+    atomic action Loaded:
+        require self.file == "loading"
+        self.file = "open"
+        self.buffer = self.disk
+
+    atomic action LoadFail:
+        # GET /api/hooks/file failed, or did not answer within 15 s and
+        # Source's timer turned it into an error (a late answer is
+        # dropped).
+        require self.file == "loading"
+        self.file = "error"
+
+    atomic action FileRetry:
+        require self.file == "error"
+        self.file = "loading"
+
+    atomic action Edit:
+        # Typing flips the buffer between the two versions and clears the
+        # note (onChange: setNote("")).
+        require self.file == "open"
+        if self.buffer == "ok":
+            self.buffer = "broken"
+        else:
+            self.buffer = "ok"
+        self.note = ""
+
+    atomic action Save:
+        # PUT /api/hooks/file with the buffer; the path is in a pool and
+        # ends .js, so serve writes it. Saving an unedited buffer writes
+        # the same bytes again; modelled only for an edited one.
+        require self.file == "open"
+        require self.buffer != self.disk
+        self.disk = self.buffer
+        self.note = "saved"
+
+    atomic action DryRun:
+        # POST /api/hooks/dryrun {path, event}: serve runs the file on
+        # disk. The buffer is not sent. A second run in a row gives the
+        # same answer, so it is left out.
+        require self.file == "open"
+        require self.note not in ("ran", "failed")
+        if self.disk == "ok":
+            self.note = "ran"
+        else:
+            self.note = "failed"
+
+    # --- the off switch -------------------------------------------------
+
+    atomic action Toggle:
+        # OffToggle: POST /api/off {id: "hook:<event>/<name>", off}.
+        require self.list in ("loaded", "stale")
+        require self.file == "closed"
+        self.hook_off = not self.hook_off
+
+    # --- callers serve must refuse ---------------------------------------
+
+    atomic action PutOutside:
+        # Another client PUTs a path outside the pools: "../" traversal,
+        # a symlink in a pool pointing out, or a non-.js file (a rule the
+        # page lists read-only). poolPath refuses all three with a 400.
+        require self.list == "loading"
+        pass
+
+    atomic action OffBadKind:
+        # POST /api/off {id: "bogus:x"}: setOff rejects an unknown kind
+        # with a 400 and off.yml is not written.
+        require self.list == "loading"
+        pass
+
+action Init:
+    page = Page()
+
+# Rows, and so files and switches, exist only once the list has data.
+always assertion FileNeedsList:
+    return page.file == "closed" or page.list in ("loaded", "stale")
+
+# A note belongs to an open file.
+always assertion NoteNeedsOpenFile:
+    return page.note == "" or page.file == "open"
+
+# A file that is not open was never edited: the buffer is the disk.
+always assertion BufferOnlyWhenOpen:
+    return page.file == "open" or page.buffer == page.disk
+
+# A dry run says what the saved file does, whatever the buffer holds.
+always assertion DryRunFollowsDisk:
+    return page.note != "ran" or page.disk == "ok"
+
+# serve never writes outside the hook and watcher pools, or a non-.js file.
+always assertion NothingWrittenOutsidePools:
+    return not page.wrote_outside
+
+# off.yml gets only the five known kinds.
+always assertion NoUnknownOffKind:
+    return not page.wrote_bad_kind
+
+# A fire shows on the page within a poll: Poll is fair (the interval
+# runs while the page is visible), so however often reads fail in
+# between, the page does not keep a fire unshown forever.
+always eventually assertion FireShows:
+    return not page.unshown
+
+# KNOWN GAP (not asserted; fizz fails it, e.g. Open, Loaded, Edit,
+# DryRun): with an edited, unsaved buffer, Dry run tests the saved file
+# and nothing on the page says so. The property the page ought to have:
+#   always assertion DryRunTestsWhatIsShown:
+#       return page.note not in ("ran", "failed") or page.buffer == page.disk

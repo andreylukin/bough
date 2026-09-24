@@ -260,7 +260,10 @@ function Source({ path, event, load, save, dryrun, definition = false, inRun = f
             <>
               <label className="visually-hidden" htmlFor={`${id}-body`}>File contents</label>
               <textarea id={`${id}-body`} className="hk-edit mono" rows={10} spellCheck={false}
-                        value={body} disabled={saving} onChange={(e) => { setBody(e.target.value); setNote(""); }} />
+                        value={body} disabled={saving}
+                        // A dry run's error is about the text it ran; left up after an edit it
+                        // read as the verdict on code nobody has run yet.
+                        onChange={(e) => { setBody(e.target.value); setNote(""); setErr(""); }} />
               <div className="hk-acts">
                 <button className="btn btn-primary" disabled={saving} onClick={() => {
                   setNote(""); setErr(""); setSaving(true);
