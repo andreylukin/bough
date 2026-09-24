@@ -1,0 +1,160 @@
+# One project's image build as the Projects → Orb panel drives it
+# (go/internal/serve/orbs.go buildOrb, buildLog, orbSummary; orb.EnsureImage;
+# web/src/projects.tsx OrbSection, orb.tsx failedBuild/confirmFailedBuild).
+#
+# The container runtime is abstract: serve's build is "sync repos, then
+# take build.lock, truncate build.log, write build.json building, run,
+# write build.json ok|failed", each step one action the adapter's fake
+# runtime can hold. A session's own build (orb.Open after "Start anyway")
+# is the session-start flow's; here the dialog that gates it is all.
+#
+# Fields, all of them the Project role's (fizzbee-mbt compares role state):
+#   runs    serve build goroutines alive; building[slug] is runs > 0
+#   phase   what serve's goroutine is doing: idle | syncing | building
+#   json    build.json's state: "" (none yet) | building | ok | failed
+#   built   the image for the current definition's tag exists
+#   err     serve's buildErr[slug] is set
+#   last    how the running or last serve build ended: "" (running or
+#           never) | ok | failed. A ghost: what happened, not what the
+#           server stores, so FailureReported checks err against it.
+#   valid   project.yml loads and hashes (a 400 otherwise)
+#   confirm the "image build failed" dialog is up (confirmFailedBuild)
+#
+# Where the code disagrees with the mapped flow, the code won:
+# - "Rebuild" of an image that exists and did not fail is not a build:
+#   EnsureImage returns before touching build.json or build.log. Only a
+#   definition change (a new tag) or a failed build makes Build rebuild.
+# - The log endpoint's state is derived, not stored: build.json, then
+#   buildErr ("failed"), then building[slug] ("building"), in that order.
+# - A 409 and a 400 change nothing on the server, so they are self-loops of
+#   Build, not states; the adapter checks the status code in the action.
+# - The truncated-log offset reset is byte-level (offset > size → 0) and
+#   is not a state here; one serve build at a time never meets it.
+
+# buildLog's state, in the order the handler applies them. Plain starlark
+# (def), not fizz func: those can only be called as statements.
+def log_state(p):
+    s = p.json
+    if p.err:
+        s = "failed"
+    if p.runs > 0:
+        s = "building"
+    return s
+
+# orb.tsx failedBuild over orbSummary: its Build field has the log's
+# overrides, then "a failure recorded for another tag" (built) wins.
+def failed_view(p):
+    return log_state(p) == "failed" and not p.built
+
+role Project:
+    action Init:
+        self.runs = 0
+        self.phase = "idle"
+        self.json = ""
+        self.built = False
+        self.err = False
+        self.last = ""
+        self.valid = True
+        self.confirm = False
+
+    # POST /api/projects/{slug}/orb/build: 400 on a definition that does
+    # not load or hash, 409 while serve's goroutine runs, else 202. The
+    # failed-build dialog is modal: nothing on the page is clickable
+    # behind it.
+    atomic action Build:
+        require not self.confirm
+        if not self.valid:
+            pass
+        elif self.runs > 0:
+            pass
+        else:
+            self.runs = self.runs + 1
+            self.phase = "syncing"
+            self.err = False
+            self.last = ""
+
+    # SyncRepos, the lock, or EnsureImage's first ImageExists failed:
+    # nothing touched build.json, so buildErr is the only record.
+    atomic fair action SyncFail:
+        require self.phase == "syncing"
+        self.err = True
+        self.last = "failed"
+        self.phase = "idle"
+        self.runs = self.runs - 1
+
+    # EnsureImage under build.lock: an image that exists and did not fail
+    # returns at once, anything else truncates build.log and writes
+    # build.json building.
+    atomic fair action Begin:
+        require self.phase == "syncing"
+        if self.built and self.json != "failed":
+            self.last = "ok"
+            self.phase = "idle"
+            self.runs = self.runs - 1
+        else:
+            self.json = "building"
+            self.phase = "building"
+
+    atomic fair action BuildOk:
+        require self.phase == "building"
+        self.json = "ok"
+        self.built = True
+        self.last = "ok"
+        self.phase = "idle"
+        self.runs = self.runs - 1
+
+    atomic fair action BuildFail:
+        require self.phase == "building"
+        self.json = "failed"
+        self.err = True
+        self.last = "failed"
+        self.phase = "idle"
+        self.runs = self.runs - 1
+
+    # Someone saves project.yml (the editor, or an agent with the file
+    # tools, which can leave it broken): a new tag, so no image for it.
+    # Only while serve is not building, to keep the model small.
+    atomic action Edit:
+        require self.runs == 0 and not self.confirm
+        oneof ok in [True, False]:
+            self.valid = ok
+            self.built = False
+
+    # New session on this project whose last build failed with no image
+    # standing in: confirmFailedBuild asks before starting. Without a
+    # failure the session just starts, which this flow does not follow.
+    atomic action StartSession:
+        require not self.confirm and self.valid and failed_view(self)
+        self.confirm = True
+
+    # Either answer closes the dialog; what the started session builds
+    # is the session-start flow's.
+    atomic action StartAnyway:
+        require self.confirm
+        self.confirm = False
+
+    atomic action OpenOrb:
+        require self.confirm
+        self.confirm = False
+
+action Init:
+    project = Project()
+
+# The building[slug] guard: a second POST while one runs is a 409.
+always assertion OneServeBuild:
+    return project.runs <= 1
+
+# The poller stops on anything but "building": while serve's goroutine is
+# alive (syncing included, before build.json says so) it must read building.
+always assertion BuildingWhileServeRuns:
+    return project.runs == 0 or log_state(project) == "building"
+
+# A serve build that failed, before build.json was written (clone, lock)
+# or after, reads failed once it is over, not the previous build's ok.
+always assertion FailureReported:
+    return project.runs > 0 or project.last != "failed" or log_state(project) == "failed"
+
+# Every build request settles: the log endpoint stops saying building and
+# says how it ended.
+always eventually assertion BuildSettles:
+    return project.runs == 0 and log_state(project) != "building"
