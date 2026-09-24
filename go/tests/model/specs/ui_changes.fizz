@@ -45,6 +45,10 @@
 # file (only), with no list. diff is the shown file's patch: none, loading
 # (Pending "Diff") or ok. The popover re-fetches it, showing Pending again,
 # whenever its read is re-read; a page card re-fetches silently.
+# kept is the page's cards that hold a patch ("", "a", "h" or "ah"): a
+# card keeps the patch it fetched when it is shut (FileCard's diff state
+# outlives its open), so opening it again shows that patch at once and
+# re-fetches silently. New cards (a new page, a scope switch) hold none.
 #
 # Server session status touches this surface in one place: a running
 # turn's entries grow the transcript, and every entry re-reads both lists
@@ -130,6 +134,14 @@ def retryable(p):
         st = p.tree
     return st in ["failed", "stale"] and (p.route == "page" or p.pop)
 
+# kept with file f added.
+def keep(k, f):
+    if f in k:
+        return k
+    if f == "a":
+        return "a" + k
+    return k + f
+
 role Changes:
     action Init:
         self.vp = "wide"
@@ -145,6 +157,7 @@ role Changes:
         self.tree = "loading"
         self.pick = ""
         self.diff = "none"
+        self.kept = ""
         # The world, not the page.
         self.edited = False
 
@@ -158,6 +171,7 @@ role Changes:
         if self.route == "page":
             if remount:
                 self.pick = ""
+                self.kept = ""
             if (remount or before == None or len(before) == 0) and self.pick == "" and len(fs) == 1:
                 self.pick = fs[0]
         if not popbody(self) and self.route != "page":
@@ -165,6 +179,8 @@ role Changes:
         now = path(self)
         if now == "":
             self.diff = "none"
+        elif self.route == "page" and now != old and now in self.kept:
+            self.diff = "ok"
         elif now != old or remount:
             self.diff = "loading"
         elif reread and self.route == "thread":
@@ -189,6 +205,7 @@ role Changes:
         self.tree = "loading"
         self.pick = ""
         self.diff = "none"
+        self.kept = ""
 
     # --- the person
 
@@ -331,6 +348,8 @@ role Changes:
     atomic fair action DiffAnswer:
         require self.diff == "loading"
         self.diff = "ok"
+        if self.route == "page":
+            self.kept = keep(self.kept, path(self))
 
     # The 10 s tree poll fails on a shown tree: the list stays, stale.
     atomic action PollFails:
@@ -383,6 +402,10 @@ always assertion SelectionIsListed:
 # A diff is only ever for the file shown, and only while one is.
 always assertion DiffOnlyForShownFile:
     return (changes.diff == "none") == (path(changes) == "")
+
+# Only the page's cards keep a patch, and only for a file it lists.
+always assertion KeptOnlyOnPage:
+    return changes.kept == "" or (changes.route == "page" and all([f in listed(changes) for f in changes.kept.elems()]))
 
 # Nothing stays loading: every read and every diff lands.
 always eventually assertion ReadsLand:
