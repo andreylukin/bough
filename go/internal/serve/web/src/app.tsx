@@ -1950,6 +1950,21 @@ export function NativeCall({ line, current }: { line: Line; /** The failure its 
   );
 }
 
+/**
+ * A row's identity across its live and recorded forms. A native call in
+ * flight is a live line with a seq between records (withRunningCalls);
+ * its end lands as a record with a seq of its own. Keyed by seq, every
+ * row around it remounted then: a call row or Working fold the reader
+ * had open snapped shut the moment the call finished. The call id is
+ * the same in both.
+ */
+function rowKey(l: Line): string {
+  return isNativeCall(l) ? "call:" + String(l.data!.id) : String(l.seq);
+}
+function itemKey(it: Item): string {
+  return it.kind === "tools" ? rowKey(it.lines[0]) : it.kind === "line" ? rowKey(it.line) : String(it.seq);
+}
+
 /** Fired when a turn starts or output streams in; open output cards close. */
 const TRANSCRIPT_GREW = "bough:transcript-grew";
 
@@ -2143,7 +2158,7 @@ export function ToolRun({ lines, codes, live, stopped, failSeq, spawned, turnEdi
     } else if (isNativeCall(l)) {
       const f = nativeFacts(l);
       facts.push(f);
-      rows.push(<NativeCall key={l.seq} line={l} current={failSeq === l.seq} />);
+      rows.push(<NativeCall key={rowKey(l)} line={l} current={failSeq === l.seq} />);
     } else if (l.kind === "job") {
       // Consecutive job rows share one head.
       let j = i;
@@ -3136,7 +3151,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
       const spawned = next?.kind === "sub" ? subagentsFromTurn(turn, "", live).find((w) => w.subrunSeq === next.seq && w.result) : undefined;
       // Only the turn's one group can own its whole diff.
       const sole = items.filter((x) => x.kind === "tools").length === 1;
-      return <ToolRun key={"tools" + it.seq} lines={it.lines} codes={codes} live={live} spawned={spawned} turnEdits={sole ? turnEdits : undefined} stopped={turn.stopped || turn.done?.kind === "cancelled" || cut} failSeq={fail?.seq} />;
+      return <ToolRun key={"tools" + rowKey(it.lines[0])} lines={it.lines} codes={codes} live={live} spawned={spawned} turnEdits={sole ? turnEdits : undefined} stopped={turn.stopped || turn.done?.kind === "cancelled" || cut} failSeq={fail?.seq} />;
     }
     if (it.line.kind.startsWith("todo/")) {
       // Consecutive todo records fold into one row, rendered at the first.
@@ -3218,7 +3233,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
       <div className="turn-body">
         {segs.map((sg) => {
           if (sg.kind !== "work") return <Fragment key={"i" + sg.item.seq}>{renderItem(sg.item, 0, [sg.item])}</Fragment>;
-          const rows = sg.items.map((it, i) => <Fragment key={"i" + it.seq}>{renderItem(it, i, sg.items)}</Fragment>);
+          const rows = sg.items.map((it, i) => <Fragment key={"i" + itemKey(it)}>{renderItem(it, i, sg.items)}</Fragment>);
           // Only while the thread says the turn is working: a turn waiting on your answer is not.
           const running = live && working !== undefined && sg === runningSeg;
           if (!running && sg.rows < 2) return rows;
@@ -3228,7 +3243,7 @@ export function TurnView({ turn, tail, n, working, superseded }: { turn: Turn; t
           const settled = tip?.kind === "tools" ? done(tip.lines.at(-1)) : tip?.kind === "line" && done(tip.line);
           const step = working && working !== "Working" && working !== WAITING_MODEL && working !== "Thinking" && !settled ? working : sg.step;
           return (
-            <WorkSegmentRow key={"seg" + sg.seq} seg={sg} session={ctx?.session ?? ""} all={allSegs}
+            <WorkSegmentRow key={"seg" + itemKey(sg.items[0])} seg={sg} session={ctx?.session ?? ""} all={allSegs}
                             defaultOpen={Boolean(fail && sg.last && (sg.seqs.includes(fail.seq) || sg.failed > 0))}
                             running={running} since={turn.prompt?.at} step={step}>
               {rows}
