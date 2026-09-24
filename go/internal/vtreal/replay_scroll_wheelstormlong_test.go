@@ -96,7 +96,7 @@ func wheelStorm(t *testing.T, tape string, cols, rows int) {
 		t.Fatal(err)
 	}
 	stderr := filepath.Join(home, "stderr.log")
-	tm := &tmuxApp{t: t, sock: fmt.Sprintf("vtstorm-%d-%d", os.Getpid(), time.Now().UnixNano())}
+	tm := &tmuxApp{t: t, sock: "vtstorm-" + uniqueID()}
 	shell := fmt.Sprintf("cd %s && HOME=%s TERM=xterm-256color BOUGH_WEB_ADDR=127.0.0.1:0 %s -config %s 2>%s; echo BOUGH-EXIT=$?; sleep 600",
 		home, home, bin, cfg, stderr)
 	tm.run("new-session", "-d", "-x", fmt.Sprint(cols), "-y", fmt.Sprint(rows), shell)

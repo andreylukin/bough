@@ -8,8 +8,6 @@ package vtreal
 // Replay-backed: the next turn must get the tape's first reply.
 
 import (
-	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -23,7 +21,7 @@ func bangShellCancelAndResizeStart(t *testing.T) (*tmuxApp, string, string, stri
 	t.Helper()
 	tape, _ := filepath.Abs("testdata/replay/bang-shell.jsonl")
 	tm, home := resizeTmuxStart(t, 100, 30, replayConfig(tape))
-	marker := fmt.Sprintf("bscr-%d-%d", os.Getpid(), time.Now().UnixNano())
+	marker := "bscr-" + uniqueID()
 	line := "!sh -c 'for i in $(seq 1 50); do echo bscr-tick-$i; sleep 0.2; done' " + marker
 	t.Cleanup(func() { _ = exec.Command("pkill", "-f", marker).Run() })
 	return tm, home, line, marker

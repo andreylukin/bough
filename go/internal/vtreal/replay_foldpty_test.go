@@ -659,7 +659,7 @@ func foldPtyTmux(t *testing.T, cols, rows int, yml string) *tmuxApp {
 	if err := os.WriteFile(cfg, []byte(yml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	tm := &tmuxApp{t: t, sock: fmt.Sprintf("vtreal-fold-%d-%d", os.Getpid(), time.Now().UnixNano())}
+	tm := &tmuxApp{t: t, sock: "vtreal-fold-" + uniqueID()}
 	shell := fmt.Sprintf("cd %s && HOME=%s TERM=xterm-256color BOUGH_WEB_ADDR=127.0.0.1:0 %s -config %s", home, home, bin, cfg)
 	tm.run("new-session", "-d", "-x", fmt.Sprint(cols), "-y", fmt.Sprint(rows), shell)
 	t.Cleanup(func() {
