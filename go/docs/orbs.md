@@ -348,6 +348,8 @@ type State struct {
 	Primary   string            `json:"primary,omitempty"`   // host path of repos[0] worktree
 	Error     string            `json:"error,omitempty"`
 	PID       int               `json:"pid,omitempty"`       // child owning the orb; serve shows "stopped" when dead
+	Spec      string            `json:"spec,omitempty"`      // specKey of the run spec the container was created with
+	Restart   string            `json:"restart,omitempty"`   // "", "pending" or "building": a requested restart in flight
 	UpdatedAt time.Time         `json:"updatedAt"`
 }
 
@@ -403,7 +405,36 @@ func (o *Orb) Command(ctx context.Context, argv ...string) *exec.Cmd
 func (o *Orb) Root() string
 func (o *Orb) Stop(ctx context.Context) error   // container stop; state Stopped; worktrees kept
 func Remove(ctx context.Context, rt container.Runtime, home, session string) error // rm container, git worktree remove, rm Dir
+
+// Restart (internal/orb/restart.go): apply the current definition to a
+// running session. Successor syncs repos, adds worktrees for new repos and
+// builds the image with o's container still running; it writes no
+// state.json and touches no container, and refuses a changed first repo
+// (cwd, checkpoints and workdir hang off it). Replace stops o (state.json
+// says stopped first, as Stop does), removes the container only when the
+// image, the spec key or fresh says so, starts next (resume.sh reruns) and
+// re-points open portals at the new IP (RetargetPortals, same host ports).
+// If next fails to start, o's container is brought back from o.spec and
+// the error says both. o is retired: its Command fails "orb replaced".
+func (o *Orb) Successor(ctx context.Context, p projectdef.Project) (*Orb, error)
+func (o *Orb) Replace(ctx context.Context, next *Orb, fresh bool) (Replaced, error)
+func (o *Orb) SetRestart(phase string) // RestartPending, RestartBuilding, ""
+// restart.json in Dir: written by `bough project restart` and serve,
+// polled (1 s) and removed by the owning session process.
+func RequestRestart(home, session string, r RestartRequest) error
+func TakeRestart(home, session string) (RestartRequest, bool)
+func ResumeTail(home, session string, n int) string // this start's resume.log
 ```
+
+A container is reused only when the last state.json proves it was
+created with this image AND this run spec: `State.Spec` is `specKey`,
+a hash of image, mounts (caches and identity dirs included), base env
+without the token, workdir, cpus, memory and the ports project.yml asks
+for (asked for, not published: a busy host port must not flip the key).
+So a project.yml change the image hash ignores (env, ports, identity,
+caches, cpus, memory) recreates the container at the next start or
+restart. A state from before `Spec` was recorded is trusted on its image
+alone, so upgrading bough does not recreate every container.
 
 `execEnv` builds every exec's env (Command and resume.sh) in this order,
 later names winning: coreEnv (`HOME`, `TERM`, `BOUGH_SCRATCH`);
@@ -601,7 +632,43 @@ type orbExec interface {
   exists, is starting, the tools wait for it, no address yet. Effect on
   unmount: cancel a start in flight and wait for it to let go, then
   `Stop` (never Remove — resume reuses it). A reload keeps the handle,
-  failed or not: a failed build is not retried until the next process.
+  failed or not: a failed build is not retried until the next process
+  or a restart.
+- Restart (`plugins/orb/restart.go`): `/orb restart [fresh]`,
+  `bough project restart [session] [--fresh]` (from a shell, or relayed
+  from the guest, where the relay sets `BOUGH_SESSION`/`BOUGH_RELAYED` so
+  the agent's own session is the default) and `POST
+  /api/sessions/{id}/orb/restart` all reach one restarter per handle. The
+  last two cannot reach the process, so they write `restart.json`; a
+  request older than the handle is dropped (that start applied it). The
+  build starts at once while the old container keeps serving; a failed
+  build changes nothing but a notice. The swap waits until no turn is
+  open: the turn is tracked from `loop/event` — assistant, thinking,
+  code, call, result and steer open it, `done` closes it (both engines
+  emit `done` at every turn end, cancelled ones included), and 300 ms of
+  quiet must follow. Other kinds (title, todo, activity, `sub:*`) do not
+  count: they arrive after `done` too, and a background subagent is not
+  this session's turn — its in-flight calls stop with the container like
+  any job. A request from the guest therefore always waits for its own
+  turn to end, and the bash call that asked returns "scheduled" at once:
+  there is deliberately no "now", since killing the call that asked is
+  what this avoids. An idle session swaps as soon as the build is done. A
+  newer request during a build drops the older build (nothing was
+  created yet). The handle KEEPS ITS IDENTITY: `orb` and `orb-state` are
+  not re-Provided, because a Provide reloads every row that reads the
+  key (the ui among them), and tools and the engine resolve `orb` per
+  call anyway. The swap closes an exec gate (Command waits on it), swaps
+  the `*Orb` under the handle's mutex and records `lastSwap`, so a
+  background job started before it reports "stopped with the orb" and
+  queues no failure wake. The row's settled work reruns quietly for the
+  new orb (definition re-read; the `orb` prompt section changes, which
+  the engine sends as a `<context-update>` — the frozen system prompt is
+  never edited), and the result goes out as a `job-notices` notice (so
+  an idle agent wakes): the new image tag, whether the container was
+  recreated and why (specDiff), the jobs that stopped, and this start's
+  resume.log tail. A handle whose first start failed has no container to
+  protect: a restart prepares and starts at once. `State.Restart` puts
+  "restart pending" / "rebuilding" on the bar's line.
 - Open failure: row error names the row and wraps
   (`orb: open %s: %w`); state.json says failed so serve shows it.
 - `runtime.Available` failing => the same error path with the fix
@@ -704,6 +771,7 @@ sessions. It never deletes a conversation.
 | `GET /api/projects/{slug}/orb/build/log?offset=N` | — | `{"text": "...", "offset": M, "state": "building|ok|failed|"}` — bytes from N of build.log, max 256 KiB per call; client polls every 1 s while building |
 | `POST /api/sessions/{id}/project` | `{"project": "<slug>"}` | `{"ok": true}`; `""` unassigns. 409 for a session whose history says `mode: project` — its project is recorded there and nothing re-files it |
 | `GET /api/sessions/{id}/orb` | — | `{"orb": OrbState}` (`orb.State` JSON, status forced to `stopped` when PID dead and status was running/starting; `up: true` when the container runs, including after a failed setup); local => `{"orb": null}` |
+| `POST /api/sessions/{id}/orb/restart` | `{"fresh"?: bool}` | 202 `{"ok": true, "scheduled": true}` when the session runs (serve's child, or another live owner): writes `restart.json`, and the session rebuilds now and swaps when its turn ends; 200 `{"ok": true, "scheduled": false}` when nobody runs it (its next start applies the definition); 404 without an orb |
 | `POST /api/sessions/{id}/orb/stop` | — | `{"ok": true}`; runtime Stop on OrbName. Allowed while the child is live: the child's `Orb.Command` re-starts a stopped container on the next exec. serve marks state.json `stopped` before the runtime Stop (restored if Stop fails, unless the container no longer exists: a missing container is stopped already, so the record stays `stopped` and the idle reaper is not stuck retrying it); the child writes `running` again on restart. A background job that dies while the orb is marked stopped (or not running) records `stopped: true`, shows `[stopped with the orb]` and queues no wake notice. The web asks to confirm only when the session has running jobs |
 | `POST /api/sessions` | `{"cwd", "prompt", "mode"?: "local"\|"project", "project"?: "<slug>"}` | 201 `{"session": Row, "queued": bool}`. mode omitted => local. project mode: the slug must name a project (400 otherwise), cwd defaults to home and is ignored for the child dir; child env gets `BOUGH_MODE=project BOUGH_PROJECT=<slug>`, and the session is started as a THREAD of the project's main thread (`spawnedBy` = main, created if the project has none), so it goes through the background-agent queue and reports its finished turns to main |
 

@@ -254,3 +254,59 @@ func projectStop(out io.Writer, in io.Reader, home string, args []string) error 
 	fmt.Fprintf(out, "Stopped orb %s.\n", s.Session)
 	return nil
 }
+
+// projectRestart asks a running session to apply its project's current
+// definition to its orb: the image builds now, while the old container
+// keeps running, and the container is swapped when the session's turn
+// ends. Only the session's own process can swap its orb, so this writes
+// the request file it polls. Relayed from the guest (the agent's bash),
+// the session defaults to the caller's, and the request returns at once:
+// the swap never kills the call that asked for it.
+func projectRestart(out io.Writer, home string, args []string, self string, relayed bool) error {
+	usage := fmt.Errorf("usage: bough project restart [session] [--fresh]")
+	var pos []string
+	fresh := false
+	for _, a := range args {
+		switch a {
+		case "--fresh", "-fresh":
+			fresh = true
+		default:
+			if strings.HasPrefix(a, "-") {
+				return fmt.Errorf("unknown flag %s", a)
+			}
+			pos = append(pos, a)
+		}
+	}
+	if len(pos) > 1 {
+		return usage
+	}
+	id := self
+	if len(pos) == 1 {
+		id = pos[0]
+	}
+	if id == "" {
+		return usage
+	}
+	s, err := orbOf(home, id)
+	if err != nil {
+		return err
+	}
+	// A definition that does not load fails here, while the caller is
+	// still looking, not later in a notice.
+	if _, err := loadProject(home, s.Project); err != nil {
+		return err
+	}
+	if !ownerAlive(s) {
+		fmt.Fprintf(out, "Session %s is not running; its next start builds the new image and recreates the container when the image or spec changed.\n", s.Session)
+		return nil
+	}
+	by := "cli"
+	if relayed && id == self {
+		by = "agent"
+	}
+	if err := orb.RequestRestart(home, s.Session, orb.RestartRequest{Fresh: fresh, By: by}); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Restart of orb %s scheduled: the image builds now and the container is swapped when the session's current turn ends (background jobs stop); a notice reports the result.\n", s.Session)
+	return nil
+}

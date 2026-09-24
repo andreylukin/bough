@@ -45,10 +45,13 @@ name is the "name:" line in project.yml.
                                         repos clone, gh token, secrets resolve); a session in detail
   logs <slug|session>                   a project's build.log, or a session's resume.log
   stop <session> [--yes]                stop a session's container (asks when its session runs)
+  restart [session] [--fresh]           apply the project's current setup to a running session's orb
+                                        (rebuilds if needed, swaps when its turn ends; in an orb the
+                                        session defaults to your own; --fresh recreates the container)
   rm <session> [--branches] [--yes]     remove a session's orb: container, worktrees, orb dir
   prune [slug] [--branches] [--yes]     remove failed and archived sessions' orbs and unused images
                                         branches bough/<session> are kept; --branches deletes merged or pushed ones
-Changes apply to the next session started in the project.`
+Changes apply to the next session started in the project, or to a running one with restart.`
 
 func runProject(args []string) {
 	if err := project(os.Stdout, os.Stdin, args); err != nil {
@@ -86,6 +89,8 @@ func project(out io.Writer, in io.Reader, args []string) error {
 		return projectLogs(out, home, args[1:])
 	case "stop":
 		return projectStop(out, in, home, args[1:])
+	case "restart":
+		return projectRestart(out, home, args[1:], os.Getenv("BOUGH_SESSION"), os.Getenv("BOUGH_RELAYED") == "1")
 	case "show":
 		if err := need(1); err != nil {
 			return err

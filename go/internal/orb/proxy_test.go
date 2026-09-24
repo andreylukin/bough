@@ -321,3 +321,30 @@ func TestShimSendsToken(t *testing.T) {
 		t.Fatalf("without token: %q %v", out, err)
 	}
 }
+
+// A relayed command learns whose orb asked: `bough project restart` with
+// no session defaults to the caller's and records the agent as asking.
+func TestRelayPassesCallerSession(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not installed")
+	}
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "host-bough")
+	os.WriteFile(fake, []byte("#!/bin/sh\necho \"s=$BOUGH_SESSION r=$BOUGH_RELAYED b=$AGENT_BROWSER_SESSION\"\n"), 0o755)
+	p, err := startProxyBin("127.0.0.1", "", fakeBough(fake))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	scratch := t.TempDir()
+	if err := writeShim(scratch); err != nil {
+		t.Fatal(err)
+	}
+	c := exec.Command(filepath.Join(shimDir(scratch), "bough"), "project", "restart")
+	c.Env = append(os.Environ(), "BOUGH_HOST="+p.URL(), "BOUGH_SESSION=sess-7")
+	out, err := c.Output()
+	if err != nil || string(out) != "s=sess-7 r=1 b=sess-7\n" {
+		t.Fatalf("relayed env: %q %v", out, err)
+	}
+}

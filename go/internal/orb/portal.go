@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -42,8 +43,34 @@ var portals struct {
 }
 
 type portal struct {
-	ln   net.Listener
-	dial string // container IP:guest, resolved when the portal opened
+	ln    net.Listener
+	guest int
+	// dial is the container's IP:guest, resolved when the portal opened
+	// and re-pointed by RetargetPortals when a restart gives the orb a new
+	// container (and so a new IP) behind the same URL.
+	dial atomic.Pointer[string]
+}
+
+func newPortal(ln net.Listener, ip string, guest int) *portal {
+	p := &portal{ln: ln, guest: guest}
+	addr := net.JoinHostPort(ip, strconv.Itoa(guest))
+	p.dial.Store(&addr)
+	return p
+}
+
+// RetargetPortals points every open portal of the session at ip, for an
+// orb whose container was replaced: the host ports and URLs the person
+// already has keep working. Connections already open are left alone.
+func RetargetPortals(session, ip string) {
+	if ip == "" {
+		return
+	}
+	portals.Lock()
+	defer portals.Unlock()
+	for _, p := range portals.open[session] {
+		addr := net.JoinHostPort(ip, strconv.Itoa(p.guest))
+		p.dial.Store(&addr)
+	}
 }
 
 // OpenPortal forwards 127.0.0.1:<free port> to <orb IP>:guest for the
@@ -75,7 +102,7 @@ func OpenPortal(home, session string, guest int, name string) (PortalState, erro
 	if err != nil {
 		return PortalState{}, fmt.Errorf("orb: portal: %w", err)
 	}
-	p := &portal{ln: ln, dial: net.JoinHostPort(st.IP, strconv.Itoa(guest))}
+	p := newPortal(ln, st.IP, guest)
 	if portals.open == nil {
 		portals.open = map[string]map[int]*portal{}
 	}
@@ -143,7 +170,7 @@ func (p *portal) serve() {
 
 func (p *portal) pipe(in net.Conn) {
 	defer in.Close()
-	out, err := net.DialTimeout("tcp", p.dial, 5*time.Second)
+	out, err := net.DialTimeout("tcp", *p.dial.Load(), 5*time.Second)
 	if err != nil {
 		return // nothing listening inside the orb yet
 	}

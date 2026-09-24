@@ -96,9 +96,12 @@ func (p *proxy) relayExec(w http.ResponseWriter, r *http.Request) {
 	}
 	// Each orb drives its own browser. Two sessions sharing one would
 	// race over the active tab, focus, dialogs and the ref map, so the
-	// session id becomes the browser session name.
+	// session id becomes the browser session name. BOUGH_SESSION and
+	// BOUGH_RELAYED tell `bough project restart` whose orb asked, so the
+	// agent needs no session id and the request is recorded as its own.
+	// It grants nothing new: every `bough project` verb is relayed already.
 	if s := r.Header.Get(relaySessionHeader); s != "" {
-		cmd.Env = append(os.Environ(), "AGENT_BROWSER_SESSION="+s)
+		cmd.Env = append(os.Environ(), "AGENT_BROWSER_SESSION="+s, "BOUGH_SESSION="+s, "BOUGH_RELAYED=1")
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = bytes.NewBufferString(stdin), &stdout, &stderr

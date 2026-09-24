@@ -24,6 +24,7 @@ import (
 	"github.com/andreylukin/bough/internal/projectdef"
 	"github.com/andreylukin/bough/kernel"
 	"github.com/andreylukin/bough/plugins/commands"
+	"github.com/andreylukin/bough/plugins/loop"
 	"github.com/andreylukin/bough/plugins/tools"
 )
 
@@ -175,7 +176,9 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	if reused {
 		cancel()
 	} else {
-		h = newHandle(home, session, slug, cancel)
+		h = newHandle(home, session, slug, rt, pad.Dir(), cancel)
+		h.rs = newRestarter(h, ctx)
+		h.rs.start()
 		// The host half now: repos synced, worktrees added, the process
 		// moved into the primary worktree. Seconds of local git, and
 		// what the first turn's checkpoint, cwd and prompt need. The
@@ -231,24 +234,51 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	r := projectRole{main: isMain, thread: isThread, parent: parent}
 	secs, _ := kernel.Get[sections](ctx, "prompt-sections")
 	uiMode := uiModeOf(ctx)
+	// A restart's outcome goes to the agent as a job notice, which wakes
+	// an idle one: that is how it learns its jobs died, since jobs killed
+	// by an orb stop deliberately send none. With no tools row, the person.
+	if h.rs != nil {
+		h.rs.setNotify(func(text string) {
+			if n, err := kernel.Get[interface{ Notify(string) }](ctx, "job-notices"); err == nil {
+				n.Notify(text)
+				return
+			}
+			say(ctx, uiMode, text)
+		})
+		// The swap waits for the turn to end; the loop's events say when.
+		// Subscriptions made in Apply are disposed with the row.
+		ctx.On("loop/event", func(payload any) {
+			if ev, ok := payload.(loop.Event); ok {
+				h.rs.observe(ev.Kind)
+			}
+		})
+	}
 	// gone is this Apply's lifetime: a watcher from before a reload must
 	// not write a section the reload's Effect just cleared.
 	gone := make(chan struct{})
 	// settled is the per-Apply work that needs the open orb: the prompt
 	// section with its address, the notices, the address refresh on
-	// restart. On a reused, already open orb it runs at once.
-	settled := func() {
+	// restart. On a reused, already open orb it runs at once. A restart
+	// runs it again, quiet (its notice says what changed), for the orb
+	// now behind the handle: the definition is read again, so checks,
+	// identity and ports come from the one the restart applied.
+	settled := func(quiet bool) {
 		select {
 		case <-gone:
 			return
 		default:
+		}
+		loud := !reused && !quiet
+		p := p
+		if fresh, err := projectdef.Load(home, slug); err == nil {
+			p = fresh
 		}
 		o := h.Orb()
 		if o == nil {
 			// Said once, by the Apply whose start it was: a reload keeps
 			// the failed handle and only restores the section.
 			err := h.Ready(context.Background())
-			if !reused {
+			if loud {
 				st, _ := iorb.ReadState(home, session)
 				say(ctx, uiMode, failureReport(slug, iorb.FailedAt(st), err))
 			}
@@ -258,17 +288,17 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			return
 		}
 		st := o.State()
-		if st.ProxyAuth == iorb.ProxyAuthLegacy && !reused {
+		if st.ProxyAuth == iorb.ProxyAuthLegacy && loud {
 			say(ctx, uiMode, fmt.Sprintf("orb: %s: %s", slug, iorb.LegacyProxyNotice))
 		}
 		resume, _ := projectdef.ReadFile(home, slug, projectdef.FileResume)
 		setup, _ := projectdef.ReadFile(home, slug, projectdef.FileSetup)
 		dockerfile, _ := projectdef.ReadFile(home, slug, projectdef.FileDockerfile)
 		missing := missingEnv(resume, p.Def.Checks, p.Def, setup+"\n"+dockerfile)
-		if len(missing) > 0 && !reused {
+		if len(missing) > 0 && loud {
 			say(ctx, uiMode, fmt.Sprintf("orb: %s: unset env %s (resume.sh/checks)", slug, strings.Join(missing, ", ")))
 		}
-		if st.Status == iorb.StatusFailed && !reused {
+		if st.Status == iorb.StatusFailed && loud {
 			say(ctx, uiMode, failureReport(slug, iorb.FailedAt(st), fmt.Errorf("%s", st.Error)))
 		}
 		if secs != nil {
@@ -292,15 +322,17 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		go func() {
 			select {
 			case <-h.ready:
-				settled()
+				settled(false)
 			case <-gone:
 			}
 		}()
 	} else {
-		settled()
+		settled(false)
 	}
+	h.setRefresh(settled)
 	ctx.Effect(func() {
 		close(gone)
+		h.setRefresh(nil)
 		h.OnResume(nil)
 		if secs != nil {
 			secs.Set("orb", "")
@@ -387,7 +419,7 @@ func registerOrbCommand(ctx *kernel.Context, reg *commands.Registry, o orbLike, 
 		}
 	}
 	reg.Unregister("orb")
-	info := commands.CommandInfo{Name: "orb", Usage: "status|logs|stop|<slug>", Summary: "this session's orb: status, logs, stop; /orb <slug> sets a project up"}
+	info := commands.CommandInfo{Name: "orb", Usage: "status|logs|stop|restart [fresh]|<slug>", Summary: "this session's orb: status, logs, stop; restart applies the project's current setup; /orb <slug> sets a project up"}
 	if err := reg.Register(info, orbCommand(o, home, jobs)); err != nil {
 		fmt.Fprintf(os.Stderr, "bough: orb: /orb: %v\n", err)
 		return
@@ -446,16 +478,16 @@ func failureReport(slug, phase string, err error) string {
 	var fix string
 	switch phase {
 	case iorb.PhaseBuild:
-		fix = fmt.Sprintf("Fix the image recipe: `bough project show %s setup.sh` (or Dockerfile), `bough project write %s setup.sh < fixed.sh`; the next session rebuilds. Web: Projects → %s → Orb → Rebuild.", slug, slug, slug)
+		fix = fmt.Sprintf("Fix the image recipe: `bough project show %s setup.sh` (or Dockerfile), `bough project write %s setup.sh < fixed.sh`, then `bough project restart` (or /orb restart) rebuilds it in this session. Web: Projects → %s → Orb → Rebuild.", slug, slug, slug)
 	case iorb.PhaseSetup:
-		fix = fmt.Sprintf("The container runs, but resume.sh failed: `bough project show %s resume.sh`, `bough project write %s resume.sh < fixed.sh`; it reruns when the orb restarts. Web: Projects → %s → Orb.", slug, slug, slug)
+		fix = fmt.Sprintf("The container runs, but resume.sh failed: `bough project show %s resume.sh`, `bough project write %s resume.sh < fixed.sh`; it reruns on `bough project restart` (or /orb restart). Web: Projects → %s → Orb.", slug, slug, slug)
 	default:
 		fix = fmt.Sprintf("Check the project's repos and the container runtime: `bough project show %s`. Web: Projects → %s → Orb.", slug, slug)
 	}
 	return fmt.Sprintf("orb for project %s failed%s: %s\n%s", slug, phaseWord(phase), msg, fix)
 }
 
-var openPrefix = regexp.MustCompile(`^(orb: )?(open \S+: )?(orb: )?`)
+var openPrefix = regexp.MustCompile(`^(orb: )?((open|restart) \S+: )?(orb: )?`)
 
 func phaseWord(phase string) string {
 	switch phase {
@@ -482,7 +514,7 @@ func startingPromptSection(slug, root string, r projectRole) string {
 // cannot run.
 func failedPromptSection(slug string, err error) string {
 	return fmt.Sprintf("Project session: %s. Its container failed to start, so tools.bash, write and patch are unavailable in this session:\n%v\n"+
-		"Tell the user this error plainly. If it comes from the project definition (setup.sh, Dockerfile, resume.sh, project.yml), say what to change and give the exact command, e.g. `bough project show %s setup.sh` and `bough project write %s setup.sh < fixed.sh`; the next session start rebuilds.", slug, err, slug, slug)
+		"Tell the user this error plainly. If it comes from the project definition (setup.sh, Dockerfile, resume.sh, project.yml), say what to change and give the exact command, e.g. `bough project show %s setup.sh` and `bough project write %s setup.sh < fixed.sh`; then run `bough project restart` (or the user runs /orb restart), which rebuilds it in this session.", slug, err, slug, slug)
 }
 
 // addressSection says where servers in the container are reachable: its
@@ -509,7 +541,7 @@ func addressSection(b *strings.Builder, st iorb.State) {
 	// The browser is the host's; the guest has no Chrome. See cmd/bough/browser.go.
 	b.WriteString("To look at a page yourself, run `bough browser` (agent-browser on the user's machine, which can reach this container's address): `bough browser open <url>`, then `bough browser snapshot -i` for the accessibility tree with refs like @e2, then `bough browser click @e2`. Refs belong to the snapshot that produced them, so take a fresh snapshot after anything that changes the page, and prefer the tree over screenshots.\n")
 	if len(st.Ports) == 0 {
-		fmt.Fprintf(b, "No ports are forwarded to the host's 127.0.0.1 from project.yml. For a service that should be there on every start, ask the user, then run \"bough project set %s ports 3000,8080:80\" (host:container); it applies when the orb is removed and recreated. For anything ad hoc, use a portal instead.\n", st.Project)
+		fmt.Fprintf(b, "No ports are forwarded to the host's 127.0.0.1 from project.yml. For a service that should be there on every start, ask the user, then run \"bough project set %s ports 3000,8080:80\" (host:container), then \"bough project restart\" to apply it to this session (the orb is rebuilt and swapped when your turn ends; background jobs stop). For anything ad hoc, use a portal instead.\n", st.Project)
 	}
 }
 
@@ -551,7 +583,7 @@ func promptSection(root, memory string, st iorb.State, def projectdef.Def, missi
 	} else {
 		b.WriteString("No host identity is lent to this container: no GH_TOKEN and no cloud or cluster config (~/.aws, ~/.kube, ...).\n")
 	}
-	fmt.Fprintf(&b, "If a command needs one of the user's logins, ask the user to allow it, then run \"bough project add-identity %s gh\" or \"... %s .aws\" (append :rw only for token caches that must refresh); it applies to the next session. Network traffic leaves through the host, so internal hosts the user can reach work here too.\n", st.Project, st.Project)
+	fmt.Fprintf(&b, "If a command needs one of the user's logins, ask the user to allow it, then run \"bough project add-identity %s gh\" or \"... %s .aws\" (append :rw only for token caches that must refresh); \"bough project restart\" applies it to this session when your turn ends. Network traffic leaves through the host, so internal hosts the user can reach work here too.\n", st.Project, st.Project)
 	addressSection(&b, st)
 	names := make([]string, 0, len(st.Worktrees))
 	for n := range st.Worktrees {
@@ -576,7 +608,7 @@ func promptSection(root, memory string, st iorb.State, def projectdef.Def, missi
 		fmt.Fprintf(&b, "Env referenced by resume.sh/checks that may be unset: %s. If so, set them (bough project set %s env.NAME / tools.secret) before trusting checks.\n", strings.Join(missing, ", "), st.Project)
 	}
 	b.WriteString("If a build or test is blocked by a missing credential, dependency or tool, do not fall back to weaker verification. Find what the repo expects (Makefile, docker-compose, CI config), fix the project definition with `bough project`, ask for secrets with `tools.secret`, and say plainly what stayed unverified.\n")
-	fmt.Fprintf(&b, "This project's definition (repos, checks, env, setup.sh, resume.sh) is yours to change with \"bough project ... %s ...\" (no args for usage); it validates, and changes apply to the next session.\n", st.Project)
+	fmt.Fprintf(&b, "This project's definition (repos, checks, env, setup.sh, resume.sh) is yours to change with \"bough project ... %s ...\" (no args for usage); it validates, and changes apply to the next session; \"bough project restart\" applies them to this one when your turn ends (the image rebuilds if needed, the container is swapped, background jobs stop, and a notice reports the result).\n", st.Project)
 	// One file, edited only when asked. Nothing extracts or summarises
 	// into it: a brief the user did not write is a brief they cannot trust.
 	fmt.Fprintf(&b, "%s is this project's standing brief, prepended to every session in it. Write it (tools.write) only when the user asks you to remember something for later; keep it short, and never copy a conversation into it.\n", memory)
