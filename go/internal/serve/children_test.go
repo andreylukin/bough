@@ -147,6 +147,32 @@ func TestChildQueueStartsInOrder(t *testing.T) {
 	}
 }
 
+// A spawn that raises the cap goes behind the child already waiting,
+// and the room it made starts that child (specs/agent_running_caps).
+func TestChildRaisedCapStartsQueuedFirst(t *testing.T) {
+	t.Parallel()
+	f := childFixture(t)
+	if _, q, err := f.sup.CreateChild(CreateOptions{Prompt: "HANG a", SpawnedBy: "parent"}, 0, 1); err != nil || q {
+		t.Fatalf("a: %v %v", q, err)
+	}
+	b, qb, err := f.sup.CreateChild(CreateOptions{Prompt: "HANG b", SpawnedBy: "parent"}, 0, 1)
+	if err != nil || !qb {
+		t.Fatalf("b not queued: %v %v", qb, err)
+	}
+	c, qc, err := f.sup.CreateChild(CreateOptions{Prompt: "HANG c", SpawnedBy: "parent"}, 0, 2)
+	if err != nil || !qc {
+		t.Fatalf("c started ahead of queued b: queued=%v %v", qc, err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for f.startCount(t) < 2 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if got := f.sup.queuedIDs(); f.startCount(t) != 2 || len(got) != 1 || got[0] != c {
+		t.Fatalf("starts %d, queue %v; want b started (%s) and c (%s) waiting", f.startCount(t), got, b, c)
+	}
+}
+
 func TestChildBurstStartsOnlyCap(t *testing.T) {
 	t.Parallel()
 	f := childFixture(t)
