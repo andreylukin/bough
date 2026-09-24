@@ -21,9 +21,13 @@ deadlock_detection: false
 #   doneSinceAck the last "done" entry's seq > meta.Ack  (unseen)
 #   stale        the clock is past the window since the last entry
 #
+# "The last entry" skips the turn's summary and title: the child writes
+# them a small-model call after the done, and they are part of the step
+# that wrote the done (Finish, Fail), not news after an ack.
+#
 # Trouble compares the ack with the LAST entry, unseen with the last
-# DONE: a title or a notice written after the person looked (Note) never
-# brings the dot back, but it does bring an acked failure's trouble back.
+# DONE: a notice written after the person looked (Note) never brings
+# the dot back, but it does bring an acked failure's trouble back.
 # That is the code (Troubled: "something recorded after the last time it
 # was marked seen"), not the flow's first map ("a later failure").
 #
@@ -58,7 +62,10 @@ role Session:
     action Init:
         self.status = "idle"
         self.testsFailed = False
-        self.newSinceAck = False
+        # A web session's transcript starts with its meta line, written
+        # at create, and nothing has been acked yet: the last seq is past
+        # the ack before any prompt. Idle is never troubled regardless.
+        self.newSinceAck = True
         self.doneSinceAck = False
         self.stale = False
         self.screen = "closed"
@@ -66,7 +73,8 @@ role Session:
         self.unseen = False
 
     # troubled then unseen, as rowOf calls them (api.go). An idle session
-    # has no entry yet and is never troubled (digest.empty).
+    # is never troubled: it has only its meta line, and no failure or
+    # test run to report.
     atomic func recompute():
         t = ""
         if self.status != "idle" and self.newSinceAck and not self.stale:
@@ -108,12 +116,15 @@ role Session:
         self.doneSinceAck = True
         self.wrote()
 
+    # A failed turn closes with a "done" too (stop: error), so the last
+    # done moves past the ack; unseen stays off because status is failed.
     atomic action Fail:
         require self.status == "running"
         self.status = "failed"
+        self.doneSinceAck = True
         self.wrote()
 
-    # A title or a notice written after the turn closed and was acked.
+    # A notice written after the turn closed and was acked.
     atomic action Note:
         require self.status in ("done", "failed") and not self.newSinceAck and not self.stale
         self.wrote()
