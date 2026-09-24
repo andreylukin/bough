@@ -46,20 +46,27 @@
 #     separate resolve failure inside a user turn: it reads exactly like
 #     Provider.FatalError there.
 #   - Stop during retry_wait cancels the turn's running call (cancelTurn
-#     cancels the ops of turnCalls); it is not adopted.
-#   - Retries are the Anthropic adapter's (messagesapi); llm-control has
-#     none. Walking this flow needs llm-control to fail through that same
-#     retry loop (and to answer refused / max_tokens), which it cannot
-#     today.
+#     cancels the ops of turnCalls); it is not adopted. The web's Stop is
+#     a SIGINT, and the child exits after the cancel: a job it still ran
+#     goes with it (found by the server walk).
+#   - Retries are the Anthropic adapter's (messagesapi); llm-control's
+#     "api" turns go through that same retry loop (two attempts) and
+#     answer refused / max_tokens.
+#   - The engine asks the model again only on a result or an input, so a
+#     request is in flight beside a running call only when another call
+#     of the same reply has returned (found by the server walk).
 #
-# The spec models what the product should do. Three places it does not
-# today, each the reason for one assertion below:
-#   - WakeRequestFails records its error with no open turn (actor.go
-#     providerError notes before its !a.open check): ErrorOnlyInTurn.
+# The spec models what the product should do. Three places it was
+# suspected not to, each the reason for one assertion below:
+#   - WakeRequestFails recorded its error with no open turn (the Gate
+#     failed the request before its DeltaStart): ErrorOnlyInTurn. Fixed:
+#     the Gate starts the request first (gate.go start).
 #   - The max_tokens system note renders as "Hooks · 1 notices":
-#     CutShownAsCut.
-#   - The sticky overflow is Gate memory; a child restart forgets it and
-#     the next turn pays for a second 400: OverflowPaidOnce.
+#     CutShownAsCut. Left to the browser walk; TurnHooks only gets the
+#     lines isHookLine takes ("hook …"), so this one may not hold.
+#   - The sticky overflow was Gate memory; a child restart forgot it and
+#     the next turn paid for a second 400: OverflowPaidOnce. Fixed: the
+#     error entry records the model and Open reads it back.
 #
 # Fields (Session role):
 #   status   StatusOf: idle | running | done | error | stopped (derived)
@@ -84,6 +91,9 @@
 #            model (the test counts llm-control requests)
 #   cut      "cut": the turn's reply was cut at max_tokens and the page
 #            says so; "" otherwise
+#   live     the session has a running child (the row's live flag): the
+#            web starts one with the session and with every input or
+#            /model it sends; a Stop and a restart end it
 
 NONE = "none"
 MAX = 2
@@ -104,6 +114,7 @@ role Session:
         self.overflow = False
         self.paid = 0
         self.cut = ""
+        self.live = True
 
     # StatusOf's switch, with a live child (no interrupted here).
     atomic func derive():
@@ -167,6 +178,7 @@ role Session:
             self.call = "job"
         elif self.call in ("ended", "returned"):
             self.call = NONE
+        self.live = True
         self.openTurn("user")
 
     # --- the person ---
@@ -186,14 +198,18 @@ role Session:
         require not self.open and self.overflow
         self.overflow = False
         self.paid = 0
+        self.live = True
 
-    # Stop while the adapter waits to retry: the wait returns on the cut
-    # context, the Gate answers it as a cancel, the call is cancelled.
+    # Stop while the adapter waits to retry: the web's Stop is a SIGINT to
+    # the child, which cancels the turn (the wait returns on the cut
+    # context, the Gate answers it as a cancel) and then exits, so every
+    # call it still runs goes with it: the turn's own and a job.
     atomic action StopDuringRetry:
         require self.req == "retry_wait"
-        if self.call == "running":
+        if self.call in ("running", "job"):
             self.call = NONE
         self.close("cancelled")
+        self.live = False
 
     # --- the provider (the model this session's requests reach) ---
 
@@ -239,8 +255,10 @@ role Session:
         require self.req == "out" and self.overflow
         self.fail()
 
-    # A reply with a tool call: recorded, the call runs, and the next
-    # request goes out while it does (engine calls run asynchronously).
+    # A reply with a tool call that runs on and one that returns at once:
+    # recorded, and the quick one's result sends the next request while
+    # the other runs (engine calls run asynchronously). With the running
+    # call alone the engine asks nothing until it returns.
     atomic action CallStart:
         require self.req == "streaming" and self.call == NONE
         self.call = "running"
@@ -287,10 +305,13 @@ role Session:
         self.openTurn("wake")
         self.fail()
 
-    # The child is restarted between turns (serve restart, ensure after
-    # an exit). Its jobs are gone with it; the overflow is not forgotten.
+    # The child exits between turns (a serve restart, an archive); the
+    # next input or /model starts a fresh one. The overflow is not
+    # forgotten with it. (With live left out this was a self-loop, which
+    # the graph does not keep: no walk could take it.)
     atomic action ChildRestart:
-        require not self.open and self.call == NONE
+        require not self.open and self.call == NONE and self.live
+        self.live = False
 
 action Init:
     session = Session()
