@@ -61,6 +61,9 @@ export interface Flow<C> {
    *  every non-2xx fetch, and a flow may make serve fail). Only that step's
    *  own failure: anything else still fails the walk. */
   expectedError?(c: C, text: string): boolean;
+  /** More invariants the surface owes at every node, after the shared
+   *  ones (helpers/surface.ts has focus, clipping and axe checks). */
+  check?(c: C, where: string): Promise<void>;
 }
 
 /** The role's fields out of a graph state, keyed by bare field name. */
@@ -129,6 +132,7 @@ export function modelTests<C>(flow: Flow<C>): void {
               return flow.read(c);
             }, { message: `${where}: state`, timeout: 10_000 }).toEqual(roleState(flow.role, step.state));
             await invariants(page, flow.status(c), errors, where);
+            await flow.check?.(c, where);
           }
         } finally {
           await flow.cleanup?.(c);
