@@ -14,11 +14,13 @@ deadlock_detection: false
 #                                  last key; the reply is tagged with its
 #                                  token and a cleaned-up effect's reply is
 #                                  dropped (live = false)
-#   serve/files.go API.files       searches the session's recorded cwd
-#                                  (history meta), else serve's home
+#   serve/files.go API.files       searches the session's cwd as history
+#                                  lists it (a project session's primary
+#                                  worktree), else serve's home
 #   plugins/loop/loop.go ExpandAt  regular files under the child's root only,
 #                                  64 KiB each, then a "[truncated ...]" note
-#   unreal/session/actor.go admit  ExpandAt(line, the engine's cwd)
+#   unreal/session/actor.go admit  ExpandAt(line, the session's working
+#                                  dir: the primary worktree in an orb)
 #   web/src/app.tsx <Thread key=row.id>  switching sessions remounts the
 #                                  composer, so the old picker unmounts
 #
@@ -91,9 +93,11 @@ role Mention:
         require self.picker == "debouncing"
         self.picker = "fetching"
 
-    # The server answers the current token. files.go searches the session's
-    # recorded cwd; for an orb session that is ~ while the child expands
-    # against the primary worktree, so today searched would be "other".
+    # The server answers the current token, searched under the root the
+    # child expands against. For an orb session both are the primary
+    # worktree; admit used to expand against the engine's cwd from before
+    # the orb moved the process there ($HOME), so a picked file went to
+    # the model as bare text (the MBT stage's finding).
     atomic fair<strong> action ReplyArrives:
         require self.picker == "fetching"
         self.picker = "results"
