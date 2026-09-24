@@ -1291,14 +1291,26 @@ func (s *Supervisor) RenameProject(slug, name string) error {
 	if name == "" {
 		return ErrBadName
 	}
-	if _, ok := s.Project(slug); !ok {
+	p, ok := s.Project(slug)
+	if !ok {
 		return fmt.Errorf("serve: supervisor: no project %q: %w", slug, ErrUnknownProject)
 	}
 	if err := projectdef.SetName(s.home, slug, name); err != nil {
+		// SetName splices only the name: line, so a definition broken
+		// anywhere else is still broken after it. That is the file's
+		// fault, fixed in the editor, not a server error: it came back
+		// as a 500 the page could only show as "something went wrong".
+		if p.Error != "" {
+			return fmt.Errorf("serve: supervisor: rename %s: %w: %w", slug, ErrBrokenProject, err)
+		}
 		return fmt.Errorf("serve: supervisor: rename %s: %w", slug, err)
 	}
 	return nil
 }
+
+// ErrBrokenProject is a change refused because project.yml does not
+// parse.
+var ErrBrokenProject = errors.New("serve: supervisor: project.yml does not parse; fix it in the editor first")
 
 // DeleteProject removes the project directory and the state a project of
 // the same name would otherwise inherit — its images, its repo cache and
