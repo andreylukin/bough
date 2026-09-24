@@ -117,7 +117,7 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			return fmt.Errorf("orb: unknown config key %q", k)
 		}
 	}
-	if home, err := os.UserHomeDir(); err == nil {
+	if home, err := userHome(); err == nil {
 		if err := InstallSkill(home); err != nil {
 			fmt.Fprintf(os.Stderr, "bough: orb: install /orb skill: %v\n", err)
 		}
