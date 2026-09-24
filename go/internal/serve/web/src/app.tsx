@@ -5771,7 +5771,9 @@ export default function App() {
   const threadFor = (r: Row) => (
     <RunningCallCtx.Provider key={r.id} value={runningCall}>
     <Thread key={r.id} row={r} lines={shownLines} jump={jump?.id === r.id ? jump : null} loading={loadedFor !== r.id} loadError={loadFail ?? undefined} paused={paused}
-      onRetry={() => (loadedFor === r.id ? retryRef.current() : setLoadTry((n) => n + 1))} stream={stream} activity={runningCall ? callStep({ data: { tool: runningCall.tool }, text: runningCall.detail }) : activity} projects={projects} busy={busy || Boolean(locked[r.id])} onBack={goList}
+      /* "Updates paused" can show before the transcript's first read lands; its
+         Retry is a catch-up there too, not a reload that clears the pause. */
+      onRetry={() => (loadedFor === r.id || (paused !== undefined && !loadFail) ? retryRef.current() : setLoadTry((n) => n + 1))} stream={stream} activity={runningCall ? callStep({ data: { tool: runningCall.tool }, text: runningCall.detail }) : activity} projects={projects} busy={busy || Boolean(locked[r.id])} onBack={goList}
       sending={pending[r.id] ?? []}
       setSending={(f) => setPending((m) => ({ ...m, [r.id]: f(m[r.id] ?? []) }))}
       onSend={(t) => deliverTo(r.id, () => api.prompt(r.id, t))}
