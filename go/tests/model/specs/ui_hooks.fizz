@@ -28,7 +28,8 @@
 #   edited the textarea differs from what was last read or saved.
 #   save   "idle" | "saving" (button says Saving…, it and the textarea
 #          disabled) | "saved" (note "Saved.") | "error" (err alert).
-#   dry    "idle" | "running" (request in flight; see KNOWN GAPS) |
+#   dry    "idle" | "running" (request in flight: the button says
+#          Running…, aria-busy, and stays enabled; see KNOWN GAPS) |
 #          "result" (note "Dry run finished in …") | "error" (err alert).
 #   Source has ONE note slot and ONE err slot for both requests, so an
 #   answer that writes a slot replaces whatever the other request left
@@ -265,9 +266,8 @@ always assertion AwayHoldsNothing:
 #         return page.dry not in ("result", "error") or not page.edited
 #   The same holds for Edit while a dry run is in flight: onChange clears
 #   the slots, and the late answer fills them again.
-# - A dry run in flight shows nothing: no "Running…", the button stays
-#   enabled, and a second click sends a second request. A status for the
-#   running state does not exist to assert.
+# - A dry run in flight stays enabled: it says Running… (aria-busy), but a
+#   second click sends a second request.
 # - Dry run stays enabled while a save is in flight, so it can run the
 #   file before the save lands.
 # - Back with edited text drops it without asking:

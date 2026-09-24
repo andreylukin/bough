@@ -177,9 +177,10 @@ export function ErrorNote({ title, err, children, action, secondary, className =
 }) {
   const raw = (err instanceof Error ? err.message : String(err ?? "")).trim();
   return (
-    <div className={("error-note state state-alert " + className).trim()}>
+    // The alert is the note, not its heading: an h2 may not take role=alert.
+    <div className={("error-note state state-alert " + className).trim()} role="alert">
       <span className="state-glyph"><StateIcon kind="alert" /></span>
-      <h2 className="error-note-title" role="alert">{title}</h2>
+      <h2 className="error-note-title">{title}</h2>
       {(children ?? (raw && humanError(err))) && <p className="error-note-body">{children ?? humanError(err)}</p>}
       {(action || secondary) && (
         <div className="state-actions">

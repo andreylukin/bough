@@ -222,9 +222,16 @@ function Source({ path, event, load, save, dryrun, definition = false, inRun = f
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
   const [saving, setSaving] = useState(false);
+  // Whether a read was ever sent: the hidden panel of a file nobody opened
+  // is empty, not a "Loading file…" that no request stands behind.
+  const [asked, setAsked] = useState(false);
+  // Dry runs still out. The button stays live (a second press runs it
+  // again) but says so, or a slow hook looked like a press that did nothing.
+  const [running, setRunning] = useState(0);
   const id = useId();
 
   const read = () => {
+    setAsked(true);
     setErr("");
     // A hung request must not spin forever: after 15s it becomes an error with a Retry.
     let late = false;
@@ -255,7 +262,7 @@ function Source({ path, event, load, save, dryrun, definition = false, inRun = f
         {body === null
           ? err
             ? <p className="err hk-loaderr" role="alert">Could not open the file — {err} <button className="btn btn-sm" onClick={read}>Retry</button></p>
-            : <Waiting what="File" inline timeout={15_000} onRetry={read} />
+            : asked && <Waiting what="File" inline timeout={15_000} onRetry={read} />
           : (
             <>
               <label className="visually-hidden" htmlFor={`${id}-body`}>File contents</label>
@@ -271,13 +278,14 @@ function Source({ path, event, load, save, dryrun, definition = false, inRun = f
                     setErr(e instanceof Error ? e.message : String(e))).finally(() => setSaving(false));
                 }}>{saving ? "Saving…" : "Save"}</button>
                 {dryrun && event && (
-                  <button className="btn" onClick={() => {
-                    setNote(""); setErr("");
+                  <button className="btn" aria-busy={running > 0 || undefined} onClick={() => {
+                    setNote(""); setErr(""); setRunning((n) => n + 1);
                     dryrun(path, event).then((r) => {
                       if (r.error) { setErr(r.error); return; }
                       setNote(`Dry run finished in ${r.ms}ms: ${JSON.stringify(r.result)}`);
-                    }).catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
-                  }}>Dry run</button>
+                    }).catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)))
+                      .finally(() => setRunning((n) => n - 1));
+                  }}>{running > 0 ? "Running…" : "Dry run"}</button>
                 )}
                 {note && <span className="hk-note" role="status">{note}</span>}
               </div>
