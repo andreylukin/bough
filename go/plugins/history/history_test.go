@@ -69,6 +69,41 @@ func TestApplyResumeClosesKilledTurn(t *testing.T) {
 	}
 }
 
+// A job lives in the process that started it: resuming a log whose job
+// never finished records its end, once, or the resumed session (a
+// background agent Stop ended, messaged again) listed a dead job as
+// still running.
+func TestApplyResumeEndsDeadJobs(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "jobs.jsonl")
+	s, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Append("input", map[string]any{"text": "alpha"})
+	s.Append("job", map[string]any{"id": 1, "event": "started", "cmd": "make", "call": "c1"})
+	s.Append("job", map[string]any{"id": 2, "event": "started", "cmd": "sleep 1"})
+	s.Append("job", map[string]any{"id": 2, "event": "finished", "cmd": "sleep 1", "exit": 0})
+	s.Append("done", map[string]any{"running": 1})
+	s.Close()
+	for range 2 {
+		ctx := kernel.NewContext()
+		if err := (plugin{}).Apply(ctx, map[string]any{"file": p}); err != nil {
+			t.Fatal(err)
+		}
+		ctx.Unmount()
+	}
+	es, err := readEntries(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(es) != 6 {
+		t.Fatalf("entries after two resumes = %+v, want one job end appended", es)
+	}
+	if e := es[5]; e.Kind != "job" || e.Data["event"] != "finished" || e.Data["id"] != 1.0 || e.Data["cmd"] != "make" || e.Data["call"] != "c1" {
+		t.Fatalf("appended %+v, want job 1 finished", e)
+	}
+}
+
 func TestFreshSessionOnlyMetaIsRemoved(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	ctx := kernel.NewContext()
