@@ -5,6 +5,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -333,21 +334,23 @@ func TestWheelScroll(t *testing.T) {
 
 func TestLongTranscriptScrollback(t *testing.T) {
 	t.Parallel()
-	d := defaultDrv(t)
-	d.event("user", "the very first message")
-	fillTranscript(d, 200)
-	if strings.Contains(d.plain(), "the very first message") {
-		t.Fatal("first message should have scrolled out of view")
-	}
-	for i := 0; i < 50 && !d.m.vp.AtTop(); i++ {
-		d.press(keyPgUp())
-	}
-	if !d.m.vp.AtTop() {
-		t.Fatal("repeated pgup should reach the top")
-	}
-	if !strings.Contains(d.plain(), "the very first message") {
-		t.Errorf("scrollback to top should show the first message:\n%s", d.plain())
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := defaultDrv(t)
+		d.event("user", "the very first message")
+		fillTranscript(d, 200)
+		if strings.Contains(d.plain(), "the very first message") {
+			t.Fatal("first message should have scrolled out of view")
+		}
+		for i := 0; i < 50 && !d.m.vp.AtTop(); i++ {
+			d.press(keyPgUp())
+		}
+		if !d.m.vp.AtTop() {
+			t.Fatal("repeated pgup should reach the top")
+		}
+		if !strings.Contains(d.plain(), "the very first message") {
+			t.Errorf("scrollback to top should show the first message:\n%s", d.plain())
+		}
+	})
 }
 
 func TestNewEventWhileScrolledUpShowsCue(t *testing.T) {

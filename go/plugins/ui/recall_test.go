@@ -7,6 +7,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"testing/synctest"
 )
 
 // pastDrv is a driver whose launcher offers earlier sessions' prompts.
@@ -70,25 +71,27 @@ func TestPastPromptsReadOnce(t *testing.T) {
 // cursor several rows down.
 func TestUpWalksWrappedRowsBeforeHistory(t *testing.T) {
 	t.Parallel()
-	d := pastDrv(t, "from before")
-	d.typeStr(strings.Repeat("word ", 60)) // one logical line, many rows
-	if d.m.input.LineCount() != 1 {
-		t.Fatalf("precondition: one logical line, got %d", d.m.input.LineCount())
-	}
-	if d.m.input.LineInfo().Height < 2 {
-		t.Fatalf("precondition: the draft should wrap, height %d", d.m.input.LineInfo().Height)
-	}
-	d.press(keyUp())
-	if v := d.m.input.Value(); !strings.HasPrefix(v, "word ") {
-		t.Fatalf("up inside a wrapped line must move the cursor, not recall; got %q", v)
-	}
-	// Walk to the top row, then one more press recalls.
-	for range d.m.input.LineInfo().Height {
+	synctest.Test(t, func(t *testing.T) {
+		d := pastDrv(t, "from before")
+		d.typeStr(strings.Repeat("word ", 60)) // one logical line, many rows
+		if d.m.input.LineCount() != 1 {
+			t.Fatalf("precondition: one logical line, got %d", d.m.input.LineCount())
+		}
+		if d.m.input.LineInfo().Height < 2 {
+			t.Fatalf("precondition: the draft should wrap, height %d", d.m.input.LineInfo().Height)
+		}
 		d.press(keyUp())
-	}
-	if got := d.m.input.Value(); got != "from before" {
-		t.Fatalf("up from the first visual row should recall, got %q", got)
-	}
+		if v := d.m.input.Value(); !strings.HasPrefix(v, "word ") {
+			t.Fatalf("up inside a wrapped line must move the cursor, not recall; got %q", v)
+		}
+		// Walk to the top row, then one more press recalls.
+		for range d.m.input.LineInfo().Height {
+			d.press(keyUp())
+		}
+		if got := d.m.input.Value(); got != "from before" {
+			t.Fatalf("up from the first visual row should recall, got %q", got)
+		}
+	})
 }
 
 func TestCtrlPAndCtrlNAreUpAndDown(t *testing.T) {
@@ -107,34 +110,38 @@ func TestCtrlPAndCtrlNAreUpAndDown(t *testing.T) {
 // esc clears a draft; Up brings it back, so clearing is undoable.
 func TestEscClearedDraftIsRecallable(t *testing.T) {
 	t.Parallel()
-	d := defaultDrv(t)
-	d.typeStr("half-written thought")
-	d.press(keyEsc()) // arms
-	d.press(keyEsc()) // clears
-	if d.m.input.Value() != "" {
-		t.Fatal("a double esc should clear the draft")
-	}
-	d.press(keyUp())
-	if got := d.m.input.Value(); got != "half-written thought" {
-		t.Fatalf("up should bring back the cleared draft, got %q", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := defaultDrv(t)
+		d.typeStr("half-written thought")
+		d.press(keyEsc()) // arms
+		d.press(keyEsc()) // clears
+		if d.m.input.Value() != "" {
+			t.Fatal("a double esc should clear the draft")
+		}
+		d.press(keyUp())
+		if got := d.m.input.Value(); got != "half-written thought" {
+			t.Fatalf("up should bring back the cleared draft, got %q", got)
+		}
+	})
 }
 
 // Escaping out of a recalled prompt must not append it again: it is
 // already in history.
 func TestEscOnRecalledPromptAddsNothing(t *testing.T) {
 	t.Parallel()
-	d := pastDrv(t, "from before")
-	d.press(keyUp())
-	d.press(keyEsc()) // arms
-	d.press(keyEsc()) // clears
-	if d.m.input.Value() != "" {
-		t.Fatal("precondition: the recalled prompt should have been cleared")
-	}
-	if n := len(d.m.comp.dropped); n != 0 {
-		t.Fatalf("a recalled prompt should not be re-recorded, got %d dropped", n)
-	}
-	if got := d.m.prompts(); len(got) != 1 {
-		t.Fatalf("history should still hold one prompt, got %v", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := pastDrv(t, "from before")
+		d.press(keyUp())
+		d.press(keyEsc()) // arms
+		d.press(keyEsc()) // clears
+		if d.m.input.Value() != "" {
+			t.Fatal("precondition: the recalled prompt should have been cleared")
+		}
+		if n := len(d.m.comp.dropped); n != 0 {
+			t.Fatalf("a recalled prompt should not be re-recorded, got %d dropped", n)
+		}
+		if got := d.m.prompts(); len(got) != 1 {
+			t.Fatalf("history should still hold one prompt, got %v", got)
+		}
+	})
 }

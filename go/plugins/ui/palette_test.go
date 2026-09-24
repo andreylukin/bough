@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -141,25 +142,27 @@ func TestBackspacePastSlashCloses(t *testing.T) {
 
 func TestEscClosesAndTypingReopens(t *testing.T) {
 	t.Parallel()
-	d := drvCmds(t, reg(t, "alpha"))
-	d.typeStr("/")
-	d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if d.m.pal.open {
-		t.Fatal("esc should close the palette")
-	}
-	if d.m.input.Value() != "" {
-		t.Fatalf("esc on a lone /query should clear the composer, got %q", d.m.input.Value())
-	}
-	d.typeStr("/a")
-	if !d.m.pal.open {
-		t.Error("typing after esc should reopen the palette")
-	}
-	// A draft with more than the /word keeps its text.
-	d.typeStr("lpha now")
-	d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if got := d.m.input.Value(); got != "/alpha now" {
-		t.Errorf("esc must not drop a draft with args, got %q", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := drvCmds(t, reg(t, "alpha"))
+		d.typeStr("/")
+		d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+		if d.m.pal.open {
+			t.Fatal("esc should close the palette")
+		}
+		if d.m.input.Value() != "" {
+			t.Fatalf("esc on a lone /query should clear the composer, got %q", d.m.input.Value())
+		}
+		d.typeStr("/a")
+		if !d.m.pal.open {
+			t.Error("typing after esc should reopen the palette")
+		}
+		// A draft with more than the /word keeps its text.
+		d.typeStr("lpha now")
+		d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+		if got := d.m.input.Value(); got != "/alpha now" {
+			t.Errorf("esc must not drop a draft with args, got %q", got)
+		}
+	})
 }
 
 // --- ordering: builtins before skills, /help first on a bare "/" ---
@@ -300,55 +303,57 @@ func TestTabCyclesMatches(t *testing.T) {
 
 func TestKeysCommandAndQuestionMark(t *testing.T) {
 	t.Parallel()
-	r := commands.NewRegistry()
-	if err := r.Register(commands.CommandInfo{Name: "keys"},
-		func(string) (string, error) { return "", commands.ActionKeys }); err != nil {
-		t.Fatal(err)
-	}
-	d := drvCmds(t, r)
-	d.typeStr("?")
-	if d.m.input.Value() != "" {
-		t.Fatalf("? on an empty composer must not type, got %q", d.m.input.Value())
-	}
-	// A panel over the transcript, not a block: nothing to save.
-	if len(d.m.blocks) != 0 {
-		t.Errorf("? must not add transcript blocks, got %+v", d.m.blocks)
-	}
-	scr := d.plain()
-	for _, want := range []string{"keys  (? or esc closes)", "ctrl+c", "quit", "ctrl+o", "inspect history"} {
-		if !strings.Contains(scr, want) {
-			t.Errorf("? should show the keymap with %q:\n%s", want, scr)
+	synctest.Test(t, func(t *testing.T) {
+		r := commands.NewRegistry()
+		if err := r.Register(commands.CommandInfo{Name: "keys"},
+			func(string) (string, error) { return "", commands.ActionKeys }); err != nil {
+			t.Fatal(err)
 		}
-	}
-	d.typeStr("?")
-	if strings.Contains(d.plain(), "or esc closes") || d.m.input.Value() != "" {
-		t.Errorf("? again closes the panel without typing:\n%s", d.plain())
-	}
-	d.typeStr("?")
-	d.press(keyEsc())
-	if strings.Contains(d.plain(), "or esc closes") {
-		t.Errorf("esc closes the panel:\n%s", d.plain())
-	}
-	// Any other key closes the panel and still lands.
-	d.typeStr("?")
-	d.typeStr("what?")
-	if got := d.m.input.Value(); got != "what?" {
-		t.Errorf("typing over the panel must not be swallowed, got %q", got)
-	}
-	if strings.Contains(d.plain(), "or esc closes") {
-		t.Errorf("typing closes the panel:\n%s", d.plain())
-	}
-	d.press(keyCtrl('l'))
-	d.typeStr("/keys")
-	d.press(keyEnter())
-	if !d.m.keysOpen || !strings.Contains(d.plain(), "or esc closes") {
-		t.Errorf("/keys should open the keys panel:\n%s", d.plain())
-	}
-	for _, b := range d.m.blocks {
-		if b.kind == "system" {
-			t.Errorf("/keys must not print a keymap block, got %+v", b)
+		d := drvCmds(t, r)
+		d.typeStr("?")
+		if d.m.input.Value() != "" {
+			t.Fatalf("? on an empty composer must not type, got %q", d.m.input.Value())
 		}
-	}
+		// A panel over the transcript, not a block: nothing to save.
+		if len(d.m.blocks) != 0 {
+			t.Errorf("? must not add transcript blocks, got %+v", d.m.blocks)
+		}
+		scr := d.plain()
+		for _, want := range []string{"keys  (? or esc closes)", "ctrl+c", "quit", "ctrl+o", "inspect history"} {
+			if !strings.Contains(scr, want) {
+				t.Errorf("? should show the keymap with %q:\n%s", want, scr)
+			}
+		}
+		d.typeStr("?")
+		if strings.Contains(d.plain(), "or esc closes") || d.m.input.Value() != "" {
+			t.Errorf("? again closes the panel without typing:\n%s", d.plain())
+		}
+		d.typeStr("?")
+		d.press(keyEsc())
+		if strings.Contains(d.plain(), "or esc closes") {
+			t.Errorf("esc closes the panel:\n%s", d.plain())
+		}
+		// Any other key closes the panel and still lands.
+		d.typeStr("?")
+		d.typeStr("what?")
+		if got := d.m.input.Value(); got != "what?" {
+			t.Errorf("typing over the panel must not be swallowed, got %q", got)
+		}
+		if strings.Contains(d.plain(), "or esc closes") {
+			t.Errorf("typing closes the panel:\n%s", d.plain())
+		}
+		d.press(keyCtrl('l'))
+		d.typeStr("/keys")
+		d.press(keyEnter())
+		if !d.m.keysOpen || !strings.Contains(d.plain(), "or esc closes") {
+			t.Errorf("/keys should open the keys panel:\n%s", d.plain())
+		}
+		for _, b := range d.m.blocks {
+			if b.kind == "system" {
+				t.Errorf("/keys must not print a keymap block, got %+v", b)
+			}
+		}
+	})
 }
 
 // --- filter (pure) ---
@@ -462,20 +467,22 @@ func TestFullDraftWithArgsDispatches(t *testing.T) {
 
 func TestEmptyPaletteEatsOnlyEsc(t *testing.T) {
 	t.Parallel()
-	d := drvCmds(t, reg(t, "alpha"))
-	d.typeStr("/zzz")
-	if !d.m.pal.open {
-		t.Fatal("palette stays open while the draft starts with /")
-	}
-	d.press(keyEnter()) // NOT swallowed: falls through and dispatches
-	if p := d.plain(); !strings.Contains(p, "unknown command: /zzz (try /help)") {
-		t.Errorf("unknown command should render the canonical miss:\n%s", p)
-	}
-	d.typeStr("/zzz")
-	d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if d.m.pal.open {
-		t.Error("esc should close even an empty palette")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := drvCmds(t, reg(t, "alpha"))
+		d.typeStr("/zzz")
+		if !d.m.pal.open {
+			t.Fatal("palette stays open while the draft starts with /")
+		}
+		d.press(keyEnter()) // NOT swallowed: falls through and dispatches
+		if p := d.plain(); !strings.Contains(p, "unknown command: /zzz (try /help)") {
+			t.Errorf("unknown command should render the canonical miss:\n%s", p)
+		}
+		d.typeStr("/zzz")
+		d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+		if d.m.pal.open {
+			t.Error("esc should close even an empty palette")
+		}
+	})
 }
 
 func TestOtherKeysFallThroughAndRefilter(t *testing.T) {

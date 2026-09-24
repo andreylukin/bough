@@ -95,7 +95,10 @@ func (d *drv) feed(msg tea.Msg) {
 // press runs a key through Update and executes the returned commands
 // one level deep (expanding tea.BatchMsg), feeding produced messages
 // back in. Returns every message the commands produced, so callers can
-// look for tea.QuitMsg.
+// look for tea.QuitMsg. A command can be a tea.Tick — the Esc hold
+// (250 ms), the cursor blink (~500 ms) — that blocks for real: tests
+// that press such keys run inside synctest.Test, where the tick fires
+// as soon as nothing else can run.
 func (d *drv) press(k tea.KeyPressMsg) []tea.Msg {
 	next, cmd := d.m.Update(k)
 	d.m = next.(model)

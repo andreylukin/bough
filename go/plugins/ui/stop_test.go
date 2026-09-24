@@ -5,6 +5,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -52,101 +53,113 @@ func TestCtrlCCancelsRunningTurn(t *testing.T) {
 
 func TestEscCancelsRunningTurn(t *testing.T) {
 	t.Parallel()
-	d, calls := cancelDrv(t)
-	d.typeStr("slow thing")
-	d.press(keyEnter())
-	d.press(keyEsc())
-	if *calls != 1 {
-		t.Fatalf("cancel service called %d times, want 1", *calls)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d, calls := cancelDrv(t)
+		d.typeStr("slow thing")
+		d.press(keyEnter())
+		d.press(keyEsc())
+		if *calls != 1 {
+			t.Fatalf("cancel service called %d times, want 1", *calls)
+		}
+	})
 }
 
 // Claude Code's contract: a single esc interrupts, a DOUBLE esc clears
 // the draft. One press only arms, and says what a second would do.
 func TestDoubleEscClearsComposerWhenIdle(t *testing.T) {
 	t.Parallel()
-	d := defaultDrv(t)
-	d.typeStr("half a thought")
+	synctest.Test(t, func(t *testing.T) {
+		d := defaultDrv(t)
+		d.typeStr("half a thought")
 
-	d.press(keyEsc())
-	if got := d.m.input.Value(); got != "half a thought" {
-		t.Fatalf("one esc must not clear the draft, got %q", got)
-	}
-	if !strings.Contains(d.plain(), "press esc again to clear") {
-		t.Errorf("the first press should say what a second does:\n%s", d.plain())
-	}
+		d.press(keyEsc())
+		if got := d.m.input.Value(); got != "half a thought" {
+			t.Fatalf("one esc must not clear the draft, got %q", got)
+		}
+		if !strings.Contains(d.plain(), "press esc again to clear") {
+			t.Errorf("the first press should say what a second does:\n%s", d.plain())
+		}
 
-	d.press(keyEsc())
-	if got := d.m.input.Value(); got != "" {
-		t.Errorf("the second esc should clear the composer, got %q", got)
-	}
+		d.press(keyEsc())
+		if got := d.m.input.Value(); got != "" {
+			t.Errorf("the second esc should clear the composer, got %q", got)
+		}
+	})
 }
 
 // Any other key disarms, so esc-something-esc does not clear.
 func TestEscDisarmedByAnotherKey(t *testing.T) {
 	t.Parallel()
-	d := defaultDrv(t)
-	d.typeStr("keep me")
-	d.press(keyEsc())
-	d.typeStr("!") // any key at all
-	d.press(keyEsc())
-	if got := d.m.input.Value(); got == "" {
-		t.Error("a key between the two escs should have disarmed the pair")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := defaultDrv(t)
+		d.typeStr("keep me")
+		d.press(keyEsc())
+		d.typeStr("!") // any key at all
+		d.press(keyEsc())
+		if got := d.m.input.Value(); got == "" {
+			t.Error("a key between the two escs should have disarmed the pair")
+		}
+	})
 }
 
 // On an empty composer the pair opens the rewind MENU — a list you walk
 // and pick from, which is what Claude Code's Esc+Esc opens.
 func TestDoubleEscOnEmptyComposerOpensTheRewindMenu(t *testing.T) {
 	t.Parallel()
-	d := rewindDrv(t, "first thing", "second thing")
-	d.press(keyEsc())
-	if !strings.Contains(d.plain(), "press esc again to rewind") {
-		t.Fatalf("the first press should offer the rewind:\n%s", d.plain())
-	}
-	d.press(keyEsc())
-	p := d.plain()
-	if !d.m.rw.open {
-		t.Fatalf("the second esc should open the menu:\n%s", p)
-	}
-	for _, want := range []string{"rewind", "first thing", "second thing", "(current)", "esc cancels"} {
-		if !strings.Contains(p, want) {
-			t.Errorf("the menu should show %q:\n%s", want, p)
+	synctest.Test(t, func(t *testing.T) {
+		d := rewindDrv(t, "first thing", "second thing")
+		d.press(keyEsc())
+		if !strings.Contains(d.plain(), "press esc again to rewind") {
+			t.Fatalf("the first press should offer the rewind:\n%s", d.plain())
 		}
-	}
+		d.press(keyEsc())
+		p := d.plain()
+		if !d.m.rw.open {
+			t.Fatalf("the second esc should open the menu:\n%s", p)
+		}
+		for _, want := range []string{"rewind", "first thing", "second thing", "(current)", "esc cancels"} {
+			if !strings.Contains(p, want) {
+				t.Errorf("the menu should show %q:\n%s", want, p)
+			}
+		}
+	})
 }
 
 // Without a /tree command there is nothing to fork with, and the menu
 // says so instead of panicking on a nil registry.
 func TestDoubleEscWithoutTreeSaysSo(t *testing.T) {
 	t.Parallel()
-	d := defaultDrv(t)
-	d.press(keyEsc())
-	d.press(keyEsc())
-	if d.m.rw.open {
-		t.Error("no /tree command: the menu should not open")
-	}
-	if !strings.Contains(d.plain(), "nothing to rewind to") {
-		t.Errorf("it should say why:\n%s", d.plain())
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := defaultDrv(t)
+		d.press(keyEsc())
+		d.press(keyEsc())
+		if d.m.rw.open {
+			t.Error("no /tree command: the menu should not open")
+		}
+		if !strings.Contains(d.plain(), "nothing to rewind to") {
+			t.Errorf("it should say why:\n%s", d.plain())
+		}
+	})
 }
 
 func TestEscLeavesOpenPaletteToItself(t *testing.T) {
 	t.Parallel()
-	// The palette owns esc: it closes and clears a lone "/query" (the
-	// draft was only ever a filter), but never touches other text.
-	d := drvCmds(t, reg(t, "help"))
-	d.typeStr("look at /he")
-	if !d.m.pal.open {
-		t.Fatal("palette should open on /")
-	}
-	d.press(keyEsc())
-	if d.m.pal.open {
-		t.Error("esc should close the palette")
-	}
-	if got := d.m.input.Value(); got != "look at /he" {
-		t.Errorf("esc on an open palette must not clear a mixed draft, got %q", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		// The palette owns esc: it closes and clears a lone "/query" (the
+		// draft was only ever a filter), but never touches other text.
+		d := drvCmds(t, reg(t, "help"))
+		d.typeStr("look at /he")
+		if !d.m.pal.open {
+			t.Fatal("palette should open on /")
+		}
+		d.press(keyEsc())
+		if d.m.pal.open {
+			t.Error("esc should close the palette")
+		}
+		if got := d.m.input.Value(); got != "look at /he" {
+			t.Errorf("esc on an open palette must not clear a mixed draft, got %q", got)
+		}
+	})
 }
 
 func TestCancelWithoutServiceIsLoud(t *testing.T) {
@@ -221,19 +234,21 @@ func TestExitLine(t *testing.T) {
 // would only hide the usage chip.
 func TestCancellingFlashClearsWhenTheTurnEnds(t *testing.T) {
 	t.Parallel()
-	d := defaultDrv(t)
-	d.m.cfg.Load().cancel = func() {}
-	d.typeStr("go")
-	d.press(keyEnter())
-	d.press(keyEsc())
-	if d.m.flash != "cancelling…" {
-		t.Fatalf("flash after esc: %q", d.m.flash)
-	}
-	d.event("cancelled", "")
-	d.event("done", "")
-	if d.m.flash != "" {
-		t.Fatalf("flash should clear at done, got %q", d.m.flash)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := defaultDrv(t)
+		d.m.cfg.Load().cancel = func() {}
+		d.typeStr("go")
+		d.press(keyEnter())
+		d.press(keyEsc())
+		if d.m.flash != "cancelling…" {
+			t.Fatalf("flash after esc: %q", d.m.flash)
+		}
+		d.event("cancelled", "")
+		d.event("done", "")
+		if d.m.flash != "" {
+			t.Fatalf("flash should clear at done, got %q", d.m.flash)
+		}
+	})
 }
 
 // rewindDrv is a driver with a /tree command and a history of turns,

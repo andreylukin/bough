@@ -6,6 +6,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -124,25 +125,27 @@ func TestTabOnActionRowKeepsDraft(t *testing.T) {
 
 func TestActionPaletteRestoresDraftOnEsc(t *testing.T) {
 	t.Parallel()
-	d := drvCmds(t, reg(t, "alpha"))
-	d.typeStr("some long draft")
-	d.press(keyCtrl('x'))
-	d.press(keyRune('p'))
-	if !d.m.pal.actionsOnly || d.m.input.Value() != "/" {
-		t.Fatalf("ctrl+x p opens actions mode over a \"/\" (actions=%v draft=%q)", d.m.pal.actionsOnly, d.m.input.Value())
-	}
-	d.typeStr("exp")
-	d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if got := d.m.input.Value(); got != "some long draft" {
-		t.Errorf("esc should give the displaced draft back, got %q", got)
-	}
-	if d.m.pal.open || d.m.pal.actionsOnly {
-		t.Error("esc closes the actions mode")
-	}
-	d.typeStr("!")
-	if got := d.m.input.Value(); got != "some long draft!" {
-		t.Errorf("typing continues the restored draft, got %q", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := drvCmds(t, reg(t, "alpha"))
+		d.typeStr("some long draft")
+		d.press(keyCtrl('x'))
+		d.press(keyRune('p'))
+		if !d.m.pal.actionsOnly || d.m.input.Value() != "/" {
+			t.Fatalf("ctrl+x p opens actions mode over a \"/\" (actions=%v draft=%q)", d.m.pal.actionsOnly, d.m.input.Value())
+		}
+		d.typeStr("exp")
+		d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+		if got := d.m.input.Value(); got != "some long draft" {
+			t.Errorf("esc should give the displaced draft back, got %q", got)
+		}
+		if d.m.pal.open || d.m.pal.actionsOnly {
+			t.Error("esc closes the actions mode")
+		}
+		d.typeStr("!")
+		if got := d.m.input.Value(); got != "some long draft!" {
+			t.Errorf("typing continues the restored draft, got %q", got)
+		}
+	})
 }
 
 func TestActionPaletteRestoresDraftOnAccept(t *testing.T) {
@@ -167,29 +170,33 @@ func TestActionPaletteRestoresDraftOnAccept(t *testing.T) {
 
 func TestActionPaletteRestoresDraftWhenSlashErased(t *testing.T) {
 	t.Parallel()
-	d := drvCmds(t, reg(t, "alpha"))
-	d.typeStr("keep me")
-	d.press(keyCtrl('x'))
-	d.press(keyRune('p'))
-	d.press(tea.KeyPressMsg{Code: tea.KeyBackspace})
-	if got := d.m.input.Value(); got != "keep me" {
-		t.Errorf("erasing the mode's \"/\" gives the draft back, got %q", got)
-	}
-	if d.m.pal.open || d.m.pal.actionsOnly {
-		t.Error("the mode is over once its \"/\" is gone")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := drvCmds(t, reg(t, "alpha"))
+		d.typeStr("keep me")
+		d.press(keyCtrl('x'))
+		d.press(keyRune('p'))
+		d.press(tea.KeyPressMsg{Code: tea.KeyBackspace})
+		if got := d.m.input.Value(); got != "keep me" {
+			t.Errorf("erasing the mode's \"/\" gives the draft back, got %q", got)
+		}
+		if d.m.pal.open || d.m.pal.actionsOnly {
+			t.Error("the mode is over once its \"/\" is gone")
+		}
+	})
 }
 
 func TestActionPaletteReopensAfterEscOnSlash(t *testing.T) {
 	t.Parallel()
-	d := drvCmds(t, reg(t, "alpha"))
-	d.typeStr("/")
-	d.press(tea.KeyPressMsg{Code: tea.KeyEscape}) // the palette stays shut on "/" until the draft changes
-	d.press(keyCtrl('x'))
-	d.press(keyRune('p'))
-	if !d.m.pal.open || !d.m.pal.actionsOnly || d.m.input.Value() != "/" {
-		t.Errorf("ctrl+x p opens regardless of an earlier esc (open=%v actions=%v draft=%q)", d.m.pal.open, d.m.pal.actionsOnly, d.m.input.Value())
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := drvCmds(t, reg(t, "alpha"))
+		d.typeStr("/")
+		d.press(tea.KeyPressMsg{Code: tea.KeyEscape}) // the palette stays shut on "/" until the draft changes
+		d.press(keyCtrl('x'))
+		d.press(keyRune('p'))
+		if !d.m.pal.open || !d.m.pal.actionsOnly || d.m.input.Value() != "/" {
+			t.Errorf("ctrl+x p opens regardless of an earlier esc (open=%v actions=%v draft=%q)", d.m.pal.open, d.m.pal.actionsOnly, d.m.input.Value())
+		}
+	})
 }
 
 func TestActionPaletteUnderInspectorFlashes(t *testing.T) {
@@ -235,16 +242,18 @@ func TestActionPaletteEnterOverNoRowsSubmitsNothing(t *testing.T) {
 
 func TestClickClearsPendingLeader(t *testing.T) {
 	t.Parallel()
-	d := defaultDrv(t)
-	d.press(keyCtrl('x'))
-	d.feed(tea.MouseClickMsg{X: 1, Y: 1, Button: tea.MouseLeft})
-	if d.m.leader {
-		t.Fatal("a click should drop the pending leader")
-	}
-	d.press(keyRune('q'))
-	if got := d.m.input.Value(); got != "q" {
-		t.Errorf("the next key is typed, not a chord, got %q", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := defaultDrv(t)
+		d.press(keyCtrl('x'))
+		d.feed(tea.MouseClickMsg{X: 1, Y: 1, Button: tea.MouseLeft})
+		if d.m.leader {
+			t.Fatal("a click should drop the pending leader")
+		}
+		d.press(keyRune('q'))
+		if got := d.m.input.Value(); got != "q" {
+			t.Errorf("the next key is typed, not a chord, got %q", got)
+		}
+	})
 }
 
 // --- leader + chords ---
@@ -367,16 +376,18 @@ func TestChordOpensActionPalette(t *testing.T) {
 
 func TestChordWorksWithoutCommandsService(t *testing.T) {
 	t.Parallel()
-	d := defaultDrv(t) // no commands: "/" is plain text, but ctrl+x p still opens the action rows
-	d.press(keyCtrl('x'))
-	d.press(keyRune('p'))
-	if !d.m.pal.open {
-		t.Fatal("ctrl+x p should open the action palette without a commands service")
-	}
-	d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if d.m.pal.open || d.m.pal.actionsOnly {
-		t.Error("esc closes the action palette and its mode")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := defaultDrv(t) // no commands: "/" is plain text, but ctrl+x p still opens the action rows
+		d.press(keyCtrl('x'))
+		d.press(keyRune('p'))
+		if !d.m.pal.open {
+			t.Fatal("ctrl+x p should open the action palette without a commands service")
+		}
+		d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+		if d.m.pal.open || d.m.pal.actionsOnly {
+			t.Error("esc closes the action palette and its mode")
+		}
+	})
 }
 
 // --- keymap config ---

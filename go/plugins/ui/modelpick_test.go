@@ -7,6 +7,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -38,21 +39,23 @@ func modelDrv(t *testing.T) (*drv, *[]string) {
 }
 
 func TestSlashModelOpensPickerCurrentMarked(t *testing.T) {
-	d, _ := modelDrv(t)
-	d.dispatchLine("/model")
-	if !d.m.mp.open || d.m.mp.pick != 0 {
-		t.Fatalf("/model should open the picker on the current row: %+v", d.m.mp)
-	}
-	p := d.plain()
-	for _, want := range []string{"pick a model", "▸ llm-anthropic claude-sonnet-5 (current)", "  llm-cerebras gpt-oss-120b", "  llm-echo", "esc back"} {
-		if !strings.Contains(p, want) {
-			t.Errorf("picker missing %q:\n%s", want, p)
+	synctest.Test(t, func(t *testing.T) {
+		d, _ := modelDrv(t)
+		d.dispatchLine("/model")
+		if !d.m.mp.open || d.m.mp.pick != 0 {
+			t.Fatalf("/model should open the picker on the current row: %+v", d.m.mp)
 		}
-	}
-	d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if d.m.mp.open {
-		t.Fatal("esc should close the picker")
-	}
+		p := d.plain()
+		for _, want := range []string{"pick a model", "▸ llm-anthropic claude-sonnet-5 (current)", "  llm-cerebras gpt-oss-120b", "  llm-echo", "esc back"} {
+			if !strings.Contains(p, want) {
+				t.Errorf("picker missing %q:\n%s", want, p)
+			}
+		}
+		d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+		if d.m.mp.open {
+			t.Fatal("esc should close the picker")
+		}
+	})
 }
 
 func TestModelPickerEnterDispatchesChoice(t *testing.T) {

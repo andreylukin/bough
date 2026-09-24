@@ -8,15 +8,43 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync/atomic"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
 
+// recProbe witnesses a recorder start two ways: the model calling
+// startRecorder (counted as it happens) and the fake rec touching its
+// sentinel once running.
+type recProbe struct {
+	sentinel string
+	starts   *atomic.Int32
+}
+
+// probeRecorder points startRecorder at the real startRecording,
+// counting the calls, until the test ends.
+func probeRecorder(t *testing.T, sentinel string) recProbe {
+	p := recProbe{sentinel: sentinel, starts: new(atomic.Int32)}
+	startRecorder = func() (*recorder, error) { p.starts.Add(1); return startRecording() }
+	t.Cleanup(func() { startRecorder = startRecording })
+	return p
+}
+
+// spawned reports whether a recorder was started. The count catches a
+// start the moment it happens, so there is no need to sleep for the
+// sentinel (the check used to wait 200 ms every time).
+func (p recProbe) spawned() bool {
+	if p.starts.Load() > 0 {
+		return true
+	}
+	_, err := os.Stat(p.sentinel)
+	return err == nil
+}
+
 // voiceWhileAskPendingDrv is a driver with an ask pending, voice on in
 // mode, the real startRecording and a sentinel-writing rec on PATH.
-func voiceWhileAskPendingDrv(t *testing.T, mode string) (*drv, *fakeAsk, string) {
+func voiceWhileAskPendingDrv(t *testing.T, mode string) (*drv, *fakeAsk, recProbe) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script recorder")
@@ -28,7 +56,7 @@ func voiceWhileAskPendingDrv(t *testing.T, mode string) (*drv, *fakeAsk, string)
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
-	startRecorder = startRecording
+	probe := probeRecorder(t, sentinel)
 	fa := &fakeAsk{}
 	cfg := cfgWith(t, nil, nil, nil)
 	cfg.ask = fa
@@ -45,16 +73,15 @@ func voiceWhileAskPendingDrv(t *testing.T, mode string) (*drv, *fakeAsk, string)
 	if d.m.pendingAsk != "ask-1" {
 		t.Fatalf("ask not pending")
 	}
-	return d, fa, sentinel
+	return d, fa, probe
 }
 
-func voiceWhileAskPendingCheck(t *testing.T, d *drv, fa *fakeAsk, sentinel string) {
+func voiceWhileAskPendingCheck(t *testing.T, d *drv, fa *fakeAsk, probe recProbe) {
 	t.Helper()
 	if d.m.v.recording {
 		t.Errorf("space started recording over a pending ask (flash %q)", d.m.flash)
 	}
-	time.Sleep(200 * time.Millisecond) // let a spawned recorder touch its sentinel
-	if _, err := os.Stat(sentinel); err == nil {
+	if probe.spawned() {
 		t.Errorf("a recorder was spawned while the ask was pending")
 	}
 	if d.m.v.recording {

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -162,21 +163,23 @@ func TestSlashSessionsOpensPickerCwdFirstCurrentMarked(t *testing.T) {
 }
 
 func TestPickerEscMidSessionKeepsTranscript(t *testing.T) {
-	d, chosen := midSession(t)
-	d.dispatchLine("/sessions")
-	n := len(d.m.blocks) // transcript + the "❯ /sessions" echo
-	d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if d.m.picking {
-		t.Fatal("esc should close the picker")
-	}
-	select {
-	case id := <-chosen:
-		t.Fatalf("esc mid-session must not choose, chose %q", id)
-	default:
-	}
-	if len(d.m.blocks) != n {
-		t.Errorf("esc changed the transcript: %d -> %d blocks", n, len(d.m.blocks))
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d, chosen := midSession(t)
+		d.dispatchLine("/sessions")
+		n := len(d.m.blocks) // transcript + the "❯ /sessions" echo
+		d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+		if d.m.picking {
+			t.Fatal("esc should close the picker")
+		}
+		select {
+		case id := <-chosen:
+			t.Fatalf("esc mid-session must not choose, chose %q", id)
+		default:
+		}
+		if len(d.m.blocks) != n {
+			t.Errorf("esc changed the transcript: %d -> %d blocks", n, len(d.m.blocks))
+		}
+	})
 }
 
 func TestPickerEnterMidSessionSwapsAndReplays(t *testing.T) {
