@@ -18,6 +18,7 @@ import (
 
 	"github.com/andreylukin/bough"
 	"github.com/andreylukin/bough/internal/schema"
+	"github.com/andreylukin/bough/internal/stepgate"
 	"github.com/andreylukin/bough/kernel"
 	_ "github.com/andreylukin/bough/plugins/activity"
 	_ "github.com/andreylukin/bough/plugins/agenttools"
@@ -501,6 +502,14 @@ func main() {
 	if err := ctx.Mount(rows); err != nil {
 		fatal(err)
 	}
+	// Test hook (BOUGH_TEST_STEP_GATE, off unless set): a "cancel" file
+	// cancels the turn as the SIGINT below does, without the exit that
+	// follows it, so a model test can step the cancelled call.
+	stepgate.Here().Watch("cancel", nil, func() {
+		if cancel, err := kernel.Get[func()](ctx, "cancel"); err == nil {
+			cancel()
+		}
+	})
 
 	// A web session records "<pid> <addr>" so `bough restart` can find
 	// it; the deferred remove runs after the clean unmount below.

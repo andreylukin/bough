@@ -63,6 +63,7 @@ func (a *Asker) nativeTools() []agenttools.Tool {
 				}
 				defer release()
 				out, err := a.putIn(ctx.Done(), nil, v.Question, false, v.Options...)
+				returned(err)
 				if err != nil {
 					return agenttools.Result{Error: err.Error()}, nil
 				}
@@ -107,6 +108,7 @@ func (a *Asker) nativeTools() []agenttools.Tool {
 				out, err := a.secretVia(func(q string) (string, error) {
 					return a.putIn(ctx.Done(), nil, q, true)
 				}, v.Name, v.Question, project...)
+				returned(err)
 				if err != nil {
 					return agenttools.Result{Error: err.Error()}, nil
 				}
@@ -114,4 +116,16 @@ func (a *Asker) nativeTools() []agenttools.Tool {
 			},
 		},
 	}
+}
+
+// returned notes how a native call ended and, under the test hook,
+// holds it before the engine records that end: the gap in which the
+// child still has the question open (hlAsk) though nothing waits on it.
+func returned(err error) {
+	if err != nil {
+		gate.Note("call", "failed")
+	} else {
+		gate.Note("call", "answered")
+	}
+	gate.Hold("ret")()
 }

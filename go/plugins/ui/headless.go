@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/andreylukin/bough/internal/stepgate"
 	"github.com/andreylukin/bough/plugins/commands"
 	"github.com/andreylukin/bough/plugins/llm"
 )
@@ -205,6 +206,7 @@ func hlPrint(ev Event) {
 		hlMu.Lock()
 		hlAsk = &hlAskState{id: ev.ID, options: ev.Options, secret: ev.Secret}
 		hlMu.Unlock()
+		hlNote()
 		if HeadlessJSON {
 			extra := map[string]any{"id": ev.ID, "options": ev.Options}
 			if ev.Secret {
@@ -228,6 +230,7 @@ func hlPrint(ev Event) {
 		hlMu.Lock()
 		hlAsk = nil
 		hlMu.Unlock()
+		hlNote()
 	}
 	if askEnded(ev) {
 		// The ask returned with no answer (a timeout): the next line is
@@ -235,6 +238,7 @@ func hlPrint(ev Event) {
 		hlMu.Lock()
 		hlAsk = nil
 		hlMu.Unlock()
+		hlNote()
 	}
 	switch ev.Kind {
 	case "error":
@@ -262,6 +266,7 @@ func hlPrint(ev Event) {
 	}
 	if ev.Kind == "done" && hlTurnErr.Swap(false) {
 		hlErrored.Store(true) // the turn ended on the error
+		hlNote()
 	}
 	if ev.Kind == "done" {
 		hlMu.Lock()
@@ -293,8 +298,11 @@ func headlessPump() {
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024) // a task brief can be long
-	for sc.Scan() {
+	for n := 0; sc.Scan(); n++ {
+		// Test hook: each line waits its turn under BOUGH_TEST_STEP_GATE.
+		done := hlGate.Hold(fmt.Sprintf("in.%d", n))
 		hlLineIn(sc.Text())
+		done()
 	}
 
 	// EOF: no line can answer an ask now, so fail a pending one (and
@@ -303,6 +311,7 @@ func headlessPump() {
 	// events go idle.
 	hlEOF.Store(true)
 	hlCancelAsk()
+	hlGate.Note("stdin", "eof")
 	drainHeadless()
 	drainEngine()
 	interruptSelf()
@@ -485,9 +494,28 @@ func hlAnswerPending(line string) bool {
 	}
 	if err := ans.Answer(pa.id, text); err != nil {
 		hlErrored.Store(true)
+		hlGate.Note("refused", "true")
 		hlLine(hlErr, "error", err.Error(), nil)
 	}
+	hlNote()
 	return true
+}
+
+// hlGate is the BOUGH_TEST_STEP_GATE hook, nil unless a model test set
+// it (tests/model/specs/ask_timeout_vs_answer.fizz): it steps stdin a
+// line at a time and notes hlAsk and hlErrored, which no API shows.
+var hlGate = stepgate.Here()
+
+// hlNote records hlAsk and hlErrored for the test hook.
+func hlNote() {
+	if hlGate == nil {
+		return
+	}
+	hlMu.Lock()
+	open := hlAsk != nil
+	hlMu.Unlock()
+	hlGate.Note("hlAsk", strconv.FormatBool(open))
+	hlGate.Note("errored", strconv.FormatBool(hlErrored.Load()))
 }
 
 // hlTurnErr is an error the running turn has not recovered from yet: set
@@ -516,6 +544,7 @@ func hlCancelAsk() {
 	if c, ok := ans.(askCanceler); ok {
 		c.Cancel(pa.id)
 	}
+	hlNote()
 }
 
 // hlDispatch runs a "/" line through the commands service, printing
