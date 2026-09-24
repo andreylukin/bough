@@ -36,7 +36,10 @@ var webArtifactConcurrentBrowsersPressRe = regexp.MustCompile(`the user pressed 
 // mid-turn; the wakes after it run past the tape and stop cleanly.
 func webArtifactConcurrentBrowsersTape(t *testing.T) string {
 	t.Helper()
-	reply := "```stop\n" + strings.Repeat("streaming ", 400) + "\n```"
+	// 200 words at 30ms: ~6 s, against presses that land ~3 s in (after
+	// the 2.5 s first sweep). At 400 words the wakes queued behind 6 s
+	// more of stream.
+	reply := "```stop\n" + strings.Repeat("streaming ", 200) + "\n```"
 	lines := []map[string]any{
 		{"seq": 1, "at": "2026-09-10T10:00:00Z", "kind": "meta", "data": map[string]any{"cwd": "/tmp/demo"}},
 		{"seq": 2, "at": "2026-09-10T10:00:01Z", "kind": "input", "data": map[string]any{"text": "stream something long"}},
