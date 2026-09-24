@@ -4252,7 +4252,11 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 .me{flex:1 1 0%;display:flex;min-width:0;overflow:hidden}
 .me-loading{padding:var(--s-5)}
 .me-main{flex:1 1 0%;display:flex;flex-direction:column;min-width:0}
-.me-bar{flex-shrink:0;display:flex;align-items:center;gap:var(--s-3);min-height:40px;padding:var(--s-2) var(--s-4);border-bottom:1px solid var(--line)}
+/* The bar wraps rather than squeeze the date: with the stamp, "Brief
+   running", Copy standup and "Writing…" up at once the actions outgrow
+   the column beside the rail, and the title (the only thing that can
+   shrink) was cut to "Thursday, S…". */
+.me-bar{flex-shrink:0;display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-2) var(--s-3);min-height:40px;padding:var(--s-2) var(--s-4);border-bottom:1px solid var(--line)}
 .me-title{flex:1 1 auto;min-width:0;margin:0;font:600 var(--fs-h2)/var(--lh-tight) var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .me-sub{font-size:var(--fs-sm);color:var(--text-3);white-space:nowrap}
 .me-stale{color:var(--amber)}
