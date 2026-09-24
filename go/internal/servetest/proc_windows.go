@@ -8,3 +8,6 @@ func setProcessGroup(cmd *exec.Cmd) {}
 func terminate(cmd *exec.Cmd) { cmd.Process.Kill() }
 
 func killGroup(cmd *exec.Cmd) { cmd.Process.Kill() }
+
+// groupAlive has no group to ask on Windows: serve alone is checked.
+func groupAlive(cmd *exec.Cmd) bool { return cmd.ProcessState == nil }

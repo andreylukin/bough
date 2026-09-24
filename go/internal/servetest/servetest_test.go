@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -86,6 +88,55 @@ func TestServeRoundTrip(t *testing.T) {
 	all, err := s.ListSessions(ctx, true)
 	if err != nil || len(all) != 1 || !all[0].Archived {
 		t.Errorf("list all = %+v, %v; want the one archived session", all, err)
+	}
+}
+
+// A restart keeps HOME, address and token: the session is still there,
+// nothing of the old serve's process group outlives it, the same binary
+// answers as the same build, and a copy of it as another one.
+func TestServeRestarts(t *testing.T) {
+	t.Parallel()
+	s := servetest.Start(t, servetest.Options{})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	row, err := s.CreateSession(ctx, s.Dir(t, "work"), "say HI! please")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.WaitSession(ctx, row.ID, func(r serve.Row) bool { return r.Status == serve.StatusDone && r.Live }); err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.Build(ctx)
+	if err != nil || before == "" {
+		t.Fatalf("build = %q, %v", before, err)
+	}
+	s.Shutdown()
+	if s.GroupAlive() {
+		t.Fatal("a process of the stopped serve's group is still running")
+	}
+	if _, err := s.Build(ctx); err == nil {
+		t.Fatal("a stopped serve answered")
+	}
+	if err := s.Resume(""); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := s.GetSession(ctx, row.ID)
+	if err != nil || got.Status != serve.StatusDone || got.Live {
+		t.Fatalf("after restart: %+v, %v; want the done session with no child", got, err)
+	}
+	if b, _ := s.Build(ctx); b != before {
+		t.Errorf("same binary restarted as build %q, was %q", b, before)
+	}
+	s.Shutdown()
+	copyBin := filepath.Join(s.Root, "bough-new")
+	if err := os.Link(s.Bin(), copyBin); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Resume(copyBin); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := s.Build(ctx); b == before || b == "" {
+		t.Errorf("a new binary answered as build %q, the old one was %q", b, before)
 	}
 }
 
