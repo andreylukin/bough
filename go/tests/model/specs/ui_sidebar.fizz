@@ -1,0 +1,561 @@
+---
+# An end state (everything loaded, nothing left to do but stutter) is
+# not a deadlock; the liveness check still sees it.
+deadlock_detection: false
+---
+# The control room's sidebar, client side: what the person sees in the
+# session list and can do with it (go/tests/model/README.md).
+#
+# Code this is checked against (go/internal/serve/web/src):
+#   app.tsx  Sidebar: closed (⌘B, side-collapse, the rail), searching +
+#            query (the filter field, "/", Escape), wsFolded (a group's
+#            fold), showArchived/archFolded/archFromFilter (Archived and
+#            "Include"), dragging/dropAt + dropProject (drag a row onto a
+#            project group), card (the hover card), the Seen button, the
+#            unseen dot, the Needs you pins, the "No sessions" line.
+#   app.tsx  App: refresh/loadedAt/loadErr (the list read), visible (the
+#            query filter), pane (a phone shows list or thread), the
+#            viewing ack (viewingUnseen), act() for Seen and the move.
+#   status.tsx  sessionSignal/hasFailure/isUnseen (what pins and dots).
+#
+# The world: one local session A (a: "none" until it appears, then
+# running/done/failed), a project p whose thread B may exist (proj), and
+# one archived session Z, always in the store. A is what the person
+# clicks, hovers, drags and marks seen; B is only there so p has a group
+# to drop A on; Z is only there so Archived has something to load.
+# Neither query the person types matches B or Z: "hit" matches A's title,
+# "miss" matches nothing.
+#
+# Where this model differs from the surface as first mapped:
+# - There is no filter MENU and no inline rename in the sidebar: the
+#   filter is a text field behind the toolbar's Filter button (and "/"),
+#   and rename lives in the thread header's popover (askText). Neither
+#   rename nor a menu is modelled here.
+# - The only per-row hover affordance is the hover card (after 300 ms,
+#   closed by any pointerdown, scroll, blur or route change); the Seen
+#   button is always shown on a troubled row, not only on hover.
+# - A failed session is pinned under Needs you and, when it is a local
+#   one, leaves its folder group (a group left empty is not drawn). It
+#   stays pinned after Seen: sessionSignal ranks a recorded failure from
+#   the last 72 h as needing you, seen or not; Seen only drops the button.
+# - Moving is not optimistic: act() waits for POST assign, then re-reads
+#   the list; until then the row stays in its folder (move "pending").
+#   A project session (mode project) is not draggable at all, and a local
+#   session already in p could only be dropped on its own folder's group,
+#   which exists only with another row in it: not modelled (A moves in,
+#   never out).
+# - The first list read is "loading" (the page says so after 200 ms; the
+#   harness clock is past that), "unavailable" when it fails. A later
+#   read failing is "delayed": the rows stay under the notice.
+# - Server events (a session appearing, a turn finishing or failing) are
+#   the change plus the list read that shows it, so they need the list
+#   readable (rows "ready"). One turn: A appears running and ends done
+#   or failed; a second prompt adds states and no sidebar mechanism.
+#
+# Keeping it small: every path is one browser test, so each feature is
+# exercised from a quiet state (no filter, Archived shut, no drag, the
+# home route, a desktop) unless the code ties it to another one:
+# - the filter with Archived ("Include" lasts as long as the filter), with
+#   the rail and ⌘B (⌘B does nothing in the field), with Needs you (a
+#   query unpins) and with the empty line ("No sessions match");
+# - the unseen dot and the ack with the route, the rail and a phone's panes;
+# - Needs you with the group fold, and with p's group after a move.
+# So: the filter opens on a desktop's home route, before a finish and
+# without trouble; Archived opens only before A appears (it is the empty
+# line's other half); a phone only opens, leaves and acks (the filter,
+# ⌘B, hover and drag are desktop's); server events wait while the filter
+# or Archived is open. Not modelled: Escape in the tree (the field's
+# Escape is), "/" from a phone's thread (it shows the list), ⌘B on a
+# phone (it flips the saved flag the phone ignores), the per-search
+# group folds, the turn log under a row, and arrow-key tree walking.
+#
+# All state lives in the Sidebar role (fizzbee-mbt compares role state).
+# The last five fields are derived by recompute, the way the page derives
+# them from the others. Every field is on the page: inField is
+# document.activeElement being #q, closed is the side-collapse button's
+# aria-expanded (in the DOM on a phone too, where CSS hides it).
+
+role Sidebar:
+    action Init:
+        # "desktop" | "phone" (max-width:720px).
+        self.viewport = "desktop"
+        # A phone shows one pane: the list, or what the route opened.
+        self.pane = "list"
+        # "home" (#/), "session" (#/s/A), "page" (#/hooks: another view).
+        self.route = "home"
+        # bough:side-closed. Folds the sidebar to a rail on a desktop; a
+        # phone hides the button and ignores it.
+        self.closed = False
+        # The filter: "off" (field hidden, no query), "open" (field shown,
+        # query empty), "hit" (a query A matches), "miss" (one nothing
+        # matches).
+        self.search = "off"
+        # Focus is in the filter field: typing goes to it, ⌘B and "/" do not.
+        self.inField = False
+        # The list read: "loading" | "unavailable" | "ready" | "delayed".
+        self.rows = "loading"
+        # Session A as the server has it.
+        self.a = "none"
+        self.unseen = False
+        self.trouble = False
+        # A's project: "" (listed under its folder) or "p".
+        self.project = ""
+        # Project p has a thread (B): p has a group in the sidebar.
+        self.proj = False
+        # A's folder group is folded (bough:ws-folded).
+        self.groupFolded = False
+        # Archived: "off" (showArchived false), "loading", "failed",
+        # "open" (loaded, section open), "folded" (loaded, section shut).
+        self.arch = "off"
+        # Archived was included from a filter's "Include": it lasts as
+        # long as that filter.
+        self.archFromFilter = False
+        # Dragging A: "none" | "dragging" | "over" (over p's group, the
+        # drop hint shown) | "pending" (dropped; POST assign in flight).
+        self.move = "none"
+        # The hover card over A's row.
+        self.card = False
+        # --- derived ---
+        # "full" | "rail" | "hidden" (a phone showing the thread pane).
+        self.side = "full"
+        # What the list says: "loading" | "unavailable" | "delayed" |
+        # "empty" (No sessions yet.) | "nomatch" (No sessions match) |
+        # "rows" | "archived" (only the Archived section's own pending or
+        # failed load) | "rail" | "hidden".
+        self.says = "loading"
+        # Where A's row is on screen: "none" (not listed, or the sidebar
+        # is not showing rows), "group", "pinned" (Needs you), "folded"
+        # (listed under a folded group, not drawn).
+        self.aRow = "none"
+        # The unseen dot on A's row.
+        self.dot = False
+        # The Seen button on A's row.
+        self.seenBtn = False
+        self.recompute()
+
+    atomic func recompute():
+        if self.viewport == "phone":
+            side = "full" if self.pane == "list" else "hidden"
+        elif self.closed:
+            side = "rail"
+        else:
+            side = "full"
+        self.side = side
+        q = self.search in ("hit", "miss")
+        listed = self.a != "none" and self.search != "miss"
+        where = "none"
+        if listed and side == "full" and self.rows in ("ready", "delayed"):
+            if self.a == "failed" and not q:
+                where = "pinned"
+            elif self.groupFolded and not q and self.project == "":
+                where = "folded"
+            else:
+                where = "group"
+        self.aRow = where
+        drawn = where in ("group", "pinned")
+        # The card is drawn from the listed rows (cardRow): a row the
+        # filter or a fold takes away takes its card with it.
+        self.card = self.card and drawn
+        self.dot = drawn and self.a == "done" and self.unseen and self.route != "session"
+        self.seenBtn = drawn and self.trouble
+        # Z is in the rows once Archived has loaded, and filtered by a query.
+        zListed = self.arch in ("open", "folded") and not q
+        total = (1 if listed else 0) + (1 if self.proj and not q else 0) + (1 if zListed else 0)
+        if side != "full":
+            says = side
+        elif self.rows == "unavailable":
+            says = "unavailable"
+        elif self.rows == "loading":
+            says = "loading"
+        elif self.rows == "delayed":
+            says = "delayed"
+        elif total > 0:
+            says = "rows"
+        elif self.arch in ("loading", "failed"):
+            says = "archived"
+        elif q:
+            says = "nomatch"
+        else:
+            says = "empty"
+        self.says = says
+
+    # Clearing the query ends an Archived included from it (archFromFilter
+    # effect on searchOn).
+    atomic func queryCleared():
+        if self.archFromFilter:
+            self.archFromFilter = False
+            self.arch = "off"
+
+    # --- the list read ---------------------------------------------------
+
+    atomic action Loaded:
+        require self.rows == "loading"
+        self.rows = "ready"
+        self.recompute()
+
+    atomic action LoadFail:
+        require self.rows == "loading"
+        self.rows = "unavailable"
+        self.recompute()
+
+    # "Sessions unavailable · Retry".
+    atomic action Retry:
+        require self.rows == "unavailable" and self.side == "full"
+        self.rows = "loading"
+        self.recompute()
+
+    # A later poll fails: "Updates delayed · synced … ago"; rows stay.
+    atomic action PollFail:
+        require (self.rows == "ready" and self.a == "running" and
+                 self.search == "off" and self.arch == "off" and
+                 self.move == "none" and self.route == "home" and
+                 self.viewport == "desktop" and not self.card and not self.closed and
+                 not self.proj and not self.groupFolded)
+        self.rows = "delayed"
+        self.recompute()
+
+    atomic fair action PollOk:
+        require self.rows == "delayed"
+        self.rows = "ready"
+        self.recompute()
+
+    # --- the server ------------------------------------------------------
+
+    # A session started elsewhere (the CLI, another tab) is listed.
+    atomic action Appear:
+        require (self.rows == "ready" and self.a == "none" and self.search == "off" and
+                 self.arch == "off")
+        self.a = "running"
+        self.recompute()
+
+    # A thread is started in project p: p's group appears.
+    atomic action ProjectThread:
+        require (self.rows == "ready" and not self.proj and self.search == "off" and
+                 self.arch == "off" and self.move == "none" and
+                 self.route == "home" and self.viewport == "desktop" and
+                 not self.closed and not self.groupFolded and self.a == "running")
+        self.proj = True
+        self.recompute()
+
+    atomic action Finish:
+        require (self.rows == "ready" and self.a == "running" and self.search == "off"
+                 and self.arch == "off" and self.move == "none" and not self.card
+                 and (not self.proj or self.project == "p"))
+        self.a = "done"
+        self.unseen = True
+        self.recompute()
+
+    atomic action Fail:
+        require (self.rows == "ready" and self.a == "running" and self.search == "off"
+                 and self.arch == "off" and self.move == "none" and not self.card
+                 and (not self.proj or self.project == "p"))
+        self.a = "failed"
+        self.trouble = True
+        self.recompute()
+
+    # The page acks an unseen finish on screen (viewingUnseen). Not the
+    # trouble: that has Seen.
+    atomic fair<strong> action AutoAck:
+        require (self.unseen and self.route == "session" and
+                 (self.viewport == "desktop" or self.pane == "thread"))
+        self.unseen = False
+        self.recompute()
+
+    # --- rows -----------------------------------------------------------
+
+    # Click A's row (in its group or its Needs you pin). From the home
+    # route only, so Back always lands on home (see Back).
+    atomic action OpenRow:
+        require (self.aRow in ("group", "pinned") and self.move == "none" and
+                 self.route == "home" and self.search in ("off", "hit") and
+                 self.arch == "off" and (not self.proj or self.project == "p"))
+        self.route = "session"
+        self.pane = "thread"
+        self.inField = False
+        self.card = False
+        self.recompute()
+
+    # Back home. A page's own Back (page-head .back, goList) on either
+    # viewport and the phone thread's (thread-head .back, goList); on a
+    # desktop the thread's Back is hidden, and it is the sidebar's history
+    # arrow, which returns to #/ because OpenRow only leaves from there.
+    atomic action Back:
+        require (self.route != "home" and
+                 (self.viewport == "desktop" or self.pane == "thread"))
+        self.route = "home"
+        self.pane = "list"
+        self.card = False
+        self.recompute()
+
+    # A page beside sessions from the sidebar's nav (Hooks).
+    atomic action NavPage:
+        require (self.search == "off" and self.arch == "off" and
+                 self.move == "none" and self.route == "home" and
+                 self.viewport == "desktop" and self.side == "full" and
+                 not self.card and self.a in ("none", "running") and not self.proj)
+        self.route = "page"
+        self.pane = "thread"
+        self.card = False
+        self.recompute()
+
+    # The hover card, 300 ms after the pointer rests on A's row.
+    atomic action Hover:
+        require (self.aRow in ("group", "pinned") and not self.card and
+                 self.search == "off" and self.arch == "off" and
+                 self.move == "none" and self.route == "home" and
+                 self.viewport == "desktop" and self.rows == "ready" and
+                 not self.proj and self.a in ("running", "failed"))
+        self.card = True
+        self.recompute()
+
+    atomic action Unhover:
+        require self.card
+        self.card = False
+        self.recompute()
+
+    # Seen on a troubled row: act(api.ack), then the list re-read.
+    atomic action MarkSeen:
+        require self.seenBtn and self.move == "none"
+        self.trouble = False
+        self.card = False
+        self.inField = False
+        self.recompute()
+
+    # A's folder group's head (a folder has no page: its whole head folds).
+    atomic action FoldGroup:
+        require (self.aRow in ("group", "folded") and self.project == "" and
+                 self.search == "off" and self.arch == "off" and
+                 self.move == "none" and self.route == "home" and
+                 self.viewport == "desktop" and not self.proj and
+                 self.a in ("running", "done"))
+        self.groupFolded = not self.groupFolded
+        self.card = False
+        self.recompute()
+
+    # --- drag and drop ---------------------------------------------------
+
+    atomic action DragStart:
+        require (self.aRow == "group" and self.project == "" and
+                 self.search == "off" and self.arch == "off" and
+                 self.move == "none" and self.route == "home" and
+                 self.viewport == "desktop" and self.rows == "ready" and
+                 self.a == "running")
+        self.move = "dragging"
+        self.card = False
+        self.recompute()
+
+    # Over p's group: dropProject says A moves to p; the hint shows.
+    atomic action DragOver:
+        require self.move == "dragging" and self.proj
+        self.move = "over"
+        self.recompute()
+
+    atomic action DragLeave:
+        require self.move == "over"
+        self.move = "dragging"
+        self.recompute()
+
+    # Let go anywhere that takes no drop.
+    atomic action DragCancel:
+        require self.move in ("dragging", "over")
+        self.move = "none"
+        self.recompute()
+
+    atomic action Drop:
+        require self.move == "over"
+        self.move = "pending"
+        self.recompute()
+
+    atomic fair action MoveOk:
+        require self.move == "pending"
+        self.move = "none"
+        self.project = "p"
+        self.groupFolded = False
+        self.recompute()
+
+    # Refused (the error bar says why); the row stays in its folder.
+    atomic action MoveFail:
+        require self.move == "pending"
+        self.move = "none"
+        self.recompute()
+
+    # --- collapse --------------------------------------------------------
+
+    # ⌘B, or the toolbar's panel button: never from inside the field.
+    atomic action ToggleSide:
+        require (self.viewport == "desktop" and not self.inField and
+                 self.move == "none" and self.arch == "off" and
+                 self.route in ("home", "session") and not self.groupFolded and
+                 not self.proj and self.rows == "ready" and self.search != "miss")
+        self.closed = not self.closed
+        self.card = False
+        self.recompute()
+
+    # The rail's Filter button: unfold with the field open. Focus comes
+    # from the effect on `searching` turning true, so it lands in the
+    # field only when the field was shut: a field left open (a query in
+    # force when the list was folded) comes back unfocused.
+    atomic action RailFilter:
+        require (self.side == "rail" and self.route == "home" and self.a != "done" and
+                 not self.trouble)
+        self.closed = False
+        if self.search == "off":
+            self.search = "open"
+            self.inField = True
+        self.recompute()
+
+    # The window crosses 720 px. A field the new layout hides loses focus.
+    atomic action Resize:
+        require (self.search == "off" and self.arch == "off" and self.move == "none" and not self.card
+                 and self.route != "page" and self.rows == "ready" and not self.closed
+                 and not self.groupFolded and not self.proj)
+        self.viewport = "phone" if self.viewport == "desktop" else "desktop"
+        self.recompute()
+
+    # --- the filter ------------------------------------------------------
+
+    # "/" anywhere not typing: unfold, show the list (a phone), focus.
+    atomic action Slash:
+        require (not self.inField and self.move == "none" and self.arch == "off" and
+                 self.route == "home" and self.viewport == "desktop" and
+                 not self.groupFolded and not self.proj and not self.card and
+                 self.a != "done" and not self.trouble)
+        self.closed = False
+        self.pane = "list"
+        if self.search == "off":
+            self.search = "open"
+        self.inField = True
+        self.card = False
+        self.recompute()
+
+    # The toolbar's Filter button: opens the field, or clears and hides it.
+    atomic action FilterButton:
+        require (self.side == "full" and self.move == "none" and
+                 self.route == "home" and self.viewport == "desktop" and
+                 not self.groupFolded and not self.proj and not self.card and
+                 self.a != "done" and not self.trouble)
+        if self.search == "off":
+            self.search = "open"
+            self.inField = True
+        else:
+            self.search = "off"
+            self.inField = False
+            self.queryCleared()
+        self.card = False
+        self.recompute()
+
+    atomic action TypeHit:
+        require self.inField and self.search != "hit" and self.viewport == "desktop"
+        self.search = "hit"
+        self.recompute()
+
+    atomic action TypeMiss:
+        require self.inField and self.search != "miss" and self.viewport == "desktop"
+        self.search = "miss"
+        self.recompute()
+
+    # Delete the query; the field stays.
+    atomic action ClearQuery:
+        require self.inField and self.search in ("hit", "miss")
+        self.search = "open"
+        self.queryCleared()
+        self.recompute()
+
+    # Escape in the field: clear, hide, focus back on the Filter button.
+    atomic action Escape:
+        require self.inField
+        self.search = "off"
+        self.inField = False
+        self.queryCleared()
+        self.recompute()
+
+    # --- Archived ---------------------------------------------------------
+
+    # The section's header: off opens and loads it ("Include" under a
+    # query, which ties it to the query); loaded, it folds and unfolds.
+    atomic action ArchivedHead:
+        # "Opened and empty, the fold has nothing to offer" never hides
+        # the header here: Z is always there.
+        require (self.side == "full" and self.rows == "ready"
+                 and (self.arch == "off" or (self.arch in ("open", "folded") and self.search == "off"))
+                 and self.move == "none" and self.route == "home" and self.viewport == "desktop"
+                 and not self.groupFolded and not self.proj and not self.card and self.a == "none")
+        if self.arch == "off":
+            self.arch = "loading"
+            self.archFromFilter = self.search in ("hit", "miss")
+        elif self.arch == "open":
+            self.arch = "folded"
+        else:
+            self.arch = "open"
+        self.inField = False
+        self.card = False
+        self.recompute()
+
+    atomic fair action ArchivedLoaded:
+        require self.arch == "loading"
+        self.arch = "open"
+        self.recompute()
+
+    atomic action ArchivedFail:
+        require self.arch == "loading" and self.search == "off"
+        self.arch = "failed"
+        self.recompute()
+
+    # "Couldn't load archived · Retry".
+    atomic action ArchivedRetry:
+        require self.arch == "failed" and self.side == "full"
+        self.arch = "loading"
+        self.inField = False
+        self.recompute()
+
+action Init:
+    sidebar = Sidebar()
+
+# Focus in the filter field means the field is on screen.
+always assertion FieldFocusNeedsField:
+    return not sidebar.inField or (sidebar.search != "off" and sidebar.side == "full")
+
+# The hover card belongs to a row on screen and never outlives a drag.
+always assertion CardOverDrawnRow:
+    return not sidebar.card or (sidebar.aRow in ("group", "pinned") and sidebar.move == "none")
+
+# The open row carries no unseen dot (its ack is already on the way),
+# and a dot only ever says a clean finish.
+always assertion NoDotOnOpenRowOrFailure:
+    return not sidebar.dot or (sidebar.route != "session" and sidebar.a == "done")
+
+# Seen is offered only where marking seen does something.
+always assertion SeenOnlyOnTrouble:
+    return not sidebar.seenBtn or (sidebar.trouble and sidebar.a == "failed")
+
+# "No sessions yet." only when there is nothing to list.
+always assertion EmptyMeansNothing:
+    return sidebar.says != "empty" or (sidebar.a == "none" and not sidebar.proj and sidebar.arch not in ("open", "folded"))
+
+# A failure is never out of sight in the list: pinned whenever the
+# sidebar shows rows unfiltered, whatever its group's fold.
+always assertion FailurePinned:
+    shown = sidebar.side == "full" and sidebar.rows in ("ready", "delayed") and sidebar.search in ("off", "open")
+    return not (shown and sidebar.a == "failed") or sidebar.aRow == "pinned"
+
+# A drop is offered only where it lands: a local session over a project
+# group that exists.
+always assertion DropOnlyWhereItLands:
+    return sidebar.move not in ("over", "pending") or (sidebar.project == "" and sidebar.proj and sidebar.side == "full")
+
+# Archived included from a filter lasts as long as that filter.
+always assertion IncludeLastsWithFilter:
+    return not sidebar.archFromFilter or sidebar.search in ("hit", "miss")
+
+# The list always says something while it is on screen.
+always assertion ListSaysSomething:
+    return sidebar.side != "full" or sidebar.says in ("loading", "unavailable", "delayed", "empty", "nomatch", "rows", "archived")
+
+# ⌘B never fires from inside the filter field (it is text editing there).
+transition assertion NoFoldFromField(before, after):
+    return before.sidebar.closed == after.sidebar.closed or not before.sidebar.inField
+
+# An unseen finish on screen is acked: no run stays viewing it unseen.
+always eventually assertion ViewedFinishIsAcked:
+    s = sidebar
+    return not (s.unseen and s.route == "session" and (s.viewport == "desktop" or s.pane == "thread"))
