@@ -595,7 +595,7 @@ func (a *wikiReviewAdapter) Start() error {
 			a.held = append(a.held, wrRun{turn: name, pid: pid, ids: ids})
 			return true, a.waitIngesting(len(a.held))
 		}
-		if pid != 0 && alive(pid) {
+		if pid != 0 && wikiRunAlive(pid) {
 			return false, nil
 		}
 		// It exited without asking the model: take the turn back,
@@ -651,7 +651,7 @@ func (a *wikiReviewAdapter) end(ok bool) error {
 	} else {
 		control.ReleaseWith(a.t, a.dir, r.turn, control.Turn{Mode: "error", Error: "ingest timed out"})
 	}
-	if err := poll("the wiki run to exit", func() (bool, error) { return r.pid == 0 || !alive(r.pid), nil }); err != nil {
+	if err := poll("the wiki run to exit", func() (bool, error) { return r.pid == 0 || !wikiRunAlive(r.pid), nil }); err != nil {
 		return err
 	}
 	return a.waitIngesting(len(a.held))
@@ -705,8 +705,8 @@ func (a *wikiReviewAdapter) wikiRuns() ([]int, error) {
 	return pids, nil
 }
 
-// alive: a reaped or zombie `wiki run` no longer counts.
-func alive(pid int) bool {
+// wikiRunAlive: a reaped or zombie `wiki run` no longer counts.
+func wikiRunAlive(pid int) bool {
 	out, err := exec.Command("ps", "-o", "stat=,command=", "-p", strconv.Itoa(pid)).Output()
 	return err == nil && !strings.HasPrefix(strings.TrimSpace(string(out)), "Z") && strings.Contains(string(out), " wiki run")
 }
@@ -762,14 +762,6 @@ func (a *wikiReviewAdapter) api(method, path string, body, out any) error {
 		return nil
 	}
 	return json.Unmarshal(raw, out)
-}
-
-func status(err error) int {
-	var e *servetest.APIError
-	if errors.As(err, &e) {
-		return e.Status
-	}
-	return 0
 }
 
 var wikiReviewActions = map[string]map[string]fmbt.ActionFunc{"Wiki": {
