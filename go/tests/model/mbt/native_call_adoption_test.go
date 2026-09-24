@@ -1078,7 +1078,16 @@ func ncaHistory(entries []history.Entry) []tracecheck.Step {
 		switch {
 		case e.Kind == "input" && e.Data["steer"] == true:
 			bash()
-			emit("Steer", nil)
+			// A steer is recorded when serve gets it, which can be after the
+			// foreground call ended although it was sent before (the page's
+			// send was still on its way): it was sent in the settle window.
+			if n := len(steps); n > 0 && steps[n-1].Action == "Session#0.CallEnds" && st["call"] == "ended" {
+				steps = steps[:n-1]
+				emit("Steer", map[string]any{"call": "fg"})
+				emit("CallEnds", map[string]any{"call": "ended"})
+			} else {
+				emit("Steer", nil)
+			}
 			emit("SteerLands", nil)
 			replyDue = true
 		case isWake(e):
@@ -1284,11 +1293,16 @@ func TestNativeCallAdoptionHistoryProjection(t *testing.T) {
 	wake := history.Entry{Kind: "input", Data: map[string]any{"wake": true}}
 	done := history.Entry{Kind: "done"}
 	stopped := history.Entry{Kind: "job", Data: map[string]any{"id": 1.0, "event": "finished", "call": "c", "stopped": true}}
+	fgEnd := history.Entry{Kind: "call", Data: map[string]any{"tool": "bash", "id": "c"}}
+	steer := history.Entry{Kind: "input", Data: map[string]any{"text": "also", "steer": true}}
 	lost := history.Entry{Kind: "call", Data: map[string]any{"tool": "bash", "id": "c", "error": "interrupted: bough restarted before this call finished; it was not re-run"}}
 	for name, es := range map[string][]history.Entry{
 		"ends and wakes": {input, started, done1, end, fin, wake, done},
 		"killed":         {input, started, done1, end, stopped, wake, done},
 		"child exits":    {input, started, done1, stopped, input, lost, done},
+		// A steer sent in the settle window that serve records only after
+		// the call ended (the browser walk holds its POST until SteerLands).
+		"steer lands after the end": {input, fgEnd, steer, done},
 	} {
 		if v := g.Check(ncaHistory(es)); v != nil {
 			t.Errorf("%s: %v", name, v)
