@@ -106,7 +106,10 @@ func fakeChild() {
 		line := sc.Text()
 		if armed {
 			armed = false
-			say(map[string]any{"kind": "assistant", "text": "answered:" + line})
+			// serve tags the answer, as the real child expects.
+			var a struct{ Answer string }
+			json.Unmarshal([]byte(line), &a)
+			say(map[string]any{"kind": "assistant", "text": "answered:" + a.Answer})
 			say(map[string]any{"kind": "done", "text": ""})
 			continue
 		}

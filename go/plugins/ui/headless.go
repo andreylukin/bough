@@ -367,8 +367,34 @@ func askEnded(ev Event) bool {
 
 // hlLineIn routes one stdin line.
 func hlLineIn(line string) {
-	// A pending secret takes the raw line: no JSON sniffing, so a value
-	// that happens to start with "{" is still the answer.
+	// serve's own lines are JSON objects. {"notice": "..."} is serve
+	// reporting a background agent, and {"answer": "..."} the person's
+	// reply to the pending ask, tagged so that its text is never read as
+	// anything else (a reply that parses as {"notice"} was a phantom
+	// report and left the ask open). Both are told apart before any
+	// answer handling, the secret's included: a report arriving while
+	// tools.secret was open was stored as the secret and lost.
+	var obj struct {
+		Prompt string  `json:"prompt"`
+		Notice string  `json:"notice"`
+		Answer *string `json:"answer"`
+	}
+	isObj := strings.HasPrefix(line, "{") && json.Unmarshal([]byte(line), &obj) == nil
+	if isObj && obj.Notice != "" {
+		hlNotice(obj.Notice) // not a prompt, so no done is owed
+		return
+	}
+	if isObj && obj.Answer != nil {
+		if !hlAnswerPending(*obj.Answer) {
+			// serve disarmed an ask this process no longer has open:
+			// the answer has nobody to go to, and it is not a prompt.
+			fmt.Fprintln(hlErr, "ui: headless: answer dropped: no pending ask")
+		}
+		return
+	}
+	// A pending secret takes any other line raw: no prompt unwrapping,
+	// so a typed value that happens to start with "{" is still the
+	// answer.
 	hlMu.Lock()
 	secret := hlAsk != nil && hlAsk.secret
 	hlMu.Unlock()
@@ -377,23 +403,8 @@ func hlLineIn(line string) {
 	}
 	// A JSON object line {"prompt": "..."} is one multi-line prompt:
 	// the way a harness hands over a task brief with its newlines.
-	// {"notice": "..."} is serve reporting a background agent.
-	if strings.HasPrefix(line, "{") {
-		var obj struct {
-			Prompt string `json:"prompt"`
-			Notice string `json:"notice"`
-		}
-		if err := json.Unmarshal([]byte(line), &obj); err == nil {
-			// Before hlAnswerPending: a pending tools.ask would take the
-			// notice as its answer. Not a prompt, so no done is owed.
-			if obj.Notice != "" {
-				hlNotice(obj.Notice)
-				return
-			}
-			if obj.Prompt != "" {
-				line = obj.Prompt
-			}
-		}
+	if isObj && obj.Prompt != "" {
+		line = obj.Prompt
 	}
 	if hlAnswerPending(line) {
 		return // the line answered a pending tools.ask

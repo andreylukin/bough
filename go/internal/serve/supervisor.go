@@ -1035,7 +1035,11 @@ func (s *Supervisor) Answer(id, text string) error {
 		// the answer, and a respawn would re-ask.
 		return ErrNoAsk
 	}
-	if err := s.write(ch, text); err != nil {
+	// Tagged, not raw: the child reads every line serve writes, and a
+	// raw answer that parsed as {"notice"} or {"prompt"} became that
+	// instead, leaving the ask open while it was disarmed here.
+	ch.started()
+	if err := s.writeLine(ch, map[string]string{"answer": text}); err != nil {
 		return err
 	}
 	s.mu.Lock()
