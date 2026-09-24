@@ -1,0 +1,6153 @@
+{
+  "paths": [
+    {
+      "target": 82,
+      "links": [
+        0,
+        6,
+        21,
+        55,
+        69,
+        82
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Dismiss",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "dismissed",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 83,
+      "links": [
+        0,
+        6,
+        21,
+        55,
+        69,
+        83
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Dismiss",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "dismissed",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeToken",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 84,
+      "links": [
+        0,
+        6,
+        21,
+        55,
+        69,
+        84
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Dismiss",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "dismissed",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 85,
+      "links": [
+        0,
+        6,
+        21,
+        55,
+        71,
+        85
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 86,
+      "links": [
+        0,
+        6,
+        21,
+        55,
+        71,
+        86
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeToken",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 87,
+      "links": [
+        0,
+        6,
+        21,
+        55,
+        71,
+        87
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Dismiss",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "dismissed",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 88,
+      "links": [
+        0,
+        6,
+        21,
+        55,
+        71,
+        88
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickMention",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 89,
+      "links": [
+        0,
+        6,
+        21,
+        55,
+        71,
+        89
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 90,
+      "links": [
+        0,
+        6,
+        21,
+        55,
+        72,
+        90
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionFailed",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "error",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 91,
+      "links": [
+        0,
+        6,
+        21,
+        55,
+        72,
+        91
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionFailed",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "error",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Dismiss",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "dismissed",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 92,
+      "links": [
+        0,
+        6,
+        21,
+        55,
+        72,
+        92
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionFailed",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "error",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.RetryMention",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 93,
+      "links": [
+        0,
+        6,
+        21,
+        55,
+        72,
+        93
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionFailed",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "error",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 94,
+      "links": [
+        0,
+        6,
+        21,
+        57,
+        75,
+        94
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypePath",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.Send",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": true,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": true,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 95,
+      "links": [
+        4,
+        18,
+        50,
+        65,
+        79,
+        95
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypePath",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.PickSkill",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 96,
+      "links": [
+        4,
+        18,
+        50,
+        65,
+        79,
+        96
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypePath",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.PickSkill",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.PickSkill",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 68,
+      "links": [
+        0,
+        6,
+        21,
+        55,
+        68
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 70,
+      "links": [
+        0,
+        6,
+        21,
+        55,
+        70
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 73,
+      "links": [
+        0,
+        6,
+        21,
+        57,
+        73
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypePath",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 74,
+      "links": [
+        0,
+        6,
+        21,
+        57,
+        74
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypePath",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 76,
+      "links": [
+        0,
+        6,
+        22,
+        58,
+        76
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickSkill",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 77,
+      "links": [
+        0,
+        6,
+        22,
+        58,
+        77
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickSkill",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickSkill",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 78,
+      "links": [
+        0,
+        6,
+        22,
+        60,
+        78
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickSkill",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Send",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": true,
+            "Composer#0.sent": true,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": true,
+            "Composer#0.sent": true,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 80,
+      "links": [
+        4,
+        18,
+        50,
+        65,
+        80
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypePath",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.PickSkill",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 81,
+      "links": [
+        4,
+        18,
+        50,
+        65,
+        81
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypePath",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.PickSkill",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.Send",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": true,
+            "Composer#0.sent": true,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 53,
+      "links": [
+        0,
+        6,
+        21,
+        53
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 54,
+      "links": [
+        0,
+        6,
+        21,
+        54
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeSlash",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 56,
+      "links": [
+        0,
+        6,
+        21,
+        56
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 59,
+      "links": [
+        0,
+        6,
+        22,
+        59
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickSkill",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 61,
+      "links": [
+        1,
+        11,
+        30,
+        61
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeSlash",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Dismiss",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "dismissed",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 62,
+      "links": [
+        1,
+        11,
+        30,
+        62
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeSlash",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Dismiss",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "dismissed",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeToken",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 63,
+      "links": [
+        1,
+        11,
+        30,
+        63
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeSlash",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Dismiss",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "dismissed",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 64,
+      "links": [
+        4,
+        18,
+        50,
+        64
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypePath",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.PickerLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 66,
+      "links": [
+        4,
+        18,
+        51,
+        66
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypePath",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.PickerFailed",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "error",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 67,
+      "links": [
+        4,
+        18,
+        51,
+        67
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypePath",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.PickerFailed",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "error",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.RetryPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 23,
+      "links": [
+        0,
+        7,
+        23
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerFailed",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "error",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 24,
+      "links": [
+        0,
+        7,
+        24
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickerFailed",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "error",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.RetryPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 25,
+      "links": [
+        1,
+        9,
+        25
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeSlash",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Dismiss",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "dismissed",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 26,
+      "links": [
+        1,
+        9,
+        26
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeSlash",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Dismiss",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "dismissed",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeToken",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 27,
+      "links": [
+        1,
+        9,
+        27
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeSlash",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Dismiss",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "dismissed",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 28,
+      "links": [
+        1,
+        11,
+        28
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeSlash",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loaded",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 29,
+      "links": [
+        1,
+        11,
+        29
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeSlash",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeToken",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 31,
+      "links": [
+        1,
+        11,
+        31
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeSlash",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickMention",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "skill",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 32,
+      "links": [
+        1,
+        11,
+        32
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeSlash",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": true,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "session",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 33,
+      "links": [
+        1,
+        12,
+        33
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeSlash",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionFailed",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "error",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 34,
+      "links": [
+        1,
+        12,
+        34
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeSlash",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionFailed",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "error",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Dismiss",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "dismissed",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 35,
+      "links": [
+        1,
+        12,
+        35
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeSlash",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionFailed",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "error",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.RetryMention",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 36,
+      "links": [
+        1,
+        12,
+        36
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeSlash",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionFailed",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "error",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 37,
+      "links": [
+        2,
+        14,
+        37
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Dismiss",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "dismissed",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 38,
+      "links": [
+        2,
+        14,
+        38
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Dismiss",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "dismissed",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeToken",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 39,
+      "links": [
+        2,
+        14,
+        39
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Dismiss",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "dismissed",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 40,
+      "links": [
+        2,
+        16,
+        40
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 41,
+      "links": [
+        2,
+        16,
+        41
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeToken",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 42,
+      "links": [
+        2,
+        16,
+        42
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Dismiss",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "dismissed",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 43,
+      "links": [
+        2,
+        16,
+        43
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.PickMention",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 44,
+      "links": [
+        2,
+        16,
+        44
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionLoaded",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "open",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 45,
+      "links": [
+        2,
+        17,
+        45
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionFailed",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "error",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 46,
+      "links": [
+        2,
+        17,
+        46
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionFailed",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "error",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Dismiss",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "dismissed",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 47,
+      "links": [
+        2,
+        17,
+        47
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionFailed",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "error",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.RetryMention",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 48,
+      "links": [
+        2,
+        17,
+        48
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.MentionFailed",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "error",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 49,
+      "links": [
+        4,
+        18,
+        49
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypePath",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 52,
+      "links": [
+        4,
+        20,
+        52
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypePath",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.Send",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": true,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": true,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 5,
+      "links": [
+        0,
+        5
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.ClosePicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 8,
+      "links": [
+        1,
+        8
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeSlash",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 10,
+      "links": [
+        1,
+        10
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeSlash",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "/",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 13,
+      "links": [
+        2,
+        13
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.OpenPicker",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "loading",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 15,
+      "links": [
+        2,
+        15
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypeAt",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "@",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "loading",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 19,
+      "links": [
+        4,
+        19
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.TypePath",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": true,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "path",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 3,
+      "links": [
+        3
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        },
+        {
+          "action": "Composer#0.Paste",
+          "state": {
+            "composer": "role Composer#0",
+            "Composer#0.cached": false,
+            "Composer#0.hasPath": false,
+            "Composer#0.kind": "",
+            "Composer#0.lead": "none",
+            "Composer#0.listed": "",
+            "Composer#0.mention": "none",
+            "Composer#0.picker": "closed",
+            "Composer#0.ran": false,
+            "Composer#0.sent": false,
+            "Composer#0.typedPath": false
+          }
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "states": {
+      "covered": 30,
+      "total": 30,
+      "uncovered": []
+    },
+    "transitions": {
+      "covered": 97,
+      "total": 97,
+      "uncovered": []
+    }
+  }
+}
