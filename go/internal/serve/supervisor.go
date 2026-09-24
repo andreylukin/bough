@@ -142,6 +142,9 @@ var (
 	ErrBadAnswer      = errors.New("serve: supervisor: a secret answer cannot contain a newline")
 	ErrUnknownSession = errors.New("serve: supervisor: unknown session")
 	ErrArchived       = errors.New("serve: supervisor: session is archived")
+	// ErrPendingAsk is Send refusing a line while an ask is armed: the
+	// child would read it as the answer.
+	ErrPendingAsk = errors.New("serve: supervisor: a pending ask takes the next line; answer it first")
 )
 
 const (
@@ -981,7 +984,7 @@ func (s *Supervisor) Send(id, text string) error {
 	// An armed ask eats the next stdin line, so a prompt sent now
 	// would silently become the answer. Refuse rather than guess.
 	if a := s.PendingAsk(id); a != nil {
-		return fmt.Errorf("serve: supervisor: %s: a pending ask (%s) takes the next line; answer it first", id, a.Text)
+		return fmt.Errorf("serve: supervisor: %s: %w (%s)", id, ErrPendingAsk, a.Text)
 	}
 	ch, err := s.ensure(id)
 	if err != nil {

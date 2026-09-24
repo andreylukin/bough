@@ -330,6 +330,14 @@ func TestAPICreateAndPromptAndAsk(t *testing.T) {
 	if code, _ := f.do(t, "POST", "/api/sessions/"+id+"/prompt", `{"text":"x"}`); code != http.StatusConflict {
 		t.Errorf("prompt with an armed ask = %d, want 409", code)
 	}
+	// So would the pickers' /model and /think: a conflict with the
+	// session's state, not a server fault.
+	if code, _ := f.do(t, "POST", "/api/sessions/"+id+"/model", `{"model":"m"}`); code != http.StatusConflict {
+		t.Errorf("model with an armed ask = %d, want 409", code)
+	}
+	if code, _ := f.do(t, "POST", "/api/sessions/"+id+"/effort", `{"effort":"high"}`); code != http.StatusConflict {
+		t.Errorf("effort with an armed ask = %d, want 409", code)
+	}
 	// An answer written for another question is refused, not delivered.
 	if code, _ := f.do(t, "POST", "/api/sessions/"+id+"/answer", `{"text":"a","ask":"not-this-one"}`); code != http.StatusConflict {
 		t.Errorf("answer to an expired question = %d, want 409", code)
