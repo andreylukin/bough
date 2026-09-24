@@ -1,0 +1,5198 @@
+{
+  "paths": [
+    {
+      "target": 103,
+      "links": [
+        0,
+        5,
+        27,
+        56,
+        83,
+        95,
+        103
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.NotFound",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "missing",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenPalette",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "pal",
+            "Nav#0.page": "missing",
+            "Nav#0.sel": "safe",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.PalSession",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "other",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 104,
+      "links": [
+        0,
+        5,
+        27,
+        56,
+        83,
+        96,
+        104
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.NotFound",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "missing",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenPalette",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "pal",
+            "Nav#0.page": "missing",
+            "Nav#0.sel": "safe",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.PalProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "other",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 105,
+      "links": [
+        0,
+        5,
+        27,
+        58,
+        88,
+        97,
+        105
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "other",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Found",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "other_session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "other",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 106,
+      "links": [
+        0,
+        5,
+        27,
+        58,
+        88,
+        98,
+        106
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "other",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.NotFound",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "missing",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "other",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 107,
+      "links": [
+        0,
+        5,
+        27,
+        58,
+        88,
+        99,
+        107
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "other",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.LoadFailed",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loadfail",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "other",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 108,
+      "links": [
+        0,
+        5,
+        27,
+        58,
+        88,
+        99,
+        108
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "other",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.LoadFailed",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loadfail",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Retry",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 94,
+      "links": [
+        0,
+        5,
+        27,
+        56,
+        83,
+        94
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.NotFound",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "missing",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenPalette",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "pal",
+            "Nav#0.page": "missing",
+            "Nav#0.sel": "safe",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.PalClose",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "missing",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 100,
+      "links": [
+        0,
+        5,
+        27,
+        58,
+        88,
+        100
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "other",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "other",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 101,
+      "links": [
+        0,
+        5,
+        28,
+        61,
+        89,
+        101
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenUnknown",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "unknown",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "lost",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "unknown",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "unknown",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "lost",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "unknown",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 102,
+      "links": [
+        0,
+        5,
+        29,
+        64,
+        90,
+        102
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenGoneProject",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "project_gone",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "project_missing",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "project_gone",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "project_gone",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "project_missing",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "project_gone",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 77,
+      "links": [
+        0,
+        5,
+        27,
+        55,
+        77
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Found",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "other_session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "other",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 78,
+      "links": [
+        0,
+        5,
+        27,
+        55,
+        78
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Found",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "other_session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 79,
+      "links": [
+        0,
+        5,
+        27,
+        55,
+        79
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Found",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "other_session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Reload",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 80,
+      "links": [
+        0,
+        5,
+        27,
+        56,
+        80
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.NotFound",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "missing",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "other",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 81,
+      "links": [
+        0,
+        5,
+        27,
+        56,
+        81
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.NotFound",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "missing",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 82,
+      "links": [
+        0,
+        5,
+        27,
+        56,
+        82
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.NotFound",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "missing",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Reload",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 84,
+      "links": [
+        0,
+        5,
+        27,
+        57,
+        84
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.LoadFailed",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loadfail",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "other",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 85,
+      "links": [
+        0,
+        5,
+        27,
+        57,
+        85
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.LoadFailed",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loadfail",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Retry",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 86,
+      "links": [
+        0,
+        5,
+        27,
+        57,
+        86
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.LoadFailed",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loadfail",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 87,
+      "links": [
+        0,
+        5,
+        27,
+        57,
+        87
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.LoadFailed",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loadfail",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Reload",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 91,
+      "links": [
+        2,
+        12,
+        35,
+        68,
+        91
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenContext",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "sub",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "sub",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 92,
+      "links": [
+        2,
+        12,
+        35,
+        68,
+        92
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenContext",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "sub",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.CloseSub",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 93,
+      "links": [
+        2,
+        15,
+        41,
+        69,
+        93
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenPalette",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "pal",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "safe",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.TypeArchive",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "pal",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "none",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.ArrowToArchive",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "pal",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "chosen",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.PalClose",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 51,
+      "links": [
+        0,
+        5,
+        26,
+        51
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.NavProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "projects",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 52,
+      "links": [
+        0,
+        5,
+        26,
+        52
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.NavProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "projects",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 53,
+      "links": [
+        0,
+        5,
+        26,
+        53
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.NavProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 54,
+      "links": [
+        0,
+        5,
+        26,
+        54
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.NavProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Reload",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 59,
+      "links": [
+        0,
+        5,
+        27,
+        59
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 60,
+      "links": [
+        0,
+        5,
+        27,
+        60
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOther",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Reload",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "other",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "loading",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 62,
+      "links": [
+        0,
+        5,
+        28,
+        62
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenUnknown",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "unknown",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "lost",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 63,
+      "links": [
+        0,
+        5,
+        28,
+        63
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenUnknown",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "unknown",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "lost",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Reload",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "unknown",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "lost",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 65,
+      "links": [
+        0,
+        5,
+        29,
+        65
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenGoneProject",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "project_gone",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "project_missing",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 66,
+      "links": [
+        0,
+        5,
+        29,
+        66
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenGoneProject",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "project_gone",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "project_missing",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Reload",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "project_gone",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "project_missing",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 67,
+      "links": [
+        0,
+        6,
+        33,
+        67
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.NavProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "projects",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 70,
+      "links": [
+        2,
+        15,
+        41,
+        70
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenPalette",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "pal",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "safe",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.TypeArchive",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "pal",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "none",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.PalClose",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 71,
+      "links": [
+        3,
+        17,
+        46,
+        71
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.NavProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "projects",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "projects",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 72,
+      "links": [
+        3,
+        17,
+        46,
+        72
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.NavProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "projects",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "projects",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 73,
+      "links": [
+        3,
+        18,
+        48,
+        73
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.NavProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "projects",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "projects",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 74,
+      "links": [
+        3,
+        18,
+        48,
+        74
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.NavProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "projects",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "projects",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 75,
+      "links": [
+        4,
+        21,
+        50,
+        75
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.OpenSubLink",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "sub",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "sub",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 76,
+      "links": [
+        4,
+        21,
+        50,
+        76
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.OpenSubLink",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "sub",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.CloseSub",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 25,
+      "links": [
+        0,
+        5,
+        25
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 30,
+      "links": [
+        0,
+        5,
+        30
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenOldProject",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 31,
+      "links": [
+        0,
+        5,
+        31
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 32,
+      "links": [
+        0,
+        6,
+        32
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.NavProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "projects",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 34,
+      "links": [
+        0,
+        6,
+        34
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveFast",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.NavProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 36,
+      "links": [
+        2,
+        12,
+        36
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenContext",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.CloseSub",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 37,
+      "links": [
+        2,
+        12,
+        37
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenContext",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 38,
+      "links": [
+        2,
+        12,
+        38
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenContext",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Reload",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 39,
+      "links": [
+        2,
+        13,
+        39
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 40,
+      "links": [
+        2,
+        13,
+        40
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.NavProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 42,
+      "links": [
+        2,
+        15,
+        42
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenPalette",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "pal",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "safe",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.PalClose",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 43,
+      "links": [
+        2,
+        15,
+        43
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenPalette",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "pal",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "safe",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.PalProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 44,
+      "links": [
+        2,
+        15,
+        44
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.OpenPalette",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "pal",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "safe",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.PalShortcuts",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "sheet",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 45,
+      "links": [
+        2,
+        16,
+        45
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.ShowShortcuts",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "sheet",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.SheetClose",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 47,
+      "links": [
+        3,
+        18,
+        47
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.NavProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "projects",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.OpenSubLink",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 49,
+      "links": [
+        4,
+        21,
+        49
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.OpenSubLink",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "sub",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.OpenSubLink",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 7,
+      "links": [
+        1,
+        7
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveLate",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 8,
+      "links": [
+        1,
+        8
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveLate",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.NavProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 9,
+      "links": [
+        1,
+        9
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ArriveLate",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.OpenSubLink",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 10,
+      "links": [
+        2,
+        10
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.GoHome",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 11,
+      "links": [
+        2,
+        11
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.NavProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "s",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 14,
+      "links": [
+        2,
+        14
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.ClickRow",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        },
+        {
+          "action": "Nav#0.Reload",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 19,
+      "links": [
+        3,
+        19
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.NavProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 20,
+      "links": [
+        3,
+        20
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.NavProjects",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.Reload",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "projects",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "projects",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 22,
+      "links": [
+        4,
+        22
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.OpenSubLink",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.CloseSub",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "s",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "session",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 23,
+      "links": [
+        4,
+        23
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.OpenSubLink",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.Back",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 24,
+      "links": [
+        4,
+        24
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": false,
+            "Nav#0.back": "none",
+            "Nav#0.hash": "home",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "overview",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.OpenSubLink",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        },
+        {
+          "action": "Nav#0.Reload",
+          "state": {
+            "nav": "role Nav#0",
+            "Nav#0.arrived": true,
+            "Nav#0.back": "home",
+            "Nav#0.hash": "sub",
+            "Nav#0.overlay": "none",
+            "Nav#0.page": "sub",
+            "Nav#0.sel": "",
+            "Nav#0.unseen": true
+          }
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "states": {
+      "covered": 42,
+      "total": 42,
+      "uncovered": []
+    },
+    "transitions": {
+      "covered": 109,
+      "total": 109,
+      "uncovered": []
+    }
+  }
+}

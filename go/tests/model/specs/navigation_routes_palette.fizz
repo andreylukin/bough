@@ -1,0 +1,357 @@
+# Where you are in the control room lives in the URL (web/src/app.tsx, the
+# "Where you are lives in the URL" effect): the hash is read on load, on
+# Back/Forward and on a typed link; the page writes its own state back
+# with replaceState; opening a session, a project, a wiki page or a nav
+# link pushes. This spec is one person's tab on a desktop with one listed
+# session S (unseen, own, recent: the one arrival opens), one session X
+# that the list does not hold (archived, or not on this server), and a
+# project slug that does not exist.
+#
+# hash is the route location.hash names:
+#   home       #/                       page overview (or S, by arrival)
+#   s          #/s/S                    page session (S's transcript)
+#   sub        #/s/S/context            page sub (Context; Changes is the same)
+#   other      #/s/X                    page loading, then other_session |
+#                                       missing ("Session not found") |
+#                                       loadfail ("Couldn't load", Retry)
+#   projects   #/projects               page projects (Hooks, Me and Wiki
+#                                       route and push the same way)
+#   project_gone  #/projects/<no such slug>   page project_missing
+#   unknown    #/anything-else          page lost ("Nothing at this address")
+# An old project link (#/projects/<uuid>) is never a resting hash: it
+# redirects to #/projects in place.
+#
+# back is where one Back lands ("none": nothing, or not modelled past one
+# step). overlay is what sits over the page: none, pal (the ⌘K / ⌘P / ⌥N
+# palette, one surface) or sheet (the ? shortcuts dialog). sel is the
+# palette's highlighted row: safe, none (nothing highlighted), chosen (a
+# destructive row the person arrowed onto); "" while the palette is shut.
+# unseen is S's unseen finish; arrived is the arrival pick being decided.
+#
+# Deliberately left out, because they change focus and not the route:
+# F6 regions, ⌘B sidebar, ⌥I composer. Forward is Back's mirror and is
+# not modelled; nor is a phone (arrival never runs there).
+#
+# Kept small on purpose (every path is a browser test): the router reads
+# only the hash, so a move's effect does not depend on the history behind
+# it, and most actions are enabled from one history (`back == "home"` or
+# similar) rather than from every one. Back and the lookup outcomes are
+# enabled everywhere they can be.
+#
+# Where this spec is ahead of the product (2026-09-23; the MBT and
+# browser stages are expected to go red here until it is fixed):
+#   PalProjects      the palette's Projects (and Hooks) command sets the
+#                    view without pushState, so the write-back replaces
+#                    and Back skips the page you left (app.tsx go:projects)
+#   OpenOldProject   the redirect assigns location.hash, which pushes: Back
+#                    lands on the old link and is redirected forward again
+#   OpenGoneProject  a 404 from GET /api/projects/{slug} renders "Couldn't
+#                    read this project" with a Retry that cannot succeed
+#   TypeArchive      when every hit is destructive the palette highlights
+#                    the first one anyway (Math.max(0, findIndex(...)) in
+#                    palette.tsx), so Enter reaches the archive confirm
+
+# What a fresh read of a hash renders (the router's read()).
+def landing(h):
+    if h == "home":
+        return "overview"
+    if h == "s":
+        return "session"
+    if h == "sub":
+        return "sub"
+    if h == "other":
+        return "loading"
+    if h == "projects":
+        return "projects"
+    if h == "project_gone":
+        return "project_missing"
+    return "lost"
+
+# The hash the router's write-back names for a page it owns (the
+# replaceState effect); "" for a page it leaves alone: a lookup keeps the
+# link it came from, and a lost route is never written over.
+def written(p):
+    if p == "overview":
+        return "home"
+    if p == "session":
+        return "s"
+    if p == "sub":
+        return "sub"
+    if p == "projects":
+        return "projects"
+    if p == "project_missing":
+        return "project_gone"
+    return ""
+
+role Nav:
+    action Init:
+        self.hash = "home"
+        self.page = "overview"
+        self.back = "none"
+        self.overlay = "none"
+        self.sel = ""
+        self.unseen = True
+        self.arrived = False
+
+    # --- system: the first list read and the session lookup ---
+    #
+    # The page acks S's unseen finish once S's transcript is on screen
+    # (App's ack effect: sessions view, no Context/Changes). That ack is
+    # folded into every move that puts page "session" up (unseen = False
+    # there), which is what SeenOnlyWhenVisible checks.
+
+    # The list answered within 400 ms of mount, on #/, on a desktop: S is
+    # opened and the URL says so by replaceState (no history entry).
+    atomic fair action ArriveFast:
+        require not self.arrived and self.hash == "home" and self.page == "overview"
+        self.arrived = True
+        self.page = "session"
+        self.hash = "s"
+        self.unseen = False
+
+    # It answered late (the overview is already on screen), or the hash
+    # is not empty: nothing moves.
+    atomic fair action ArriveLate:
+        require not self.arrived
+        self.arrived = True
+
+    # GET /api/sessions/X for a session the list does not hold: its
+    # transcript (archived included), a 404 ("Session not found", with
+    # Search archived), or any other failure ("Couldn't load", Retry).
+    atomic fair action Found:
+        require self.page == "loading"
+        self.page = "other_session"
+
+    atomic fair action NotFound:
+        require self.page == "loading"
+        self.page = "missing"
+
+    atomic fair action LoadFailed:
+        require self.page == "loading"
+        self.page = "loadfail"
+
+    # --- the person: pushes ---
+
+    # A sidebar row (or ⌘K's session row, below): openSession pushes.
+    atomic action ClickRow:
+        require self.overlay == "none" and self.page in ("overview", "projects") and self.back in ("none", "home", "s")
+        self.back = self.hash
+        self.hash = "s"
+        self.page = "session"
+        self.unseen = False
+        self.arrived = True
+
+    # Home / "Show all sessions" (goList) pushes #/.
+    atomic action GoHome:
+        require self.overlay == "none" and self.page != "overview" and self.back in ("none", "home", "s")
+        self.back = self.hash
+        self.hash = "home"
+        self.page = "overview"
+        self.arrived = True
+
+    # The Projects nav link pushes NAV_HREF.projects.
+    atomic action NavProjects:
+        require self.overlay == "none" and self.page in ("overview", "session") and self.back in ("none", "home", "s")
+        self.back = self.hash
+        self.hash = "projects"
+        self.page = "projects"
+        self.arrived = True
+
+    # A link typed, pasted or followed: a new entry.
+    atomic action OpenOther:
+        require self.overlay == "none" and self.page == "overview" and self.back == "s"
+        self.back = self.hash
+        self.hash = "other"
+        self.page = "loading"
+        self.arrived = True
+
+    atomic action OpenUnknown:
+        require self.overlay == "none" and self.page == "overview" and self.back == "s"
+        self.back = self.hash
+        self.hash = "unknown"
+        self.page = "lost"
+        self.arrived = True
+
+    atomic action OpenGoneProject:
+        require self.overlay == "none" and self.page == "overview" and self.back == "s"
+        self.back = self.hash
+        self.hash = "project_gone"
+        self.page = "project_missing"
+        self.arrived = True
+
+    # A link straight to S's Context page: S is not on screen, so it is
+    # not seen.
+    atomic action OpenSubLink:
+        require self.overlay == "none" and self.page == "overview" and self.unseen
+        self.back = self.hash
+        self.hash = "sub"
+        self.page = "sub"
+        self.arrived = True
+
+    # An old project link redirects to #/projects in place: the old entry
+    # is replaced, so Back leaves rather than bouncing into the redirect.
+    atomic action OpenOldProject:
+        require self.overlay == "none" and self.page == "overview" and self.back == "s"
+        self.back = self.hash
+        self.hash = "projects"
+        self.page = "projects"
+        self.arrived = True
+
+    # --- the person: replaces (a session's own sub-page) ---
+
+    atomic action OpenContext:
+        require self.overlay == "none" and self.page == "session" and self.back == "home"
+        self.hash = "sub"
+        self.page = "sub"
+
+    # Esc closes a sub-page; it never leaves the session.
+    atomic action CloseSub:
+        require self.overlay == "none" and self.page == "sub"
+        self.hash = "s"
+        self.page = "session"
+        self.unseen = False
+
+    # "Retry" under "Couldn't load this session".
+    atomic action Retry:
+        require self.overlay == "none" and self.page == "loadfail"
+        self.page = "loading"
+
+    # --- the browser ---
+
+    atomic action Back:
+        require self.overlay == "none" and self.back != "none"
+        self.hash = self.back
+        self.back = "none"
+        self.page = landing(self.hash)
+        self.unseen = self.unseen and self.page != "session"
+        self.arrived = True
+
+    # Reload reads the same URL again. Its effect depends on the hash
+    # alone (history is untouched), so it is checked once per page, not
+    # once per history behind it. On #/ the arrival pick runs again; the
+    # model checks that once, from Init: same effect, same inputs.
+    atomic action Reload:
+        require self.overlay == "none" and self.back == "home"
+        self.page = landing(self.hash)
+        self.unseen = self.unseen and self.page != "session"
+
+    # --- the palette (⌘K, ⌘P, ⌥N; "Search archived" opens it too) ---
+
+    atomic action OpenPalette:
+        require self.overlay == "none" and self.page in ("session", "missing") and self.back == "home"
+        self.overlay = "pal"
+        self.sel = "safe"
+
+    # A query only a destructive command answers (">archive this"): the
+    # "Archive this session" row is the only hit. Nothing is highlighted,
+    # so Enter does nothing.
+    atomic action TypeArchive:
+        require self.overlay == "pal" and self.sel == "safe" and self.page == "session" and self.back == "home"
+        self.sel = "none"
+
+    # Arrowing onto it is choosing it on purpose.
+    atomic action ArrowToArchive:
+        require self.overlay == "pal" and self.sel == "none"
+        self.sel = "chosen"
+
+    atomic action PalClose:
+        require self.overlay == "pal"
+        self.overlay = "none"
+        self.sel = ""
+
+    # A session row: openSession pushes.
+    atomic action PalSession:
+        require self.overlay == "pal" and self.sel == "safe" and self.hash != "s"
+        self.back = self.hash
+        self.hash = "s"
+        self.page = "session"
+        self.unseen = False
+        self.overlay = "none"
+        self.sel = ""
+        self.arrived = True
+
+    # The "Projects" command goes where the nav link goes, the same way.
+    atomic action PalProjects:
+        require self.overlay == "pal" and self.sel == "safe" and self.hash != "projects"
+        self.back = self.hash
+        self.hash = "projects"
+        self.page = "projects"
+        self.overlay = "none"
+        self.sel = ""
+        self.arrived = True
+
+    # "Keyboard shortcuts": the palette closes, then the sheet opens.
+    atomic action PalShortcuts:
+        require self.overlay == "pal" and self.sel == "safe" and self.page == "session" and self.back == "home"
+        self.overlay = "sheet"
+        self.sel = ""
+
+    # --- the shortcuts sheet ---
+
+    atomic action ShowShortcuts:
+        require self.overlay == "none" and self.page == "session" and self.back == "home"
+        self.overlay = "sheet"
+
+    atomic action SheetClose:
+        require self.overlay == "sheet"
+        self.overlay = "none"
+
+action Init:
+    nav = Nav()
+
+# The URL names what is on screen, so a reload lands on the same view,
+# session and sub-page.
+always assertion URLNamesThePage:
+    return written(nav.page) in ("", nav.hash)
+
+# A route nothing knows is "Nothing at this address", never a session
+# lookup, and it stays in the URL it came from.
+always assertion UnknownRouteIsLost:
+    return (nav.hash == "unknown") == (nav.page == "lost")
+
+# A link to a session the list does not hold is looked up on its own:
+# it shows, or says it is missing or failed, never the overview.
+always assertion UnlistedSessionIsLookedUp:
+    return nav.hash != "other" or nav.page in ("loading", "other_session", "missing", "loadfail")
+
+# A project that does not exist says so; it is not an error with a Retry
+# that cannot succeed.
+always assertion GoneProjectIsNotFound:
+    return nav.hash != "project_gone" or nav.page == "project_missing"
+
+# Enter in the palette never lands on a destructive command by default.
+always assertion PaletteNeverDefaultsToDestructive:
+    return nav.sel != "destructive" and (nav.sel == "") == (nav.overlay != "pal")
+
+# A redirect is never a history entry: Back into it would bounce forward.
+always assertion BackNeverLandsOnARedirect:
+    return nav.back != "old_project" and nav.hash != "old_project"
+
+# Opening S does not mark it seen until its transcript is on screen: not
+# on the overview, not under Context.
+transition assertion SeenOnlyWhenVisible(before, after):
+    return not (before.nav.unseen and not after.nav.unseen) or after.nav.page == "session"
+
+# Every move to another page is one Back away, except a session's own
+# sub-page, the arrival pick and a redirect, which replace.
+transition assertion EveryPageMoveIsBackable(before, after):
+    b = before.nav
+    a = after.nav
+    if a.hash == b.hash:
+        return True
+    if a.hash == b.back and a.back == "none":
+        return True
+    if (b.hash == "s" and a.hash == "sub") or (b.hash == "sub" and a.hash == "s"):
+        return True
+    if b.hash == "home" and a.hash == "s" and not b.arrived and a.back == b.back:
+        return True
+    return a.back == b.hash
+
+# Every navigation ends on a page or an explicit not-found/error state:
+# the lookup never leaves "Loading session…" for good.
+always eventually assertion LookupSettles:
+    return nav.page != "loading"
+
+# The first list read is always decided (arrival or not).
+always eventually assertion ArrivalDecided:
+    return nav.arrived
