@@ -1,0 +1,262 @@
+---
+# A lost prompt leaves nothing to do but look at it: that is rest, not a
+# deadlock (and it is what ARowResolves below is about).
+deadlock_detection: false
+---
+
+# Stop pressed in another tab (its Stop button or the palette's "Stop
+# this turn") while this tab's prompt is still on its way to a session
+# that has no child. stop_interrupt.fizz is one tab, where the page's
+# own Stop first awaits its in-flight sends; here the Stop comes from a
+# tab whose inflight set is empty, so nothing orders it after the send.
+#
+# Tab A sends to a session whose child is gone (the previous turn was
+# stopped: a SIGINT ends a headless child). Supervisor.Send
+# (internal/serve/supervisor.go) is one HTTP request in two steps:
+#   ensure    spawns a child and reserves the lease (s.kids[id] = ch),
+#             then start() returns with cmd and stdin set;
+#   writePrompt  sets ch.unread, then writes the line; 200 or an error.
+# Supervisor.Interrupt holds only when `ch.unread && !ch.inTurn`. Between
+# ensure and writePrompt unread is still false, so an Interrupt there
+# SIGINTs the fresh child at once.
+#
+# Tab B can press Stop only while it believes the turn is live: its
+# composer's `live` is row.status === "running" (B has no send of its
+# own) and the palette's "Stop this turn" shows on the same condition.
+# While A's prompt is unread the server's row is not running (no input
+# recorded yet), so B reaches the gap only with a stale row: its list
+# poll is 4 s (12 s while it streams). Init is that: the previous turn
+# was running when B last polled; it was stopped, its child exited, and
+# B has not polled since.
+#
+# Corrections to the mapped model (the code wins):
+#   - EnsureDone and MarkUnread are one step (WriteA). Between ensure
+#     returning and writePrompt setting unread there is only the
+#     background-agent `running` slot, which no Interrupt reads; for
+#     Interrupt the whole ensure..writePrompt span is "started, unread
+#     false", the state phase == "ensuring" stands for.
+#   - "HoldExpires" and "ChildExits" are kept, and "ChildTakes" is Take.
+#     A SIGINT is delivered to a started process at once; what the model
+#     orders is when the child dies of it (ChildSignal). A child with a
+#     SIGINT on its way never takes its prompt: booting, it dies of it;
+#     booted and idle, headless exits 0 on it.
+#   - SwallowTimerA cannot fire in this flow and is left out. Thread's
+#     swallowedByStop needs (1) the row's id in stoppedIds, which only
+#     that tab's own Stop fills, and (2) a done or cancelled recorded
+#     after the row. A prompt killed unread records neither: the child
+#     dies before it writes anything. So the rescue misses a lost prompt
+#     even when A itself pressed Stop, and whichever tab pressed it.
+#   - The stale holdGen timer (stop_interrupt.fizz) is not modelled:
+#     every release here is followed by the child's exit, and a timer
+#     that outlives its child finds ch.dropped and does nothing.
+#   - The turn is never replied to or finished here: this flow ends at
+#     the Stop, and "stopped before any reply" is what makes the
+#     restore reachable. turn_lifecycle and stop_interrupt cover the rest.
+#
+# Fields (Session role):
+#   phase    the lease: "none" (no child) | "ensuring" (spawned, prompt
+#            not yet written: unread false) | "unread" (written, not
+#            taken) | "turn" (taken, the turn runs)
+#   status   server row: "stopped" (the previous turn, or this one
+#            cancelled) | "running" (open turn and a live child)
+#   taken    A's prompt became a turn (its input is recorded)
+#   held     an interrupt is held (ch.held); timer: its 20 s timer pends
+#   sigint   a SIGINT the child has not yet died of: "" | "early" (sent
+#            in the ensure gap) | "sent" (to a running turn, or a hold
+#            released by the take) | "expired" (released by holdLimit)
+#   arow     tab A's pending row: "" | "sending" (request in flight) |
+#            "accepted" (200, not landed: "Sending…") | "landed" |
+#            "failed" (the error row with Retry)
+#   bview    tab B's row says running (stale or fresh)
+#   bstop    tab B's thread stop state: "" | "stopping" | "failed"
+#   brestore tab B's restoreOnStop ref (set by its thread Stop only)
+#   bpal     tab B's palette Stop was posted while B's row says running
+#   bdraft   "" | "restored": a stopped prompt put back in B's composer
+
+role Session:
+    action Init:
+        self.phase = "none"
+        self.status = "stopped"
+        self.taken = False
+        self.held = False
+        self.timer = False
+        self.sigint = ""
+        self.arow = ""
+        self.bview = True
+        self.bstop = ""
+        self.brestore = False
+        self.bpal = False
+        self.bdraft = ""
+
+    # POST /api/sessions/{id}/interrupt, from any tab. False is the 404
+    # (no child holds the lease).
+    atomic func interrupt():
+        if self.phase == "none":
+            return False
+        if self.phase == "ensuring":
+            # started(), unread false: SIGINT now.
+            if self.sigint == "":
+                self.sigint = "early"
+        elif self.phase == "unread":
+            # unread && !inTurn: hold; a repeat Stop arms another timer
+            # of the same generation.
+            self.held = True
+            self.timer = True
+        elif self.sigint == "":
+            self.sigint = "sent"
+        return True
+
+    # Tab A sends while its row is idle; Send's ensure spawns a child.
+    atomic action SendA:
+        require self.arow == "" and self.phase == "none"
+        self.phase = "ensuring"
+        self.arow = "sending"
+
+    # writePrompt: unread, then the write. A child already dead of an
+    # early SIGINT has no reader on its stdin: EPIPE, a 500, and A shows
+    # the failure. A child with the SIGINT still on its way takes the
+    # line into its pipe: 200, "Sending…".
+    atomic fair action WriteA:
+        require self.arow == "sending"
+        if self.phase == "none":
+            self.arow = "failed"
+        else:
+            self.phase = "unread"
+            self.arow = "accepted"
+
+    # The child's first output: unread clears, a held interrupt is
+    # released into the turn it can now cancel.
+    atomic fair action Take:
+        require self.phase == "unread" and self.sigint == ""
+        self.phase = "turn"
+        self.status = "running"
+        self.taken = True
+        self.timer = False
+        if self.held:
+            self.held = False
+            self.sigint = "sent"
+
+    # holdLimit passed with the prompt unread: the hold is released as a
+    # SIGINT to a child with nothing to cancel.
+    atomic fair action HoldExpires:
+        require self.timer
+        self.timer = False
+        self.held = False
+        if self.sigint == "":
+            self.sigint = "expired"
+
+    # The child dies of the SIGINT. Mid-turn it records cancelled (then
+    # the bookkeeping done) and exits: the row reads stopped. Before the
+    # take it exits with nothing recorded, and the unread line dies with
+    # it. drop() hands the lease back; a pending timer finds it dropped.
+    atomic fair action ChildSignal:
+        require self.sigint != "" and self.phase != "none"
+        if self.phase == "turn":
+            self.status = "stopped"
+        self.phase = "none"
+        self.sigint = ""
+        self.held = False
+        self.timer = False
+
+    # A's transcript shows the input: the row lands.
+    atomic fair action PollA:
+        require self.arow == "accepted" and self.taken
+        self.arow = "landed"
+
+    # B's thread Stop (button or Esc): stopping, restoreOnStop, and B's
+    # inflight wait, which is empty, then the POST.
+    atomic action StopB:
+        require self.bview and self.bstop != "stopping"
+        self.bstop = "stopping"
+        self.brestore = True
+        ok = self.interrupt()
+        if not ok:
+            self.bstop = "failed"
+
+    # The palette's "Stop this turn" in tab B: act(() => api.interrupt())
+    # and nothing else. A 404 is act's toast.
+    atomic action PaletteStopB:
+        require self.bview
+        ok = self.interrupt()
+        self.bpal = True
+
+    # B's list poll brings its row up to date. Once B's row is not live
+    # the Thread's effects run: stopping clears, and restoreOnStop puts
+    # a prompt stopped before any reply into the (empty) draft.
+    atomic fair action PollB:
+        require self.bview != (self.status == "running")
+        self.bview = self.status == "running"
+        if not self.bview:
+            self.bstop = ""
+            self.bpal = False
+            if self.brestore and self.taken and self.status == "stopped" and self.bdraft == "":
+                self.brestore = False
+                self.bdraft = "restored"
+
+action Init:
+    session = Session()
+
+# Once writePrompt has marked the prompt unread, no Stop from any tab
+# reaches the child before it takes it: a Stop is held, and the only
+# SIGINT that reaches an unread prompt is the one holdLimit released
+# (or one sent in the ensure gap, before unread existed).
+always assertion HoldCoversUnread:
+    return not (session.sigint == "sent" and session.phase == "unread")
+
+# A hold lives only while its prompt is unread, and its timer only with it.
+always assertion HoldOnlyWhileUnread:
+    return (not session.held or session.phase == "unread") and (session.timer == session.held)
+
+# The server's row says running only while a child runs the turn.
+always assertion RunningHasAChild:
+    return session.status != "running" or session.phase == "turn"
+
+# A's row lands only on a recorded input, and fails only when the child
+# died before the write: a failed row's prompt never ran.
+always assertion RowMatchesTranscript:
+    return (session.arow != "landed" or session.taken) and (session.arow != "failed" or not session.taken)
+
+# Only B's own thread Stop restores, and only a prompt that was taken.
+always assertion RestoreOnlyAfterThreadStop:
+    return session.bdraft == "" or (session.taken and session.status == "stopped")
+
+# A held interrupt is released: by the take, or by holdLimit.
+always eventually assertion HoldReleased:
+    return not session.held
+
+# B's "Stopping" clears without a reload, whatever the Stop hit.
+always eventually assertion BStoppingClears:
+    return session.bstop != "stopping"
+
+# ---------------------------------------------------------------------
+# Claims the code does NOT meet. Each was checked by adding it to this
+# spec: fizz fails it with the trace given. They are findings, left out
+# so the check stays green; the product is not changed in this stage.
+#
+# EnsureGapHeld (mapped: "an interrupt between ensure and writePrompt's
+# unread is held"):
+#     always assertion EnsureGapHeld:
+#         return session.sigint != "early"
+#   FAILED: SendA, StopB -> sigint "early". Interrupt SIGINTs the child
+#   Send just spawned, because unread is set only in writePrompt.
+#
+# ARowResolves (mapped liveness: "tab A's Sending… row resolves without
+# a reload", and "every tab's pending row eventually fails or
+# re-queues, whichever tab pressed Stop"):
+#     always eventually assertion ARowResolves:
+#         return session.arow != "sending" and session.arow != "accepted"
+#   FAILED: SendA, StopB (early SIGINT), WriteA (200 into the dying
+#   child's pipe), ChildSignal: arow "accepted" forever. A second way:
+#   SendA, WriteA, StopB (held), HoldExpires, ChildSignal: the same.
+#   Neither records a done or cancelled, and A never pressed Stop, so
+#   swallowedByStop has nothing to go on.
+#
+# PaletteStopLikeThreadStop (mapped: "palette Stop behaves like the
+# thread's Stop: inflight wait, stopping state, restore"):
+#     always assertion PaletteStopLikeThreadStop:
+#         return not (session.bpal and session.bstop != "stopping")
+#   FAILED: PaletteStopB (from Init) -> bpal with bstop "". The palette
+#   posts api.interrupt directly: B's Stop button stays enabled, no
+#   "Stopping", no restoreOnStop (so a turn stopped from the palette
+#   never gives its prompt back), and in the sending tab itself it
+#   would skip the inflight await that orders Stop after the send.
