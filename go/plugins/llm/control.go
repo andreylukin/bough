@@ -240,6 +240,9 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 				}
 				return a.reply(ctx, turn.Text, 0)
 			}
+			if err := a.say(ctx, name); err != nil {
+				return ullm.Response{}, err
+			}
 			select {
 			case <-ctx.Done():
 				return ullm.Response{}, ctx.Err()
@@ -248,6 +251,35 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 		}
 	}
 	return ullm.Response{}, fmt.Errorf("llm-control: %s.json: unknown mode %q (want ok, error, slow, call or block)", name, turn.Mode)
+}
+
+// say streams each <name>.say-<n> a held turn has been handed as one
+// live delta and renames it <name>.said-<n>, in the order of n. It is
+// text the session shows and never records, so a test can make the
+// ephemeral path fire while the turn is still in flight.
+func (a *controlAdapter) say(ctx context.Context, name string) error {
+	says, err := filepath.Glob(filepath.Join(a.c.dir, name+".say-*"))
+	if err != nil {
+		return err
+	}
+	slices.Sort(says)
+	for _, p := range says {
+		if strings.HasSuffix(p, "-tmp") {
+			continue
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		if a.opts.Sink != nil {
+			a.opts.Sink(agentllm.Delta{Seq: agentllm.SeqOf(ctx), Attempt: 1, Kind: agentllm.DeltaText, Text: string(b)})
+		}
+		n := strings.TrimPrefix(filepath.Base(p), name+".say-")
+		if err := os.Rename(p, filepath.Join(a.c.dir, name+".said-"+n)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // reply streams text a word at a time, delay apart, so the live

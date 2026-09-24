@@ -263,6 +263,33 @@ func TestControlBlockReleaseBash(t *testing.T) {
 	WaitTaken(t, r.dir(), "002", time.Second)
 }
 
+// Say streams live text out of a held turn without ending it: the delta
+// is on stdout, and the turn still waits for its release.
+func TestControlBlockSay(t *testing.T) {
+	t.Parallel()
+	r := start(t, "--json")
+	Queue(t, r.dir(), "001", Turn{Mode: "block", Text: "released after saying"})
+	r.send("hello")
+	WaitTaken(t, r.dir(), "001", 30*time.Second)
+	Say(t, r.dir(), "001", 1, "partial ")
+	r.waitFor(`"kind":"assistant-delta","text":"partial "`)
+	deadline := time.Now().Add(5 * time.Second)
+	for !Said(r.dir(), "001", 1) {
+		if time.Now().After(deadline) {
+			t.Fatal("say 1 not marked said")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if out := r.out.String(); strings.Contains(out, `"kind":"done"`) || strings.Contains(out, "released after saying") {
+		t.Fatalf("the say ended the held turn:\n%s", out)
+	}
+	Release(t, r.dir(), "001")
+	r.waitFor(`"kind":"done"`)
+	if code, out := r.finish(); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
 // Block holds the request until the test releases it: nothing replies
 // while it is held, and the queued text arrives once it is released.
 func TestControlBlock(t *testing.T) {

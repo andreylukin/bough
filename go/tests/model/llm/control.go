@@ -179,6 +179,28 @@ func Stream(t testing.TB, dir, name, text string, timeout time.Duration) {
 	t.Fatalf("llm-control: turn %q did not stream %q after %s", name, text, timeout)
 }
 
+// Say makes a held "block" turn stream text as one assistant delta
+// while it stays held: live text the session never records, which is
+// what a test of the ephemeral (Seq 0) path needs. The row renames
+// <name>.say-<n> to <name>.said-<n> once the delta is out; says for one
+// turn go out in the order of n.
+func Say(t testing.TB, dir, name string, n int, text string) {
+	t.Helper()
+	p := filepath.Join(dir, fmt.Sprintf("%s.say-%06d", name, n))
+	if err := os.WriteFile(p+"-tmp", []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(p+"-tmp", p); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Said reports whether the row has streamed say n of turn name.
+func Said(dir, name string, n int) bool {
+	_, err := os.Stat(filepath.Join(dir, fmt.Sprintf("%s.said-%06d", name, n)))
+	return err == nil
+}
+
 // WaitTaken waits until the row has picked up turn name (it renames
 // <name>.json to <name>.taken as the request starts), so a test knows
 // the model call is in flight.
