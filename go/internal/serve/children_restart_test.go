@@ -79,6 +79,40 @@ func TestChildQueueSurvivesRestart(t *testing.T) {
 	}
 }
 
+// Shutting down with the running cap full leaves the queued child
+// queued. Close kills the running one, whose exit frees its slot; a
+// drain that ran then started the queued child outside Close's kill
+// list and cleared its persisted task, so it died with serve and the
+// restart had nothing to requeue (serve_restart_resume.fizz, Stop).
+func TestCloseLeavesQueuedChildQueued(t *testing.T) {
+	t.Parallel()
+	f := childFixture(t)
+	if _, _, err := f.sup.CreateChild(CreateOptions{Prompt: "HANG a", SpawnedBy: "parent"}, 0, 1); err != nil {
+		t.Fatal(err)
+	}
+	b, queued, err := f.sup.CreateChild(CreateOptions{Prompt: "b", SpawnedBy: "parent"}, 0, 1)
+	if err != nil || !queued {
+		t.Fatalf("b = %v %v", queued, err)
+	}
+	// Other sessions give Close more kills to make after a's, which is
+	// the window a drain started by a's exit ran in.
+	for _, id := range []string{"s1", "s2", "s3", "s4"} {
+		f.seed(t, id)
+		if err := f.sup.Adopt(id); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "session live", func() bool { return f.sup.childPID(id) != 0 })
+	}
+	f.sup.Close()
+	time.Sleep(300 * time.Millisecond) // a drain the kill triggered
+	if m := f.sup.Meta(b); m.Task == nil {
+		t.Fatalf("b's task was cleared by the shutdown: %+v", m)
+	}
+	if f.sup.historyExists(b) {
+		t.Fatal("b started while serve was shutting down")
+	}
+}
+
 // A notice to a lease still starting waits for its stdin rather than
 // falling back to the file the new process has already read.
 func TestNotifyWaitsForStartingChild(t *testing.T) {

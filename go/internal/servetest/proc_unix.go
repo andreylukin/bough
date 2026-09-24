@@ -17,3 +17,6 @@ func setProcessGroup(cmd *exec.Cmd) {
 func terminate(cmd *exec.Cmd) { cmd.Process.Signal(syscall.SIGTERM) }
 
 func killGroup(cmd *exec.Cmd) { syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+
+// groupAlive: signal 0 to the group reaches any member still running.
+func groupAlive(cmd *exec.Cmd) bool { return syscall.Kill(-cmd.Process.Pid, 0) == nil }

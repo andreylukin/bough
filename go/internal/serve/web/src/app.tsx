@@ -721,7 +721,11 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
       <Fragment key={r.id}>
       <div className={"session" + (child ? " session-child" : "")}>
         <div className={"row-wrap" + (open ? " row-open" : "")}>
-          <button role="treeitem" onClick={() => onSelect(r.id)} data-id={r.id}
+          {/* data-live: a process holds the session. Nothing draws it, but a
+              done row with a child and one without read the same, and the
+              restart model test must tell them apart (a view or a
+              reconnect must never give a session a child). */}
+          <button role="treeitem" onClick={() => onSelect(r.id)} data-id={r.id} data-live={r.live ? "" : undefined}
                   draggable={movable || undefined}
                   onDragStart={movable ? (e) => { e.dataTransfer.setData(DRAG_SESSION, r.id); e.dataTransfer.effectAllowed = "move"; unpeek(); setDragging(r); } : undefined}
                   onDragEnd={movable ? () => { setDragging(null); setDropAt(null); } : undefined}

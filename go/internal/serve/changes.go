@@ -65,6 +65,14 @@ func Changes(ctx context.Context, dir string) (files []Change, ok bool) {
 // with an error instead of holding the request open.
 const changesTimeout = 5 * time.Second
 
+// readCtx bounds a git read by changesTimeout alone. The request's own
+// context ends when serve shuts down (it ends every request so event
+// streams let go), and a read cut short by a restart answered 504 "took
+// longer than 5s" to the page; Shutdown waits for a short read instead.
+func readCtx(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(r.Context()), changesTimeout)
+}
+
 // Seams for tests: each request runs its own git, with no shared lock.
 var (
 	changesOf    = Changes
@@ -77,7 +85,7 @@ func (a *API) changes(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: unknown session %q", r.PathValue("id")))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), changesTimeout)
+	ctx, cancel := readCtx(r)
 	defer cancel()
 	files, repo := changesOf(ctx, in.Cwd)
 	if ctx.Err() != nil {
@@ -279,7 +287,7 @@ func (a *API) edits(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, fmt.Errorf("serve: api: read session %q: %w", id, err))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), changesTimeout)
+	ctx, cancel := readCtx(r)
 	defer cancel()
 	var files []Edit
 	var repo bool

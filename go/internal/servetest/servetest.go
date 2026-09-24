@@ -61,11 +61,90 @@ type Server struct {
 	Root  string // the temp dir everything below lives in
 	Home  string // $HOME for the server and its sessions
 
+	// cmd and exited are the current process: Shutdown and Resume replace
+	// them, so a test that restarts serve calls those from one goroutine.
 	cmd    *exec.Cmd
+	bin    string
+	opts   Options
 	out    *safeBuf
 	exited chan struct{}
 	close  sync.Once
 	client *http.Client
+}
+
+// launch starts serve from bin on s's HOME and address.
+func (s *Server) launch(bin string) error {
+	cmd := exec.Command(bin, "serve", "--run", s.Addr)
+	cmd.Dir = s.Home
+	cmd.Env = childEnv(s.Home, s.opts.Env)
+	cmd.Stdout, cmd.Stderr = s.out, s.out
+	setProcessGroup(cmd)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("servetest: start %s: %w", bin, err)
+	}
+	exited := make(chan struct{})
+	go func() { cmd.Wait(); close(exited) }()
+	s.cmd, s.bin, s.exited = cmd, bin, exited
+	return nil
+}
+
+// Shutdown stops serve the way launchd or `bough update` does, with
+// SIGTERM, and waits for it; its HOME, port and token stay for Resume.
+// A serve still up after 5s is killed with its whole process group.
+func (s *Server) Shutdown() {
+	select {
+	case <-s.exited:
+		return
+	default:
+	}
+	terminate(s.cmd)
+	select {
+	case <-s.exited:
+	case <-time.After(5 * time.Second):
+		killGroup(s.cmd)
+		<-s.exited
+	}
+}
+
+// Resume starts serve again on the same HOME and address after Shutdown,
+// from bin ("" is the binary it last ran), and waits for it to answer.
+// A restart test uses a copy of the binary as the "new build".
+func (s *Server) Resume(bin string) error {
+	if bin == "" {
+		bin = s.bin
+	}
+	if err := s.launch(bin); err != nil {
+		return err
+	}
+	return s.waitReady(s.opts.ReadyTimeout)
+}
+
+// Bin is the binary the current (or last) serve process runs.
+func (s *Server) Bin() string { return s.bin }
+
+// GroupAlive says whether anything in the last serve's process group is
+// still running: serve itself, or a session child it started (children
+// stay in serve's group). After Shutdown it is the "no child outlives
+// serve" check.
+func (s *Server) GroupAlive() bool { return groupAlive(s.cmd) }
+
+// Build is GET /api/health's X-Bough-Build header: the build answering.
+func (s *Server) Build(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.URL+"/api/health", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+s.Token)
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", &APIError{Status: resp.StatusCode, Msg: resp.Status}
+	}
+	return resp.Header.Get(serve.BuildHeader), nil
 }
 
 var (
@@ -176,22 +255,13 @@ func start(t testing.TB, bin string, opts Options) (*Server, error) {
 		return nil, err
 	}
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-
-	cmd := exec.Command(bin, "serve", "--run", addr)
-	cmd.Dir = home
-	cmd.Env = childEnv(home, opts.Env)
-	out := &safeBuf{}
-	cmd.Stdout, cmd.Stderr = out, out
-	setProcessGroup(cmd)
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("servetest: start %s: %w", bin, err)
-	}
 	s := &Server{
 		URL: "http://" + addr, Addr: addr, Root: root, Home: home,
-		cmd: cmd, out: out, exited: make(chan struct{}),
-		client: &http.Client{},
+		out: &safeBuf{}, client: &http.Client{}, opts: opts,
 	}
-	go func() { cmd.Wait(); close(s.exited) }()
+	if err := s.launch(bin); err != nil {
+		return nil, err
+	}
 	// Registered after the root's removal, so it runs first: the
 	// process is gone before its HOME is deleted under it.
 	t.Cleanup(func() {
@@ -257,22 +327,7 @@ func (s *Server) waitReady(timeout time.Duration) error {
 // Close stops the server: SIGTERM, which has serve end its sessions,
 // then SIGKILL to the whole process group if it has not exited in 5s.
 // Idempotent. It deletes nothing; the temp root goes with the test.
-func (s *Server) Close() {
-	s.close.Do(func() {
-		select {
-		case <-s.exited:
-			return
-		default:
-		}
-		terminate(s.cmd)
-		select {
-		case <-s.exited:
-		case <-time.After(5 * time.Second):
-			killGroup(s.cmd)
-			<-s.exited
-		}
-	})
-}
+func (s *Server) Close() { s.close.Do(s.Shutdown) }
 
 // Output is everything the server wrote to stdout and stderr so far.
 func (s *Server) Output() string { return s.out.String() }
@@ -416,6 +471,31 @@ func (s *Server) Effort(ctx context.Context, id, level string) error {
 // PID is the serve process's pid; its session children are its own
 // children, which a test that pauses one finds through it.
 func (s *Server) PID() int { return s.cmd.Process.Pid }
+
+// Rename is POST /api/sessions/{id}/rename.
+func (s *Server) Rename(ctx context.Context, id, title string) error {
+	return s.do(ctx, http.MethodPost, "/api/sessions/"+url.PathEscape(id)+"/rename", map[string]string{"title": title}, nil)
+}
+
+// Answer is POST /api/sessions/{id}/answer: the reply to a pending ask.
+func (s *Server) Answer(ctx context.Context, id, text string) error {
+	return s.do(ctx, http.MethodPost, "/api/sessions/"+url.PathEscape(id)+"/answer", map[string]string{"text": text}, nil)
+}
+
+// CreateAgent is POST /api/sessions with spawnedBy: parent starting a
+// background agent on prompt, as tools.spawn({background}) does.
+// maxRunning is the running cap the request sets (0 = serve's default);
+// queued says it waits behind that cap.
+func (s *Server) CreateAgent(ctx context.Context, parent, prompt string, maxRunning, maxPerSession int) (row serve.Row, queued bool, err error) {
+	var r struct {
+		Session serve.Row `json:"session"`
+		Queued  bool      `json:"queued"`
+	}
+	err = s.do(ctx, http.MethodPost, "/api/sessions", map[string]any{
+		"spawnedBy": parent, "prompt": prompt, "maxRunning": maxRunning, "maxPerSession": maxPerSession,
+	}, &r)
+	return r.Session, r.Queued, err
+}
 
 // Stop is POST /api/sessions/{id}/stop, the Work panel's stop. It
 // answers what the session was: "running", "queued" or "idle".

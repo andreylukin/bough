@@ -49,6 +49,14 @@ export interface Serve {
   newSession(prompt?: string): Promise<string>;
   /** SIGTERM, SIGKILL after 3s, remove HOME. Idempotent. */
   stop(): Promise<void>;
+  /** The binary the current (or last) serve process runs. */
+  bin(): string;
+  /** SIGTERM and wait, as launchd or `bough update` stop it (SIGKILL
+   *  after 5s); HOME, port and token stay for resume. */
+  shutdown(): Promise<void>;
+  /** Start serve again on the same HOME and port after shutdown, from
+   *  bin (default: the one it last ran), and wait until it answers. */
+  resume(bin?: string): Promise<void>;
 }
 
 const echoConfig = '- id: llm\n  plugin: llm-echo\n';
@@ -85,29 +93,69 @@ export async function startServe(
 
   const port = await freePort();
   const url = `http://127.0.0.1:${port}`;
-  // cwd = HOME, which has no ./bough.yml, so ~/.bough/bough.yml is the one in force.
-  const child: ChildProcess = spawn(boughBin, ['serve', '--run', `127.0.0.1:${port}`], { cwd: home, env: hermeticEnv(home, opts.env) });
   const chunks: string[] = [];
-  child.stdout?.on('data', (d) => chunks.push(String(d)));
-  child.stderr?.on('data', (d) => chunks.push(String(d)));
-  const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
   const output = () => chunks.join('');
+  // A restart spawns serve again on the same HOME and port: the child,
+  // its exit and its binary are whichever process is current.
+  let child!: ChildProcess;
+  let exited!: Promise<void>;
+  let bin = boughBin;
+  const launch = (b: string) => {
+    // cwd = HOME, which has no ./bough.yml, so ~/.bough/bough.yml is the one in force.
+    const c = spawn(b, ['serve', '--run', `127.0.0.1:${port}`], { cwd: home, env: hermeticEnv(home, opts.env) });
+    c.stdout?.on('data', (d) => chunks.push(String(d)));
+    c.stderr?.on('data', (d) => chunks.push(String(d)));
+    exited = new Promise<void>((resolve) => c.once('exit', () => resolve()));
+    child = c;
+    bin = b;
+  };
+  const alive = () => child.exitCode === null && child.signalCode === null;
+  const terminate = async (graceMs: number) => {
+    if (!alive()) return;
+    const t = setTimeout(() => child.kill('SIGKILL'), graceMs);
+    child.kill('SIGTERM');
+    await exited;
+    clearTimeout(t);
+  };
+  launch(boughBin);
 
   const api = await newRequest({ baseURL: url, extraHTTPHeaders: { Authorization: `Bearer ${token}`, Origin: url } });
   let stopped: Promise<void> | undefined;
   const stop = () => (stopped ??= (async () => {
     await api.dispose();
-    if (child.exitCode === null && child.signalCode === null) {
-      const t = setTimeout(() => child.kill('SIGKILL'), 3000);
-      child.kill('SIGTERM');
-      await exited;
-      clearTimeout(t);
-    }
+    await terminate(3000);
     fs.rmSync(home, { recursive: true, force: true });
   })());
 
+  const readyMs = opts.readyTimeoutMs ?? 15_000;
+  // undefined once serve answers /api/health, else why it did not.
+  const waitReady = async (): Promise<string | undefined> => {
+    const deadline = Date.now() + readyMs;
+    let last = '';
+    for (;;) {
+      if (!alive()) return `bough serve exited (${child.exitCode ?? child.signalCode}) before it was ready:\n${output()}`;
+      try {
+        const res = await api.get('/api/health', { timeout: 1000 });
+        if (res.status() === 200) return undefined;
+        last = `health ${res.status()}`;
+      } catch (e) {
+        last = String(e);
+      }
+      if (Date.now() > deadline) return `bough serve not ready after ${readyMs}ms (${last}):\n${output()}`;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
+
   const s: Serve = {
-    url, port, pid: child.pid ?? 0, home, work, token, api, output, stop,
+    url, port, get pid() { return child.pid ?? 0; }, home, work, token, api, output, stop,
+    bin: () => bin,
+    shutdown: () => terminate(5000),
+    resume: async (b?: string) => {
+      if (alive()) throw new Error('serve: resume while serve is still running');
+      launch(b ?? bin);
+      const err = await waitReady();
+      if (err) throw new Error(err);
+    },
     newSession: async (prompt = '') => {
       const res = await api.post('/api/sessions', { data: { cwd: work, prompt } });
       if (!res.ok()) throw new Error(`serve: create session: ${res.status()} ${await res.text()}`);
@@ -115,26 +163,12 @@ export async function startServe(
     },
   };
 
-  const deadline = Date.now() + (opts.readyTimeoutMs ?? 15_000);
-  let last = '';
-  for (;;) {
-    if (child.exitCode !== null || child.signalCode !== null) {
-      await stop();
-      throw new Error(`bough serve exited (${child.exitCode ?? child.signalCode}) before it was ready:\n${output()}`);
-    }
-    try {
-      const res = await api.get('/api/health', { timeout: 1000 });
-      if (res.status() === 200) return s;
-      last = `health ${res.status()}`;
-    } catch (e) {
-      last = String(e);
-    }
-    if (Date.now() > deadline) {
-      await stop();
-      throw new Error(`bough serve not ready after ${opts.readyTimeoutMs ?? 15_000}ms (${last}):\n${output()}`);
-    }
-    await new Promise((r) => setTimeout(r, 50));
+  const err = await waitReady();
+  if (err) {
+    await stop();
+    throw new Error(err);
   }
+  return s;
 }
 
 /** The cookie serve sets on a GET of "/", set before any navigation. */
