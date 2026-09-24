@@ -95,7 +95,9 @@ const mbtPort = 50051
 // the process dies.
 func lockMBT(t *testing.T) {
 	t.Helper()
-	f, err := os.OpenFile(filepath.Join(os.TempDir(), "bough-fizz-mbt-50051.lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	// Not os.TempDir(): the port is machine-wide, and two runs with their
+	// own TMPDIR each took "the" lock and collided on 50051.
+	f, err := os.OpenFile("/tmp/bough-fizz-mbt-50051.lock", os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,9 +117,17 @@ func startGraphServer(t *testing.T, runDir string) {
 	t.Helper()
 	_, server := fizzTools(t)
 	addr := fmt.Sprintf("127.0.0.1:%d", mbtPort)
-	if c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond); err == nil {
+	// A checkout whose harness still locks under its own TMPDIR holds
+	// the port without this lock: wait it out rather than fail.
+	for deadline := time.Now().Add(10 * time.Minute); ; time.Sleep(time.Second) {
+		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err != nil {
+			break
+		}
 		c.Close()
-		t.Fatalf("port %d is already taken by something that is not holding the MBT lock", mbtPort)
+		if time.Now().After(deadline) {
+			t.Fatalf("port %d is still taken by something that is not holding the MBT lock", mbtPort)
+		}
 	}
 	var out bytes.Buffer
 	cmd := exec.Command(server, "--port", fmt.Sprint(mbtPort), "--states_file", runDir+"/")
