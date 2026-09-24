@@ -663,11 +663,11 @@ func turnLifecycleHistory(entries []history.Entry) []tracecheck.Step {
 	add := func(action string, state map[string]any) {
 		steps = append(steps, tracecheck.Step{Action: "Session#0." + action, State: state})
 	}
-	var open, failed, sent, behind, rec bool
+	var open, failed, sent, behind, rec, ended bool
 	catchUp := func() {
 		if behind {
 			add("CatchUp", nil)
-			behind, rec = false, false
+			behind, rec, ended = false, false, false
 		}
 	}
 	for i, e := range entries {
@@ -691,18 +691,21 @@ func turnLifecycleHistory(entries []history.Entry) []tracecheck.Step {
 			// Reply's entry is followed by its failed call; a Finish's
 			// reply is the turn's last word.
 			if i+1 < len(entries) && entries[i+1].Kind == "call" && entries[i+1].Data["error"] != nil {
+				if ended {
+					catchUp()
+				}
 				add("Delta", nil)
 				add("Reply", nil)
 				behind, rec = true, true
 			}
 		case "call":
 			if e.Data["error"] == nil {
-				if rec {
+				if rec || ended {
 					catchUp()
 				}
 				add("NativeCall", nil)
 				add("CallEnd", nil)
-				behind = true
+				behind, ended = true, true
 			}
 		case "error":
 			failed = true
@@ -711,20 +714,43 @@ func turnLifecycleHistory(entries []history.Entry) []tracecheck.Step {
 				continue
 			}
 			if failed {
-				if rec {
+				if rec || ended {
 					catchUp()
 				}
 				add("Fail", status("error"))
 			} else {
 				add("Finish", status("done"))
 			}
-			open, behind, rec = false, true, false
+			open, behind, rec, ended = false, true, false, false
 		}
 	}
 	return steps
 }
 
 func init() { historyProjections["turn_lifecycle"] = turnLifecycleHistory }
+
+// After a native call's end is recorded its running row stands until a
+// catch-up, and no text streams, no call starts and no turn fails before
+// it: the projection must put that CatchUp back. The exhaustive walk
+// (MODEL_COVER=transitions) found the reply case.
+func TestTurnLifecycleHistoryAfterCallEnd(t *testing.T) {
+	t.Parallel()
+	g, err := tracecheck.Load(filepath.Join(filepath.Dir(specPath("turn_lifecycle")), "..", "testdata", "turn_lifecycle"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok := history.Entry{Kind: "call", Data: map[string]any{"id": "c1"}}
+	reply := []history.Entry{{Kind: "assistant"}, {Kind: "call", Data: map[string]any{"error": "no such tool"}}}
+	for name, turn := range map[string][]history.Entry{
+		"reply": append([]history.Entry{ok}, reply...),
+		"call":  {ok, ok},
+		"fail":  {ok, {Kind: "error"}},
+	} {
+		entries := append([]history.Entry{{Kind: "input"}}, turn...)
+		entries = append(entries, history.Entry{Kind: "done"})
+		t.Run(name, func(t *testing.T) { checkHistory(t, g, entries, turnLifecycleHistory) })
+	}
+}
 
 // The fizzbee-mbt runner picks each next action at random among all
 // fourteen, enabled or not, and stops checking a walk at the first
