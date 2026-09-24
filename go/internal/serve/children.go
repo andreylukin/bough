@@ -329,6 +329,12 @@ func (s *Supervisor) childEventLocked(id, kind string, extra map[string]any) {
 		}
 		// Not "error": the loop writes it MID-turn, several per turn.
 		delete(s.running, id)
+		if s.closed {
+			// Close killed it: the turn is interrupted, not stopped, and
+			// the restart shows it so. A report here raced serve's own
+			// exit and wrote meta.json after Close returned.
+			return
+		}
 		go s.report(id, m.SpawnedBy, kind)
 		go s.drainQueue()
 	}
