@@ -59,6 +59,36 @@ func TestSettleAdoptsThenWakes(t *testing.T) {
 	})
 }
 
+// A turn that closes while a job adopted by an earlier turn still runs
+// says so in done{jobs}: its reply is final, yet the session is still
+// working, and serve keeps a background agent's running slot on it.
+// The job's wake turn closes with none left.
+func TestDoneCountsOlderJobs(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRigWith(t, []rigOpt{settle(200 * time.Millisecond)},
+			fake.Step{Want: "serve", Output: []ullmItem{fake.Call("h1", "hold", `{"text":"npm run dev"}`)}},
+			fake.Step{Want: "again", Output: []ullmItem{fake.Text("still serving")}},
+			fake.Step{Want: "held and released", Output: []ullmItem{fake.Text("the server stopped")}},
+		)
+		r.rt.Submit("serve it")
+		r.waitDone(1)
+		if d := r.last("done"); d.Data["running"] != 1 || d.Data["jobs"] != nil {
+			t.Fatalf("adopting done %v\n%s", d.Data, r.dump())
+		}
+		r.rt.Submit("again")
+		r.waitDone(2)
+		if d := r.last("done"); d.Data["running"] != nil || d.Data["jobs"] != 1 {
+			t.Fatalf("done beside a running job %v\n%s", d.Data, r.dump())
+		}
+		close(r.kit.release)
+		r.waitDone(3)
+		if d := r.last("done"); d.Data["wake"] != true || d.Data["jobs"] != nil {
+			t.Fatalf("wake done %v\n%s", d.Data, r.dump())
+		}
+	})
+}
+
 // A provider error is a turn-level failure: error then done{stop:error},
 // and Run survives it, so the next input works.
 func TestProviderErrorKeepsRunAlive(t *testing.T) {

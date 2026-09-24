@@ -1041,6 +1041,18 @@ func (a *actorState) doneData(running int, stop string) map[string]any {
 	if running > 0 {
 		data["running"] = running
 	}
+	// Jobs earlier turns adopted that still run: this close is final,
+	// but the session is not done working, and serve keeps a background
+	// agent's running slot until they end.
+	jobs := -running
+	for id, ad := range a.adopted {
+		if _, out := a.m.Outstanding[id]; out && !ad.ended {
+			jobs++
+		}
+	}
+	if jobs > 0 {
+		data["jobs"] = jobs
+	}
 	if a.wake {
 		data["wake"] = true
 	}
