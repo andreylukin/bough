@@ -4907,6 +4907,10 @@ export default function App() {
   const STARTING_MS = 120_000;
   const [paused, setPaused] = useState<number | undefined>(undefined);
   const [loadTry, setLoadTry] = useState(0);
+  // The session whose last read failed (not found, or could not load).
+  // A failure is not an answer to keep: coming back to its link asks
+  // again, where the same selection alone would not re-read it.
+  const failedLookup = useRef<string | null>(null);
   const retryRef = useRef<() => void>(() => {});
   useEffect(() => { lastSeq.current = lines.length ? lines[lines.length - 1].seq : 0; }, [lines]);
   // Live fragments of the reply being written, newest last. Never
@@ -5035,6 +5039,7 @@ export default function App() {
     api.session(selected).then((r) => {
       if (!live) return;
       created.current.delete(selected);
+      failedLookup.current = null;
       setStarting(false);
       setLines(r.entries);
       setLoadedFor(selected);
@@ -5051,6 +5056,7 @@ export default function App() {
         return;
       }
       setStarting(false);
+      failedLookup.current = selected;
       setLoadFail(e instanceof Error ? e.message : String(e)); setMissing(gone);
     });
 
@@ -5236,6 +5242,7 @@ export default function App() {
       if (wr) { setLost(null); setView("wiki"); setWikiRoute(wr); setSub(null); setPane("thread"); return; }
       const m = /^s\/([^/]+)\/?(context|changes|portal)?(?:\?.*)?$/.exec(h);
       if (m) {
+        if (failedLookup.current === m[1]) setLoadTry((n) => n + 1);
         setView("sessions"); setSelected(m[1]); setSub((m[2] as "context" | "changes" | "portal" | undefined) ?? null); setPane("thread");
       } else if (h === "") {
         // No session named: on a phone that is the list. The thread pane
