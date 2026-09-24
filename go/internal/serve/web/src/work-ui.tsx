@@ -343,7 +343,9 @@ export function useChildren(row: Row, rows: Row[], tick: number): { children: Ro
   const [nonce, setNonce] = useState(0);
   const sig = `${row.agents?.running ?? 0}:${row.agents?.queued ?? 0}:${row.agents?.total ?? 0}:${tick}`;
   useEffect(() => {
-    if (!has) { setState("idle"); return; }
+    // No agents left (Stop and archive drops a queued one outright): the
+    // last list must go too, or Work kept counting an agent that is gone.
+    if (!has) { setChildren(null); setState("idle"); return; }
     let on = true;
     const t = setTimeout(() => {
       api.children(row.id)
