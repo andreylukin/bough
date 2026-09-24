@@ -1,0 +1,230 @@
+---
+# The child's turn ends (Finish) or waits on a person who never comes
+# back: a quiet session with nothing left to do is rest, not deadlock.
+deadlock_detection: false
+---
+
+# Answer delivery races (recipe: go/tests/model/README.md). ask_answer.fizz
+# has one client with one POST in flight and arms a question in the same
+# step the child asks it. This flow takes both apart: the question is
+# armed by serve's stdout pump some time after the child asked it, two
+# clients (two tabs, a retry, the CLI) answer the same question, and a
+# person's /prompt can land in the gap.
+#
+# One question lives in three places here:
+#   open    the child's Asker (plugins/ask putIn) and headless hlAsk,
+#           set in one step when the child asks (headless.go:204-207).
+#   out     the child's stdout not yet read by serve's pump, in order:
+#           "A"/"B" (an ask event), "endA"/"endB" (the ask call ended,
+#           answered or timed out).
+#   armed   serve's s.asks[id] (supervisor.go emitLocked:903-919), set
+#           and cleared only as the pump reads `out`.
+# The page shows `open`: history records the ask before the event is
+# emitted (ask.go:126-140), so a poll can show a question serve has not
+# armed yet, and a click then is refused. A page that polled late is not
+# a field: its click is an older request still in flight (tab0/tab1).
+# A is a plain question, B (asked after A returns) a secret. tab0 answers
+# whichever question is open; tab1 is the second answerer of A (another
+# tab, a retry, the CLI) and never answers B, which keeps the graph near
+# 1500 states.
+#
+# pipe is the child's stdin, oldest first: "ansA"/"ansB" (an answer line
+# serve wrote for that question) or "prompt". tab0/tab1 is each tab's
+# POST /answer in flight ("" none, else the question it names), prompt
+# the one /prompt in flight (at most one per walk, `prompted`).
+#
+# THIS SPEC IS THE CONTRACT, NOT TODAY'S CODE. It assumes two things
+# the product does not do yet (findings, see the notes of the run that
+# wrote it):
+#   1. Supervisor.Answer checks the arm, writes the line and removes
+#      that arm under one critical section (answer below). Today the
+#      id check (api.go:427), PendingAsk, the write and an unconditional
+#      delete(s.asks, id) are four separate steps (supervisor.go:1017-
+#      1047).
+#   2. stdin lines are typed: an answer line names its ask id and the
+#      child hands it only to that open ask, dropping it otherwise; a
+#      prompt line is never an answer (ReadLine below). Today
+#      hlAnswerPending gives any line to whatever ask is open
+#      (headless.go:368-409, 474-495), and a line that arrives with none
+#      open is a steer or a new turn.
+# The flags at the bottom are what history would betray, sticky once
+# set; the contract never sets them, and each invariant was shown to
+# fail under a one-step mutation back towards today's code.
+
+role Session:
+    # The turn is already running: the prompt that started it is not
+    # what this flow is about.
+    action Init:
+        self.status = "running"
+        self.asked = 0
+        self.open = ""
+        self.out = []
+        self.armed = ""
+        self.pipe = []
+        self.tab0 = ""
+        self.tab1 = ""
+        self.prompt = False
+        self.prompted = False
+        self.wrote = []
+        self.dupWrite = False
+        self.unarmedWrite = False
+        self.wrongDisarm = False
+        self.promptEaten = False
+        self.answerAsPrompt = False
+        self.secretLeak = False
+
+    # tools.ask: history gets the question, the child's stdin router
+    # takes the next answer line for it, and the event is queued on
+    # stdout for serve to arm later.
+    atomic action AskA:
+        require self.status == "running" and self.open == "" and self.asked == 0
+        self.asked = 1
+        self.open = "A"
+        self.out = self.out + ["A"]
+
+    # tools.secret, after A returned (answered or timed out).
+    atomic action AskB:
+        require self.status == "running" and self.open == "" and self.asked == 1
+        self.asked = 2
+        self.open = "B"
+        self.out = self.out + ["B"]
+
+    # The ask times out with no answer: the call ends, the event follows.
+    atomic fair action Timeout:
+        require self.open != ""
+        self.out = self.out + ["end" + self.open]
+        self.open = ""
+
+    # The turn ends after B returned. Its "done" event would disarm too
+    # (emitLocked), but B's end is already ahead of it on stdout, so it
+    # is left out of `out`.
+    atomic fair action Finish:
+        require self.status == "running" and self.open == "" and self.asked == 2
+        self.status = "done"
+
+    # serve's pump reads one stdout line (emitLocked).
+    atomic fair action ArmFromEvent:
+        require len(self.out) > 0
+        ev = self.out[0]
+        self.out = self.out[1:]
+        if ev == "A" or ev == "B":
+            self.armed = ev
+        elif ev == "end" + self.armed:
+            self.armed = ""
+
+    # The child reads one stdin line and routes it by its type: a
+    # prompt goes to the turn (a steer, or a new turn) even with an ask
+    # open, an answer to the ask it names if that one is still open, and
+    # is dropped otherwise (the ask it answered timed out meanwhile).
+    atomic fair action ReadLine:
+        require len(self.pipe) > 0
+        line = self.pipe[0]
+        self.pipe = self.pipe[1:]
+        if line == "prompt":
+            to = "turn"
+        elif line == "ans" + self.open:
+            to = self.open
+        else:
+            to = "drop"
+        self.take(line, to)
+
+    # A tab answers the question it shows: POST /answer {ask}.
+    atomic action ClickTab0:
+        require self.tab0 == "" and self.open != ""
+        self.tab0 = self.open
+
+    atomic action ClickTab1:
+        require self.tab1 == "" and self.open == "A"
+        self.tab1 = "A"
+
+    # serve handles a tab's POST.
+    atomic fair action DeliverTab0:
+        require self.tab0 != ""
+        self.answer(self.tab0)
+        self.tab0 = ""
+
+    atomic fair action DeliverTab1:
+        require self.tab1 != ""
+        self.answer(self.tab1)
+        self.tab1 = ""
+
+    # The person sends a message: POST /prompt.
+    atomic action SendPrompt:
+        require not self.prompted and self.status == "running"
+        self.prompted = True
+        self.prompt = True
+
+    # api.go prompt: 409 while an ask is armed, else Send writes it.
+    atomic fair action DeliverPrompt:
+        require self.prompt
+        self.prompt = False
+        if self.armed == "":
+            self.pipe = self.pipe + ["prompt"]
+
+    # Supervisor.Answer as the contract has it: the arm is checked, the
+    # line written and that arm removed in one step; anything else is a
+    # 409 and writes nothing.
+    atomic func answer(q):
+        if self.armed == q:
+            self.write(q)
+            self.disarm(q)
+
+    # The child acts on a line: `to` is the open ask it answered, the
+    # turn, or nowhere. An answered ask returns and its call's end
+    # follows on stdout.
+    atomic func take(line, to):
+        if to == "A" or to == "B":
+            if line == "prompt":
+                self.promptEaten = True
+            self.open = ""
+            self.out = self.out + ["end" + to]
+        if to == "turn" and line != "prompt":
+            self.answerAsPrompt = True
+        if line == "ansB" and to != "B" and to != "drop":
+            self.secretLeak = True
+
+    atomic func write(q):
+        if self.armed != q:
+            self.unarmedWrite = True
+        if q in self.wrote:
+            self.dupWrite = True
+        self.wrote = self.wrote + [q]
+        self.pipe = self.pipe + ["ans" + q]
+
+    atomic func disarm(q):
+        if self.armed != q and self.armed != "":
+            self.wrongDisarm = True
+        self.armed = ""
+
+action Init:
+    session = Session()
+
+# At most one answer line per ask id: a second /answer for the same
+# question (another tab, a retry, the CLI) is a 409.
+always assertion AnswerOncePerAsk:
+    return not session.dupWrite
+
+# POST /answer {ask: X} writes only while X is armed at the write.
+always assertion AnswerOnlyWhileArmed:
+    return not session.unarmedWrite
+
+# Answer's disarm removes only the ask it answered, never a newer one.
+always assertion DisarmOnlyOwn:
+    return not session.wrongDisarm
+
+# A /prompt is never consumed as an answer, and an answer line is never
+# read as a prompt or steer.
+always assertion PromptAndAnswerApart:
+    return not session.promptEaten and not session.answerAsPrompt
+
+# The secret's answer reaches the child only as the secret's answer.
+always assertion SecretOnlyAsItsAnswer:
+    return not session.secretLeak
+
+# serve's arm catches up with the child's open question.
+always eventually assertion ArmMatchesOpen:
+    return session.armed == session.open
+
+# Every armed question eventually leaves needs-you.
+always eventually assertion ArmClears:
+    return session.armed == ""
