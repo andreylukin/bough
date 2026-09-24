@@ -1,0 +1,278 @@
+---
+deadlock_detection: false
+---
+
+# (Terminal states are real: the child exited after its one respawn.)
+# An open tools.ask across a ui/ask row remount (hot reload, /model swap)
+# and across the child's exit and respawn. Recipe: go/tests/model/README.md.
+# The single-process, single-mount flow is ask_answer.fizz; this one
+# adds what that one takes as fixed: the Asker, the headless answer
+# router and the ask ids all belong to one mount of one process.
+#
+# Where each piece lives in the code:
+#   Asker    plugins/ask/ask.go: one per ask-row Apply. pending[id] holds
+#            the blocked call; ids are "ask-"+seq from a counter that
+#            starts at 0 in every Asker (putIn).
+#   router   plugins/ui/headless.go: hlAsk (the id the next stdin line
+#            answers, set by hlPrint on the "ask" event) and hlAnswer
+#            (the current mount's "ask-answers", nil between dispose and
+#            remount: runHeadless's disposer). hlAnswerPending clears
+#            hlAsk and calls hlAnswer.Answer(hlAsk.id, line).
+#   serve    internal/serve/supervisor.go s.asks (armed): set on "ask",
+#            cleared by Answer (after the stdin write) and by
+#            done/cancelled/error/exit/result/call. api.go answer
+#            refuses {ask} only when it names a different pending id.
+#   page     app.tsx: the composer draft and draftAsk, both kept in
+#            localStorage per session, so they survive a page reload;
+#            askChanged = draftAsk !== row.ask.id holds Send back.
+#
+# Fields. alive: a child process. gen: which Asker is current (the ask
+# row's Apply count across processes). seq: that Asker's counter.
+# uiUp: the ui row is mounted (hlAnswer set). open/openId/openGen: the
+# ask call that is blocked, which Asker holds it. hlAsk: the router's
+# pending id. held: an answer line that reached the child in the gap
+# ("" | "ans" | "sec"), heldSrc the question it was written for. armed:
+# serve's arm. row/rowQ/rowSecret: the ask the page shows. draft/draftId:
+# the composer draft (the question it was written for) and its draftAsk.
+# used: every ask id this session's history has. q1 and q2 are the two
+# questions the model asks (each once), plain or secret.
+#
+# The last four fields are ghosts, sticky once set, for the invariants:
+# answerAsPrompt (an answer line reached the loop as user input),
+# secretAsInput (a secret did), dupId (an ask id repeated in history),
+# wrongAnswer (an answer written for one question answered another).
+#
+# THIS SPEC IS THE INTENDED BEHAVIOUR. The product differs in three
+# places (findings; each is the mutation that makes an invariant fail):
+#  1. Gap (Deliver with not uiUp): hlAnswerPending sees hlAnswer nil,
+#     drops hlAsk and returns false, so the line falls through to
+#     hlSubmit, which waits for the remount and sends it as a prompt.
+#     A secret too: `secret && hlAnswerPending` fails the same way.
+#     Intended: the line is held and handed to the remounted router,
+#     which answers the ask or refuses the line; never a prompt.
+#  2. ReloadAsk: the ask row's Apply has no effect for pending asks, so
+#     the blocked call keeps waiting on the old Asker. The ui row
+#     remounts with the new Asker, whose pending map is empty: the next
+#     answer is disarmed by serve, refused by the new Asker ("no pending
+#     ask") and lost, while the page still shows the question with
+#     nothing armed (409 on every retry) until the 10-minute timeout.
+#     Intended: disposing an Asker ends its open asks at once (the call
+#     returns an error, the call/result event disarms serve and clears
+#     the row), so the page is told.
+#  3. Ids: every Asker restarts at ask-1, both after ReloadAsk and in
+#     a respawned child. Intended: ids unique per session history
+#     (gen-qualified here). With reused ids a draft kept (localStorage)
+#     for the old ask-1 matches the new ask-1: askChanged is false, the
+#     api's id check passes, and it answers a different question.
+
+role Session:
+    action Init:
+        self.alive = True
+        self.gen = 1
+        self.seq = 0
+        self.reloads = 0
+        self.respawns = 0
+        self.uiUp = True
+        self.asked = 0
+        self.open = ""
+        self.openId = ""
+        self.openGen = 0
+        self.hlAsk = ""
+        self.held = ""
+        self.heldSrc = ""
+        self.armed = ""
+        self.row = ""
+        self.rowQ = ""
+        self.rowSecret = False
+        self.draft = ""
+        self.draftId = ""
+        self.used = []
+        self.answerAsPrompt = False
+        self.secretAsInput = False
+        self.dupId = False
+        self.wrongAnswer = False
+
+    # The model calls tools.ask / tools.secret. The event reaches the
+    # headless printer only while the ui row is mounted (a disposed
+    # mount's broadcaster stops publishing), so asks start with it up.
+    atomic action AskPlain:
+        require self.alive and self.uiUp and self.open == "" and self.held == "" and self.asked < 2
+        self.put(False)
+
+    atomic action AskSecret:
+        require self.alive and self.uiUp and self.open == "" and self.held == "" and self.asked < 2
+        self.put(True)
+
+    # Config hot reload of the ui row: dispose, then remount later. In
+    # between hlAnswer is nil.
+    atomic action ReloadUi:
+        require self.alive and self.uiUp
+        self.uiUp = False
+
+    atomic fair action RemountUi:
+        require self.alive and not self.uiUp
+        self.uiUp = True
+        if self.held != "":
+            self.route(self.heldSrc)
+            self.held = ""
+            self.heldSrc = ""
+
+    # The ask row remounts (a /model swap remounts rows that register
+    # tools on codemode; Park frees the VM for it during an ask). The ui
+    # row Gets "ask-answers", so it remounts too: a gap opens.
+    atomic action ReloadAsk:
+        require self.alive and self.uiUp and self.reloads < 1
+        self.reloads += 1
+        self.gen += 1
+        self.seq = 0
+        self.uiUp = False
+        if self.open != "":
+            # Intended: the disposed Asker cancels what it holds.
+            self.resolve()
+
+    # The person answers the question on screen through its own control
+    # (an option, the answer field, the secret field): POST /answer with
+    # the row's id.
+    atomic action Answer:
+        require self.alive and self.row != "" and self.armed == self.row
+        self.deliver(self.rowQ, self.rowSecret)
+
+    # Typing into the composer while a plain question is on screen
+    # starts an answer draft, keyed to that question's id (draftAsk).
+    atomic action TypeDraft:
+        require self.draft == "" and self.row != "" and not self.rowSecret
+        self.draft = self.rowQ
+        self.draftId = self.row
+
+    # askChanged note: "Use for this question" retargets the draft on
+    # the person's say-so.
+    atomic action UseForQuestion:
+        require self.draft != "" and self.row != "" and not self.rowSecret and self.draftId != self.row
+        self.draft = self.rowQ
+        self.draftId = self.row
+
+    # Send: only when askChanged is false; POST /answer {ask: draftId}.
+    atomic action SendDraft:
+        require self.draft != "" and self.alive and self.row != "" and self.draftId == self.row and self.armed == self.row
+        src = self.draft
+        self.draft = ""
+        self.draftId = ""
+        self.deliver(src, False)
+
+    # tools.ask's timeout: the call returns an error, the call/result
+    # event disarms serve and clears the row.
+    atomic fair action Timeout:
+        require self.alive and self.open != ""
+        self.resolve()
+
+    # The child exits (crash, restart) and a later prompt respawns it:
+    # a fresh process, a fresh ui mount and Asker. What was in flight in
+    # the old one (an open ask, a held line) is gone; the draft stays.
+    atomic action Exit:
+        require self.alive
+        self.alive = False
+        self.open = ""
+        self.openId = ""
+        self.openGen = 0
+        self.hlAsk = ""
+        self.held = ""
+        self.heldSrc = ""
+        self.armed = ""
+        self.row = ""
+        self.rowQ = ""
+        self.rowSecret = False
+        self.uiUp = True
+
+    atomic action Respawn:
+        require not self.alive and self.respawns < 1
+        self.respawns += 1
+        self.alive = True
+        self.gen += 1
+        self.seq = 0
+
+    atomic func put(secret):
+        self.asked += 1
+        self.seq += 1
+        id = "g" + str(self.gen) + "-ask-" + str(self.seq)
+        if id in self.used:
+            self.dupId = True
+        self.used = self.used + [id]
+        q = "q" + str(self.asked)
+        self.open = q
+        self.openId = id
+        self.openGen = self.gen
+        self.hlAsk = id
+        self.armed = id
+        self.row = id
+        self.rowQ = q
+        self.rowSecret = secret
+
+    # serve writes the line and disarms; the child reads it.
+    atomic func deliver(src, secret):
+        self.armed = ""
+        if not self.uiUp:
+            if secret:
+                self.held = "sec"
+            else:
+                self.held = "ans"
+            self.heldSrc = src
+        else:
+            self.route(src)
+
+    # hlAnswerPending: the current Asker answers the router's id, or the
+    # line is refused (an error line); either way hlAsk clears.
+    atomic func route(src):
+        if self.hlAsk != "" and self.hlAsk == self.openId and self.openGen == self.gen:
+            if src != self.open:
+                self.wrongAnswer = True
+            self.open = ""
+            self.openId = ""
+            self.openGen = 0
+            self.row = ""
+            self.rowQ = ""
+            self.rowSecret = False
+        self.hlAsk = ""
+
+    atomic func resolve():
+        self.open = ""
+        self.openId = ""
+        self.openGen = 0
+        self.hlAsk = ""
+        self.armed = ""
+        self.row = ""
+        self.rowQ = ""
+        self.rowSecret = False
+
+action Init:
+    session = Session()
+
+# An answer line is never submitted as a prompt: with no Asker to take
+# it, it is held or refused.
+always assertion AnswerNeverPrompt:
+    return not session.answerAsPrompt
+
+# A secret never becomes an input entry.
+always assertion SecretNeverInput:
+    return not session.secretAsInput
+
+# Ask ids are unique within a session's history, across remounts and
+# processes.
+always assertion AskIdsUnique:
+    return not session.dupId
+
+# A draft written for one ask answers that ask only.
+always assertion DraftReachesItsAsk:
+    return not session.wrongAnswer
+
+# The question on screen can still be answered: serve holds its arm, or
+# its answer is on its way (held in the gap, or already written).
+always assertion ShownAskAnswerable:
+    return session.row == "" or session.armed == session.row or session.held != ""
+
+# An ask that survives a remount is answered or ends (timeout, cancel,
+# exit), and a line held in the gap is handed on.
+always eventually assertion AskEnds:
+    return session.open == ""
+
+always eventually assertion HeldHandedOn:
+    return session.held == ""
