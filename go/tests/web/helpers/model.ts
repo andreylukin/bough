@@ -130,6 +130,12 @@ export function walkTest(spec: string): typeof test {
   return ((title: string, fn: Parameters<typeof test>[1]) => test.fixme(`${title} [quarantined: ${why}]`, fn)) as unknown as typeof test;
 }
 
+// Gaps between those reads. The first read usually lands before the page
+// has drawn the step (an ack or a stream event away), and expect.poll's
+// default 100/250/500/1000 ms backoff put most of a second on each such
+// step; the page redraws in a few ms.
+export const POLL_INTERVALS = [25, 50, 100, 250];
+
 /** One test per generated path of flow.spec. */
 export function modelTests<C>(flow: Flow<C>): void {
   const opts = { config: flow.config, env: flow.env };
@@ -178,7 +184,7 @@ export function modelTests<C>(flow: Flow<C>): void {
               const step = flow.pollStepMs ?? POLL_STEP_MS;
               if (step > 0) await page.clock.fastForward(step);
               return flow.read(c);
-            }, { message: `${where}: state`, timeout: 10_000 }).toEqual(roleState(flow.role, step.state));
+            }, { message: `${where}: state`, timeout: 10_000, intervals: POLL_INTERVALS }).toEqual(roleState(flow.role, step.state));
             await invariants(page, flow.status(c), errors, where);
             await flow.invariants?.(c, where);
             await flow.check?.(c, where);

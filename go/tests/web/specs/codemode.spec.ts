@@ -1,6 +1,6 @@
 // Codemode flows: js execution, result collapse, long-output scrolling.
 import { test, expect } from '../helpers/fixtures';
-import { boot, say, termText, vpText, waitForTermText } from '../helpers/term';
+import { boot, inputUntil, say, termText, vpText, waitForTermText } from '../helpers/term';
 
 test('CODE! runs the js block and shows code, result, and done separator', async ({ launchBough, page }) => {
   const b = await launchBough();
@@ -66,15 +66,10 @@ bough.setup({ provider: { default: "longp" } });
   await waitForTermText(page, 'LINE_200_END');
   // The viewport is bottom-pinned (the status bar previews LINE_1, so
   // the assertion is scoped to the transcript rows).
-  let vp = await vpText(page);
+  const vp = await vpText(page);
   expect(vp).not.toContain('LINE_1_END');
 
   // Page up until the first line comes into view.
-  let found = vp.includes('LINE_1_END');
-  for (let i = 0; i < 20 && !found; i++) {
-    await page.keyboard.press('PageUp');
-    await page.waitForTimeout(50);
-    found = (await vpText(page)).includes('LINE_1_END');
-  }
+  const found = await inputUntil(page, () => page.keyboard.press('PageUp'), 'LINE_1_END', 20);
   expect(found).toBe(true);
 });
