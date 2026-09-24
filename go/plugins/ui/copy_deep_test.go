@@ -50,8 +50,7 @@ func copyPayload(msgs []tea.Msg) (string, bool) {
 // callers must not use t.Parallel).
 func copyStub(t *testing.T, via []string) *[]string {
 	var got []string
-	writeClipboardNative = func(s string) []string { got = append(got, s); return via }
-	t.Cleanup(func() { writeClipboardNative = clipboardNative })
+	stubClipboard(t, func(s string) []string { got = append(got, s); return via })
 	return &got
 }
 
@@ -127,6 +126,7 @@ const copyWideSrc = "漢字かな🙂テスト 中文字符 👍 ok\n第二行 �
 // Wide runes: any selection edge (including mid-rune cells) copies
 // whole runes only, never U+FFFD or broken UTF-8.
 func TestCopyWideRunesNeverHalved(t *testing.T) {
+	t.Parallel()
 	rapid.Check(t, func(rt *rapid.T) {
 		d := defaultDrv(t)
 		d.event("assistant", copyWideSrc)

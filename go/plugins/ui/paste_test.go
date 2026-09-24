@@ -109,8 +109,7 @@ func TestPastedImagePathBecomesReference(t *testing.T) {
 // reply; the clipboard write goes by OSC 52 and the native tool, and
 // the flash names both.
 func TestCopyActionCopiesLastReplyRaw(t *testing.T) {
-	writeClipboardNative = func(string) []string { return []string{"stub"} }
-	t.Cleanup(func() { writeClipboardNative = clipboardNative })
+	stubClipboard(t, func(string) []string { return []string{"stub"} })
 	d := defaultDrv(t)
 	d.event("assistant", "**bold** reply that is long enough to wrap around the eighty column screen a few times over, surely")
 	d.event("assistant", "second")
@@ -136,8 +135,7 @@ func TestCopyActionCopiesLastReplyRaw(t *testing.T) {
 // With no native tool and a TERM without OSC 52 nothing took the text:
 // the flash says the copy failed instead of claiming OSC 52 did it.
 func TestCopyFlashFailsWithNoPath(t *testing.T) {
-	writeClipboardNative = func(string) []string { return nil }
-	t.Cleanup(func() { writeClipboardNative = clipboardNative })
+	stubClipboard(t, noClipboard)
 	t.Setenv("TERM", "linux")
 	d := defaultDrv(t)
 	d.event("assistant", "reply")
