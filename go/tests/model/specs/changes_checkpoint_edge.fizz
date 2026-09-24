@@ -21,8 +21,9 @@
 #   done     its done entry lists its file
 #   undone   /undo put its file back to its checkpoint ("undo" entry)
 # Turn 2 starts only once turn 1 is done or undone. /undo takes the last
-# done turn not undone and is refused while a turn runs (a refusal
-# changes nothing and is left out).
+# done turn not undone and is refused while a turn runs, and once the
+# cwd is gone, since there is no checkout to put its files back into
+# (a refusal changes nothing and is left out).
 #
 # fault is the one thing that goes wrong, at most once, never undone:
 #   none        healthy
@@ -252,6 +253,7 @@ role Page:
 
     atomic action Undo:
         require settled(self) and not running(self) and "done" in [self.t1, self.t2]
+        require self.fault != "cwd_gone"
         if self.t2 == "done":
             self.t2 = "undone"
         else:
