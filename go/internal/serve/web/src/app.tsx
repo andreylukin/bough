@@ -277,6 +277,11 @@ export function focusAppOnRoute(doc: Document) {
   doc.querySelector<HTMLElement>(".app")?.focus({ preventScroll: true });
 }
 
+/** A session's archive confirm, as askConfirm's arguments: safe, so it opens on Cancel. */
+export function archiveAsk(r: Row): [string, string, { action: string; safe: boolean }] {
+  return ["Archive this session?", `“${sessionTitle(r)}” leaves the list. It stays under Archived and can be restored.`, { action: "Archive", safe: true }];
+}
+
 /** Back and forward keep their slot with no history, so the icons after them never shift. */
 export function HistoryArrows({ back, forward }: { back: boolean; forward: boolean }) {
   const hide = !back && !forward;
@@ -5608,8 +5613,7 @@ export default function App() {
     if (r.archived) return act(async () => { await api.unarchive(r.id); mark(false); }, "unarchive");
     const n = (r.agents?.running ?? 0) + (r.agents?.queued ?? 0);
     if (n === 0) {
-      const ok = await askConfirm("Archive this session?", `“${sessionTitle(r)}” leaves the list. It stays under Archived and can be restored.`,
-        { action: "Archive", safe: true });
+      const ok = await askConfirm(...archiveAsk(r));
       return ok ? act(async () => { await api.archive(r.id); mark(true); }, "archive") : false;
     }
     const pick = await askChoice(`Archive ${sessionTitle(r)}?`,
