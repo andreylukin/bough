@@ -97,6 +97,8 @@ export interface Row {
   ask?: Ask;
   model?: string;
   effort?: string;
+  /** The session's own llm row while it still runs it (not serve's); gone once a model was set. */
+  configured?: { plugin: string; model: string; effort?: string };
   project?: string;
   /** Background jobs still running. */
   jobs?: Job[];
