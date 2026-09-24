@@ -420,11 +420,7 @@ func (a *API) answer(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, fmt.Errorf("serve: api: unknown session %q", id))
 		return
 	}
-	if p := a.sup.PendingAsk(id); body.Ask != "" && p != nil && p.ID != body.Ask {
-		writeErr(w, http.StatusConflict, fmt.Errorf("serve: api: session %q: that question expired; a newer one is pending", id))
-		return
-	}
-	if err := a.sup.Answer(id, body.Text); err != nil {
+	if err := a.sup.Answer(id, body.Ask, body.Text); err != nil {
 		writeErr(w, statusFor(err), fmt.Errorf("serve: api: session %q: %w", id, err))
 		return
 	}
@@ -824,7 +820,7 @@ func statusFor(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, ErrBadAnswer):
 		return http.StatusBadRequest
-	case errors.Is(err, ErrNoAsk), errors.Is(err, ErrArchived), errors.Is(err, ErrProjectExists), errors.Is(err, ErrProjectSession):
+	case errors.Is(err, ErrNoAsk), errors.Is(err, ErrAskExpired), errors.Is(err, ErrArchived), errors.Is(err, ErrProjectExists), errors.Is(err, ErrProjectSession):
 		return http.StatusConflict
 	case errors.Is(err, ErrUnknownProject):
 		return http.StatusNotFound
