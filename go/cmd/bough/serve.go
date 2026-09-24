@@ -131,16 +131,22 @@ func runningServe(home string) (webSession, bool) {
 		os.Remove(pf)
 		return webSession{}, false
 	}
-	return webSession{pid: pid, addr: addr, dir: dir, config: config, caps: caps}, true
+	var host string
+	if f := strings.Split(strings.TrimRight(string(b), "\n"), "\t"); len(f) > 4 {
+		host = f[4]
+	}
+	return webSession{pid: pid, addr: addr, dir: dir, config: config, caps: caps, host: host}, true
 }
 
-// writeServePidfile records "<pid> <addr>\t<cwd>\t<config>\t<caps>".
+// writeServePidfile records "<pid> <addr>\t<cwd>\t<config>\t<caps>\t<host>",
+// host being --host: restart brings serve back with it, or a proxied
+// install answers every request after an update with a 403.
 // A pidfile naming a live foreign pid is left alone: a second daemon
 // that fails to bind must not leave the file naming its own dead pid
 // while the first one serves on — and two supervisors would mean two
 // writers per session file. The returned cleanup (nil on failure)
 // removes the file on clean shutdown.
-func writeServePidfile(home, addr string) func() {
+func writeServePidfile(home, addr, host string) func() {
 	pf := servePidfile(home)
 	if b, err := os.ReadFile(pf); err == nil {
 		if pid, _, _, _, _, perr := parsePidfile(string(b)); perr == nil && pid != os.Getpid() && alive(pid) {
@@ -153,8 +159,8 @@ func writeServePidfile(home, addr string) func() {
 		return nil
 	}
 	dir, _ := os.Getwd()
-	if err := os.WriteFile(pf, fmt.Appendf(nil, "%d %s\t%s\t%s\t%s\n",
-		os.Getpid(), addr, dir, webConfig, ""), 0o644); err != nil {
+	if err := os.WriteFile(pf, fmt.Appendf(nil, "%d %s\t%s\t%s\t%s\t%s\n",
+		os.Getpid(), addr, dir, webConfig, "", host), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "bough serve: pidfile:", err)
 		return nil
 	}
@@ -347,7 +353,7 @@ func serveForeground(home, addr string, insecure bool, host string) error {
 	// sessions resolve; only the TUI path set this, so serve always said
 	// "(embedded)" even with a ~/.bough/bough.yml in force.
 	webConfig = resolveConfig(false, "").describe()
-	if done := writeServePidfile(home, addr); done != nil {
+	if done := writeServePidfile(home, addr, host); done != nil {
 		defer done()
 	}
 	rt, err := serveOrbRuntime(home)

@@ -108,7 +108,7 @@ func TestServePidfileRoundTrip(t *testing.T) {
 		t.Fatal("an empty HOME reports a running daemon")
 	}
 
-	done := writeServePidfile(home, "127.0.0.1:7684")
+	done := writeServePidfile(home, "127.0.0.1:7684", "room.test")
 	if done == nil {
 		t.Fatal("writeServePidfile refused to write into a clean HOME")
 	}
@@ -116,8 +116,8 @@ func TestServePidfileRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("the pidfile we just wrote is not read back")
 	}
-	if w.pid != os.Getpid() || w.addr != "127.0.0.1:7684" {
-		t.Fatalf("pidfile = pid %d addr %q", w.pid, w.addr)
+	if w.pid != os.Getpid() || w.addr != "127.0.0.1:7684" || w.host != "room.test" {
+		t.Fatalf("pidfile = pid %d addr %q host %q", w.pid, w.addr, w.host)
 	}
 	if cwd, _ := os.Getwd(); w.dir != cwd {
 		t.Errorf("dir = %q, want %q", w.dir, cwd)
@@ -175,7 +175,7 @@ func TestWriteServePidfileRefusesALiveForeignPid(t *testing.T) {
 	if err := os.WriteFile(pf, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if done := writeServePidfile(home, "127.0.0.1:7685"); done != nil {
+	if done := writeServePidfile(home, "127.0.0.1:7685", ""); done != nil {
 		t.Fatal("clobbered a live daemon's pidfile")
 	}
 	got, err := os.ReadFile(pf)
