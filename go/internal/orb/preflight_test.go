@@ -26,9 +26,21 @@ func TestPreflight(t *testing.T) {
 	}
 	os.MkdirAll(filepath.Join(home, "notgit"), 0o755)
 	origin := filepath.Join(home, "origin.git")
-	exec.Command("git", "init", "-q", "--bare", origin).Run()
-	exec.Command("git", "-C", repo, "commit", "-q", "--allow-empty", "-m", "x").Run()
-	exec.Command("git", "-C", repo, "push", "-q", origin, "HEAD:refs/heads/main").Run()
+	// -b main: ls-remote asks for HEAD, which a bare repo points at
+	// init.defaultBranch, master without a config (CI) and never pushed.
+	if out, err := exec.Command("git", "init", "-q", "--bare", "-b", "main", origin).CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	// An identity of its own: a CI runner has none, and an ignored
+	// failure here left origin empty.
+	for _, args := range [][]string{
+		{"-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "x"},
+		{"-C", repo, "push", "-q", origin, "HEAD:refs/heads/main"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatal(err, string(out))
+		}
+	}
 
 	// No gh login and the keychain items are TestMain's.
 	p := projectdef.Project{Slug: "p", Def: projectdef.Def{
