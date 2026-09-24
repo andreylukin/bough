@@ -26,6 +26,8 @@ deadlock_detection: false
 #   timer     a catch-up timer is armed (an event's 120 ms, or the backoff)
 #   behind    an event was recorded that no landed read has brought in
 #   paused    "Updates paused · Retry" is on screen
+#   recorded  an Event was recorded this walk: the ring replays a record
+#             to every new subscriber, and the page arms its catch-up on it
 #
 # Abstractions: one event at a time (an event arrives only with no timer
 # armed); the first read's answer does not clear `behind` (the event's own
@@ -44,6 +46,21 @@ deadlock_detection: false
 #   (the turn's final event) is the one that stays silent.
 # - a hung first read is left by leaving the thread; coming back (Open)
 #   reads again. On the thread itself there is no Retry.
+#
+# Corrections from the server walk (mbt/hung_transcript_test.go):
+# - opening the thread subscribes, and the ring replays the session's
+#   last records to the new EventSource; each arms the 120 ms catch-up.
+#   Open (and RetryFirst) arm the timer when the walk recorded an Event.
+#   Records from before the walk are outside the model.
+# - RetryFirst bumps loadTry, which re-runs the whole effect: the old
+#   run's catch-up and timer are dropped, `paused` is cleared, the lines
+#   start empty and the new first read is sent after every event so far,
+#   so nothing is behind until the next one.
+# - so "paused means behind" (PausedOnlyWhenBehind) does not hold: the
+#   catch-up the replay arms can fail with nothing behind, and "Updates
+#   paused" then shows over a transcript the first read will fill.
+#   Open, Event, CatchUpFire, CatchUpAnswers, Leave, Open, CatchUpFire,
+#   CatchUpFails. The claim is dropped; it is a false alarm, not a loss.
 #
 # The product does not meet the mapped claims; they are left out so the
 # check stays green, each with the counterexample fizz gave when it was
@@ -69,11 +86,13 @@ role Thread:
         self.timer = False
         self.behind = False
         self.paused = False
+        self.recorded = False
 
     atomic action Open:
         require not self.open
         self.open = True
         self.first = "out"
+        self.timer = self.recorded
 
     atomic action Leave:
         require self.open
@@ -96,16 +115,21 @@ role Thread:
         require self.first == "out"
         self.first = "hung"
 
-    # "Couldn't load this session · Retry" (setLoadTry).
+    # "Couldn't load this session · Retry" (setLoadTry): the effect again.
     atomic action RetryFirst:
         require self.first == "failed"
         self.first = "out"
+        self.catchup = "none"
+        self.timer = self.recorded
+        self.behind = False
+        self.paused = False
 
     # A recorded event on the open session's stream arms the catch-up.
     atomic action Event:
         require self.open and not self.timer
         self.timer = True
         self.behind = True
+        self.recorded = True
 
     atomic fair<strong> action CatchUpFire:
         require self.timer
@@ -148,10 +172,6 @@ always assertion PausedHasAWayOn:
 # its timer cleared, so nothing of it can pause or load later.
 always assertion ClosedThreadHoldsNothing:
     return thread.open or (thread.first == "none" and thread.catchup == "none" and not thread.timer and not thread.paused and not thread.behind)
-
-# Paused means behind: a failed catch-up left something unread.
-always assertion PausedOnlyWhenBehind:
-    return not thread.paused or thread.behind
 
 # A read that is out and not hung is answered or reported.
 always eventually assertion FirstReadSettles:
