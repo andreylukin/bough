@@ -94,7 +94,10 @@ func (s *Server) launch(bin string) error {
 
 // Shutdown stops serve the way launchd or `bough update` does, with
 // SIGTERM, and waits for it; its HOME, port and token stay for Resume.
-// A serve still up after 5s is killed with its whole process group.
+// A serve still up after 10s is killed with its whole process group:
+// serve itself drains requests for up to 5s before it kills its
+// children, and a 5s grace here SIGKILLed the group in that same
+// instant, so a test never saw what serve's own shutdown left behind.
 func (s *Server) Shutdown() {
 	select {
 	case <-s.exited:
@@ -104,7 +107,7 @@ func (s *Server) Shutdown() {
 	terminate(s.cmd)
 	select {
 	case <-s.exited:
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		killGroup(s.cmd)
 		<-s.exited
 	}
@@ -296,7 +299,7 @@ func (s *Server) waitReady(timeout time.Duration) error {
 }
 
 // Close stops the server: SIGTERM, which has serve end its sessions,
-// then SIGKILL to the whole process group if it has not exited in 5s.
+// then SIGKILL to the whole process group if it has not exited in 10s.
 // Idempotent. It deletes nothing; the temp root goes with the test.
 func (s *Server) Close() { s.close.Do(s.Shutdown) }
 

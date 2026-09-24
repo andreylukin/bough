@@ -27,11 +27,14 @@
 #   claim, and api.go createSession answers 500 and drops the id: the
 #   toast says it failed while a claimed child and its history file
 #   live on (stray, sessions 1), and Retry makes a second session.
-# - ServeRestart with the file on disk but unclaimed. today: claim
-#   refuses ("closed") and killChild SIGKILLs the child, which leaves
-#   the meta-only file (a SIGKILL skips the clean shutdown that deletes
-#   it): an empty session appears after the restart for a create the
-#   page was told failed.
+# - ServeRestart with a create's child spawned. today: Close kills only
+#   claimed children, so the unclaimed one outlives serve (a stray); and
+#   were its file to land after Close, claim refuses ("closed") and the
+#   SIGKILL leaves the meta-only file (a SIGKILL skips the clean
+#   shutdown that deletes it). The file on disk but unclaimed is not a
+#   state a restart finds: serve claims it within one 50 ms poll
+#   (stage 2, the server walk, showed the "failed" this spec first had
+#   there was "lost").
 # - HistoryAfterDeadline (and ChildExitsEarly after the file): the Stat
 #   miss, the deadline check and the kill are not atomic with the
 #   child's write, so the file can land between them: 500, and a
@@ -228,11 +231,13 @@ role Room:
         require self.a == "spawned"
         self.fail("A")
 
-    # Claimed, then stdin refuses the first line: the child is killed
-    # and its file removed, so the 500 is the whole truth.
+    # The file lands, is claimed, and stdin refuses the first line: the
+    # child is killed and its file removed, so the 500 is the whole
+    # truth. One step from spawned: serve claims and writes within one
+    # poll of the file landing, so nothing else happens in between (the
+    # server walk found the file gone at every later step).
     atomic action PromptWriteFailsA:
-        require self.a == "hist" and self.ka == "typed"
-        self.sa = 0
+        require self.a == "spawned" and self.ka == "typed"
         self.fail("A")
 
     atomic fair action DeliverA:
@@ -266,8 +271,10 @@ role Room:
         require self.b == "hist"
         self.b = "claimed"
 
+    # Every create waits the same createTimeout from its own spawn, and A
+    # was spawned first: B cannot time out while A is still waiting.
     atomic fair action CreateTimeoutB:
-        require self.b == "spawned"
+        require self.b == "spawned" and self.a != "spawned"
         self.fail("B")
 
     atomic fair action DeliverB:
@@ -287,20 +294,23 @@ role Room:
     # ---- serve ----
 
     # SIGTERM/kickstart (down and up again in one step). Shutdown waits
-    # on the POSTs, then Close: a create without its file is killed, one
-    # with its file unclaimed is refused and its file removed, a claimed
-    # one's session stays but its 201 never reaches the page. Every
+    # on the POSTs, then Close: a create without its file is killed; one
+    # with its file is claimed within a poll (50 ms) of the file landing,
+    # long before any restart the page could race, so its session stays
+    # like a claimed one's, and its 201 never reaches the page. (A file
+    # landing in the instant between Close and exit is removed with its
+    # killed child, so that create is one without its file.) Every
     # pending POST ends in the toast; the last one wins it.
     atomic action ServeRestart:
         require inflight(self.a) or inflight(self.b)
-        if self.a == "claimed":
+        if self.a in ("hist", "claimed"):
             self.a = "lost"
             self.toast = "A"
         elif inflight(self.a):
             self.a = "failed"
             self.sa = 0
             self.toast = "A"
-        if self.b == "claimed":
+        if self.b in ("hist", "claimed"):
             self.b = "lost"
             self.toast = "B"
         elif inflight(self.b):
