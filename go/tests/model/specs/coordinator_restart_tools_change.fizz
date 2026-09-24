@@ -1,0 +1,364 @@
+---
+# A session with nothing left to do (the crash budget spent, the store
+# broken, no turn open) is rest, not a deadlock; the liveness checks
+# still see every cycle.
+deadlock_detection: false
+---
+
+# The engine-unreal coordinator (the harness's Run goroutine) dies or
+# restarts under one bough session: a tool-set change (/model, an MCP
+# reload), a Run that returns an error, the one rebuild runExit allows,
+# and a send that finds no coordinator. One session, one actor
+# (go/internal/unreal/session/actor.go, build.go ensureRun).
+#
+# What the code does, and so what the spec says:
+#
+# - toolsChanged (actor.go:1246) only marks a restart while a
+#   coordinator exists and the registry's hash differs from the one it
+#   was built with; evaluate (actor.go:800) restarts only with no turn
+#   open, no request in flight, nothing pending, no input unobserved and
+#   toolSettle (500 ms) past the last signal, and drops the restart if
+#   the hash came back as it was. The settle wait is folded into the
+#   fair Restart step. A /model swap remounts the rows whose tools then
+#   unregister and register again: the signal fires mid-cascade and the
+#   set comes back unchanged (SwitchModel); an MCP reload that changes a
+#   server's tools leaves the set changed (McpReload).
+# - restartRun (actor.go:1259) only cancels Run; until runExit is
+#   posted the coordinator is still a.run ("stopping"), so a prompt in
+#   that window is delivered to the cancelled inbox and kept in
+#   a.unobserved. runExit (actor.go:1221) then rebuilds once (restart,
+#   or calls still outstanding, and rebuilds < 1) and ensureRun
+#   redelivers every unobserved input (build.go "Inputs the last
+#   coordinator never recorded").
+# - rebuilds is reset only by openTurn (actor.go:546). Two restarts, or
+#   a restart then a Run error, with no turn opened between them spend
+#   the budget: the second leaves no coordinator.
+# - A Run error (not a stop) notes "engine: <err>" and closes an open
+#   turn with closeTurn(0, "error"): one error, one done, running 0.
+# - The mirror's Inflight is cleared only by the response to the newest
+#   turn. A Run that dies mid-request leaves it set, and so does the
+#   harness: an input counts as delivered only once a response to its
+#   turn is recorded (coordinator loop.go deliveredInputs), so the next
+#   coordinator asks again. With the bough turn already closed by the
+#   error, that request opens a wake turn (openWake), as a call that
+#   finishes with no turn open does.
+# - ensureRun fails when the store refuses (Resume/Create, the frozen
+#   system prompt, a restored call whose tool is gone). startTurn
+#   (actor.go:501) closes its turn with the error. send (actor.go:558)
+#   records the input as unobserved first and only notes the error;
+#   notice() (a background job's news while idle) and a rebuild in
+#   runExit reach that path with a turn open.
+#
+# Where the code disagrees with the mapped model, the code wins (see the
+# claims at the end that are not asserted, each with fizz's
+# counterexample). The mapped states are field combinations here:
+#   running_turn               open, run "up"
+#   tools_changed_pending      restart, run "up"
+#   restart_deferred_until_idle restart while open or a request is in flight
+#   restarted_idle             not open, run "up" after RunStops
+#   run_error_turn_open        crashed (the error closes the turn in the
+#                              same step: there is no open-after-error state)
+#   rebuilt_for_outstanding    call != "none", run "up", rebuilds 1
+#   second_run_error_no_rebuild call != "none", run "none", rebuilds 1
+#   send_failed_unobserved     open, unobserved, run "none", down "refused"
+#   next_prompt_rebuilds       run "none" with no call; Prompt builds
+# Mapped as User, SwitchModel and Prompt are the person's; the rest
+# are the environment's or the coordinator's.
+#
+# Fields (Session role):
+#   open      a bough turn is open (input written, done not yet)
+#   run       the coordinator: "none" | "up" | "stopping" (cancelled for
+#             a restart, runExit not yet posted)
+#   down      why there is no coordinator: "" (there is one, or none was
+#             ever built) | "error" (Run returned an error) | "restart"
+#             | "refused" (the last ensureRun failed)
+#   inflight  the mirror has a request with no response yet
+#   unobserved an input was sent and the coordinator has not recorded it
+#   call      an outstanding tool call: "none" | "fg" (holds the turn)
+#             | "job" (adopted after turn_settle)
+#   restart   a restart is marked (a.restart)
+#   changed   the tool set differs from the coordinator's hash
+#   rebuilds  runExit rebuilds since the last openTurn (0 | 1)
+#   store     "ok" | "broken": whether ensureRun can build
+#   ran       a coordinator was built at least once
+#   crashes   Run errors so far (bounded by MAX_CRASHES)
+#   errs      error entries written in this turn
+#   dones     done entries written for this turn
+#   crashed   a Run error hit this turn while it was open
+#   uncounted a done was written with running 0 while a foreground call
+#             of that turn was still running
+
+MAX_CRASHES = 2
+
+role Session:
+    action Init:
+        self.open = False
+        self.run = "none"
+        self.down = ""
+        self.inflight = False
+        self.unobserved = False
+        self.call = "none"
+        self.restart = False
+        self.changed = False
+        self.rebuilds = 0
+        self.store = "ok"
+        self.ran = False
+        self.crashes = 0
+        self.errs = 0
+        self.dones = 0
+        self.crashed = False
+        self.uncounted = False
+
+    # ensureRun with no coordinator: build one from the store (with the
+    # tool set as it is now), or note the error.
+    atomic func build():
+        if self.store == "ok":
+            self.run = "up"
+            self.down = ""
+            self.changed = False
+            self.ran = True
+            return True
+        self.down = "refused"
+        if self.open:
+            self.errs = self.errs + 1
+        return False
+
+    # openTurn: a fresh turn's bookkeeping.
+    atomic func open_turn():
+        self.open = True
+        self.rebuilds = 0
+        self.errs = 0
+        self.dones = 0
+        self.crashed = False
+        self.uncounted = False
+
+    # runExit's tail: one rebuild when a restart was asked for or calls
+    # still run, then ensureRun redelivers what was never recorded.
+    atomic func rebuild(restarting):
+        if (restarting or self.call != "none") and self.rebuilds < 1:
+            self.rebuilds = 1
+            ok = self.build()
+
+    # ---- the person ----
+
+    # A prompt with no turn open (startTurn). A coordinator is built
+    # first; a refused build closes the turn with the error. With one
+    # up, or stopping, the input is sent (and delivered, or kept
+    # unobserved by a cancelled inbox).
+    atomic action Prompt:
+        require not self.open
+        self.open_turn()
+        if self.run == "none":
+            ok = self.build()
+            if not ok:
+                self.dones = 1
+                self.open = False
+                return
+        self.unobserved = True
+
+    # /model while the session runs: its tools unregister and register
+    # again, so the signal fires with the set moving and it comes back
+    # as it was.
+    # A repeat while a restart is already marked changes nothing and is
+    # left out (a self-loop per state in the graph).
+    atomic action SwitchModel:
+        require self.run != "none" and not self.restart
+        self.restart = True
+
+    # ---- the environment ----
+
+    # An MCP server's tools changed on reload.
+    atomic action McpReload:
+        require self.run != "none" and not (self.restart and self.changed)
+        self.restart = True
+        self.changed = True
+
+    # The store starts refusing to build (a full disk, a removed store
+    # dir, a restored call whose tool is gone), and later recovers.
+    atomic action StoreBreaks:
+        require self.store == "ok"
+        self.store = "broken"
+
+    atomic action StoreHeals:
+        require self.store == "broken"
+        self.store = "ok"
+
+    # A background job's news with no turn open (notice): a wake turn of
+    # its own. send marks the input unobserved before ensureRun, and a
+    # refused build only notes the error. A job (tools.bash in the
+    # background, not a coordinator call) exists only once a turn has
+    # run, so only once a coordinator was built (ran).
+    atomic action NoticeArrives:
+        require not self.open
+        require self.ran
+        self.open_turn()
+        self.unobserved = True
+        if self.run == "none":
+            ok = self.build()
+
+    # Run returns an error of its own (not the actor's cancel).
+    atomic action RunExitsWithError:
+        require self.run == "up" and self.crashes < MAX_CRASHES
+        self.crashes = self.crashes + 1
+        restarting = self.restart
+        self.run = "none"
+        self.down = "error"
+        self.restart = False
+        if self.open:
+            self.errs = self.errs + 1
+            self.crashed = True
+            # closeTurn(0, "error"): running 0, whatever still runs.
+            if self.call == "fg":
+                self.uncounted = True
+            self.dones = self.dones + 1
+            self.open = False
+        self.rebuild(restarting)
+
+    # ---- the coordinator ----
+
+    # It records an input and asks the model (ItemInput, ItemTurn).
+    atomic fair action Record:
+        require self.run == "up" and self.unobserved
+        self.unobserved = False
+        self.inflight = True
+
+    # The model answers with text. A request the coordinator makes with
+    # no bough turn open (one a Run error cut off, asked again) opens a
+    # wake turn. Strong: max_steps bounds the tool rounds in the
+    # product; the model is not modelled calling tools forever.
+    atomic fair<strong> action Reply:
+        require self.run == "up" and self.inflight
+        if not self.open:
+            self.open_turn()
+        self.inflight = False
+
+    # The model answers with one tool call.
+    atomic action CallTool:
+        require self.run == "up" and self.inflight and self.call == "none"
+        if not self.open:
+            self.open_turn()
+        self.inflight = False
+        self.call = "fg"
+
+    # A call finishes: the coordinator records it and asks the model
+    # again. With no turn open (an adopted job, or a call its turn's
+    # error close left running) that request opens a wake turn.
+    atomic fair action CallEnds:
+        require self.run == "up" and self.call != "none"
+        self.call = "none"
+        self.inflight = True
+        if not self.open:
+            self.open_turn()
+
+    # ---- the actor's evaluate ----
+
+    # The turn is quiescent with no foreground call: done, running 0.
+    atomic fair action Finish:
+        require self.open and not self.inflight and not self.unobserved
+        require self.call != "fg"
+        self.dones = self.dones + 1
+        self.open = False
+
+    # turn_settle passed with a foreground call running: it becomes a
+    # job and the turn closes, running 1.
+    atomic fair action Adopt:
+        require self.open and not self.inflight and not self.unobserved
+        require self.call == "fg"
+        self.call = "job"
+        self.dones = self.dones + 1
+        self.open = False
+
+    # evaluate's restart check, toolSettle after the last signal. It
+    # fires whenever the session is idle past the settle, so it is
+    # strongly fair: prompts that keep coming do not starve it.
+    atomic fair<strong> action Restart:
+        require self.restart and self.run == "up" and not self.open
+        require not self.inflight and not self.unobserved
+        if self.changed:
+            self.run = "stopping"
+        else:
+            self.restart = False
+
+    # The cancelled Run returns: runExit with stopped set writes no
+    # error; restarting is true, so it rebuilds if the budget allows.
+    atomic fair action RunStops:
+        require self.run == "stopping"
+        self.run = "none"
+        self.down = "restart"
+        self.restart = False
+        self.rebuild(True)
+
+action Init:
+    session = Session()
+
+# ---- asserted: fizz proves these ----
+
+# Every turn writes at most one done (closeTurn is its only writer and
+# runs once per turn).
+always assertion OneDonePerTurn:
+    return session.dones <= 1
+
+# A Run error in an open turn records an error and exactly one done.
+always assertion RunErrorClosesTheTurn:
+    return (not session.crashed or
+            (not session.open and session.dones == 1 and session.errs >= 1))
+
+# A restart is only ever decided with no turn open and nothing in
+# flight: the coordinator it cancels owes the model nothing. (A prompt
+# can still land in the window before runExit; it opens a turn and its
+# input waits unobserved for the rebuild.)
+always assertion RestartOnlyWhenQuiet:
+    return not (session.run == "stopping" and
+                (session.inflight or (session.open and not session.unobserved)))
+
+# A call is left with no coordinator to report through only when the
+# one rebuild was already spent or the store refused it.
+always assertion OrphanOnlyWhenRebuildSpent:
+    return not (session.call != "none" and session.run == "none" and
+                session.rebuilds == 0 and session.down != "refused")
+
+# An open turn whose input has no coordinator is one a refused build
+# left there (the stuck send below), never a lost one.
+always assertion UnsentOnlyAfterRefusal:
+    return not (session.open and session.unobserved and session.run == "none" and
+                session.down != "refused")
+
+# A marked restart is eventually carried out or dropped as unchanged.
+always eventually assertion ToolsChangeSettles:
+    return not session.restart
+
+# An open turn closes, except the stuck send (see FailedSendNotStuck).
+always eventually assertion TurnCloses:
+    return (not session.open or
+            (session.unobserved and session.run == "none"))
+
+# ---- mapped claims the code breaks (not asserted, so the check stays
+# green; each was added as an assertion and fizz's shortest
+# counterexample is quoted) ----
+#
+# FailedSendNotStuck: `not (open and unobserved and run == "none")`.
+# FAILS: Prompt, StoreBreaks, RunExitsWithError (the turn closes with
+# the error; no call and no restart, so no rebuild), NoticeArrives.
+# notice() -> send() puts the input in a.unobserved and ensureRun
+# fails: an error is noted, the turn stays open and quiescent() is
+# false for good (evaluate never closes it, and nothing retries the
+# build), so the session reads running until Stop or the process ends.
+# The liveness form (an open turn always closes) fails the same way
+# through the restart window: Restart (stopping), Prompt, StoreBreaks,
+# RunStops, whose one rebuild is refused with the prompt unobserved.
+#
+# DoneCountsRunningCalls: `not uncounted`. FAILS: Prompt, Record,
+# CallTool, RunExitsWithError. runExit closes the open turn with
+# closeTurn(0, "error") without adopting its foreground call:
+# done.running is 0 while the call runs; the rebuilt coordinator
+# reports it later as a wake turn, never as a numbered job.
+#
+# NoSilentOrphan: `not (call != "none" and run == "none" and
+# down == "restart")`. FAILS: Prompt, Record, CallTool,
+# RunExitsWithError (rebuilt for the call: rebuilds 1), McpReload,
+# Restart, RunStops. rebuilds is reset only by openTurn, so a restart
+# after a rebuild in the same idle stretch finds the budget spent: no
+# coordinator, no error written, and the running call's result waits
+# for the next input. Two restarts with an adopted job running (Adopt,
+# McpReload, Restart, RunStops, McpReload, Restart, RunStops) end the
+# same way.
