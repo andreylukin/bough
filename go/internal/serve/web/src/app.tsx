@@ -5184,9 +5184,12 @@ export default function App() {
 
   // A preview outlives its turn only if the entry it was previewing
   // never arrived. Once the session is no longer running there is
-  // nothing left to be a preview of.
+  // nothing left to be a preview of. The same goes for native calls'
+  // running rows: done/cancelled clear them, but a child that died
+  // mid-call (a crash, an archive kill, a serve restart) sends neither,
+  // and its row spun on in an Interrupted session.
   const status = row?.status;
-  useEffect(() => { if (status && status !== "running") { setStream([]); setActivity(""); } }, [status]);
+  useEffect(() => { if (status && status !== "running") { setStream([]); setActivity(""); setNativeRunning((m) => (m.size ? new Map() : m)); } }, [status]);
 
   const [palette, setPalette] = useState(false);
   // What the palette opens with, when something other than ⌘K opened it
