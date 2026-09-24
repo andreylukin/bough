@@ -1,0 +1,144 @@
+# meta.json cannot be saved under the model and effort pickers
+# (go/tests/model/README.md). Split off meta_save_failure.fizz, which has
+# the rest of the verbs, to keep each graph small; the rules are the same.
+#
+#   PickModel   POST /api/sessions/{id}/model   SetModel  (Send "/model" + save)
+#   PickEffort  POST /api/sessions/{id}/effort  SetEffort (Send "/think" + save)
+#
+# The list shows meta.Model / meta.Effort from serve's memory (rowOf
+# falls back to history's model only when meta.Model is empty); a
+# restart loads them from meta.json.
+#
+# This spec is the INTENDED behaviour: save first, then Send; a failed
+# save answers an error and tells the child nothing, so the child never
+# runs a model the list does not name and the page never toasts
+# "Couldn't change model" over a list that shows it changed. The product
+# today Sends first and keeps the change in memory when the save fails
+# (the MUTATION lines below); stage 2's MBT run is expected to go red on
+# it until SetModel and SetEffort are fixed.
+#
+# Fields:
+#   diskFull   saves fail
+#   model / effort          meta in serve's memory: what the list shows
+#   modelDisk / effortDisk  the same in meta.json: what a restart loads
+#   childModel / childEffort
+#              what the child was last told by /model and /think
+#   live       the session's child is up; Send spawns it (ensure)
+#   toast      the page's "Couldn't …" toast with the pick's target, so
+#              Retry re-sends exactly that ("" none)
+#
+# Abstractions: two models and two levels, which is every transition a
+# third would add again. Picks are made on a session that is not
+# archived (Send answers 409 there, and the pickers sit in the disabled
+# composer), so archiving is left out. Which model a child respawned
+# after a restart runs is not modelled: childModel is what the last child
+# was told.
+
+role Session:
+    action Init:
+        self.diskFull = False
+        self.model = "a"
+        self.modelDisk = "a"
+        self.effort = "low"
+        self.effortDisk = "low"
+        self.childModel = "a"
+        self.childEffort = "low"
+        self.live = False
+        self.toast = ""
+
+    atomic action DiskFills:
+        require not self.diskFull
+        self.diskFull = True
+
+    # Fair: a full disk is not left full forever.
+    atomic fair action DiskFrees:
+        require self.diskFull
+        self.diskFull = False
+
+    atomic action Prompt:
+        require not self.live
+        self.live = True
+
+    # app.tsx act(): success clears the toast, failure sets it.
+    atomic func pickModel(to):
+        if not self.diskFull:
+            self.model = to
+            self.modelDisk = to
+            self.childModel = to
+            self.live = True
+            self.toast = ""
+        else:
+            self.toast = "model:" + to
+        # MUTATION(product today): Send first, so self.childModel = to
+        # and self.live = True always, and self.model = to always.
+
+    atomic func pickEffort(to):
+        if not self.diskFull:
+            self.effort = to
+            self.effortDisk = to
+            self.childEffort = to
+            self.live = True
+            self.toast = ""
+        else:
+            self.toast = "effort:" + to
+
+    atomic action PickModel:
+        self.pickModel("b" if self.model == "a" else "a")
+
+    atomic action PickEffort:
+        self.pickEffort("high" if self.effort == "low" else "low")
+
+    # The toast's Retry: the same pick, the same target.
+    atomic fair action ToastRetry:
+        require self.toast != ""
+        t = self.toast
+        if t == "model:a":
+            self.pickModel("a")
+        elif t == "model:b":
+            self.pickModel("b")
+        elif t == "effort:low":
+            self.pickEffort("low")
+        else:
+            self.pickEffort("high")
+
+    # serve stops and starts: the child is gone, memory is meta.json.
+    atomic action ServeRestart:
+        self.live = False
+        self.model = self.modelDisk
+        self.effort = self.effortDisk
+
+action Init:
+    session = Session()
+
+# What the list shows equals what a restart would load.
+always assertion ListEqualsDisk:
+    return session.model == session.modelDisk and session.effort == session.effortDisk
+
+# The child runs what the list names: a pick whose save failed told the
+# child nothing.
+always assertion ChildRunsWhatListSays:
+    return session.childModel == session.model and session.childEffort == session.effort
+
+# The page never says "Couldn't change model" while the list shows the
+# model it tried.
+always assertion NoToastForWhatIsDone:
+    t = session.toast
+    if t.startswith("model:"):
+        return session.model != t[len("model:"):]
+    if t.startswith("effort:"):
+        return session.effort != t[len("effort:"):]
+    return True
+
+# An error answer changes nothing: while the disk stays full, neither
+# the list nor the child moves.
+transition assertion FullDiskChangesNothing(before, after):
+    b = before.session
+    a = after.session
+    if not (b.diskFull and a.diskFull):
+        return True
+    return (a.model == b.model and a.effort == b.effort and
+            a.childModel == b.childModel and a.childEffort == b.childEffort)
+
+# Once the disk is free, Retry clears every failure it reported.
+always eventually assertion FailuresConverge:
+    return session.toast == "" or session.diskFull
