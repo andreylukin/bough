@@ -42,6 +42,13 @@
 #     joins the errors and carries on).
 #   - Archived sessions (prune's other reason) are left out: prune
 #     eligibility is modelled as the status reason only.
+#   - A new orb after a remove has no container and no branch until its
+#     start: prepareMounts makes the branch at the base (only for a repo
+#     in project.yml) and the start makes the container. A runtime remove
+#     can only fail on a container that is there: every runtime's Remove
+#     answers nil for a missing one (found by the server walk,
+#     mbt/orb_remove_data_safety_test.go; the first spec had both at
+#     Prepare, and a failed remove left an orphan with no container).
 #
 # Fields (role Orb):
 #   orb        present | none (dir and container gone) | orphan (dir gone,
@@ -53,6 +60,7 @@
 #   branch     bough/<session>: merged (an ancestor of the base, or
 #              pushed) | unmerged | deleted
 #   inYml      the repo is still in project.yml
+#   ctr        the container exists (made by a start, kept by stops)
 #   owner      none | serve (serve's child) | cli (another bough that
 #              wrote since serve started) | clistale (another bough, alive,
 #              whose last write is older than serve)
@@ -81,6 +89,7 @@ role Orb:
         self.dirty = False
         self.branch = "merged"
         self.inYml = True
+        self.ctr = True
         self.owner = "none"
         self.flow = "idle"
         self.pdirty = False
@@ -109,12 +118,16 @@ role Orb:
         self.prepare()
 
     # SyncRepos passed; prepareMounts re-adds (or keeps) a worktree per
-    # repo in project.yml and names exactly those. Build and container
-    # start are folded in: they write no Worktrees.
+    # repo in project.yml and names exactly those, making bough/<session>
+    # at the base if a remove deleted it. Build and container start are
+    # folded in: they write no Worktrees.
     atomic fair action SyncOk:
         require self.owner != "none" and self.file == "sync"
         self.file = "running"
         self.tracked = self.inYml
+        if self.inYml and self.branch == "deleted":
+            self.branch = "merged"
+        self.ctr = True
         self.wrote()
 
     # SyncRepos failed: o.fail writes failed with the still-empty map.
@@ -189,7 +202,7 @@ role Orb:
         self.web_delete(False)
 
     atomic action ConfirmRuntimeRemoveFails:
-        require self.flow == "web"
+        require self.flow == "web" and self.ctr
         self.web_delete(True)
 
     # --- CLI: bough project rm <session> --branches / prune --branches ---
@@ -211,7 +224,7 @@ role Orb:
         self.cli_delete(False)
 
     atomic action CliYesRuntimeRemoveFails:
-        require self.flow == "cli"
+        require self.flow == "cli" and self.ctr
         self.cli_delete(True)
 
     atomic fair action CliNo:
@@ -237,8 +250,6 @@ role Orb:
             self.lost = ""
             self.orphaned = ""
             self.blost = ""
-            if self.branch == "deleted":
-                self.branch = "merged"
         self.file = "sync"
         self.tracked = False
         self.killed = False
@@ -308,6 +319,7 @@ role Orb:
                 self.blost = "stale" if stale else "fresh"
             self.branch = "deleted"
         self.orb = "orphan" if rtfail else "none"
+        self.ctr = rtfail
         self.reported = rtfail
         self.file = "none"
         self.tracked = False
