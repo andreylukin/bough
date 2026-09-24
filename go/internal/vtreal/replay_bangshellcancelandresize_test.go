@@ -96,6 +96,10 @@ func TestBangShellCancelAndResize(t *testing.T) {
 		tm.resize(70, 24)
 		tm.keys("Escape")
 		bangShellCancelAndResizeWaitAlive(t, tm, marker, false)
+		// The child is gone before bough has drawn "! cancelled" into
+		// the box; under a loaded run a frame without it can hold still
+		// for a whole settle window. Wait for the marker, then judge.
+		tm.waitUntil(func(s string) bool { return strings.Contains(strings.ToLower(s), "cancel") }, "the cancelled marker")
 		s := resizeTmuxSettled(tm, 70)
 		if !strings.Contains(s, "bscr-tick-10") || strings.Contains(s, "bscr-tick-50") {
 			t.Fatalf("cancelled box must keep the partial output only:\n%s", s)
