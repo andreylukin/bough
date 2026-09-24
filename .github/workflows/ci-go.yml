@@ -81,7 +81,7 @@ jobs:
       # Only pushes to main save: one entry per shard per commit already
       # fills the repo's cache quota quickly.
       - name: Restore Go build and test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             ${{ steps.go-env.outputs.build }}
@@ -115,7 +115,7 @@ jobs:
         run: go test -parallel 4 -timeout 20m ./internal/vtreal/
       - name: Save Go build and test cache
         if: github.event_name == 'push' && !cancelled()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: |
             ${{ steps.go-env.outputs.build }}
@@ -230,7 +230,7 @@ jobs:
         working-directory: go/tests/web
       - name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('go/tests/web/package-lock.json') }}
