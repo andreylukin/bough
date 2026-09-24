@@ -5226,7 +5226,15 @@ export default function App() {
       // The engine's own "model is thinking" only says a request is out
       // and nothing came back: that is Waiting (worded the same on the
       // page), and as a label of work it turned the header to Working.
-      if (ev.kind === "activity") { setActivity(ev.text === ENGINE_WAITING ? "" : ev.text); return; }
+      if (ev.kind === "activity") {
+        setActivity(ev.text === ENGINE_WAITING ? "" : ev.text);
+        // A request went out, carrying what was recorded for it: a turn
+        // another client started (a watcher's wake, a prompt from the
+        // CLI) prints no "input", so without this its prompt stayed off
+        // the page while the model thought, however long that took.
+        if (ev.text === ENGINE_WAITING) { clearTimeout(timer); timer = setTimeout(catchUp, 120); }
+        return;
+      }
       // An engine's call carries the provider's call id (a string); the loop's per-block calls number theirs.
       const native = (ev.kind === "call" || ev.kind === "sub:call") && typeof ev.extra?.id === "string";
       // Live only, never refetched: a native call's start and its streamed output.
