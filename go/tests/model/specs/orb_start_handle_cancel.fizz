@@ -123,12 +123,15 @@ role Handle:
 
     # A tools call past Ready: the orb's Command (restarting a stopped
     # container first), or a "false" command carrying the start's error.
+    # Only a restart writes state.json: a command in a container whose
+    # resume.sh failed leaves it failed.
     atomic func run_cmd():
         self.reply = ""
         self.waiter = "none"
         if has_orb(self):
-            self.ctr = "running"
-            self.file = "running"
+            if self.ctr != "running":
+                self.ctr = "running"
+                self.file = "running"
             self.exec_on = "container"
             if self.row != "mounted":
                 self.late = True
@@ -204,14 +207,16 @@ role Handle:
         self.settle("setup", "running", "failed")
 
     # A headless run waited for the start inside Apply: a failed start or
-    # a failed resume.sh closes the handle and fails the row with the
-    # report; otherwise the row mounts on the open orb.
+    # a failed resume.sh closes the handle (which cancels its ctx) and
+    # fails the row with the report; otherwise the row mounts on the
+    # open orb.
     atomic fair action HeadlessNonWebRun:
         require self.row == "applying" and self.mode == "headless" and self.start == "settled"
         if self.res == "ok":
             self.finish_apply(False)
         else:
             self.said = self.said + 1
+            self.cancelled = True
             if has_orb(self):
                 self.ctr = "stopped"
                 self.file = "stopped"
