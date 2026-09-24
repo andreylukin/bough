@@ -1,0 +1,448 @@
+---
+# Every state has a keystroke left (Esc, Enter, typing): nothing here can
+# deadlock, and the bounds (one queued message, one extra at a time) are
+# rest, not a stuck page.
+deadlock_detection: false
+---
+
+# Which handler wins a key while the person is typing in the web
+# composer (web/src/app.tsx Thread's textarea onKeyDown and send();
+# the window keydown handlers in App for ?, Cmd+P, Option+N, Option+I;
+# palette.tsx usePaletteKey for Cmd+K; mention.tsx's capture handler for
+# an open / or @ picker; keys.ts escStops, sheetKey, switchKey,
+# newSessionKey, focusComposerKey; dialog.tsx for modal dialogs and the
+# Keyboard shortcuts sheet).
+#
+# One session on screen, a Mac keyboard: Option+letter types a letter or
+# starts a dead key (Option+N is the ~ of ñ, Option+I the ^ of î/ê).
+#
+# Fields (all on the Composer role):
+#   turn      this session's turn: idle | sending (sent, not yet taken:
+#             "Sending") | running | stopping (Esc pressed, the stop in
+#             flight; the row still says running)
+#   draft     "" | typed
+#   queued    a Cmd+Enter message is waiting for the turn to end
+#   overlay   what owns the keys besides the textarea: none | picker (the
+#             / or @ caret picker) | dialog (a modal: a confirm, the
+#             Start thread prompt) | sheet (Keyboard shortcuts) |
+#             palette (Cmd+K / Cmd+P / Option+N quick access)
+#   composing an IME composition is open in the textarea
+#   focus     composer | page (focus left the textarea: the transcript, a
+#             toolbar button). An open dialog, sheet or palette holds
+#             focus itself; closing it puts focus back in the composer.
+#   transcript ok | failed: the transcript did not load ("Transcript
+#             didn't load", Retry)
+#   acting    "" | here | elsewhere: an act() in flight (a model or
+#             effort change, an archive) addressed to this session, or
+#             to another one the person started it on before coming here
+#   refused   "" | busy | load: the reason an Enter was refused, shown
+#             by the composer until the cause clears
+#   last      the keystroke that made this state, tracked by the adapter
+#             (it pressed it): "" (not a key: a click, the server) |
+#             print (a character or newline typed with focus in the
+#             textarea: a letter, ?, Option+N, Option+I, Shift+Enter) |
+#             enter | mod_enter | esc | shortcut (a key pressed outside
+#             the textarea, or Cmd+P/Cmd+K anywhere)
+#
+# Derived in view():
+#   send_enabled   the Send (Steer) button is enabled
+#
+# Where this departs from the code, and why (the spec says what the page
+# must do; each of these is a finding for the MBT and browser stages):
+# - ? into an empty composer: keys.ts sheetKey opens the shortcut sheet
+#   and preventDefault swallows the ?. Here it lands in the draft; the
+#   sheet opens only from outside a text field.
+# - Option+N and Option+I are matched by e.code (keys.ts altCode) in a
+#   window handler that runs for a textarea too: Option+N in the
+#   composer opens the new-session palette instead of starting ñ, and
+#   Option+I with focus already in the composer is preventDefault-ed, so
+#   î and ê are lost. Here both type in the composer and act as
+#   shortcuts only from outside it.
+# - send() does not check failedLoad: the Send button is disabled while
+#   the transcript failed to load, but Enter sends. Here Enter is
+#   refused and says why.
+# - busy is App-global (act() in app.tsx), and Thread gets busy={busy ||
+#   locked[id]}: a model change in any session disables every
+#   session's Send, and send() returns silently. Here only an act on
+#   this session refuses Enter, and a refusal says why. (The queue
+#   flush waits on the same global busy.)
+# - Cmd+K (usePaletteKey) has no .dlg-scrim guard, unlike Cmd+P and
+#   Option+N: over an open dialog it may open the palette. Here Cmd+P and
+#   Cmd+K do nothing while a dialog or the sheet is open.
+# Scope:
+# - One extra at a time: a picker, dialog, sheet, palette, IME
+#   composition, failed load, act in flight or focus away each start
+#   only from a plain composer (plain() below), and cross only the turn
+#   and the draft. Crossing them all is ~10x the states, every path one
+#   browser test, and shows no new routing.
+# - Enter inside a dialog, the sheet or the palette is theirs (confirm,
+#   pick) and never reaches the composer: not modeled, Esc closes them.
+# - Typing inside the palette's own input, the Stop button, the queue's
+#   order, a stopped prompt put back and the steer/queue handshake are
+#   stop_interrupt.fizz and steer_queue.fizz. A pick in a picker keeps
+#   the draft "typed"; what it inserts is skills_mentions.fizz.
+# - Alt+I off a Mac (no character) is the Option+I shortcut from the
+#   page; it is not a separate action.
+
+role Composer:
+    action Init:
+        self.turn = "idle"
+        self.draft = ""
+        self.queued = False
+        self.overlay = "none"
+        self.composing = False
+        self.focus = "composer"
+        self.transcript = "ok"
+        self.acting = ""
+        self.refused = ""
+        self.last = ""
+        self.view()
+
+    atomic func view():
+        self.send_enabled = self.draft != "" and self.transcript == "ok" and self.acting != "here"
+
+    # The composer with nothing extra: see "One extra at a time".
+    atomic func plain():
+        return (self.overlay == "none" and not self.composing and self.focus == "composer"
+                and self.transcript == "ok" and self.acting == "")
+
+    # The textarea gets the key itself (no dialog, sheet or palette over
+    # it). An open caret picker still lets the textarea have it.
+    atomic func in_composer():
+        return self.focus == "composer" and self.overlay in ["none", "picker"]
+
+    # The row says running: stopping is still a running turn.
+    atomic func running():
+        return self.turn in ["running", "stopping"]
+
+    # A send from the composer: what the Send button does, and nothing
+    # the disabled button would not.
+    atomic func send():
+        if self.draft == "":
+            return
+        if self.transcript == "failed":
+            self.refused = "load"
+        elif self.acting == "here":
+            self.refused = "busy"
+        else:
+            self.draft = ""
+            self.refused = ""
+            if self.turn == "idle":
+                self.turn = "sending"
+
+    # ---- typing in the composer ----
+
+    # A letter (or anything printable that is not one of the keys
+    # below). An open picker keeps filtering.
+    atomic action Type:
+        ic = self.in_composer()
+        require ic and not self.composing
+        self.draft = "typed"
+        self.last = "print"
+        self.view()
+
+    # ? as a character, the draft empty or not.
+    atomic action TypeQuestion:
+        ic = self.in_composer()
+        require ic and not self.composing
+        self.draft = "typed"
+        self.last = "print"
+        self.view()
+
+    # Option+N in the textarea: the ~ dead key (ñ).
+    atomic action OptionN:
+        ic = self.in_composer()
+        require ic and not self.composing
+        self.draft = "typed"
+        self.last = "print"
+        self.view()
+
+    # Option+I in the textarea: the ^ dead key (î, ê).
+    atomic action OptionI:
+        ic = self.in_composer()
+        require ic and not self.composing
+        self.draft = "typed"
+        self.last = "print"
+        self.view()
+
+    # A newline; it ends the / or @ token, so a picker shuts.
+    atomic action ShiftEnter:
+        ic = self.in_composer()
+        require ic and not self.composing
+        self.draft = "typed"
+        self.overlay = "none"
+        self.last = "print"
+        self.view()
+
+    # / at the start (or @ anywhere) opens the caret picker.
+    atomic action Slash:
+        pl = self.plain()
+        require pl
+        self.draft = "typed"
+        self.overlay = "picker"
+        self.last = "print"
+        self.view()
+
+    # An IME composition starts over a typed draft.
+    atomic action Compose:
+        pl = self.plain()
+        require pl and self.draft != ""
+        self.composing = True
+        self.last = "print"
+        self.view()
+
+    # The Enter that confirms the composition: isComposing, never a send.
+    atomic action ComposeEnd:
+        require self.composing
+        self.composing = False
+        self.last = "enter"
+        self.view()
+
+    # ---- Enter, Cmd+Enter, Esc ----
+
+    atomic action Enter:
+        ic = self.in_composer()
+        require ic and not self.composing
+        self.last = "enter"
+        if self.overlay == "picker":
+            # The picker takes Enter (capture) and picks; nothing is sent.
+            self.overlay = "none"
+        else:
+            self.send()
+        self.view()
+
+    # Cmd+Enter queues while the turn runs; otherwise it is Enter.
+    atomic action ModEnter:
+        ic = self.in_composer()
+        require ic and not self.composing
+        self.last = "mod_enter"
+        if self.overlay == "picker":
+            self.overlay = "none"
+        elif self.turn in ["running", "stopping"]:
+            if self.draft != "":
+                self.draft = ""
+                self.queued = True
+        else:
+            self.send()
+        self.view()
+
+    atomic action Esc:
+        ic = self.in_composer()
+        require ic or self.overlay in ["dialog", "sheet", "palette"]
+        self.last = "esc"
+        if self.overlay in ["dialog", "sheet", "palette"]:
+            self.overlay = "none"
+            self.focus = "composer"
+        elif self.composing:
+            self.composing = False
+        elif self.overlay == "picker":
+            self.overlay = "none"
+        elif self.turn in ["sending", "running"]:
+            self.turn = "stopping"
+        self.view()
+
+    # ---- shortcuts ----
+
+    # Cmd+P (switch) and Cmd+K (all): from the textarea, a picker or the
+    # page, never over a dialog or the sheet. Over the palette it stays.
+    atomic action ModP:
+        require not self.composing and self.overlay not in ["dialog", "sheet"]
+        pl = self.plain()
+        require self.focus == "page" or self.overlay == "palette" or pl or self.overlay == "picker"
+        self.overlay = "palette"
+        self.focus = "composer"
+        self.last = "shortcut"
+        self.view()
+
+    atomic action ModK:
+        require not self.composing and self.overlay not in ["dialog", "sheet"]
+        pl = self.plain()
+        require self.focus == "page" or self.overlay == "palette" or pl or self.overlay == "picker"
+        self.overlay = "palette"
+        self.focus = "composer"
+        self.last = "shortcut"
+        self.view()
+
+    # From outside a text field: ? shows the sheet, Option+N the
+    # new-session palette, Option+I goes into the composer.
+    atomic action PageQuestion:
+        require self.focus == "page" and self.overlay == "none"
+        self.overlay = "sheet"
+        self.focus = "composer"
+        self.last = "shortcut"
+        self.view()
+
+    atomic action PageOptionN:
+        require self.focus == "page" and self.overlay == "none"
+        self.overlay = "palette"
+        self.focus = "composer"
+        self.last = "shortcut"
+        self.view()
+
+    atomic action PageOptionI:
+        require self.focus == "page" and self.overlay == "none"
+        self.focus = "composer"
+        self.last = "shortcut"
+        self.view()
+
+    # ---- clicks and the rest of the page ----
+
+    atomic action ClickPage:
+        pl = self.plain()
+        require pl
+        self.focus = "page"
+        self.last = ""
+        self.view()
+
+    # A modal dialog opens (the archive confirm, Start thread).
+    atomic action OpenDialog:
+        pl = self.plain()
+        require pl
+        self.overlay = "dialog"
+        self.last = ""
+        self.view()
+
+    # A model pick in this session's toolbar: act() in flight here.
+    atomic action ChangeModel:
+        pl = self.plain()
+        require pl
+        self.acting = "here"
+        self.last = ""
+        self.view()
+
+    # An act() the person started on another session is still in flight.
+    atomic action ActElsewhere:
+        pl = self.plain()
+        require pl
+        self.acting = "elsewhere"
+        self.last = ""
+        self.view()
+
+    atomic fair action ActDone:
+        require self.acting != ""
+        self.acting = ""
+        if self.refused == "busy":
+            self.refused = ""
+        self.last = ""
+        self.view()
+
+    atomic action LoadFails:
+        pl = self.plain()
+        require pl
+        self.transcript = "failed"
+        self.last = ""
+        self.view()
+
+    # The thread's Retry. Fair: the liveness below is about the page
+    # once the person retries, not about a server that never answers.
+    atomic fair action Reload:
+        require self.transcript == "failed"
+        self.transcript = "ok"
+        if self.refused == "load":
+            self.refused = ""
+        self.last = ""
+        self.view()
+
+    # ---- the turn ----
+
+    atomic fair action Taken:
+        require self.turn == "sending"
+        self.turn = "running"
+        self.last = ""
+        self.view()
+
+    atomic action Finish:
+        require self.turn == "running"
+        self.turn = "idle"
+        self.last = ""
+        self.view()
+
+    atomic fair action Stopped:
+        require self.turn == "stopping"
+        self.turn = "idle"
+        self.last = ""
+        self.view()
+
+    # The queued message goes out once the turn has ended and nothing
+    # of this session's holds it.
+    atomic fair action Flush:
+        require self.turn == "idle" and self.queued and self.acting != "here" and self.transcript == "ok"
+        self.queued = False
+        self.turn = "sending"
+        self.last = ""
+        self.view()
+
+action Init:
+    composer = Composer()
+
+# ---- safety ----
+
+# A printable character typed into the composer lands in the draft, and
+# never opens the sheet or the palette instead.
+always assertion PrintableLands:
+    c = composer
+    return c.last != "print" or (c.draft != "" and c.focus == "composer" and c.overlay in ["none", "picker"])
+
+# Enter (or Cmd+Enter outside a running turn) never sends what the
+# disabled Send button refuses. A send is the draft leaving the composer
+# on Enter, or on Cmd+Enter when no turn runs (a running turn queues it).
+transition assertion EnterNeverBeyondButton(before, after):
+    b = before.composer
+    a = after.composer
+    queue = a.last == "mod_enter" and b.turn in ["running", "stopping"]
+    sent = a.last in ["enter", "mod_enter"] and b.draft != "" and a.draft == "" and not queue
+    return not sent or b.send_enabled
+
+# An Enter the composer owns, on a typed draft, either sends or says why.
+transition assertion RefusedEnterSaysWhy(before, after):
+    b = before.composer
+    a = after.composer
+    owned = a.last == "enter" and b.overlay == "none" and b.focus == "composer" and not b.composing and b.draft != ""
+    return not owned or a.draft == "" or a.refused != ""
+
+# The reason on screen is the reason that holds now.
+always assertion RefusalIsCurrent:
+    c = composer
+    return (c.refused != "busy" or c.acting == "here") and (c.refused != "load" or c.transcript == "failed")
+
+# The Enter that ends an IME composition is the IME's: nothing is sent.
+transition assertion ComposeEnterNeverSends(before, after):
+    b = before.composer
+    a = after.composer
+    return not (b.composing and a.last == "enter") or (a.draft == b.draft and a.turn == b.turn)
+
+# Esc stops the turn only when no picker, dialog, sheet, palette or IME
+# owns it, and then it does.
+transition assertion EscStopsOnlyWhenFree(before, after):
+    b = before.composer
+    a = after.composer
+    free = b.overlay == "none" and not b.composing and b.focus == "composer" and b.turn in ["sending", "running"]
+    stops = b.turn != "stopping" and a.turn == "stopping"
+    return stops == (a.last == "esc" and free)
+
+# Cmd+Enter queues only while the turn runs.
+transition assertion QueueOnlyWhileRunning(before, after):
+    b = before.composer
+    a = after.composer
+    return not (a.queued and not b.queued) or (a.last == "mod_enter" and b.turn in ["running", "stopping"])
+
+# Cmd+P and Cmd+K never open the palette over a dialog or the sheet.
+transition assertion PaletteNotOverModal(before, after):
+    b = before.composer
+    a = after.composer
+    return not (a.overlay == "palette" and b.overlay != "palette") or b.overlay not in ["dialog", "sheet"]
+
+# An act on another session never blocks this composer.
+always assertion BusyElsewhereNeverBlocks:
+    c = composer
+    return c.acting == "here" or (c.refused != "busy" and (c.draft == "" or c.transcript != "ok" or c.send_enabled))
+
+# ---- liveness ----
+
+# A refused Enter becomes possible once the cause clears: the act ends,
+# the transcript loads, and the refusal goes with them.
+always eventually assertion RefusalClears:
+    return composer.refused == ""
+
+always eventually assertion SendNotHeld:
+    return composer.acting != "here" and composer.transcript == "ok"
