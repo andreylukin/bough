@@ -299,6 +299,39 @@ func TestStopOrb(t *testing.T) {
 
 // A failed setup leaves the container running: the row and the orb
 // detail say it is up, so the web can still offer Stop.
+// A stop serve makes outside the Stop orb handler — Kill, archive, the
+// reaper's own — must not leave the running snapshot saying the
+// container runs: the session's next start would show up (and offer
+// Stop) for a stopped container for up to runningTTL. Found by the orb
+// lifecycle model walk (go/tests/model): Kill, then a restart.
+func TestKillDropsRunningSnapshot(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	ctx := context.Background()
+	id := "killed"
+	seedModeSession(t, f, id, map[string]any{"cwd": "/w", "mode": "project", "project": "app"})
+	f.rt.Build(ctx, container.BuildSpec{Tag: "img"}, nil)
+	if err := f.rt.Start(ctx, container.RunSpec{Name: container.OrbName(id), Image: "img"}); err != nil {
+		t.Fatal(err)
+	}
+	writeState(t, f.home, orb.State{Session: id, Project: "app", Status: orb.StatusStarting, PID: os.Getpid(), UpdatedAt: time.Now()})
+	_, body := f.do(t, "GET", "/api/sessions/"+id, "")
+	if o, _ := rowOf(t, body)["orb"].(map[string]any); o["up"] != true {
+		t.Fatalf("before the stop: row orb = %v, want up", o)
+	}
+	// What Kill's stopKilledOrb does for a killed child.
+	if err := f.sup.stopOrb(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	// The session starts again; the container is still stopped.
+	time.Sleep(2 * time.Millisecond)
+	writeState(t, f.home, orb.State{Session: id, Project: "app", Status: orb.StatusStarting, PID: os.Getpid(), UpdatedAt: time.Now()})
+	_, body = f.do(t, "GET", "/api/sessions/"+id, "")
+	if o, _ := rowOf(t, body)["orb"].(map[string]any); o["up"] != nil {
+		t.Errorf("after serve stopped it: row orb = %v, want not up", o)
+	}
+}
+
 func TestFailedSetupOrbIsUp(t *testing.T) {
 	t.Parallel()
 	f := newAPI(t)

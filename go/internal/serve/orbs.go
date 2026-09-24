@@ -193,9 +193,16 @@ func (a *API) containerUp(session string) bool {
 		return false
 	}
 	name := container.OrbName(session)
+	// A stop serve made since the snapshot makes it stale for this
+	// session. The Stop orb handler drops the snapshot itself, but Kill
+	// (archive, a stopped agent) stops through the supervisor, which
+	// cannot reach it, and a restart then showed the stopped container up.
+	a.sup.mu.Lock()
+	stoppedAt, stopped := a.sup.stoppedAt[session]
+	a.sup.mu.Unlock()
 	a.runningMu.Lock()
 	defer a.runningMu.Unlock()
-	if a.running == nil || time.Since(a.runningAt) > runningTTL {
+	if a.running == nil || time.Since(a.runningAt) > runningTTL || (stopped && !stoppedAt.Before(a.runningAt)) {
 		ctx, cancel := context.WithTimeout(context.Background(), runtimeTimeout)
 		names, err := rt.Running(ctx)
 		cancel()
