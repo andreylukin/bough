@@ -116,7 +116,9 @@ async function readUiState(c: Ctx): Promise<Record<string, unknown>> {
     const call = !last ? 'none' : last.querySelector('.tool-running') ? 'running' : last.classList.contains('block-failed') ? 'failed' : 'ok';
     const jump = q('button.jump-latest[aria-label$="jump to latest"], button.jump-latest[aria-label="Jump to latest"]');
     const strip = q('.thread-head .runtime-strip');
-    const chg = [...(strip?.querySelectorAll<HTMLDetailsElement>('details.rt-jobs') ?? [])].find((d) => d.querySelector('a.chg-full'));
+    // The chip itself, not the Details overflow (also a details.rt-jobs),
+    // which holds it for a frame after a phone widens, before the strip unfolds.
+    const chg = [...(strip?.querySelectorAll<HTMLDetailsElement>('details.rt-jobs:not(.rt-more)') ?? [])].find((d) => d.querySelector('a.chg-full'));
     const more = strip?.querySelector<HTMLDetailsElement>('details.rt-more');
     const settings = q('.head-pop[role="dialog"]');
     const a = document.activeElement;
@@ -305,7 +307,7 @@ modelTests<Ctx>({
       await c.page.locator('.head-pop[role="dialog"]').waitFor({ timeout: 10_000 });
     },
     async OpenChanges(c) {
-      await c.page.locator('.runtime-strip details.rt-jobs:has(a.chg-full) > summary').click();
+      await c.page.locator('.runtime-strip .rt-metrics > details.rt-jobs:not(.rt-more):has(a.chg-full) > summary').click();
     },
     async OpenDetails(c) {
       await c.page.locator('.runtime-strip details.rt-more > summary').click();
@@ -319,7 +321,7 @@ modelTests<Ctx>({
       await c.page.mouse.click(box!.x + box!.width - 8, box!.y + box!.height - 8);
     },
     async OpenFullChanges(c) {
-      const chg = c.page.locator('.runtime-strip details.rt-jobs[open] a.chg-full');
+      const chg = c.page.locator('.runtime-strip details.rt-jobs:not(.rt-more)[open] a.chg-full');
       const phone = c.page.locator('.runtime-strip details.rt-more[open] a.rt-link[href$="/changes"]');
       if (await chg.count()) await chg.click();
       else if (await phone.count()) await phone.click();
