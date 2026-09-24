@@ -327,7 +327,9 @@ mark.hit{background:#354b3b;color:#d7e9dc;border-radius:2px}
 .head-pop{position:absolute;top:calc(100% + 8px);inset-inline-end:0;z-index:var(--z-pop);width:280px;padding:4px;
           display:flex;flex-direction:column;background:var(--raised);border:1px solid var(--line-strong);border-radius:var(--r-md);
           box-shadow:0 1px 2px rgb(0 0 0/.4),0 12px 32px rgb(0 0 0/.45)}
-.head-pop .controls{padding:4px 6px}
+.head-pop .controls{padding:4px 6px;flex-wrap:wrap}
+/* Under the Project setting: which MEMORY.md the running child has, a full line of its own. */
+.ctl-brief{flex:1 0 100%;margin:0;padding-inline-start:4px;font-size:var(--fs-sm);line-height:16px;color:var(--text-3)}
 .thread-head .head-pop .sel-btn{background:var(--surface);border-color:var(--line-strong)}
 .head-pop .ctl{width:100%;justify-content:space-between}
 .head-pop-item{display:flex;align-items:center;height:36px;padding:0 10px;text-align:start;font:var(--fs-md) var(--sans);

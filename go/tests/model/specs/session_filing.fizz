@@ -1,0 +1,167 @@
+# Filing sessions into projects (go/tests/model/README.md): a local
+# session is filed under a project, moved between projects or taken out,
+# from Settings, by dragging its row onto a sidebar group, or from the
+# Projects page; a project session's project is fixed by its history.
+#
+# Two sessions and one project that comes and goes:
+#   Session#0  a local session in a repo checkout, starts unassigned
+#   Session#1  a project session in project "a" (history says mode
+#              project, BOUGH_PROJECT=a) whose child is not running;
+#              its row keeps "a"'s sidebar group present
+#   Project#0  project "b": starts absent, made by "Create project from
+#              <repo>", deleted from the Projects page ("New project…"
+#              makes one the same way FromRepo does, minus the moves, so
+#              it is left out to keep the path count down)
+# Project "a" always exists and is not modelled further.
+#
+# Fields, each read by the adapter and by the page:
+#   project   the row's project: meta.Project for a local session, the
+#             history's slug for a project one; the sidebar group
+#   page      the project page that lists it (GET /api/projects/{slug}
+#             threads); "" when none does
+#   byrepo    listed by GET /api/projects/by-repo (the unfiled pile)
+#   live      its child process is running
+#   injected  the project whose directory (and so MEMORY.md) the running
+#             child was started with: projectEnv at its start, "" when
+#             none or not running
+#
+# Where the mapped model was corrected against the code:
+# - Moving/BulkMoving/MoveFailed are not states. Every move is one
+#   POST /api/sessions/{id}/project inside act(), which awaits it and
+#   then refresh() before the page settles (app.tsx act; Projects page
+#   onAssignMany uses allSettled + refresh), so the next thing anyone
+#   reads already shows the move: "shows on the refresh after the
+#   action" is atomic here, and SameMembership is its invariant form.
+#   The page offers only projects it lists, and the drag only groups
+#   dropProject allows, so a refusal needs a race (another tab deleted
+#   the target) or a disk error the model does not hold.
+# - Dragging is not a state: the drop targets are what Drop requires.
+#   The sidebar has groups only for projects that have rows, so "b" is a
+#   drop target only while this very session is in it (then it is its
+#   own group), and the folder group exists only while another unfiled
+#   session shares the cwd — none here. So a drag only ever files into
+#   "a".
+# - "Create project from <repo>" does NOT call POST /api/projects/from-repo
+#   (nothing in web/src does): it is POST /api/projects then one assign
+#   per session of that repo (projects.tsx fromRepo -> onAssignMany).
+# - AssignProject does not validate the slug's shape; it refuses a slug
+#   with no project directory (404 ErrUnknownProject) and a project
+#   session (409 ErrProjectSession).
+# - The UI never offers a move for a project session (Settings shows it
+#   fixed, its checkbox is disabled, dropProject returns undefined); only
+#   an API client can send one, which ApiMove models.
+
+role Session:
+    action Init:
+        self.project = "a" if self.mode == "project" else ""
+        self.page = self.project
+        self.byrepo = self.mode == "local"
+        self.live = False
+        self.injected = ""
+
+    # Settings > Project select, or the Projects page's per-row Move / bulk
+    # move (one POST per selected session): any project the page lists,
+    # or "" (Unassigned).
+    atomic action Assign:
+        require self.mode == "local"
+        to = oneof ["", "a", "b"]
+        require to != self.project
+        require to != "b" or b.made
+        self.project = to
+        self.page = to
+        self.byrepo = to == ""
+
+    # Dropping the row on a sidebar group: dropProject's targets, which
+    # here are only "a"'s group (see the header).
+    atomic action Drop:
+        require self.mode == "local"
+        require self.project != "a"
+        self.project = "a"
+        self.page = "a"
+        self.byrepo = False
+
+    # "Create project from <repo>" on the Projects page's unfiled group:
+    # a new project, then this repo's unfiled sessions assigned to it.
+    atomic action FromRepo:
+        require self.mode == "local"
+        require self.project == ""
+        require not b.made
+        b.made = True
+        self.project = "b"
+        self.page = "b"
+        self.byrepo = False
+
+    # Another client taking a project session out of its project: serve
+    # answers 409 and nothing changes. (Into another project is the same
+    # refusal.)
+    atomic action ApiMove:
+        require self.mode == "project"
+        self.project = self.project
+
+    # A message resumes the child; projectEnv reads meta.Project at this
+    # start and only here.
+    atomic action Start:
+        require self.mode == "local"
+        require not self.live
+        self.live = True
+        self.injected = self.project
+
+    # Fair: a child is eventually stopped (by the person, a serve restart
+    # or a crash). serve itself never restarts a local child to pick up a
+    # new filing — see BriefAtNextStart.
+    atomic fair action Stop:
+        require self.live
+        self.live = False
+        self.injected = ""
+
+role Project:
+    action Init:
+        self.made = False
+
+    # Delete on the Projects page: DeleteProject removes the directory and
+    # takes every session filed in it out. It first ends every session of
+    # the project (EndProject -> projectSessions, which includes the local
+    # sessions filed there), so a filed child does not outlive the
+    # directory its BOUGH_PROJECT_DIR names: the next message starts it
+    # unfiled. (Stage 2's MBT run found this; the first draft kept the
+    # child running with the old env.)
+    atomic action Delete:
+        require self.made
+        self.made = False
+        if local.project == "b":
+            local.project = ""
+            local.page = ""
+            local.byrepo = True
+            local.live = False
+            local.injected = ""
+
+action Init:
+    local = Session(mode="local")
+    orb = Session(mode="project")
+    b = Project()
+
+# A project session's project is its history's, whatever anyone sends.
+always assertion ProjectSessionFixed:
+    return orb.project == "a" and orb.page == "a"
+
+# The sidebar group (row.project via projectOf) and the project page's
+# thread list (inProject) are one membership rule.
+always assertion SameMembership:
+    return local.page == local.project and orb.page == orb.project
+
+# The by-repo pile is exactly the unfiled sessions.
+always assertion ByRepoOnlyUnfiled:
+    return local.byrepo == (local.project == "") and orb.byrepo == (orb.project == "")
+
+# Nobody is filed under a project that has no directory.
+always assertion FiledOnlyIntoProjects:
+    return local.project != "b" or b.made
+
+# Filing changes grouping only: what a running child was started with
+# changes only when the child starts or stops.
+transition assertion FilingLeavesChildAlone(before, after):
+    return after.local.injected == before.local.injected or after.local.live != before.local.live
+
+# A filing reaches the child's MEMORY.md injection once the child restarts.
+always eventually assertion BriefAtNextStart:
+    return not local.live or local.injected == local.project

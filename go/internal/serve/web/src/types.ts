@@ -102,6 +102,8 @@ export interface Row {
   /** The session's own llm row while it still runs it (not serve's); gone once a model was set. */
   configured?: { plugin: string; model: string; effort?: string };
   project?: string;
+  /** The project whose MEMORY.md the running child started with; absent when none or no child runs. */
+  startedIn?: string;
   /** Background jobs still running. */
   jobs?: Job[];
   /** The prompt cache after the last turn that reported one. */

@@ -98,6 +98,11 @@ type Row struct {
 	// project session it is the slug its history recorded, which nothing
 	// can re-file; for a local one it is where a person filed it.
 	Project string `json:"project,omitempty"`
+	// StartedIn is the project whose directory (and so MEMORY.md) the
+	// running child was started with; "" when none or no child runs.
+	// Filing a live session changes Project at once but not this: the
+	// child reads the directory only at its start.
+	StartedIn string `json:"startedIn,omitempty"`
 	// Jobs are the background jobs still running; Cache is the prompt
 	// cache after the last turn that reported one.
 	Jobs  []Job  `json:"jobs,omitempty"`
@@ -687,6 +692,7 @@ func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 		Effort:     meta.Effort,
 		Configured: configured,
 		Project:    project,
+		StartedIn:  a.sup.StartedIn(in.ID),
 		Jobs:       jobs,
 		Cache:      d.cacheFor(model),
 		Trouble:    trouble,

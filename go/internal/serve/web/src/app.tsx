@@ -3456,6 +3456,15 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only, cat
                       options={[{ value: "", label: "Unassigned" }, ...projects.map((p) => ({ value: p.slug, label: p.name }))]} />}
         </div>
       )}
+      {/* A running child keeps the MEMORY.md it started with: serve gives it
+          the project's directory only at a start. Without this, a move read
+          as applying to the next turn. */}
+      {only !== "model" && row.mode !== "project" && row.live && (() => {
+        const name = (slug: string) => projects.find((p) => p.slug === slug)?.name ?? slug;
+        const had = row.startedIn ?? "", now = row.project ?? "";
+        const next = had === now ? "" : now ? ` ${name(now)}’s applies from its next start.` : " Taking it out applies from its next start.";
+        return <p className="ctl-brief" role="note">Running with {had ? `${name(had)}’s` : "no project"} MEMORY.md.{next}</p>;
+      })()}
     </div>
   );
 }
