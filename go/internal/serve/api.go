@@ -304,7 +304,16 @@ func (a *API) listSessions(w http.ResponseWriter, r *http.Request) {
 	if cwd == "" {
 		rows = append(rows, a.pendingRows(seen)...)
 	}
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Modified.After(rows[j].Modified) })
+	// By activity, not mtime: a turn's summary and title move the file's
+	// mtime and put the session above one whose turn ended later, and on
+	// a tie they decided which came first. Equal times break on id,
+	// newest first, as history.List does.
+	sort.SliceStable(rows, func(i, j int) bool {
+		if c := rows[i].LastAt.Compare(rows[j].LastAt); c != 0 {
+			return c > 0
+		}
+		return rows[i].ID > rows[j].ID
+	})
 	writeJSONTagged(w, r, map[string]any{"sessions": rows})
 }
 
@@ -714,8 +723,15 @@ func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 	}
 }
 
+// lastAt is when the session last did something. A turn's summary and
+// title (the title plugin's, or `bough summarize`'s backfill of an old
+// session) are bookkeeping written after the fact: counting them lifted
+// a session above one whose turn ended later, in the list and the page.
 func lastAt(entries []history.Entry, fallback time.Time) time.Time {
 	for i := len(entries) - 1; i >= 0; i-- {
+		if k := entries[i].Kind; k == "turn-summary" || k == "title" {
+			continue
+		}
 		if !entries[i].At.IsZero() {
 			return entries[i].At
 		}
