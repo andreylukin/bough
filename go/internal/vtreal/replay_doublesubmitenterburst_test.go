@@ -15,7 +15,7 @@ import (
 
 func doubleSubmitEnterBurstWrite(a *app, s string) {
 	a.t.Helper()
-	if _, err := a.term.pty.Write([]byte(s)); err != nil {
+	if _, err := a.term.WriteInput([]byte(s)); err != nil {
 		a.t.Fatal(err)
 	}
 }

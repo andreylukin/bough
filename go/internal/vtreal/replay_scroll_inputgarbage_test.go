@@ -18,7 +18,7 @@ var inputGarbageLeak = regexp.MustCompile(`\[<|\d+;\d+[Mm]|\[I|\[O|200~|201~`)
 func inputGarbageRaw(a *app, s string, gap time.Duration) {
 	a.t.Helper()
 	for i := 0; i < len(s); i++ {
-		if _, err := a.term.pty.Write([]byte{s[i]}); err != nil {
+		if _, err := a.term.WriteInput([]byte{s[i]}); err != nil {
 			a.t.Fatal(err)
 		}
 		if gap > 0 {

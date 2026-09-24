@@ -72,7 +72,7 @@ func TestScrollDragAndMotion(t *testing.T) {
 		"\x1b[<65;4", ";5M", "\x1b[<", "64;10;10M", "\x1b[<65;4",
 	}
 	for _, s := range raw {
-		_, _ = a.term.pty.Write([]byte(s))
+		_, _ = a.term.WriteInput([]byte(s))
 		time.Sleep(5 * time.Millisecond)
 	}
 	for i := range 200 {

@@ -215,12 +215,15 @@ func (a *app) waitUntil(pred func(screen string) bool, what string) {
 // row saw it four lines off the bottom with blank rows beneath it.
 //
 // The same 120ms window is also judged on the byte stream, polled every
-// 10ms: no output reaching the emulator for 120ms since the call began
-// means no cell changed either, and it ends the wait up to 60ms sooner
-// than the sampling grid does, on ~1900 calls a run that together were
-// a third of the package's test time. The window starts at the call,
-// not at the last output, so input sent just before is still answered.
-// The samples stay for output that never stops but changes no text.
+// 10ms: no output reaching the emulator for 120ms means no cell changed
+// either, and it ends the wait up to 60ms sooner than the sampling grid
+// does, on ~1900 calls a run that together were a third of the
+// package's test time. The window also runs from the last input sent
+// through the terminal, so input sent just before is still answered;
+// a screen already quiet that long with nothing sent since is returned
+// at once (a third of the calls were such, and each used to wait out a
+// fresh window from the call). The samples stay for output that never
+// stops but changes no text.
 //
 // While a turn or a job runs, the spinner and the elapsed timers tick
 // on their own and no two samples match; every such call used to run
@@ -237,7 +240,7 @@ func (a *app) settled() string {
 		time.Sleep(10 * time.Millisecond)
 		// A terminal that never stamped (no output yet, or one built
 		// without stampWriter) has no byte clock: samples only.
-		if last := a.term.LastOutput(); last.UnixNano() != 0 && time.Since(last) >= quiet && time.Since(began) >= quiet {
+		if last := a.term.LastOutput(); last.UnixNano() != 0 && time.Since(last) >= quiet && time.Since(a.term.LastInput()) >= quiet {
 			return a.text()
 		}
 		if time.Since(prevAt) < every {

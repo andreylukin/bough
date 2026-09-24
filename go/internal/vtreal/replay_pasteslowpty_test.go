@@ -24,7 +24,7 @@ func TestPasteSlowPTYManyReads(t *testing.T) {
 	raw := "\x1b[200~" + text + "\x1b[201~"
 	for len(raw) > 0 {
 		n := min(7, len(raw))
-		if _, err := a.term.pty.Write([]byte(raw[:n])); err != nil {
+		if _, err := a.term.WriteInput([]byte(raw[:n])); err != nil {
 			t.Fatal(err)
 		}
 		raw = raw[n:]

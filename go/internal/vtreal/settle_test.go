@@ -98,6 +98,39 @@ func TestSettledWaitsForTheReplyToInput(t *testing.T) {
 	}
 }
 
+// A screen that has been quiet for a window with nothing sent to it
+// since is settled already: waiting out a fresh window from the call
+// cost a third of the package's ~1500 settles 120ms each for nothing.
+func TestSettledReturnsAtOnceOnAQuietScreen(t *testing.T) {
+	t.Parallel()
+	a := settleApp(t, `printf STEADY; exec sleep 30`)
+	a.waitFor("STEADY")
+	time.Sleep(200 * time.Millisecond) // quiet for longer than a window, no input
+	began := time.Now()
+	s := a.settled()
+	if took := time.Since(began); took > 60*time.Millisecond {
+		t.Fatalf("settled took %s on a screen quiet for 200ms with no input since", took)
+	}
+	if !strings.Contains(s, "STEADY") {
+		t.Fatalf("settled screen lost the text:\n%s", s)
+	}
+}
+
+// Raw bytes written to the pty are input too: the reply to them is
+// waited for like the reply to a key.
+func TestSettledWaitsForTheReplyToRawInput(t *testing.T) {
+	t.Parallel()
+	a := settleApp(t, `stty -echo; printf READY; read l; sleep 0.05; printf "GOT:%s" "$l"; exec sleep 30`)
+	a.waitFor("READY")
+	time.Sleep(200 * time.Millisecond)
+	if _, err := a.term.WriteInput([]byte("ping\r")); err != nil {
+		t.Fatal(err)
+	}
+	if s := a.settled(); !strings.Contains(s, "GOT:ping") {
+		t.Fatalf("settled returned before the reply to raw input sent just before it:\n%s", s)
+	}
+}
+
 // A spinner and an elapsed timer tick on their own for as long as a
 // turn or a job runs. A screen where only they move is as settled as
 // it gets: settled returns it after a longer calm window instead of

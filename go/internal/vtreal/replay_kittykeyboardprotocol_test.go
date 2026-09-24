@@ -51,7 +51,7 @@ func kittyKeyboardProtocolStart(t *testing.T) *app {
 // way a kitty terminal would, bypassing the emulator's key encoder.
 func kittyKeyboardProtocolRaw(a *app, s string) {
 	a.t.Helper()
-	if _, err := a.term.pty.Write([]byte(s)); err != nil {
+	if _, err := a.term.WriteInput([]byte(s)); err != nil {
 		a.t.Fatal(err)
 	}
 	time.Sleep(30 * time.Millisecond) // one key per read, like a person

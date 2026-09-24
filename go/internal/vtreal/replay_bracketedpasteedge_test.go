@@ -28,7 +28,7 @@ func bracketedpasteedgeWrite(t *testing.T, a *app, parts ...string) {
 		if i > 0 {
 			time.Sleep(80 * time.Millisecond)
 		}
-		if _, err := a.term.pty.Write([]byte(p)); err != nil {
+		if _, err := a.term.WriteInput([]byte(p)); err != nil {
 			t.Fatal(err)
 		}
 	}
