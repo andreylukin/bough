@@ -22,13 +22,14 @@ import (
 )
 
 const (
-	bgjobOutputFloodWhilePickerOpenBursts = 50
+	bgjobOutputFloodWhilePickerOpenBursts = 25
 	bgjobOutputFloodWhilePickerOpenPer    = 1000
 	bgjobOutputFloodWhilePickerOpenBudget = 500 * time.Millisecond
 )
 
-// bgjobOutputFloodWhilePickerOpenCmd floods a bounded 50k lines over
-// roughly ten seconds, so the pickers are driven mid-flood.
+// bgjobOutputFloodWhilePickerOpenCmd floods a bounded 25k lines over
+// roughly five seconds, so the pickers are driven mid-flood: the picker
+// phase takes 1-2 s, and a flood that ends first fails loudly below.
 func bgjobOutputFloodWhilePickerOpenCmd() string {
 	return fmt.Sprintf("i=0; while [ $i -lt %d ]; do yes FLOODLINE | head -n %d; sleep 0.2; i=$((i+1)); done; echo FLOOD-END",
 		bgjobOutputFloodWhilePickerOpenBursts, bgjobOutputFloodWhilePickerOpenPer)
