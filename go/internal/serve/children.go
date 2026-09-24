@@ -367,6 +367,8 @@ func (s *Supervisor) endUnstarted(id string, how Status, reason string) {
 		title = oneLineTitle(m.Task.Prompt)
 	}
 	m.Ended, m.Task = how, nil
+	// With the task goes the only name it had: its row keeps it.
+	m.Title = title
 	s.meta[id] = m
 	_ = s.saveMetaLocked()
 	s.mu.Unlock()

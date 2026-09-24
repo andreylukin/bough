@@ -1,6 +1,8 @@
 package serve
 
 import (
+	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -294,5 +296,49 @@ func TestRequeueSkipsAChildThatRan(t *testing.T) {
 	}
 	if m := f.sup.Meta(id); m.Task != nil || m.Queued {
 		t.Fatalf("meta = %+v", m)
+	}
+}
+
+// A child with no history is still named by its task in /children, the
+// Work dialog's rows: while it boots and after it could not start. Its
+// row came from queuedRow, which only read a prompt still in the queue,
+// so both were listed as an untitled "Background agent".
+func TestUnstartedChildKeepsItsTitle(t *testing.T) {
+	t.Parallel()
+	f, _, hang := launchFixture(t)
+	srv := httptest.NewServer(NewAPI(f.sup))
+	t.Cleanup(srv.Close)
+	row := func(id string) (string, string) {
+		resp, err := srv.Client().Get(srv.URL + "/api/sessions/parent/children")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var body struct{ Children []Row }
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range body.Children {
+			if r.ID == id {
+				return r.Title, string(r.Status)
+			}
+		}
+		return "", ""
+	}
+	touch(t, hang)
+	id, _, err := f.sup.CreateChild(CreateOptions{Prompt: "fix the parser", SpawnedBy: "parent"}, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "a live child", func() bool { return f.sup.childPID(id) != 0 })
+	if title, st := row(id); title != "fix the parser" || st != "running" {
+		t.Fatalf("booting child = %q %q, want its task as title, running", title, st)
+	}
+	if err := syscall.Kill(f.sup.childPID(id), syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	noticeFrom(t, f, id, "failed")
+	if title, st := row(id); title != "fix the parser" || st != "error" {
+		t.Fatalf("child that could not start = %q %q, want its task as title, error", title, st)
 	}
 }

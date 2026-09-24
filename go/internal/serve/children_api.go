@@ -58,6 +58,15 @@ func (a *API) createChild(w http.ResponseWriter, opt CreateOptions, maxPerSessio
 func (a *API) queuedRow(id string) Row {
 	m := a.sup.Meta(id)
 	prompt, _ := a.sup.QueuedPrompt(id)
+	// Popped off the queue but not on disk yet (booting): the task is
+	// still in meta. Once it could not start, endUnstarted kept its title.
+	if prompt == "" && m.Task != nil {
+		prompt = m.Task.Prompt
+	}
+	title := m.Title
+	if title == "" {
+		title = oneLineTitle(prompt)
+	}
 	// A queued child has no history yet; only a project spawn carries a
 	// project, so the membership is what says where it will run.
 	mode := "local"
@@ -67,7 +76,7 @@ func (a *API) queuedRow(id string) Row {
 	now := time.Now()
 	return Row{
 		ID:        id,
-		Title:     oneLineTitle(prompt),
+		Title:     title,
 		Status:    StatusQueued,
 		Queued:    true,
 		SpawnedBy: m.SpawnedBy,
