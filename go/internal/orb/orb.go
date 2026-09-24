@@ -406,7 +406,7 @@ func (o *Orb) ensureProxyLocked(ctx context.Context) {
 	if err != nil || ip == nil || ip.IsLoopback() {
 		return
 	}
-	p, err := startProxy(ip.String(), o.token)
+	p, err := startProxy(ip.String(), o.token, o.Root())
 	if err != nil {
 		if o.rt.Name() != "fake" {
 			fmt.Fprintf(os.Stderr, "bough: orb: proxy on %s: %v\n", ip, err)

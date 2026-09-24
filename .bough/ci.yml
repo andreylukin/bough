@@ -1,0 +1,16 @@
+# Checks for `bough ci` (go/README.md, "CI checks"). vet and unit are
+# keyed on the whole tree and lean on go's cache; web-dist reruns only
+# when the control-room UI changes, and fails when dist/app.js is stale.
+checks:
+  vet:
+    dir: go
+    go_cache: true
+    run: go vet ./...
+  unit:
+    dir: go
+    go_cache: true
+    run: go test -parallel 4 ./...
+  web-dist:
+    dir: go/internal/serve/web
+    inputs: ["go/internal/serve/web/**"]
+    run: bun install --frozen-lockfile && bun test && bun run check && bun run build && git diff --exit-code --stat -- dist/app.js

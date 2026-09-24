@@ -83,6 +83,8 @@ go build ./cmd/bough
 ./bough sessions             # list sessions, newest first
 ./bough search <query>       # find sessions by what was said in them;
                              # repo:/branch:/since: narrow the results
+./bough ci                   # .bough/ci.yml's checks on the working tree,
+                             # rerunning only those whose inputs changed
 ./bough mcp list             # configured MCP servers (plugin command)
 ./bough mcp tools [server]   # their tools (all, or one server); mcp search <q> finds one
 ./bough mcp status           # does each server answer; mcp call <srv/tool> [args] runs one
@@ -259,6 +261,65 @@ the live session file.
 
 Long-term storage is TBD; the `history` row (its `file` config is how
 resume works today) is the swap point for a future store.
+
+## CI checks
+
+`bough ci` runs the checks a repo defines in `.bough/ci.yml` against a
+checkpoint of the working tree — the git tree id `history.Snapshot`
+writes, the same object a turn checkpoint is — and stores each result
+under a key of what the check can see. Asking again about an unchanged
+tree, or about a tree that differs only outside a check's inputs, is a
+cache read. It is built to be called by the agent from its bash tool:
+the report is one line per check and the exit code is the answer.
+
+```yaml
+checks:
+  vet:      {dir: go, go_cache: true, run: go vet ./...}
+  web:      {dir: web, inputs: ["web/**"], run: bun test}
+  e2e:      {run: ./scripts/e2e.sh, manual: true}
+```
+
+```sh
+bough ci                     # run what is not cached, then report; waits
+bough ci --no-wait           # report stored results only, never run
+bough ci --check web         # just these (repeatable; manual ones too)
+bough ci --tree <tree-ish>   # a commit, a tree id, refs/bough/turns/<sid>/<seq>
+bough ci --rerun --json      # ignore the cache; machine-readable report
+bough ci log web             # the stored output of web for this tree
+```
+
+- **Keys.** A check with `inputs` (repo-relative globs, `**` spans
+  directories) is keyed on its `run`, `dir` and the mode, blob id and
+  path of every matching file. Any other check — `go_cache: true` says
+  so on purpose — is keyed on the whole tree id: a key over every
+  tracked file would hash what the tree id already hashes. Such a check
+  reruns on any change, cheaply, because go's own build and test cache
+  hits in the CI worktree. The key does not see the toolchain or the
+  environment; `--rerun` is the way past a result stale for that reason.
+- **Config comes from the tree being checked**, not the working
+  directory. Without a `ci.yml`, the `checks.fast` of the project whose
+  repo this is (matched on git common dir, so orb worktrees resolve)
+  becomes check `fast`, and `checks.full` a manual `full`.
+- **Where it runs.** Never in the live checkout: one persistent git
+  worktree per repository at `~/.bough/ci/<repo>-<hash>/work`, shared by
+  every worktree of that repo, moved from tree to tree with
+  `read-tree -u --reset` so unchanged files keep their mtimes. Tracked
+  files a check modified are restored and untracked leftovers cleaned
+  (ignored ones, like `node_modules`, are kept). An flock on
+  `~/.bough/ci/<repo>-<hash>/lock` serialises concurrent calls; the
+  second finds the first's results instead of running again. Checks run
+  one at a time, as `sh -c` with `BOUGH_CI_TREE` and `BOUGH_CI_CHECK`
+  set; ^C kills the check's process group and stores nothing.
+- **Results** are `results/<check>/<key>.json` with the `.log` beside
+  it, never garbage-collected in this version.
+- **Exit codes.** 0 every selected check passed, 1 any failed, 2
+  anything unsettled (`unknown`, or `running` under another call's
+  lock) and usage or config errors. Manual checks not asked for show as
+  `manual` and do not count.
+- **In an orb** the guest's `bough` relays `ci --no-wait` and `ci log`
+  to the host, from the shell's cwd inside the orb. Running checks is
+  not relayed: the commands come from a file the agent can write, and
+  the host is outside the container that confines the session.
 
 ## init.js
 

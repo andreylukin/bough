@@ -27,23 +27,26 @@ type proxy struct {
 	srv   *http.Server
 	token string
 	bin   func() (string, error) // the host bough relayed calls run
+	// root is the orb's dir (worktrees live under it): the only place a
+	// relayed `bough ci` may be run from.
+	root string
 }
 
 // startProxy listens on addr (the guest's gateway IP, so only the host and
 // its VMs can reach it) on a free port.
-func startProxy(addr, token string) (*proxy, error) {
-	return startProxyBin(addr, token, os.Executable)
+func startProxy(addr, token, root string) (*proxy, error) {
+	return startProxyBin(addr, token, root, os.Executable)
 }
 
 // startProxyBin is startProxy relaying to bin's binary. Tests hand a fake
 // host bough in here rather than swapping a package var, so they can run
 // in parallel.
-func startProxyBin(addr, token string, bin func() (string, error)) (*proxy, error) {
+func startProxyBin(addr, token, root string, bin func() (string, error)) (*proxy, error) {
 	ln, err := net.Listen("tcp", net.JoinHostPort(addr, "0"))
 	if err != nil {
 		return nil, err
 	}
-	p := &proxy{ln: ln, token: token, bin: bin}
+	p := &proxy{ln: ln, token: token, bin: bin, root: root}
 	p.srv = &http.Server{Handler: http.HandlerFunc(p.serve), ReadHeaderTimeout: 30 * time.Second}
 	go p.srv.Serve(ln)
 	return p, nil
