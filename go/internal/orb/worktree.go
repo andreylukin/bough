@@ -7,12 +7,21 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/andreylukin/bough/internal/projectdef"
 )
 
+// gitWaitDelay bounds how long a git killed by its context may keep its
+// output open. At a credential prompt the process holding the pipe is
+// not git but its remote helper and the prompt it waits on, which the
+// kill does not reach: the start sat in CombinedOutput past the
+// 30-minute context that was meant to end it.
+const gitWaitDelay = 5 * time.Second
+
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd.WaitDelay = gitWaitDelay
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
@@ -29,12 +38,34 @@ func syncCache(ctx context.Context, home, slug string, r projectdef.Repo) error 
 		if err := os.MkdirAll(filepath.Dir(gd), 0o755); err != nil {
 			return err
 		}
-		out, err := exec.CommandContext(ctx, "git", "clone", "--bare", "--quiet", r.Remote, gd).CombinedOutput()
+		// Cloned beside it and renamed into place: the cache's existence
+		// is what preflight and the next start read as "a clone to fall
+		// back on", and a clone in flight (or killed at a credential
+		// prompt, which leaves its directory) is not one.
+		tmp, err := os.MkdirTemp(filepath.Dir(gd), filepath.Base(gd)+".clone-")
 		if err != nil {
+			return err
+		}
+		cmd := exec.CommandContext(ctx, "git", "clone", "--bare", "--quiet", r.Remote, tmp)
+		cmd.WaitDelay = gitWaitDelay
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			os.RemoveAll(tmp)
 			return fmt.Errorf("git clone %s: %w: %s", r.Remote, err, strings.TrimSpace(string(out)))
+		}
+		if err := os.Rename(tmp, gd); err != nil {
+			os.RemoveAll(tmp)
+			// Another start's clone got there first.
+			if _, serr := os.Stat(gd); serr != nil {
+				return err
+			}
 		}
 		return nil
 	}
+	// The cache is keyed by the repo's name, so its origin is the URL of
+	// the first clone: a token added to the remote in project.yml later
+	// never reached the fetch, which went on prompting for credentials.
+	gitOut(ctx, gd, "remote", "set-url", "origin", r.Remote)
 	gitOut(ctx, gd, "fetch", "--quiet", "origin", "+refs/heads/*:refs/heads/*")
 	return nil
 }
