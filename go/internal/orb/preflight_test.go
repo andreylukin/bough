@@ -11,7 +11,6 @@ import (
 
 	"github.com/andreylukin/bough/internal/container"
 	"github.com/andreylukin/bough/internal/projectdef"
-	"github.com/andreylukin/bough/internal/secrets"
 )
 
 type downRuntime struct{ *container.Fake }
@@ -19,6 +18,7 @@ type downRuntime struct{ *container.Fake }
 func (downRuntime) Available(context.Context) error { return errors.New("run: container system start") }
 
 func TestPreflight(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	repo := filepath.Join(home, "app")
 	if out, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
@@ -30,16 +30,7 @@ func TestPreflight(t *testing.T) {
 	exec.Command("git", "-C", repo, "commit", "-q", "--allow-empty", "-m", "x").Run()
 	exec.Command("git", "-C", repo, "push", "-q", origin, "HEAD:refs/heads/main").Run()
 
-	origHost, origRead := hostCommand, secrets.KeychainRead
-	t.Cleanup(func() { hostCommand, secrets.KeychainRead = origHost, origRead; ghToken.val = "" })
-	hostCommand = func(string, ...string) string { return "" }
-	ghToken.val = ""
-	secrets.KeychainRead = func(service string) (string, error) {
-		if service == "bough/p/GOOD" {
-			return "s3cr3t-value", nil
-		}
-		return "", secrets.ErrNotFound
-	}
+	// No gh login and the keychain items are TestMain's.
 	p := projectdef.Project{Slug: "p", Def: projectdef.Def{
 		Repos: []projectdef.Repo{
 			{Path: repo},
@@ -85,6 +76,7 @@ func TestPreflight(t *testing.T) {
 }
 
 func TestPreflightRemoteCredentialsNotEchoed(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	c := cloneCheck(context.Background(), home, "p", projectdef.Repo{Remote: "https://user:ghp_leaky123@127.0.0.1:1/x.git"})
 	if c.Status != PreflightFail || strings.Contains(c.Detail, "ghp_leaky123") {

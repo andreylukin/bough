@@ -14,7 +14,6 @@ import (
 
 	"github.com/andreylukin/bough/internal/container"
 	"github.com/andreylukin/bough/internal/projectdef"
-	"github.com/andreylukin/bough/internal/secrets"
 )
 
 func git(t *testing.T, dir string, args ...string) string {
@@ -27,14 +26,43 @@ func git(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// repoTemplate is newRepo's repo, made once by the first test that asks
+// and removed by TestMain.
+var repoTemplate struct {
+	once sync.Once
+	dir  string
+	err  error
+}
+
+// newRepo is a fresh one-commit repo on main. It is a copy of one made
+// once: three git processes per call were a large share of this
+// package's time on a loaded machine.
 func newRepo(t *testing.T) string {
 	t.Helper()
+	repoTemplate.once.Do(func() {
+		dir, err := os.MkdirTemp("", "orb-repo-template-")
+		if err != nil {
+			repoTemplate.err = err
+			return
+		}
+		repoTemplate.dir = dir
+		os.WriteFile(filepath.Join(dir, "go.sum"), []byte("v1\n"), 0o644)
+		os.WriteFile(filepath.Join(dir, "README"), []byte("hi\n"), 0o644)
+		for _, args := range [][]string{{"init", "-q", "-b", "main"}, {"add", "-A"}, {"commit", "-qm", "init"}} {
+			cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"}, args...)...)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				repoTemplate.err = errors.New("git " + strings.Join(args, " ") + ": " + err.Error() + "\n" + string(out))
+				return
+			}
+		}
+	})
+	if repoTemplate.err != nil {
+		t.Fatal(repoTemplate.err)
+	}
 	dir := t.TempDir()
-	git(t, dir, "init", "-q", "-b", "main")
-	os.WriteFile(filepath.Join(dir, "go.sum"), []byte("v1\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "README"), []byte("hi\n"), 0o644)
-	git(t, dir, "add", "-A")
-	git(t, dir, "commit", "-qm", "init")
+	if err := os.CopyFS(dir, os.DirFS(repoTemplate.dir)); err != nil {
+		t.Fatal(err)
+	}
 	return dir
 }
 
@@ -365,20 +393,9 @@ func TestCommandCancelKillsGuest(t *testing.T) {
 }
 
 // Secrets reach resume.sh and Command through the exec env, re-read per
-// exec, and never the container's run env. Not parallel: it swaps the
-// keychain seam.
+// exec, and never the container's run env. The keychain is TestMain's.
 func TestExecEnvSecrets(t *testing.T) {
-	old := secrets.KeychainRead
-	t.Cleanup(func() { secrets.KeychainRead = old })
-	secrets.KeychainRead = func(service string) (string, error) {
-		switch service {
-		case "bough/sec/DEVPI_URL":
-			return "https://devpi.test/one", nil
-		case "bough/sec/LATER":
-			return "later-value", nil
-		}
-		return "", secrets.ErrNotFound
-	}
+	t.Parallel()
 	ctx := context.Background()
 	home, scratch := t.TempDir(), t.TempDir()
 	newProject(t, home, "sec", "  - path: "+newRepo(t)+"\n")
@@ -708,6 +725,7 @@ func (r *stopHookRT) Stop(ctx context.Context, name string) error {
 // A job killed by the session's own Stop (TUI /orb stop) must see the stop
 // already, or it records a failure and wakes a paid turn.
 func TestStopMarksStoppedBeforeJobsDie(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	home := t.TempDir()
 	src := newRepo(t)

@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"github.com/andreylukin/bough/internal/container"
 	"github.com/andreylukin/bough/internal/projectdef"
-	"github.com/andreylukin/bough/internal/secrets"
 	"strings"
 	"testing"
 )
@@ -67,20 +66,10 @@ func TestRedactWriterChunks(t *testing.T) {
 }
 
 // Resolved secrets are redacted in resume.log and by the orb's Redactor;
-// `redact: false` in project.yml turns both off. Not parallel: it swaps
-// the keychain seam.
+// `redact: false` in project.yml turns both off. The keychain is
+// TestMain's.
 func TestOrbRedactsSecrets(t *testing.T) {
-	old := secrets.KeychainRead
-	t.Cleanup(func() { secrets.KeychainRead = old })
-	secrets.KeychainRead = func(service string) (string, error) {
-		switch service {
-		case "bough/red/API_KEY":
-			return "sk-live-0123456789", nil
-		case "bough/red/PORT":
-			return "8080", nil
-		}
-		return "", secrets.ErrNotFound
-	}
+	t.Parallel()
 	for _, optOut := range []bool{false, true} {
 		ctx := context.Background()
 		home, scratch := t.TempDir(), t.TempDir()

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -25,16 +26,24 @@ type proxy struct {
 	ln    net.Listener
 	srv   *http.Server
 	token string
+	bin   func() (string, error) // the host bough relayed calls run
 }
 
 // startProxy listens on addr (the guest's gateway IP, so only the host and
 // its VMs can reach it) on a free port.
 func startProxy(addr, token string) (*proxy, error) {
+	return startProxyBin(addr, token, os.Executable)
+}
+
+// startProxyBin is startProxy relaying to bin's binary. Tests hand a fake
+// host bough in here rather than swapping a package var, so they can run
+// in parallel.
+func startProxyBin(addr, token string, bin func() (string, error)) (*proxy, error) {
 	ln, err := net.Listen("tcp", net.JoinHostPort(addr, "0"))
 	if err != nil {
 		return nil, err
 	}
-	p := &proxy{ln: ln, token: token}
+	p := &proxy{ln: ln, token: token, bin: bin}
 	p.srv = &http.Server{Handler: http.HandlerFunc(p.serve), ReadHeaderTimeout: 30 * time.Second}
 	go p.srv.Serve(ln)
 	return p, nil
@@ -101,7 +110,7 @@ func (p *proxy) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, relayDenied, http.StatusUnauthorized)
 			return
 		}
-		relayExec(w, r)
+		p.relayExec(w, r)
 		return
 	}
 	if !p.proxyAuthorized(r) {

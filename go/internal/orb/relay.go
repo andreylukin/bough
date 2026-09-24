@@ -27,9 +27,6 @@ import (
 // Chromium per image, and the host can already reach the guest's ports.
 var relayedCommands = map[string]bool{"mcp": true, "project": true, "browser": true}
 
-// hostBough is the binary relayed calls run; tests swap it.
-var hostBough = func() (string, error) { return os.Executable() }
-
 const relayTimeout = 10 * time.Minute
 
 // The guest speaks a base64 framing rather than JSON: a project may
@@ -71,7 +68,7 @@ func writeRelayBody(w io.Writer, stdout, stderr string, exit int) {
 		base64.StdEncoding.EncodeToString([]byte(stderr)))
 }
 
-func relayExec(w http.ResponseWriter, r *http.Request) {
+func (p *proxy) relayExec(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8<<20))
 	if err != nil {
 		http.Error(w, "orb relay: "+err.Error(), http.StatusBadRequest)
@@ -86,7 +83,7 @@ func relayExec(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "orb relay: only `bough mcp ...`, `bough project ...` and `bough browser ...` run on the host", http.StatusForbidden)
 		return
 	}
-	bin, err := hostBough()
+	bin, err := p.bin()
 	if err != nil {
 		http.Error(w, "orb relay: "+err.Error(), http.StatusInternalServerError)
 		return
