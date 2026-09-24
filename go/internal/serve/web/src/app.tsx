@@ -5226,12 +5226,25 @@ export default function App() {
       // The engine's own "model is thinking" only says a request is out
       // and nothing came back: that is Waiting (worded the same on the
       // page), and as a label of work it turned the header to Working.
-      if (ev.kind === "activity") { setActivity(ev.text === ENGINE_WAITING ? "" : ev.text); return; }
+      // The engine announces neither its input nor its replies (serve's
+      // supervisor: the child never prints "input"), so a turn's prompt
+      // landed only with its first recorded call end or its done: until
+      // then it stood as an unrecorded send, and a live call started
+      // meanwhile rendered as a turn of its own above it. A model request and a native call's start both come after
+      // everything before them was recorded: catch up on those too, the
+      // fragments before them superseded as by any record.
+      const recorded = () => { superseded = runs; clearTimeout(timer); timer = setTimeout(catchUp, 120); };
+      if (ev.kind === "activity") {
+        setActivity(ev.text === ENGINE_WAITING ? "" : ev.text);
+        if (ev.text === ENGINE_WAITING) recorded();
+        return;
+      }
       // An engine's call carries the provider's call id (a string); the loop's per-block calls number theirs.
       const native = (ev.kind === "call" || ev.kind === "sub:call") && typeof ev.extra?.id === "string";
       // Live only, never refetched: a native call's start and its streamed output.
       if (ev.kind === "call-delta" || (native && ev.extra?.phase === "start")) {
         setNativeRunning((m) => liveNative(m, ev));
+        if (ev.kind !== "call-delta") recorded();
         return;
       }
       // A native call's end falls through: it is recorded, and the refetch below brings the row that replaces the running one.
