@@ -1,0 +1,179 @@
+# serve restarts (bough update, a crash, launchd kickstart) and the
+# sessions it supervises resume. One control room: the serve process,
+# one web session the person has open on the page, the page itself, and
+# one background agent queued behind the running cap.
+#
+# What the code does, and so what the spec says:
+#
+# - Shutdown (cmd/bough/serve.go serveForeground) ends every request
+#   first (the SSE streams), then sup.Close kills and reaps every
+#   child. A crash does not run Close, but the children still go: under
+#   launchd the job's process group is reaped, and a detached serve's
+#   children read EOF on stdin and the headless ui row interrupts them.
+#   So Stop is one step that leaves no child and no serve. It stands
+#   for all three: the mapped model's ShuttingDown state is inside it
+#   (see NOTE on Close below for why that is an assumption).
+# - A session's status is derived (internal/serve/status.go StatusOf):
+#   an open turn with a live child is running, without one it is
+#   interrupted; an ask only waits on you while the child that asked it
+#   is alive, otherwise it falls through to the open turn it
+#   interrupted. The first start after a restart (ensure -> `-r <id>`)
+#   closes the dangling turn as cancelled (plugins/history) and the new
+#   input opens a fresh one, so the dead child's ask is never answered.
+# - The events endpoint never spawns (api.go events); only a prompt
+#   goes through Supervisor.ensure, which reserves the lease under the
+#   mutex, so a session never has two children.
+# - What a person set (title, archive, ack, project, main thread) and a
+#   queued agent's task are written to meta.json when set
+#   (saveMetaLocked). NewSupervisor re-reads them, re-queues the tasks
+#   (requeueLocked) and drains the queue; the running map is not
+#   persisted, so after a restart the cap is free. titled stands for
+#   every such field: nothing in the spec changes it, and the claim is
+#   that no restart does either.
+# - Every API answer carries X-Bough-Build (build.go buildID); the page
+#   remembers the first and shows the "bough updated. Reload" banner
+#   once, when an answer names another build (api.ts noteBuild).
+#   buildID is the VCS revision plus the executable's path and mtime,
+#   read once at startup, so a plain restart of the same binary is the
+#   same build and shows no banner.
+# - page is what the control room says about reaching serve. The list
+#   poll failing (loadErr) and a failed catch-up (paused) make it
+#   offline; the first answer from the serve that came back (list poll,
+#   catch-up retry, EventSource reconnect) makes it live again with no
+#   reload, and names the build. The poll runs every few seconds and the
+#   model tests read the page only after moving its clock past one, so
+#   the poll is folded into Stop/Start/StartNew rather than being a step
+#   of its own that no reader could ever see pending.
+#
+# Differences from the mapped model (the code wins):
+# - "Never two supervisors (pidfile)": the pidfile does not refuse a
+#   second `serve --run`; it only leaves the live one's pidfile alone
+#   (writeServePidfile). The port refuses it, at net.Listen, which runs
+#   AFTER NewSupervisor has already started draining the persisted
+#   queue. One serve process is taken as given here (serve is up|down).
+# - Dismissing the banner is final (watchBuild asks once), so a second
+#   update never re-shows it; Dismiss is not modelled.
+#
+# NOTE on Close: it kills the children it snapshotted and only then sets
+# closed. A killed background agent's exit event frees its running slot
+# and starts `go drainQueue()`, which checks closed (still false),
+# persists the next queued task as started (Task = nil) and launches a
+# child Close never kills. Stop being one atomic step is the product's
+# intent, not what Close guarantees.
+
+role Room:
+    action Init:
+        self.serve = "up"
+        self.page = "live"
+        # A turn is running when the restart comes: the interesting case.
+        self.status = "running"
+        self.kids = 1
+        # "new" once the serve answering is not the build the page loaded.
+        self.build = "same"
+        self.banner = False
+        self.task = "queued"
+        self.titled = True
+
+    # SIGINT/SIGTERM (bough update, launchctl kickstart), or a crash.
+    atomic action Stop:
+        require self.serve == "up"
+        self.serve = "down"
+        self.page = "offline"
+        self.kids = 0
+        if self.status in ("running", "needs-you"):
+            self.status = "interrupted"
+
+    # launchd KeepAlive (or the person) starts the same binary again.
+    atomic fair action Start:
+        require self.serve == "down"
+        self.serve = "up"
+        self.page = "live"
+        if self.build == "new":
+            self.banner = True
+
+    # bough update: the new binary comes up.
+    atomic action StartNew:
+        require self.serve == "down"
+        self.serve = "up"
+        self.page = "live"
+        self.build = "new"
+        self.banner = True
+
+    # NewSupervisor's drainQueue, or a slot freeing later, starts the
+    # persisted queued agent.
+    atomic fair<strong> action Drain:
+        require self.serve == "up" and self.task == "queued"
+        self.task = "started"
+
+    # The child's turn calls tools.ask.
+    atomic action Ask:
+        require self.status == "running"
+        self.status = "needs-you"
+
+    atomic action Answer:
+        require self.status == "needs-you"
+        self.status = "running"
+
+    atomic action Finish:
+        require self.status == "running"
+        self.status = "done"
+
+    # POST /api/sessions/{id}/prompt: ensure adopts the session with
+    # `-r <id>` when no child holds it, else writes to the live one.
+    atomic action Send:
+        require self.serve == "up" and self.status in ("done", "interrupted")
+        if self.kids == 0:
+            self.kids = 1
+        self.status = "running"
+
+    # The person answers the banner: the page now runs the build
+    # serving it.
+    atomic action Reload:
+        require self.serve == "up" and self.banner
+        self.build = "same"
+        self.banner = False
+
+action Init:
+    room = Room()
+
+always assertion OneChildPerSession:
+    return room.kids <= 1
+
+always assertion NoChildWithoutServe:
+    return room.serve == "up" or room.kids == 0
+
+always assertion NothingSetIsLost:
+    return room.titled and room.task in ("queued", "started")
+
+# An open turn with no child reads interrupted, never running, and an
+# ask left by a dead child is not waiting on anyone.
+always assertion InterruptedNeverRunning:
+    return room.status not in ("running", "needs-you") or room.kids == 1
+
+# The page says offline exactly while serve is down: it comes back on
+# its own, without a reload.
+always assertion PageTracksServe:
+    return (room.page == "live") == (room.serve == "up")
+
+always assertion BannerOnlyForNewBuild:
+    return not room.banner or room.build == "new"
+
+# The only thing that starts a child is a prompt: a step that gives the
+# session a child also opens its turn (so a view, a reconnect or a
+# restart never does).
+transition assertion ViewingNeverSpawns(before, after):
+    return before.room.kids >= after.room.kids or (before.room.status in ("done", "interrupted") and after.room.status == "running")
+
+# Nothing answers an ask whose child died: a needs-you session that loses
+# its child reads interrupted, never running or done.
+transition assertion DeadAskNotAnswerable(before, after):
+    return not (before.room.status == "needs-you" and after.room.kids == 0 and after.room.status != "interrupted")
+
+always eventually assertion PageRecovers:
+    return room.page == "live"
+
+always eventually assertion BannerShows:
+    return room.build == "same" or room.banner
+
+always eventually assertion QueuedAgentStarts:
+    return room.task == "started"

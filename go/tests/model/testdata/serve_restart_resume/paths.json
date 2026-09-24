@@ -1,0 +1,4549 @@
+{
+  "paths": [
+    {
+      "target": 72,
+      "links": [
+        0,
+        5,
+        19,
+        35,
+        54,
+        72
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Ask",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "needs-you",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 73,
+      "links": [
+        0,
+        5,
+        19,
+        35,
+        54,
+        73
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Ask",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "needs-you",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Answer",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 74,
+      "links": [
+        0,
+        5,
+        19,
+        35,
+        54,
+        74
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Ask",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "needs-you",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Reload",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "needs-you",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 75,
+      "links": [
+        0,
+        5,
+        19,
+        35,
+        55,
+        75
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 76,
+      "links": [
+        0,
+        5,
+        19,
+        35,
+        55,
+        76
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 77,
+      "links": [
+        0,
+        5,
+        19,
+        35,
+        55,
+        77
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Reload",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 78,
+      "links": [
+        1,
+        8,
+        26,
+        43,
+        67,
+        78
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Start",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 79,
+      "links": [
+        1,
+        8,
+        26,
+        43,
+        67,
+        79
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 51,
+      "links": [
+        0,
+        5,
+        19,
+        34,
+        51
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Start",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 52,
+      "links": [
+        0,
+        5,
+        19,
+        34,
+        52
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 53,
+      "links": [
+        0,
+        5,
+        19,
+        35,
+        53
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 56,
+      "links": [
+        0,
+        5,
+        19,
+        35,
+        56
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Reload",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 57,
+      "links": [
+        0,
+        5,
+        20,
+        39,
+        57
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Ask",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "needs-you",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 58,
+      "links": [
+        0,
+        5,
+        20,
+        39,
+        58
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Ask",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "needs-you",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "needs-you",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 59,
+      "links": [
+        0,
+        5,
+        20,
+        39,
+        59
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Ask",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "needs-you",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Answer",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 60,
+      "links": [
+        0,
+        5,
+        20,
+        39,
+        60
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Ask",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "needs-you",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Reload",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "needs-you",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 61,
+      "links": [
+        0,
+        5,
+        20,
+        40,
+        61
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 62,
+      "links": [
+        0,
+        5,
+        20,
+        40,
+        62
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 63,
+      "links": [
+        0,
+        5,
+        20,
+        40,
+        63
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 64,
+      "links": [
+        0,
+        5,
+        20,
+        40,
+        64
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Reload",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 65,
+      "links": [
+        1,
+        8,
+        26,
+        42,
+        65
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Start",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 66,
+      "links": [
+        1,
+        8,
+        26,
+        42,
+        66
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Start",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 68,
+      "links": [
+        1,
+        8,
+        26,
+        43,
+        68
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 69,
+      "links": [
+        1,
+        8,
+        26,
+        43,
+        69
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Reload",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 70,
+      "links": [
+        3,
+        12,
+        29,
+        47,
+        70
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Start",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 71,
+      "links": [
+        3,
+        12,
+        29,
+        47,
+        71
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 30,
+      "links": [
+        0,
+        4,
+        16,
+        30
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Start",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 31,
+      "links": [
+        0,
+        4,
+        16,
+        31
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Start",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 32,
+      "links": [
+        0,
+        5,
+        18,
+        32
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Start",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 33,
+      "links": [
+        0,
+        5,
+        18,
+        33
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 36,
+      "links": [
+        0,
+        5,
+        19,
+        36
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Reload",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 37,
+      "links": [
+        0,
+        5,
+        20,
+        37
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 38,
+      "links": [
+        0,
+        5,
+        20,
+        38
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 41,
+      "links": [
+        0,
+        5,
+        20,
+        41
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Reload",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 44,
+      "links": [
+        3,
+        12,
+        28,
+        44
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Start",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 45,
+      "links": [
+        3,
+        12,
+        28,
+        45
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Start",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 46,
+      "links": [
+        3,
+        12,
+        28,
+        46
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Start",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 48,
+      "links": [
+        3,
+        12,
+        29,
+        48
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 49,
+      "links": [
+        3,
+        12,
+        29,
+        49
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 50,
+      "links": [
+        3,
+        12,
+        29,
+        50
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Reload",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 15,
+      "links": [
+        0,
+        4,
+        15
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Start",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 17,
+      "links": [
+        0,
+        4,
+        17
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Start",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 21,
+      "links": [
+        0,
+        5,
+        21
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Reload",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 22,
+      "links": [
+        1,
+        6,
+        22
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Start",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 23,
+      "links": [
+        1,
+        6,
+        23
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.StartNew",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": true,
+            "Room#0.build": "new",
+            "Room#0.kids": 0,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 24,
+      "links": [
+        1,
+        7,
+        24
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Ask",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "needs-you",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 25,
+      "links": [
+        1,
+        7,
+        25
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Ask",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "needs-you",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Answer",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 27,
+      "links": [
+        1,
+        8,
+        27
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 9,
+      "links": [
+        2,
+        9
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Ask",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "needs-you",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Stop",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 0,
+            "Room#0.page": "offline",
+            "Room#0.serve": "down",
+            "Room#0.status": "interrupted",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 10,
+      "links": [
+        2,
+        10
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Ask",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "needs-you",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "needs-you",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 11,
+      "links": [
+        2,
+        11
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Ask",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "needs-you",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Answer",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 13,
+      "links": [
+        3,
+        13
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Drain",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "started",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 14,
+      "links": [
+        3,
+        14
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Finish",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "done",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        },
+        {
+          "action": "Room#0.Send",
+          "state": {
+            "room": "role Room#0",
+            "Room#0.banner": false,
+            "Room#0.build": "same",
+            "Room#0.kids": 1,
+            "Room#0.page": "live",
+            "Room#0.serve": "up",
+            "Room#0.status": "running",
+            "Room#0.task": "queued",
+            "Room#0.titled": true
+          }
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "states": {
+      "covered": 28,
+      "total": 28,
+      "uncovered": []
+    },
+    "transitions": {
+      "covered": 80,
+      "total": 80,
+      "uncovered": []
+    }
+  }
+}
