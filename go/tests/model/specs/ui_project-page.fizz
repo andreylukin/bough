@@ -1,0 +1,556 @@
+---
+# The page always has a step (Resize), so there is no deadlock to find;
+# liveness is RequestsSettle.
+deadlock_detection: false
+---
+# The project page (#/projects/<slug>) as the person sees it: the
+# CLIENT-side state machine of web/src/project.tsx ProjectView +
+# ProjectPage + ProjectHome + ProjectComposer, the MEMORY.md editor
+# (web/src/orb.tsx FileEditor, mounted in the Project panel) and the orb
+# status strip (project.tsx OrbLine). Recipe: go/tests/model/README.md.
+#
+# Where project_main_threads.fizz follows the server (Main's lock, the
+# thread's report), this follows the screen: which column, drawer, rail,
+# panel and dialog are up, what the composer and the editor are doing,
+# and the server facts only where they change this page (main exists,
+# one thread's group, main's orb).
+#
+# What is on screen, from the code:
+# - Nothing but a status until the first GET /api/projects/{slug} lands:
+#   <Pending what="Project"/>, or the ErrorNote with Retry when it
+#   failed. A later failed poll keeps the detail and shows nothing (err
+#   is read only while there is no detail), so it is not a step here.
+# - view is ProjectView's `open`: "home" (""), "main" (detail.main) or
+#   "thread" (the one modelled thread). The home is the composer, then
+#   main's row and the threads by group; beside a conversation the
+#   threads are a column at the left, folded to a rail when the person
+#   folded it (remembered, bough:prj-threads-folded) -- only where it
+#   is a column (wide).
+# - wide is the viewport class: max-width:1080px is "tight", where the
+#   thread column and the Project panel are drawers over the
+#   conversation behind one scrim, and the rail and its chevron are not
+#   drawn. (The <860px class changes only widths, nothing a person can
+#   do, so it is folded into tight.)
+# - panel is the Project panel. Its default is one remembered choice,
+#   bough:prj-panel ("" unset, "0", "1"), written only by the Project
+#   button at wide: unset, it is up on the home and down beside a
+#   conversation. ProjectPage's effect on [tight, onThread] re-derives
+#   it and closes the drawer whenever the viewport class changes or the
+#   page goes between the home and a conversation (main <-> thread does
+#   not flip onThread, so it keeps both).
+# - composer is ProjectComposer on the home: "empty", "typed",
+#   "sending" (textarea and Send disabled, "Sending..."), "failed" (the
+#   error under it, the text kept). Enter sends, Shift+Enter is a
+#   newline; typing is one step. A send that lands opens main
+#   (onMessage: messageProject, load, setOpen(main)). Leaving the home
+#   unmounts it, so its text goes with it.
+# - files is the definition files read (GET /api/projects/{slug}/orb):
+#   the editor waits on it, a failure says so with Retry.
+# - mem is the MEMORY.md tab of FileEditor: "clean", "dirty" (a draft;
+#   Save enabled, the tab wears a dot), "saving" ("Saving...", Save
+#   disabled), "saved" (the "MEMORY.md saved." note, 2.6 s), "failed"
+#   (the server's error beside the editor, the draft kept). The editor
+#   lives in the panel: the panel going down unmounts it, and its draft
+#   and a save's outcome go with it (see KNOWN GAPS).
+# - orb is main's container as detail.mainOrb says: "none", "starting"
+#   (starting/building; up is false until it runs), "running",
+#   "stopped". The strip's words are strip(), its Stop link shows only
+#   while orbUp. Stop asks first when main has running jobs
+#   (confirmStopOrb): dialog is that modal, modelled with jobs running.
+# - thread is the one thread's group (threadGroup): "none" (no thread,
+#   or archived/moved: the stale-thread effect sends a page showing it
+#   home), "running", "unseen" (Finished -- unseen), "done". The done
+#   group starts folded in the column (CLOSED); done_folded is its head's
+#   aria-expanded, inverted. Viewing an unseen thread acks it (the App's
+#   viewingUnseen, one step here), and dropping it on Done does too.
+#
+# Scope cuts, since every generated path is one browser walk:
+# - One thread, started by main's Start thread button (main stays on
+#   screen). New thread, the project.yml parse error callout, the Show
+#   all cap (>8 rows) and thread orbs add controls, not mechanisms.
+# - No navigation while the composer is sending: an in-flight send
+#   still opens main when it lands, wherever the person went.
+# - The editor's Edit waits for the "saved" note to fade.
+# - The main thread's own status (the column's main button) is the
+#   conversation's business, not this page's.
+# - The rest keep the graph near 300 states (327, 1151 transitions):
+#   the files answer before the detail and only their first read fails;
+#   only the first message fails; the page's work (messages, threads,
+#   the orb, the editor) is walked on the wide page with the rail open
+#   (busy_ok), the editor with nothing else moving (quiet), and while a
+#   save answers or its note shows the person only closes the panel or
+#   waits (still); main's orb stops only with no thread; the viewport
+#   changes only on a quiet page before the panel choice is remembered;
+#   the rail is folded and unfolded beside one conversation.
+
+def overlay(p):
+    # At tight the panel and the thread drawer cover the page behind a
+    # scrim: nothing under it can be clicked.
+    return (not p.wide) and (p.panel or p.drawer)
+
+def column_shown(p):
+    # The thread list beside a conversation: a column at wide unless
+    # folded to the rail, a drawer at tight only while open.
+    if p.view == "home":
+        return False
+    if p.wide:
+        return not p.rail
+    return p.drawer
+
+def list_shown(p):
+    # Somewhere a thread row can be clicked or dragged: the home's
+    # queue, or the column/drawer beside a conversation.
+    if p.detail != "loaded":
+        return False
+    if p.view == "home":
+        return not overlay(p)
+    return column_shown(p)
+
+def thread_row_shown(p):
+    # The column's done group is folded until opened; the home never
+    # folds a group of one row.
+    if p.thread == "none" or not list_shown(p):
+        return False
+    if p.view != "home" and p.thread == "done":
+        return not p.done_folded
+    return True
+
+def still(p):
+    # No modal up, and no save of MEMORY.md answering or just answered.
+    # Scope: while a save is in flight or its note is up, the person
+    # only closes the panel (the discard in KNOWN GAPS) or waits.
+    return not p.dialog and p.mem not in ("saving", "saved")
+
+def busy_ok(p):
+    # Scope: the page's work (messages, threads, the orb) is walked on
+    # the wide page with its files read and the rail open; the tight
+    # page, the rail and a failed files read are walked around it.
+    return p.wide and p.files == "loaded" and not p.rail and not p.dialog
+
+def quiet(p):
+    # Scope: the editor is walked with nothing else moving on the page:
+    # no message in flight, main's orb settled, the thread at rest.
+    return p.composer == "empty" and p.orb != "starting" and p.thread in ("none", "done")
+
+def panel_wanted(pref, view):
+    if pref != "":
+        return pref == "1"
+    return view == "home"
+
+def panel_shown(p):
+    return p.detail == "loaded" and p.panel
+
+def strip(orb, main):
+    # OrbLine's words, as the product says them: orbUp is status
+    # "running" or up, and a starting/building orb is not up yet.
+    if orb == "none":
+        if main:
+            return "Main thread has no orb yet."
+        return "No orb yet."
+    if orb == "running":
+        return "Main thread's orb - Running"
+    return "Main thread's orb is stopped."
+
+def status_line(p):
+    # The one thing that always says where the page is: the pending
+    # line, the error, or the crumb (the slug and the counts on the
+    # home, "All threads · <title>" beside a conversation).
+    if p.detail == "loading":
+        return "Loading project"
+    if p.detail == "error":
+        return "Couldn't read this project"
+    if p.view == "home":
+        return "counts"
+    return "crumb"
+
+role Page:
+    action Init:
+        self.detail = "loading"
+        self.files = "loading"
+        self.main = False
+        self.view = "home"
+        self.thread = "none"
+        self.done_folded = True
+        self.orb = "none"
+        self.composer = "empty"
+        self.wide = True
+        self.pref = ""
+        self.panel = panel_wanted("", "home")
+        self.drawer = False
+        self.rail = False
+        self.mem = "clean"
+        self.dialog = False
+
+    # --- how the page's views go between each other ------------------
+
+    atomic func settle(before):
+        # ProjectPage's [tight, onThread] effect, run after any step that
+        # changed the viewport class or moved between the home and a
+        # conversation. The panel going down takes the editor with it.
+        # Leaving the home unmounts ProjectComposer: its text goes too.
+        onthread_changed = (before == "home") != (self.view == "home")
+        if self.view != "home":
+            self.composer = "empty"
+        if onthread_changed:
+            self.relayout()
+
+    atomic func relayout():
+        shown = self.wide and panel_wanted(self.pref, self.view)
+        if self.panel and not shown:
+            self.mem = "clean"
+        self.panel = shown
+        self.drawer = False
+
+    atomic func close_panel():
+        if self.panel:
+            self.mem = "clean"
+        self.panel = False
+
+    # --- the first read and the files --------------------------------
+
+    atomic fair action Loaded:
+        # Scope: the files' first read answers before the detail's.
+        require self.detail == "loading" and self.files != "loading"
+        self.detail = "loaded"
+
+    atomic action LoadFail:
+        require self.detail == "loading" and self.files != "loading"
+        self.detail = "error"
+
+    atomic action Retry:
+        # The ErrorNote's Retry: load() and loadFiles() again.
+        require self.detail == "error" and still(self)
+        self.detail = "loading"
+        if self.files == "error":
+            self.files = "loading"
+
+    atomic fair action FilesLoaded:
+        require self.files == "loading"
+        self.files = "loaded"
+
+    atomic action FilesFail:
+        # Scope: only the first read fails (a retried one answers).
+        require self.files == "loading" and self.detail == "loading"
+        self.files = "error"
+
+    atomic action FilesRetry:
+        # The Files section's inline Retry (onRetry: the detail is read
+        # again too, a poll here).
+        require self.files == "error" and panel_shown(self) and still(self)
+        self.files = "loading"
+
+    # --- the composer on the home --------------------------------------
+
+    atomic action Type:
+        # Scope: the home's composer is walked before any thread.
+        require self.detail == "loaded" and self.view == "home" and self.thread == "none"
+        require busy_ok(self)
+        require self.composer in ("empty", "failed")
+        require not overlay(self) and still(self)
+        if self.composer == "empty":
+            self.composer = "typed"
+
+    atomic action Send:
+        # Enter (or Send): the text is trimmed non-empty and nothing is
+        # in flight; a failed send's text is still there to send again.
+        require self.detail == "loaded" and self.view == "home"
+        require self.composer in ("typed", "failed")
+        require not overlay(self) and still(self)
+        self.composer = "sending"
+
+    atomic fair action SendOk:
+        # messageProject: Main() (created or reopened), Send; its orb
+        # starts if it is not running. The page reloads and opens main.
+        require self.composer == "sending"
+        self.main = True
+        if self.orb != "running":
+            self.orb = "starting"
+        self.composer = "empty"
+        before = self.view
+        self.view = "main"
+        self.settle(before)
+
+    atomic fair action SendFail:
+        # Scope: only the first message, the one that creates main.
+        require self.composer == "sending" and not self.main
+        self.composer = "failed"
+
+    # --- going between the home, main and the thread -----------------
+
+    atomic action OpenMain:
+        # Main's row on the home, or the column's pinned Main thread.
+        require self.main and self.view != "main" and list_shown(self)
+        require self.composer != "sending" and still(self) and not self.rail
+        before = self.view
+        self.view = "main"
+        self.settle(before)
+
+    atomic action OpenThread:
+        # The thread's row; its unseen finish is acked on view. A pick in
+        # the drawer leaves the drawer up (onOpen is setOpen alone).
+        require self.view != "thread" and thread_row_shown(self)
+        require self.composer != "sending" and still(self) and not self.rail
+        before = self.view
+        self.view = "thread"
+        if self.thread == "unseen":
+            self.thread = "done"
+        self.settle(before)
+
+    atomic action Back:
+        # "< All threads" in the bar, under the scrim at tight.
+        require self.detail == "loaded" and self.view != "home"
+        require not overlay(self) and still(self) and not self.rail
+        before = self.view
+        self.view = "home"
+        self.settle(before)
+
+    # --- the thread column, its rail and its drawer --------------------
+
+    atomic action FoldRail:
+        # Scope: folded and unfolded beside one conversation (navigation
+        # waits for it to be unfolded; the fold is remembered either way).
+        # The column's chevron (wide only: at tight it is not drawn).
+        require self.detail == "loaded" and self.view != "home" and self.wide
+        require not self.rail and still(self) and self.mem == "clean"
+        self.rail = True
+
+    atomic action UnfoldRail:
+        require self.detail == "loaded" and self.view != "home" and self.wide
+        require self.rail and still(self)
+        self.rail = False
+
+    atomic action ToggleDone:
+        # The column's Done group head.
+        require self.view != "home" and column_shown(self) and self.thread == "done"
+        require still(self) and self.mem == "clean"
+        self.done_folded = not self.done_folded
+
+    atomic action ToggleDrawer:
+        # The bar's Threads button: drawn only beside a conversation at
+        # tight. It closes the panel. With the drawer up it is under the
+        # scrim, so only the panel being up leaves it clickable.
+        require self.detail == "loaded" and self.view != "home" and not self.wide
+        require not overlay(self) and still(self)
+        self.close_panel()
+        self.drawer = True
+
+    atomic action CloseDrawer:
+        # The drawer's own Close, or a tap on the scrim.
+        require self.drawer and still(self)
+        self.drawer = False
+
+    # --- the Project panel ---------------------------------------------
+
+    atomic action TogglePanel:
+        # The bar's Project button. At wide the choice is remembered; at
+        # tight it is a drawer and under the scrim once up, so there it
+        # only opens (the panel's Close and the scrim close it). A save in
+        # flight does not stop it (KNOWN GAPS 2).
+        # Scope: with the composer at rest.
+        require self.detail == "loaded" and not self.dialog and self.composer == "empty"
+        require self.wide or (not self.panel and not self.drawer)
+        if self.wide:
+            if self.panel:
+                self.pref = "0"
+            else:
+                self.pref = "1"
+        if self.panel:
+            self.close_panel()
+        else:
+            self.panel = True
+        self.drawer = False
+
+    atomic action ClosePanel:
+        # The drawer's Close or the scrim: tight only.
+        require panel_shown(self) and not self.wide and not self.dialog
+        self.close_panel()
+
+    atomic action Resize:
+        # The viewport crosses 1080px. The confirm dialog is the
+        # browser-level modal: it stays whatever happens behind it.
+        # Scope: the viewport changes only on a quiet page, and the
+        # tight page is walked with the thread at rest (see quiet) and
+        # before the panel choice is remembered.
+        require quiet(self) and not self.dialog and self.pref == ""
+        self.wide = not self.wide
+        self.relayout()
+
+    # --- MEMORY.md -----------------------------------------------------
+
+    atomic action Edit:
+        require panel_shown(self) and busy_ok(self) and quiet(self)
+        require self.mem in ("clean", "dirty", "failed")
+        if self.mem == "clean":
+            self.mem = "dirty"
+
+    atomic action Save:
+        # Enabled only with a draft that differs and no save in flight.
+        require panel_shown(self) and busy_ok(self) and quiet(self)
+        require self.mem in ("dirty", "failed")
+        self.mem = "saving"
+
+    atomic fair action SaveOk:
+        require self.mem == "saving"
+        self.mem = "saved"
+
+    atomic fair action SaveFail:
+        require self.mem == "saving"
+        self.mem = "failed"
+
+    atomic fair action SaidFades:
+        require self.mem == "saved"
+        self.mem = "clean"
+
+    # --- the orb strip -------------------------------------------------
+
+    atomic action StopOrb:
+        # The strip's Stop: only while orbUp. Main has jobs running, so
+        # it asks first.
+        # Scope: main's orb stops only with no thread in the project.
+        require panel_shown(self) and self.orb == "running" and busy_ok(self)
+        require self.thread == "none" and self.composer == "empty" and self.mem == "clean"
+        self.dialog = True
+
+    atomic action ConfirmStop:
+        # "Stop orb": api.stopOrb, then the page reloads.
+        require self.dialog
+        self.dialog = False
+        self.orb = "stopped"
+
+    atomic action CancelStop:
+        # Cancel or Escape.
+        require self.dialog
+        self.dialog = False
+
+    atomic fair action OrbUp:
+        require self.orb == "starting"
+        self.orb = "running"
+
+    atomic action OrbExit:
+        # main's owner went away: serve reports the orb stopped.
+        require self.orb == "running" and self.thread == "none"
+        self.orb = "stopped"
+
+    # --- the thread, as the 4 s poll brings it -------------------------
+
+    atomic action StartThread:
+        # Main's composer's Start thread: the thread is created running
+        # and main stays on screen.
+        # Scope: main hands out work while its orb runs.
+        require self.view == "main" and self.main and self.thread == "none" and self.orb == "running"
+        require busy_ok(self)
+        require not overlay(self) and still(self)
+        self.thread = "running"
+
+    atomic action ThreadFinish:
+        require self.thread == "running"
+        if self.view == "thread":
+            self.thread = "done"
+        else:
+            self.thread = "unseen"
+
+    atomic action ThreadMessage:
+        # Typing into the open thread's composer.
+        require self.view == "thread" and self.thread == "done" and busy_ok(self)
+        require not overlay(self) and still(self)
+        self.thread = "running"
+
+    atomic action DropOnDone:
+        # Dragging an unseen thread onto Done marks it seen.
+        require self.thread == "unseen" and list_shown(self) and still(self)
+        self.thread = "done"
+
+    atomic action ArchiveThread:
+        # Archived or moved elsewhere (another client): it leaves the
+        # list, and a page showing it goes home.
+        # Scope: with the column unfolded (the rail is walked in place).
+        require self.thread in ("unseen", "done") and not self.rail
+        self.thread = "none"
+        self.done_folded = True
+        if self.view == "thread":
+            before = self.view
+            self.view = "home"
+            self.settle(before)
+
+action Init:
+    page = Page()
+
+# Something always says where the page is, loading and failed included.
+always assertion StatusVisible:
+    return status_line(page) != ""
+
+# Nothing but the status until the project is read: no conversation, no
+# drawer, no editor state, no dialog.
+always assertion NothingBeforeDetail:
+    if page.detail == "loaded":
+        return True
+    return page.view == "home" and not page.drawer and page.mem == "clean" and not page.dialog and page.composer == "empty"
+
+# At most one drawer covers the conversation.
+always assertion OneDrawer:
+    return not (page.drawer and page.panel)
+
+# The thread drawer exists only where it is one: tight, beside a
+# conversation.
+always assertion DrawerOnlyWhereItIsOne:
+    return not page.drawer or (not page.wide and page.view != "home")
+
+# The middle column always has something to show: main is open only once
+# it exists, the thread only while it is in the project.
+always assertion OpenHasSomething:
+    if page.view == "main":
+        return page.main
+    if page.view == "thread":
+        return page.thread != "none"
+    return True
+
+# A thread on screen is never marked unseen.
+always assertion UnseenNeverOnScreen:
+    return not (page.view == "thread" and page.thread == "unseen")
+
+# The composer's text and its error belong to the home.
+always assertion ComposerOnHome:
+    return page.composer == "empty" or page.view == "home"
+
+# The editor holds a draft, a save or a note only while it is drawn: the
+# panel is up and the files are read.
+always assertion EditorNeedsPanel:
+    return page.mem == "clean" or (panel_shown(page) and page.files == "loaded")
+
+# At wide the panel is what the person last chose with the Project
+# button, and unchosen it is up on the home and down beside a
+# conversation, whatever happened at tight in between.
+always assertion PanelFollowsChoice:
+    return not page.wide or page.panel == panel_wanted(page.pref, page.view)
+
+# The strip names a main once there is one.
+always assertion StripKnowsMain:
+    return page.orb == "none" or page.main
+
+# Every request the page starts settles: a send, a save, the first read.
+always eventually assertion RequestsSettle:
+    return page.composer != "sending" and page.mem != "saving" and page.detail != "loading"
+
+# KNOWN GAPS: the product as it is, modelled faithfully above; the
+# property it ought to have is not asserted, since fizz fails each:
+#
+# 1. The strip calls a starting or building orb stopped: orbUp is false
+#    until the container runs (serve sets up only for "running"), so
+#    OrbLine says "Main thread's orb is stopped. It starts when you
+#    message the project." right after the message that started it.
+#    fizz: Init, FilesLoaded, Loaded, Type, Send, SendOk.
+#      always assertion StripHonest:
+#          return page.orb != "starting" or strip(page.orb, page.main) != "Main thread's orb is stopped."
+#
+# 2. A MEMORY.md draft is discarded without a word when the panel goes
+#    down: the Project button, the scrim, a resize across 1080px, or a
+#    message or a thread opened from the home (the panel default flips).
+#    A save in flight then lands with nobody told. With a `dropped` flag
+#    set wherever mem is reset from dirty/failed/saving, fizz fails
+#    `not page.dropped` on: Init, FilesLoaded, Loaded, Edit, TogglePanel.
+#
+# 3. At tight, picking a thread in the drawer leaves the drawer over the
+#    conversation it opened (onOpen is setOpen alone; the effect that
+#    closes the drawer runs only when onThread flips). With a `picked`
+#    flag, fizz: ... StartThread, ThreadFinish, DropOnDone, ToggleDone,
+#    Resize, ToggleDrawer, OpenThread.
