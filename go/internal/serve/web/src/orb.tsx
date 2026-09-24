@@ -209,6 +209,9 @@ export function filePlaceholder(f: OrbFile): string {
   return "Empty: saving removes the file";
 }
 
+/** The editor's own state: drafts per file, a save in flight, its error, the saved note. */
+export interface EditorInitial { drafts: Partial<Record<OrbFile, string>>; saving: boolean; saveErr: string; said: string }
+
 /**
  * The definition files, a tab per file over one pane, with the drafts and
  * the Save that both pages share.
@@ -218,7 +221,7 @@ export function filePlaceholder(f: OrbFile): string {
  * puts MEMORY.md first. The tab is controlled so a caller can point at
  * the file it wants fixed (the preflight's "Edit project.yml").
  */
-export function FileEditor({ order, files, tab, onTab, onSave, editorRef, meta, note, actions, announce }: {
+export function FileEditor({ order, files, tab, onTab, onSave, editorRef, meta, note, actions, announce, initial }: {
   order: readonly OrbFile[];
   files: Partial<Record<OrbFile, string>>;
   tab: OrbFile; onTab: (f: OrbFile) => void;
@@ -233,12 +236,14 @@ export function FileEditor({ order, files, tab, onTab, onSave, editorRef, meta, 
   actions?: ReactNode;
   /** Say so when a save lands; the orb panel's Build log already does. */
   announce?: boolean;
+  /** Where its state starts, for a static render; the app never passes it. */
+  initial?: EditorInitial;
 }) {
   // Edits per file survive switching tabs; a saved file drops its draft.
-  const [drafts, setDrafts] = useState<Partial<Record<OrbFile, string>>>({});
-  const [saving, setSaving] = useState(false);
-  const [saveErr, setSaveErr] = useState("");
-  const [said, setSaid] = useState("");
+  const [drafts, setDrafts] = useState<Partial<Record<OrbFile, string>>>(initial?.drafts ?? {});
+  const [saving, setSaving] = useState(initial?.saving ?? false);
+  const [saveErr, setSaveErr] = useState(initial?.saveErr ?? "");
+  const [said, setSaid] = useState(initial?.said ?? "");
   const saved = files[tab] ?? "";
   const text = drafts[tab] ?? saved;
   const dirty = text !== saved;
