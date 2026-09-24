@@ -6,7 +6,7 @@
 // example.
 import * as fs from 'fs';
 import * as path from 'path';
-import type { Page } from '@playwright/test';
+import type { Page, TestInfo } from '@playwright/test';
 import { test, expect, type Serve } from './serve';
 
 const modelDir = path.resolve(__dirname, '..', '..', 'model');
@@ -39,6 +39,15 @@ export interface Flow<C> {
   sessions(c: C): string[];
   /** Let anything still held (a blocked turn) go before serve stops. */
   cleanup?(c: C): Promise<void>;
+  /** Console errors a step causes on purpose. Chromium logs every
+   *  request answered 4xx ("Failed to load resource: … 409"), so a flow
+   *  whose spec has a refused request names that line here. */
+  expectedErrors?: RegExp;
+  /** Walk every path on the worker's one serve (sharedServe) instead of
+   *  one serve per path. For a flow whose init makes its own world in a
+   *  serve (a fresh project) and whose cleanup leaves nothing running:
+   *  a hundred paths then pay for a handful of boots, not a hundred. */
+  shared?: boolean;
 }
 
 /** The role's fields out of a graph state, keyed by bare field name. */
@@ -63,14 +72,17 @@ const POLL_STEP_MS = 5_000;
 
 /** One test per generated path of flow.spec. */
 export function modelTests<C>(flow: Flow<C>): void {
+  // A worker option cannot be set inside a describe (it would force a
+  // new worker), and modelTests is called at a spec file's top level.
+  if (flow.config && flow.shared) test.use({ workerServeOpts: { config: flow.config } });
   test.describe(`model: ${flow.spec}`, () => {
-    if (flow.config) test.use({ serveOpts: { config: flow.config } });
+    if (flow.config && !flow.shared) test.use({ serveOpts: { config: flow.config } });
 
     loadPaths(flow.spec).forEach((trace, i) => {
       const walk = trace.slice(1).map((s) => s.action.slice(flow.role.length + 1)).join(' → ');
-      test(`path ${i}: ${walk}`, async ({ serve, page }, info) => {
+      const walkPath = async (serve: Serve, page: Page, info: TestInfo) => {
         const errors: string[] = [];
-        page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+        page.on('console', (m) => { if (m.type() === 'error' && !flow.expectedErrors?.test(m.text())) errors.push(m.text()); });
         page.on('pageerror', (e) => errors.push(String(e)));
 
         // The page's timers run on a clock the walk can move: a row the
@@ -101,7 +113,9 @@ export function modelTests<C>(flow: Flow<C>): void {
           await flow.cleanup?.(c);
           saveTranscripts(serve, flow.spec, flow.sessions(c), info.title);
         }
-      });
+      };
+      if (flow.shared) test(`path ${i}: ${walk}`, ({ sharedServe, page }, info) => walkPath(sharedServe, page, info));
+      else test(`path ${i}: ${walk}`, ({ serve, page }, info) => walkPath(serve, page, info));
     });
   });
 }
