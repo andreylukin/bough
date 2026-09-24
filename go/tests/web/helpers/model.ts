@@ -118,7 +118,6 @@ export const QUARANTINED: Record<string, string> = {
   skills_mentions: 'PickSkill reads the wrong state',
   // Pass locally, fail on a CI runner (2026-09-24, run 35993131696):
   changes_review: 'a walk times out on the Open click on a CI runner',
-  setup_welcome: 'KeyRejected then SaveKey times out under load (CI; flaky locally)',
   session_filing: 'Assign and Project Delete log console errors on a CI runner',
   ui_me: "the brief bar's text reads clipped after Refresh on a CI runner",
 };

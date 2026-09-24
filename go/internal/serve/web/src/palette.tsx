@@ -350,11 +350,20 @@ export function Palette(props: PaletteProps) {
     if (el?.isConnected && !document.querySelector("[aria-modal='true']")) el.focus?.();
   }, [open]);
 
+  // The query resets while rendering the open, not in an effect after it:
+  // the palette stays mounted while closed, and an effect let the first
+  // frame of a reopen show the last query, then wiped whatever was typed
+  // into it before the effect ran.
+  const shownFor = open ? initialQuery : null;
+  const [resetFor, setResetFor] = useState(shownFor);
+  if (resetFor !== shownFor) {
+    setResetFor(shownFor);
+    if (open) { setQ(initialQuery); setAtId(null); }
+  }
+
   useEffect(() => {
     if (!open) return;
     opener.current = document.activeElement;
-    setQ(initialQuery);
-    setAtId(null);
     field.current?.focus();
   }, [open, initialQuery]);
 
