@@ -112,7 +112,6 @@ export const QUARANTINED: Record<string, string> = {
   ask_answer: 'after Exit the page no longer shows how many questions were asked (asked reads 0)',
   steer_queue: 'Stop leaves the queued message sending, and the draft is not cleared',
   ui_composer: 'a second Skills click shows the cached list; the spec expects loading',
-  navigation_routes_palette: 'Back lands in the wrong state; a session never finishes',
   wiki_review: 'ToActivity after an ingest reads the wrong state',
   archive_unarchive: 'AgentFinish after Unarchive reads the wrong state',
   skills_mentions: 'PickSkill reads the wrong state',
