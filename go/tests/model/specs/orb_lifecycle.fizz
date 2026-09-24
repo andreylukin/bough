@@ -1,0 +1,325 @@
+# A project session's orb as serve and the control room see it: the child
+# (the session's bough process) prepares, builds, starts and settles it
+# in ~/.bough/orbs/<session>/state.json; serve reads that file and the
+# container runtime and derives the status a row honestly shows; the
+# person stops, removes and looks through portals; the reaper stops idle
+# ones. The container runtime is abstract (ctr), so the spec needs none.
+#
+# Where the code disagreed with the mapped model (and the code won):
+#   - serve DOES write state.json: Stop orb, the reaper and Kill go
+#     through orb.StopContainer, whose MarkStopped writes status
+#     "stopped" (and Restore puts it back on a failed stop). What holds is
+#     that serve only ever writes "stopped" (or deletes the dir on
+#     Remove); every other status is the child's.
+#   - "Starting" is not one state: Prepare writes starting(sync,
+#     worktree), Start writes building(build), then starting(container),
+#     then starting(resume.sh). phase carries that: prepare | build |
+#     container | resume, and a failed orb keeps the phase it failed in
+#     (orb.FailedAt: build -> build.log, resume -> resume.log "setup",
+#     anything else "start").
+#   - Kill/archive/EndProject stop the container only when the runtime
+#     says it runs (stopKilledOrb); a child killed mid-build leaves
+#     state.json "building" and nothing corrects it (see BuildLogEnds).
+#   - Remove kills serve's own child BEFORE it checks for dirty
+#     worktrees, so a Remove refused as dirty still ends the session.
+#   - A portal's "live" is a TCP dial to the listener in the child's
+#     process, not to the container: it says nothing about the container
+#     being up (see PortalLiveOnlyWithItsSession).
+#
+# Fields (role Orb):
+#   file     state.json status: none (no orb dir) | building | starting |
+#            running | failed | stopped
+#   phase    the phase state.json is in or failed in
+#   ctr      the container: missing | stopped | running
+#   owner    the process owning state.json: none | serve (serve's child) |
+#            cli (another bough)
+#   mark     serve stopped this orb since the child last wrote
+#            (stoppedAt >= state.updatedAt)
+#   snap     serve's running-container snapshot says this one runs; it is
+#            at most runningTTL (10 s) old, and serve's own stop or
+#            remove drops it (forgetRunning)
+#   idle     the session wrote no history and no state for BOUGH_ORB_IDLE
+#   dirty    a worktree has uncommitted changes
+#   portal   state.json lists a portal (its listener lives in the owner)
+#   lost     a Remove deleted uncommitted work (must never happen)
+
+role Orb:
+    action Init:
+        self.file = "none"
+        self.phase = ""
+        self.ctr = "missing"
+        self.owner = "none"
+        self.mark = False
+        self.snap = False
+        self.idle = False
+        self.dirty = False
+        self.portal = False
+        self.lost = False
+
+    # --- the child: a session starts (or resumes) and writes phases ---
+
+    # Prepare's first write: a fresh State (no portals) at starting(sync).
+    # serve's child for a web session, another bough for a CLI one; a
+    # resume of a session whose owner is gone is the same start.
+    atomic action StartByServe:
+        require self.owner == "none"
+        self.owner = "serve"
+        self.child_start()
+
+    atomic action StartByCli:
+        require self.owner == "none"
+        self.owner = "cli"
+        self.child_start()
+
+    atomic action Prepared:
+        require self.owner != "none" and self.file == "starting" and self.phase == "prepare"
+        self.file = "building"
+        self.phase = "build"
+        self.child_wrote()
+
+    atomic fair action BuildOk:
+        require self.owner != "none" and self.file == "building"
+        self.file = "starting"
+        self.phase = "container"
+        self.child_wrote()
+
+    # A failed step writes failed at the phase it was in (orb.fail).
+    atomic action StartFails:
+        require self.owner != "none" and self.file in ("starting", "building")
+        self.file = "failed"
+        self.child_wrote()
+
+    atomic action ContainerUp:
+        require self.owner != "none" and self.file == "starting" and self.phase == "container"
+        self.ctr = "running"
+        self.phase = "resume"
+        self.child_wrote()
+
+    # resume.sh passed: running, phase ready.
+    atomic action Ready:
+        require self.owner != "none" and self.file == "starting" and self.phase == "resume"
+        self.file = "running"
+        self.phase = ""
+        self.child_wrote()
+
+    # The child's next exec finds the container not running (Stop orb,
+    # the reaper, an engine restart) and starts it again
+    # (ensureRunningLocked): starting(container), then resume.sh again.
+    atomic action Exec:
+        require self.owner != "none" and self.ctr != "running"
+        require self.file in ("running", "stopped") or (self.file == "failed" and self.phase in ("container", "resume"))
+        self.file = "starting"
+        self.phase = "container"
+        self.child_wrote()
+
+    # A turn writes history: the session is not idle.
+    atomic action Activity:
+        require self.owner != "none" and self.idle
+        self.idle = False
+
+    # The agent edits and commits in its worktrees while the orb runs.
+    atomic action Edit:
+        require self.owner != "none" and self.file == "running" and not self.dirty
+        self.dirty = True
+
+    atomic action Commit:
+        require self.owner != "none" and self.file == "running" and self.dirty
+        self.dirty = False
+
+    # OpenPortal refuses unless state.json says running (orb.OpenPortal);
+    # recordPortal rewrites state.json from disk, status unchanged.
+    atomic action OpenPortal:
+        require self.owner != "none" and self.file == "running" and not self.portal
+        self.portal = True
+        self.child_wrote()
+
+    atomic action ClosePortal:
+        require self.owner != "none" and self.portal
+        self.portal = False
+        self.child_wrote()
+
+    # The session exits cleanly: its row unmounts, Orb.Stop stops the
+    # container and CloseSessionPortals drops the portals.
+    atomic action Exit:
+        require self.owner != "none" and self.file in ("running", "failed", "stopped")
+        self.owner = "none"
+        self.file = "stopped"
+        self.ctr = "stopped" if self.ctr == "running" else self.ctr
+        self.portal = False
+        self.child_wrote()
+
+    # The owner dies without cleanup (crash, SIGKILL of another bough):
+    # state.json and its portal entries stay as they were.
+    atomic action OwnerDies:
+        require self.owner != "none"
+        self.owner = "none"
+
+    # --- serve ---
+
+    # Stop orb, offered by the page only while the row shows up
+    # (orbUp). A confirm when jobs run is the page's, not a state.
+    atomic action StopOrb:
+        require up(self)
+        self.serve_stop()
+
+    # Kill / archive / EndProject: SIGKILL serve's child, then
+    # stopKilledOrb stops the container only if the runtime says it runs.
+    atomic action Kill:
+        require self.owner == "serve"
+        self.owner = "none"
+        if self.ctr == "running":
+            self.serve_stop()
+
+    # The reaper: state.json running or failed and quiet for the limit,
+    # whoever owns it and whatever the container is.
+    atomic fair action Reap:
+        require self.idle and self.file in ("running", "failed")
+        self.serve_stop()
+
+    # Time passes with nothing written.
+    atomic action GoIdle:
+        require not self.idle and self.file in ("running", "failed")
+        self.idle = True
+
+    # The running snapshot expires (runningTTL) and is read again.
+    atomic fair action Refresh:
+        require self.snap != (self.ctr == "running")
+        self.snap = (self.ctr == "running")
+
+    # DELETE orb after the plan's confirm (the page offers Remove only
+    # while the row is not up). serve's own child is killed first; one
+    # owned by another bough is refused (409); dirty worktrees are
+    # refused (409) after that kill.
+    atomic action Remove:
+        require self.file != "none" and not up(self) and self.owner != "cli"
+        if self.owner == "serve":
+            self.owner = "none"
+            if self.ctr == "running":
+                self.serve_stop()
+        if not self.dirty:
+            self.lost = self.dirty
+            self.file = "none"
+            self.phase = ""
+            self.ctr = "missing"
+            self.mark = False
+            self.snap = False
+            self.idle = False
+            self.portal = False
+
+    # Helpers are `atomic func`: a plain func call is a yield point, and
+    # fizz then explores a thread crashing half way through an atomic
+    # action (a Remove that set file none and then left mark True).
+    atomic func child_start():
+        self.file = "starting"
+        self.phase = "prepare"
+        self.portal = False
+        self.child_wrote()
+
+    # Every state.json write moves updatedAt past serve's stoppedAt and
+    # restarts the idle clock.
+    atomic func child_wrote():
+        self.mark = False
+        self.idle = False
+
+    # Supervisor.stopOrb: MarkStopped (a write: updatedAt now), stop the
+    # container (a missing one is already stopped), stoppedAt now, and
+    # the API drops its snapshot.
+    atomic func serve_stop():
+        if self.file != "none":
+            self.file = "stopped"
+        if self.ctr == "running":
+            self.ctr = "stopped"
+        self.mark = True
+        self.idle = False
+        self.snap = False
+
+# serve's orbState: the status a row shows.
+def status(o):
+    f = o.file
+    if f not in ("running", "failed", "starting"):
+        return f
+    if f == "failed":
+        return f
+    if o.owner == "none" or o.mark:
+        return "stopped"
+    return f
+
+# orbState's Up: running trusts state.json, failed and starting ask the
+# snapshot; an owner gone keeps only what the runtime confirms; serve's
+# own stop is down.
+def up(o):
+    f = o.file
+    if f == "failed":
+        return o.snap
+    if f not in ("running", "starting"):
+        return False
+    u = True if f == "running" else o.snap
+    if o.owner == "none":
+        return u and o.snap
+    if o.mark:
+        return False
+    return u
+
+# portalViews: live is a TCP dial to the listener, which exists only in
+# the owning process.
+def portal_live(o):
+    return o.portal and o.owner != "none"
+
+# sessionBuildLog's state: build.json, which the child keeps "building"
+# for the length of its build. (serve's own Rebuild also reads building;
+# it is project-wide and ends in serve's goroutine, so it is left out.)
+def build_log(o):
+    if o.file == "building":
+        return "building"
+    return "done"
+
+action Init:
+    orb = Orb()
+
+# A row claims a start or a run only while an owner lives and serve has
+# not stopped it since: state.json alone never makes an orb look alive.
+always assertion LiveStatusHasOwner:
+    return status(orb) not in ("running", "starting") or (orb.owner != "none" and not orb.mark)
+
+# Stop never deletes: whatever serve stopped still has its orb dir.
+always assertion StopNeverDeletes:
+    return not orb.mark or orb.file != "none"
+
+# Remove never deletes uncommitted work.
+always assertion RemoveKeepsDirtyWork:
+    return not orb.lost
+
+# Remove never leaves a live session without its orb: that child's next
+# exec would recreate the container behind the person's back.
+always assertion NoSessionWithoutOrb:
+    return orb.file != "none" or orb.owner == "none"
+
+# serve's own stop shows at once: stopped and not up, no snapshot wait.
+always assertion ServeStopShowsAtOnce:
+    return not orb.mark or (status(orb) == "stopped" and not up(orb))
+
+# Up is shown whenever the container runs, even under a failed status,
+# so Stop stays offered — once the snapshot has caught up, and except
+# while state.json says building (see notes: a resume building over a
+# container left running hides it).
+always assertion UpWhileContainerRuns:
+    fresh = orb.snap == (orb.ctr == "running")
+    return not (fresh and orb.ctr == "running" and orb.file != "building") or up(orb)
+
+# A portal left in state.json by a session that died is never offered
+# as live. (Live says the listener exists, not the container: see notes.)
+always assertion PortalLiveOnlyWithItsSession:
+    return not orb.portal or orb.owner != "none" or not portal_live(orb)
+
+# The snapshot is at most runningTTL behind the runtime.
+always eventually assertion SnapshotCatchesUp:
+    return orb.snap == (orb.ctr == "running")
+
+# An idle running or failed orb is eventually stopped by the reaper.
+always eventually assertion IdleOrbsReaped:
+    return not (orb.idle and orb.file in ("running", "failed"))
+
+# A build log eventually ends (ok or failed) — while its builder lives.
+# A child that dies mid-build leaves it "building" (see notes).
+always eventually assertion BuildLogEnds:
+    return build_log(orb) != "building" or orb.owner == "none"
