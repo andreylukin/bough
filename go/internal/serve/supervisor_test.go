@@ -717,6 +717,30 @@ func TestSupervisorInterruptWhileModelThinks(t *testing.T) {
 	}
 }
 
+// A rename whose save fails must change nothing: the page shows the
+// error, so a list read must not show the new name either, and a
+// restart would bring the old one back (specs/title_rename.fizz,
+// FailedRenameChangesNothing).
+func TestSupervisorSetTitleFailedSaveChangesNothing(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed(t, "sess-name")
+	if err := f.sup.SetTitle("sess-name", "before"); err != nil {
+		t.Fatalf("SetTitle: %v", err)
+	}
+	// A directory where the save writes its temp file fails the write.
+	tmp := filepath.Join(f.home, ".bough", "serve", "meta.json.tmp")
+	if err := os.Mkdir(tmp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.sup.SetTitle("sess-name", "after"); err == nil {
+		t.Fatal("SetTitle succeeded with meta.json.tmp blocked")
+	}
+	if got := f.sup.Meta("sess-name").Title; got != "before" {
+		t.Errorf("after a failed save, meta title = %q, want %q", got, "before")
+	}
+}
+
 func TestSupervisorArchiveKillsAndPersists(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

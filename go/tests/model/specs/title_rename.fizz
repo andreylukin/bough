@@ -1,0 +1,130 @@
+# A session's name, as serve derives it and the web page shows it
+# (go/tests/model/README.md). The session is open in the page: Rename…
+# lives in its thread header's menu, and the tab names the open view.
+#
+# Where the name comes from (serve's rowOf): meta.Title when non-empty,
+# else history's title. History's title is the latest "title" entry, else
+# the first input's first line, else "" (the page then says "Untitled ·
+# <date>" with the id tail as a chip; the id tail is not the name). The
+# session-title plugin writes one final "title" entry after the first
+# logged turn and never renames after that. A rename is stored beside
+# history in serve's meta, never appended to it: history is the record
+# of what happened, so handing the name back (renaming to empty) shows
+# history's title again, including one the small model wrote meanwhile.
+#
+# Values: "" none, "prompt" the opening line, "auto" the small model's
+# name, "mine" what the person typed. One typed text is enough: a second
+# one would only rename "mine" to "mine2" through the same transitions.
+#
+# Fields:
+#   hist     history's title (SessionInfo.Title)
+#   meta     serve's meta.Title for the session
+#   title    the row's title as GET /api/sessions returns it
+#   sidebar, header, tab
+#            what the page shows: the list row, the thread's <h1>, and
+#            document.title; all three read the same row, which the page
+#            only replaces on a list read (a poll, or the refresh a
+#            rename awaits)
+#   dialog   the Rename session dialog is up
+#   failed   the dialog shows the POST's error and stays up
+#   prior    meta when the dialog opened: a failed rename keeps it
+
+role Session:
+    action Init:
+        self.hist = ""
+        self.meta = ""
+        self.title = ""
+        self.sidebar = ""
+        self.header = ""
+        self.tab = ""
+        self.dialog = False
+        self.failed = False
+        self.prior = ""
+
+    # The first prompt: until the small model names the session, history's
+    # title is the opening line. The page learns it on its next list read.
+    atomic action Prompt:
+        require self.hist == ""
+        self.hist = "prompt"
+        self.title = self.meta if self.meta != "" else self.hist
+
+    # The session-title plugin's one final name, after the first logged
+    # turn. A rename hides it; it is still history's title underneath.
+    atomic action AutoTitle:
+        require self.hist == "prompt"
+        self.hist = "auto"
+        self.title = self.meta if self.meta != "" else self.hist
+
+    # The list poll (4 s, 12 s with a session open): the page replaces its
+    # rows, and every surface re-reads the one row. Fair: the poll runs
+    # for as long as the page is open.
+    atomic fair action Poll:
+        require self.sidebar != self.title
+        self.sidebar = self.title
+        self.header = self.title
+        self.tab = self.title
+
+    # Settings > Rename…: askText, prefilled with the header's title.
+    atomic action OpenRename:
+        require not self.dialog
+        self.dialog = True
+        self.failed = False
+        self.prior = self.meta
+
+    # POST /rename {title} succeeded; onRename awaits refresh() before
+    # the dialog closes, so the page already shows the new name. Empty
+    # hands the name back to history.
+    atomic action Rename:
+        require self.dialog
+        text = any ["", "mine"]
+        # The dialog refuses the text it opened with (the header then)
+        # unless it is empty. Only a rename makes the header "mine", and
+        # nothing changes meta while the dialog is up, so the header now
+        # stands for the text it opened with without a field of its own.
+        require text == "" or text != self.header
+        self.meta = text
+        self.title = self.meta if self.meta != "" else self.hist
+        self.sidebar = self.title
+        self.header = self.title
+        self.tab = self.title
+        self.dialog = False
+        self.failed = False
+        self.prior = ""
+
+    # POST /rename failed (404 for a session serve no longer lists, or
+    # meta not saved): the dialog shows the error and stays up, and
+    # nothing about the name changed.
+    atomic action RenameFail:
+        require self.dialog
+        self.failed = True
+
+    atomic action Dismiss:
+        require self.dialog
+        self.dialog = False
+        self.failed = False
+        self.prior = ""
+
+action Init:
+    session = Session()
+
+# A rename never reaches history: history's title is only ever what the
+# session and the small model wrote.
+always assertion HistoryNeverHoldsRename:
+    return session.hist != "mine"
+
+# meta.Title overrides history's title only when non-empty.
+always assertion MetaOverridesOnlyWhenSet:
+    return session.title == (session.meta if session.meta != "" else session.hist)
+
+# The list row, the thread header and the tab never disagree.
+always assertion OneTitleEverywhere:
+    return session.sidebar == session.header and session.header == session.tab
+
+# A failed rename leaves the name as it was when the dialog opened.
+always assertion FailedRenameChangesNothing:
+    return not session.failed or (session.dialog and session.meta == session.prior)
+
+# Whatever changed the name (a rename, the small model, a first prompt),
+# the page shows it on a later list read.
+always eventually assertion PageCatchesUp:
+    return session.sidebar == session.title

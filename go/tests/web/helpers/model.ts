@@ -43,6 +43,10 @@ export interface Flow<C> {
    *  request answered 4xx/5xx ("Failed to load resource: … 409"), so a
    *  flow whose spec has a refused or failed request names that line here. */
   allowConsole?: RegExp;
+  /** A console error the step in flight provoked on purpose (Chromium logs
+   *  every non-2xx fetch, and a flow may make serve fail). Only that step's
+   *  own failure: anything else still fails the walk. */
+  expectedError?(c: C, text: string): boolean;
 }
 
 /** The role's fields out of a graph state, keyed by bare field name. */
@@ -74,7 +78,12 @@ export function modelTests<C>(flow: Flow<C>): void {
       const walk = trace.slice(1).map((s) => s.action.slice(flow.role.length + 1)).join(' → ');
       test(`path ${i}: ${walk}`, async ({ serve, page }, info) => {
         const errors: string[] = [];
-        page.on('console', (m) => { if (m.type() === 'error' && !flow.allowConsole?.test(m.text())) errors.push(m.text()); });
+        let c: C | undefined;
+        page.on('console', (m) => {
+          if (m.type() !== 'error' || flow.allowConsole?.test(m.text())) return;
+          if (c && flow.expectedError?.(c, m.text())) return;
+          errors.push(m.text());
+        });
         page.on('pageerror', (e) => errors.push(String(e)));
 
         // The page's timers run on a clock the walk can move: a row the
@@ -82,7 +91,7 @@ export function modelTests<C>(flow: Flow<C>): void {
         // 12 s while another session is open), and waiting that out in
         // real time made a five-step path take a minute.
         await page.clock.install();
-        const c = await flow.init(page, serve);
+        c = await flow.init(page, serve);
         try {
           for (const [n, step] of trace.entries()) {
             const name = step.action === 'Init' ? 'Init' : step.action.slice(flow.role.length + 1);

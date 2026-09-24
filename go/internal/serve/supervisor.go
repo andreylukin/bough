@@ -1240,10 +1240,22 @@ func (s *Supervisor) AllMeta() map[string]SessionMeta {
 func (s *Supervisor) SetTitle(id, title string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	m := s.meta[id]
+	old, had := s.meta[id]
+	m := old
 	m.Title = title
 	s.meta[id] = m
-	return s.saveMetaLocked()
+	// A failed save answers the page with an error, so the name must not
+	// change in memory either: the next list read would show it, and a
+	// restart would take it back.
+	if err := s.saveMetaLocked(); err != nil {
+		if had {
+			s.meta[id] = old
+		} else {
+			delete(s.meta, id)
+		}
+		return err
+	}
+	return nil
 }
 
 // Projects lists every project directory, by display name. It reads the
