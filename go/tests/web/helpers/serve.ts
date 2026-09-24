@@ -29,6 +29,8 @@ export interface ServeOpts {
    *  Defaults to an llm-echo row so no test reaches a provider. */
   config?: string;
   readyTimeoutMs?: number;
+  /** Extra environment for the serve process (e.g. BOUGH_CONTAINER=none). */
+  env?: Record<string, string>;
 }
 
 export interface Serve {
@@ -53,8 +55,8 @@ const echoConfig = '- id: llm\n  plugin: llm-echo\n';
 
 // Provider keys in the runner's environment would let a session that
 // slipped past the echo row call out; serve never needs them here.
-function hermeticEnv(home: string): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
+function hermeticEnv(home: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extra, HOME: home };
   for (const k of Object.keys(env)) if (k.endsWith('_API_KEY')) delete env[k];
   return env;
 }
@@ -84,7 +86,7 @@ export async function startServe(
   const port = await freePort();
   const url = `http://127.0.0.1:${port}`;
   // cwd = HOME, which has no ./bough.yml, so ~/.bough/bough.yml is the one in force.
-  const child: ChildProcess = spawn(boughBin, ['serve', '--run', `127.0.0.1:${port}`], { cwd: home, env: hermeticEnv(home) });
+  const child: ChildProcess = spawn(boughBin, ['serve', '--run', `127.0.0.1:${port}`], { cwd: home, env: hermeticEnv(home, opts.env) });
   const chunks: string[] = [];
   child.stdout?.on('data', (d) => chunks.push(String(d)));
   child.stderr?.on('data', (d) => chunks.push(String(d)));
