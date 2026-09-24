@@ -1,0 +1,290 @@
+# Where a new session starts, from the web page: the two reads the page
+# makes once at load (GET /api/health for home, GET /api/setup for
+# serve's start dir), the palette's Start rows (⌥N / the New button),
+# the "Start in folder" dialog's typed path, and the Overview's
+# ModePicker + New session button. Recipe: go/tests/model/README.md.
+#
+# Code this is checked against:
+#   web/src/app.tsx    home / startDir (the two load effects), newMode,
+#                      commands new:cwd, new:start, new:here, new:dir:*,
+#                      new:orb:*, new:folder (askText, "~" expansion),
+#                      the Overview's ModePicker + New session, start()
+#   web/src/palette.tsx startFolders (every cwd a local session ran in)
+#   web/src/mode.tsx   ModePicker (Local | the project Select)
+#   serve/setup.go     setup / setupFolder (home, folder.exists, checkout)
+#   serve/api.go       createSession: cwd must be a directory, else 400
+#   serve/orbs.go      createProjectSession: unknown slug, 400
+#
+# The fixture behind the abstract values: one serve whose start dir S is
+# a git checkout (not home); home H; one past local session whose cwd is
+# P = H/past (so P is P's only start folder: home, S and orb cwds are
+# never listed); one project Q. S must also hold a folder named `past`,
+# so a relative "past" resolved against serve's cwd lands somewhere real
+# (under launchd serve's cwd is /).
+#   tilde    "~/past" typed into the dialog: P
+#   relative "past": no leading / or ~
+#   missing  "~/nope": no such folder
+#
+# Fields:
+#   home     the page's home: loading | known | failed (health refused)
+#   start    the page's startDir: loading | checkout (S) | none (setup
+#            refused; a folder that is not a checkout reads the same)
+#   folder   P on disk: live | gone
+#   prow     how a Start row aimed at P reads: ok | missing
+#   project  Q: listed | deleted (removed from another tab)
+#   mode     the ModePicker: local | project (Q)
+#   ui       list (no palette) | palette (⌥N) | dialog (Start in folder)
+#            | failed (the "Couldn't start a session" toast)
+#   typed    the dialog's field: none (prefilled, Start disabled) |
+#            tilde | relative | missing
+#   open     the open session's folder: none (Overview) | home | start |
+#            past | orb (a project session; its rowDir is home)
+#
+# This spec is the page as it should be. Where the product disagrees
+# today (each is expected red in the MBT/browser stages, and each is
+# what its claim below exists for):
+# - HealthFails: home stays "" for the page's life (the effect runs
+#   once), which drops every new:* command and the Overview's New
+#   session. The page should take home from /api/setup too (it returns
+#   it) and retry /api/health on the list poll: NewAfterSetup,
+#   HomeComesBack.
+# - DeleteFolderOnDisk: startFolders lists every past cwd without asking
+#   whether it still exists; the row reads like any other and picking it
+#   400s. It should say the folder is missing: OfferedExistsOrMissing.
+# - SubmitRelative: the dialog expands only "~", and createSession
+#   stats a relative cwd against serve's own cwd, so "past" starts a
+#   session in S/past. It should be refused (400, the toast):
+#   NeverServeCwd. Resolving it against home would do too; the spec
+#   picks refusal, the smaller server change (filepath.IsAbs).
+# - ProjectDeletedElsewhere: newMode keeps the deleted slug; the
+#   Select shows a value it does not list and New posts a project that
+#   400s. It should fall back to Local: ModeIsListed.
+#
+# Where the code disagrees with the model as first mapped:
+# - A failed home does not remove every way to start: a typed ~/path in
+#   the palette still offers folder rows (pathRows needs no home) and
+#   then "Start a session in <folder>: …". Only the new:* rows and the
+#   Overview button go. Typed palette paths are ui_palette.fizz's.
+# - The palette's Enter target is already unique: new:cwd, new:start and
+#   new:here are suggested under exclusive conditions (EnterUnique).
+# - "Created" and "failed" are one step each here: which one a pick
+#   gets is decided by the target alone (400 before anything spawns).
+#   The in-flight create is session_create.fizz's.
+#
+# Scope cuts, since every generated path is one browser walk: one typed
+# path per dialog; P is deleted, and Q deleted, only with nothing open
+# over the list; a created session is closed before the next Overview
+# New (the ModePicker is on the Overview only).
+
+# The open session's folder as the palette's rowDir sees it: a project
+# session's cwd is its orb worktree, so rowDir is home for it.
+def row_dir(p):
+    if p.open == "orb":
+        return "home"
+    return p.open
+
+# How many Start rows are suggested in the ⌥N palette (Enter takes the
+# first suggested row). app.tsx's suggest flags, with S != H and P != S.
+def suggested(p):
+    d = row_dir(p)
+    n = 0
+    # new:cwd: the open session's folder, when it is not home.
+    if d != "none" and d != "home":
+        n += 1
+    # new:start: S when it is a checkout and not already new:cwd.
+    if p.start == "checkout" and d != "start" and (d == "none" or d == "home"):
+        n += 1
+    # new:here: home, when S is not a checkout.
+    if (d == "none" or d == "home") and p.start != "checkout":
+        n += 1
+    return n
+
+role Page:
+    action Init:
+        self.home = "loading"
+        self.start = "loading"
+        self.folder = "live"
+        self.prow = "ok"
+        self.project = "listed"
+        self.mode = "local"
+        self.ui = "list"
+        self.typed = "none"
+        self.open = "none"
+
+    # --- the two reads at load -------------------------------------------
+
+    # GET /api/health answers. Fair: after a failure the page asks again
+    # on its list poll, so a transient failure heals without a reload.
+    atomic fair action HealthOk:
+        require self.home != "known"
+        self.home = "known"
+
+    # The first GET /api/health fails (a restart, a dropped connection).
+    atomic action HealthFails:
+        require self.home == "loading"
+        self.home = "failed"
+
+    # GET /api/setup answers: S is a checkout. It carries home as well.
+    atomic fair action SetupAnswers:
+        require self.start == "loading"
+        self.start = "checkout"
+        self.home = "known"
+
+    # GET /api/setup fails: no startDir, New starts in home.
+    atomic action SetupFails:
+        require self.start == "loading"
+        self.start = "none"
+
+    # --- the palette ------------------------------------------------------
+
+    # ⌥N or the New button: the palette in "new" mode.
+    atomic action OpenNewPalette:
+        require self.ui == "list"
+        self.ui = "palette"
+
+    atomic action Escape:
+        require self.ui in ("palette", "dialog")
+        self.ui = "list"
+        self.typed = "none"
+
+    # Enter on the suggested Start row: new:cwd, new:start or new:here.
+    atomic action PickSuggested:
+        require self.ui == "palette" and self.home == "known"
+        d = row_dir(self)
+        if d == "past" and self.folder == "gone":
+            self.ui = "failed"
+        else:
+            self.ui = "list"
+            if d == "none" or d == "home":
+                self.open = "start" if self.start == "checkout" else "home"
+            else:
+                self.open = d
+
+    # "New session in past" (new:dir:P), listed unless P is the open
+    # session's own folder (then it is new:cwd, the suggested row).
+    atomic action PickPast:
+        require self.ui == "palette" and self.home == "known"
+        require row_dir(self) != "past"
+        if self.folder == "gone":
+            self.ui = "failed"
+        else:
+            self.ui = "list"
+            self.open = "past"
+
+    # "New session in Q" (new:orb:Q).
+    atomic action PickOrb:
+        require self.ui == "palette" and self.home == "known"
+        require self.project == "listed"
+        self.ui = "list"
+        self.open = "orb"
+
+    # "New session in a folder…": the dialog, prefilled with rowDir.
+    atomic action AskFolder:
+        require self.ui == "palette" and self.home == "known"
+        self.ui = "dialog"
+        self.typed = "none"
+
+    # --- the "Start in folder" dialog ----------------------------------
+
+    atomic action TypeTilde:
+        require self.ui == "dialog" and self.typed == "none"
+        self.typed = "tilde"
+
+    atomic action TypeRelative:
+        require self.ui == "dialog" and self.typed == "none"
+        self.typed = "relative"
+
+    atomic action TypeMissing:
+        require self.ui == "dialog" and self.typed == "none"
+        self.typed = "missing"
+
+    # Start: POST /api/sessions {cwd}. ~/past is P; a relative path is
+    # refused; ~/nope is not a directory.
+    atomic action SubmitPath:
+        require self.ui == "dialog" and self.typed != "none"
+        if self.typed == "tilde" and self.folder == "live":
+            self.ui = "list"
+            self.open = "past"
+        else:
+            self.ui = "failed"
+        self.typed = "none"
+
+    # --- the world changes under the page --------------------------------
+
+    # P is removed on disk; the next list read says so on its rows.
+    atomic action DeleteFolderOnDisk:
+        require self.ui == "list" and self.folder == "live"
+        self.folder = "gone"
+        self.prow = "missing"
+
+    # Q is deleted from another tab; the next projects read drops it.
+    atomic action ProjectDeletedElsewhere:
+        require self.ui == "list" and self.project == "listed"
+        self.project = "deleted"
+        self.mode = "local"
+
+    # --- the Overview ------------------------------------------------------
+
+    # The ModePicker's project Select: Q.
+    atomic action PickProjectMode:
+        require self.ui == "list" and self.open == "none" and self.home == "known"
+        require self.project == "listed" and self.mode == "local"
+        self.mode = "project"
+
+    # The ModePicker's Local button.
+    atomic action PickLocalMode:
+        require self.ui == "list" and self.open == "none" and self.home == "known"
+        require self.mode == "project"
+        self.mode = "local"
+
+    # New session: S when it is a checkout, else home; or Q's orb.
+    atomic action OverviewNew:
+        require self.ui == "list" and self.open == "none" and self.home == "known"
+        if self.mode == "project":
+            if self.project == "listed":
+                self.open = "orb"
+            else:
+                self.ui = "failed"
+        else:
+            self.open = "start" if self.start == "checkout" else "home"
+
+    # Back to the Overview; the created session stays in the list.
+    atomic action Close:
+        require self.ui == "list" and self.open != "none"
+        self.open = "none"
+
+    # The toast is dismissed.
+    atomic action Dismiss:
+        require self.ui == "failed"
+        self.ui = "list"
+
+action Init:
+    page = Page()
+
+# Every Start row aimed at P either points at a folder that exists or
+# says it is missing.
+always assertion OfferedExistsOrMissing:
+    return page.folder == "live" or page.prow == "missing"
+
+# A created session never runs in serve's own cwd: a relative path is
+# refused, not resolved against wherever serve was started.
+always assertion NeverServeCwd:
+    return page.open != "servecwd"
+
+# The ModePicker shows Local or a project the page lists.
+always assertion ModeIsListed:
+    return page.mode == "local" or page.project == "listed"
+
+# Once /api/setup has answered, New is offered: home is known.
+always assertion NewAfterSetup:
+    return page.start != "checkout" or page.home == "known"
+
+# With home known, the ⌥N palette suggests exactly one Start row, so
+# Enter has one target.
+always assertion EnterUnique:
+    return page.ui != "palette" or page.home != "known" or suggested(page) == 1
+
+# After a failed /api/health, the Start commands come back without a
+# reload.
+always eventually assertion HomeComesBack:
+    return page.home == "known"
