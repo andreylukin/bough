@@ -692,7 +692,7 @@ func (a *ordsAdapter) orbPath() string { return "/api/sessions/" + url.PathEscap
 // worst case, a client of the API that prunes branches (the page itself
 // sends no query).
 func (a *ordsAdapter) OpenRemovePlan() error {
-	_, ok, err := a.step(func(o ordsFields) bool { return o.orb == "present" && o.flow == "idle" })
+	ok, err := a.openBegin()
 	if !ok || err != nil {
 		return err
 	}
@@ -700,6 +700,17 @@ func (a *ordsAdapter) OpenRemovePlan() error {
 	if err != nil {
 		return err
 	}
+	return a.openEnd(code)
+}
+
+// openBegin and openEnd are OpenRemovePlan around its GET, which the
+// browser walk sends from the page.
+func (a *ordsAdapter) openBegin() (bool, error) {
+	_, ok, err := a.step(func(o ordsFields) bool { return o.orb == "present" && o.flow == "idle" })
+	return ok, err
+}
+
+func (a *ordsAdapter) openEnd(code int) error {
 	if code != http.StatusOK {
 		return fmt.Errorf("GET %s/remove = %d, want 200", a.orbPath(), code)
 	}
@@ -708,12 +719,17 @@ func (a *ordsAdapter) OpenRemovePlan() error {
 }
 
 func (a *ordsAdapter) Cancel() error {
-	_, ok, err := a.step(func(o ordsFields) bool { return o.flow == "web" })
+	ok, err := a.cancelBegin()
 	if !ok || err != nil {
 		return err
 	}
 	a.flow = "idle"
 	return nil
+}
+
+func (a *ordsAdapter) cancelBegin() (bool, error) {
+	_, ok, err := a.step(func(o ordsFields) bool { return o.flow == "web" })
+	return ok, err
 }
 
 func (a *ordsAdapter) Confirm() error                   { return a.confirm(false) }
@@ -723,17 +739,33 @@ func (a *ordsAdapter) ConfirmRuntimeRemoveFails() error { return a.confirm(true)
 // before and after: whether serve's child was ended, whether the orb
 // went, and what went with it.
 func (a *ordsAdapter) confirm(rtfail bool) error {
-	pre, ok, err := a.step(func(o ordsFields) bool { return o.flow == "web" && (o.ctr || !rtfail) })
+	pre, ok, err := a.confirmBegin(rtfail)
 	if !ok || err != nil {
 		return err
 	}
-	a.flow = "idle"
-	a.rt.failRemove.Store(rtfail)
 	code, err := a.call(http.MethodDelete, a.orbPath()+"?branches=1")
 	a.rt.failRemove.Store(false)
 	if err != nil {
 		return err
 	}
+	return a.confirmEnd(pre, code)
+}
+
+// confirmBegin is everything before the DELETE: the gate, the state it
+// is judged against, and the runtime set to fail for the variant. The
+// browser walk sends the DELETE from the page between the two halves.
+func (a *ordsAdapter) confirmBegin(rtfail bool) (ordsFields, bool, error) {
+	pre, ok, err := a.step(func(o ordsFields) bool { return o.flow == "web" && (o.ctr || !rtfail) })
+	if !ok || err != nil {
+		return pre, ok, err
+	}
+	a.flow = "idle"
+	a.rt.failRemove.Store(rtfail)
+	return pre, true, nil
+}
+
+// confirmEnd judges the DELETE that answered code.
+func (a *ordsAdapter) confirmEnd(pre ordsFields, code int) error {
 	switch code {
 	case http.StatusOK, http.StatusConflict, http.StatusInternalServerError:
 	default:
