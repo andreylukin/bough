@@ -182,11 +182,27 @@ func (a *app) waitUntil(pred func(screen string) bool, what string) {
 // the composer, and two identical samples of a half-drawn frame then
 // read as "settled" — which is how an assertion about the composer's
 // row saw it four lines off the bottom with blank rows beneath it.
+//
+// The same 120ms window is also judged on the byte stream, polled every
+// 10ms: no output reaching the emulator for 120ms since the call began
+// means no cell changed either, and it ends the wait up to 60ms sooner
+// than the sampling grid does, on ~1900 calls a run that together were
+// a third of the package's test time. The window starts at the call,
+// not at the last output, so input sent just before is still answered.
+// The samples stay for output that never stops but changes no text.
 func (a *app) settled() string {
-	prev := a.text()
+	const quiet, every = 120 * time.Millisecond, 60 * time.Millisecond
+	began := time.Now()
+	prev, prevAt := a.text(), began
 	same := 0
-	for range 60 {
-		time.Sleep(60 * time.Millisecond)
+	for time.Since(began) < 60*every {
+		time.Sleep(10 * time.Millisecond)
+		if time.Since(a.term.LastOutput()) >= quiet && time.Since(began) >= quiet {
+			return a.text()
+		}
+		if time.Since(prevAt) < every {
+			continue
+		}
 		cur := a.text()
 		if cur == prev {
 			same++

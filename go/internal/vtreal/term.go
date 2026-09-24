@@ -15,7 +15,9 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
@@ -36,6 +38,8 @@ type Terminal struct {
 	dec       map[ansi.DECMode]ansi.ModeSetting
 	cursor    uv.Position
 	cursorVis bool
+
+	lastOut atomic.Int64 // UnixNano of the last write into the emulator
 }
 
 type Snapshot struct {
@@ -77,8 +81,8 @@ func NewTerminal(tb testing.TB, cols, rows int) (*Terminal, error) {
 	})
 	t.Emu = emu
 	setTitle := func(s string) { t.mu.Lock(); t.title = s; t.mu.Unlock() }
-	go io.Copy(newTitleFilter(emu, setTitle), pty) //nolint:errcheck // app output → emulator
-	go io.Copy(pty, emu)                           //nolint:errcheck // emulator input (keys, replies) → app
+	go io.Copy(newTitleFilter(stampWriter{emu, &t.lastOut}, setTitle), pty) //nolint:errcheck // app output → emulator
+	go io.Copy(pty, emu)                                                    //nolint:errcheck // emulator input (keys, replies) → app
 	return t, nil
 }
 
@@ -151,3 +155,21 @@ func (t *Terminal) Snapshot() Snapshot {
 	}
 	return s
 }
+
+// stampWriter records when bytes last reached the emulator. It sits
+// under the title filter, so a title-only write (which never touches
+// the cells) does not stamp and a held-back grapheme flushed by the
+// filter's timer does.
+type stampWriter struct {
+	w  io.Writer
+	at *atomic.Int64
+}
+
+func (s stampWriter) Write(p []byte) (int, error) {
+	n, err := s.w.Write(p)
+	s.at.Store(time.Now().UnixNano())
+	return n, err
+}
+
+// LastOutput is when the app's output last reached the screen.
+func (t *Terminal) LastOutput() time.Time { return time.Unix(0, t.lastOut.Load()) }
