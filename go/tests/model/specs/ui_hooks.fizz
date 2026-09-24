@@ -1,0 +1,275 @@
+# The Hooks page (#/hooks) as the browser holds it: the list's loading,
+# error and stale states, one hook's definition panel (Source), the text
+# in it, Save, and Dry run. This is the client's state machine; the
+# server's side of the same page (what it writes, what it refuses, fires
+# reaching the list) is specs/hooks_page.fizz. Recipe:
+# go/tests/model/README.md.
+#
+# Code this is checked against (go/internal/serve/web/src/):
+#   hooks.tsx  HooksPage   refresh, the 5 s interval, Waiting (!data)
+#              HooksView   the stale banner once data exists
+#              Source      open, body, note, err, saving, read, expand,
+#                          Save, Dry run
+#   loading.tsx Pending    the list's 20 s "taking too long" and Retry
+#   app.tsx    Back        leaving the page unmounts HooksPage
+#
+# What is on screen, field by field:
+#   route  "hooks" | "away" (Back, or any nav item: HooksPage unmounts
+#          and every field below goes with it).
+#   list   "loading": skeleton, role=status. "slow": Pending passed 20 s
+#          ("Hooks is taking too long", Retry). "error": no data and the
+#          read failed ("Couldn't load hooks", Retry). "loaded": the rows.
+#          "stale": the rows plus "Stale · last updated … Retry".
+#   panel  the definition panel's disclosure: "closed" | "open"
+#          (aria-expanded on "Open definition" / "Hide definition").
+#   file   Source's body: "none" (never read), "loading" (Waiting
+#          inline), "error" (body null and err set: "Could not open the
+#          file — … Retry"; also the 15 s timer), "loaded" (textarea).
+#   edited the textarea differs from what was last read or saved.
+#   save   "idle" | "saving" (button says Saving…, it and the textarea
+#          disabled) | "saved" (note "Saved.") | "error" (err alert).
+#   dry    "idle" | "running" (request in flight: the button says
+#          Running…, aria-busy, and stays enabled; see KNOWN GAPS) |
+#          "result" (note "Dry run finished in …") | "error" (err alert).
+#   Source has ONE note slot and ONE err slot for both requests, so an
+#   answer that writes a slot replaces whatever the other request left
+#   there: that is why SaveOk can idle a dry "result", and so on.
+#
+# Left out, each because it does not change this surface:
+# - Focus and keyboard mode: the page has no dialog, popover or key
+#   binding of its own; focus stays on the control that was clicked.
+# - Viewport class: the narrow layout wraps the same controls.
+# - Server session status and hook fires: they change which rows the list
+#   shows, not any state here (hooks_page.fizz models fires).
+# - Filter chips: a filter that hides the row unmounts nothing (Source is
+#   keyed by path under the row), so it is the panel closed.
+# - Retry on "error" or "stale": refresh() does not clear err, so the
+#   screen stays the same until the read answers, which is Poll/PollFail.
+#
+# Pruned to keep the graph small (every path is one browser test): the
+# list moves (Poll, PollFail) only before the definition was ever opened
+# (file "none"). A refresh re-renders HooksView with new data, but Source
+# is keyed by path and keeps its state, and the stale banner sits above
+# the rows, so a list step taken with Source in any other state is the
+# same step taken from a walked one. Hide is walked only with no request
+# in flight, and Show only on a fresh (not stale) list, for the same
+# reason.
+#
+# All state lives in the Page role (fizzbee-mbt compares role state).
+
+role Page:
+    action Init:
+        self.route = "hooks"
+        self.list = "loading"
+        self.panel = "closed"
+        self.file = "none"
+        self.edited = False
+        self.save = "idle"
+        self.dry = "idle"
+
+    # --- the list -------------------------------------------------------
+
+    atomic fair action Poll:
+        # GET /api/hooks answered: setData, setErr(""). Once data exists
+        # the page never goes back to Waiting.
+        require self.route == "hooks"
+        require self.file == "none"
+        self.list = "loaded"
+
+    atomic action PollFail:
+        require self.route == "hooks"
+        require self.file == "none"
+        if self.list in ("loading", "slow", "error"):
+            self.list = "error"
+        else:
+            self.list = "stale"
+
+    atomic action ListTimeout:
+        # Pending's 20 s timer while the first read has not answered.
+        require self.route == "hooks"
+        require self.list == "loading"
+        self.list = "slow"
+
+    atomic action ListRetry:
+        # "Retry" under "taking too long": Pending restarts its clock.
+        require self.route == "hooks"
+        require self.list == "slow"
+        self.list = "loading"
+
+    # --- the definition panel -------------------------------------------
+
+    atomic action Show:
+        # "Open definition": the row exists only with data. expand() reads
+        # the file whenever body is still null, so reopening a panel that
+        # failed, or was hidden mid-read, reads again. A stale list shows
+        # the same rows, so "loaded" stands for both (pruned).
+        require self.route == "hooks"
+        require self.list == "loaded"
+        require self.panel == "closed"
+        self.panel = "open"
+        if self.file != "loaded":
+            self.file = "loading"
+
+    atomic action Hide:
+        # "Hide definition": the panel is hidden, not unmounted; body,
+        # edits and requests in flight all carry on. Hidden only with no
+        # save or dry run in flight (pruned: an answer lands the same way
+        # whether the panel is up).
+        require self.route == "hooks"
+        require self.panel == "open"
+        require self.save != "saving" and self.dry != "running"
+        self.panel = "closed"
+
+    atomic action Loaded:
+        require self.route == "hooks"
+        require self.file == "loading"
+        self.file = "loaded"
+        self.edited = False
+
+    atomic action LoadFail:
+        # The read failed, or 15 s passed and read()'s timer set err (the
+        # late answer is then dropped).
+        require self.route == "hooks"
+        require self.file == "loading"
+        self.file = "error"
+
+    atomic action FileRetry:
+        require self.route == "hooks"
+        require self.panel == "open"
+        require self.file == "error"
+        self.file = "loading"
+
+    # --- the text, Save and Dry run --------------------------------------
+
+    atomic action Edit:
+        # Typing: onChange clears note and err. The textarea is disabled
+        # while saving. A dry run in flight keeps running.
+        require self.route == "hooks"
+        require self.panel == "open"
+        require self.file == "loaded"
+        require self.save != "saving"
+        self.edited = True
+        self.save = "idle"
+        if self.dry != "running":
+            self.dry = "idle"
+
+    atomic action Save:
+        # Save: setNote(""), setErr(""), setSaving(true). Enabled whenever
+        # the text is shown and no save is in flight, edited or not.
+        require self.route == "hooks"
+        require self.panel == "open"
+        require self.file == "loaded"
+        require self.save != "saving"
+        self.save = "saving"
+        if self.dry != "running":
+            self.dry = "idle"
+
+    atomic action SaveOk:
+        # setNote("Saved.") replaces a dry run's note; its err stays.
+        require self.route == "hooks"
+        require self.save == "saving"
+        self.save = "saved"
+        self.edited = False
+        if self.dry == "result":
+            self.dry = "idle"
+
+    atomic action SaveFail:
+        # setErr(message) replaces a dry run's error; its note stays.
+        require self.route == "hooks"
+        require self.save == "saving"
+        self.save = "error"
+        if self.dry == "error":
+            self.dry = "idle"
+
+    atomic action DryRun:
+        # Dry run: setNote(""), setErr(""), then the request. Nothing
+        # disables the button, during a save or during a dry run.
+        require self.route == "hooks"
+        require self.panel == "open"
+        require self.file == "loaded"
+        self.dry = "running"
+        if self.save != "saving":
+            self.save = "idle"
+
+    atomic action DryOk:
+        require self.route == "hooks"
+        require self.dry == "running"
+        self.dry = "result"
+        if self.save == "saved":
+            self.save = "idle"
+
+    atomic action DryFail:
+        # r.error from the hook, or the request failing: both land in err.
+        require self.route == "hooks"
+        require self.dry == "running"
+        self.dry = "error"
+        if self.save == "error":
+            self.save = "idle"
+
+    # --- leaving and coming back -----------------------------------------
+
+    atomic action Back:
+        # HooksPage unmounts: data, the panel, the text and any answer
+        # still in flight are gone (a save already sent still lands on
+        # disk). See KNOWN GAPS. Walked with no request in flight (pruned:
+        # an answer to an unmounted page changes nothing on it).
+        require self.route == "hooks"
+        require self.save != "saving" and self.dry != "running"
+        self.route = "away"
+        self.list = "loading"
+        self.panel = "closed"
+        self.file = "none"
+        self.edited = False
+        self.save = "idle"
+        self.dry = "idle"
+
+    atomic action Return:
+        require self.route == "away"
+        self.route = "hooks"
+
+action Init:
+    page = Page()
+
+# The definition panel, and everything Source holds, lives under a row;
+# rows exist only once the list has data.
+always assertion SourceNeedsRows:
+    return (page.panel == "closed" and page.file == "none") or page.list in ("loaded", "stale")
+
+# An open panel always says something: loading, the error with Retry, or
+# the text. It is never an empty box.
+always assertion OpenPanelNeverBlank:
+    return page.panel == "closed" or page.file != "none"
+
+# Edits, Save and Dry run exist only with the text on screen: no request
+# is sent, and no verdict shown, for a file that is not loaded.
+always assertion ActionsNeedText:
+    return page.file == "loaded" or (not page.edited and page.save == "idle" and page.dry == "idle")
+
+# "Saved." never sits beside text that differs from what was saved.
+always assertion SavedMeansClean:
+    return page.save != "saved" or not page.edited
+
+# One note slot and one err slot: the page never claims two verdicts in
+# the same slot at once.
+always assertion OneNoteOneAlert:
+    return not (page.save == "saved" and page.dry == "result") and not (page.save == "error" and page.dry == "error")
+
+# A page not on screen holds nothing: coming back starts from Waiting.
+always assertion AwayHoldsNothing:
+    return page.route == "hooks" or (page.list == "loading" and page.panel == "closed" and page.file == "none" and not page.edited and page.save == "idle" and page.dry == "idle")
+
+# KNOWN GAPS (not asserted; each fails fizz as it stands):
+# - Dry run tests the saved file, not the text on screen (serve reads it
+#   from disk). Open, Loaded, Edit, DryRun, DryOk shows a verdict beside
+#   edited text:
+#     always assertion VerdictMatchesText:
+#         return page.dry not in ("result", "error") or not page.edited
+#   The same holds for Edit while a dry run is in flight: onChange clears
+#   the slots, and the late answer fills them again.
+# - A dry run in flight stays enabled: it says Running… (aria-busy), but a
+#   second click sends a second request.
+# - Dry run stays enabled while a save is in flight, so it can run the
+#   file before the save lands.
+# - Back with edited text drops it without asking:
+#     always assertion NoSilentDiscard: needs the pre-Back state, which a
+#     state assertion cannot see; Open, Loaded, Edit, Back is the path.
