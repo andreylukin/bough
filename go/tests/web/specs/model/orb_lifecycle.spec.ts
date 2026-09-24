@@ -222,7 +222,9 @@ test.describe('model: orb_lifecycle', () => {
   loadPaths('orb_lifecycle').forEach((trace, i) => {
     const walk = trace.slice(1).map((s) => s.action.slice(ROLE.length + 1)).join(' → ');
     test(`path ${i}: ${walk}`, async ({ page, backend }) => {
-      test.setTimeout(60_000);
+      // Sized by the walk: a MODEL_COVER=transitions walk runs to ~50
+      // steps and ran out of a flat 60 s mid-walk.
+      test.setTimeout(60_000 + trace.length * 3_000);
       const errors: string[] = [];
       page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
       page.on('pageerror', (e) => errors.push(String(e)));

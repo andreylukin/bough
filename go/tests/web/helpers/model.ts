@@ -146,6 +146,10 @@ export function modelTests<C>(flow: Flow<C>): void {
       const walk = trace.slice(1).map((s) => name(s.action)).join(' → ');
       const title = `path ${i}: ${walk}`;
       const run = async (serve: Serve, page: Page, info: TestInfo) => {
+        // A spec's timeout is sized for its states-cover walks; a
+        // MODEL_COVER=transitions walk is dozens of steps longer, and at
+        // a second or two a step it ran out of time mid-walk.
+        info.setTimeout(info.timeout + trace.length * 3_000);
         const errors: string[] = [];
         let c: C | undefined;
         const expected = (t: string) => (flow.expectedErrors ?? []).some((re) => re.test(t));
@@ -199,10 +203,15 @@ export function modelTests<C>(flow: Flow<C>): void {
 // go/tests/model/mbt to replay against the spec's graph.
 function saveTranscripts(serve: Serve, spec: string, ids: string[], title: string): void {
   const root = process.env.MODEL_TRACE_DIR;
-  if (!root) return;
+  // A flow with no transcripts (sessions() is []) registers no history
+  // projection, and an empty <spec>/ dir failed TestHistoryTraces.
+  if (!root || ids.length === 0) return;
   const dir = path.join(root, spec);
   fs.mkdirSync(dir, { recursive: true });
-  const slug = title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  // A MODEL_COVER=transitions walk's title runs to thousands of
+  // characters, past the 255-byte file-name limit (ENAMETOOLONG). The
+  // "path-N" prefix already makes the name unique within the spec.
+  const slug = title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 100);
   for (const id of ids) {
     const src = path.join(serve.home, '.bough', 'history', id + '.jsonl');
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(dir, `${slug}-${id}.jsonl`));
