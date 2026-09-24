@@ -33,10 +33,14 @@
 #            serve has armed (write+read being one step, arm == open)
 #   plainAsked, secretAsked   each question is asked at most once, so the
 #            graph stays finite
-#   notice   none | queued | delivered: the one background report. queued
-#            = in job-notices, waiting for the loop's next step (an open
-#            ask blocks that step); delivered = the loop handed it to the
-#            model. noticeCount counts deliveries.
+#   notice   none | queued | delivered: the one background report.
+#            delivered = the model has it (a request carrying it went
+#            out); queued = the engine has it but a model request is in
+#            flight, and it goes out at that request's boundary
+#            (actor.go steerOrQueue). The engine is asynchronous: an open
+#            ask is an outstanding call, not a blocked loop, so a report
+#            reaches the model while the question is still open, and an
+#            idle agent is woken by it. noticeCount counts deliveries.
 #   wake     none | queued | checked | delivered | dropped: the one
 #            watcher wake. checked = deliver() found the session idle and
 #            is about to Send.
@@ -50,21 +54,21 @@
 #   strayLine        serve wrote a wake or command line while an ask was
 #                    armed (sticky): it would have been read as the answer.
 #
-# Where this disagrees with the code as of main 5471918e, the spec says
-# what the flow promises and the code is the finding:
-#   - A pending SECRET takes the raw line before the notice sniff
-#     (headless.go:369-377). A background agent finishing while its
-#     parent has tools.secret open: the {"notice": ...} line is stored as
-#     the secret (keychain, ref in project.yml), the secret ask closes as
-#     if answered, and the report is never delivered. Here Notify routes
-#     the notice first whatever ask is open (NoticeNeverAnswers,
-#     OnlySecretIsTheAnswer, NoticeExactlyOnce, NoticeDelivered fail on
-#     the product's order).
-#   - A plain answer is written raw and sniffed as JSON (headless.go:
-#     381-392): an answer whose text is {"notice": "..."} becomes a
-#     phantom notice, the ask stays open in the child while serve has
-#     disarmed it, and the next /prompt (no longer refused) is eaten as
-#     the answer. Here AnswerNoticeLike answers the question.
+# Where the code as of main 5471918e disagreed (the MBT,
+# tests/model/mbt/notice_during_open_ask_test.go, went red on each; the
+# first two are fixed by serve tagging the answer {"answer": ...} and the
+# child telling notice and answer apart before anything else, the third
+# by an ErrPendingAsk sentinel):
+#   - A pending SECRET took the raw line before the notice sniff. A
+#     background agent finishing while its parent had tools.secret open:
+#     the {"notice": ...} line was taken as the secret, the secret ask
+#     closed as if answered, and the report was never delivered.
+#   - A plain answer was written raw and sniffed as JSON: an answer whose
+#     text is {"notice": "..."} became a phantom notice, the ask stayed
+#     open in the child while serve had disarmed it, and the next
+#     /prompt (no longer refused) was eaten as the answer.
+#   - SetModel (and SetEffort) refused on an armed ask answered 500, not
+#     the 409 of a /prompt: Send's refusal had no sentinel.
 
 role Session:
     action Init:
@@ -83,15 +87,18 @@ role Session:
 
     # The model calls tools.ask / tools.secret: the child emits kind
     # "ask" and serve arms it (emitLocked); the row turns needs-you. Asks
-    # never overlap: a block blocks on its ask.
+    # never overlap: a block blocks on its ask. The call ends the request
+    # in flight, so a report waiting at its boundary goes out.
     atomic action AskPlain:
         require self.status == "running" and self.ask == "" and not self.plainAsked
+        self.flushNotice()
         self.plainAsked = True
         self.ask = "plain"
         self.status = "needs-you"
 
     atomic action AskSecret:
         require self.status == "running" and self.ask == "" and not self.secretAsked
+        self.flushNotice()
         self.secretAsked = True
         self.ask = "secret"
         self.status = "needs-you"
@@ -100,19 +107,22 @@ role Session:
     # (childEventLocked -> report -> notifyFrom): the {"notice"} line is
     # written whatever is armed, and the child routes it to job-notices
     # before any answer handling. It never touches the ask or the arm.
+    # job-notices hands it to the engine at once (actor.go notice): with
+    # a model request in flight it waits for that request's boundary;
+    # otherwise it goes out now, as a [notice] input beside the open ask
+    # or as a turn of its own on an idle agent.
     atomic action Notify:
         require self.notice == "none"
-        self.notice = "queued"
+        if self.status == "running" and self.ask == "":
+            self.notice = "queued"
+        else:
+            self.deliverNotice()
 
-    # job-notices hands the report to the loop: before the next model
-    # step of a running turn, or by waking an idle agent. A turn blocked
-    # on an ask takes no step until the ask returns.
+    # The model's step in flight ends and the report goes out with the
+    # next request; the turn runs on.
     atomic fair action DeliverNotice:
-        require self.notice == "queued" and self.ask == ""
-        self.notice = "delivered"
-        self.noticeCount += 1
-        if self.status == "done":
-            self.status = "running"
+        require self.notice == "queued"
+        self.deliverNotice()
 
     # A watcher's check produced news: queued in the watch engine.
     atomic action WatcherQueue:
@@ -169,14 +179,27 @@ role Session:
         require self.ask != ""
         self.closeAsk()
 
+    # The turn ends. A report waiting at the last request's boundary
+    # makes one more request first.
     atomic fair action Finish:
         require self.status == "running" and self.ask == ""
+        self.flushNotice()
         self.status = "done"
 
     # The person prompts an idle session: a new turn.
     atomic action Prompt:
         require self.status == "done"
         self.status = "running"
+
+    atomic func deliverNotice():
+        self.notice = "delivered"
+        self.noticeCount += 1
+        if self.status == "done":
+            self.status = "running"
+
+    atomic func flushNotice():
+        if self.notice == "queued":
+            self.deliverNotice()
 
     atomic func closeAsk():
         self.ask = ""
@@ -216,8 +239,8 @@ always assertion NoticeExactlyOnce:
 always assertion NeedsYouIsTheAsk:
     return (session.status == "needs-you") == (session.ask != "")
 
-# A notice sent while an ask is open reaches the parent's loop: the ask
-# ends (answer, or the fair timeout) and the loop's next step takes it.
+# A notice waiting for a request's boundary reaches the model: every
+# step that ends the request in flight takes it along.
 always eventually assertion NoticeDelivered:
     return session.notice != "queued"
 
