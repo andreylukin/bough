@@ -4,6 +4,7 @@
 // the DOM, plus the invariants every screen owes. The recipe is
 // go/tests/model/README.md; specs/model/example.spec.ts is the worked
 // example.
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Page, TestInfo } from '@playwright/test';
@@ -202,7 +203,10 @@ function saveTranscripts(serve: Serve, spec: string, ids: string[], title: strin
   if (!root) return;
   const dir = path.join(root, spec);
   fs.mkdirSync(dir, { recursive: true });
-  const slug = title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  // A transitions walk's title runs to dozens of steps; a file name past
+  // 255 bytes failed the walk (ENAMETOOLONG) after every step passed.
+  const full = title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const slug = full.length <= 120 ? full : `${full.slice(0, 100)}-${crypto.createHash('sha1').update(full).digest('hex').slice(0, 12)}`;
   for (const id of ids) {
     const src = path.join(serve.home, '.bough', 'history', id + '.jsonl');
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(dir, `${slug}-${id}.jsonl`));
