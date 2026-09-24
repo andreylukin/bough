@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -65,6 +66,10 @@ type Asker struct {
 	emit    func(Event)
 	hist    appender // nil: no durable record
 	project string   // session-project; "" in a local session
+	// expireDir is BOUGH_TEST_ASK_EXPIRE_DIR: a file named for an open
+	// ask's id there times that ask out now. Test use only: a model test
+	// needs the timeout at a step it picks, and the real one is minutes.
+	expireDir string
 }
 
 // pend is one blocked ask: its answer channel, and whether the answer
@@ -137,6 +142,12 @@ func (a *Asker) putIn(done <-chan struct{}, park func() func(), question string,
 	if park != nil {
 		defer park()()
 	}
+	timeout := time.After(a.timeout)
+	if a.expireDir != "" {
+		stop := make(chan struct{})
+		defer close(stop)
+		timeout = expireOn(filepath.Join(a.expireDir, id), timeout, stop)
+	}
 	select {
 	case <-done:
 		a.mu.Lock()
@@ -148,12 +159,37 @@ func (a *Asker) putIn(done <-chan struct{}, park func() func(), question string,
 			return "", fmt.Errorf("ask: cancelled with no answer")
 		}
 		return text, nil
-	case <-time.After(a.timeout):
+	case <-timeout:
 		a.mu.Lock()
 		delete(a.pending, id)
 		a.mu.Unlock()
 		return "", fmt.Errorf("ask: no answer after %s", a.timeout)
 	}
+}
+
+// expireOn fires when timeout does or when file appears (consuming it),
+// until stop closes. The poll only runs under BOUGH_TEST_ASK_EXPIRE_DIR.
+func expireOn(file string, timeout <-chan time.Time, stop <-chan struct{}) <-chan time.Time {
+	out := make(chan time.Time, 1)
+	go func() {
+		tick := time.NewTicker(10 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case now := <-timeout:
+				out <- now
+				return
+			case now := <-tick.C:
+				if os.Remove(file) == nil {
+					out <- now
+					return
+				}
+			}
+		}
+	}()
+	return out
 }
 
 // askSecret is tools.secret: ask the user for a credential, store it
@@ -281,10 +317,11 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		timeout = time.Duration(n) * time.Minute
 	}
 	a := &Asker{
-		pending: map[string]pend{},
-		timeout: timeout,
-		code:    code,
-		emit:    func(ev Event) { ctx.Emit("loop/event", ev) },
+		pending:   map[string]pend{},
+		timeout:   timeout,
+		code:      code,
+		expireDir: os.Getenv("BOUGH_TEST_ASK_EXPIRE_DIR"),
+		emit:      func(ev Event) { ctx.Emit("loop/event", ev) },
 	}
 	if h, err := kernel.Get[appender](ctx, "history"); err == nil {
 		a.hist = h
