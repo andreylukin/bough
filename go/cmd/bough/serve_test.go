@@ -8,6 +8,34 @@ import (
 	"testing"
 )
 
+// serve asks about project sessions' containers (inspect, stop, the
+// idle reaper) through the runtime their orb row picks, which they read
+// from ~/.bough/bough.yml: a `runtime: fake` (or podman) row must not
+// have serve talking to Apple's CLI about containers it never made.
+func TestServeOrbRuntimeFollowsTheOrbRow(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if rt, err := serveOrbRuntime(home); err != nil || rt != nil {
+		t.Fatalf("no config: runtime = %v, %v; want nil (the supervisor's default)", rt, err)
+	}
+	cfg := filepath.Join(home, ".bough", "bough.yml")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte("- id: orb\n  plugin: orb\n  config:\n    runtime: fake\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rt, err := serveOrbRuntime(home); err != nil || rt == nil || rt.Name() != "fake" {
+		t.Fatalf("runtime: fake row: runtime = %v, %v", rt, err)
+	}
+	if err := os.WriteFile(cfg, []byte("- id: orb\n  plugin: orb\n  config:\n    runtime: nope\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := serveOrbRuntime(home); err == nil {
+		t.Fatal("an unknown runtime on the orb row was accepted")
+	}
+}
+
 func TestServeArgsHost(t *testing.T) {
 	t.Parallel()
 	_, _, _, host, err := serveArgs([]string{"--run", "9001", "--host=bough.example.ts.net"})

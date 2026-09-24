@@ -69,6 +69,11 @@ func (plugin) Inject() []string { return []string{"history", "scratch"} }
 // newFake is swapped by tests that need a hand on the fake runtime.
 var newFake = func() container.Runtime { return container.NewFake() }
 
+// RuntimeFor is the backend a `runtime:` value on the orb row names, for
+// serve, which must ask about project containers through the same one
+// its sessions run them on.
+func RuntimeFor(name string) (container.Runtime, error) { return runtimeFor(name) }
+
 // runtimeFor maps the row's runtime config to a backend.
 func runtimeFor(name string) (container.Runtime, error) {
 	switch name {
