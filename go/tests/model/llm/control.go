@@ -23,6 +23,15 @@ type Turn struct {
 	Text    string `json:"text,omitempty"`
 	Error   string `json:"error,omitempty"`
 	DelayMS int    `json:"delay_ms,omitempty"`
+	// Call, on a release, answers the held request with this tool call
+	// instead of text: {Name: "ask"} makes the model ask the person.
+	Call *Call `json:"call,omitempty"`
+}
+
+// Call is one tool call the model makes.
+type Call struct {
+	Name string         `json:"name"`
+	Args map[string]any `json:"args,omitempty"`
 }
 
 // Dir is the control dir the row reads when its config names none.

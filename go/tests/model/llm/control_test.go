@@ -251,3 +251,27 @@ func TestControlBlock(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }
+
+// A release that carries a Call answers the held request with that tool
+// call, so a test can make the model ask (tools.ask) at a moment it
+// picks; the answer goes back as the call's result and the next queued
+// turn answers it.
+func TestControlBlockReleaseCall(t *testing.T) {
+	t.Parallel()
+	r := start(t)
+	Queue(t, r.dir(), "001", Turn{Mode: "block", Text: "never sent"})
+	Queue(t, r.dir(), "002", Turn{Mode: "ok", Text: "thanks for blue"})
+	r.send("hello")
+	WaitTaken(t, r.dir(), "001", 30*time.Second)
+	ReleaseWith(t, r.dir(), "001", Turn{Call: &Call{Name: "ask", Args: map[string]any{"question": "which colour?"}}})
+	r.waitFor("which colour?")
+	r.send("blue")
+	r.waitFor("[assistant] thanks for blue")
+	code, out := r.finish()
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if strings.Contains(out, "never sent") {
+		t.Fatalf("held text sent despite the call release:\n%s", out)
+	}
+}

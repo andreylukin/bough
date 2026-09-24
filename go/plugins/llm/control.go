@@ -89,6 +89,12 @@ type controlTurn struct {
 	Text    string `json:"text"`
 	Error   string `json:"error"`
 	DelayMS int    `json:"delay_ms"`
+	// Call, in a release, answers the held request with this tool call:
+	// a test makes the model ask (tools.ask) at a moment it picks.
+	Call *struct {
+		Name string          `json:"name"`
+		Args json.RawMessage `json:"args"`
+	} `json:"call"`
 }
 
 // take claims the next queued turn. A name the test is still writing
@@ -168,6 +174,9 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 				if len(b) > 0 && json.Unmarshal(b, &then) == nil && then.Mode == "error" {
 					return ullm.Response{}, errors.New(then.Error)
 				}
+				if then.Call != nil {
+					return a.call(name, then.Call.Name, then.Call.Args)
+				}
 				if then.Text != "" {
 					return a.reply(ctx, then.Text, 0)
 				}
@@ -208,6 +217,25 @@ func (a *controlAdapter) reply(ctx context.Context, text string, delay time.Dura
 		ID:     fmt.Sprintf("control-%d", n),
 		Stop:   ullm.StopComplete,
 		Output: []ullm.Item{{Type: ullm.ItemMessage, Data: ullm.Message{Role: ullm.RoleAssistant, Text: text}}},
+		Usage:  u,
+	}, nil
+}
+
+// call answers with one tool call; its id is the turn's name, unique
+// across the control dir, so two calls never share one.
+func (a *controlAdapter) call(turn, tool string, args json.RawMessage) (ullm.Response, error) {
+	if len(args) == 0 {
+		args = json.RawMessage("{}")
+	}
+	u := ullm.Usage{InputTokens: 1, OutputTokens: 1}
+	a.c.mu.Lock()
+	addAgentUsage(&a.c.usage, u)
+	n := a.c.n
+	a.c.mu.Unlock()
+	return ullm.Response{
+		ID:     fmt.Sprintf("control-%d", n),
+		Stop:   ullm.StopComplete,
+		Output: []ullm.Item{{Type: ullm.ItemToolCall, Data: ullm.ToolCall{CallID: "control-" + turn, Name: tool, Arguments: string(args)}}},
 		Usage:  u,
 	}, nil
 }
