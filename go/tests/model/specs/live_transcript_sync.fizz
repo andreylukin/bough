@@ -27,8 +27,13 @@ deadlock_detection: false
 #
 # The mapped states are field values: Unsubscribed sel == -1; Live conn
 # "live"; SubscriberDropped conn "dropped" with frames still in the
-# channel; Reconnecting conn "dropped" with none; CatchingUp fetch !=
-# None; Paused paused; Switched loaded False after a Switch.
+# channel; Reconnecting conn "dropped" with none; CatchingUp fetch.sess
+# >= 0; Paused paused; Switched loaded False after a Switch.
+#
+# No role field is ever None: fizzbee-mbt 0.2.0 has no None on the wire
+# (an adapter can send nothing that compares equal to it), so "none" is
+# spelled sess = -1 for the two request slots and id = 0 for a frame
+# without an SSE id line.
 #
 # Abstractions, each to keep the graph small:
 # - one live session (#0) whose child records MAXREC entries; session #1
@@ -89,8 +94,8 @@ STATIC_DISK = 1 # entries of the finished session #1
 # still yields, and fizz would interleave other actions inside it.
 
 def frame(kind, seq):
-    # writeEvent: an SSE id line only for a recorded seq (None = no line).
-    id = None
+    # writeEvent: an SSE id line only for a recorded seq (0 = no line).
+    id = 0
     if seq > 0:
         id = seq
     return record(kind=kind, seq=seq, id=id)
@@ -138,8 +143,10 @@ role Sync:
         self.inbox = []       # the subscriber's channel: frames not yet read
         self.lines = []       # the page's lines: record(sess, seq)
         self.loaded = False   # the first GET for sel landed
-        self.get = None       # initial GET in flight: record(sess, snap); snap -1 = not read yet
-        self.fetch = None     # catch-up in flight: record(sess, since)
+        # initial GET in flight: record(sess, snap); sess -1 = none, snap -1 = not read yet
+        self.get = record(sess=-1, snap=-1)
+        # catch-up in flight: record(sess, since); sess -1 = none
+        self.fetch = record(sess=-1, since=0)
         self.timer = False    # catch-up armed
         self.paused = False   # "Updates paused"
 
@@ -185,14 +192,14 @@ role Sync:
         lost = False
 
     atomic fair<strong> action InitialServe:
-        require self.get != None and self.get.snap == -1
+        require self.get.sess >= 0 and self.get.snap == -1
         n = disk_of(self.get.sess, self.disk)
         self.get = record(sess=self.get.sess, snap=n)
 
     atomic fair<strong> action InitialOk:
-        require self.get != None and self.get.snap >= 0
+        require self.get.sess >= 0 and self.get.snap >= 0
         g = self.get
-        self.get = None
+        self.get = record(sess=-1, snap=-1)
         # setLines(r.entries): a replace, not a merge. A catch-up that
         # landed first may have added lines this older read lacks.
         if len([l for l in self.lines if l.seq > g.snap]) > 0:
@@ -214,19 +221,19 @@ role Sync:
         self.timer = replay(self.sel, self.ring, self.timer)
 
     atomic fair<strong> action CatchUpFire:
-        require self.timer and self.fetch == None
+        require self.timer and self.fetch.sess < 0
         self.timer = False
         self.fetch = record(sess=self.sel, since=last_seq(self.lines))
 
     atomic action Retry:
-        require self.paused and self.fetch == None
+        require self.paused and self.fetch.sess < 0
         self.timer = False
         self.fetch = record(sess=self.sel, since=last_seq(self.lines))
 
     atomic fair<strong> action CatchUpOk:
-        require self.fetch != None
+        require self.fetch.sess >= 0
         f = self.fetch
-        self.fetch = None
+        self.fetch = record(sess=-1, since=0)
         if f.sess == self.sel:
             self.paused = False
             n = disk_of(f.sess, self.disk)
@@ -239,9 +246,9 @@ role Sync:
                 lost = False
 
     atomic action CatchUpFail:
-        require self.fetch != None
+        require self.fetch.sess >= 0
         f = self.fetch
-        self.fetch = None
+        self.fetch = record(sess=-1, since=0)
         if f.sess == self.sel:
             self.paused = True
             self.timer = True
@@ -257,7 +264,7 @@ action Init:
 # must never resume from text that was never recorded.
 always assertion EphemeralFramesHaveNoId:
     for f in sync.inbox + sync.ring:
-        if f.seq == 0 and f.id != None:
+        if f.seq == 0 and f.id != 0:
             return False
     return True
 
