@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writePid(t *testing.T, home string, pid int, addr string) {
@@ -92,6 +93,40 @@ func TestClient(t *testing.T) {
 	var ae *APIError
 	if !errors.As(err, &ae) || ae.Code != 404 || !strings.Contains(ae.Msg, "unknown session") {
 		t.Fatalf("404 = %v", err)
+	}
+}
+
+// A LoadToken that finds the file another one has just created (O_EXCL)
+// but not yet written waits for the write and returns that token: two
+// serves starting at once, or a CLI beside a starting serve, used to
+// fail "token file ... is empty".
+func TestLoadTokenWaitsForTheCreatorsWrite(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	p := TokenPath(home)
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	type res struct {
+		tok string
+		err error
+	}
+	got := make(chan res, 1)
+	go func() {
+		tok, err := LoadToken(home)
+		got <- res{tok, err}
+	}()
+	time.Sleep(200 * time.Millisecond)
+	if _, err := f.WriteString("the-creators-token\n"); err != nil {
+		t.Fatal(err)
+	}
+	if r := <-got; r.err != nil || r.tok != "the-creators-token" {
+		t.Fatalf("LoadToken = %q, %v; want the creator's token", r.tok, r.err)
 	}
 }
 
