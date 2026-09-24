@@ -5837,7 +5837,11 @@ export default function App() {
                onAck={(id) => act(() => api.ack(id), "mark it seen")}
                onShowList={() => setPane("list")} reveal={reveal} onOpenProject={goProject}
                onMove={(id, p) => act(() => api.assign(id, p), "move the session")}
-               loadedAt={loadedAt} loadErr={loadErr} onRetry={retryList} />
+               loadedAt={loadedAt}
+               // Until Archived has loaded, a failed read is its read: the
+               // section says so with its own Retry, and a second notice
+               // over the list said the same failure twice.
+               loadErr={archived && !rowsAll ? null : loadErr} onRetry={retryList} />
       <main className="app-main">
       {lost !== null && view === "sessions" && !selected ? (
         <div className="thread empty">
