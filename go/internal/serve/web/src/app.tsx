@@ -768,8 +768,10 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
             )}
           </button>
           {/* The disclosure and Seen are siblings of the row, not inside
-              it: a button in a button is invalid and would open it too. */}
-          {r.trouble && onAck && !pin && (
+              it: a button in a button is invalid and would open it too.
+              A pin carries Seen when it is the row's only copy: a local
+              session is lifted out of its folder, a project's thread is not. */}
+          {r.trouble && onAck && (!pin || !projectOf(r)) && (
             <button className="btn row-ack" onClick={() => onAck(r.id)} aria-label={`Mark ${name || "session"} seen`}>Seen</button>
           )}
           {r.turns && !q && !pin ? (
