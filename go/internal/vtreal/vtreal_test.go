@@ -104,7 +104,17 @@ func start(t *testing.T, cols, rows int) *app { return startCfg(t, cols, rows, c
 // (KEY=value) goes to the child only, so the test can stay parallel.
 func startCfg(t *testing.T, cols, rows int, yml string, env ...string) *app {
 	t.Helper()
+	return startCfgIn(t, "", cols, rows, yml, env...)
+}
+
+// startCfgIn is startCfg running in dir instead of $HOME ("" = $HOME),
+// for a working tree several tests can share read-only.
+func startCfgIn(t *testing.T, dir string, cols, rows int, yml string, env ...string) *app {
+	t.Helper()
 	home := t.TempDir()
+	if dir == "" {
+		dir = home
+	}
 	cfg := filepath.Join(home, "bough.yml")
 	if err := os.WriteFile(cfg, []byte(yml), 0o644); err != nil {
 		t.Fatal(err)
@@ -114,7 +124,7 @@ func startCfg(t *testing.T, cols, rows int, yml string, env ...string) *app {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(bin, "-config", cfg)
-	cmd.Dir = home
+	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"HOME="+home, "TERM=xterm-256color", "COLORTERM=truecolor",
 		"NO_COLOR=", "BOUGH_VERBOSE=",
