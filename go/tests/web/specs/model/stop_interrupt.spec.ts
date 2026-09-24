@@ -159,6 +159,8 @@ modelTests<Ctx>({
   spec: 'stop_interrupt',
   role: 'Session#0',
   config: CONTROL_CONFIG,
+  shared: true,
+  reset: true,
 
   async init(page, serve) {
     // A walk is up to 12 steps, each a poll of up to 10 s in the worst case.

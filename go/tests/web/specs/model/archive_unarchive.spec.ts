@@ -128,6 +128,8 @@ modelTests<Ctx>({
   spec: 'archive_unarchive',
   role: 'Session#0',
   config: CONTROL_CONFIG,
+  shared: true,
+  reset: true,
 
   async init(page, serve) {
     const c: Ctx = { page, serve, dir: controlDir(serve.home), id: '', filler: '', agent: '', held: '', block: '', turn: 0 };

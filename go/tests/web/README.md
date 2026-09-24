@@ -79,7 +79,16 @@ failed run's trace with `npx playwright show-trace <trace.zip>`.
   the reads, as `background-agents.spec.ts` does). Take a `serve` of
   the test's own only when the test seeds `HOME` or `bough.yml`
   (`project.spec.ts`, `me.spec.ts`, `welcome.spec.ts`,
-  `engine-calls.spec.ts`, most model walks) or needs an empty server.
+  `engine-calls.spec.ts`) or needs an empty server.
+- A model walk whose `init` only makes sessions of its own takes
+  `shared: true, reset: true` in its flow: one serve per worker, and
+  after each walk every live session is archived (which ends it) and
+  llm-control's queue is emptied, so the next walk starts as on a fresh
+  serve. The worker's serve gets the flow's `config`/`env`; seed files
+  with `test.use({ workerServeOpts })` (`ask_answer.spec.ts`). A walk
+  that writes fixed paths under `HOME` (`hooks-page.spec.ts`,
+  `changes-review.spec.ts`) or asserts on the whole list
+  (`session_create.spec.ts`) keeps its own serve.
 - New spec against `bough --web`: use `launchBough`, one process per
   test. A `--web` process is one loop that every page attached to it
   shares (`multi.spec.ts`), so two tests on one would see each other's
