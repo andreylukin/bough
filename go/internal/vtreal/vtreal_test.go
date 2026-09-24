@@ -8,6 +8,7 @@
 package vtreal
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -26,6 +28,11 @@ import (
 )
 
 var bin string // built once in TestMain
+
+// prebuilds are other binaries TestMain builds beside bin, by the name
+// of the test that needs them; each still guards itself with a
+// sync.Once, for a test that runs without TestMain's -run matching.
+var prebuilds = map[string]func(){}
 
 func TestMain(m *testing.M) {
 	// Every child inherits this: none may take the user's page server
@@ -43,6 +50,16 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
+	// Other binaries a selected test needs build alongside this one and
+	// are waited for here, so no build competes with a running test.
+	flag.Parse()
+	run := flag.Lookup("test.run").Value.String()
+	var pre sync.WaitGroup
+	for name, b := range prebuilds {
+		if ok, err := regexp.MatchString(run, name); ok || err != nil {
+			pre.Go(b)
+		}
+	}
 	// ".exe" on Windows, or the file builds and then cannot be
 	// executed: "executable file not found in %PATH%", which was
 	// about half of the Windows failures on its own.
@@ -53,6 +70,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "vtreal: build:", err)
 		os.Exit(1)
 	}
+	pre.Wait()
 	code := m.Run()
 	killChildren()
 	os.RemoveAll(dir)
