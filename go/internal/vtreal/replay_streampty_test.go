@@ -85,12 +85,17 @@ func streamPtyFastTape(t *testing.T, n int) string {
 	return streamPtyTape(t, turns...)
 }
 
+// The slow and stall tapes end on the prose, with no stop fence: the
+// replay llm pauses delay_ms after every delta, and the fence's four
+// ("\n", "```stop\n", "done\n", "```") only padded each run by four
+// more pauses (10 s of the stall test's 15) after what is under test.
+// A reply with no js block ends the turn just the same.
 func streamPtySlowTape(t *testing.T) string {
-	return streamPtyTape(t, []streamPtyStep{streamPtyStop("SLOWBEGIN " + strings.Repeat("slow ", 10) + "SLOWEND")})
+	return streamPtyTape(t, []streamPtyStep{{reply: "SLOWBEGIN " + strings.Repeat("slow ", 10) + "SLOWEND"}})
 }
 
 func streamPtyStallTape(t *testing.T) string {
-	return streamPtyTape(t, []streamPtyStep{streamPtyStop("STALLA STALLZ")})
+	return streamPtyTape(t, []streamPtyStep{{reply: "STALLA STALLZ"}})
 }
 
 func streamPtyHugeTape(t *testing.T) string {
@@ -276,9 +281,12 @@ func streamPtyRedraw(tm *tmuxApp, cols, rows int, where string) {
 	if before == after {
 		return
 	}
-	// A repaint still on its way is not a stale cell: give it 2 s and
-	// report only what persists.
-	time.Sleep(2 * time.Second)
+	// A repaint still on its way is not a stale cell: give it up to 2 s
+	// and report only what persists. It usually lands within a few
+	// captures, so stop waiting as soon as the screen is back.
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline) && tm.screen() != before; {
+		time.Sleep(20 * time.Millisecond)
+	}
 	if late := tm.settled(); late == before {
 		tm.t.Logf("%s: repaint after the forced redraw took over a settle window to land", where)
 		return
