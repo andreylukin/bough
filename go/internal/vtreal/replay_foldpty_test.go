@@ -50,7 +50,14 @@ func foldPtyEnd(ls []string) int {
 // foldPtyFrame is check() plus the fold-specific invariants.
 func foldPtyFrame(a *app, where string) {
 	a.t.Helper()
-	a.check(where)
+	foldPtyFrameOn(a, where, a.settled())
+}
+
+// foldPtyFrameOn is foldPtyFrame on s, a screen the caller has just
+// settled with nothing sent since (see checkOn).
+func foldPtyFrameOn(a *app, where, s string) {
+	a.t.Helper()
+	a.checkOn(where, s)
 	snap := a.term.Snapshot()
 	ls := a.lines()
 	end := foldPtyEnd(ls)
@@ -131,15 +138,16 @@ func foldPtyRoundTrip(a *app, y int, where string) {
 	ls := strings.Split(before, "\n")
 	tail := strings.TrimPrefix(strings.TrimLeft(ls[y], " "), "▸ ")
 	a.click(foldPtyCol(ls[y])+1, y)
-	if after := a.settled(); after == before {
+	opened := a.settled()
+	if opened == before {
 		if foldPtyStepRow.MatchString(tail) && !foldPtyKnown() {
 			a.t.Logf("%s: %s (click on %q did nothing)", where, foldPtyBugNarrationLead, tail)
 			return
 		}
-		a.t.Errorf("%s: a click on %q changed nothing:\n%s", where, tail, after)
+		a.t.Errorf("%s: a click on %q changed nothing:\n%s", where, tail, opened)
 		return
 	}
-	foldPtyFrame(a, where+" opened")
+	foldPtyFrameOn(a, where+" opened", opened)
 	open := -1
 	for i, l := range a.lines() {
 		if strings.HasPrefix(strings.TrimLeft(l, " "), "▾ ") && strings.Contains(l, tail) {
@@ -158,10 +166,11 @@ func foldPtyRoundTrip(a *app, y int, where string) {
 	cur := a.lines()
 	a.click(foldPtyCol(cur[open])+1, open)
 	a.waitUntil(func(s string) bool { return strings.Contains(s, "▸ "+tail) }, where+": second click to close it")
-	if after := a.settled(); after != before {
-		a.t.Errorf("%s: open+close did not restore the screen (ghost or lost rows):\nbefore:\n%s\nafter:\n%s", where, before, after)
+	closed := a.settled()
+	if closed != before {
+		a.t.Errorf("%s: open+close did not restore the screen (ghost or lost rows):\nbefore:\n%s\nafter:\n%s", where, before, closed)
 	}
-	foldPtyFrame(a, where+" closed")
+	foldPtyFrameOn(a, where+" closed", closed)
 }
 
 // Known product bugs this file found. Their cases skip (or log, inside
@@ -239,7 +248,7 @@ func TestFoldPtyStepFoldCodeLed(t *testing.T) {
 	foldPtyFrame(a, "fold open")
 	foldPtyChord(a, 'c')
 	s := a.settled()
-	foldPtyFrame(a, "collapse_all")
+	foldPtyFrameOn(a, "collapse_all", s)
 	if strings.Contains(s, "▾ 2 steps") {
 		t.Fatalf("collapse_all left the step fold open:\n%s", s)
 	}
@@ -444,7 +453,7 @@ func TestFoldPtyHistoryTapes(t *testing.T) {
 				before := a.settled()
 				a.key(uv.KeyEnter, 0)
 				toggled := a.settled()
-				foldPtyFrame(a, fmt.Sprintf("stop %d toggled", i))
+				foldPtyFrameOn(a, fmt.Sprintf("stop %d toggled", i), toggled)
 				a.key(uv.KeyEnter, 0)
 				after := a.settled()
 				// A tail-windowed result takes a third enter: one of the
