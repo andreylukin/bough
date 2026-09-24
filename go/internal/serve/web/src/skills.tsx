@@ -64,7 +64,8 @@ export function SkillPicker({ onPick, disabled = false }: { onPick: (name: strin
               aria-label="Filter skills" aria-controls="skill-list" role="combobox" aria-expanded="true"
               aria-activedescendant={active >= 0 ? "skill-" + active : undefined}
               onChange={(e) => setQ(e.target.value)} onKeyDown={keys} />
-            <div id="skill-list" ref={listbox} className="skills-list" role="listbox" aria-label="Skills">
+            {/* A listbox only once there are options: loading, failed or empty, it holds a status line, which a listbox may not. */}
+            <div id="skill-list" ref={listbox} className="skills-list" role={hits.length ? "listbox" : undefined} aria-label={hits.length ? "Skills" : undefined}>
               {hits.map((s, i) => (
                 <button key={s.name} id={"skill-" + i} role="option" aria-selected={i === active} data-at={i === active ? 1 : 0}
                   tabIndex={-1} className={"skill" + (i === active ? " skill-on" : "")}
