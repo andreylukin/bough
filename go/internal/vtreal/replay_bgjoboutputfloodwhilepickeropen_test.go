@@ -148,7 +148,19 @@ func TestBgjobOutputFloodWhilePickerOpen(t *testing.T) {
 				return
 			case <-time.After(20 * time.Millisecond):
 			}
+			// Judge only frames between writes. Opening the picker is
+			// one big frame that reaches the emulator in several PTY
+			// reads; a sample between two of them showed the picker's
+			// top over the old composer and strip, a frame bough never
+			// drew, and failed about one full run in three.
+			before := a.term.LastOutput()
+			if time.Since(before) < 30*time.Millisecond {
+				continue
+			}
 			s := a.text()
+			if !a.term.LastOutput().Equal(before) {
+				continue
+			}
 			if overdraw == "" && strings.Contains(s, "pick a model") && bgjobOutputFloodWhilePickerOpenStrip(s) {
 				overdraw = s
 			}
