@@ -105,6 +105,11 @@ test("agents: queued only from the child's own record; children override rows", 
   expect(agentsFromRows(parent, [row({ id: "c9", spawnedBy: "p", status: "running", live: true })])[0]).toMatchObject({ canStop: true, session: "c9", outputState: "none" });
 });
 
+test("a queued agent can be stopped: it has no process, and serve drops it from the queue", () => {
+  const [w] = agentsFromRows(row({ id: "p" }), [], [row({ id: "q", spawnedBy: "p", status: "queued", queued: true, live: false })]);
+  expect(w).toMatchObject({ life: "queued", canStop: true });
+});
+
 test("workIndex merges jobs, subagents and agents", () => {
   const lines = [line("input", "x"), typed(1, "started"), sub("start", "1", "t"), sub("done", "1", "", { status: "ok" })];
   const ws = workIndex({ session: "p", lines, turns: groupTurns(lines), row: row({ id: "p" }), rows: [row({ id: "c", spawnedBy: "p", status: "queued" })], live: true });

@@ -47,3 +47,14 @@ test("a child session's parent link is a header row of its own, not inside the t
   expect(html).toMatch(/<header class="thread-head"><button[^>]*class="child-parent-link"/);
   expect(html).not.toMatch(/head-main"><button[^>]*child-parent-link/);
 });
+
+test("a report stored for a session with no process shows in its transcript until its loop takes it", () => {
+  const meta: Line = { seq: 1, at: "2026-01-02T10:00:00Z", kind: "meta", text: "" };
+  const notice: Line = { seq: 2, at: "2026-01-02T10:00:00Z", kind: "notice", text: "[agent first task · 01a0 finished] finished b0001", data: { id: "n1", from: "01a0", to: "s1" } };
+  const stored = thread({}, { lines: [meta, notice] });
+  expect(stored).toContain("agent-notice-name");
+  expect(stored).toContain(">first task<");
+  // Delivered, it is the wake turn's input: shown there, not twice.
+  const delivered: Line = { seq: 3, at: "2026-01-02T10:00:01Z", kind: "notice-delivered", text: "", data: { id: "n1" } };
+  expect(thread({}, { lines: [meta, notice, delivered] })).not.toContain("agent-notice-name");
+});

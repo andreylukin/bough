@@ -63,6 +63,21 @@ func TestNotifyStoppedAppendsEntry(t *testing.T) {
 	}
 }
 
+// A stored notice is still a change to the session's transcript: the
+// event tells a page that has it open to catch up. Without one, an open
+// parent with no process never showed its agents' reports.
+func TestNotifyStoppedEmitsEvent(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.seed(t, "sess-stopped")
+	if err := f.sup.Notify("sess-stopped", "report"); err != nil {
+		t.Fatalf("Notify: %v", err)
+	}
+	if !hasKind(f.sup.Recent("sess-stopped"), "notice") {
+		t.Fatalf("no notice event: %v", kinds(f.sup.Recent("sess-stopped")))
+	}
+}
+
 func TestNotifyUnknownSession(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

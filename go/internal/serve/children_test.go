@@ -482,3 +482,35 @@ func TestAnUnpromptedChildHoldsNoRunningSlot(t *testing.T) {
 		t.Fatalf("thread %s queued behind an idle one", next)
 	}
 }
+
+// A finished background agent messaged again is running again: it holds
+// a running slot until that turn closes, so the parent's count shows it
+// and the Work dialog's Stop interrupts it. The real headless child
+// never prints "input", which the slot used to wait for: the re-messaged
+// agent ran unseen and Stop answered "idle" without stopping it.
+func TestAMessagedChildHoldsARunningSlot(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, envTurns+"=1", envNoInput+"=1")
+	f.seed(t, "parent")
+	id, queued, err := f.sup.CreateChild(CreateOptions{Prompt: "hello", SpawnedBy: "parent"}, 0, 1)
+	if err != nil || queued {
+		t.Fatalf("CreateChild = %q %v %v", id, queued, err)
+	}
+	waitNotices(t, f, "parent", 1)
+	if r, _, _ := f.sup.agentCounts("parent"); r != 0 {
+		t.Fatalf("running = %d after the first turn closed, want 0", r)
+	}
+	if err := f.sup.Send(id, "HANG again"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the second turn to open", func() bool {
+		st, _ := StatusOf(mustEntries(t, f, id), f.sup.Live(id))
+		return st == StatusRunning
+	})
+	if r, _, _ := f.sup.agentCounts("parent"); r != 1 {
+		t.Fatalf("running = %d with the messaged agent mid-turn, want 1", r)
+	}
+	if was, err := f.sup.stopChild(id); err != nil || was != "running" {
+		t.Fatalf("stopChild = %q %v, want running", was, err)
+	}
+}

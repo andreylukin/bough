@@ -42,6 +42,11 @@ func (s *Supervisor) notifyFrom(id, from, text string) error {
 	if err != nil {
 		return fmt.Errorf("serve: supervisor: notify %s: %w", id, err)
 	}
+	// The page catches up on events only: without one, a parent open
+	// with no process never showed the report it was just given.
+	s.mu.Lock()
+	s.emitLocked(id, "notice", text, nil)
+	s.mu.Unlock()
 	return nil
 }
 

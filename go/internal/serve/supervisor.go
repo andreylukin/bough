@@ -952,7 +952,30 @@ func (s *Supervisor) Send(id, text string) error {
 	if err != nil {
 		return err
 	}
-	return s.writePrompt(ch, text)
+	// A background agent's prompt opens a turn, and an open turn holds a
+	// running slot until its done/cancelled/exit gives it back: that is
+	// what the parent's running count and Stop read. The real headless
+	// child never prints the "input" that childEventLocked takes it on,
+	// so a messaged agent ran holding none and Stop answered "idle".
+	// Taken before the write: a fast turn's done must not beat it.
+	took := false
+	if !strings.HasPrefix(text, "/") && !strings.HasPrefix(text, "!") {
+		s.mu.Lock()
+		if m := s.meta[id]; m.SpawnedBy != "" && !m.Queued && !s.running[id] {
+			s.running[id], took = true, true
+		}
+		s.mu.Unlock()
+	}
+	if err := s.writePrompt(ch, text); err != nil {
+		if took {
+			s.mu.Lock()
+			delete(s.running, id)
+			s.mu.Unlock()
+			go s.drainQueue()
+		}
+		return err
+	}
+	return nil
 }
 
 // Answer replies to the armed tools.ask over the same pipe.

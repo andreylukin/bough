@@ -12,7 +12,7 @@ import { DialogHost, askChoice, askConfirm, askText, showShortcuts } from "./dia
 import { focusComposerKey, isMac, newSessionKey, sheetKey, switchKey, treeKey } from "./keys";
 import { Welcome, welcomeDismissed } from "./welcome";
 import { clampToViewport } from "./popover";
-import { Markdown, programRan, codeLabel, callVerb, callFailed, callRunning, callsHeadline, callStep, isCall, isNativeCall, presentTense, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, cleanError, isAgentNotice, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
+import { Markdown, programRan, codeLabel, callVerb, callFailed, callRunning, callsHeadline, callStep, isCall, isNativeCall, presentTense, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, cleanError, isAgentNotice, storedNotices, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
 import { agentWakeNotes, agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
@@ -4036,6 +4036,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     if (atBottom.current) end.current?.scrollIntoView({ block: "end" });
   }, [lines.length, streamLen]);
   const turns = useMemo(() => groupTurns(lines), [lines]);
+  const stored = useMemo(() => storedNotices(lines), [lines]);
   // R4-B: the last finished turn ended on a failed command: the header says Failed, as its footer does, never a checked Done.
   const lastFail = useMemo(() => {
     const t = [...turns].reverse().find((u) => u.done);
@@ -4057,7 +4058,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     // A child's report to this session is its result; nothing else carries one.
     .map((w) => (w.kind === "agent" && reports.has(w.id) ? { ...w, result: reports.get(w.id) } : w)), [row, lines, turns, rows, kids.children, reports]);
   const byKey = useMemo(() => new Map(workers.map((w) => [w.key, w])), [workers]);
-  const { stops, requestStop } = useStopStore(byKey, review);
+  const { stops, requestStop } = useStopStore(byKey, review, kids.refresh);
   const workCtx = useMemo<WorkCtx>(() => {
     const jobs = new Map(workers.filter((w) => w.kind === "job").map((w) => [w.id, w]));
     const jobFirst = new Map<string, number>();
@@ -4585,7 +4586,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
           </ErrorNote>
         )}
         {loading && !loadError && slow && <p className="meta-line transcript-state" role="status">Loading transcript…</p>}
-        {!loading && turns.length === 0 && !running && !row.ask && !unlanded.length && (
+        {!loading && turns.length === 0 && !stored.length && !running && !row.ask && !unlanded.length && (
           <div className="transcript-state thread-empty">
             <h2>{row.spawnedBy ? "This background agent has not run yet" : "Nothing here yet"}</h2>
             <p>Describe the next task below, or press / for skills.</p>
@@ -4605,6 +4606,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
               ? (stream.length && stream[stream.length - 1].kind === "thinking" ? "Thinking" : activity || (stream.length ? "Working" : WAITING_MODEL)) : undefined} />
         ))}
         </EditPrompt.Provider>
+        {stored.map((l) => <JobBlock key={l.seq} line={l} />)}
         {unlanded.map((p) => (
           <SendingPrompt key={p.id} p={p} accepted={running && !p.steer} clamp={fullPending !== p.id} clipped={clipped[p.id]}
             onClip={(el) => { if (!clipped[p.id] && el.scrollHeight > el.clientHeight + 1) setClipped((m) => ({ ...m, [p.id]: true })); }}
