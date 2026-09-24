@@ -3340,7 +3340,7 @@ if (typeof window !== "undefined" && window.visualViewport) {
   vv.addEventListener("resize", fit);
 }
 
-type Catalogue = { providers: ProviderInfo[]; efforts: string[]; /** The configured llm row: what a session runs as until a pick. */ default?: { plugin: string; model: string; effort?: string } };
+type Catalogue = { providers: ProviderInfo[]; efforts: string[]; /** Serve's own llm row; a session's is its row's `configured`. */ default?: { plugin: string; model: string; effort?: string } };
 
 /** GET /api/models, once per caller; `enabled` false reads nothing (the caller was handed one). */
 function useCatalogue(enabled = true) {
@@ -3375,10 +3375,18 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only, cat
   // way back to it, so once a model is set it is not offered.
   // The configured model is named, not called "Default": that word named
   // nothing, and a session that has not answered yet still runs as something.
-  const dflt = cat?.default;
-  const models: Option[] = row.model ? [] : [dflt?.model
-    ? { value: "", label: dflt.model, short: dflt.model.split("/").pop(), group: "Configured", detail: "default" }
-    : { value: "", label: "Default model" }];
+  // It is the session's own llm row, from the row: /api/models' default
+  // is serve's config, and a session in a repo with its own bough.yml (or
+  // a child started with --set llm.plugin) runs something else. A
+  // provider whose config names no model is named by its plugin.
+  const conf = row.configured;
+  const confName = conf ? conf.model || conf.plugin : "";
+  const value = conf ? "" : row.model ?? "";
+  // Until the catalogue loads the picker names nothing, as the effort
+  // select says nothing: it has no list to name a choice from.
+  const models: Option[] = !cat ? [] : conf
+    ? [{ value: "", label: confName, short: confName.split("/").pop(), group: "Configured", detail: "default" }]
+    : row.model ? [] : [{ value: "", label: "Default model" }];
   for (const p of cat?.providers ?? []) {
     for (const m of p.models ?? []) {
       // The group already names the provider; the trigger drops it too.
@@ -3386,18 +3394,18 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only, cat
                     detail: m.context ? contextSize(m.context) : undefined });
     }
   }
-  if (row.model && !models.some((o) => o.value === row.model)) {
-    models.push({ value: row.model, label: row.model, short: row.model.split("/").pop(), group: "In use" });
+  if (cat && value && !models.some((o) => o.value === value)) {
+    models.push({ value, label: value, short: value.split("/").pop(), group: "In use" });
   }
 
   // Effort is offered for what the chosen model supports; a model the
   // catalogue does not describe falls back to every level it knows.
-  const runsAs = row.model || dflt?.model;
+  const runsAs = conf ? conf.model : row.model;
   const chosen = cat?.providers.flatMap((p) => p.models ?? []).find((m) => m.id === runsAs);
   const efforts = chosen?.efforts?.length ? chosen.efforts : (cat?.efforts ?? []);
   // Likewise the effort: the configured level, or the provider's own when the config sets none.
-  const effortDefault: Option = dflt?.effort ? { value: "", label: `${effortLabel(dflt.effort)} · default`, short: effortLabel(dflt.effort) }
-    : dflt ? { value: "", label: "Provider default", short: "Default" } : { value: "", label: "Default effort" };
+  const effortDefault: Option = conf?.effort ? { value: "", label: `${effortLabel(conf.effort)} · default`, short: effortLabel(conf.effort) }
+    : conf ? { value: "", label: "Provider default", short: "Default" } : { value: "", label: "Default effort" };
 
   return (
     <div className="controls">
@@ -3407,7 +3415,8 @@ export function Controls({ row, projects, onModel, onEffort, onAssign, only, cat
         <div className="ctl ctl-run" title="Model and effort for the next turn">
           <span className="ctl-label ctl-next">Next turn</span>
           <span className="ctl-label ctl-field">Model</span>
-          <Select label="Next turn model" value={row.model ?? ""} options={models} searchable align="end" disabled={disabled} currentGroup="Next turn"
+          <Select label="Next turn model" value={cat ? value : ""} options={models} searchable align="end" disabled={disabled || !cat} currentGroup="Next turn"
+                  placeholder={catFailed ? "Unavailable" : cat ? "Choose" : "Loading"}
                   suffix={row.effort}
                   footer={(o) => {
                     const m = o && cat?.providers.flatMap((p) => p.models ?? []).find((x) => x.id === o.value);
@@ -5489,7 +5498,13 @@ export default function App() {
   const archiveRow = async (r: Row) => {
     // The list shows the change as soon as the server takes it: a poll
     // already in flight could otherwise land stale after act's refresh.
-    const mark = (archived: boolean) => setRows((rs) => rs.map((x) => x.id === r.id ? { ...x, archived } : x));
+    // The open session's own lookup too: once the refresh drops an
+    // archived row from the list, the page shows that copy, and a session
+    // with no child sends no event that would re-read it.
+    const mark = (archived: boolean) => {
+      setRows((rs) => rs.map((x) => x.id === r.id ? { ...x, archived } : x));
+      setLooked((l) => l?.id === r.id ? { ...l, archived } : l);
+    };
     if (r.archived) return act(async () => { await api.unarchive(r.id); mark(false); }, "unarchive");
     const n = (r.agents?.running ?? 0) + (r.agents?.queued ?? 0);
     if (n === 0) {

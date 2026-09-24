@@ -2,6 +2,8 @@ package serve
 
 import (
 	"net/http"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -59,7 +61,7 @@ func TestModelCatalogue(t *testing.T) {
 func TestModelCatalogueNamesTheDefault(t *testing.T) {
 	t.Parallel()
 	f := newAPI(t)
-	f.api.SetDefaults(func() ModelDefault {
+	f.api.SetDefaults(func(string) ModelDefault {
 		return ModelDefault{Plugin: "llm-openrouter", Model: "openai/gpt-6-astra", Effort: "medium"}
 	})
 	_, body := f.do(t, "GET", "/api/models", "")
@@ -69,7 +71,7 @@ func TestModelCatalogueNamesTheDefault(t *testing.T) {
 	}
 	// No configured model known: the key is absent, never an empty name.
 	g := newAPI(t)
-	g.api.SetDefaults(func() ModelDefault { return ModelDefault{} })
+	g.api.SetDefaults(func(string) ModelDefault { return ModelDefault{} })
 	_, body = g.do(t, "GET", "/api/models", "")
 	if _, ok := body["default"]; ok {
 		t.Errorf("an unknown default was reported: %v", body["default"])
@@ -123,5 +125,60 @@ func TestRowOmitsModelUntilSet(t *testing.T) {
 	}
 	if _, ok := sess["effort"]; ok {
 		t.Errorf("effort reported before it was ever set: %v", sess)
+	}
+}
+
+// The picker's Configured option names the session's OWN llm row, not
+// serve's: serve started from ~ runs sessions in repos with their own
+// bough.yml. It stays after the session has answered (a row whose
+// config names no model is named by what it answered as), and it is
+// gone once anything switched the model, since nothing goes back.
+func TestRowNamesTheSessionsConfiguredModel(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	f.api.SetDefaults(func(dir string) ModelDefault {
+		if dir == "/repo" {
+			return ModelDefault{Plugin: "llm-control", Effort: "low"}
+		}
+		return ModelDefault{Plugin: "llm-echo", Model: "serve-default"}
+	})
+	now := time.Now()
+	meta := history.Entry{Seq: 1, At: now, Kind: "meta", Data: map[string]any{"cwd": "/repo", "mode": "local"}}
+	turn := []history.Entry{
+		meta,
+		{Seq: 2, At: now, Kind: "input", Data: map[string]any{"text": "hi"}},
+		{Seq: 3, At: now, Kind: "engine", Data: map[string]any{"model": "control", "provider": "control"}},
+		{Seq: 4, At: now, Kind: "assistant", Data: map[string]any{"model": "control", "text": "hi"}},
+		{Seq: 5, At: now, Kind: "done"},
+	}
+	f.seed(t, "fresh", meta)
+	f.seed(t, "answered", turn...)
+	f.seed(t, "switched", append(slices.Clone(turn),
+		history.Entry{Seq: 6, At: now, Kind: "command", Data: map[string]any{"text": "/model llm-openai gpt-5.6"}},
+		history.Entry{Seq: 7, At: now, Kind: "model", Data: map[string]any{"sets": []any{"llm.plugin=llm-openai", "llm.model=gpt-5.6"}}},
+		history.Entry{Seq: 8, At: now, Kind: "system", Data: map[string]any{"text": "model: llm-openai · gpt-5.6"}},
+	)...)
+	f.seed(t, "picked", meta)
+	f.sup.mu.Lock()
+	f.sup.meta["picked"] = SessionMeta{Model: "gpt-5.6"}
+	f.sup.mu.Unlock()
+
+	want := map[string]any{
+		"fresh":    map[string]any{"plugin": "llm-control", "model": "", "effort": "low"},
+		"answered": map[string]any{"plugin": "llm-control", "model": "control", "effort": "low"},
+		"switched": nil,
+		"picked":   nil,
+	}
+	for id, w := range want {
+		_, body := f.do(t, "GET", "/api/sessions/"+id, "")
+		sess, _ := body["session"].(map[string]any)
+		if got := sess["configured"]; !reflect.DeepEqual(got, w) {
+			t.Errorf("%s: configured = %v, want %v", id, got, w)
+		}
+	}
+	// /api/models still names serve's own row: that is serve's default.
+	_, body := f.do(t, "GET", "/api/models", "")
+	if d, _ := body["default"].(map[string]any); d["model"] != "serve-default" {
+		t.Errorf("/api/models default = %v, want serve's own", body["default"])
 	}
 }

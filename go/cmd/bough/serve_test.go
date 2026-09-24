@@ -155,3 +155,24 @@ func TestWriteServePidfileRefusesALiveForeignPid(t *testing.T) {
 		t.Fatalf("pidfile = %q, %v; want it untouched", got, err)
 	}
 }
+
+// A session in a repo with its own bough.yml runs that file's llm row,
+// whatever serve's cwd or HOME config says, and an edit to it shows on
+// the next read despite the memo.
+func TestConfiguredInReadsTheSessionsDir(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "bough.yml")
+	if err := os.WriteFile(cfg, []byte("- id: llm\n  plugin: llm-control\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if d := configuredIn(dir); d.Plugin != "llm-control" || d.Model != "" {
+		t.Fatalf("configuredIn = %+v, want llm-control with no model", d)
+	}
+	if err := os.WriteFile(cfg, []byte("- id: llm\n  plugin: llm-echo\n  config:\n    model: repo-model\n    effort: high\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if d := configuredIn(dir); d.Plugin != "llm-echo" || d.Model != "repo-model" || d.Effort != "high" {
+		t.Fatalf("after an edit configuredIn = %+v, want llm-echo repo-model high", d)
+	}
+}

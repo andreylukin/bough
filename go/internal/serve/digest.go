@@ -31,6 +31,8 @@ type rowDigest struct {
 	askLive     *Ask
 	jobsLive    []Job
 	model       string
+	ownModel    string // ownModel's answer
+	switched    bool
 	mode        string
 	project     string
 	lastAt      time.Time
@@ -74,6 +76,7 @@ func digestOf(entries []history.Entry, fallback time.Time) *rowDigest {
 		hasInput:    hasInput(entries),
 		empty:       len(entries) == 0,
 	}
+	d.ownModel, d.switched = ownModel(entries)
 	// The turn's summary and title are written after its done, a
 	// small-model call later: a Mark seen clicked on the failure in
 	// between was taken back when they landed. They are the turn already

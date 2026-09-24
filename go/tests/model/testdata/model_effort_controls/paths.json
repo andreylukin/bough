@@ -1,0 +1,3794 @@
+{
+  "paths": [
+    {
+      "target": 60,
+      "links": [
+        0,
+        3,
+        9,
+        27,
+        49,
+        60
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 61,
+      "links": [
+        0,
+        3,
+        9,
+        27,
+        49,
+        61
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.BadEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 62,
+      "links": [
+        0,
+        3,
+        9,
+        27,
+        49,
+        62
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 63,
+      "links": [
+        0,
+        4,
+        13,
+        34,
+        55,
+        63
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 46,
+      "links": [
+        0,
+        3,
+        9,
+        27,
+        46
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Turn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 47,
+      "links": [
+        0,
+        3,
+        9,
+        27,
+        47
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 48,
+      "links": [
+        0,
+        3,
+        9,
+        27,
+        48
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.BadEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 50,
+      "links": [
+        0,
+        3,
+        9,
+        29,
+        50
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 51,
+      "links": [
+        0,
+        3,
+        9,
+        29,
+        51
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.BadEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 52,
+      "links": [
+        0,
+        3,
+        9,
+        29,
+        52
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 53,
+      "links": [
+        0,
+        4,
+        12,
+        32,
+        53
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 54,
+      "links": [
+        0,
+        4,
+        13,
+        34,
+        54
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 56,
+      "links": [
+        0,
+        4,
+        13,
+        36,
+        56
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 57,
+      "links": [
+        0,
+        4,
+        13,
+        36,
+        57
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.BadEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 58,
+      "links": [
+        0,
+        4,
+        13,
+        36,
+        58
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 59,
+      "links": [
+        0,
+        5,
+        17,
+        41,
+        59
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 25,
+      "links": [
+        0,
+        3,
+        9,
+        25
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Turn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 26,
+      "links": [
+        0,
+        3,
+        9,
+        26
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 28,
+      "links": [
+        0,
+        3,
+        9,
+        28
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.BadEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 30,
+      "links": [
+        0,
+        3,
+        10,
+        30
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 31,
+      "links": [
+        0,
+        4,
+        12,
+        31
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 33,
+      "links": [
+        0,
+        4,
+        13,
+        33
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Turn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 35,
+      "links": [
+        0,
+        4,
+        13,
+        35
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.BadEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 37,
+      "links": [
+        0,
+        4,
+        15,
+        37
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 38,
+      "links": [
+        0,
+        4,
+        15,
+        38
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.BadEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 39,
+      "links": [
+        0,
+        4,
+        15,
+        39
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 40,
+      "links": [
+        0,
+        5,
+        17,
+        40
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        },
+        {
+          "action": "Session#0.Land",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "own",
+            "Session#0.group": "catalogue",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "m",
+            "Session#0.shown": "m",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 42,
+      "links": [
+        0,
+        5,
+        20,
+        42
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 43,
+      "links": [
+        0,
+        5,
+        20,
+        43
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 44,
+      "links": [
+        0,
+        5,
+        20,
+        44
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.BadEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 45,
+      "links": [
+        0,
+        5,
+        20,
+        45
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 11,
+      "links": [
+        0,
+        4,
+        11
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Turn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 14,
+      "links": [
+        0,
+        4,
+        14
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.BadEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 16,
+      "links": [
+        0,
+        5,
+        16
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Turn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 18,
+      "links": [
+        0,
+        5,
+        18
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "inuse",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "x",
+            "Session#0.shown": "x",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 19,
+      "links": [
+        0,
+        5,
+        19
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.BadEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "high",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 21,
+      "links": [
+        0,
+        7,
+        21
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.PickModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 22,
+      "links": [
+        0,
+        7,
+        22
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.SetUnlistedModel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 23,
+      "links": [
+        0,
+        7,
+        23
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.BadEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 24,
+      "links": [
+        0,
+        7,
+        24
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": true,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 2,
+      "links": [
+        0,
+        2
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.Turn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 6,
+      "links": [
+        0,
+        6
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueLoads",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.BadEffort",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loaded",
+            "Session#0.effort": "",
+            "Session#0.efforts": "all",
+            "Session#0.group": "configured",
+            "Session#0.offers_default": true,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "cfg",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 8,
+      "links": [
+        1,
+        8
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.CatalogueFails",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "failed",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        },
+        {
+          "action": "Session#0.RetryCatalogue",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.archived": false,
+            "Session#0.catalogue": "loading",
+            "Session#0.effort": "",
+            "Session#0.efforts": "none",
+            "Session#0.group": "none",
+            "Session#0.offers_default": false,
+            "Session#0.runs": "cfg",
+            "Session#0.shown": "",
+            "Session#0.switching": false
+          }
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "states": {
+      "covered": 22,
+      "total": 22,
+      "uncovered": []
+    },
+    "transitions": {
+      "covered": 64,
+      "total": 64,
+      "uncovered": []
+    }
+  }
+}

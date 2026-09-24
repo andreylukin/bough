@@ -1,0 +1,158 @@
+# Model and effort pickers ("Next turn") on one web session's page.
+#
+# The claim: the picker names the model the session's NEXT turn runs,
+# and the effort select offers that model's levels. Before anyone picks,
+# that is the session's own configured llm row (not serve's: a serve
+# started in another cwd, or a child started with --set llm.plugin=...,
+# runs something else), and it stays right after turns even for a
+# provider that never names a model (llm-echo, llm-control).
+#
+# Models are abstract:
+#   cfg  the session's configured model; not in the catalogue, as with
+#        the deterministic providers the tests run on
+#   m    a catalogue model with its own list of reasoning levels
+#   x    an id no provider lists, set by another client over the API
+#
+# Fields the adapter and the page both read:
+#   catalogue       GET /api/models: loading | failed | loaded
+#   runs            what the next turn runs (the adapter knows the
+#                   session's config and what it asked for)
+#   shown           the model picker's value, "" while it names nothing
+#   group           the picked option's group: configured | catalogue |
+#                   inuse | none
+#   offers_default  the Configured option is in the list
+#   efforts         the effort select's levels: none | all | own (m's)
+#   effort          meta.Effort, the effort select's value ("" = default)
+#   archived        the session is archived
+#   switching       a POST /model from the picker is in flight
+#
+# A refused call (archived 409, invalid effort 500) is a self-loop: the
+# adapter checks the status code, the spec checks nothing moved.
+
+role Session:
+    action Init:
+        self.catalogue = "loading"
+        self.runs = "cfg"
+        self.effort = ""
+        self.archived = False
+        self.switching = False
+        self.view()
+
+    # What Controls derives from the row and the catalogue. The picker
+    # waits for the catalogue: until it loads it names nothing. atomic:
+    # a plain func is a yield point, and the assertions would see the
+    # action's new fields beside the old view.
+    atomic func view():
+        if self.catalogue != "loaded":
+            self.shown = ""
+            self.group = "none"
+            self.offers_default = False
+            self.efforts = "none"
+            return
+        self.shown = self.runs
+        # Default is only where a session starts: nothing can go back to it.
+        self.offers_default = self.runs == "cfg"
+        if self.runs == "cfg":
+            self.group = "configured"
+        elif self.runs == "m":
+            self.group = "catalogue"
+        else:
+            self.group = "inuse"
+        # A model the catalogue does not describe gets every level.
+        self.efforts = "own" if self.runs == "m" else "all"
+
+    atomic fair action CatalogueLoads:
+        require self.catalogue == "loading"
+        self.catalogue = "loaded"
+        self.view()
+
+    atomic action CatalogueFails:
+        require self.catalogue == "loading"
+        self.catalogue = "failed"
+        self.view()
+
+    # "Models unavailable · Retry".
+    atomic action RetryCatalogue:
+        require self.catalogue == "failed"
+        self.catalogue = "loading"
+        self.view()
+
+    # A turn changes nothing here: the picker names the same model after
+    # a reply as before it, whether or not the provider names one.
+    atomic action Turn:
+        require self.catalogue == "loaded" and not self.archived and not self.switching
+        pass
+
+    # The person picks m in the picker; the provider is the catalogue
+    # group's. The row changes when the POST answers (Land).
+    atomic action PickModel:
+        require self.catalogue == "loaded" and not self.switching and self.runs != "m"
+        self.switching = True
+
+    # POST /model answers: SetModel writes '/model plugin id' ahead of
+    # any later prompt and records meta.Model, so the next turn runs m.
+    # Archived meanwhile: 409, nothing changes.
+    atomic fair action Land:
+        require self.switching
+        self.switching = False
+        if not self.archived:
+            self.runs = "m"
+        self.view()
+
+    # Another client sets an id no provider lists (POST /model).
+    atomic action SetUnlistedModel:
+        require self.catalogue == "loaded" and not self.switching and self.runs != "x"
+        if not self.archived:
+            self.runs = "x"
+        self.view()
+
+    # The person picks a level the select offers (POST /effort).
+    atomic action PickEffort:
+        require self.catalogue == "loaded" and not self.switching and self.effort == ""
+        if not self.archived:
+            self.effort = "high"
+
+    # A level llm.ValidEffort rejects, from another client: refused
+    # before the archived check, and nothing changes.
+    atomic action BadEffort:
+        require self.catalogue == "loaded" and not self.switching
+        pass
+
+    atomic action Archive:
+        require self.catalogue == "loaded" and not self.archived
+        self.archived = True
+
+    atomic action Unarchive:
+        require self.archived and not self.switching
+        self.archived = False
+
+action Init:
+    session = Session()
+
+# The picker names what the next turn runs, once it names anything.
+always assertion PickerNamesWhatRuns:
+    return session.shown == session.runs or (session.catalogue != "loaded" and session.shown == "")
+
+# Default is offered only while no model was ever set.
+always assertion DefaultOnlyBeforeAnySet:
+    return session.offers_default == (session.catalogue == "loaded" and session.runs == "cfg")
+
+# A model no provider lists still shows, under "In use".
+always assertion UnlistedShowsInUse:
+    return session.shown != "x" or session.group == "inuse"
+
+# The effort select offers the levels of the model the session runs.
+always assertion EffortsMatchModel:
+    if session.catalogue != "loaded":
+        return session.efforts == "none"
+    if session.runs == "m":
+        return session.efforts == "own"
+    return session.efforts == "all"
+
+# A pick lands: the picker does not stay mid-switch.
+always eventually assertion SwitchLands:
+    return not session.switching
+
+# The catalogue load does not hang (it may fail; Retry is the person's).
+always eventually assertion CatalogueSettles:
+    return session.catalogue != "loading"
