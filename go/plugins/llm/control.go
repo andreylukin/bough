@@ -9,7 +9,8 @@ package llm
 // call one tool, or hold until <name>.release appears. llm-script's tape is fixed at
 // mount; this one is fed while the session runs, which is what cancel,
 // steer and "the model is still thinking" tests need. The test side is
-// go/tests/model/llm. Config: dir (default ~/.bough/llm-control).
+// go/tests/model/llm. Config: dir (default ~/.bough/llm-control), and
+// hold_boot (hold a fresh session before its history file; see holdBoot).
 
 import (
 	"context"
@@ -51,6 +52,11 @@ func (p *controlPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		return fmt.Errorf("llm-control: %w", err)
 	}
 	holdStart(dir)
+	if hold := cfg["hold_boot"]; hold == true || hold == "true" {
+		if err := holdBoot(ctx, dir); err != nil {
+			return err
+		}
+	}
 	ctx.Provide(serviceKey(cfg), &controlLLM{dir: dir})
 	return nil
 }
@@ -78,6 +84,48 @@ func holdStart(dir string) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// holdBoot keeps a fresh session from going on to write its history
+// file until the test writes <dir>/boot/<id>.release. serve's Create
+// waits for that file, so this is how a model test holds a project's
+// main thread (or a thread) in "starting" for as long as the step it is
+// checking needs; the orb's own start is async and never held it. This
+// row mounts before history, so the wait is in front of the file. A
+// session whose file exists is a restart or a reload and goes on.
+func holdBoot(ctx *kernel.Context, dir string) error {
+	id, _ := kernel.Get[string](ctx, "session-id")
+	if id == "" {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("llm-control: hold_boot: %w", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".bough", "history", id+".jsonl")); err == nil {
+		return nil
+	}
+	boot := filepath.Join(dir, "boot")
+	if err := os.MkdirAll(boot, 0o755); err != nil {
+		return fmt.Errorf("llm-control: hold_boot: %w", err)
+	}
+	role := "session"
+	if isMain, _ := kernel.Get[bool](ctx, "session-main"); isMain {
+		role = "main"
+	}
+	if err := os.WriteFile(filepath.Join(boot, id+".waiting"), []byte(role), 0o644); err != nil {
+		return fmt.Errorf("llm-control: hold_boot: %w", err)
+	}
+	// Bounded so a test that never releases fails on its own timeout
+	// rather than leaving a process behind.
+	deadline := time.Now().Add(2 * time.Minute)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(filepath.Join(boot, id+".release")); err == nil {
+			return nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return fmt.Errorf("llm-control: hold_boot: %s never released", id)
 }
 
 type controlLLM struct {

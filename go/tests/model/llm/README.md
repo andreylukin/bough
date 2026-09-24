@@ -21,6 +21,15 @@ While a `block` turn is held, each `<name>.say-<n>` the test writes
 (`control.Say`) is streamed as one live assistant delta and renamed
 `<name>.said-<n>`: text the session shows and never records.
 
+With `hold_boot: true` on the row, a fresh session (one with
+`BOUGH_SESSION_ID` and no history file yet) stops before it writes its
+history file, writes `boot/<id>.waiting` (content `main` for a
+project's main thread, else `session`) and waits for
+`boot/<id>.release` (`Booting`, `WaitBooting`, `ReleaseBoot`). serve's
+Create waits for that file, so a test can hold a session in
+"starting"; a restart or reload of a session that has a file is not
+held.
+
 An empty queue answers `[llm-control: no turn queued in <dir>]` rather
 than waiting, so a test that queued too few turns fails instead of
 hanging. Session titles and other `Complete` calls never take a turn.

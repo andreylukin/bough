@@ -1493,8 +1493,11 @@ func (s *Supervisor) Main(slug string) (string, error) {
 		return "", err
 	}
 	// Outside s.mu: Create takes createMu and waits for the child's
-	// history file, which is seconds, not microseconds.
-	if _, err := s.Create(CreateOptions{Mode: "project", Slug: slug, ID: id}); err != nil {
+	// history file, which is seconds, not microseconds. The env says it
+	// is main here too: projectEnv derives it only for a restart, since
+	// a Create's spawn has no id to look up, so the first process of
+	// every main ran as an ordinary project session.
+	if _, err := s.Create(CreateOptions{Mode: "project", Slug: slug, ID: id, Env: []string{"BOUGH_PROJECT_MAIN=1"}}); err != nil {
 		return "", fmt.Errorf("serve: supervisor: project %s: start the main thread: %w", slug, err)
 	}
 	return id, nil

@@ -18,9 +18,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/andreylukin/bough/internal/container"
 	"github.com/andreylukin/bough/internal/serve"
 	"github.com/andreylukin/bough/internal/serve/watch"
 	"github.com/andreylukin/bough/internal/serveclient"
+	"github.com/andreylukin/bough/kernel"
+	orbplugin "github.com/andreylukin/bough/plugins/orb"
 )
 
 // defaultServeAddr is the control API's own port: not 7683 (the
@@ -303,6 +306,32 @@ func waitServe(home, addr string) (webSession, error) {
 		serveAgentID, addr, filepath.Join(home, ".bough", "serve.log"), launchdDomain(), serveAgentID)
 }
 
+// serveOrbRuntime is the container runtime project sessions run their
+// orbs on, nil for the OS default. They start in home, so their orb row
+// is ~/.bough/bough.yml's over the embedded one, which names none. serve
+// inspects, stops and reaps their containers: with the OS default it
+// asked Apple's CLI about containers a `runtime: podman` or `fake` row
+// had made somewhere else.
+func serveOrbRuntime(home string) (container.Runtime, error) {
+	path := filepath.Join(home, ".bough", "bough.yml")
+	if _, err := os.Stat(path); err != nil {
+		return nil, nil
+	}
+	rows, err := kernel.LoadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		if r.Plugin != "orb" || r.Disabled {
+			continue
+		}
+		if name, _ := r.Config["runtime"].(string); name != "" {
+			return orbplugin.RuntimeFor(name)
+		}
+	}
+	return nil, nil
+}
+
 // serveForeground is the daemon body: supervisor + API on addr until
 // SIGINT/SIGTERM, then drain HTTP and kill every child.
 func serveForeground(home, addr string, insecure bool, host string) error {
@@ -321,11 +350,16 @@ func serveForeground(home, addr string, insecure bool, host string) error {
 	if done := writeServePidfile(home, addr); done != nil {
 		defer done()
 	}
+	rt, err := serveOrbRuntime(home)
+	if err != nil {
+		return fmt.Errorf("serve: orb runtime: %w", err)
+	}
 	sup, err := serve.NewSupervisor(serve.Options{
 		Exe:      resolveExe(),
 		HistDir:  sessionsDir(),
 		MetaPath: filepath.Join(home, ".bough", "serve", "meta.json"),
 		Home:     home,
+		Runtime:  rt,
 	})
 	if err != nil {
 		return fmt.Errorf("serve: supervisor: %w", err)

@@ -1,0 +1,273 @@
+# The project page (#/projects/<slug>): the project's main thread, a
+# thread started from the page, and the report the thread's finish
+# leaves in main. Checked against internal/serve projects.go
+# (projectDetail, messageProject, inProject), orbs.go
+# createProjectSession, supervisor.go Main/MainID, children.go
+# CreateChild/launch/report, and web/src project.tsx ProjectView.
+#
+# Main(slug) is modelled in steps because its lock is the claim: a
+# request goes wait -> held -> idle. "wait" is the POST in flight before
+# the per-slug lock; "held" is Main holding it, which it does through
+# Create, i.e. until main's history file exists; the step out of "held"
+# releases it and does the rest of the handler (unarchive + Send, or
+# CreateChild). The page's own request (a) is a message ("msg-*") or
+# 'New thread' ("thread-*"). A second tab (b) messages the project too,
+# modelled only in the race that the lock exists for: the first message
+# to a project with no main.
+#
+# The orb runtime is abstract: main "starting" is Create waiting for the
+# child's history file (the container boots in there), MainReady is the
+# file appearing. Create's 10 s timeout is not modelled.
+#
+# mains counts main ids whose history exists or is being awaited. A
+# "gone" main (its history file deleted) no longer counts; MainID then
+# reports no main, so the page shows the no-main home.
+#
+# One thread is modelled: none, starting (created; 404 until its history
+# exists, a pending row in the list), empty (prompt-less: launch writes
+# no prompt, so no turn is open), running, reported (turn over and its
+# notice in main: one step, see ThreadFinish). Archiving it or
+# moving it out of the project is back to none. Start thread's thread
+# is created with its task and is modelled straight into running: main
+# stays on screen for it, so nothing reads its starting step.
+#
+# Scope cuts, since every generated path is one browser walk: the
+# project is archived and main's history lost only with no thread in the
+# project; no thread is started while the project is archived; the other
+# tab only sends the first message, sent before or while the page sends
+# its own; and the page is navigated only between its requests.
+
+def page_lists(thread):
+    # projectDetail: sessions inProject (!Archived && Project == slug),
+    # plus pendingRows for a child with no history yet.
+    return thread != "none"
+
+def sidebar_lists(thread):
+    # The web's projectOf over /api/sessions rows, the mirror of
+    # inProject; serve lists a booting child there too.
+    return thread != "none"
+
+role Project:
+    action Init:
+        self.main = "none"
+        self.mains = 0
+        self.archived = False
+        self.lock = ""
+        self.a = "idle"
+        self.b = "idle"
+        self.asked = False
+        self.view = "home"
+        self.thread = "none"
+        self.parented = False
+        self.full = False
+
+    # --- the page reads; nothing it reads may start main.
+
+    atomic action Poll:
+        # ProjectView's 4 s GET /api/projects/{slug}: MainID, never Main.
+        require self.main == "none"
+        pass
+
+    # --- requests that go through Main(slug).
+
+    atomic action Message:
+        # ProjectComposer -> POST /api/projects/{slug}/message; with the
+        # other tab's first message in flight, only into the race itself.
+        require self.a == "idle" and (self.b == "idle" or self.main == "none")
+        self.a = "msg-wait"
+        self.asked = True
+
+    atomic action NewThread:
+        # 'New thread' -> POST /api/sessions {mode: project, prompt: ""}.
+        # createProjectSession calls Main() before CreateChild, so with
+        # no main it first waits for main to boot.
+        require self.a == "idle" and self.b == "idle"
+        require self.thread == "none" and not self.archived
+        self.a = "thread-wait"
+        self.asked = True
+
+    atomic action MessageB:
+        # Another tab's first message; the page's may follow it into Main.
+        require self.b == "idle" and self.main == "none" and self.a == "idle"
+        self.b = "wait"
+        self.asked = True
+
+    atomic fair<strong> action EnterA:
+        require self.a in ("msg-wait", "thread-wait") and self.lock == ""
+        self.lock = "a"
+        if self.a == "msg-wait":
+            self.a = "msg-held"
+        else:
+            self.a = "thread-held"
+        # Reuse only a recorded main whose history file exists; anything
+        # else (none, or gone) gets a fresh id, persisted before spawn.
+        if self.main != "live":
+            self.main = "starting"
+            self.mains = self.mains + 1
+
+    atomic fair<strong> action EnterB:
+        require self.b == "wait" and self.lock == ""
+        self.lock = "b"
+        self.b = "held"
+        if self.main != "live":
+            self.main = "starting"
+            self.mains = self.mains + 1
+
+    atomic fair action MainReady:
+        # The child's history file appears; Create returns.
+        require self.main == "starting"
+        self.main = "live"
+        if self.a == "thread-held":
+            # createProjectSession goes on from Main() to CreateChild in
+            # the same handler, with nothing between them another client
+            # could see: the thread exists the moment main does. (Found
+            # by the server adapter, which saw the thread listed right
+            # after MainReady while this step still said "held".)
+            self.lock = ""
+            self.thread = "starting"
+            self.parented = True
+            self.full = True
+            self.view = "thread"
+            self.a = "idle"
+
+    atomic fair<strong> action DoneA:
+        require self.a in ("msg-held", "thread-held") and self.main == "live"
+        self.lock = ""
+        if self.a == "msg-held":
+            # messageProject: unarchive, Send; the page opens main.
+            self.archived = False
+            self.view = "main"
+        else:
+            # CreateChild(SpawnedBy=main, Thread=true) returns the id at
+            # once; the page reloads, then opens the thread.
+            self.thread = "starting"
+            self.parented = True
+            self.full = True
+            self.view = "thread"
+        self.a = "idle"
+
+    atomic fair<strong> action DoneB:
+        require self.b == "held" and self.main == "live"
+        self.lock = ""
+        self.b = "idle"
+        self.archived = False
+
+    atomic action StartThread:
+        # Main's composer 'Start thread': the button exists only with main
+        # on screen, so Main() inside the create is the fast path.
+        require self.view == "main" and self.main == "live" and not self.archived
+        require self.a == "idle" and self.lock == "" and self.thread == "none"
+        self.thread = "running"
+        self.parented = True
+        self.full = True
+
+    # --- the thread's life, and its report to main.
+
+    atomic fair action ThreadBoot:
+        # The child's history file appears: an empty room, no turn open.
+        require self.thread == "starting"
+        self.thread = "empty"
+
+    atomic action ThreadMessage:
+        # Typing in the open thread's composer.
+        require self.view == "thread" and self.thread in ("empty", "reported")
+        self.thread = "running"
+
+    atomic action ThreadFinish:
+        # The turn ends (done/cancelled/exit): childEventLocked hands the
+        # report to a goroutine and notifyFrom puts the notice in main.
+        # One step: nothing holds the report between the turn's end and
+        # the notice, so no client ever sees a finished thread whose
+        # report is still on its way (the server adapter found the
+        # notice already in main every time). A report that never lands
+        # is a finished thread that never reads "reported", which the
+        # adapter fails on.
+        require self.thread == "running"
+        self.thread = "reported"
+
+    atomic action ArchiveThread:
+        # Archived or moved out of the project: it leaves the list, and a
+        # page showing it goes back to the home (the stale-thread effect).
+        require self.thread in ("empty", "reported")
+        self.thread = "none"
+        self.parented = False
+        self.full = False
+        if self.view == "thread":
+            self.view = "home"
+
+    atomic action ArchiveProject:
+        # archiveProject stops and folds main; a message reopens it
+        # ("A message reopens it").
+        require self.main == "live" and not self.archived
+        require self.a == "idle" and self.b == "idle" and self.thread == "none"
+        self.archived = True
+
+    # --- navigation on the page.
+
+    atomic action OpenMain:
+        require self.view != "main" and self.main == "live" and self.a == "idle" and self.b == "idle"
+        self.view = "main"
+
+    atomic action OpenThread:
+        require self.view != "thread" and self.thread != "none" and self.a == "idle"
+        self.view = "thread"
+
+    atomic action Back:
+        # '‹ All threads'.
+        require self.view != "home" and self.a == "idle" and self.b == "idle"
+        self.view = "home"
+
+    # --- the environment: main's history file disappears.
+
+    atomic action LoseMainHistory:
+        # Only between requests, and only with no thread in the project:
+        # a thread's SpawnedBy is the OLD id and report() drops a notice
+        # to a parent with no history file, so a re-mint under a live
+        # thread loses that thread's report (a gap; see the flow notes).
+        require self.main == "live" and not self.archived
+        require self.a == "idle" and self.b == "idle" and self.thread == "none"
+        self.main = "gone"
+        self.mains = self.mains - 1
+        if self.view == "main":
+            self.view = "home"
+
+action Init:
+    project = Project()
+
+# A project has exactly one main thread even when two tabs message it at
+# once: the per-slug lock is held from the history check through Create.
+always assertion OneMain:
+    return project.mains <= 1
+
+# Whoever holds Main's lock has passed its check, so there is a main
+# with history or one being awaited: a recorded main whose history file
+# is gone was re-minted, not handed back.
+always assertion GoneMainReminted:
+    held = project.a in ("msg-held", "thread-held") or project.b == "held"
+    return not held or project.main in ("starting", "live")
+
+# Reading the project page never creates main or starts a container.
+always assertion ReadingNeverCreatesMain:
+    return project.main == "none" or project.asked
+
+# Every thread started from the page is main's child (its report lands
+# there) and still a full agent (Thread=true).
+always assertion ThreadsUnderMain:
+    return project.thread == "none" or (project.parented and project.full)
+
+# The page's thread list and the sidebar's project group agree.
+always assertion ListsAgree:
+    return page_lists(project.thread) == sidebar_lists(project.thread)
+
+# After a message main exists and the page opens on it (DoneA sets the
+# view in the same step); a New thread gets created and opened.
+always eventually assertion RequestComplete:
+    return project.a == "idle"
+
+# The other tab's message gets through too.
+always eventually assertion OtherTabComplete:
+    return project.b == "idle"
+
+# A started thread boots: it is openable past its 404.
+always eventually assertion ThreadBoots:
+    return project.thread != "starting"

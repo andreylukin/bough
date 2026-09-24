@@ -74,12 +74,18 @@ type run struct {
 // start launches `bough --headless --set llm.plugin=llm-control` in a
 // fresh HOME and cwd with an open stdin; the default bough.yml is
 // copied in, so the row under test is the only change to it.
-func start(t *testing.T, args ...string) *run { return startWith(t, false, args...) }
+func start(t *testing.T, args ...string) *run { return startWith(t, false, nil, args...) }
 
 // startHeld is start with HoldStart in place before the process runs.
-func startHeld(t *testing.T) *run { return startWith(t, true) }
+func startHeld(t *testing.T) *run { return startWith(t, true, nil) }
 
-func startWith(t *testing.T, hold bool, args ...string) *run {
+// startEnv is start with env added to the child's environment.
+func startEnv(t *testing.T, env []string, args ...string) *run {
+	t.Helper()
+	return startWith(t, false, env, args...)
+}
+
+func startWith(t *testing.T, hold bool, env []string, args ...string) *run {
 	t.Helper()
 	base := t.TempDir()
 	home, cwd := filepath.Join(base, "home"), filepath.Join(base, "cwd")
@@ -107,6 +113,7 @@ func startWith(t *testing.T, hold bool, args ...string) *run {
 	if hold {
 		HoldStart(t, Dir(home))
 	}
+	cmd.Env = append(cmd.Env, env...)
 	r := &run{t: t, home: home, out: &buf{}, exited: make(chan error, 1)}
 	cmd.Stdout, cmd.Stderr = r.out, r.out
 	pr, pw, err := os.Pipe()
@@ -372,6 +379,33 @@ func TestControlBlockStream(t *testing.T) {
 	}
 	Release(t, r.dir(), "001")
 	r.waitFor(`"kind":"assistant","text":"whole reply"`)
+	if code, out := r.finish(); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+// hold_boot holds a fresh session before its history file exists, the
+// file serve's Create waits for, until the test releases it: that is
+// how a model test keeps a project's main thread or a thread starting.
+func TestControlHoldBoot(t *testing.T) {
+	t.Parallel()
+	const id = "01a0d000-0000-7000-8000-00000000b007"
+	r := startEnv(t, []string{"BOUGH_SESSION_ID=" + id}, "--set", "llm.hold_boot=true")
+	if role := WaitBooting(t, r.dir(), id, 30*time.Second); role != "session" {
+		t.Errorf("booting role = %q, want session", role)
+	}
+	hist := filepath.Join(r.home, ".bough", "history", id+".jsonl")
+	time.Sleep(300 * time.Millisecond)
+	if _, err := os.Stat(hist); err == nil {
+		t.Fatalf("history written while the boot is held:\n%s", r.out.String())
+	}
+	ReleaseBoot(t, r.dir(), id)
+	Queue(t, r.dir(), "001", Turn{Mode: "ok", Text: "booted and answering"})
+	r.send("hello")
+	r.waitFor("[assistant] booted and answering")
+	if _, err := os.Stat(hist); err != nil {
+		t.Fatalf("no history after the release: %v", err)
+	}
 	if code, out := r.finish(); code != 0 {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
