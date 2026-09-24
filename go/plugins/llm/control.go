@@ -111,10 +111,19 @@ func (c *controlLLM) AgentAdapter(o agentllm.Options) (agentllm.Adapter, error) 
 }
 
 type controlTurn struct {
-	Mode    string `json:"mode"`
-	Text    string `json:"text"`
-	Error   string `json:"error"`
-	DelayMS int    `json:"delay_ms"`
+	Mode    string       `json:"mode"`
+	Text    string       `json:"text"`
+	Error   string       `json:"error"`
+	DelayMS int          `json:"delay_ms"`
+	Call    *controlCall `json:"call"`
+}
+
+// controlCall is a tool call a release answers with, so a test can put
+// a turn through a real native call and keep it running after.
+type controlCall struct {
+	ID   string          `json:"id"`
+	Name string          `json:"name"`
+	Args json.RawMessage `json:"args"`
 }
 
 // take claims the next queued turn. A name the test is still writing
@@ -183,9 +192,22 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 		return a.reply(ctx, turn.Text, time.Duration(turn.DelayMS)*time.Millisecond)
 	case "block":
 		release := filepath.Join(a.c.dir, name+".release")
+		stream := filepath.Join(a.c.dir, name+".stream")
+		seq := agentllm.SeqOf(ctx)
 		tick := time.NewTicker(10 * time.Millisecond)
 		defer tick.Stop()
 		for {
+			// A fragment streamed while held: text on screen that no
+			// entry records yet. Removing the file is the test's signal
+			// that it went out.
+			if b, err := os.ReadFile(stream); err == nil {
+				if a.opts.Sink != nil {
+					a.opts.Sink(agentllm.Delta{Seq: seq, Attempt: 1, Kind: agentllm.DeltaText, Text: string(b)})
+				}
+				if err := os.Remove(stream); err != nil {
+					return ullm.Response{}, err
+				}
+			}
 			if b, err := os.ReadFile(release); err == nil {
 				// A release that carries a turn answers as it says, so a
 				// test can hold a session in "running" and only then
@@ -193,6 +215,9 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 				var then controlTurn
 				if len(b) > 0 && json.Unmarshal(b, &then) == nil && then.Mode == "error" {
 					return ullm.Response{}, errors.New(then.Error)
+				}
+				if then.Call != nil {
+					return a.call(ctx, then.Text, *then.Call)
 				}
 				if then.Text != "" {
 					return a.reply(ctx, then.Text, 0)
@@ -236,6 +261,27 @@ func (a *controlAdapter) reply(ctx context.Context, text string, delay time.Dura
 		Output: []ullm.Item{{Type: ullm.ItemMessage, Data: ullm.Message{Role: ullm.RoleAssistant, Text: text}}},
 		Usage:  u,
 	}, nil
+}
+
+// call answers with text (when any) and then a tool call, the shape of
+// a provider response that goes on to run a tool.
+func (a *controlAdapter) call(ctx context.Context, text string, c controlCall) (ullm.Response, error) {
+	r, err := a.reply(ctx, text, 0)
+	if err != nil {
+		return r, err
+	}
+	if text == "" {
+		r.Output = nil
+	}
+	if c.ID == "" {
+		c.ID = r.ID + "-call"
+	}
+	args := string(c.Args)
+	if args == "" || args == "null" {
+		args = "{}"
+	}
+	r.Output = append(r.Output, ullm.Item{Type: ullm.ItemToolCall, Data: ullm.ToolCall{CallID: c.ID, Name: c.Name, Arguments: args}})
+	return r, nil
 }
 
 func controlWords(s string) []string {

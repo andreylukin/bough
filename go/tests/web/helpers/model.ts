@@ -39,8 +39,9 @@ export interface Flow<C> {
   sessions(c: C): string[];
   /** Let anything still held (a blocked turn) go before serve stops. */
   cleanup?(c: C): Promise<void>;
-  /** Console errors the spec itself calls for, e.g. Chromium's "Failed to
-   *  load resource" line for a 4xx/5xx the spec's failure step answers. */
+  /** Console errors a step causes on purpose. Chromium logs every
+   *  request answered 4xx/5xx ("Failed to load resource: … 409"), so a
+   *  flow whose spec has a refused or failed request names that line here. */
   allowConsole?: RegExp;
 }
 
