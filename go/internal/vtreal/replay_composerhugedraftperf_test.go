@@ -100,7 +100,10 @@ func composerHugeDraftPerfOp(a *app, what string, send func(), leftSuffix, under
 func TestComposerHugeDraftPerfPasteEditWhileStreaming(t *testing.T) {
 	t.Parallel()
 	tape, _ := filepath.Abs("testdata/replay/paste-stream.jsonl")
-	a := startCfg(t, 100, 30, pasteReplayConfig(tape, 150))
+	// 60ms a word: ~5 s of stream against ~2 s of paste and edits (the
+	// worst key is ~65ms). At 150ms the test spent 10 s waiting for the
+	// reply to end before the steer was recorded.
+	a := startCfg(t, 100, 30, pasteReplayConfig(tape, 60))
 	a.typeText("stream please")
 	a.key(uv.KeyEnter, 0)
 	a.waitFor("streamhead")
