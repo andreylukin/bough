@@ -85,6 +85,11 @@ type Row struct {
 	// project session it is the slug its history recorded, which nothing
 	// can re-file; for a local one it is where a person filed it.
 	Project string `json:"project,omitempty"`
+	// StartedIn is the project whose directory (and so MEMORY.md) the
+	// running child was started with; "" when none or no child runs.
+	// Filing a live session changes Project at once but not this: the
+	// child reads the directory only at its start.
+	StartedIn string `json:"startedIn,omitempty"`
 	// Jobs are the background jobs still running; Cache is the prompt
 	// cache after the last turn that reported one.
 	Jobs  []Job  `json:"jobs,omitempty"`
@@ -638,26 +643,27 @@ func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 	now := time.Now()
 	trouble := d.troubled(st, meta.Ack, now, in.Background)
 	return Row{
-		ID:       in.ID,
-		Title:    title,
-		Summary:  in.Summary,
-		Cwd:      in.Cwd,
-		Repo:     in.Repo,
-		Branch:   in.Branch,
-		Status:   st,
-		Live:     live,
-		Archived: meta.Archived,
-		Entries:  in.Entries,
-		Modified: in.ModTime,
-		LastAt:   d.lastAt,
-		Ask:      ask,
-		Model:    model,
-		Effort:   meta.Effort,
-		Project:  project,
-		Jobs:     jobs,
-		Cache:    d.cacheFor(model),
-		Trouble:  trouble,
-		Unseen:   d.unseen(st, trouble, meta.Ack, now, in.Origin),
+		ID:        in.ID,
+		Title:     title,
+		Summary:   in.Summary,
+		Cwd:       in.Cwd,
+		Repo:      in.Repo,
+		Branch:    in.Branch,
+		Status:    st,
+		Live:      live,
+		Archived:  meta.Archived,
+		Entries:   in.Entries,
+		Modified:  in.ModTime,
+		LastAt:    d.lastAt,
+		Ask:       ask,
+		Model:     model,
+		Effort:    meta.Effort,
+		Project:   project,
+		StartedIn: a.sup.StartedIn(in.ID),
+		Jobs:      jobs,
+		Cache:     d.cacheFor(model),
+		Trouble:   trouble,
+		Unseen:    d.unseen(st, trouble, meta.Ack, now, in.Origin),
 
 		TestsFailed: d.testsFailed,
 		TestsAt:     d.testsAt,

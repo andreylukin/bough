@@ -98,6 +98,8 @@ export interface Row {
   model?: string;
   effort?: string;
   project?: string;
+  /** The project whose MEMORY.md the running child started with; absent when none or no child runs. */
+  startedIn?: string;
   /** Background jobs still running. */
   jobs?: Job[];
   /** The prompt cache after the last turn that reported one. */

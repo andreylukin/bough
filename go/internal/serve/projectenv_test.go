@@ -126,3 +126,54 @@ func TestProjectEnvMarksTheMainThread(t *testing.T) {
 		t.Errorf("a thread starts with %v, which claims it is main", got)
 	}
 }
+
+// A running child keeps the project directory it started with, so the
+// row says which one that was: a person who files a live session sees
+// its MEMORY.md is not in force until the child starts again, instead of
+// expecting it on the next turn. Nothing while no child runs.
+func TestRowSaysWhichProjectTheChildStartedWith(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	if _, err := projectdef.CreateEmpty(f.home, "web", "Web"); err != nil {
+		t.Fatal(err)
+	}
+	f.seed(t, "sess-brief", history.Entry{
+		Seq: 1, At: time.Now(), Kind: "meta", Data: map[string]any{"cwd": f.home},
+	})
+	a := NewAPI(f.sup)
+	row := func() Row {
+		t.Helper()
+		in, ok := a.info("sess-brief")
+		if !ok {
+			t.Fatal("no session sess-brief")
+		}
+		return a.row(in)
+	}
+	if err := f.sup.AssignProject("sess-brief", "web"); err != nil {
+		t.Fatalf("AssignProject: %v", err)
+	}
+	if r := row(); r.Live || r.StartedIn != "" {
+		t.Fatalf("no child: live %v, startedIn %q; want false, \"\"", r.Live, r.StartedIn)
+	}
+	if err := f.sup.Adopt("sess-brief"); err != nil {
+		t.Fatalf("Adopt: %v", err)
+	}
+	waitFor(t, "the child's start", func() bool { return len(startedWith(t, f, "sess-brief")) == 1 })
+	if r := row(); !r.Live || r.StartedIn != "web" {
+		t.Fatalf("started filed in web: live %v, startedIn %q; want true, \"web\"", r.Live, r.StartedIn)
+	}
+	// Taken out while it runs: the child still has web's directory.
+	if err := f.sup.AssignProject("sess-brief", ""); err != nil {
+		t.Fatalf("AssignProject out: %v", err)
+	}
+	if r := row(); r.Project != "" || r.StartedIn != "web" {
+		t.Fatalf("filed out while running: project %q, startedIn %q; want \"\", \"web\"", r.Project, r.StartedIn)
+	}
+	if err := f.sup.Kill("sess-brief"); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	waitFor(t, "the child to be gone", func() bool { return !f.sup.Live("sess-brief") })
+	if r := row(); r.StartedIn != "" {
+		t.Fatalf("after the child went: startedIn %q, want \"\"", r.StartedIn)
+	}
+}

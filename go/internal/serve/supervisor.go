@@ -189,6 +189,9 @@ type child struct {
 	// line sent then is a steer that lands only at the next boundary,
 	// so an interrupt must go straight through, not wait for it.
 	inTurn bool
+	// startedIn: the project whose directory projectEnv gave this
+	// process, "" for none. Fixed for the process's life (Row.StartedIn).
+	startedIn string
 }
 
 // Supervisor is safe for concurrent use. One mutex guards the lease
@@ -633,7 +636,15 @@ func (s *Supervisor) start(ch *child, dir, id string, extra, more []string) erro
 	// created, and spawnArgs is in-memory and empty after a serve
 	// restart. A session already running does not pick it up — the
 	// injection starts at its next start.
-	cmd.Env = append(cmd.Env, s.projectEnv(id)...)
+	penv := s.projectEnv(id)
+	cmd.Env = append(cmd.Env, penv...)
+	for _, kv := range penv {
+		if dir, ok := strings.CutPrefix(kv, "BOUGH_PROJECT_DIR="); ok {
+			s.mu.Lock()
+			ch.startedIn = filepath.Base(dir)
+			s.mu.Unlock()
+		}
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("serve: supervisor: stdin pipe: %w", err)
@@ -1135,6 +1146,17 @@ func (s *Supervisor) Live(id string) bool {
 	defer s.mu.Unlock()
 	_, ok := s.kids[id]
 	return ok
+}
+
+// StartedIn is the project the session's running child was started
+// with, "" when it was started with none or no child runs.
+func (s *Supervisor) StartedIn(id string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ch, ok := s.kids[id]; ok {
+		return ch.startedIn
+	}
+	return ""
 }
 
 // PendingAsk is the ask this session is blocked on, from the event
