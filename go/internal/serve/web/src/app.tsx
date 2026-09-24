@@ -4343,7 +4343,14 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     ro.observe(el);
     return () => { ro.disconnect(); root.style.removeProperty("--composer-h"); };
   }, []);
-  useEffect(() => { if (!live) setStopping(""); }, [live]);
+  // A Stop still waiting on the sends before it is not over when the turn
+  // is: once they settle it interrupts whatever runs then (a steer that
+  // landed after the finish starts a turn), so it keeps saying Stopping
+  // until they have.
+  const stopWaits = useRef(false);
+  const liveNow = useRef(live);
+  liveNow.current = live;
+  useEffect(() => { if (!live && !stopWaits.current) setStopping(""); }, [live]);
   useEffect(() => {
     if (!restoreOnStop.current || running || loading) return;
     const t = stoppedPrompt(lines);
@@ -4356,7 +4363,10 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const stop = async () => {
     restoreOnStop.current = true;
     setStopping("stopping");
+    stopWaits.current = true;
     await Promise.allSettled([...inflight.current]);
+    stopWaits.current = false;
+    if (!liveNow.current) setStopping("");
     const ok = await onInterrupt();
     if (ok === false) setStopping("failed");
   };
@@ -4909,7 +4919,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                 </button>
               )}
               {/* One filled control: Stop is a square icon, Queue shows once there is a draft to queue. */}
-              {live && (stopping === "failed"
+              {(live || stopping === "stopping") && (stopping === "failed"
                 ? <button className="btn composer-stop-retry" onClick={stop} title="Stop (Esc)" aria-keyshortcuts="Escape">Retry stop</button>
                 : <button className="btn btn-ghost composer-stop" disabled={stopping === "stopping"} onClick={stop}
                           aria-label={stopping === "stopping" ? "Stopping" : "Stop"} title="Stop (Esc)" aria-keyshortcuts="Escape">
