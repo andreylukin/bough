@@ -130,12 +130,19 @@ role Session:
         self.status = "running"
         self.draft = ""
 
+    # Clear and Remove are keys too: like Enter they never beat a ready
+    # flush. The browser walk showed it: a thread whose turn just ended
+    # has already handed the queue's head to deliver() before any click.
     atomic action Clear:
         require self.draft != ""
+        ready = self.flush_ready()
+        require not ready
         self.draft = ""
 
     atomic action RemoveQueued:
         require len(self.queue) > 0
+        ready = self.flush_ready()
+        require not ready
         i = oneof range(len(self.queue))
         self.queue = self.queue[:i] + self.queue[i + 1:]
 

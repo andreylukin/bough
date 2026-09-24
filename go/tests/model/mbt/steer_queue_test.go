@@ -214,7 +214,7 @@ func (a *steerQueueAdapter) Answer() error {
 }
 
 func (a *steerQueueAdapter) Clear() error {
-	if a.gate.pass(a.draft != "") {
+	if a.gate.pass(a.draft != "" && !a.flushReady()) {
 		a.draft = ""
 	}
 	return nil
@@ -223,7 +223,7 @@ func (a *steerQueueAdapter) Clear() error {
 // RemoveQueued drops the queued message the runner's choice names.
 func (a *steerQueueAdapter) RemoveQueued(args []fmbt.Arg) error {
 	i, ok := argOf(args, "i").(int)
-	if !a.gate.pass(len(a.queue) > 0 && ok && i < len(a.queue)) {
+	if !a.gate.pass(len(a.queue) > 0 && !a.flushReady() && ok && i < len(a.queue)) {
 		return nil
 	}
 	a.queue = slices.Delete(a.queue, i, i+1)
