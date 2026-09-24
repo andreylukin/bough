@@ -1,0 +1,3904 @@
+{
+  "paths": [
+    {
+      "target": 66,
+      "links": [
+        0,
+        4,
+        11,
+        19,
+        29,
+        43,
+        50,
+        62,
+        66
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 67,
+      "links": [
+        0,
+        4,
+        11,
+        19,
+        29,
+        43,
+        50,
+        62,
+        67
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 68,
+      "links": [
+        0,
+        4,
+        11,
+        19,
+        29,
+        43,
+        50,
+        63,
+        68
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.StartSession",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": true,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.StartAnyway",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 69,
+      "links": [
+        0,
+        4,
+        11,
+        19,
+        29,
+        43,
+        50,
+        63,
+        69
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.StartSession",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": true,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.OpenOrb",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 70,
+      "links": [
+        0,
+        4,
+        11,
+        19,
+        29,
+        43,
+        51,
+        65,
+        70
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 71,
+      "links": [
+        0,
+        4,
+        11,
+        19,
+        29,
+        43,
+        51,
+        65,
+        71
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 61,
+      "links": [
+        0,
+        4,
+        11,
+        19,
+        29,
+        43,
+        50,
+        61
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 64,
+      "links": [
+        0,
+        4,
+        11,
+        19,
+        29,
+        43,
+        51,
+        64
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 52,
+      "links": [
+        0,
+        4,
+        11,
+        20,
+        31,
+        44,
+        52
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 53,
+      "links": [
+        0,
+        4,
+        11,
+        20,
+        31,
+        44,
+        53
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 54,
+      "links": [
+        0,
+        4,
+        11,
+        20,
+        31,
+        44,
+        54
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 55,
+      "links": [
+        0,
+        4,
+        11,
+        20,
+        31,
+        45,
+        55
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 56,
+      "links": [
+        0,
+        4,
+        11,
+        20,
+        31,
+        45,
+        56
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 57,
+      "links": [
+        0,
+        4,
+        11,
+        20,
+        32,
+        47,
+        57
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 58,
+      "links": [
+        0,
+        4,
+        11,
+        20,
+        32,
+        47,
+        58
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 59,
+      "links": [
+        0,
+        4,
+        12,
+        22,
+        37,
+        49,
+        59
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 60,
+      "links": [
+        0,
+        4,
+        12,
+        22,
+        37,
+        49,
+        60
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 40,
+      "links": [
+        0,
+        3,
+        8,
+        16,
+        27,
+        40
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 41,
+      "links": [
+        0,
+        3,
+        8,
+        16,
+        27,
+        41
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 42,
+      "links": [
+        0,
+        4,
+        11,
+        19,
+        29,
+        42
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "ok",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 46,
+      "links": [
+        0,
+        4,
+        11,
+        20,
+        32,
+        46
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 48,
+      "links": [
+        0,
+        4,
+        12,
+        22,
+        37,
+        48
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 26,
+      "links": [
+        0,
+        3,
+        8,
+        16,
+        26
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 28,
+      "links": [
+        0,
+        4,
+        11,
+        19,
+        28
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 30,
+      "links": [
+        0,
+        4,
+        11,
+        19,
+        30
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildOk",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": true,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "ok",
+            "Project#0.last": "ok",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 33,
+      "links": [
+        0,
+        4,
+        12,
+        21,
+        33
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "failed",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "failed",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 34,
+      "links": [
+        0,
+        4,
+        12,
+        21,
+        34
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "failed",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 35,
+      "links": [
+        0,
+        4,
+        12,
+        21,
+        35
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "failed",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 36,
+      "links": [
+        0,
+        4,
+        12,
+        22,
+        36
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 38,
+      "links": [
+        0,
+        4,
+        12,
+        23,
+        38
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.StartSession",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": true,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.StartAnyway",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 39,
+      "links": [
+        0,
+        4,
+        12,
+        23,
+        39
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.BuildFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.StartSession",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": true,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.OpenOrb",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "failed",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 15,
+      "links": [
+        0,
+        3,
+        8,
+        15
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 17,
+      "links": [
+        0,
+        3,
+        9,
+        17
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.StartSession",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": true,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.StartAnyway",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 18,
+      "links": [
+        0,
+        3,
+        9,
+        18
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.StartSession",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": true,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.OpenOrb",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 24,
+      "links": [
+        1,
+        6,
+        14,
+        24
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 25,
+      "links": [
+        1,
+        6,
+        14,
+        25
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 7,
+      "links": [
+        0,
+        3,
+        7
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.SyncFail",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": true,
+            "Project#0.json": "",
+            "Project#0.last": "failed",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 10,
+      "links": [
+        0,
+        4,
+        10
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Begin",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "building",
+            "Project#0.last": "",
+            "Project#0.phase": "building",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 13,
+      "links": [
+        1,
+        6,
+        13
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 2,
+      "links": [
+        0,
+        2
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Build",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "syncing",
+            "Project#0.runs": 1,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 5,
+      "links": [
+        1,
+        5
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        },
+        {
+          "action": "Project#0.Edit",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.built": false,
+            "Project#0.confirm": false,
+            "Project#0.err": false,
+            "Project#0.json": "",
+            "Project#0.last": "",
+            "Project#0.phase": "idle",
+            "Project#0.runs": 0,
+            "Project#0.valid": true
+          }
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "states": {
+      "covered": 32,
+      "total": 32,
+      "uncovered": []
+    },
+    "transitions": {
+      "covered": 72,
+      "total": 72,
+      "uncovered": []
+    }
+  }
+}

@@ -140,7 +140,9 @@ export const ORB_AS_STATUS: Record<OrbStatus, Status> = {
 export function orbVerdict(d: OrbDetail): { status: Status; word: string; why?: string } {
   if (!d.runtime.available) return { status: "error", word: "Runtime not running", why: d.runtime.error };
   if (d.orb.error) return { status: "error", word: "Orb failed", why: d.orb.error };
-  if (d.build.state === "building") return { status: "running", word: "Building image" };
+  // An image for this definition already exists: sessions can start on it
+  // while the build runs, and "Building image" alone said they could not.
+  if (d.build.state === "building") return { status: "running", word: d.orb.built ? "Ready · rebuilding image" : "Building image" };
   if (d.build.state === "failed") return d.orb.built
     ? { status: "needs-you", word: "Ready · last build failed", why: d.build.error }
     : { status: "error", word: "Build failed", why: d.build.error };
@@ -422,8 +424,9 @@ export function ProjectOrb({ project, detail, log, error, actionError, onSave, o
 
         <FileEditor order={FILES} files={detail.files} tab={tab} onTab={setTab} onSave={onSave} editorRef={editorRef}
                     actions={<>
-                      <button className="btn btn-primary" disabled={building || !detail.runtime.available} onClick={onBuild}
-                              title={detail.runtime.available ? undefined : "Start the container runtime first"}>{building ? "Building…" : "Build image"}</button>
+                      {/* A definition that does not load is a 400 from serve, which the panel had nowhere to show: the verdict already says why. */}
+                      <button className="btn btn-primary" disabled={building || !detail.runtime.available || !!detail.orb.error} onClick={onBuild}
+                              title={!detail.runtime.available ? "Start the container runtime first" : detail.orb.error ? "Fix the definition first" : undefined}>{building ? "Building…" : "Build image"}</button>
                     </>} />
         {!detail.runtime.available && <div className="orb-tabs"><span className="orb-hint">Start the container runtime first</span></div>}
 

@@ -31,6 +31,9 @@ export interface ServeOpts {
   readyTimeoutMs?: number;
   /** Extra environment for serve and the sessions it starts. */
   env?: Record<string, string>;
+  /** What to run instead of bough, with the same `serve --run ADDR`
+   *  (tests/model/orbserve: serve over a container runtime the test owns). */
+  bin?: string;
 }
 
 export interface Serve {
@@ -99,7 +102,7 @@ export async function startServe(
   // its exit and its binary are whichever process is current.
   let child!: ChildProcess;
   let exited!: Promise<void>;
-  let bin = boughBin;
+  let bin = opts.bin ?? boughBin;
   const launch = (b: string) => {
     // cwd = HOME, which has no ./bough.yml, so ~/.bough/bough.yml is the one in force.
     const c = spawn(b, ['serve', '--run', `127.0.0.1:${port}`], { cwd: home, env: hermeticEnv(home, opts.env) });
@@ -117,7 +120,7 @@ export async function startServe(
     await exited;
     clearTimeout(t);
   };
-  launch(boughBin);
+  launch(bin);
 
   const api = await newRequest({ baseURL: url, extraHTTPHeaders: { Authorization: `Bearer ${token}`, Origin: url } });
   let stopped: Promise<void> | undefined;

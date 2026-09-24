@@ -87,17 +87,29 @@ function OrbSection({ project, onOpen, onChanged, titles, rows = [] }: {
   const load = useCallback(() => {
     api.orb(project.slug).then((d) => { setDetail(d); setErr(""); }, (e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
   }, [project.slug]);
-  useEffect(load, [load]);
+  // The definition changes without this panel too (an agent writing
+  // project.yml with the file tools, another tab's editor): the list poll
+  // brings a new summary, and the detail read before it is stale.
+  const summary = JSON.stringify(project.orb ?? null);
+  useEffect(load, [load, summary]);
 
   const state = detail?.build.state;
+  // Only another project starts the log over. Resetting on every state
+  // change blanked the log and re-read it from 0 each time a build
+  // started or finished.
+  useEffect(() => { offset.current = 0; setLog(""); }, [project.slug]);
   useEffect(() => {
     let stop = false;
-    offset.current = 0; setLog("");
     const tick = async () => {
       try {
         const r = await api.buildLog(project.slug, offset.current);
         if (stop) return;
-        if (r.text) setLog((l) => l + r.text);
+        // A newer build truncated the log under our offset and the server
+        // started over at 0: its text replaces the old build's lines, or
+        // the page shows two builds' logs run together.
+        const from = r.offset - new TextEncoder().encode(r.text).length;
+        if (from !== offset.current) setLog(r.text);
+        else if (r.text) setLog((l) => l + r.text);
         offset.current = r.offset;
         if (r.state === "building") { setTimeout(tick, 1000); return; }
         // It finished between polls: the detail's image and state are stale.
