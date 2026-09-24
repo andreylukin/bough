@@ -5265,7 +5265,9 @@ export default function App() {
     if (lost !== null) return; // the unknown route stays in the URL it came from
     const want = view === "hooks" ? "#/hooks"
       : view === "me" ? "#/me"
-      : view === "project" ? (projectFocus ? `#/projects/${projectSlug}/t/${projectFocus.id}` : `#/projects/${projectSlug}`)
+      // The thread on screen, not the one the page was opened on: a thread
+      // opened from the project's home was in no URL, so a reload lost it.
+      : view === "project" ? (selected ? `#/projects/${projectSlug}/t/${selected}` : `#/projects/${projectSlug}`)
       : view === "projects" ? (orbOpen ? `#/projects/${orbOpen}/orb` : "#/projects")
       : view === "wiki" ? `#/${wikiHash(wikiRoute)}`
       : selected ? `#/s/${selected}${sub ? `/${sub}` : ""}`
