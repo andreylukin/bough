@@ -269,6 +269,7 @@ func Open(ctx context.Context, d Deps) (*Runtime, error) {
 	}
 	r.a.init(r)
 	r.gate = newGate(r, "", nil)
+	r.gate.overflow = lastOverflow(d.History.Entries())
 	r.ops = r.newOps(sctx, "")
 	// The observer is added once, before any Run: it only applies the
 	// sync mirror and queues the item, so a slow history write can never
@@ -281,6 +282,20 @@ func Open(ctx context.Context, d Deps) (*Runtime, error) {
 	go r.loop()
 	go r.watch()
 	return r, nil
+}
+
+// lastOverflow is the model the session's context last overflowed on,
+// from the error entries that record it. The Gate keeps an overflow
+// sticky for its model; kept only in memory, a restarted child (a serve
+// restart, the respawn after a Stop) forgot it and paid for another 400
+// on the next turn.
+func lastOverflow(es []history.Entry) string {
+	for i := len(es) - 1; i >= 0; i-- {
+		if m, ok := es[i].Data["overflow"].(string); ok && es[i].Kind == "error" {
+			return m
+		}
+	}
+	return ""
 }
 
 // newOps builds the session-lifetime operation manager around the

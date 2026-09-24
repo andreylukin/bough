@@ -284,7 +284,12 @@ func (a *actorState) response(mr sessionstore.ModelResponse, meta project.Meta) 
 	// minute build "writing bash call" in the status bar and the web.
 	a.live("activity", "", nil)
 	if meta.Err != "" {
-		a.providerError(meta.Err)
+		var extra map[string]any
+		if meta.Overflow {
+			// Read back at Open: the overflow outlives this process.
+			extra = map[string]any{"overflow": meta.Model}
+		}
+		a.providerError(meta.Err, extra)
 		return
 	}
 	if r.Stop == ullm.StopRefused {
@@ -321,8 +326,8 @@ func (a *actorState) response(mr sessionstore.ModelResponse, meta project.Meta) 
 // providerError is §9.9: the turn fails, and the calls still running are
 // adopted as jobs and parked, so their results reach the model with the
 // next input instead of re-triggering a failing provider.
-func (a *actorState) providerError(text string) {
-	a.note("error", text, nil)
+func (a *actorState) providerError(text string, extra map[string]any) {
+	a.note("error", text, extra)
 	if !a.open || a.cancelling != nil {
 		return
 	}

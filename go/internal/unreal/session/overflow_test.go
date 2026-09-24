@@ -3,7 +3,9 @@
 package session
 
 import (
+	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -51,4 +53,28 @@ func TestStickyOverflowWakeOpensItsTurn(t *testing.T) {
 			t.Fatalf("%d provider requests, want 2 (the wake's is the Gate's)", n)
 		}
 	})
+}
+
+// The overflow outlives the process: a session reopened after one (a
+// serve restart, a Stop's respawn) answers the overflowed model's next
+// request itself instead of paying for another 400.
+func TestOverflowStickyAcrossReopen(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, fake.Step{Want: "big", Err: fmt.Errorf("prompt too long: %w", agentllm.ErrContextOverflow)})
+	r.rt.Submit("big")
+	r.waitDone(1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := r.rt.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r.open()
+	r.rt.Submit("again")
+	r.waitDone(2)
+	if n := len(r.fake.Requests()); n != 1 {
+		t.Fatalf("%d provider requests, want 1 (the overflow is sticky across a reopen)\n%s", n, r.dump())
+	}
+	if !strings.Contains(r.last("error").Data["text"].(string), "no longer fits") || r.count("error") != 2 {
+		t.Fatalf("history\n%s", r.dump())
+	}
 }
