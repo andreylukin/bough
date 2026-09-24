@@ -126,7 +126,8 @@ role Session:
                 # Answer writes the line and disarms. The child hands it
                 # to whatever ask it has open (hlAnswerPending never
                 # looks at the POSTed id); with none open (a stale arm,
-                # see Resolve) Asker.Answer fails and the answer is lost.
+                # which Resolve no longer leaves) Asker.Answer would fail
+                # and the answer would be lost.
                 self.armed = ""
                 if self.open != "":
                     self.record(self.open, target, self.inflight == "q2nl")
@@ -134,11 +135,12 @@ role Session:
 
     # The ask resolves with no answer: tools.ask timed out, and the
     # block's result (code mode) or the ask call's end (engine) is
-    # recorded. History stops showing it; serve's arm is only cleared by
-    # done/cancelled/error/exit, so it stays armed until the turn ends.
+    # recorded. History stops showing it, and serve disarms on the same
+    # event (emitLocked), so the next /prompt steers the turn.
     atomic fair action Resolve:
         require self.alive and self.open != ""
         self.open = ""
+        self.armed = ""
         self.ask = ""
         self.status = "running"
 
@@ -190,6 +192,12 @@ always assertion AnswerReachesItsQuestion:
 # the question on screen is exactly what makes the status needs-you.
 always assertion NeedsYouOnlyWhileAlive:
     return (session.status == "needs-you") == (session.ask != "") and (session.ask == "" or session.alive)
+
+# serve's arm is the question on screen: an arm left behind by an ask
+# that resolved without an answer refused every /prompt (409) while the
+# row said "running" and offered to steer.
+always assertion ArmedMatchesScreen:
+    return session.armed == "" or session.armed == session.ask
 
 # A secret answer is never logged and never carries a newline.
 always assertion SecretNeverLogged:
