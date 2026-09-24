@@ -110,6 +110,8 @@ function useFiles(on: boolean, token: string, session: string) {
     // the top of the project, so the picker opens the moment you type it.
     if (!on) { setGot(null); setError(false); return; }
     let live = true;
+    // A retry (or a new token) is a fresh read: "Couldn't load" gives way to loading, not to nothing.
+    setError(false);
     const t = setTimeout(() => {
       fetch(`/api/files?q=${encodeURIComponent(token)}&session=${encodeURIComponent(session)}`)
         .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
