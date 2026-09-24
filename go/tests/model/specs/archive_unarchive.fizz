@@ -48,12 +48,16 @@ role Session:
         self.live = True
 
     # The live session's turn calls tools.spawn({background}): the agent
-    # starts now or waits for a slot.
+    # starts now, or (SpawnQueued) waits for a slot. Two actions, not a
+    # oneof: fizzbee-mbt 0.2.0 checks a step against the fork's
+    # intermediate node, which still has the state from before the choice.
     atomic action Spawn:
         require self.live and self.agent == "none"
-        oneof:
-            self.agent = "running"
-            self.agent = "queued"
+        self.agent = "running"
+
+    atomic action SpawnQueued:
+        require self.live and self.agent == "none"
+        self.agent = "queued"
 
     # drainQueue starts a queued agent whatever its parent's state:
     # "Archive only" must leave it free to run.
