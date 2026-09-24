@@ -4277,8 +4277,9 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const unlanded = loading ? sending : sending.filter((p) => isCmd(p) ? !cmdLanded(p) : inputs.filter((l) => l.seq > p.after).length <= prompts.indexOf(p) && !sameText(p));
   // R3-C: a turn is live from the moment its prompt is sent, not only once
   // the row says running: Esc in that gap must stop it, and a message sent
-  // then steers it.
-  const live = running || unlanded.some((p) => !p.steer);
+  // then steers it. A turn waiting on your answer is still one: without
+  // it here the page offered no Stop while a question was up.
+  const live = running || row.status === "needs-you" || unlanded.some((p) => !p.steer);
   // Sends still on their way to the server: a stop waits for them, or it
   // would reach a session with nothing to stop and the prompt would run.
   const inflight = useRef(new Set<Promise<unknown>>());
@@ -5753,7 +5754,7 @@ export default function App() {
         id: "s:fail", group: "This session", label: "Jump to latest failed call", suggest: true,
         run: () => { setView("sessions"); setSub(null); setPane("thread"); setJump({ id: row.id, turn: 0, seq: latestFail, at: Date.now() }); },
       }] : []),
-      ...(row.status === "running" ? [{
+      ...(row.status === "running" || row.status === "needs-you" ? [{
         id: "s:stop", group: "This session", label: "Stop this turn", suggest: true,
         run: () => act(() => api.interrupt(row.id), "stop the turn"),
       }] : []),
