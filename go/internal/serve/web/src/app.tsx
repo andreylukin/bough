@@ -5189,9 +5189,16 @@ export default function App() {
   // nothing left to be a preview of. The same goes for native calls'
   // running rows: done/cancelled clear them, but a child that died
   // mid-call (a crash, an archive kill, a serve restart) sends neither,
-  // and its row spun on in an Interrupted session.
+  // and its row spun on in an Interrupted session. Needs-you is not that:
+  // the ask or secret call that put the row there is still running, and
+  // dropping its row took the Ask block out of the transcript.
   const status = row?.status;
-  useEffect(() => { if (status && status !== "running") { setStream([]); setActivity(""); setNativeRunning((m) => (m.size ? new Map() : m)); } }, [status]);
+  useEffect(() => {
+    if (!status || status === "running") return;
+    setStream([]);
+    setActivity("");
+    if (status !== "needs-you") setNativeRunning((m) => (m.size ? new Map() : m));
+  }, [status]);
 
   const [palette, setPalette] = useState(false);
   // What the palette opens with, when something other than ⌘K opened it
