@@ -4111,6 +4111,22 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   useLayoutEffect(() => {
     if (atBottom.current) end.current?.scrollIntoView({ block: "end" });
   }, [lines.length, streamLen]);
+  // A row opened or shut at the end (the Working fold, a call) while
+  // following it: scroll anchoring nudged the view to keep what was on
+  // screen in place, and that nudge read as the reader scrolling away:
+  // "Jump to latest" showed and the turn was no longer followed. Whether
+  // it was followed is read at the click (a summary's toggle, by pointer
+  // or key, is its click), before the layout that nudges it.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const clicked = (e: MouseEvent) => {
+      if (!atBottom.current || !(e.target instanceof Element) || !e.target.closest("summary")) return;
+      requestAnimationFrame(() => { atBottom.current = true; end.current?.scrollIntoView({ block: "end" }); });
+    };
+    el.addEventListener("click", clicked, true);
+    return () => el.removeEventListener("click", clicked, true);
+  }, []);
   const turns = useMemo(() => groupTurns(lines), [lines]);
   const stored = useMemo(() => storedNotices(lines), [lines]);
   // R4-B: the last finished turn ended on a failed command: the header says Failed, as its footer does, never a checked Done.
