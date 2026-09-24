@@ -60,8 +60,39 @@ func (p *controlPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			return err
 		}
 	}
+	stop := make(chan struct{})
+	go relayStderr(dir, stop)
+	ctx.Effect(func() { close(stop) })
 	ctx.Provide(serviceKey(cfg), &controlLLM{dir: dir, tag: newControlTag()})
 	return nil
+}
+
+// relayStderr prints each <name>.stderr the test drops in the control
+// dir as one line on this process's stderr, claiming it by renaming it
+// <name>.stderr-said first so only one process prints it. serve relays a
+// child's stderr lines as "error" events that never reach history: a
+// test needs one at a step it picks, with nothing else happening, and a
+// config reload that prints one also reconciles the tree.
+func relayStderr(dir string, stop <-chan struct{}) {
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-tick.C:
+		}
+		files, _ := filepath.Glob(filepath.Join(dir, "*.stderr"))
+		for _, f := range files {
+			said := f + "-said"
+			if os.Rename(f, said) != nil {
+				continue
+			}
+			if b, err := os.ReadFile(said); err == nil {
+				fmt.Fprintln(os.Stderr, strings.TrimSpace(string(b)))
+			}
+		}
+	}
 }
 
 // holdStart parks the process while <dir>/start.hold exists, announcing
@@ -178,9 +209,9 @@ type controlTurn struct {
 	Args json.RawMessage `json:"args"`
 	// Bash, on a release, answers with one bash tool call running it.
 	Bash string `json:"bash"`
-	// Calls, on an "ok" turn, are tool calls the response makes instead
-	// of text, so a test can have the agent run a real tool (a shell edit
-	// the write tools never report).
+	// Calls, on an "ok" turn or a release, are tool calls the response
+	// makes instead of text, so a test can have the agent run a real tool
+	// (a shell edit the write tools never report), or several at once.
 	Calls []controlCall `json:"calls"`
 }
 
@@ -292,6 +323,20 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 				}
 				if then.Mode == "call" {
 					return a.callTurn(ctx, name, then)
+				}
+				// "refuse" answers as a provider's refusal: a response,
+				// not an error, that the engine records as an error note
+				// mid-turn. Calls, when any, come with it.
+				if then.Mode == "refuse" {
+					r, err := a.calls(ctx, name, then.Calls)
+					r.Stop = ullm.StopRefused
+					r.Failure = &ullm.Failure{Code: "refusal:control", Message: then.Error}
+					return r, err
+				}
+				// A release with calls answers with all of them at once:
+				// one reply whose calls the engine runs in parallel.
+				if len(then.Calls) > 0 {
+					return a.calls(ctx, name, then.Calls)
 				}
 				// A release with a command answers with a bash call: the
 				// engine records it with its exit and asks again, so a
