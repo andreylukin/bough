@@ -132,6 +132,11 @@ jobs:
           go-version-file: go/go.mod
           cache: true
           cache-dependency-path: go/go.sum
+      # The runner's default node cannot strip TS types; the path
+      # generator's tests run on node directly.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - run: scripts/model-test.sh
 
   web-e2e:
