@@ -8,6 +8,9 @@ package vtreal
 //
 // The tape paces the llm's words (delay_ms); the palette opens on
 // seeing the reply's HALFWAY word, so it always lands mid-stream.
+// Despite its name the word comes 11th: the palette then has ~3.8 s of
+// stream left at 25ms a word, where it had 4.2 s at 40ms with 60 words
+// waited out before it.
 
 import (
 	"fmt"
@@ -25,7 +28,7 @@ func paletteDuringStreamRunActionStart(t *testing.T) *app {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := startCfg(t, 100, 60, cancelConfig(tape, 40)+`
+	a := startCfg(t, 100, 60, cancelConfig(tape, 25)+`
 - id: ui
   plugin: ui
   config: {collapse: none}
