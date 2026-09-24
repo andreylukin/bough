@@ -1,0 +1,344 @@
+# Provider failures inside a turn, on the engine (engine-unreal), one
+# web session: a transient failure retried after a delta-reset, retries
+# running out, a fatal error, a context overflow that stays sticky for
+# its model, a refusal and a reply cut at max_tokens. turn_lifecycle
+# models one pre-output failure; this flow is everything it leaves out.
+#
+# Where the pieces live (checked against the code):
+#   messagesapi/adapter.go Respond: the retry loop. badBeta / binding
+#     retry once; overflow and fatal return at once; anything else is
+#     retried within f.budget(MaxAttempts), and before each wait the
+#     adapter sinks a DeltaRetry with Attempt+1.
+#   unreal/project/project.go Delta: a delta whose (seq, attempt)
+#     differs from the last one emits "delta-reset" if text was shown
+#     (the DeltaRetry itself does), then "provider hiccup — retrying…"
+#     as a live "system" event. response(): a StopMaxOutputTokens
+#     response records a "system" entry "reply cut off at max_tokens…".
+#   unreal/session/gate.go Respond: resolve() and the sticky-overflow
+#     check answer with an Err meta BEFORE the DeltaStart sink, so a
+#     request that dies there never opens a wake turn; ErrContextOverflow
+#     sets g.overflow = model (in memory, on the Gate); a parked Gate
+#     answers a request that only answers parked calls as Muted.
+#   unreal/session/actor.go response(): Err meta -> providerError; a
+#     StopRefused response -> note("error", "the model declined …") and
+#     the turn goes on to close with done. providerError: note("error")
+#     FIRST, then returns if !a.open; else adopts the running calls as
+#     jobs, parks the turn's calls and closeTurn(…, "error") -> done.
+#     cancelTurn (Stop): parks, CancelInflight; the adapter's retry wait
+#     returns on the cut context and the Gate answers it as a cancel,
+#     so the turn closes "cancelled" with no error entry.
+#   serve/status.go StatusOf: an "error" entry sets errInTurn until the
+#     next input, and errInTurn wins over a done/cancelled close.
+#   web app.tsx: streamAfter drops the live reply on "delta-reset";
+#     TurnHooks folds every "system" line of a turn into "Hooks · N
+#     notices"; the failed turn's card (RetryTurn) resends the prompt.
+#
+# Corrections to the mapped model:
+#   - "retry_wait ('provider hiccup')": the web never shows the hiccup.
+#     The live "system" event falls through the subscribe handler to a
+#     catch-up and nothing is recorded, so there is nothing to draw; only
+#     the delta-reset is visible. The spec has no hiccup field.
+#   - Page.CatchUp is left to turn_lifecycle (behind / supersede): here
+#     every field is what the page shows once caught up.
+#   - "resolve_failed" and "error_outside_turn" are one path: a wake
+#     request (a background job ends while idle) that fails before the
+#     provider, by resolve() or by the sticky overflow. There is no
+#     separate resolve failure inside a user turn: it reads exactly like
+#     Provider.FatalError there.
+#   - Stop during retry_wait cancels the turn's running call (cancelTurn
+#     cancels the ops of turnCalls); it is not adopted.
+#   - Retries are the Anthropic adapter's (messagesapi); llm-control has
+#     none. Walking this flow needs llm-control to fail through that same
+#     retry loop (and to answer refused / max_tokens), which it cannot
+#     today.
+#
+# The spec models what the product should do. Three places it does not
+# today, each the reason for one assertion below:
+#   - WakeRequestFails records its error with no open turn (actor.go
+#     providerError notes before its !a.open check): ErrorOnlyInTurn.
+#   - The max_tokens system note renders as "Hooks · 1 notices":
+#     CutShownAsCut.
+#   - The sticky overflow is Gate memory; a child restart forgets it and
+#     the next turn pays for a second 400: OverflowPaidOnce.
+#
+# Fields (Session role):
+#   status   StatusOf: idle | running | done | error | stopped (derived)
+#   open     a turn is open (its input recorded, no done/cancelled yet)
+#   erred    an "error" entry since the last input (errInTurn)
+#   closed   how the last turn closed: "" | done | cancelled
+#   dones    closing entries (done / cancelled) of the current turn
+#   stray    an "error" entry was recorded while no turn was open
+#   turn     what opened the last turn: "" | user | wake
+#   req      the model request of the open turn: none | out (sent, no
+#            output yet) | streaming | retry_wait
+#   attempt  the request's attempt, 1..MAX
+#   stream   the attempt whose streamed fragments are on screen, 0: none
+#   call     the turn's one tool call: none | running (foreground) |
+#            returned (ended inside the turn) | parked (adopted as a job
+#            when the provider failed, parked on the Gate) | ended (a
+#            parked call's end, muted) | job (adopted, no longer parked:
+#            the next input unparked it)
+#   overflow the current model overflowed: its requests are answered by
+#            the Gate, never the provider
+#   paid     context-overflow 400s the provider returned for the current
+#            model (the test counts llm-control requests)
+#   cut      "cut": the turn's reply was cut at max_tokens and the page
+#            says so; "" otherwise
+
+NONE = "none"
+MAX = 2
+
+role Session:
+    action Init:
+        self.status = "idle"
+        self.open = False
+        self.erred = False
+        self.closed = ""
+        self.dones = 0
+        self.stray = False
+        self.turn = ""
+        self.req = NONE
+        self.attempt = 1
+        self.stream = 0
+        self.call = NONE
+        self.overflow = False
+        self.paid = 0
+        self.cut = ""
+
+    # StatusOf's switch, with a live child (no interrupted here).
+    atomic func derive():
+        if self.open:
+            self.status = "running"
+        elif self.erred:
+            self.status = "error"
+        elif self.closed == "cancelled":
+            self.status = "stopped"
+        elif self.closed == "done":
+            self.status = "done"
+        else:
+            self.status = "idle"
+
+    # An input (or a wake's own entries) opens a turn: errInTurn resets.
+    atomic func openTurn(kind):
+        self.open = True
+        self.erred = False
+        self.closed = ""
+        self.dones = 0
+        self.turn = kind
+        self.req = "out"
+        self.attempt = 1
+        self.stream = 0
+        self.cut = ""
+        self.derive()
+
+    # loop.note("error"): the entry is recorded wherever it lands.
+    atomic func noteError():
+        if self.open:
+            self.erred = True
+        else:
+            self.stray = True
+            self.erred = True
+        self.derive()
+
+    # closeTurn: one done (or cancelled); leaving running clears the
+    # live reply.
+    atomic func close(how):
+        self.open = False
+        self.closed = how
+        self.dones = self.dones + 1
+        self.req = NONE
+        self.attempt = 1
+        self.stream = 0
+        self.derive()
+
+    # actor.go providerError on an open turn: record, adopt the running
+    # call as a job, park the turn's calls, close with done.
+    atomic func fail():
+        self.noteError()
+        if self.call == "running":
+            self.call = "parked"
+        self.close("done")
+
+    atomic func input():
+        # The input answers something new: the Gate unparks, a parked
+        # call runs on as an ordinary job, and a muted end reaches the
+        # model with this input.
+        if self.call == "parked":
+            self.call = "job"
+        elif self.call in ("ended", "returned"):
+            self.call = NONE
+        self.openTurn("user")
+
+    # --- the person ---
+
+    atomic action Prompt:
+        require not self.open
+        self.input()
+
+    # The failed turn's card: Retry resends its prompt, a new turn.
+    atomic action Retry:
+        require self.status == "error"
+        self.input()
+
+    # The failed turn's card (or the picker): a new model. Its requests
+    # reach the provider again.
+    atomic action SwitchModel:
+        require not self.open and self.overflow
+        self.overflow = False
+        self.paid = 0
+
+    # Stop while the adapter waits to retry: the wait returns on the cut
+    # context, the Gate answers it as a cancel, the call is cancelled.
+    atomic action StopDuringRetry:
+        require self.req == "retry_wait"
+        if self.call == "running":
+            self.call = NONE
+        self.close("cancelled")
+
+    # --- the provider (the model this session's requests reach) ---
+
+    atomic fair action StreamFragment:
+        require self.req in ("out", "streaming") and not self.overflow
+        self.req = "streaming"
+        self.stream = self.attempt
+
+    # A transient failure (429, 5xx, overloaded, a reset connection)
+    # with attempts left: DeltaRetry(attempt+1) -> delta-reset first.
+    atomic action TransientError:
+        require self.req in ("out", "streaming") and not self.overflow
+        require self.attempt < MAX
+        self.attempt = self.attempt + 1
+        self.stream = 0
+        self.req = "retry_wait"
+
+    # The retry's wait passes: the same request again.
+    atomic fair action RetryFires:
+        require self.req == "retry_wait"
+        self.req = "out"
+
+    # A transient failure on the last attempt: f.final.
+    atomic action RetriesExhausted:
+        require self.req in ("out", "streaming") and not self.overflow
+        require self.attempt == MAX
+        self.fail()
+
+    # 400/401/404, a bad key, an unknown model: no retry.
+    atomic action FatalError:
+        require self.req in ("out", "streaming") and not self.overflow
+        self.fail()
+
+    # A 400 "prompt is too long" (before any output): sticky from now on.
+    atomic action ContextOverflow:
+        require self.req == "out" and not self.overflow
+        self.overflow = True
+        self.paid = self.paid + 1
+        self.fail()
+
+    # The Gate answers an overflowed model's request itself.
+    atomic fair action StickyOverflow:
+        require self.req == "out" and self.overflow
+        self.fail()
+
+    # A reply with a tool call: recorded, the call runs, and the next
+    # request goes out while it does (engine calls run asynchronously).
+    atomic action CallStart:
+        require self.req == "streaming" and self.call == NONE
+        self.call = "running"
+        self.req = "out"
+        self.attempt = 1
+        self.stream = 0
+
+    # A reply with no calls, and nothing left running: done.
+    atomic fair action Finish:
+        require self.req == "streaming" and self.call != "running"
+        self.close("done")
+
+    # StopRefused: the actor notes "the model declined", the turn closes.
+    atomic action Refusal:
+        require self.req in ("out", "streaming") and not self.overflow
+        require self.call != "running"
+        self.noteError()
+        self.close("done")
+
+    # StopMaxOutputTokens: the cut reply is recorded with its system note.
+    atomic action MaxTokensStop:
+        require self.req == "streaming" and self.call != "running"
+        self.cut = "cut"
+        self.close("done")
+
+    # --- the system ---
+
+    atomic fair action CallEnds:
+        require self.open and self.call == "running"
+        self.call = "returned"
+
+    # A parked call ends: the Gate answers the request its result starts
+    # as Muted, before the DeltaStart that would open a wake turn.
+    atomic action CallEndsWhileParked:
+        require self.call == "parked"
+        self.call = "ended"
+
+    # An unparked job ends while idle and its wake request fails before
+    # the provider (resolve() fails, or the model's overflow is sticky).
+    # The wake opens its turn first, so the error has a turn to fail.
+    atomic action WakeRequestFails:
+        require not self.open and self.call == "job"
+        self.call = NONE
+        self.openTurn("wake")
+        self.fail()
+
+    # The child is restarted between turns (serve restart, ensure after
+    # an exit). Its jobs are gone with it; the overflow is not forgotten.
+    atomic action ChildRestart:
+        require not self.open and self.call == NONE
+
+action Init:
+    session = Session()
+
+# After a delta-reset no earlier attempt's fragment is on screen.
+always assertion NoStaleFragments:
+    return session.stream == 0 or session.stream == session.attempt
+
+# Retries are bounded, and only an open turn has a request.
+always assertion BoundedAttempts:
+    return session.attempt <= MAX and (session.req == NONE or session.open)
+
+# A turn that recorded an error closes with exactly one done and reads
+# error until the next input.
+always assertion ErrorTurnClosesOnce:
+    if session.open:
+        return session.dones == 0
+    if session.closed != "":
+        return session.dones == 1 and (not session.erred or session.status == "error")
+    return session.dones == 0
+
+# After a provider error, a parked call's end starts no request and no
+# wake: the only turn after it is one the person starts.
+always assertion ParkedCallsStayQuiet:
+    return not (session.call in ("parked", "ended") and session.turn == "wake" and session.open)
+
+# An overflow is sticky for its model (across a child restart): the
+# provider says 400 once per model.
+always assertion OverflowPaidOnce:
+    return session.paid <= 1
+
+# An error entry is recorded only inside an open turn.
+always assertion ErrorOnlyInTurn:
+    return not session.stray
+
+# Stop during a retry wait ends as cancelled, not as an error.
+always assertion StopIsNotError:
+    return not (session.closed == "cancelled" and session.status == "error")
+
+# A max_tokens cut is shown as a cut, not folded into hook notices.
+always assertion CutShownAsCut:
+    return session.cut in ("", "cut")
+
+# A transient failure ends: the retry goes out, or Stop cancels it.
+always eventually assertion RetryWaitEnds:
+    return session.req != "retry_wait"
+
+# Every turn closes: success, one error, or a cancel (bounded attempts,
+# one call per turn).
+always eventually assertion TurnEnds:
+    return not session.open
