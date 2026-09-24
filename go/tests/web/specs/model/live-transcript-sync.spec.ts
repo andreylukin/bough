@@ -549,7 +549,8 @@ function saveTranscript(serve: Serve, id: string, title: string): void {
   const dir = path.join(root, SPEC);
   fs.mkdirSync(dir, { recursive: true });
   const src = path.join(serve.home, '.bough', 'history', id + '.jsonl');
-  const slug = title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  // Capped below the 255-byte file name limit, as in helpers/model.ts.
+  const slug = title.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 120);
   if (fs.existsSync(src)) fs.copyFileSync(src, path.join(dir, `${slug}-${id}.jsonl`));
 }
 
