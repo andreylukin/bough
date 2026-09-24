@@ -27,7 +27,9 @@ func TestProjectIdentityCommands(t *testing.T) {
 			t.Fatalf("add-identity %s: %v", dir, err)
 		}
 	}
-	if p, _ := projectdef.Load(home, "ci"); strings.Join(p.Def.Identity, ",") != ".circleci,.config/foo" {
+	// A new project starts with the gh identity (projectdef.defaultIdentity);
+	// the temp HOME has no Parallel CLI dir, so gh is the only default.
+	if p, _ := projectdef.Load(home, "ci"); strings.Join(p.Def.Identity, ",") != "gh,.circleci,.config/foo" {
 		t.Errorf("identity = %v, want .circleci once and .config/foo", p.Def.Identity)
 	}
 	if err := run("add-identity", "ci", ".ssh"); err == nil {
@@ -39,7 +41,7 @@ func TestProjectIdentityCommands(t *testing.T) {
 	if err := run("remove-identity", "ci", ".circleci"); err == nil {
 		t.Error("removing an absent identity dir succeeded")
 	}
-	if p, _ := projectdef.Load(home, "ci"); strings.Join(p.Def.Identity, ",") != ".config/foo" {
+	if p, _ := projectdef.Load(home, "ci"); strings.Join(p.Def.Identity, ",") != "gh,.config/foo" {
 		t.Errorf("after remove identity = %v", p.Def.Identity)
 	}
 }
