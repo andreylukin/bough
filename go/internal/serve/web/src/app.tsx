@@ -3722,10 +3722,12 @@ export function PendingThread({ sending }: { sending: Pending[] }) {
 }
 
 /** Rows a Stop swallowed: unsent when Stop was pressed, and a done or
- * cancel was recorded after them with no input of theirs. */
+ * cancel was recorded after them with no input of theirs. An interrupted
+ * cancel is a respawned child closing a turn its dead one left open, not
+ * the stop ending anything. */
 export function swallowedByStop(unlanded: Pending[], stopped: Set<string>, lines: Line[]): Pending[] {
   return unlanded.filter((p) => stopped.has(p.id)
-    && lines.some((l) => (l.kind === "done" || l.kind === "cancelled") && l.seq > p.after)
+    && lines.some((l) => (l.kind === "done" || (l.kind === "cancelled" && !l.data?.interrupted)) && l.seq > p.after)
     && !lines.some((l) => l.kind === "input" && l.seq > p.after));
 }
 
