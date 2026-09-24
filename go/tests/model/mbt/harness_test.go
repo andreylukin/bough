@@ -323,16 +323,25 @@ func waitRow(s *servetest.Server, id, what string, ok func(serve.Row) bool) (ser
 // walk replaces dozens of per-target paths that each rebooted serve.
 // MODEL_COVER=transitions takes every link instead of reaching every
 // settled state; that exhaustive run is the nightly one.
-func pathsJSON(spec string) ([]byte, error) {
+func pathsJSON(spec string) ([]byte, error) { return pathsJSONCover(spec, envCover()) }
+
+// pathsJSONCover is pathsJSON with the cover fixed, for a test whose point
+// needs every link (a wrong adapter caught on one particular transition).
+func pathsJSONCover(spec string, cover tracecheck.Cover) ([]byte, error) {
 	g, err := tracecheck.Load(filepath.Join(filepath.Dir(specPath(spec)), "..", "testdata", spec))
 	if err != nil {
 		return nil, err
 	}
-	cover := tracecheck.CoverStates
-	if os.Getenv("MODEL_COVER") == string(tracecheck.CoverTransitions) {
-		cover = tracecheck.CoverTransitions
-	}
 	return json.Marshal(struct {
 		Paths []tracecheck.Walk `json:"paths"`
 	}{g.Walks(cover, 0)})
+}
+
+// envCover is the run's cover: every settled state unless
+// MODEL_COVER=transitions asks for every link.
+func envCover() tracecheck.Cover {
+	if os.Getenv("MODEL_COVER") == string(tracecheck.CoverTransitions) {
+		return tracecheck.CoverTransitions
+	}
+	return tracecheck.CoverStates
 }

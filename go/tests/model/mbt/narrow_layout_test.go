@@ -501,7 +501,7 @@ func TestNarrowLayoutPaths(t *testing.T) {
 	t.Parallel()
 	fizzTools(t)
 	a := newNarrowLayoutAdapter(t)
-	if err := walkNarrowLayoutPaths(t, a); err != nil {
+	if err := walkNarrowLayoutPaths(t, a, envCover()); err != nil {
 		t.Fatal(err)
 	}
 	checkNarrowLayoutHistories(t, a)
@@ -531,9 +531,9 @@ func checkNarrowLayoutHistories(t *testing.T, a *narrowLayoutAdapter) {
 // walkNarrowLayoutPaths drives a through every generated path and returns
 // the first step whose action the adapter did not enable or whose state
 // is not the path's.
-func walkNarrowLayoutPaths(t *testing.T, a *narrowLayoutAdapter) error {
+func walkNarrowLayoutPaths(t *testing.T, a *narrowLayoutAdapter, cover tracecheck.Cover) error {
 	t.Helper()
-	b, err := pathsJSON("narrow_layout")
+	b, err := pathsJSONCover("narrow_layout", cover)
 	if err != nil {
 		return err
 	}
@@ -613,7 +613,9 @@ func TestNarrowLayoutPathsCatchWrongAdapter(t *testing.T) {
 	t.Parallel()
 	a := newNarrowLayoutAdapter(t)
 	a.ackOnFinish = true
-	err := walkNarrowLayoutPaths(t, a)
+	// Every link: the wrong ack shows on one transition, which a walk that
+	// only reaches every state need not take.
+	err := walkNarrowLayoutPaths(t, a, tracecheck.CoverTransitions)
 	if err == nil {
 		t.Fatal("a page that acks a finish under the list walked every path; the walk is not checking state")
 	}

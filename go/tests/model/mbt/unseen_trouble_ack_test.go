@@ -539,7 +539,11 @@ func TestUnseenTroubleAckPaths(t *testing.T) {
 		checkHistory(t, g, sessionHistory(t, a.s.Home, id), unseenTroubleAckHistory)
 	}
 	// Every link reachable without a Note or an Expire must have been
-	// checked; the rest cannot be driven (see the top of the file).
+	// checked; the rest cannot be driven (see the top of the file). Only
+	// the exhaustive run takes every link; the default reaches every state.
+	if envCover() != tracecheck.CoverTransitions {
+		return
+	}
 	reach, seen := 0, map[int]bool{0: true}
 	for queue := []int{0}; len(queue) > 0; queue = queue[1:] {
 		for li, l := range g.Links {
