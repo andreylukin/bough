@@ -108,8 +108,8 @@ func TestServePidfileRoundTrip(t *testing.T) {
 		t.Fatal("an empty HOME reports a running daemon")
 	}
 
-	done := writeServePidfile(home, "127.0.0.1:7684")
-	if done == nil {
+	done, err := writeServePidfile(home, "127.0.0.1:7684")
+	if done == nil || err != nil {
 		t.Fatal("writeServePidfile refused to write into a clean HOME")
 	}
 	w, ok := runningServe(home)
@@ -161,7 +161,8 @@ func TestRunningServeClearsAStalePidfile(t *testing.T) {
 
 // Two supervisors would each spawn a child per session, and two
 // writers on one history file is exactly what ConcurrentWriter warns
-// about — so a pidfile naming a LIVE foreign pid is never clobbered.
+// about — so a pidfile naming a LIVE foreign pid is never clobbered,
+// and the serve that found it does not start.
 func TestWriteServePidfileRefusesALiveForeignPid(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -175,12 +176,67 @@ func TestWriteServePidfileRefusesALiveForeignPid(t *testing.T) {
 	if err := os.WriteFile(pf, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if done := writeServePidfile(home, "127.0.0.1:7685"); done != nil {
-		t.Fatal("clobbered a live daemon's pidfile")
+	if done, err := writeServePidfile(home, "127.0.0.1:7685"); done != nil || err == nil {
+		t.Fatalf("started beside a live daemon's pidfile (err %v); it must refuse", err)
 	}
 	got, err := os.ReadFile(pf)
 	if err != nil || string(got) != body {
 		t.Fatalf("pidfile = %q, %v; want it untouched", got, err)
+	}
+}
+
+// A serve's exit cleanup removes the pidfile only while it names that
+// serve: a second serve that started while this one was still reaping
+// its children (a launchd respawn, a hand-run `serve --run`) owns the
+// file by then, and removing it hid that serve from `serve status` and
+// let the next `bough serve` start a third beside it.
+func TestServePidfileCleanupLeavesAnothersPidfile(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	done, err := writeServePidfile(home, "127.0.0.1:7684")
+	if done == nil || err != nil {
+		t.Fatal("writeServePidfile refused to write into a clean HOME")
+	}
+	body := fmt.Sprintf("%d 127.0.0.1:7684\t/tmp\t(embedded)\t\n", os.Getppid())
+	if err := os.WriteFile(servePidfile(home), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	done()
+	if got, err := os.ReadFile(servePidfile(home)); err != nil || string(got) != body {
+		t.Fatalf("pidfile after our cleanup = %q, %v; want the other serve's, untouched", got, err)
+	}
+}
+
+// `serve stop` and the update's restart drop the pidfile of the serve
+// they signalled only once it is gone and only while it still names
+// it: a stop that gave up after 5 s used to remove a live, still-reaping
+// serve's file, and the next start ran a second supervisor beside it.
+func TestReleaseServePidfile(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	pf := servePidfile(home)
+	if err := os.MkdirAll(filepath.Dir(pf), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	live, dead := os.Getppid(), deadPid(t)
+	line := func(pid int) string { return fmt.Sprintf("%d 127.0.0.1:7684\t/tmp\t(embedded)\t\n", pid) }
+	for _, c := range []struct {
+		name      string
+		file, pid int
+		removed   bool
+	}{
+		{"the signalled serve still reaping", live, live, false},
+		{"another serve's file", live, dead, false},
+		{"the signalled serve gone", dead, dead, true},
+	} {
+		if err := os.WriteFile(pf, []byte(line(c.file)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		releaseServePidfile(home, c.pid)
+		_, err := os.Stat(pf)
+		if gone := os.IsNotExist(err); gone != c.removed {
+			t.Errorf("%s: removed = %v, want %v", c.name, gone, c.removed)
+		}
 	}
 }
 
