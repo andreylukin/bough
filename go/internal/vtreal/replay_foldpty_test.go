@@ -300,16 +300,31 @@ func foldPtyChord(a *app, k rune) {
 	a.key(k, 0)
 }
 
-// foldPtyTapes copies the n largest replayable history tapes into a
-// temp dir, so a live session writing to them cannot move the test.
+// foldPtyDefaultTapes are the committed recordings the fold sweeps
+// replay by default. They used to default to the real
+// ~/.bough/history, which broke the suite's rule that nothing reads
+// it: the run depended on whoever's sessions were largest that day
+// (and spent ~50 s replaying them), and CI, with no history, skipped.
+var foldPtyDefaultTapes = []string{"unicode.jsonl", "keymap.jsonl", "clicks.jsonl"}
+
+// foldPtyTapes copies the n largest replayable tapes into a temp dir,
+// so a live session writing to them cannot move the test. The tapes
+// are foldPtyDefaultTapes, or every tape in BOUGH_FOLD_PTY_DIR (for
+// example ~/.bough/history, to sweep real sessions by hand).
 func foldPtyTapes(t *testing.T, n int) []string {
 	t.Helper()
-	dir := os.Getenv("BOUGH_FOLD_PTY_DIR")
-	if dir == "" {
-		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, ".bough", "history")
+	var paths []string
+	if dir := os.Getenv("BOUGH_FOLD_PTY_DIR"); dir != "" {
+		paths, _ = filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	} else {
+		for _, name := range foldPtyDefaultTapes {
+			p, err := filepath.Abs(filepath.Join("testdata", "replay", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			paths = append(paths, p)
+		}
 	}
-	paths, _ := filepath.Glob(filepath.Join(dir, "*.jsonl"))
 	type sized struct {
 		p string
 		n int64
@@ -346,7 +361,7 @@ func foldPtyTapes(t *testing.T, n int) []string {
 		out = append(out, dst)
 	}
 	if len(out) == 0 {
-		t.Skip("no replayable history tapes in " + dir)
+		t.Skip("no replayable tapes in BOUGH_FOLD_PTY_DIR")
 	}
 	return out
 }
