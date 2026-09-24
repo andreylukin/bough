@@ -51,6 +51,8 @@ func TestPhaseLine(t *testing.T) {
 		{State{Project: "web", Status: StatusBuilding, Phase: PhaseBuild, Phases: []Phase{{Name: PhaseSync, StartedAt: now.Add(-40 * time.Second), EndedAt: now.Add(-30 * time.Second)}, {Name: PhaseBuild, StartedAt: now.Add(-12 * time.Second)}}}, "orb web · build image 12s"},
 		{State{Project: "web", Status: StatusRunning, Phase: PhaseReady}, "orb web · running"},
 		{State{Project: "web", Status: StatusRunning, Phase: PhaseReady, IP: "192.168.64.5"}, "orb web · running · 192.168.64.5"},
+		{State{Project: "web", Status: StatusRunning, Phase: PhaseReady, IP: "10.0.0.2", Restart: RestartPending}, "orb web · running · 10.0.0.2 · restart pending"},
+		{State{Project: "web", Status: StatusRunning, Phase: PhaseReady, Restart: RestartBuilding}, "orb web · running · rebuilding"},
 		{State{Project: "web", Status: StatusStopped, Phase: PhaseReady, IP: "192.168.64.5"}, "orb web · stopped"},
 		{State{Project: "web", Status: StatusStopped, Phase: PhaseReady}, "orb web · stopped"},
 		{State{Project: "web", Status: StatusFailed, Phase: PhaseResume, Phases: []Phase{{Name: PhaseResume, Error: "exit 3"}}}, "orb web · failed at resume.sh"},

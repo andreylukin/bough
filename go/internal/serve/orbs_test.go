@@ -797,3 +797,34 @@ func TestReaperStopsQuietOrbsOnly(t *testing.T) {
 		t.Error("a bad duration should be an error")
 	}
 }
+
+// Restart orb asks a live session through its request file (202); a
+// session nobody runs needs nothing, since its next start applies the
+// definition (200, not scheduled); no orb is a 404.
+func TestRestartOrb(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	live := "restarty"
+	seedModeSession(t, f, live, map[string]any{"cwd": "/w", "mode": "project", "project": "app"})
+	writeState(t, f.home, orb.State{Session: live, Project: "app", Status: orb.StatusRunning, PID: os.Getpid(), UpdatedAt: time.Now()})
+	code, body := f.do(t, "POST", "/api/sessions/"+live+"/orb/restart", `{"fresh":true}`)
+	if code != http.StatusAccepted || body["scheduled"] != true {
+		t.Fatalf("restart live = %d %v", code, body)
+	}
+	if r, ok := orb.TakeRestart(f.home, live); !ok || r.By != "web" || !r.Fresh {
+		t.Fatalf("request %+v %v", r, ok)
+	}
+	idle := "restart-idle"
+	seedModeSession(t, f, idle, map[string]any{"cwd": "/w", "mode": "project", "project": "app"})
+	writeState(t, f.home, orb.State{Session: idle, Project: "app", Status: orb.StatusStopped, UpdatedAt: time.Now()})
+	code, body = f.do(t, "POST", "/api/sessions/"+idle+"/orb/restart", "")
+	if code != http.StatusOK || body["scheduled"] != false {
+		t.Fatalf("restart idle = %d %v", code, body)
+	}
+	if _, ok := orb.TakeRestart(f.home, idle); ok {
+		t.Fatal("request written for a session nobody runs")
+	}
+	if code, _ := f.do(t, "POST", "/api/sessions/nobody/orb/restart", ""); code != http.StatusNotFound {
+		t.Fatalf("restart without an orb = %d", code)
+	}
+}

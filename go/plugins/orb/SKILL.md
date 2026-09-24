@@ -112,6 +112,9 @@ commands CI runs.
 
 ## 8. Verify
 
-Changes to the image or setup.sh apply in the next session. Now, run
+Changes to the image or setup.sh apply in the next session, or in this
+one with `bough project restart`: the image rebuilds while this container
+keeps running, and the container is swapped when your turn ends
+(background jobs stop; a notice reports the result). Now, run
 resume.sh and checks.fast by hand through tools.bash. Report what passed,
 what is still unverified, and why.

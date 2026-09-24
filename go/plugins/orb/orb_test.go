@@ -200,6 +200,15 @@ func TestProjectRowOpensOrb(t *testing.T) {
 	if s, _ := iorb.ReadState(home, "sess1"); s.Status != iorb.StatusStopped {
 		t.Errorf("after /orb stop %s", s.Status)
 	}
+	// /orb restart applies the definition in this session: scheduled at
+	// once, and with no turn running the orb comes back swapped.
+	if out, err := reg.Run("orb", "restart"); err != nil || !strings.Contains(out, "scheduled") {
+		t.Errorf("/orb restart = %q, %v", out, err)
+	}
+	waitFor(t, "the restarted orb", func() bool {
+		s, _ := iorb.ReadState(home, "sess1")
+		return s.Status == iorb.StatusRunning && s.Restart == ""
+	})
 
 	// A chdir failing leaves no container behind: the start settles
 	// failed before one is started.
