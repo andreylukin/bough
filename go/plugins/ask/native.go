@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/andreylukin/bough/internal/agenttools"
 )
@@ -16,6 +19,15 @@ import (
 // ask, unmasked and recorded. A codemode block asks one question at a
 // time by construction, so the loop's path is left as it was.
 func (a *Asker) oneAtATime(done <-chan struct{}) (release func(), err error) {
+	if a.expireDir != "" {
+		// Test use only (see expireDir): a "hold" file there keeps the
+		// question from being put in until it goes, so a model test can
+		// stand in the state where the call has started and nothing is
+		// asked yet, which in real time lasts a microsecond.
+		if !waitGone(filepath.Join(a.expireDir, "hold"), done) {
+			return nil, fmt.Errorf("ask: cancelled with no answer")
+		}
+	}
 	a.mu.Lock()
 	if a.native == nil {
 		a.native = make(chan struct{}, 1)
@@ -27,6 +39,22 @@ func (a *Asker) oneAtATime(done <-chan struct{}) (release func(), err error) {
 		return func() { <-turn }, nil
 	case <-done:
 		return nil, fmt.Errorf("ask: cancelled with no answer")
+	}
+}
+
+// waitGone polls until file does not exist (true) or done closes (false).
+func waitGone(file string, done <-chan struct{}) bool {
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if _, err := os.Stat(file); os.IsNotExist(err) {
+			return true
+		}
+		select {
+		case <-done:
+			return false
+		case <-tick.C:
+		}
 	}
 }
 

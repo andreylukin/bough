@@ -1,11 +1,15 @@
 package ask
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/andreylukin/bough/internal/agenttools"
 )
 
 // A file named for the open ask in the expire dir times it out now, the
@@ -59,5 +63,61 @@ func TestExpireDirTimesOutNow(t *testing.T) {
 		if e.Kind == "ask/answer" {
 			t.Fatalf("an expired ask recorded an answer: %v", e.Data)
 		}
+	}
+}
+
+// A "hold" file in the expire dir keeps a native ask from being put in
+// until it goes: the ask-beside-parallel-calls model test stands in the
+// state where the call has started and the question is not asked yet.
+// A cancel while held ends the call as cancelled, with nothing asked.
+func TestExpireDirHoldsNativeAsk(t *testing.T) {
+	t.Parallel()
+	reg, a, _, hist := mountNative(t)
+	dir := t.TempDir()
+	a.expireDir = dir
+	hold := filepath.Join(dir, "hold")
+	if err := os.WriteFile(hold, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	asked := make(chan string, 1)
+	a.emit = func(ev Event) { asked <- ev.ID }
+	tl, _ := reg.Lookup("ask")
+	call := func(ctx context.Context) chan agenttools.Result {
+		out := make(chan agenttools.Result, 1)
+		go func() {
+			r, _ := tl.Call(ctx, agenttools.Call{ID: "c1", Args: json.RawMessage(`{"question":"held?"}`)})
+			out <- r
+		}()
+		return out
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	r := call(ctx)
+	time.Sleep(150 * time.Millisecond)
+	if es := hist.all(); len(es) != 0 {
+		t.Fatalf("asked while held: %+v", es)
+	}
+	cancel()
+	select {
+	case res := <-r:
+		if !strings.Contains(res.Error, "cancelled") {
+			t.Fatalf("cancelled while held = %+v", res)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a cancel did not end a held ask")
+	}
+	r = call(context.Background())
+	time.Sleep(150 * time.Millisecond)
+	if es := hist.all(); len(es) != 0 {
+		t.Fatalf("asked while held: %+v", es)
+	}
+	os.Remove(hold)
+	select {
+	case id := <-asked:
+		a.Answer(id, "yes")
+	case <-time.After(5 * time.Second):
+		t.Fatal("the ask was not put in once the hold went")
+	}
+	if res := <-r; res.Text != "yes" {
+		t.Fatalf("ask after the hold = %+v", res)
 	}
 }
