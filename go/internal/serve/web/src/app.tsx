@@ -4400,14 +4400,16 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   // A sent message back in the composer: its pastes are tags again, as when they were pasted.
   const toDraft = (t: string) => setDraft(foldPastes(t, (body) => pastes.current.push(body)));
 
+  // A tag whose content is gone is never sent as its placeholder: send() refuses it, and so does the queue.
+  const lostTags = (t: string) => [...t.matchAll(/\[(?:Image|File) #(\d+)\]|\[Pasted text #(\d+) \+\d+ lines\]/g)]
+    .filter((m) => m[1] ? !images.current[+m[1] - 1] : pastes.current[+m[2] - 1] === undefined);
   deliverRef.current = (t: string) => { void deliver(t, false); };
   const send = async () => {
     const t = draft.trim();
     // Enter reaches here even while the Send button is disabled.
     if (!t || busy || uploading || askChanged || row.archived) return;
     // A tag whose content is gone is never sent as its placeholder.
-    const lost = [...t.matchAll(/\[(?:Image|File) #(\d+)\]|\[Pasted text #(\d+) \+\d+ lines\]/g)]
-      .filter((m) => m[1] ? !images.current[+m[1] - 1] : pastes.current[+m[2] - 1] === undefined);
+    const lost = lostTags(t);
     if (lost.length) { setAttachErr(`Attachment unavailable: remove ${lost.map((m) => m[0]).join(", ")}`); return; }
     setDraft("");
     const full = expand(t);
@@ -4429,6 +4431,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const enqueue = () => {
     const t = draft.trim();
     if (!t || uploading || draftAsk || askChanged) return;
+    const lost = lostTags(t);
+    if (lost.length) { setAttachErr(`Attachment unavailable: remove ${lost.map((m) => m[0]).join(", ")}`); return; }
     setDraft("");
     const full = expand(t);
     pastes.current = []; images.current = [];
