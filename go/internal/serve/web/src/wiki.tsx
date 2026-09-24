@@ -404,13 +404,15 @@ function CopyPath({ text, label = "Copy full path" }: { text: string; label?: st
   );
 }
 
-export function WikiIndexView({ data, onOpen, onReview, onActivity, onIngest, check, onBack }: {
+export function WikiIndexView({ data, onOpen, onReview, onActivity, onIngest, ingestErr, check, onBack }: {
   data: WikiIndexData;
   onOpen: (path: string) => void;
   onReview: () => void;
   onActivity: () => void;
   /** Starts an ingest from the "Indexing" state. */
   onIngest?: () => void;
+  /** Why the last Ingest now did not start; "" when it did. */
+  ingestErr?: string;
   check?: () => Promise<WikiProblem[]>;
   onBack?: () => void;
 }) {
@@ -452,12 +454,13 @@ export function WikiIndexView({ data, onOpen, onReview, onActivity, onIngest, ch
 
       <div className="scroll proj-body">
         {!data.exists ? (
-          h.installed || h.ingesting ? (
+          h.installed || h.ingesting ? (<>
+            {ingestErr && <p className="hk2-alert" role="alert">Ingest did not start: {ingestErr}</p>}
             <EmptyState title="Indexing" role="status" action={onIngest && { label: "Ingest now", onClick: onIngest }}>
               {plural(h.pending, "session")} {h.pending === 1 ? "is" : "are"} waiting
               {h.every ? `; the next tick is within ${duration(h.every)}` : ""}. Pages appear here as the first ingest writes them.
             </EmptyState>
-          ) : (
+          </>) : (
             <div className="empty-state">
               <h2>Not enabled</h2>
               <p>The wiki is markdown compiled from your session history, one cited claim at a time. Enabling it
@@ -777,7 +780,10 @@ export function WikiPageView({ page, path, knownTitle, pageError, onRetry, onRet
   const [menu, setMenu] = useState(false);
   const at = page?.path ?? path ?? "";
   const open = Boolean(cite) && Boolean(page);
-  useEffect(() => { setEditing(null); setHistory(null); setShowHistory(false); setHistErr(""); }, [at]);
+  // The cite too: Back from the editor to this page's cited entry is a
+  // move like any other, and left the editor open over the entry.
+  const citeKey = cite ? `${cite.session}#${cite.seq}` : "";
+  useEffect(() => { setEditing(null); setHistory(null); setShowHistory(false); setHistErr(""); }, [at, citeKey]);
 
   // Page-to-page links are relative markdown links; followed by the
   // browser they would leave the app. Listened for on the element, so the
@@ -1068,7 +1074,9 @@ function PendingRow({ p, onIngest }: { p: WikiPending; onIngest?: (session: stri
       <span className="wk-row-main wk-title" style={{ fontSize: 14, color: "var(--text-2)" }}>{p.title || shortId(p.id)}</span>
       <span className="wk-counts">session {shortId(p.id)} · {plural(p.entries, "entry", "entries")} · {stamp(p.last)}</span>
       {onIngest && (
-        <button className="btn" disabled={state !== "" && state !== "failed"} onClick={() => {
+        // Disabled only while the POST is out: a started run can meet the
+        // lock or time out, and the session is then still waiting here.
+        <button className="btn" disabled={state === "starting"} onClick={() => {
           setState("starting");
           onIngest(p.id).then(() => setState("started")).catch(() => setState("failed"));
         }}>{state === "started" ? "Started" : state === "failed" ? "Retry" : "Ingest"}</button>
@@ -1267,6 +1275,7 @@ export function WikiPage({ route, onRoute, onBack, onOpenSession, onSearch }: {
   const source = useLoad(cite ? () => wikiApi.source(cite.session, cite.seq) : null,
     cite ? `src:${cite.session}#${cite.seq}` : "src:");
   const [note, setNote] = useState("");
+  const [ingestErr, setIngestErr] = useState("");
   // Stable, so the source pane's Escape listener is not rebound every render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const closeSource = useCallback(() => onRoute({ at: "page", path }), [path]);
@@ -1278,7 +1287,8 @@ export function WikiPage({ route, onRoute, onBack, onOpenSession, onSearch }: {
     case "index":
       return index.data
         ? <WikiIndexView data={index.data} onBack={onBack} onOpen={(p) => toPage(p)}
-                         onIngest={() => { wikiApi.ingest().then(() => index.reload()).catch(() => {}); }}
+                         ingestErr={ingestErr}
+                         onIngest={() => { setIngestErr(""); wikiApi.ingest().then(() => index.reload()).catch((e) => setIngestErr(msg(e))); }}
                          onReview={() => onRoute({ at: "review" })} onActivity={() => onRoute({ at: "activity" })}
                          check={wikiApi.check} />
         : <Loading what="The wiki" title="Wiki" err={index.err} onBack={onBack} onRetry={index.retry} />;
