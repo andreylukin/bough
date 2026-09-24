@@ -6,6 +6,7 @@ package e2e
 import (
 	"bytes"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -35,10 +37,17 @@ func TestMain(m *testing.M) {
 
 	if bin := os.Getenv("BOUGH_BIN"); bin != "" {
 		boughBin = bin
-		os.Exit(m.Run())
+		exit(m.Run())
 	}
-	dir, err := os.MkdirTemp("", "bough-e2e-bin-")
-	if err != nil {
+	// One directory per checkout, kept between runs: go build leaves an
+	// up-to-date binary alone, so a rerun skips the link (about 2 s)
+	// instead of redoing it into a fresh temp dir. go build replaces a
+	// stale one by rename, so a run still executing the old file keeps
+	// its inode.
+	h := fnv.New64a()
+	h.Write([]byte(repoRoot))
+	dir := filepath.Join(os.TempDir(), fmt.Sprintf("bough-e2e-bin-%x", h.Sum64()))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "e2e:", err)
 		os.Exit(1)
 	}
@@ -46,15 +55,26 @@ func TestMain(m *testing.M) {
 	// executed: "executable file not found in %PATH%", which was
 	// about half of the Windows failures on its own.
 	boughBin = filepath.Join(dir, "bough"+exeSuffix())
-	build := exec.Command("go", "build", "-o", boughBin, "./cmd/bough")
+	// No symbol table or DWARF: nothing here debugs the binary, and
+	// linking without them takes about half the time (tracebacks still
+	// name functions; they come from pclntab).
+	build := exec.Command("go", "build", "-ldflags=-s -w", "-o", boughBin, "./cmd/bough")
 	build.Dir = repoRoot
 	if out, err := build.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "e2e: build: %v\n%s", err, out)
-		os.RemoveAll(dir)
 		os.Exit(1)
 	}
-	code := m.Run()
-	os.RemoveAll(dir)
+	exit(m.Run())
+}
+
+// exit skips the race runtime's exit hook on a passing run: under
+// -race, os.Exit sleeps a full second (tsan's atexit_sleep_ms) for
+// stray reports, and testing has already failed every test during
+// which a race was reported. A failing run exits the usual way.
+func exit(code int) {
+	if code == 0 {
+		syscall.Exit(0)
+	}
 	os.Exit(code)
 }
 
