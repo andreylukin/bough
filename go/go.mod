@@ -19,6 +19,7 @@ require (
 	github.com/charmbracelet/x/xpty v0.1.4
 	github.com/creack/pty v1.1.24
 	github.com/dop251/goja v0.0.0-20260903201622-f87b40ad7341
+	github.com/fizzbee-io/fizzbee/mbt/lib/go v0.0.0-20251103175550-9e0bc037e5f4
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/uuid v1.6.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
@@ -92,4 +93,7 @@ require (
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20250528174236-200df99c418a // indirect
+	google.golang.org/grpc v1.74.2 // indirect
+	google.golang.org/protobuf v1.36.7 // indirect
 )

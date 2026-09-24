@@ -386,6 +386,14 @@ func (s *Server) Archive(ctx context.Context, id string) (serve.Row, error) {
 	return r.Session, err
 }
 
+// Ack is POST /api/sessions/{id}/ack: what the page sends when an
+// unseen finish or a failure is on screen, clearing unseen and trouble.
+func (s *Server) Ack(ctx context.Context, id string) (serve.Row, error) {
+	var r rowReply
+	err := s.do(ctx, http.MethodPost, "/api/sessions/"+url.PathEscape(id)+"/ack", nil, &r)
+	return r.Session, err
+}
+
 // Interrupt is POST /api/sessions/{id}/interrupt: the composer's stop.
 func (s *Server) Interrupt(ctx context.Context, id string) error {
 	return s.do(ctx, http.MethodPost, "/api/sessions/"+url.PathEscape(id)+"/interrupt", nil, nil)
