@@ -360,7 +360,7 @@ func (a *API) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.SpawnedBy != "" {
-		a.createChild(w, CreateOptions{Cwd: body.Cwd, Prompt: body.Prompt, Slug: body.Slug, Model: body.Model, SpawnedBy: body.SpawnedBy}, body.MaxPerSession, body.MaxRunning)
+		a.createChild(r.Context(), w, CreateOptions{Cwd: body.Cwd, Prompt: body.Prompt, Slug: body.Slug, Model: body.Model, SpawnedBy: body.SpawnedBy}, body.MaxPerSession, body.MaxRunning)
 		return
 	}
 	switch body.Mode {

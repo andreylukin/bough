@@ -701,7 +701,7 @@ func (a *API) createProjectSession(w http.ResponseWriter, prompt, slug string, m
 	// CreateChild mints its own id, files the membership and starts the
 	// child in the project's orb; SpawnedBy is the whole point. Thread
 	// keeps it a full agent: a person started it, not main's model.
-	a.createChild(w, CreateOptions{Prompt: prompt, Slug: p.Slug, SpawnedBy: main, Thread: true}, maxPerSession, maxRunning)
+	a.createChild(context.Background(), w, CreateOptions{Prompt: prompt, Slug: p.Slug, SpawnedBy: main, Thread: true}, maxPerSession, maxRunning)
 }
 
 // removeOrbPlan is what Remove orb would delete and keep, for its confirm.
