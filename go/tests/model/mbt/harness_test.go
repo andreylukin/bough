@@ -158,6 +158,15 @@ func startGraphServer(t *testing.T, runDir string) {
 // or the runner itself failing.
 func runMBT(t *testing.T, spec string, model fmbt.Model, actions map[string]map[string]fmbt.ActionFunc, opts map[string]any) error {
 	t.Helper()
+	// The runners share one graph server, so they queue behind each
+	// other, and at 100-8000 random runs apiece the package took eleven
+	// minutes. The deterministic walks (the *Paths tests) reach every
+	// state on every run in seconds; the random runs add breadth, and
+	// they run where time is not the point: the exhaustive
+	// MODEL_COVER=transitions job.
+	if envCover() != tracecheck.CoverTransitions {
+		t.Skip("fizzbee-mbt random runs are part of the exhaustive run: MODEL_COVER=transitions")
+	}
 	runDir := fizzCheck(t, spec)
 	lockMBT(t)
 	startGraphServer(t, runDir)

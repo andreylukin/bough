@@ -563,9 +563,9 @@ func init() { historyProjections["session_create"] = sessionCreateHistory }
 // to four are enabled at a time, so its random walks almost never get
 // past the first create's answer; the paths are what reach Claim, Land,
 // Timeout after OtherWrites and ChildExits on every run.
-func walkSessionCreatePaths(t *testing.T, a *sessionCreateAdapter) error {
+func walkSessionCreatePaths(t *testing.T, a *sessionCreateAdapter, cover tracecheck.Cover) error {
 	t.Helper()
-	b, err := pathsJSON("session_create")
+	b, err := pathsJSONCover("session_create", cover)
 	if err != nil {
 		return err
 	}
@@ -640,7 +640,7 @@ func TestSessionCreatePaths(t *testing.T) {
 	t.Parallel()
 	fizzTools(t)
 	a := newSessionCreateAdapter(t)
-	if err := walkSessionCreatePaths(t, a); err != nil {
+	if err := walkSessionCreatePaths(t, a, envCover()); err != nil {
 		t.Fatalf("spec path: %v", err)
 	}
 	if len(a.ids) == 0 {
@@ -695,7 +695,9 @@ func TestSessionCreateCatchesWrongAdapter(t *testing.T) {
 	fizzTools(t)
 	a := newSessionCreateAdapter(t)
 	a.exitAsRelease = true
-	err := walkSessionCreatePaths(t, a)
+	// Every link: the wrong release shows on the ChildExits transition,
+	// which a walk that only reaches every state need not take.
+	err := walkSessionCreatePaths(t, a, tracecheck.CoverTransitions)
 	if err == nil {
 		t.Fatal("a run whose ChildExits lets the child start passed; the paths are not checking state")
 	}
