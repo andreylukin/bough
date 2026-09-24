@@ -386,6 +386,13 @@ func (s *Server) Archive(ctx context.Context, id string) (serve.Row, error) {
 	return r.Session, err
 }
 
+// Unarchive is POST /api/sessions/{id}/unarchive.
+func (s *Server) Unarchive(ctx context.Context, id string) (serve.Row, error) {
+	var r rowReply
+	err := s.do(ctx, http.MethodPost, "/api/sessions/"+url.PathEscape(id)+"/unarchive", nil, &r)
+	return r.Session, err
+}
+
 // Ack is POST /api/sessions/{id}/ack: what the page sends when an
 // unseen finish or a failure is on screen, clearing unseen and trouble.
 func (s *Server) Ack(ctx context.Context, id string) (serve.Row, error) {
