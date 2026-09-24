@@ -47,33 +47,42 @@ const test = base.extend<{ serve: Serve }>({
 });
 
 test('an empty server walks from no key to a session that can edit the checkout', async ({ page, serve }) => {
+  // The welcome asks the provider whether a saved key works; answer as an
+  // offline check would ("unknown" still counts as usable) so the spec
+  // never reaches api.anthropic.com.
+  await page.route('**/api/setup/check?*', (route) => route.fulfill({ json: { state: 'unknown' } }));
   await page.goto(serve.url);
   await expect(page.getByRole('heading', { name: 'Welcome to bough' })).toBeVisible();
-  const folderLine = page.getByRole('status').filter({ hasText: /checkout|folder/ });
-  await expect(folderLine).toContainText('Git checkout found');
+  // Serve ran in the checkout, so the folder step is already done and
+  // folds to its path; asking for something stays closed until a key works.
+  const folderStep = page.getByRole('listitem').filter({ has: page.getByRole('heading', { name: /Pick a folder/ }) });
+  await expect(folderStep).toContainText(serve.repo);
+  await expect(page.getByText('1 of 3 done')).toBeVisible();
   const chip = page.getByRole('button', { name: 'Explain this repo' });
-  await expect(chip).toBeDisabled();
-  await expect(page.getByText('Add a provider key to enable these.')).toBeVisible();
+  await expect(chip).toHaveCount(0);
 
   await page.getByLabel('Anthropic API key').fill('sk-ant-test');
   await page.getByRole('button', { name: 'Save key' }).click();
-  await expect(page.getByText('Key found for Anthropic')).toBeVisible();
+  await expect(page.getByText('2 of 3 done')).toBeVisible();
   expect(fs.readFileSync(path.join(serve.home, '.bough', 'env'), 'utf8')).toContain('ANTHROPIC_API_KEY=sk-ant-test');
+  await expect(chip).toBeEnabled();
 
+  await folderStep.getByRole('button', { name: 'Change' }).click();
+  const folderLine = page.getByRole('status').filter({ hasText: /checkout|folder/i });
   const folder = page.getByLabel('Folder');
   await folder.fill(serve.home);
   await expect(folderLine).toContainText('Not a git checkout');
   await folder.fill(path.join(serve.home, 'nope'));
-  await expect(folderLine).toContainText('no folder at this path');
+  await expect(folderLine).toContainText('No folder at this path');
   await folder.fill(path.join(serve.repo, 'sub-that-is-missing'));
-  await expect(folderLine).toContainText('no folder at this path');
+  await expect(folderLine).toContainText('No folder at this path');
   await folder.fill(serve.repo);
   await expect(folderLine).toContainText('Git checkout found');
 
   await expect(chip).toBeEnabled();
   await chip.click();
   await expect(page.getByText('echo: Explain this repo')).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByText('Local · edits repo')).toBeVisible();
+  await expect(page.getByText('Edits repo', { exact: true })).toBeVisible();
 
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Welcome to bough' })).toHaveCount(0);
