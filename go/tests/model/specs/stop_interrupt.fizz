@@ -1,0 +1,230 @@
+# Stop / cancel a running turn (web control room), one session.
+#
+# The person presses Stop (Esc in the composer, the Stop button, or the
+# palette's "Stop this turn"); the page waits for its in-flight sends,
+# then POSTs /api/sessions/{id}/interrupt. The supervisor
+# (internal/serve/supervisor.go Interrupt) either:
+#   - 404s when no child holds the lease (ErrUnknownSession): the page
+#     shows "Retry stop";
+#   - holds the interrupt when the child has not yet taken its prompt
+#     (ch.unread && !ch.inTurn), until the child's first output releases
+#     it or holdLimit (20 s) passes: a SIGINT before the prompt is read
+#     would reach a child with nothing to cancel;
+#   - otherwise SIGINTs the child.
+#
+# Where the code disagrees with the mapped model, the code wins:
+#   - "Stop keeps the lease" is false. The serve child is
+#     `bough --headless --json`, and cmd/bough/main.go blocks on
+#     `<-sig` for SIGINT: it cancels the turn, lets [cancelled]/[done]
+#     print, unmounts and exits (130 mid-turn, 0 when idle). The next
+#     prompt respawns via ensure. Supervisor.Interrupt's doc and
+#     TestSupervisorInterruptKeepsTheLease (a fake child) say otherwise.
+#     Checked on the real binary: SIGINT to an idle headless child exits 0.
+#   - A SIGINT that reaches a child which has not taken its prompt (the
+#     hold expired) does not "run the prompt anyway": the child exits and
+#     the unread line dies with it. No input, cancelled or done is
+#     recorded, so the page's unlanded prompt never lands.
+#   - Because every SIGINT ends the child, the holdGen guard (a stale
+#     timer must not release a newer hold) protects a state the product
+#     cannot reach: a stale timer only ever outlives its child. The
+#     spec keeps the timer so the guard's reason stays checkable.
+#
+# Fields (Session role):
+#   status    server row status: idle | running | stopped | done
+#   pending   the page's prompt is sent and not yet a turn; on the
+#             server that is ch.unread (the child has not taken it)
+#   alive     a child holds the lease
+#   replied   the turn has an assistant reply
+#   held      an interrupt is held (ch.held)
+#   timer     the current hold's 20 s timer is pending
+#   stale     a timer from an earlier, released hold is pending
+#   sigint    a SIGINT on its way to the child: "" | "sent" (Stop on a
+#             live turn, or a hold released by the child taking the
+#             prompt) | "expired" (released by holdLimit)
+#   cancelled the last turn closed with "cancelled"
+#   tail      the loop's bookkeeping "done" after "cancelled" is still
+#             to come (then the child exits)
+#   stopping  the page's stop state: "" | "stopping" | "failed"
+#   draft     "" | "restored": the stopped prompt put back in the composer
+
+role Session:
+    action Init:
+        self.status = "idle"
+        self.pending = False
+        self.alive = False
+        self.replied = False
+        self.held = False
+        self.timer = False
+        self.stale = False
+        self.sigint = ""
+        self.cancelled = False
+        self.tail = False
+        self.stopping = ""
+        self.draft = ""
+
+    # The composer's `live` is `pending or status == "running"` (a send
+    # not yet landed, or a running turn); fizz functions cannot sit in a
+    # require, so it is spelled out where it is used.
+    #
+    # A prompt sent while nothing is live. A session with no child is
+    # respawned (Supervisor.ensure); the new child has no hold and no
+    # timer of its own, and the old one's timers act on a dropped child.
+    atomic action Prompt:
+        require not self.pending and self.status != "running"
+        require self.sigint == "" and not self.tail
+        # Settle is a React effect on `live`: it runs on the render that
+        # ends the turn, before a person can type the next prompt.
+        require self.stopping == ""
+        if not self.alive:
+            self.stale = False
+        self.alive = True
+        self.pending = True
+        self.replied = False
+        self.draft = ""
+
+    # The child's first output (input, assistant, code, call ...) says
+    # the prompt became a turn: emit clears unread and releases a held
+    # interrupt, which now has a turn to cancel. The hold's timer is
+    # still pending, and from here on it is stale.
+    atomic action Take:
+        require self.pending and self.alive
+        self.pending = False
+        self.status = "running"
+        self.cancelled = False
+        self.replied = False
+        if self.held:
+            self.held = False
+            self.sigint = "sent"
+        if self.timer:
+            self.timer = False
+            self.stale = True
+
+    atomic action Reply:
+        require self.status == "running" and self.alive and not self.tail
+        require not self.replied
+        self.replied = True
+
+    # The turn ends on its own (done); a SIGINT already on its way then
+    # reaches an idle child.
+    atomic action Finish:
+        require self.status == "running" and self.alive and not self.tail
+        self.status = "done"
+
+    # Stop from the composer (Esc or the button; both are guarded while
+    # "stopping"). The page awaits in-flight sends first, which the
+    # atomic Prompt already models, then POSTs /interrupt.
+    atomic action Stop:
+        require (self.pending or self.status == "running") and self.stopping != "stopping"
+        self.stopping = "stopping"
+        if not self.alive:
+            # 404 unknown session -> onInterrupt false -> "Retry stop".
+            self.stopping = "failed"
+        elif self.pending:
+            # unread && !inTurn: hold. A repeat Stop while held arms
+            # another timer of the same generation.
+            self.held = True
+            self.timer = True
+        else:
+            self.sigint = "sent"
+
+    # holdLimit passed with the prompt still unread: the timer's
+    # generation matches, so it releases the hold (a SIGINT the child,
+    # with nothing to cancel, answers by exiting).
+    atomic fair action HoldExpires:
+        require self.timer
+        self.timer = False
+        self.held = False
+        self.sigint = "expired"
+
+    # A timer of an earlier hold: its generation is stale (or its hold
+    # was already released), so releaseLocked is never reached for it.
+    atomic fair action StaleFires:
+        require self.stale
+        self.stale = False
+
+    # Sending while something is live goes out as a steer. With the child
+    # gone (a hold-expired SIGINT ended it before it took the prompt),
+    # Send respawns one and the line runs as a prompt. It is the only way
+    # out: that dropped prompt never lands, so the page stays live, its
+    # Stop button disabled on "Stopping" or answering 404 "Retry stop".
+    atomic action Resend:
+        require self.pending and not self.alive
+        self.alive = True
+
+    # The child gets the SIGINT. Mid-turn it cancels ("cancelled", then
+    # the bookkeeping "done", then exit 130). Idle, it exits at once and
+    # an unread prompt is gone with it.
+    atomic fair action ChildSignal:
+        require self.sigint != "" and self.alive and not self.tail
+        self.sigint = ""
+        if self.status == "running":
+            self.status = "stopped"
+            self.cancelled = True
+            self.tail = True
+        else:
+            self.alive = False
+            self.stale = False
+
+    # The loop's "done" after a cancel, then the exit. StatusOf skips a
+    # done that follows a cancelled close: the row stays "stopped".
+    atomic fair action Wrapup:
+        require self.tail
+        self.tail = False
+        self.alive = False
+        self.stale = False
+
+    # The page once nothing is live: `stopping` clears, and a turn
+    # stopped before any reply puts its prompt back in an empty draft
+    # (stoppedPrompt).
+    atomic fair action Settle:
+        require not self.pending and self.status != "running" and self.stopping != ""
+        self.stopping = ""
+        if self.status == "stopped" and not self.replied and self.draft == "":
+            self.draft = "restored"
+
+action Init:
+    session = Session()
+
+# An interrupt sent before the child took its prompt is never lost
+# silently: it is held, and the only SIGINT that reaches an unread
+# prompt is the one holdLimit released.
+always assertion NoEarlySignal:
+    return not (session.sigint == "sent" and session.pending)
+
+# A hold lives only while its prompt is unread, and only the current
+# hold has a live timer (a stale timer never stands for a newer hold).
+always assertion HoldOnlyWhileUnread:
+    return (not session.held or session.pending) and (not session.timer or session.held)
+
+# The done written after cancelled does not turn "stopped" into "done".
+always assertion CancelledReadsStopped:
+    return not (session.cancelled and session.status == "done")
+
+# The code's answer to "Stop keeps the lease": it does not. Once the
+# cancel's bookkeeping is written the child is gone, until a new prompt
+# respawns one.
+always assertion CancelEndsTheChild:
+    return not (session.status == "stopped" and session.cancelled and not session.tail and session.alive and not session.pending)
+
+# Only a turn stopped before any reply gives its prompt back.
+always assertion RestoreOnlyUnreplied:
+    return not (session.draft == "restored" and session.replied)
+
+# A held interrupt is released (by the prompt being taken, or holdLimit).
+always eventually assertion HoldReleased:
+    return not session.held
+
+# A Stop that reached a running turn ends it: the SIGINT it sent is
+# acted on and the row leaves running (stopped, or done if the turn
+# finished first). A 404 is the page's "Retry stop" (Stop above).
+#
+# The mapped, stronger claim — the page's "Stopping" always clears —
+# does not hold, and is left out so the check stays green: a hold that
+# expires before the child takes its prompt ends the child with the
+# prompt unlanded, so the page stays live on "Stopping" (Stop disabled)
+# until the person sends again, and the turn that send starts runs with
+# Stop still disabled. fizz's counterexample: Prompt, Stop, HoldExpires,
+# ChildSignal, Resend, Take, then running with stopping == "stopping"
+# forever.
+always eventually assertion StopEndsRunning:
+    return not (session.status == "running" and session.sigint != "")
