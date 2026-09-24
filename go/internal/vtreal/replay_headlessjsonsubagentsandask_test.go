@@ -45,6 +45,10 @@ func headlessJSONSubagentsAndAskConfig(tape string) string {
 - id: activity
   plugin: activity
   disabled: true
+# The tapes speak code mode; engine-unreal (the default loop row)
+# cannot drive a replay llm row.
+- id: loop
+  plugin: loop
 `, tape)
 }
 
