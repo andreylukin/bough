@@ -1014,6 +1014,8 @@ export function WikiReviewView({ data, onOpenPage, onAct, onSearch, onIngest, on
           {shown.map((f) => {
             const k = key(f);
             const state = busy[k];
+            // Disabled only while the decision is in flight: after "Did not save" the person tries again.
+            const inFlight = state === "…";
             return (
               <div key={k} className="wk-item">
                 <div className="wk-title-line">
@@ -1034,9 +1036,9 @@ export function WikiReviewView({ data, onOpenPage, onAct, onSearch, onIngest, on
                     <button className="btn" onClick={() => onSearch(f.claim)}>Search history</button>
                   )}
                   {(f.kind === "unsupported" || f.kind === "uncited") && (
-                    <button className="btn" disabled={Boolean(state)} onClick={() => act(f, "inference")}>Mark as inference</button>
+                    <button className="btn" disabled={inFlight} onClick={() => act(f, "inference")}>Mark as inference</button>
                   )}
-                  <button className="btn" disabled={Boolean(state)} onClick={() => act(f, "drop")}>
+                  <button className="btn" disabled={inFlight} onClick={() => act(f, "drop")}>
                     {f.kind === "superseded" ? "Drop the old claim" : "Drop the claim"}
                   </button>
                   {state && state !== "…" && <span className="hk-state hk-bad">Did not save — {state}</span>}
