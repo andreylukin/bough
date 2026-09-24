@@ -3810,6 +3810,10 @@ function OrbFailure({ id, project, name, onRebuild, onRetry, rebuildErr }: { id:
 
 const noLines: Line[] = [];
 
+/** A composer upload in flight, by session: see Thread's follow. */
+type Upload = { slot: number; tag: string; done: Promise<string> };
+const uploads = new Map<string, Set<Upload>>();
+
 export function Thread({ row, lines: given, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, onPortal, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
   /** Loaded sessions: names the parent of a background agent and lists this session's agents. */
   rows?: Row[]; onOpenSession?: (id: string) => void;
@@ -4339,7 +4343,38 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   // Main's Start thread button and what it last said (see StartThreadCtx).
   const startThread = useContext(StartThreadCtx);
   const [threadNote, setThreadNote] = useState("");
-  const [attachErr, setAttachErr] = useState("");
+  // Back from another session, a tag whose upload failed meanwhile (or
+  // before) still says so: the alert that said it died with the old Thread.
+  const [attachErr, setAttachErr] = useState(() => {
+    if (uploads.get(row.id)?.size) return "";
+    const lost = lostTags(draft.trim(), images.current, pastes.current);
+    return lost.length ? `Attachment unavailable: remove ${lost.join(", ")}` : "";
+  });
+  // An upload is followed by whichever Thread shows its session: the one
+  // that started it, or the one mounted on the way back.
+  const alive = useRef(true);
+  const follow = async (u: Upload) => {
+    setUploading((n) => n + 1);
+    try {
+      const path = await u.done;
+      // Stored slot by slot, so an unmounted Thread's stale refs never
+      // overwrite what the mounted one has since.
+      try {
+        const a = JSON.parse(localStorage.getItem(attsKey) ?? "null") as { pastes: string[]; images: string[] } | null;
+        if (a && a.images[u.slot] === "") { a.images[u.slot] = path; localStorage.setItem(attsKey, JSON.stringify(a)); }
+      } catch { /* storage off */ }
+      if (alive.current) images.current[u.slot] = path;
+    } catch (err) {
+      if (alive.current) setAttachErr(`${u.tag} not attached: ${(err as Error).message}`);
+    } finally {
+      if (alive.current) setUploading((n) => n - 1);
+    }
+  };
+  useEffect(() => {
+    alive.current = true;
+    uploads.get(row.id)?.forEach((u) => void follow(u));
+    return () => { alive.current = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const insert = (s: string) => {
     const el = composer.current;
     const from = el?.selectionStart ?? draft.length, to = el?.selectionEnd ?? draft.length;
@@ -4358,15 +4393,12 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     const slots = files.map(() => images.current.push("") - 1);
     insert(slots.map((i, k) => `[${tag(files[k], i)}] `).join(""));
     for (const [k, f] of files.entries()) {
-      setUploading((n) => n + 1);
-      try {
-        images.current[slots[k]] = isImage(f) ? await api.attach(f) : await api.attachFile(row.id, f);
-        try { localStorage.setItem(attsKey, JSON.stringify({ pastes: pastes.current, images: images.current })); } catch { /* storage off */ }
-      } catch (err) {
-        setAttachErr(`${tag(f, slots[k])} not attached: ${(err as Error).message}`);
-      } finally {
-        setUploading((n) => n - 1);
-      }
+      const u: Upload = { slot: slots[k], tag: tag(f, slots[k]), done: isImage(f) ? api.attach(f) : api.attachFile(row.id, f) };
+      const set = uploads.get(row.id) ?? new Set<Upload>();
+      uploads.set(row.id, set.add(u));
+      const followed = follow(u);
+      void u.done.catch(() => {}).finally(() => set.delete(u));
+      await followed;
     }
   };
   // A paste and a drop carry the same DataTransfer; a drop has no default
