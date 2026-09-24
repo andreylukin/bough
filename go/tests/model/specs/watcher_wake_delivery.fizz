@@ -149,8 +149,9 @@ role Watch:
         require self.status == "running"
         self.status = "needs-you"
 
+    # An answer is a POST like Prompt: the API is closed from Signal on.
     atomic fair action Answer:
-        require self.status == "needs-you"
+        require self.serve == "up" and self.status == "needs-you"
         self.status = "running"
 
     # Archiving kills the child; the open turn reads interrupted, which
