@@ -471,14 +471,18 @@ func (a *API) archive(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.metaVerb(w, id, func() error {
-		if body.StopChildren {
-			for _, c := range a.sup.Children(id) {
-				if err := a.sup.EndChild(c.ID); err != nil {
-					return err
-				}
+		// Parent first: once it is archived and dead it can spawn no
+		// agent, so the list of children to end is complete. Ending
+		// them first let the live parent start one the list never saw.
+		if err := a.sup.SetArchived(id, true); err != nil || !body.StopChildren {
+			return err
+		}
+		for _, c := range a.sup.Children(id) {
+			if err := a.sup.EndChild(c.ID); err != nil {
+				return err
 			}
 		}
-		return a.sup.SetArchived(id, true)
+		return nil
 	})
 }
 

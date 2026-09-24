@@ -4891,6 +4891,9 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
 export default function App() {
   const [rows, setRows] = useState<Row[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  // For the list poll, which is not re-made per selection.
+  const openRef = useRef(selected);
+  openRef.current = selected;
   const [lines, setLines] = useState<Line[]>([]);
   // The catch-up cursor: the newest history seq on screen, read outside
   // any state updater.
@@ -5005,6 +5008,15 @@ export default function App() {
       const rs = await api.sessions(archived);
       if (seq !== readSeq.current) return;
       setRows(rs); setLoadErr(null); setRowsAll(archived); setLoadedAt(Date.now());
+      // The open session can leave the list (archiving it does) while it
+      // stays on screen, and its row is then `looked`, which only its
+      // event stream refreshed: an archived session sends none, so the
+      // thread kept saying it was not archived and kept counting agents
+      // that had stopped. Read its row with the list instead.
+      const open = openRef.current;
+      if (open && !rs.some((r) => r.id === open)) {
+        api.session(open, lastSeq.current).then((r) => { if (openRef.current === open) setLooked(r.session); }, () => {});
+      }
     } catch (e) { if (seq === readSeq.current) setLoadErr(e instanceof Error ? e.message : String(e)); }
     finally { if (seq === readSeq.current) inFlight.current = false; }
   }, [archived]);

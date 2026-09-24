@@ -1,0 +1,159 @@
+# Archiving and unarchiving a web session that may have one background
+# agent (go/tests/model/README.md). What each field is, as serve and the
+# control room show it:
+#
+#   history   the session has recorded something (a turn ran). Archiving
+#             only flips a flag in serve's meta; the .jsonl is untouched.
+#   live      the session's own child process is up (serve's lease).
+#   archived  meta.Archived: POST /archive sets it, /unarchive clears it.
+#   listed    the row is in the default list (GET /api/sessions without
+#             all=1, and the sidebar's main section). The page marks the
+#             row when the server answers (archiveRow's mark) and then
+#             refreshes, so a poll already in flight cannot leave it
+#             listed; the model has no step where the two disagree.
+#   dialog    what archiveRow is asking: "confirm" when the row counts no
+#             running or queued agent, "choice" (Stop and archive |
+#             Archive only) when it counts one, else "none".
+#   agent     the one background agent this session spawned, as its own
+#             row says: none, queued, running, done or stopped. A queued
+#             agent that is stopped is dropped (its meta is deleted), so
+#             it goes back to none, not to stopped.
+#
+# Serve does, in POST /archive: EndChild for each child when
+# stopChildren, then SetArchived, which kills the session's child before
+# the flag is saved. Both are one HTTP request, so one atomic step here.
+# That hides two windows the code leaves open: a Send landing between
+# SetArchived's Kill and its meta save respawns the child of a session
+# about to be archived, and the parent, still live while its children
+# are ended, can spawn an agent the snapshot never saw. A failed request
+# (an EndChild or the meta save errors) is left out: nothing offline
+# makes serve fail it, and it changes no field here, only the page's
+# "Couldn't archive" toast.
+
+role Session:
+    action Init:
+        self.history = False
+        self.live = False
+        self.archived = False
+        self.listed = True
+        self.dialog = "none"
+        self.agent = "none"
+
+    # A prompt spawns the child (Send -> ensure) and records a turn.
+    # Serve refuses Send and Adopt on an archived session with 409, and
+    # the composer is disabled, so there is no prompt while archived.
+    atomic action Prompt:
+        require not self.archived and self.dialog == "none"
+        self.history = True
+        self.live = True
+
+    # The live session's turn calls tools.spawn({background}): the agent
+    # starts now, or (SpawnQueued) waits for a slot. Two actions, not a
+    # oneof: fizzbee-mbt 0.2.0 checks a step against the fork's
+    # intermediate node, which still has the state from before the choice.
+    atomic action Spawn:
+        require self.live and self.agent == "none"
+        self.agent = "running"
+
+    atomic action SpawnQueued:
+        require self.live and self.agent == "none"
+        self.agent = "queued"
+
+    # drainQueue starts a queued agent whatever its parent's state:
+    # "Archive only" must leave it free to run.
+    atomic fair action AgentStart:
+        require self.agent == "queued"
+        self.agent = "running"
+
+    atomic fair action AgentFinish:
+        require self.agent == "running"
+        self.agent = "done"
+
+    # Settings > Archive..., palette s:archive, or the sidebar row.
+    atomic action Archive:
+        require not self.archived and self.dialog == "none"
+        if self.agent in ("running", "queued"):
+            self.dialog = "choice"
+        else:
+            self.dialog = "confirm"
+
+    atomic action Cancel:
+        require self.dialog != "none"
+        self.dialog = "none"
+
+    # askConfirm's Archive: POST /archive with no body.
+    atomic action Confirm:
+        require self.dialog == "confirm"
+        self.dialog = "none"
+        self.live = False
+        self.archived = True
+        self.listed = False
+
+    # askChoice's "Stop and archive": stopChildren, so EndChild drops a
+    # queued agent and interrupts and kills a running one first. An
+    # agent that finished while the dialog was open is left done.
+    atomic action StopAndArchive:
+        require self.dialog == "choice"
+        if self.agent == "queued":
+            self.agent = "none"
+        elif self.agent == "running":
+            self.agent = "stopped"
+        self.dialog = "none"
+        self.live = False
+        self.archived = True
+        self.listed = False
+
+    # askChoice's "Archive only": the agent keeps going.
+    atomic action ArchiveOnly:
+        require self.dialog == "choice"
+        self.dialog = "none"
+        self.live = False
+        self.archived = True
+        self.listed = False
+
+    # The composer note's Unarchive, Settings, or the palette. Nothing
+    # is spawned: the session comes back idle until the next prompt.
+    atomic action Unarchive:
+        require self.archived
+        self.archived = False
+        self.listed = True
+
+action Init:
+    session = Session()
+
+always assertion ArchivedHasNoLiveChild:
+    return not (session.archived and session.live)
+
+always assertion ListedUnlessArchived:
+    return session.listed == (not session.archived)
+
+transition assertion ArchivingKeepsHistory(before, after):
+    return after.session.history or not before.session.history
+
+# While archived nothing reaches the session: no turn is recorded and no
+# child is spawned (Send and Adopt answer 409).
+transition assertion ArchivedRefusesInput(before, after):
+    if before.session.archived and after.session.archived:
+        return after.session.history == before.session.history and not after.session.live
+    return True
+
+transition assertion UnarchiveNeverRespawns(before, after):
+    if before.session.archived and not after.session.archived:
+        return after.session.live == before.session.live and after.session.agent == before.session.agent
+    return True
+
+# Archiving either leaves the agent exactly as it was (Archive only, or
+# no agent to ask about) or stops it: never finishes it, never starts a
+# queued one, never leaves it half-stopped. fizz sees states, not which
+# button was pressed; that pairing is checked per step by the MBT run.
+transition assertion ArchiveStopsOrLeavesAgents(before, after):
+    if not before.session.archived and after.session.archived:
+        if after.session.agent == before.session.agent:
+            return True
+        return before.session.agent in ("running", "queued") and after.session.agent in ("none", "stopped")
+    return True
+
+# An agent left running by "Archive only" (or started from the queue
+# after it) still gets to finish: the parent's flag stalls nothing.
+always eventually assertion AgentsSettle:
+    return session.agent not in ("queued", "running")

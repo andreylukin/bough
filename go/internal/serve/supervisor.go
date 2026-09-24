@@ -560,6 +560,13 @@ func (s *Supervisor) ensure(id string) (*child, error) {
 		s.mu.Unlock()
 		return ch, nil
 	}
+	// Send and Adopt check the flag too, but without the lock: one that
+	// read it just before SetArchived set it would spawn right after the
+	// kill. Checked here, under the lock SetArchived sets it under.
+	if s.meta[id].Archived {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("serve: supervisor: %s: %w", id, ErrArchived)
+	}
 	// Reserve the lease before releasing the mutex, so a concurrent
 	// ensure waits for this spawn rather than starting a second one.
 	ch := newChild(id)
@@ -1618,18 +1625,22 @@ func (s *Supervisor) SetEffort(id, level string) error {
 // SetArchived hides a session. Archiving kills its child first: an
 // archived session that kept writing history would be a ghost writer.
 // It is reversible, and unarchiving does not respawn anything.
+//
+// The flag is set before the kill, not after: ensure and CreateChild
+// refuse an archived session, so a Send (another tab, the CLI) or the
+// session's own spawn landing while the child dies can no longer leave
+// an archived session with a live child or a running agent.
 func (s *Supervisor) SetArchived(id string, archived bool) error {
-	if archived {
-		if err := s.Kill(id); err != nil {
-			return err
-		}
-	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	m := s.meta[id]
 	m.Archived = archived
 	s.meta[id] = m
-	return s.saveMetaLocked()
+	err := s.saveMetaLocked()
+	s.mu.Unlock()
+	if err != nil || !archived {
+		return err
+	}
+	return s.Kill(id)
 }
 
 // Acknowledge marks everything the session has recorded so far as seen.
