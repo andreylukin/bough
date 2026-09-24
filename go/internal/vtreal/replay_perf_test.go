@@ -27,12 +27,12 @@ const (
 )
 
 // perfConfig is replayConfig plus a streaming delay, so words arrive
-// one at a time the way they do from a real provider.
+// one at a time the way they do from a real provider, until hurry.
 func perfConfig(tape string, delayMS int) string {
 	return strings.Replace(
 		replayConfig(tape),
 		fmt.Sprintf("config: {file: %q}", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: %d}", tape, delayMS),
+		fmt.Sprintf("config: {file: %q, delay_ms: %d%s}", tape, delayMS, hurryKey),
 		1)
 }
 

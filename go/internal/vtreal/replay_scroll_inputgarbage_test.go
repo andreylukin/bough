@@ -47,6 +47,7 @@ func inputGarbageRun(t *testing.T, gap time.Duration, extra string) {
 	time.Sleep(300 * time.Millisecond)
 	a.typeText("draftxyz")
 	inputGarbageRaw(a, inputGarbageBurst(20)+extra, gap)
+	hurry(t, a.home) // the burst went in mid-stream: the rest of the 3000 words need not trickle
 	if !a.waitDone(1, 60*time.Second) {
 		t.Fatalf("turn never finished:\n%s", a.text())
 	}

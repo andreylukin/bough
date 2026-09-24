@@ -28,7 +28,7 @@ import (
 func loopScheduleDuringStreamAndQuitConfig(tape, hist string) string {
 	return strings.Replace(resumeConfig(tape, hist),
 		fmt.Sprintf("config: {file: %q}\n- id: codemode", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: 100}\n- id: codemode", tape), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: 100%s}\n- id: codemode", tape, hurryKey), 1)
 }
 
 // loopScheduleDuringStreamAndQuitKinds counts entries by kind.
@@ -96,6 +96,8 @@ func TestLoopScheduleDuringStreamAndQuit(t *testing.T) {
 		}
 		a.typeText("/loop 1s ping")
 		a.key(uv.KeyEnter, 0)
+		a.waitUntil(func(string) bool { return !strings.Contains(a.keymapComposer(), "/loop") }, "/loop sent mid-stream")
+		hurry(t, a.home) // /loop landed mid-stream: the rest of the reply may land at once
 		resumeWaitDones(t, a, hist, 1)
 		time.Sleep(2500 * time.Millisecond) // > two 1s "intervals"
 

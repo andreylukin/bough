@@ -244,7 +244,7 @@ func TestStatusbarSpinnerWhileStreaming(t *testing.T) {
 	cfg := fmt.Sprintf(`
 - id: llm
   plugin: replay
-  config: {file: %q, delay_ms: 40}
+  config: {file: %q, delay_ms: 40, delay_until: "~/.replay-hurry"}
 - id: codemode
   plugin: replay
   config: {file: %q, provide: codemode}
@@ -268,6 +268,7 @@ func TestStatusbarSpinnerWhileStreaming(t *testing.T) {
 		}
 		return false
 	}, "the spinner's elapsed time on the status bar while streaming")
+	hurry(t, a.home) // seen mid-stream: the rest may land at once
 	if !a.waitDone(1, 60*time.Second) {
 		t.Fatalf("turn never finished:\n%s", a.text())
 	}

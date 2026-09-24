@@ -274,7 +274,7 @@ func TestResizeTmuxMidStream(t *testing.T) {
 		// 2000 ms (38 s a run) the margin covered a sweep whose every
 		// settle waited out the spinner; resizeTmuxSettledStreaming
 		// no longer does. Too short fails loudly below, never passes.
-		fmt.Sprintf("config: {file: %q, delay_ms: 600}", tape), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: 600%s}", tape, hurryKey), 1)
 	tm, home := resizeTmuxStart(t, 100, 30, yml)
 
 	resizeTmuxSend(tm, "run the tests and show me a very long separator line")
@@ -286,6 +286,7 @@ func TestResizeTmuxMidStream(t *testing.T) {
 	if resizeTmuxDone(home) > 0 {
 		t.Fatalf("the turn finished before the sweep did, so it was not mid-stream; raise delay_ms:\n%s", resizeTmuxScreen(tm))
 	}
+	hurry(t, home) // swept mid-stream: the ~10 s left of the reply add nothing
 	resizeTmuxWaitDone(t, tm, home, 1)
 	resizeTmuxCheck(t, tm, "after the streamed turn", 100)
 }

@@ -59,7 +59,7 @@ func pasteWaitEntry(a *app, want string, kinds ...string) history.Entry {
 func pasteReplayConfig(tape string, delayMS int) string {
 	return strings.Replace(replayConfig(tape),
 		fmt.Sprintf("config: {file: %q}", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: %d}", tape, delayMS), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: %d%s}", tape, delayMS, hurryKey), 1)
 }
 
 // A paste of a few short lines lands in the composer as an editable
@@ -202,6 +202,7 @@ func TestPasteDuringStreamSteersOrQueues(t *testing.T) {
 	a.waitUntil(func(s string) bool {
 		return strings.Contains(s, "(steer") || strings.Contains(s, "(queued)")
 	}, "the mid-turn paste to be marked (steer) or (queued)")
+	hurry(t, a.home) // marked mid-turn: the rest of the reply may land at once
 	if s := a.settled(); strings.Count(s, "All done streaming.") > 1 {
 		t.Fatalf("the mid-turn paste started a second turn:\n%s", s)
 	}

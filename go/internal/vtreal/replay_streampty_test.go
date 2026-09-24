@@ -161,6 +161,7 @@ func TestStreamPtySlowStreamDraft(t *testing.T) {
 	if a.doneCount() != 0 {
 		t.Fatalf("the slow stream finished before the draft was typed; the test proved nothing")
 	}
+	hurry(t, a.home) // the draft is in: the rest of the 6 s reply adds nothing
 	if !a.waitDone(1, 30*time.Second) {
 		t.Fatalf("turn never finished:\n%s", a.text())
 	}
@@ -192,6 +193,7 @@ func TestStreamPtyStallThenEnd(t *testing.T) {
 	if !liveGlueHasSpinner(s) {
 		t.Errorf("no spinner during the stall:\n%s", s)
 	}
+	hurry(t, a.home) // end the stall now it has been seen, not at 2.5 s
 	if !a.waitDone(1, 30*time.Second) {
 		t.Fatalf("turn never finished:\n%s", a.text())
 	}

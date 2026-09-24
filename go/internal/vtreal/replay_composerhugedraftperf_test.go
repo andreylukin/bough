@@ -147,6 +147,7 @@ func TestComposerHugeDraftPerfPasteEditWhileStreaming(t *testing.T) {
 	}
 
 	a.key(uv.KeyEnter, 0)
+	hurry(t, a.home) // edited mid-stream: the steer is recorded when the reply ends
 	want := "alpha bravo X" + body + tail
 	e := pasteWaitEntry(a, "hugetail", "input", "steer")
 	got, _ := e.Data["text"].(string)

@@ -67,6 +67,7 @@ func TestThemeSwitchDuringStream(t *testing.T) {
 	if strings.Contains(a.text(), "w160") {
 		t.Fatalf("the switch landed after the stream ended; the scenario is vacuous:\n%s", a.text())
 	}
+	hurry(t, a.home) // switched mid-stream: the rest may land at once
 
 	if !a.waitDone(1, 60*time.Second) {
 		t.Fatalf("turn never finished after the switch:\n%s", a.text())

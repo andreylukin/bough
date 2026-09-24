@@ -56,6 +56,28 @@ func replayConfig(tape string) string {
 `, tape, tape)
 }
 
+// hurryKey goes on a paced replay row, after its delay_ms: the row
+// paces its words until hurry writes the file, then streams the rest
+// at once. A reply sized to outlast a mid-stream check on a loaded
+// run then costs nothing once the check is done.
+const hurryKey = `, delay_until: "~/.replay-hurry"`
+
+// hurry ends the pacing of every hurryKey row of the bough in home.
+func hurry(t *testing.T, home string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(home, ".replay-hurry"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// unhurry paces the rows again, for a later turn that needs it.
+func unhurry(t *testing.T, home string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(home, ".replay-hurry")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // panicky is what a Go crash or a lipgloss overflow leaves on screen.
 var panicky = regexp.MustCompile(`panic:|goroutine \d+ \[|runtime error:`)
 

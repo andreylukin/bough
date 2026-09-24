@@ -49,7 +49,7 @@ func configreloadremovesrowStart(t *testing.T) (*app, string) {
 	t.Helper()
 	tape := configreloadremovesrowTape(t)
 	yml := strings.Replace(replayConfig(tape), fmt.Sprintf("config: {file: %q}", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: 50}", tape), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: 50%s}", tape, hurryKey), 1)
 	if !strings.Contains(yml, "delay_ms") {
 		t.Fatalf("could not slow the llm row:\n%s", yml)
 	}
@@ -134,6 +134,7 @@ func TestConfigReloadRemovesRow(t *testing.T) {
 	t.Run("noop", func(t *testing.T) {
 		t.Parallel()
 		a, yml := configreloadremovesrowStart(t)
+		hurry(t, a.home) // no reload mid-turn here: the slow reply need not be
 		configreloadremovesrowWrite(a, yml+"# touched\n")
 		// Under the TUI the reload notice goes to the log, not the
 		// screen: wait out the 300 ms debounce instead.
@@ -168,6 +169,7 @@ func TestConfigReloadRemovesRow(t *testing.T) {
 	t.Run("todo_betweenturns", func(t *testing.T) {
 		t.Parallel()
 		a, yml := configreloadremovesrowStart(t)
+		hurry(t, a.home) // between turns: the slow reply need not be
 		todoOpen(a)
 		configreloadremovesrowWrite(a, configreloadremovesrowDisable(yml, "todo"))
 		configreloadremovesrowUntil(a, "/todo add gone", "unknown command: /todo")

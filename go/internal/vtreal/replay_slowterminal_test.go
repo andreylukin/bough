@@ -238,11 +238,15 @@ func TestSlowTerminalConverges(t *testing.T) {
 			// overlap instead of queueing (the long one is ~4 s each).
 			begin := func(slow bool) *app {
 				a := slowterminalStart(t, 100, 30, cancelConfig(tape, c.delay), slow)
+				if !slow {
+					hurry(t, a.home) // nothing to do mid-stream: unpaced
+				}
 				a.typeText(c.input)
 				a.key(uv.KeyEnter, 0)
 				if slow {
 					time.Sleep(200 * time.Millisecond)
 					a.typeText("typed during")
+					hurry(t, a.home) // typed while it streams: the rest may flood in
 				}
 				return a
 			}

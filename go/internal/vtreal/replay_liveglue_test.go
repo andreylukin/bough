@@ -23,7 +23,7 @@ import (
 func liveGlueConfig(tape string, delayMS int) string {
 	return strings.Replace(replayConfig(tape),
 		fmt.Sprintf("config: {file: %q}", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: %d}", tape, delayMS), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: %d%s}", tape, delayMS, hurryKey), 1)
 }
 
 const liveGlueCursor = "▌"

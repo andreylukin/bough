@@ -33,7 +33,7 @@ func cancelConfig(tape string, delayMS int) string {
 	cfg := replayConfig(tape)
 	out := strings.Replace(cfg,
 		fmt.Sprintf("config: {file: %q}", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: %d}", tape, delayMS),
+		fmt.Sprintf("config: {file: %q, delay_ms: %d%s}", tape, delayMS, hurryKey),
 		1)
 	if out == cfg {
 		panic("cancelConfig: replayConfig's llm row changed shape; delay_ms not applied")

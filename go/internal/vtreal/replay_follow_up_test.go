@@ -185,7 +185,7 @@ func TestFollowUpAltEnterQueuesMidTurn(t *testing.T) {
 	tape := followUpTape(t)
 	cfg := strings.Replace(replayConfig(tape),
 		fmt.Sprintf("config: {file: %q}\n", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: 400}\n", tape), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: 400%s}\n", tape, hurryKey), 1)
 	if !strings.Contains(cfg, "delay_ms: 400") {
 		t.Fatalf("could not add delay_ms to the replay row:\n%s", cfg)
 	}
@@ -196,6 +196,7 @@ func TestFollowUpAltEnterQueuesMidTurn(t *testing.T) {
 	a.typeText("beta")
 	a.key(uv.KeyEnter, uv.ModAlt)
 	a.waitFor("beta (queued)")
+	hurry(t, a.home) // queued mid-turn: the rest of both replies may land at once
 	followUpWaitDone(a, 2)
 	a.waitFor("REPLY-BETA")
 	s := a.settled()

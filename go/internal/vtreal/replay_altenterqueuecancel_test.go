@@ -31,7 +31,7 @@ func TestAltEnterQueueCancelBothOrNeither(t *testing.T) {
 	tape := followUpTape(t)
 	cfg := strings.Replace(replayConfig(tape),
 		fmt.Sprintf("config: {file: %q}\n", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: 400}\n", tape), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: 400%s}\n", tape, hurryKey), 1)
 	if !strings.Contains(cfg, "delay_ms: 400") {
 		t.Fatalf("could not add delay_ms to the replay row:\n%s", cfg)
 	}
@@ -46,6 +46,7 @@ func TestAltEnterQueueCancelBothOrNeither(t *testing.T) {
 	a.key(uv.KeyEnter, uv.ModAlt)
 	a.waitFor("gamma (queued)")
 	a.key(uv.KeyEscape, 0)
+	hurry(t, a.home) // if the queue does run, its turns need not be paced
 
 	// Settle: either three turns end (both ran) or alpha ends and the
 	// composer holds both queued lines (both restored).

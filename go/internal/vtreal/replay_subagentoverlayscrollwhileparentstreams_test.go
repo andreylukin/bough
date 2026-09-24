@@ -119,7 +119,7 @@ func subagentOverlayScrollWhileParentStreamsConfig(hist, parent string) string {
 	cfg := subagentsConfig(hist)
 	cfg = strings.Replace(cfg,
 		fmt.Sprintf("config: {file: %q}\n- id: codemode", hist),
-		fmt.Sprintf("config: {file: %q, delay_ms: 60}\n- id: codemode", parent), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: 60%s}\n- id: codemode", parent, hurryKey), 1)
 	return strings.Replace(cfg,
 		fmt.Sprintf("config: {file: %q, provide: codemode}", hist),
 		fmt.Sprintf("config: {file: %q, provide: codemode}", parent), 1)
@@ -186,6 +186,7 @@ func TestSubagentOverlayScrollWhileParentStreams(t *testing.T) {
 				t.Fatalf("overlay snapped to the bottom (%s on screen):\n%s", last, s)
 			}
 
+			hurry(t, a.home) // the rest of the parent's reply lands at once
 			subagentsEsc(a)
 			a.waitUntil(func(s string) bool { return !strings.Contains(s, "esc to close") }, "esc to close the overlay")
 			a.waitFor("PARENT-END")

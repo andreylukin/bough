@@ -33,7 +33,8 @@ func paletteDuringStreamRunActionStart(t *testing.T) *app {
   plugin: ui
   config: {collapse: none}
 `)
-	// Turn 1 finishes with an open code block.
+	// Turn 1 finishes with an open code block; only turn 2 is paced.
+	hurry(t, a.home)
 	a.typeText("first turn")
 	a.key(uv.KeyEnter, 0)
 	if !a.waitDone(1, 60*time.Second) {
@@ -42,6 +43,7 @@ func paletteDuringStreamRunActionStart(t *testing.T) *app {
 	a.waitFor("First done.")
 	a.waitFor(`console.log("early")`)
 	// Turn 2 streams; wait for the midpoint.
+	unhurry(t, a.home)
 	a.typeText("stream now")
 	a.key(uv.KeyEnter, 0)
 	a.waitFor("HALFWAY")
@@ -83,6 +85,7 @@ func TestPaletteDuringStreamRunAction(t *testing.T) {
 	if strings.Contains(a.text(), "p160") {
 		t.Fatalf("collapse_all landed after the stream ended; the scenario is vacuous:\n%s", a.text())
 	}
+	hurry(t, a.home) // ran mid-stream: the rest may land at once
 	if !a.waitDone(2, 60*time.Second) {
 		t.Fatalf("turn 2 never finished after the palette:\n%s", a.text())
 	}
@@ -125,6 +128,7 @@ func TestPaletteDuringStreamRunActionEsc(t *testing.T) {
 	a.waitUntil(func(s string) bool { return !strings.Contains(s, "collapse_all") }, "filter to drop collapse_all")
 	a.key(uv.KeyEscape, 0)
 	a.waitUntil(func(s string) bool { return !strings.Contains(s, "action · ") }, "palette to close")
+	hurry(t, a.home) // closed mid-stream: the rest may land at once
 	if !a.waitDone(2, 60*time.Second) {
 		t.Fatalf("turn 2 never finished after esc:\n%s", a.text())
 	}

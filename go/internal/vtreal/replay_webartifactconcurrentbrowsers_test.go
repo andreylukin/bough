@@ -62,7 +62,7 @@ func webArtifactConcurrentBrowsersTape(t *testing.T) string {
 func webArtifactConcurrentBrowsersConfig(tape string) string {
 	cfg := replayConfig(tape)
 	// The first replay row is the llm: slow its stream down.
-	cfg = strings.Replace(cfg, fmt.Sprintf("config: {file: %q}", tape), fmt.Sprintf("config: {file: %q, delay_ms: 30}", tape), 1)
+	cfg = strings.Replace(cfg, fmt.Sprintf("config: {file: %q}", tape), fmt.Sprintf("config: {file: %q, delay_ms: 30%s}", tape, hurryKey), 1)
 	return cfg + `
 - id: tools
   plugin: tools-basic
@@ -185,6 +185,7 @@ func TestWebArtifactConcurrentBrowsers(t *testing.T) {
 	if n := a.doneCount(); n != 0 {
 		t.Logf("turn already finished (%d) before the presses were in; not a mid-stream run", n)
 	}
+	hurry(t, a.home) // the presses are in: the wakes need not queue behind the stream
 
 	// The log order the server serialised the presses into.
 	r, err := http.Get(page + "/answers")

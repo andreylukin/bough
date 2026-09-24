@@ -73,7 +73,7 @@ func TestModelPickerMidTurn(t *testing.T) {
 	// 150ms the test spent 5 s more waiting for w59; a stream that ends
 	// before the swap still fails below, loudly.
 	cfg := strings.Replace(replayConfig(tape), "config: {file: "+fmt.Sprintf("%q", tape)+"}",
-		"config: {file: "+fmt.Sprintf("%q", tape)+", delay_ms: 80}", 1)
+		"config: {file: "+fmt.Sprintf("%q", tape)+", delay_ms: 80"+hurryKey+"}", 1)
 	a := startCfg(t, 120, 30, cfg)
 	a.check("boot")
 
@@ -117,6 +117,7 @@ func TestModelPickerMidTurn(t *testing.T) {
 	if a.doneCount() != 0 {
 		t.Errorf("the running turn ended (done/cancelled recorded) when /model swapped the llm row; it should finish on the old model")
 	}
+	hurry(t, a.home) // swapped mid-turn: the old model may finish at once
 	if !a.waitDone(1, 60*time.Second) {
 		t.Fatalf("first turn never finished:\n%s", a.text())
 	}

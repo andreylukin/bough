@@ -315,14 +315,16 @@ func TestScrollingNewOutputDoesNotFollow(t *testing.T) {
 	// delay is per tape), so at 25ms the test spent 4 s more waiting.
 	cfg := strings.Replace(replayConfig(tape),
 		fmt.Sprintf("config: {file: %q}", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: 15}", tape), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: 15%s}", tape, hurryKey), 1)
 	a := startCfg(t, 100, 24, cfg)
 
+	hurry(t, a.home) // turn 1 only fills the transcript: unpaced
 	a.typeText("ask 1")
 	a.key(uv.KeyEnter, 0)
 	a.waitFor(scrollingMark(1))
 	scrollingIdle(t, a, 1)
 	a.settled()
+	unhurry(t, a.home)
 
 	// Second turn: scroll up while it is still streaming.
 	a.typeText("ask 2")
@@ -336,6 +338,7 @@ func TestScrollingNewOutputDoesNotFollow(t *testing.T) {
 	}, "the scrolled cue mid-turn")
 	a.waitUntil(func(s string) bool { return strings.Contains(s, "↓ new output") },
 		"the new-output cue while scrolled up mid-turn")
+	hurry(t, a.home) // cue seen mid-turn: the rest may land at once
 	if !a.waitDone(2, 30*time.Second) {
 		t.Fatalf("the second turn never finished:\n%s", a.text())
 	}

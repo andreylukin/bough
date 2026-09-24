@@ -84,6 +84,7 @@ func searchDuringStreamRun(t *testing.T, during func(a *app)) (a *app, final str
 			t.Fatalf("the reply finished before search opened; the tape is not paced:\n%s", a.text())
 		}
 		during(a)
+		hurry(t, a.home) // the tail, LATEWORD in it, lands at once
 	}
 	if !a.waitDone(1, 60*time.Second) {
 		t.Fatalf("turn never finished:\n%s", a.text())
