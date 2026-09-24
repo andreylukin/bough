@@ -50,7 +50,7 @@ test('typing "/" opens the palette and typing filters it', async ({ launchBough,
   expect(screen).not.toContain('/connect');
 });
 
-test('arrows + Enter run /help and the system block renders', async ({ launchBough, page }) => {
+test('arrows + Enter run /help and its panel renders', async ({ launchBough, page }) => {
   const b = await launchBough();
   await boot(page, b.url);
 
@@ -62,15 +62,21 @@ test('arrows + Enter run /help and the system block renders', async ({ launchBou
   await page.keyboard.press('ArrowUp');
   await page.keyboard.press('Enter');
 
-  // The dispatched line echoes as a command block, and the /help table
-  // (a "system" block) lists every command with its summary.
-  await waitForTermText(page, '❯ /help');
+  // /help opens a dismissible panel over the transcript (27118cba), not
+  // a transcript block: it lists every command with its summary.
+  await waitForTermText(page, '/help commands');
   await waitForTermText(page, 'collapse all blocks');
   const screen = await termText(page);
   expect(screen).toContain('/collapse');
   expect(screen).toContain('/sessions');
   // The line never reached the LLM: no echo reply.
   await expectNotOnScreen(page, 'echo: /help');
+
+  // Esc closes it and leaves no trace: no command echo, no help rows.
+  await page.keyboard.press('Escape');
+  await waitForTermGone(page, '/help commands');
+  await expectNotOnScreen(page, '❯ /help');
+  await expectNotOnScreen(page, 'collapse all blocks');
 });
 
 test('Tab completes the draft to "/help " and leaves the palette open', async ({ launchBough, page }) => {
