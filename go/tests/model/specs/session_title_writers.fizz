@@ -1,0 +1,256 @@
+---
+deadlock_detection: false
+---
+
+# session_title_writers: who writes a session's name, and how every page
+# that shows it stays right (go/tests/model/README.md). The history half
+# (the live small model, `bough summarize`, shutdown naming, the file's
+# writers) is specs/session_title_history.fizz: together they were far
+# past the state budget, and they meet only at history's title, which
+# here is one step (AutoTitle).
+#
+# Checked against:
+#   serve  internal/serve/api.go rename -> metaVerb -> Supervisor.SetTitle
+#          (supervisor.go), which saves meta.json before it answers and
+#          rolls memory back when the save fails; rowOf (api.go) names the
+#          row meta.Title when non-empty, else history's title.
+#   page   web/src/app.tsx: refresh (the list read: polls every 4 s, 12 s
+#          with a session open; readSeq drops an answer when a later read
+#          started), the `selected` effect (the opening lookup and every
+#          event's catchUp, GET /api/sessions/{id}, merge r.session into
+#          rows), onRename (POST, then an awaited refresh, then the dialog
+#          closes); the sidebar row, the thread <h1> and document.title
+#          all read that one row through sessionTitle (render.tsx:
+#          plainTitle(title) || summary || "Untitled · <date>").
+#          web/src/dialog.tsx: submit trims, textBlocked refuses the text
+#          it opened with unless empty.
+#
+# The spec says what the design must be; where the code today differs it
+# says so under DIVERGES, and the model tests of this flow are where the
+# difference turns red:
+#
+# DIVERGES 1 (stale catch-up). A catchUp or the opening lookup that
+#   started before a rename was acknowledged still lands after it and
+#   replaces the row with the old name: header, sidebar and tab revert
+#   until the next poll (12 s). Only refresh's own list reads carry
+#   readSeq. The spec drops every read that started before the ack
+#   (Rename's inflight = "none"); the code does that for polls only.
+# DIVERGES 2 (blank titles). SetTitle stores meta.Title untrimmed. The
+#   page trims before it posts, but any other client (curl, a second
+#   page's API) can store "   ": rowOf then prefers it to history's title
+#   (non-empty), and every page shows "Untitled" (or the summary). The
+#   spec's server trims: RenameBlank hands the name back to history.
+#
+# Corrections to the mapped model:
+# - sidebar, header and tab read one row (`row` is rows.find(...), the
+#   sidebar maps rows, the tab is sessionTitle(row)), so a catch-up merge
+#   moves all three at once and they never disagree; the invariant stays
+#   as the claim the browser test checks.
+# - "restart_during_save" is not one state but two outcomes: serve dies
+#   after SetTitle saved (the rename survives but the page never hears the
+#   answer and shows the error) or before (nothing changed). Neither
+#   breaks an acknowledged rename: SetTitle saves before it answers.
+# - "textBlocked stops pinning the provisional title" is real but not a
+#   safety property: the dialog refuses the text it opened with, which is
+#   the SHOWN name, not meta. With meta empty and the opening line shown,
+#   typing that line again is refused, so a person cannot keep the
+#   opening line as the name once the small model renames it (they must
+#   type a variation). Not modelled (it would add a meta value per history
+#   name); reported with the other findings.
+#
+# Values. Names: "prompt" the opening line (provisional), "auto" the small
+# model's final name, "mine" typed in this tab, "theirs" typed in another
+# tab, "blank" a whitespace-only title. What a page shows: the name, or
+# "untitled" for an empty or blank title. The session starts prompted: a
+# session with no name at all has nothing a blank title could hide.
+#
+# Fields:
+#   hist     history's title: "prompt" until the small model's "auto"
+#   meta     serve's meta.Title in memory
+#   saved    meta.Title in meta.json: what a restart reads back
+#   title    the row's title as GET /api/sessions answers it
+#   sidebar, header, tab
+#            this tab's list row, thread <h1> and document.title
+#   inflight the title a read this tab started saw ("none": no read out).
+#            One read stands for the list poll and the thread's catchUp
+#            (an event, the title event among them, arms one).
+#   acked    this tab's last rename was acknowledged and nothing has
+#            renamed the session since
+#   dialog   "closed", "open", "saving" (POST out), "failed" (error shown)
+#   typed    the text a saving dialog posted ("" hands the name back)
+#   other    what a second tab on the same session shows
+
+# What a page shows for a row title.
+def shown(t):
+    if t == "" or t == "blank":
+        return "untitled"
+    return t
+
+def rowtitle(meta, hist):
+    if meta != "":
+        return meta
+    return hist
+
+role Session:
+    action Init:
+        self.hist = "prompt"
+        self.meta = ""
+        self.saved = ""
+        self.title = "prompt"
+        self.sidebar = "prompt"
+        self.header = "prompt"
+        self.tab = "prompt"
+        self.inflight = "none"
+        self.acked = False
+        self.dialog = "closed"
+        self.typed = ""
+        self.other = "prompt"
+
+    # The small model's one final name lands in history (the history half
+    # is session_title_history.fizz); serve's row changes only when no
+    # rename hides it. Its "title" event arms this tab's catch-up, which
+    # is ReadStart.
+    atomic action AutoTitle:
+        require self.hist == "prompt"
+        self.hist = "auto"
+        t = rowtitle(self.meta, self.hist)
+        if t != self.title:
+            self.acked = False
+        self.title = t
+
+    # A list poll or an event's catchUp leaves: it reads the row as it is
+    # now. Fair: the poll runs for as long as the page is open. Only a
+    # read that could change something is modelled.
+    atomic fair<strong> action ReadStart:
+        require self.inflight == "none"
+        s = shown(self.title)
+        require self.header != s
+        self.inflight = self.title
+
+    # Its answer lands and replaces the row: all three surfaces move.
+    atomic fair<strong> action ReadLand:
+        require self.inflight != "none"
+        s = shown(self.inflight)
+        self.sidebar = s
+        self.header = s
+        self.tab = s
+        self.inflight = "none"
+
+    # Settings > Rename…, prefilled with the header's name.
+    atomic action OpenRename:
+        require self.dialog == "closed"
+        self.dialog = "open"
+
+    # Rename pressed: the POST leaves. textBlocked refuses the text the
+    # dialog opened with (the header then) unless it is empty; nothing
+    # but this tab's own rename makes the header "mine".
+    atomic action Submit:
+        require self.dialog in ["open", "failed"]
+        text = any ["", "mine"]
+        require text == "" or text != self.header
+        self.typed = text
+        self.dialog = "saving"
+
+    # SetTitle saved meta.json and answered; onRename's awaited refresh
+    # lands and the dialog closes on the new name. Every read that
+    # started before the ack is dropped (DIVERGES 1: the code drops only
+    # its own polls).
+    atomic fair<strong> action SaveLands:
+        require self.dialog == "saving"
+        self.meta = self.typed
+        self.saved = self.typed
+        self.title = rowtitle(self.meta, self.hist)
+        s = shown(self.title)
+        self.sidebar = s
+        self.header = s
+        self.tab = s
+        self.inflight = "none"
+        self.acked = True
+        self.dialog = "closed"
+        self.typed = ""
+
+    # The save failed (disk full, 404): SetTitle rolled memory back, the
+    # dialog shows the error and stays up.
+    atomic action SaveFails:
+        require self.dialog == "saving"
+        self.dialog = "failed"
+        self.typed = ""
+
+    atomic action Dismiss:
+        require self.dialog in ["open", "failed"]
+        self.dialog = "closed"
+
+    # A second tab renames the same session (its own dialog, not
+    # modelled). This tab learns it only from a read.
+    atomic action RenameElsewhere:
+        require self.meta != "theirs"
+        self.meta = "theirs"
+        self.saved = "theirs"
+        self.title = rowtitle(self.meta, self.hist)
+        self.acked = False
+        self.other = shown(self.title)
+
+    # Another client posts a whitespace-only title. The server trims it:
+    # a blank name hands the name back to history (DIVERGES 2: the code
+    # stores it and every page says Untitled).
+    atomic action RenameBlank:
+        require self.meta != ""
+        self.meta = ""
+        self.saved = ""
+        self.title = rowtitle(self.meta, self.hist)
+        self.acked = False
+
+    # serve restarts (update, crash, kickstart): meta comes back from
+    # meta.json. A read out when it died fails. A POST out when it died
+    # either saved first (the name changed, but the page never heard the
+    # answer) or did not; either way the dialog shows an error.
+    atomic action ServeRestart:
+        if self.dialog == "saving":
+            landed = any [True, False]
+            if landed:
+                self.meta = self.typed
+                self.saved = self.typed
+            self.dialog = "failed"
+            self.typed = ""
+        self.meta = self.saved
+        t = rowtitle(self.meta, self.hist)
+        if t != self.title:
+            self.acked = False
+        self.title = t
+        self.inflight = "none"
+
+    # The second tab's own poll.
+    atomic fair<strong> action PollOther:
+        s = shown(self.title)
+        require self.other != s
+        self.other = s
+
+action Init:
+    session = Session()
+
+# After this tab's rename is acknowledged, and until something renames the
+# session again, no read that started earlier changes the name back.
+always assertion AckedRenameSticks:
+    if not session.acked:
+        return True
+    return session.header == shown(session.title)
+
+# The list row, the thread header and the tab never disagree, through
+# catch-up merges and polls alike.
+always assertion OneTitleEverywhere:
+    return session.sidebar == session.header and session.header == session.tab
+
+# A blank title never hides history's: the row always has a name.
+always assertion BlankNeverHidesHistory:
+    return shown(session.title) != "untitled"
+
+# What serve holds in memory is what meta.json holds: a rename that was
+# acknowledged (or that saved before serve died) survives a restart, and
+# a failed save changes nothing a restart would take back.
+always assertion RenameSurvivesRestart:
+    return session.meta == session.saved and session.title == rowtitle(session.meta, session.hist)
+
+# Every tab ends up showing the session's current name.
+always eventually assertion EveryTabCatchesUp:
+    s = shown(session.title)
+    return session.header == s and session.other == s

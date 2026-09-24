@@ -1,0 +1,219 @@
+---
+deadlock_detection: false
+---
+
+# session_title_history: who writes history's title for one session, and
+# what they must never do to each other (go/tests/model/README.md). The
+# other half, the name as serve and the pages show it, is
+# specs/session_title_writers.fizz; they meet at history's title (hist).
+#
+# Checked against:
+#   live   plugins/title/title.go: after every finished turn the Titler
+#          (under its work mutex) logs the turn ("turn-summary", one small
+#          model call) and then names the session once ("title" with
+#          final: true, a second call) unless a final name exists; then it
+#          arms the quiet timer (the main model's cache window). quiet
+#          names it if no turn is open; shutdown cancels an in-flight call
+#          and makes one last log + name attempt under a 10 s deadline.
+#          Until a final name exists readers show the opening line
+#          (plugins/history List: the last "title" entry wins, else the
+#          first input's first line): the provisional name.
+#   cli    plugins/title/summarize.go backfillOne (`bough summarize`):
+#          reads the file, skips it if it has any turn-summary, else logs
+#          the finished turns and names the session, then OpenExisting +
+#          Append + Close.
+#   file   plugins/history: Store.Append writes each line under an
+#          exclusive flock and catchUp only raises seq past foreign lines,
+#          it never adopts them into Entries(); OpenExisting's
+#          dropTornTail truncates the file after its last newline, with no
+#          flock.
+#   serve  a restart or an archive SIGKILLs the child (supervisor.go
+#          killChild): no shutdown naming, the timer and any call die.
+#
+# The spec says what the design must be; where the code today differs it
+# says so under DIVERGES, and this flow's model tests turn it red:
+#
+# DIVERGES 1 (double final). The live Titler decides "already named"
+#   from its own Entries(), which never include lines another process
+#   appended, and backfillOne decides "not yet summarized" from a read
+#   taken before its model calls, re-checked by nothing. `bough summarize`
+#   on a live session therefore writes a final name, and the live Titler
+#   writes a second (or the other way round); the name flips to the
+#   later. The spec re-reads the file under the flock before either
+#   appends a final name.
+# DIVERGES 2 (torn live line). summarize's OpenExisting runs dropTornTail
+#   without the flock. A live Store holds the flock across one line's
+#   write + flush, and a line longer than bufio's buffer reaches the file
+#   in more than one write: the half already on disk looks torn and is
+#   truncated away, and the rest lands glued to nothing. The spec's
+#   BackfillWrite waits for the flock (require not writing).
+# DIVERGES 3 (quiet never logs). The package doc says a failed call is
+#   retried by the next turn, the quiet timer or shutdown; quiet only
+#   runs finalName, which needs a logged turn. When the turn's log call
+#   failed, the quiet retry does nothing, and an idle live session stays
+#   on its provisional name until another turn or shutdown. The spec's
+#   quiet attempt logs and names, like the others.
+#
+# Corrections to the mapped model:
+# - "A session with a logged turn eventually gets a final name unless the
+#   model always fails" does not hold even with one failed call: every
+#   retry is tied to an event of the live child (turn end, quiet,
+#   shutdown). A child SIGKILLed by a serve restart or an archive, or one
+#   whose shutdown attempt failed, leaves the session unnamed until a new
+#   turn; and `bough summarize` skips it for good once any turn-summary
+#   exists ("already summarized"). The liveness claim here is the one the
+#   design can keep: a live child names its session, given the small model
+#   answers after at most one failed call.
+# - "provisional" is not an entry: nothing writes the opening line as a
+#   title; it is what readers fall back to while there is no final name.
+#
+# Fields:
+#   turn     the latest turn: "open" (running) or "done" (ended: done,
+#            cancelled or failed; the Titler logs all three)
+#   live     a child holds the session (its Store, its Titler)
+#   job      the Titler's call in flight: "" none, "turn" (turn end),
+#            "quiet" (the timer), "shutdown" (the last attempt)
+#   timer    the quiet timer is armed
+#   failed   the small model has failed a call (at most one: see the
+#            liveness claim)
+#   logged   the file holds a turn-summary
+#   hist     history's title: "prompt" (provisional), "auto" (the live
+#            Titler's final), "filled" (summarize's final)
+#   finals   final title entries in the file
+#   backfill "" or "read": `bough summarize` read the file, found nothing
+#            logged, and is calling the model
+#   writing  the live Store is part-way through one line (flock held)
+#   torn     a live line was cut by another writer
+
+role Session:
+    # A session whose first turn is running: its name is the opening line.
+    action Init:
+        self.turn = "open"
+        self.live = True
+        self.job = ""
+        self.timer = False
+        self.failed = False
+        self.logged = False
+        self.hist = "prompt"
+        self.finals = 0
+        self.backfill = ""
+        self.writing = False
+        self.torn = False
+
+    # The turn ends; the Titler's turnDone takes the work mutex (a call
+    # already in flight goes first).
+    atomic fair<strong> action TurnDone:
+        require self.live and self.turn == "open" and self.job == ""
+        self.turn = "done"
+        self.timer = False
+        self.job = "turn"
+
+    # The person sends another prompt; serve resumes a session with no
+    # child (`-r <id>`). An open turn makes a firing quiet timer do
+    # nothing, so it is as good as disarmed.
+    atomic action Prompt:
+        require self.turn == "done" and self.job != "shutdown"
+        self.turn = "open"
+        self.live = True
+        self.timer = False
+
+    # The small model answers: the turn is logged and, if the file has no
+    # final name yet (re-read under the flock: DIVERGES 1), the session is
+    # named. Store.Append serialises with a line in progress.
+    atomic fair<strong> action SmallModelOk:
+        require self.job != "" and not self.writing
+        if self.finals == 0:
+            self.hist = "auto"
+            self.finals = self.finals + 1
+        self.logged = True
+        if self.job == "shutdown":
+            self.live = False
+        self.timer = False
+        self.job = ""
+
+    # A call fails (error, timeout, cancelled by the deadline): the log
+    # call, or the name call after the log landed. A turn's attempt still
+    # arms the quiet timer.
+    atomic action SmallModelFails:
+        require self.job != "" and not self.failed
+        self.failed = True
+        self.logged = any [self.logged, True]
+        if self.job == "turn":
+            self.timer = True
+        if self.job == "shutdown":
+            self.live = False
+        self.job = ""
+
+    # A cache window passed with no turn open: log and name again
+    # (DIVERGES 3: the code only names).
+    atomic fair<strong> action QuietTimer:
+        require self.live and self.timer and self.job == "" and self.turn == "done"
+        self.timer = False
+        self.job = "quiet"
+
+    # The child closes (the person quits, headless input ends): an open
+    # turn ends cancelled, an in-flight call is cancelled, and shutdown
+    # makes the last attempt.
+    atomic action ChildShutdown:
+        require self.live and self.job != "shutdown"
+        self.turn = "done"
+        self.timer = False
+        self.job = "shutdown"
+
+    # serve restarts or archives the session: SIGKILL. The call, the timer
+    # and a half-written line die with the child (the next opener drops
+    # that torn tail: nobody is appending to it any more).
+    atomic action ChildKilled:
+        require self.live
+        self.live = False
+        self.turn = "done"
+        self.job = ""
+        self.timer = False
+        self.writing = False
+
+    # The live Store starts one long line (an assistant entry, a tool
+    # result) and finishes it.
+    atomic action LiveWriteStart:
+        require self.live and not self.writing
+        self.writing = True
+
+    atomic fair<strong> action LiveWriteEnd:
+        require self.writing
+        self.writing = False
+
+    # `bough summarize` reads the file: a finished turn and no
+    # turn-summary, so it calls the model.
+    atomic action SummarizeRead:
+        require self.backfill == "" and self.turn == "done" and not self.logged
+        self.backfill = "read"
+
+    # Its calls answered: it opens the file for append and writes. It
+    # takes the flock first (DIVERGES 2) and re-reads the file under it
+    # (DIVERGES 1): a final name written meanwhile is kept.
+    atomic fair<strong> action SummarizeWrite:
+        require self.backfill == "read" and not self.writing
+        if self.finals == 0:
+            self.hist = "filled"
+            self.finals = self.finals + 1
+        self.logged = True
+        self.backfill = ""
+
+action Init:
+    session = Session()
+
+# At most one final title entry per session, across processes.
+always assertion AtMostOneFinal:
+    return session.finals <= 1
+
+# No writer cuts bytes a live writer is appending.
+always assertion NoTornLiveLine:
+    return not session.torn
+
+# The opening line is the name exactly until a final name is written.
+always assertion ProvisionalUntilFinal:
+    return (session.hist == "prompt") == (session.finals == 0)
+
+# A live child names its session, given the small model answers after at
+# most one failed call.
+always eventually assertion LiveSessionGetsNamed:
+    return session.finals > 0 or not session.live
