@@ -39,6 +39,17 @@ func (l *mcphooksinitjsLLM) Complete(_ context.Context, _ string, msgs []Message
 // loop runner plus the tape LLM.
 func mcphooksinitjsRunner(t *testing.T, hookFiles map[string]string, tape ...string) (*runner, *mcphooksinitjsLLM) {
 	t.Helper()
+	return mcphooksinitjsRunnerVM(t, 300*time.Millisecond, hookFiles, tape...)
+}
+
+// hangVM is the VM timeout for cases whose hook never returns: each
+// hung hook costs the whole timeout, twice per case, and these tests
+// are serial (HOME and cwd are process-wide), so it is kept short.
+// The block itself is one console.log, far inside it even under -race.
+const hangVM = 100 * time.Millisecond
+
+func mcphooksinitjsRunnerVM(t *testing.T, vm time.Duration, hookFiles map[string]string, tape ...string) (*runner, *mcphooksinitjsLLM) {
+	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Chdir(t.TempDir())
 	for rel, body := range hookFiles {
@@ -50,7 +61,7 @@ func mcphooksinitjsRunner(t *testing.T, hookFiles map[string]string, tape ...str
 			t.Fatal(err)
 		}
 	}
-	cm := codemode.New(300 * time.Millisecond)
+	cm := codemode.New(vm)
 	kctx := kernel.NewContext()
 	kctx.Provide("codemode", cm)
 	if err := kctx.Mount([]kernel.Row{{ID: "hooks", Plugin: "hooks-js"}}); err != nil {
@@ -117,7 +128,11 @@ func TestMcpHooksInitjsHookFailures(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r, llm := mcphooksinitjsRunner(t, tc.files, mcphooksinitjsBlock)
+			vm := 300 * time.Millisecond
+			if strings.HasSuffix(tc.name, "times out") {
+				vm = hangVM
+			}
+			r, llm := mcphooksinitjsRunnerVM(t, vm, tc.files, mcphooksinitjsBlock)
 			start := time.Now()
 			kinds, texts := mcphooksinitjsRun(t, r, "go")
 			if d := time.Since(start); d > 5*time.Second {
@@ -153,7 +168,11 @@ func TestMcpHooksInitjsHookFailures(t *testing.T) {
 func TestMcpHooksInitjsPromptHookFailures(t *testing.T) {
 	for name, body := range map[string]string{"throws": `throw new Error("x")`, "hangs": `while(true){}`, "garbage": `return 5`} {
 		t.Run(name, func(t *testing.T) {
-			r, llm := mcphooksinitjsRunner(t, map[string]string{"user-prompt-submit/a.js": body})
+			vm := 300 * time.Millisecond
+			if name == "hangs" {
+				vm = hangVM
+			}
+			r, llm := mcphooksinitjsRunnerVM(t, vm, map[string]string{"user-prompt-submit/a.js": body})
 			mcphooksinitjsRun(t, r, "hello there")
 			if len(llm.calls) == 0 || !strings.Contains(llm.calls[0][len(llm.calls[0])-1].Content, "hello there") {
 				t.Fatalf("prompt did not reach the model: %v", llm.calls)

@@ -183,6 +183,7 @@ func TestSubagentsChildSyntaxError(t *testing.T) {
 }
 
 func TestSubagentsChildInfiniteLoopTimesOut(t *testing.T) {
+	t.Parallel()
 	l := subagentsTape(map[string][]string{"t": {"```js\nwhile(true){}\n```", "Status: failed\nlooped"}})
 	r := subagentsMount(t, 300*time.Millisecond, nil, l)
 	done := make(chan struct{})
