@@ -180,9 +180,17 @@ export function DialogHost({ seed }: { seed?: { req: Req; text: string } } = {})
     if (req.kind !== "text") return;
     const v = text.trim();
     if (req.onSubmit) {
+      // Saving disables the button, and Chromium drops focus off a
+      // disabled control to <body>: a refused submit from the button left
+      // a keyboard user outside the dialog. It goes back once re-enabled.
+      const fromOk = document.activeElement === ok.current;
       setSaving(true); setFailed("");
       try { await req.onSubmit(v); }
-      catch (e) { setFailed(e instanceof Error ? e.message : String(e)); setSaving(false); return; }
+      catch (e) {
+        setFailed(e instanceof Error ? e.message : String(e)); setSaving(false);
+        if (fromOk) requestAnimationFrame(() => { if (document.activeElement === document.body) ok.current?.focus(); });
+        return;
+      }
       setSaving(false);
     }
     finish(v);
