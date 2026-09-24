@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	tea "charm.land/bubbletea/v2"
 	"pgregory.net/rapid"
@@ -304,23 +305,25 @@ func TestSteerDeepDuringStreamAndSubagent(t *testing.T) {
 // follow-up; the spinner stops.
 func TestSteerDeepEscWithPendingSteers(t *testing.T) {
 	t.Parallel()
-	d, _, cancels := steerDeepDrv(t, nil)
-	d.steerDeepSay("keep A")
-	d.steerDeepSay("keep B")
-	d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if *cancels != 1 {
-		t.Fatalf("esc cancelled %d times, want 1", *cancels)
-	}
-	d.event("steer", "keep A")
-	d.event("steer", "keep B")
-	d.event("cancelled", "")
-	d.event("done", "")
-	if d.m.running {
-		t.Fatal("still running after the cancelled done")
-	}
-	if got := strings.Join(steerDeepRows(d), ","); got != "first,keep A|steer,keep B|steer" {
-		t.Fatalf("rows = %s", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d, _, cancels := steerDeepDrv(t, nil)
+		d.steerDeepSay("keep A")
+		d.steerDeepSay("keep B")
+		d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+		if *cancels != 1 {
+			t.Fatalf("esc cancelled %d times, want 1", *cancels)
+		}
+		d.event("steer", "keep A")
+		d.event("steer", "keep B")
+		d.event("cancelled", "")
+		d.event("done", "")
+		if d.m.running {
+			t.Fatal("still running after the cancelled done")
+		}
+		if got := strings.Join(steerDeepRows(d), ","); got != "first,keep A|steer,keep B|steer" {
+			t.Fatalf("rows = %s", got)
+		}
+	})
 }
 
 // A resumed session puts steers where they were sent: after the block
@@ -354,6 +357,7 @@ func TestSteerDeepResumeOrder(t *testing.T) {
 // has one row, pending = sent − landed, and after the final landing
 // and done nothing is pending or running.
 func TestSteerDeepProp(t *testing.T) {
+	t.Parallel()
 	run := func(rt *rapid.T) {
 		d, rec, _ := steerDeepDrv(t, nil)
 		var sent []string

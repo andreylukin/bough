@@ -61,6 +61,7 @@ func subagentOverlayUnderLoadCalls(d *drv) map[int]int {
 }
 
 func TestSubagentOverlayUnderLoad(t *testing.T) {
+	t.Parallel()
 	d := newDrv(t, 80, 16, cfgWith(t, nil, nil, nil))
 	d.feed(windowSize(80, 16))
 	d.typeStr("fan out")
@@ -187,6 +188,7 @@ func TestSubagentOverlayUnderLoad(t *testing.T) {
 // resize bug in the way. Six children stream and finish under a scrolled
 // dive; esc lands on the spawner's transcript pinned at the bottom.
 func TestSubagentOverlayUnderLoadEscNoResize(t *testing.T) {
+	t.Parallel()
 	d := newDrv(t, 80, 16, cfgWith(t, nil, nil, nil))
 	d.feed(windowSize(80, 16))
 	d.event("assistant", "Fanning out.\n"+nLines(30)+"\n```js\ntools.spawnAll([...])\n```")
