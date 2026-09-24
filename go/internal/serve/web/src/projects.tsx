@@ -108,13 +108,17 @@ function OrbSection({ project, onOpen, onChanged, titles, rows = [] }: {
     return () => { stop = true; };
   }, [project.slug, state, load]);
 
+  // An action's refusal is its own state: in err it showed only while the
+  // detail was missing, and the reload below cleared it.
+  const [actErr, setActErr] = useState("");
   const run = async (fn: () => Promise<unknown>) => {
-    try { await fn(); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    setActErr("");
+    try { await fn(); } catch (e) { setActErr(e instanceof Error ? e.message : String(e)); }
     await onChanged(); load();
   };
 
   return (
-    <ProjectOrb project={project} detail={detail} log={log} error={err} onOpen={onOpen} titles={titles} onRetry={load}
+    <ProjectOrb project={project} detail={detail} log={log} error={err} actionError={actErr} onOpen={onOpen} titles={titles} onRetry={load}
       onSave={async (name: OrbFile, text: string) => { await api.putOrbFile(project.slug, name, text); load(); }}
       onBuild={() => { void run(() => api.buildOrb(project.slug)); }}
       onStopOrb={async (session) => { if (await confirmStopOrb(rows.find((r) => r.id === session)?.jobs)) void run(() => api.stopOrb(session)); }}
