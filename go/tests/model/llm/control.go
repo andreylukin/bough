@@ -17,12 +17,22 @@ import (
 )
 
 // Turn is one queued model response. Mode is "ok", "error", "slow" or
-// "block".
+// "block". Call, on a release, answers with that tool call after Text,
+// so the turn goes on instead of ending.
 type Turn struct {
 	Mode    string `json:"mode"`
 	Text    string `json:"text,omitempty"`
 	Error   string `json:"error,omitempty"`
 	DelayMS int    `json:"delay_ms,omitempty"`
+	Call    *Call  `json:"call,omitempty"`
+}
+
+// Call is a tool call the model makes: a native tool by name, with its
+// arguments. ID defaults to one the row makes up.
+type Call struct {
+	ID   string         `json:"id,omitempty"`
+	Name string         `json:"name"`
+	Args map[string]any `json:"args,omitempty"`
 }
 
 // Dir is the control dir the row reads when its config names none.
@@ -75,6 +85,28 @@ func ReleaseWith(t testing.TB, dir, name string, turn Turn) {
 	if err := os.Rename(tmp, filepath.Join(dir, name+".release")); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Stream makes a held "block" turn named name send text as one streamed
+// fragment and go on holding, so a test can put text on screen that
+// nothing has recorded yet. It returns once the row has sent it.
+func Stream(t testing.TB, dir, name, text string, timeout time.Duration) {
+	t.Helper()
+	tmp, dst := filepath.Join(dir, name+".stream-tmp"), filepath.Join(dir, name+".stream")
+	if err := os.WriteFile(tmp, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(dst); os.IsNotExist(err) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("llm-control: turn %q did not stream %q after %s", name, text, timeout)
 }
 
 // WaitTaken waits until the row has picked up turn name (it renames

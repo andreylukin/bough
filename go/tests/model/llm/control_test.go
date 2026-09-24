@@ -251,3 +251,42 @@ func TestControlBlock(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }
+
+// Stream sends one fragment while the turn stays held: the delta is on
+// stdout, nothing is recorded, and the release still answers after it.
+func TestControlBlockStream(t *testing.T) {
+	t.Parallel()
+	r := start(t, "--json")
+	Queue(t, r.dir(), "001", Turn{Mode: "block", Text: "whole reply"})
+	r.send("hello")
+	WaitTaken(t, r.dir(), "001", 30*time.Second)
+	Stream(t, r.dir(), "001", "partial ", 30*time.Second)
+	r.waitFor(`"kind":"assistant-delta","text":"partial "`)
+	if out := r.out.String(); strings.Contains(out, `"kind":"assistant","text"`) || strings.Contains(out, `"kind":"done"`) {
+		t.Fatalf("a streamed fragment recorded or ended the turn:\n%s", out)
+	}
+	Release(t, r.dir(), "001")
+	r.waitFor(`"kind":"assistant","text":"whole reply"`)
+	if code, out := r.finish(); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
+
+// A release that carries a tool call answers with it (after its text,
+// when there is any), so the turn goes on: the call runs, and the next
+// request takes the next queued turn.
+func TestControlBlockReleaseCall(t *testing.T) {
+	t.Parallel()
+	r := start(t, "--json")
+	Queue(t, r.dir(), "001", Turn{Mode: "block"})
+	Queue(t, r.dir(), "002", Turn{Mode: "ok", Text: "after the call"})
+	r.send("hello")
+	WaitTaken(t, r.dir(), "001", 30*time.Second)
+	ReleaseWith(t, r.dir(), "001", Turn{Text: "calling now", Call: &Call{Name: "bash", Args: map[string]any{"command": "echo from-the-call"}}})
+	r.waitFor(`"kind":"assistant","text":"calling now"`)
+	r.waitFor(`from-the-call`)
+	r.waitFor(`"kind":"assistant","text":"after the call"`)
+	if code, out := r.finish(); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+}
