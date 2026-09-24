@@ -310,3 +310,40 @@ func TestTapeMechanicsDelayFromConfig(t *testing.T) {
 		})
 	}
 }
+
+// TestTapeMechanicsDelayUntil: once the delay_until file exists the
+// rest of the reply streams without the pause, the pause under way
+// included, so a test that has done its mid-stream work does not wait
+// out a stream sized for a slow run. "~/" is the child's $HOME, the
+// only path a test knows in advance.
+func TestTapeMechanicsDelayUntil(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	p := tapeMechanicsWrite(t, t.TempDir(), `{"seq":1,"kind":"assistant","data":{"text":"one two three four"}}`)
+	ctx := kernel.NewContext()
+	if err := (plugin{}).Apply(ctx, map[string]any{"file": p, "delay_ms": 5000, "delay_until": "~/go"}); err != nil {
+		t.Fatal(err)
+	}
+	m, err := kernel.Get[*Model](ctx, "llm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	start := time.Now()
+	reply, err := m.Stream(t.Context(), "", nil, func(d string) {
+		got = append(got, d)
+		if len(got) == 1 { // the first 5 s pause is under way when it lands
+			time.AfterFunc(300*time.Millisecond, func() {
+				if err := os.WriteFile(filepath.Join(home, "go"), nil, 0o644); err != nil {
+					t.Error(err)
+				}
+			})
+		}
+	})
+	if err != nil || reply != "one two three four" || len(got) != 4 {
+		t.Fatalf("stream: %q %v, deltas %q", reply, err, got)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("stream took %v; the delay_until file landed after 300ms", d)
+	}
+}

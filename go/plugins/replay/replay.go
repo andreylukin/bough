@@ -13,6 +13,9 @@
 //     config: {file: ..., provide: codemode}               # the same file
 //
 // delay_ms (llm side) pauses between streamed words; default 0.
+// delay_until names a file ("~/" is $HOME): while it exists the words
+// stream without the pause, so a test that has done its mid-stream work
+// ends the turn instead of waiting out a reply sized for a slow run.
 //
 // An "error" entry that ends a turn (the next top-level entry is its
 // done) is a failed model call: Complete returns it at that point. A
@@ -74,6 +77,16 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	} else if ms, ok := cfg["delay_ms"].(float64); ok {
 		tape.Delay = time.Duration(ms * float64(time.Millisecond))
 	}
+	if f, _ := cfg["delay_until"].(string); f != "" {
+		if rest, ok := strings.CutPrefix(f, "~/"); ok {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("replay: delay_until: %w", err)
+			}
+			f = filepath.Join(home, rest)
+		}
+		tape.DelayUntil = f
+	}
 	if p, _ := cfg["provide"].(string); p == "codemode" {
 		ctx.Provide("codemode", &Runtime{CodeMode: codemode.New(codemode.StepTimeout()), tape: tape})
 		return nil
@@ -95,6 +108,8 @@ type Tape struct {
 	Replies []string // assistant entries, top level only
 	Results []result // result entries, top level only
 	Delay   time.Duration
+	// DelayUntil is a file whose existence turns Delay off.
+	DelayUntil string
 
 	mu    sync.Mutex
 	calls []call // every model call in order: replies and failures
@@ -282,15 +297,38 @@ func (m *Model) Stream(ctx context.Context, system string, messages []llm.Messag
 		}
 		onDelta(rest[:i+1])
 		rest = rest[i+1:]
-		if m.tape.Delay > 0 {
-			select {
-			case <-time.After(m.tape.Delay):
-			case <-ctx.Done():
-				return "", ctx.Err()
-			}
+		if err := m.tape.pause(ctx); err != nil {
+			return "", err
 		}
 	}
 	return reply, nil
+}
+
+// pause waits Delay between two words, or until the DelayUntil file
+// appears: looked for every 20ms, so a pause already under way ends too.
+func (t *Tape) pause(ctx context.Context) error {
+	if t.Delay <= 0 {
+		return nil
+	}
+	for end := time.Now().Add(t.Delay); ; {
+		if t.DelayUntil != "" {
+			if _, err := os.Stat(t.DelayUntil); err == nil {
+				return nil
+			}
+		}
+		d := time.Until(end)
+		if d <= 0 {
+			return nil
+		}
+		if t.DelayUntil != "" {
+			d = min(d, 20*time.Millisecond)
+		}
+		select {
+		case <-time.After(d):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 // Runtime is the codemode side of the tape: a real codemode (so every
