@@ -1,0 +1,310 @@
+---
+# The bounds (MAX_TURNS, MAX_SENT, one failure row, one queue) end every
+# behaviour in a quiet thread: that is rest, not a deadlock.
+deadlock_detection: false
+---
+
+# Resending a past prompt from the web thread (web/src/app.tsx): the
+# transcript's Edit button on a prompt (TurnView, EditPrompt.edit), the
+# Retry on a failed turn's error card (ErrorCard, RetryTurn), the Retry
+# and Edit on a "Not sent" row (the failures list), and Edit on a queued
+# message. What each resends or puts back is what the person typed,
+# never what the server expanded it to: the loop and the engine append
+# "[file: p]\n<contents>" for an @file, "[skill: s]\n<SKILL.md>" for a
+# skill, and the engine "the user attached <p>; call view_image to look
+# at it" for a pasted image (plugins/loop/loop.go expandInput,
+# internal/unreal/session/actor.go expand), and record the words typed
+# as data.typed when the text differs.
+#
+# Fields (all on the Session role; see go/tests/model/README.md):
+#   status    the row's status: idle (no turn, or the last one done),
+#             running, error (the last turn failed: its error card is the
+#             latest)
+#   kinds     one per turn, oldest first: what its prompt carried
+#             rich   typed words with an @file or a skill mention: the
+#                    recorded text is longer than what was typed
+#             image  an "[Image #1: path]" tag: the engine appends its
+#                    view_image sentence
+#             Every prompt here carries one or the other; a plain prompt
+#             resends the same either way and proves nothing.
+#   ends      one per turn: running | ok | error. Each "error" turn shows
+#             an error card with Retry; it is an older card when a later
+#             turn exists.
+#   inputs    one per turn: what the transcript shows (and history's
+#             data.typed, or text when absent, records) as the prompt's
+#             typed words, against what the person typed for it:
+#             typed | expanded. "expanded" is an @file or SKILL.md body
+#             sent back as if typed (doubled on the next expansion), or
+#             the engine's view_image sentence shown as typed words.
+#   draft     the composer: "" | rich | image (a past prompt put back, or
+#             words typed now: the composer does not care which). Any
+#             other value is text nobody typed: two prompts glued
+#             ("rich+rich"), or an expansion put back ("leak").
+#   uploading a pasted image's upload is in flight: its tag is in the
+#             draft with no path yet ("Attaching image…")
+#   archived  the session is archived: the composer is read-only
+#   failed    the "Not sent" row: "" | the kind of the message it keeps.
+#             One at a time.
+#   queued    the queued message (Cmd/Ctrl+Enter while running): "" | its
+#             kind. One at a time.
+#
+# Where this departs from the mapped model, and why:
+# - "retry_sent", "edit_in_draft", "older_error_card" and the rest of the
+#   mapped states are not fields: they are read off kinds/ends/draft
+#   (an older card is an "error" end before the last turn).
+# - Uploading does not guard an error card's Retry. send() refuses a
+#   draft while an upload runs because the draft's tag has no path yet;
+#   a Retry resends a recorded prompt and never reads the draft. What
+#   the mapped invariant meant is kept for the draft: nothing is sent
+#   from the composer while uploading.
+# - Steering is steer_queue.fizz: here the composer sends only when no
+#   turn runs, and the Not-sent row's Retry (a steer when live, in the
+#   code) is only taken with nothing running. The error card's Retry
+#   while a later turn runs is modelled: it must be refused (the mapped
+#   bug is that the code steers the old prompt into that turn).
+# - The page's busy (an archive or rename request in flight) is not
+#   modelled: the failure row's Retry honours it and the card's does not;
+#   that is one more guard the card owes, said in the notes of this run.
+# - The queue flushes in the render that makes it ready, before any key
+#   the person can press (as in steer_queue.fizz), so a person's action
+#   never beats a ready flush; Archive is one of those actions, which is
+#   why an archived session never holds a queued message here.
+# - To stay walkable (every path is a browser test; crossing everything
+#   made 4866 states) each extra is taken where it matters and nowhere
+#   else: an image is pasted into a blank composer; only the first send
+#   fails, and only a typed ("rich") one, so the Not-sent row is
+#   "" | rich; only a typed draft is queued, during the first turn;
+#   Archive needs a blank composer and no Not-sent row. The kinds that
+#   matter to a resend (rich, image) still reach every resend: Edit and
+#   the card's Retry take any turn.
+
+# Two turns come from the composer (a send, a flushed queue, a Not-sent
+# retry); the third only from an error card's Retry: enough for a card
+# to be older than a later turn and still be retried once it ends.
+MAX_TURNS = 3
+MAX_SENT = 2
+
+role Session:
+    action Init:
+        self.status = "idle"
+        self.kinds = []
+        self.ends = []
+        self.inputs = []
+        self.draft = ""
+        self.uploading = False
+        self.archived = False
+        self.failed = ""
+        self.queued = ""
+
+    # The flush effect's guard (app.tsx: running, busy, flushing,
+    # unlanded, queued) with nothing unlanded here.
+    atomic func flush_ready():
+        return (self.status != "running" and self.queued != ""
+                and len(self.kinds) < MAX_SENT)
+
+    # A new turn from `kind`'s typed words: what the POST carries is what
+    # the person typed, and the transcript says so.
+    atomic func start(kind):
+        self.kinds = self.kinds + [kind]
+        self.ends = self.ends + ["running"]
+        self.inputs = self.inputs + ["typed"]
+        self.status = "running"
+
+    # ---- the person: the composer ----
+
+    # Words typed into a blank composer (with an @file or a skill in them).
+    atomic action Type:
+        require not self.archived and self.draft == ""
+        ready = self.flush_ready()
+        require not ready
+        self.draft = "rich"
+
+    # An image pasted into the composer: its "[Image #1]" tag lands at
+    # once, its path when the upload finishes.
+    atomic action PasteImage:
+        require not self.archived and not self.uploading
+        require self.draft == ""
+        ready = self.flush_ready()
+        require not ready
+        self.draft = "image"
+        self.uploading = True
+
+    atomic fair action UploadDone:
+        require self.uploading
+        self.uploading = False
+
+    # Clear: select all, delete. An image whose upload is still running
+    # keeps its tag (only a finished upload can be cleared here).
+    atomic action Clear:
+        require self.draft != "" and not self.uploading
+        ready = self.flush_ready()
+        require not ready
+        self.draft = ""
+
+    # Enter or Send with nothing running (send(): not busy, not
+    # uploading, not archived). The draft is the new turn's prompt.
+    atomic action Send:
+        require self.draft != "" and not self.uploading and not self.archived
+        require self.status != "running" and len(self.kinds) < MAX_SENT
+        ready = self.flush_ready()
+        require not ready
+        kind = self.draft
+        self.draft = ""
+        self.start(kind)
+
+    # The same, answered with an error (5xx, network): the optimistic
+    # row goes and a "Not sent" row keeps the message.
+    atomic action SendFails:
+        require self.draft == "rich" and not self.archived
+        require self.status != "running" and self.failed == ""
+        require len(self.kinds) == 0
+        ready = self.flush_ready()
+        require not ready
+        self.failed = self.draft
+        self.draft = ""
+
+    # Cmd/Ctrl+Enter while the turn runs: held until it ends.
+    atomic action Enqueue:
+        require self.status == "running" and self.draft == "rich"
+        require self.queued == "" and len(self.kinds) == 1
+        self.queued = self.draft
+        self.draft = ""
+
+    # The flush effect: the queued message goes as the next turn.
+    atomic fair action Flush:
+        ready = self.flush_ready()
+        require ready
+        kind = self.queued
+        self.queued = ""
+        self.start(kind)
+
+    # ---- the person: resending ----
+
+    # The pencil on a past prompt: its typed words back into a blank
+    # composer (disabled over a draft: "Send or clear the current draft
+    # first"). Allowed while a turn runs and while archived: it only
+    # fills the draft.
+    atomic action EditPrompt:
+        require self.draft == "" and len(self.kinds) > 0
+        ready = self.flush_ready()
+        require not ready
+        i = oneof range(len(self.kinds))
+        self.draft = self.kinds[i]
+
+    # Retry on a failed turn's error card: that turn's typed words go
+    # again as a new turn. Only with nothing running (a card's Retry
+    # never steers a later turn), never into an archived session.
+    atomic action RetryTurn:
+        require self.status != "running" and not self.archived
+        require len(self.kinds) < MAX_TURNS
+        ready = self.flush_ready()
+        require not ready
+        errs = [i for i in range(len(self.ends)) if self.ends[i] == "error"]
+        require len(errs) > 0
+        i = oneof errs
+        self.start(self.kinds[i])
+
+    # Retry on the "Not sent" row: the same request again.
+    atomic action RetryFailed:
+        require self.failed != "" and self.status != "running" and not self.archived
+        require len(self.kinds) < MAX_SENT
+        ready = self.flush_ready()
+        require not ready
+        kind = self.failed
+        self.failed = ""
+        self.start(kind)
+
+    # Edit on the "Not sent" row: back into a blank composer only.
+    atomic action EditFailed:
+        require self.failed != "" and self.draft == ""
+        ready = self.flush_ready()
+        require not ready
+        self.draft = self.failed
+        self.failed = ""
+
+    # Edit on the queued message: out of the queue into a blank composer.
+    atomic action EditQueued:
+        require self.queued != "" and self.draft == ""
+        ready = self.flush_ready()
+        require not ready
+        self.draft = self.queued
+        self.queued = ""
+
+    # Archive (header More, or another client) and Unarchive, with no
+    # turn running.
+    atomic action Archive:
+        require not self.archived and self.status != "running"
+        require self.draft == "" and self.failed == ""
+        ready = self.flush_ready()
+        require not ready
+        self.archived = True
+
+    atomic action Unarchive:
+        require self.archived
+        self.archived = False
+
+    # ---- the model ----
+
+    # The running turn ends: done, or an error entry then done (an error
+    # card on the turn, the row reads error).
+    atomic fair action Finish:
+        require self.status == "running"
+        end = oneof ["ok", "error"]
+        self.ends = self.ends[:-1] + [end]
+        self.status = "idle" if end == "ok" else "error"
+
+action Init:
+    session = Session()
+
+# What is sent again, and what the transcript shows as typed, is what
+# the person typed: never an expansion (@file and SKILL.md bodies
+# doubled, the engine's view_image sentence as typed words).
+always assertion ResendsTyped:
+    for s in session.inputs:
+        if s != "typed":
+            return False
+    return True
+
+# The draft only ever holds what someone typed: an Edit never glues onto
+# a draft and never puts an expansion back.
+always assertion DraftIsTyped:
+    return session.draft in ("", "rich", "image")
+
+# At most one turn runs, and it is the last one: a resend never lands in
+# (steers) a different running turn.
+always assertion OneTurnRuns:
+    for i in range(len(session.ends) - 1):
+        if session.ends[i] == "running":
+            return False
+    return (session.status == "running") == (len(session.ends) > 0 and session.ends[-1] == "running")
+
+# A new turn starts only in a session that is not archived and has no
+# turn running.
+transition assertion NoResendIntoArchivedOrRunning(before, after):
+    if len(after.session.kinds) > len(before.session.kinds):
+        return not before.session.archived and before.session.status != "running"
+    return True
+
+# Nothing leaves the composer while an upload runs: its tag has no path.
+transition assertion NoSendWhileUploading(before, after):
+    took = (before.session.draft != "" and after.session.draft == ""
+            and (len(after.session.kinds) > len(before.session.kinds)
+                 or after.session.failed != before.session.failed
+                 or after.session.queued != before.session.queued))
+    if took:
+        return not before.session.uploading
+    return True
+
+# Every resend is one turn: a turn is added at most one at a time.
+transition assertion OneTurnPerResend(before, after):
+    return len(after.session.kinds) <= len(before.session.kinds) + 1
+
+# A turn, retried or not, ends: it is done or shows its error card.
+always eventually assertion TurnEnds:
+    return session.status != "running"
+
+always eventually assertion QueueDrains:
+    return session.queued == ""
+
+always eventually assertion UploadSettles:
+    return not session.uploading
