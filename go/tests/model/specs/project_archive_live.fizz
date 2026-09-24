@@ -68,7 +68,7 @@ deadlock_detection: false
 #             and unarchived: "", "thread" or "main".
 #   view      home or main (the page shows main's conversation).
 #
-# Scope cuts, since every generated path is one browser walk (866
+# Scope cuts, since every generated path is one browser walk (883
 # states): one archive, one message and one later thread per walk, and a
 # walk sends the message or starts the page's thread, not both; before
 # the archive the only requests are a fresh project's first one (a
@@ -102,7 +102,10 @@ deadlock_detection: false
 #            reaches it: its Create finishes and a live, archived main
 #            runs (left == "main"). Booted by a message, messageProject
 #            then unarchives it (the message wins); by New thread, the
-#            thread starts under the archived main.
+#            thread starts under the archived main. A main that finishes
+#            booting before the thread ends is one of those threads to
+#            EndChild, which kills it; EndProject's own Kill(main) only
+#            ever reaches a main MainID named.
 #   hidden   New thread on an archived project: Main returns the
 #            archived main without unarchiving it, CreateChild(Thread)
 #            bypasses the archived parent, and the thread's report is a
@@ -287,12 +290,19 @@ role Project:
             if self.x == "running":
                 self.repx = True
             self.x = "dead"
+        if not self.mid:
+            # A main with no history file at the snapshot is listed by its
+            # Project meta among the threads: EndChild kills it if it has
+            # booted since, and a booting one is not in s.kids yet.
+            kill_main(self, "kill")
         self.arch = "killing"
 
     atomic fair action KillMain:
-        # EndProject's Kill(main): main only if it is in s.kids.
+        # EndProject's Kill(main): only a main MainID named at the
+        # snapshot, and only if it is in s.kids.
         require self.arch == "killing"
-        kill_main(self, "kill")
+        if self.mid:
+            kill_main(self, "kill")
         self.arch = "flagging"
 
     atomic fair action FlagAll:
