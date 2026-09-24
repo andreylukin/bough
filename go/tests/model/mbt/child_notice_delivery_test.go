@@ -155,6 +155,7 @@ type cndAdapter struct {
 	secretAnswers int
 	gapOn         bool
 	ev            *cndEvents
+	final         []history.Entry // the parent's file at the end of a whole walk
 
 	cli     *exec.Cmd
 	cliIn   io.WriteCloser
@@ -163,7 +164,6 @@ type cndAdapter struct {
 	evCancel context.CancelFunc
 
 	parents []string // every walk's parent
-	traced  []string // the parents of whole walks, for the trace check
 	did     map[string]int
 	skipped int // walks cut short where the real system cannot be held
 
@@ -1159,6 +1159,14 @@ func (a *cndAdapter) cndWalk(w tracecheck.Walk) (checked int, cut string, err er
 		name := strings.TrimPrefix(l.Name, cndRole)
 		s0, s1 := cndOf(a.g.Nodes[cur].State), cndOf(a.g.Nodes[l.Dest].State)
 		a.did[name]++
+		if !cndVirtual[name] && !ahead {
+			// The product may have taken a step of its own since the last
+			// check (the 1 s stored-notice poll, say): the real system is
+			// then ahead of cur before this step acts on it.
+			if ah, err := a.check(cur, 0, false); err == nil && ah {
+				ahead = true
+			}
+		}
 		err := a.step(name, s0, s1)
 		if err == nil && !a.realized && needsReal(s1) {
 			if err = a.realize(s1); err == nil {
@@ -1170,6 +1178,12 @@ func (a *cndAdapter) cndWalk(w tracecheck.Walk) (checked int, cut string, err er
 		}
 		if err != nil {
 			return checked, "", fmt.Errorf("step %d (%s): %w", i, name, err)
+		}
+		if s1.report == "stored" && (s1.proc == "live" || s1.proc == "cli") && !s1.gap && !cndVirtual[name] {
+			// A mounted parent with its services up polls its file every
+			// second: let that poll run, so the check sees the report it
+			// takes rather than the next step racing it.
+			time.Sleep(1200 * time.Millisecond)
 		}
 		was := ahead
 		ahead, err = a.check(l.Dest, 3*time.Second, a.realized || !cndVirtual[name])
@@ -1192,6 +1206,9 @@ func (a *cndAdapter) cndWalk(w tracecheck.Walk) (checked int, cut string, err er
 		}
 		return checked, "", fmt.Errorf("after the walk settled: %w", err)
 	}
+	// The file as the walk left it: Cleanup kills the parent and releases
+	// the child, whose report then lands in it after the walk.
+	a.final = a.entries()
 	return checked, "", nil
 }
 
@@ -1212,7 +1229,7 @@ func runCNDWalks(t *testing.T, g *tracecheck.Graph, walks []tracecheck.Walk, sha
 			t.Parallel()
 			shardT := t
 			var a *cndAdapter
-			checked, cut, full := 0, 0, 0
+			checked, cut, full, traced := 0, 0, 0, 0
 			for i := sh; i < len(walks); i += shards {
 				t.Run(fmt.Sprintf("w%04d", i), func(t *testing.T) {
 					if a == nil {
@@ -1239,19 +1256,22 @@ func runCNDWalks(t *testing.T, g *tracecheck.Graph, walks []tracecheck.Walk, sha
 						return
 					}
 					full++
-					if !a.synthetic {
+					if !a.synthetic && failed == nil {
 						// The adapter wrote nothing into this file itself.
-						a.traced = append(a.traced, a.parent)
+						// Checked here, so a failure names its walk.
+						traced++
+						entries := a.final
+						checkHistory(t, g, entries, cndHistory)
+						if t.Failed() {
+							t.Logf("walk %d %s: parent file: %s", i, cndActs(g, walks[i]), cndKinds(entries))
+						}
 					}
 				})
 			}
 			if a != nil {
 				t.Logf("steps checked %d, walks whole %d, cut short %d; actions %v", checked, full, cut, a.did)
 				if failed == nil {
-					for _, id := range a.traced {
-						checkHistory(t, g, sessionHistory(t, a.s.Home, id), cndHistory)
-					}
-					t.Logf("trace-checked %d parent transcripts", len(a.traced))
+					t.Logf("trace-checked %d parent transcripts", traced)
 				}
 			}
 		})
@@ -1314,19 +1334,51 @@ func cndHistory(entries []history.Entry) []tracecheck.Step {
 		t := str(e.Data["text"])
 		return e.Kind == "command" && (t == "/help" || t == "/cost")
 	}
-	// early marks start commands already read: a mount that finds a
-	// stored notice may record the wake turn it runs (or that turn's ask)
-	// before the start's own command entry.
+	turnKinds := map[string]bool{"input": true, "done": true, "cancelled": true, "ask": true, "ask/answer": true, "job": true, "call": true, "assistant": true}
+	// nextStart is the start command a process's entry at i belongs to,
+	// -1 when it is the running process's own: a mount that finds a stored
+	// notice marks it, and may record the wake turn it runs (or that
+	// turn's ask), before the start's own command entry. An entry with no
+	// process is the next start's; so is one followed by a start before
+	// any entry of a turn (the process that ran was killed, which leaves
+	// no entry). The "cancelled" that closes the killed turn is the next
+	// process's too, and so is the wake turn a mount runs.
+	nextStart := func(i int) int {
+		for j := i + 1; j < len(entries); j++ {
+			if isStart(entries[j]) {
+				return j
+			}
+			if w, _ := entries[j].Data["wake"].(bool); w && entries[j].Kind == "input" {
+				continue
+			}
+			if proc != "none" && turnKinds[entries[j].Kind] {
+				return -1
+			}
+		}
+		return -1
+	}
+	// readBeforeSecret: the pump read the report before a secret was
+	// armed (it waited out a gap, which the file cannot show) when the
+	// engine takes it while that secret is still pending.
+	readBeforeSecret := func(i int) bool {
+		for j := i + 1; j < len(entries); j++ {
+			switch entries[j].Kind {
+			case "job":
+				return true
+			case "ask/answer", "done", "cancelled", "notice":
+				// A stored notice came through the file, not the pump.
+				return false
+			}
+		}
+		return false
+	}
 	early := map[int]bool{}
 	for i, e := range entries {
 		text := str(e.Data["text"])
-		if proc == "none" && (e.Kind == "input" || e.Kind == "job" || e.Kind == "ask" || e.Kind == "ask/answer") {
-			for j := i + 1; j < len(entries); j++ {
-				if isStart(entries[j]) {
-					start(str(entries[j].Data["text"]))
-					early[j] = true
-					break
-				}
+		if e.Kind == "notice-delivered" || e.Kind == "input" || e.Kind == "job" || e.Kind == "ask" || e.Kind == "ask/answer" || e.Kind == "cancelled" {
+			if j := nextStart(i); j >= 0 && !early[j] {
+				start(str(entries[j].Data["text"]))
+				early[j] = true
 			}
 		}
 		switch e.Kind {
@@ -1339,8 +1391,14 @@ func cndHistory(entries []history.Entry) []tracecheck.Step {
 				start(text)
 			}
 		case "notice":
-			if str(e.Data["from"]) == "" || report != "closed" || proc == "live" {
+			if str(e.Data["from"]) == "" || report != "closed" {
 				continue
+			}
+			if proc == "live" {
+				// serve appends only when it holds no lease: the parent's
+				// process died.
+				proc, busy = "none", false
+				add("Kill")
 			}
 			report = "keyed"
 			add("Key")
@@ -1381,12 +1439,19 @@ func cndHistory(entries []history.Entry) []tracecheck.Step {
 			add("Prompt")
 		case "ask":
 			if s, _ := e.Data["secret"].(bool); s {
+				if readBeforeSecret(i) {
+					pipe()
+				}
 				add("AskSecret")
 			} else {
 				add("Ask")
 			}
 		case "ask/answer":
 			add("Answer")
+		case "cancelled":
+			// The killed turn, closed by the next process: its Kill is
+			// already read.
+			busy = false
 		case "done":
 			if busy {
 				busy = false
@@ -1399,38 +1464,79 @@ func cndHistory(entries []history.Entry) []tracecheck.Step {
 
 func init() { historyProjections["child_notice_delivery"] = cndHistory }
 
-// The projection reads a report stored for a parent with no process and
-// marked by the process that mounts (its notice-delivered lands before
-// its first command entry) as Append, Ensure, Mount; a wake with no
+// cndParse is cndKinds read back: a transcript written as its kinds, the
+// way a failed walk logs it, so a real file's shape can be replayed here.
+func cndParse(s string) []history.Entry {
+	var out []history.Entry
+	for _, f := range strings.Fields(s) {
+		kind, arg, _ := strings.Cut(strings.TrimSuffix(f, ")"), "(")
+		data := map[string]any{}
+		switch {
+		case kind == "command":
+			data["text"] = arg
+		case kind == "notice":
+			data["id"], data["from"], data["text"] = "n1", "c", "[agent c · c finished] r"
+		case kind == "notice-delivered":
+			data["id"] = "n1"
+		case arg == "secret":
+			data["secret"] = true
+		case kind == "input" && arg == "wake":
+			data["wake"], data["reason"] = true, "notice"
+		}
+		out = append(out, history.Entry{Kind: kind, Data: data})
+	}
+	return out
+}
+
+// Transcripts the every-transition cover wrote, as cndKinds logs them,
+// must be paths: a report stored for a parent with no process and marked
+// by the process that mounts (before or after its first command entry,
+// with its wake turn before it too), a killed process whose turn the next
+// one closes as cancelled, a CLI killed without an entry, and a notice
+// the pump read in a gap before a secret was armed. A wake with no
 // process is not a path.
 func TestChildNoticeDeliveryHistoryProjection(t *testing.T) {
 	t.Parallel()
 	g := loadCNDGraph(t)
-	e := func(kind string, data map[string]any) history.Entry { return history.Entry{Kind: kind, Data: data} }
-	wake := e("input", map[string]any{"wake": true, "reason": "notice", "text": "[agent c · c finished] r"})
-	stored := []history.Entry{
-		e("meta", nil),
-		e("notice", map[string]any{"id": "n1", "from": "c", "text": "[agent c · c finished] r"}),
-		e("notice-delivered", map[string]any{"id": "n1"}),
-		e("command", map[string]any{"text": "/help"}),
-		wake,
-		e("done", nil),
+	for name, file := range map[string]string{
+		"mount":      "meta notice notice-delivered command(/help) input(wake) done",
+		"wake first": "meta notice notice-delivered input(wake) command(/help) done",
+		"cli prompt": "meta command(/cost) input done",
+		"walk 15":    "meta command(/cost) system notice origin notice-delivered command(/help) system input(wake) engine input ask ask/answer call",
+		"walk 12":    "meta command(/cost) system notice origin notice-delivered input(wake) command(/help) system engine ask ask/answer call assistant hook done turn-summary title input assistant done turn-summary",
+		"walk 29":    "meta command(/cost) system input engine notice cancelled origin notice-delivered input(wake) command(/help) system engine",
+		"walk 56":    "meta command(/cost) system input engine ask(secret) ask/answer(secret) call notice cancelled origin notice-delivered input(wake) command(/help) system engine assistant done turn-summary turn-summary title engine",
+		"walk 71":    "meta origin command(/help) system input engine notice cancelled notice-delivered input(wake) command(/cost) system engine",
+		"walk 137":   "meta origin command(/help) system input engine assistant done turn-summary title notice notice-delivered input(wake) command(/help) system engine ask",
+		"walk 650":   "meta origin command(/help) system input engine ask(secret) job",
+		"walk 709":   "meta command(/cost) system origin command(/help) system input engine ask(secret) job",
+		"walk 142":   "meta command(/cost) system input engine ask(secret) notice notice-delivered job",
+	} {
+		if v := g.Check(cndHistory(cndParse(file))); v != nil {
+			t.Errorf("%s: %v\n  file: %s", name, v, file)
+		}
 	}
-	if v := g.Check(cndHistory(stored)); v != nil {
-		t.Fatalf("a stored report delivered on mount: %v", v)
+	if v := g.Check(cndHistory(cndParse("meta input(wake)"))); v == nil {
+		t.Error("a wake with no process passed the trace check")
 	}
-	// The mount's wake turn can be recorded before the start's command.
-	stored[3], stored[4] = stored[4], stored[3]
-	if v := g.Check(cndHistory(stored)); v != nil {
-		t.Fatalf("a wake recorded before the start's command: %v", v)
+}
+
+// cndKinds is a transcript as its entry kinds, with the texts that tell
+// a start, a wake and a secret apart.
+func cndKinds(entries []history.Entry) string {
+	var b strings.Builder
+	for _, e := range entries {
+		b.WriteString(" " + e.Kind)
+		switch {
+		case e.Kind == "command":
+			b.WriteString("(" + str(e.Data["text"]) + ")")
+		case e.Data["wake"] == true:
+			b.WriteString("(wake " + str(e.Data["reason"]) + ")")
+		case e.Data["secret"] == true:
+			b.WriteString("(secret)")
+		}
 	}
-	cli := []history.Entry{e("meta", nil), e("command", map[string]any{"text": "/cost"}), e("input", map[string]any{"text": "hi"}), e("done", nil)}
-	if v := g.Check(cndHistory(cli)); v != nil {
-		t.Fatalf("a prompt in the CLI: %v", v)
-	}
-	if v := g.Check(cndHistory([]history.Entry{e("meta", nil), wake})); v == nil {
-		t.Fatal("a wake with no process passed the trace check")
-	}
+	return b.String()
 }
 
 func cndActs(g *tracecheck.Graph, w tracecheck.Walk) string {
