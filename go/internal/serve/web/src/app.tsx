@@ -4346,7 +4346,10 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     ro.observe(el);
     return () => { ro.disconnect(); root.style.removeProperty("--composer-h"); };
   }, []);
-  useEffect(() => { if (!live) setStopping(""); }, [live]);
+  // A stop from a question never made the turn live: its end is the
+  // status leaving needs-you.
+  const waitsOnYou = row.status === "needs-you";
+  useEffect(() => { if (!live && !waitsOnYou) setStopping(""); }, [live, waitsOnYou]);
   useEffect(() => {
     if (!restoreOnStop.current || running || loading) return;
     const t = stoppedPrompt(lines);
@@ -4912,10 +4915,13 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                 </button>
               )}
               {/* One filled control: Stop is a square icon, Queue shows once there is a draft to queue. */}
-              {live && (stopping === "failed"
-                ? <button className="btn composer-stop-retry" onClick={stop} title="Stop (Esc)" aria-keyshortcuts="Escape">Retry stop</button>
+              {/* A turn waiting on a question is still open: it can be
+                  stopped without answering. Esc stays with the answer
+                  being typed, so only the button says it. */}
+              {(live || waitsOnYou) && (stopping === "failed"
+                ? <button className="btn composer-stop-retry" onClick={stop} title={live ? "Stop (Esc)" : "Stop"} aria-keyshortcuts={live ? "Escape" : undefined}>Retry stop</button>
                 : <button className="btn btn-ghost composer-stop" disabled={stopping === "stopping"} onClick={stop}
-                          aria-label={stopping === "stopping" ? "Stopping" : "Stop"} title="Stop (Esc)" aria-keyshortcuts="Escape">
+                          aria-label={stopping === "stopping" ? "Stopping" : "Stop"} title={live ? "Stop (Esc)" : "Stop"} aria-keyshortcuts={live ? "Escape" : undefined}>
                     {stopping === "stopping" ? <span className="composer-spin" aria-hidden="true" />
                       : <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect width="10" height="10" rx="2" fill="currentColor" /></svg>}
                   </button>)}
