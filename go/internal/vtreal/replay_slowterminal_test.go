@@ -261,6 +261,12 @@ func TestSlowTerminalConverges(t *testing.T) {
 			}
 			fa, sa := begin(false), begin(true)
 			finish(fa, false)
+			// The reference is the turn's final frame: the done entry lands
+			// before the repaint that drops the streaming cursor, and in a
+			// loaded run a settle could return the frame before it.
+			fa.waitUntil(func(s string) bool {
+				return !strings.Contains(s, liveGlueCursor) && !liveGlueHasSpinner(s)
+			}, "the fast run's final frame")
 			fast, fastRSS := slowterminalNorm(fa.settled()), slowterminalRSS(t, fa)
 			finish(sa, true)
 			sa.slowterminalConverge(fast, 30*time.Second)
