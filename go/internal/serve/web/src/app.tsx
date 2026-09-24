@@ -2678,6 +2678,9 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, l
   // edits and context, until the title group (status and all) and the strip
   // each fit their room. A phone folds them all. A new pane width starts over.
   const [fold, setFold] = useState(0);
+  // The chip's tab lives here: a fold (a phone, a narrow pane) moves the
+  // chip under "Details" and back, which mounts it anew each time.
+  const [chgScope, setChgScope] = useState<Scope>("session");
   const recheck = useRef<() => void>(() => {});
   // A fold that frees no width fires no resize, so each fold checks again.
   useEffect(() => { const id = requestAnimationFrame(() => recheck.current()); return () => cancelAnimationFrame(id); }, [fold]);
@@ -2686,6 +2689,10 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, l
     if (!el || !head || !main || typeof ResizeObserver === "undefined") return;
     const check = () => {
       if (window.matchMedia?.("(max-width:720px)").matches) return setFold(5);
+      // An open popover's content widens the strip, and a fold would move
+      // its chip under "Details", shutting what the person is reading.
+      // Its close checks again (the toggle listener below).
+      if (el.querySelector("details[open]")) return;
       const h1 = main.querySelector("h1");
       // R4-F: the metrics row does not wrap, so it can run under the actions
       // without the strip itself overflowing; that counts as over too.
@@ -2704,11 +2711,13 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, l
     });
     ro.observe(head); ro.observe(main); ro.observe(el);
     el.querySelectorAll(":scope>.rt-metrics,:scope>.rt-actions").forEach((n) => ro.observe(n));
-    return () => ro.disconnect();
+    const toggled = () => requestAnimationFrame(check);
+    el.addEventListener("toggle", toggled, true);
+    return () => { ro.disconnect(); el.removeEventListener("toggle", toggled, true); };
   }, []);
   const cache = row.cache && <CacheChip key="cache" cache={row.cache} model={row.model} />;
   const tests = <TestsChip key="tests" lines={lines} running={row.status === "running"} />;
-  const edits = failed ? null : <ChangesChip key="edits" row={row} />;
+  const edits = failed ? null : <ChangesChip key="edits" row={row} scope={chgScope} onScope={setChgScope} />;
   // Cache, changes and tests stand on their own: a session with no usage
   // recorded can still have a server running.
   const context = (() => {
@@ -2809,10 +2818,9 @@ function usePopovers(root: React.RefObject<HTMLElement | null>) {
  * the working tree one tab away. A phone has no room for a popover and
  * goes to the full page, #/s/<id>/changes.
  */
-export function ChangesChip({ row }: { row: Row }) {
+export function ChangesChip({ row, scope, onScope }: { row: Row; scope: Scope; onScope: (s: Scope) => void }) {
   const data = useContext(SessionChanges) ?? { session: unread, tree: unread, turn: undefined, turnSeq: undefined, retry: () => {} };
   const phone = useMedia("(max-width:720px)");
-  const [scope, setScope] = useState<Scope>("session");
   // The chip is the one place that names a missing repository; the body's tabs show a dash.
   const noRepo = (r: typeof data.session) => (r.files !== null && !r.repo ? { text: "No Git repository", quiet: true } : null);
   const c: ReturnType<typeof countOf> = noRepo(data.session) ?? countOf(data.session);
@@ -2820,7 +2828,9 @@ export function ChangesChip({ row }: { row: Row }) {
   const href = `#/s/${row.id}/changes`;
   // R4-F: nothing to count reads as one phrase, not "Session edits None".
   const none = c.text === "None";
-  const aria = none ? `No edits. Working tree: ${t.text}` : `Session edits: ${c.text}${c.add !== undefined ? `, ${c.add} added, ${c.del} removed` : ""}. Working tree: ${t.text}${data.session.failed || data.tree.failed ? ", stale" : ""}`;
+  // A failed refresh keeps the last list: say so with no edits too.
+  const stale = data.session.failed || data.tree.failed ? ", stale" : "";
+  const aria = none ? `No edits. Working tree: ${t.text}${stale}` : `Session edits: ${c.text}${c.add !== undefined ? `, ${c.add} added, ${c.del} removed` : ""}. Working tree: ${t.text}${stale}`;
   // A local session outside a checkout has no number to show: two words, not a sentence at value weight.
   const body = c.quiet && c.text === "No Git repository" ? <span className="rt-label" title="No Git repository">No repo</span> : none ? <span className="rt-label">No edits</span> : <>
     <span className="rt-label">Edits</span>
@@ -2834,7 +2844,7 @@ export function ChangesChip({ row }: { row: Row }) {
     <details className="rt rt-jobs">
       <summary aria-label={aria}>{body}</summary>
       <div className="rt-pop rt-diff">
-        <ChangesBody row={row} data={data} scope={scope} onScope={setScope} />
+        <ChangesBody row={row} data={data} scope={scope} onScope={onScope} />
         <a className="link chg-full" href={href}>Open full view</a>
       </div>
     </details>

@@ -3698,7 +3698,11 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 .chg-sum-line>.rt-zero{color:var(--text-3)}
 .chg-summary+.chg-cards,.chg-cards{gap:0;border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;background:var(--surface)}
 .chg-card{border:0;border-top:1px solid var(--line);border-radius:0;overflow:visible}
-.chg-card:first-child{border-top:0}
+.chg-card-wrap:first-child>.chg-card{border-top:0}
+/* Copy sits over the head's end, outside the summary (see FileCard). */
+.chg-card-wrap{position:relative}
+.chg-card-wrap>.chg-copy{position:absolute;top:calc((36px - var(--ctl-sm)) / 2);right:6px;z-index:2}
+.chg-card-wrap .chg-card-head{padding-right:calc(12px + var(--ctl-sm))}
 .chg-card-head{position:sticky;top:0;z-index:1;gap:8px;min-height:36px;padding:0 6px 0 12px;background:var(--surface);transition:background-color var(--dur-fast) var(--ease)}
 .chg-card-head:hover{background:color-mix(in srgb,var(--text-1) 4%,var(--surface))}
 .chg-chev{flex:none;color:var(--text-3);transition:rotate var(--dur) var(--ease)}
@@ -3723,6 +3727,8 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
   .chg-card-head{min-height:44px}
   .chg-card-dir{display:none}
   .chg-copy{width:var(--row-touch);height:var(--row-touch)}
+  .chg-card-wrap>.chg-copy{top:calc((44px - var(--row-touch)) / 2)}
+  .chg-card-wrap .chg-card-head{padding-right:calc(12px + var(--row-touch))}
 }
 
 /* §4 hooks */

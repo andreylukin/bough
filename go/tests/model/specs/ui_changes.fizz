@@ -1,0 +1,397 @@
+# The changes/diff view as the browser shows it: the client-side state
+# machine around one session's edits and its working tree. Where
+# changes_review.fizz is about what the reads return (shell edits,
+# checkpoints, hand edits), this spec is about the screen: which surface
+# holds the diff, where focus sits, what a key does, which file is
+# selected, and what loading, empty and failed look like.
+#
+# Checked against:
+#   web/src/changes.tsx  useChanges (reads, tick, retry, 10 s tree poll),
+#                        ChangesBody (tabs, pick, the only-file rule, the
+#                        popover's diff), FileCards/FileCard (the page's
+#                        cards), ChangesPage (scope reset on open)
+#   web/src/app.tsx      ChangesChip (details on a wide window, a link on
+#                        a phone, a span when there is nothing, nothing
+#                        after a failed read), usePopovers (Esc and a click
+#                        elsewhere close it, Esc gives focus to its
+#                        summary), the router (sub "changes"), the Esc
+#                        handler that closes the page, the palette's
+#                        "Review changes", SessionChanges (the thread's
+#                        read, re-read on every transcript entry)
+#   web/src/palette.tsx  Esc closes the palette, focus back to the opener
+#
+# Surfaces. The thread (#/s/<id>) has the header chip. On a wide window
+# (vp "wide", > 720px) the chip is a <details>: its popover holds a
+# ChangesBody that stays mounted while closed, so its selection and the
+# diff it fetched survive a close. On a phone (vp "phone") the chip is a
+# link to the page, or a plain span when the session has no edits. The
+# page (#/s/<id>/changes) is ChangesPage: its own reads, a card per file.
+# Showing the page unmounts the thread, so going back remounts the chip:
+# its reads start over and its scope is the session's edits again.
+#
+# Data. The session's edits are ["a", "b"] once the agent has edited
+# (edited), none before. The working tree always has "h" (dirt that was
+# there before the session) and the agent's files once it has edited.
+# A read is loading (no answer yet), ok, failed (no data: "Couldn't read
+# the changes") or stale (data kept: "Stale: the last refresh failed").
+# Re-reads that succeed land in their step, as in changes_review; the
+# data a read shows is then always the world's.
+#
+# Selection. pick is ChangesBody's pick in the popover (a click on a
+# listed file; the same click again drops it), and on the page the one
+# card a person has open (the page opens a card on its own when its list
+# mounts with exactly one file, and a card once open stays open). The
+# popover shows one file's diff at once when its list has exactly one
+# file (only), with no list. diff is the shown file's patch: none, loading
+# (Pending "Diff") or ok. The popover re-fetches it, showing Pending again,
+# whenever its read is re-read; a page card re-fetches silently.
+#
+# Server session status touches this surface in one place: a running
+# turn's entries grow the transcript, and every entry re-reads both lists
+# (AgentEdit). Nothing else about idle, running or done changes it.
+#
+# Pruned, because every transition is a browser path: failures are only
+# injected before the agent has edited and on a wide window; the palette
+# is only opened from a settled thread with the popover shut (see KNOWN
+# GAP at the bottom); a resize only from a settled thread; a page card is
+# opened one at a time; the agent edits only on a settled screen.
+
+# --- pure helpers
+
+# The files the read of scope s lists, or None while it has no data.
+def files(p, s):
+    st = p.sess
+    if s == "tree":
+        st = p.tree
+    if st in ["loading", "failed"]:
+        return None
+    if s == "session":
+        if p.edited:
+            return ["a", "b"]
+        return []
+    if p.edited:
+        return ["a", "b", "h"]
+    return ["h"]
+
+def listed(p):
+    fs = files(p, p.scope)
+    if fs == None:
+        return []
+    return fs
+
+# The header chip exists: a failed first read of the session's edits
+# renders no chip at all ("A failed read is no value").
+def chip(p):
+    return p.route == "thread" and not p.sess == "failed"
+
+# The popover's ChangesBody is mounted (open or shut).
+def popbody(p):
+    return p.route == "thread" and p.vp == "wide" and chip(p)
+
+# A ChangesBody is on the page: the popover's or the page's.
+def mounted(p):
+    return p.route == "page" or popbody(p)
+
+# The session's edits read "None": the phone's chip is then a span.
+def noedits(p):
+    fs = files(p, "session")
+    return fs != None and len(fs) == 0
+
+# The file whose diff is shown.
+def path(p):
+    if not mounted(p):
+        return ""
+    if p.pick != "":
+        return p.pick
+    if p.route == "thread":
+        fs = listed(p)
+        if len(fs) == 1:
+            return fs[0]
+    return ""
+
+# The popover lists files unless its one file is shown at once.
+def haslist(p):
+    fs = listed(p)
+    return len(fs) > 1
+
+# A page tab with an empty list is disabled, unless it is the one shown.
+# The page also lets a person switch before the first answer; the model
+# does not (so a loading page is always the one just opened).
+def tabok(p, s):
+    if p.sess == "loading":
+        return False
+    fs = files(p, s)
+    return fs == None or len(fs) > 0
+
+# Retry is on screen: the shown scope's read failed or is stale.
+def retryable(p):
+    st = p.sess
+    if p.scope == "tree":
+        st = p.tree
+    return st in ["failed", "stale"] and (p.route == "page" or p.pop)
+
+role Changes:
+    action Init:
+        self.vp = "wide"
+        self.route = "thread"
+        self.pop = False
+        self.palette = False
+        # body | chip (the popover's summary) | palette
+        self.focus = "body"
+        # Where focus goes back to when the palette closes.
+        self.back = "body"
+        self.scope = "session"
+        self.sess = "loading"
+        self.tree = "loading"
+        self.pick = ""
+        self.diff = "none"
+        # The world, not the page.
+        self.edited = False
+
+    # The list may have changed. old is the path shown before, before the
+    # list before (None: no data), reread whether the shown scope's read
+    # was re-read, remount whether every card is new (a page or a scope).
+    atomic func settle(old, before, reread, remount):
+        fs = listed(self)
+        if self.pick != "" and self.pick not in fs:
+            self.pick = ""
+        if self.route == "page":
+            if remount:
+                self.pick = ""
+            if (remount or before == None or len(before) == 0) and self.pick == "" and len(fs) == 1:
+                self.pick = fs[0]
+        if not popbody(self) and self.route != "page":
+            self.pick = ""
+        now = path(self)
+        if now == "":
+            self.diff = "none"
+        elif now != old or remount:
+            self.diff = "loading"
+        elif reread and self.route == "thread":
+            self.diff = "loading"
+
+    # The chip went away (failed read, phone): its popover and focus go too.
+    atomic func unchip():
+        if not popbody(self):
+            self.pop = False
+            if self.focus == "chip":
+                self.focus = "body"
+            if self.back == "chip":
+                self.back = "body"
+
+    # A fresh surface: the page on open, the thread's chip on return.
+    atomic func fresh(route):
+        self.route = route
+        self.pop = False
+        self.focus = "body"
+        self.scope = "session"
+        self.sess = "loading"
+        self.tree = "loading"
+        self.pick = ""
+        self.diff = "none"
+
+    # --- the person
+
+    # A click on the chip's summary.
+    atomic action OpenPopover:
+        require popbody(self) and not self.pop and not self.palette
+        self.pop = True
+        self.focus = "chip"
+
+    # usePopovers: Esc shuts it and focuses its summary.
+    atomic action EscPopover:
+        require self.pop and not self.palette
+        self.pop = False
+        self.focus = "chip"
+
+    # usePopovers: a mousedown outside shuts it; focus goes where clicked.
+    atomic action ClickAway:
+        require self.pop and not self.palette
+        self.pop = False
+        self.focus = "body"
+
+    # The popover's "Open full view", or the phone chip's link.
+    atomic action OpenPage:
+        require not self.palette and self.route == "thread"
+        require self.pop or (self.vp == "phone" and chip(self) and not noedits(self))
+        self.fresh("page")
+
+    # The page's Back button.
+    atomic action Back:
+        require self.route == "page" and not self.palette
+        self.fresh("thread")
+
+    # Esc outside a field closes the page (the app's Esc handler).
+    atomic action EscPage:
+        require self.route == "page" and not self.palette
+        self.fresh("thread")
+
+    atomic action ToSession:
+        require not self.palette and self.scope != "session"
+        require self.pop or (self.route == "page" and tabok(self, "session"))
+        old = path(self)
+        self.scope = "session"
+        self.pick = ""
+        self.settle(old, None, True, True)
+
+    atomic action ToTree:
+        require not self.palette and self.scope != "tree"
+        require self.pop or (self.route == "page" and tabok(self, "tree"))
+        old = path(self)
+        self.scope = "tree"
+        self.pick = ""
+        self.settle(old, None, True, True)
+
+    # A click on file a: the popover's list row, or the page's card head.
+    # The same click again drops it (setPick(f === pick ? null : f), and a
+    # card's toggle). On the page a card opens only while none is open.
+    atomic action SelectA:
+        require not self.palette and "a" in listed(self)
+        require (self.pop and haslist(self)) or (self.route == "page" and self.pick in ["", "a"])
+        old = path(self)
+        if self.pick == "a":
+            self.pick = ""
+        else:
+            self.pick = "a"
+        self.settle(old, listed(self), False, False)
+
+    atomic action SelectH:
+        require not self.palette and "h" in listed(self)
+        require (self.pop and haslist(self)) or (self.route == "page" and self.pick in ["", "h"])
+        old = path(self)
+        if self.pick == "h":
+            self.pick = ""
+        else:
+            self.pick = "h"
+        self.settle(old, listed(self), False, False)
+
+    # Retry under a failed or stale read re-fires every read.
+    atomic action Retry:
+        require not self.palette and retryable(self)
+        old = path(self)
+        before = files(self, self.scope)
+        self.sess = "ok"
+        self.tree = "ok"
+        self.settle(old, before, True, False)
+
+    # A window crossing 720px. The chip's scope is ChangesChip's state
+    # and survives; the popover's ChangesBody does not.
+    atomic action Resize:
+        require self.route == "thread" and not self.palette
+        require self.sess in ["ok", "stale"] and self.tree in ["ok", "stale"] and self.diff != "loading"
+        old = path(self)
+        if self.vp == "wide":
+            self.vp = "phone"
+        else:
+            self.vp = "wide"
+        self.unchip()
+        self.settle(old, None, False, True)
+
+    # Cmd-K. (Pruned to an answered thread with the popover shut.) After a
+    # failed first read the thread has no chip and no Retry: the palette's
+    # "Review changes" is the way to the page, where Retry is.
+    atomic action OpenPalette:
+        require not self.palette and not self.pop and self.route == "thread"
+        require self.sess in ["ok", "failed"] and self.diff != "loading"
+        self.palette = True
+        self.back = self.focus
+        self.focus = "palette"
+
+    atomic action EscPalette:
+        require self.palette
+        self.palette = False
+        self.focus = self.back
+        self.back = "body"
+
+    # The palette's "Review changes": setSub("changes").
+    atomic action PaletteReview:
+        require self.palette and self.route == "thread"
+        self.palette = False
+        self.back = "body"
+        self.fresh("page")
+
+    # --- the server
+
+    # The opening reads land.
+    atomic fair action Answer:
+        require self.sess == "loading"
+        old = path(self)
+        self.sess = "ok"
+        self.tree = "ok"
+        self.settle(old, None, True, False)
+
+    # git times out: both reads fail with no data. The chip goes.
+    atomic action AnswerFails:
+        require self.sess == "loading" and not self.edited and self.vp == "wide"
+        self.sess = "failed"
+        self.tree = "failed"
+        self.unchip()
+        self.settle(path(self), None, False, False)
+
+    atomic fair action DiffAnswer:
+        require self.diff == "loading"
+        self.diff = "ok"
+
+    # The 10 s tree poll fails on a shown tree: the list stays, stale.
+    atomic action PollFails:
+        require self.tree == "ok" and self.sess == "ok" and self.scope == "tree" and not self.edited
+        require (self.pop or self.route == "page") and self.diff != "loading" and not self.palette
+        self.tree = "stale"
+
+    # The next poll answers.
+    atomic fair action Poll:
+        require self.tree == "stale"
+        old = path(self)
+        self.tree = "ok"
+        self.settle(old, files(self, self.scope), self.scope == "tree", False)
+
+    # A running turn edits a and b; its entries re-read both lists.
+    atomic action AgentEdit:
+        require not self.edited and not self.palette
+        require self.sess == "ok" and self.tree == "ok" and self.diff != "loading"
+        old = path(self)
+        before = files(self, self.scope)
+        self.edited = True
+        self.settle(old, before, True, False)
+
+action Init:
+    changes = Changes()
+
+# Exactly one layer holds the keyboard: the palette has focus exactly
+# while it is open.
+always assertion PaletteOwnsFocus:
+    return changes.palette == (changes.focus == "palette")
+
+# The popover is a wide thread's, under its chip, and never sits open
+# beneath the palette.
+always assertion PopoverOnlyOnWideThread:
+    return not changes.pop or (popbody(changes) and not changes.palette)
+
+# Focus is never left on a summary that is not on screen.
+always assertion FocusOnMountedChip:
+    return (changes.focus != "chip" and changes.back != "chip") or popbody(changes)
+
+# The page opens on the session's own edits, never on the tab the last
+# page or the popover was left on.
+always assertion PageOpensOnSessionEdits:
+    return not (changes.route == "page" and changes.sess == "loading") or changes.scope == "session"
+
+# A selection is a file the shown list has.
+always assertion SelectionIsListed:
+    return changes.pick == "" or (mounted(changes) and changes.pick in listed(changes))
+
+# A diff is only ever for the file shown, and only while one is.
+always assertion DiffOnlyForShownFile:
+    return (changes.diff == "none") == (path(changes) == "")
+
+# Nothing stays loading: every read and every diff lands.
+always eventually assertion ReadsLand:
+    return changes.sess != "loading" and changes.diff != "loading"
+
+# KNOWN GAP (pruned in OpenPalette, not modelled): with the popover open,
+# Cmd-K opens the palette over it (nothing shuts a <details> on a key), so
+# the popover sits open under the modal palette, and Esc in the palette is
+# taken first by usePopovers' capture-phase window listener: it shuts the
+# popover and focuses its summary behind the palette, which stays open.
+# Lifting the prune fails PopoverOnlyOnWideThread at OpenPopover, Answer,
+# OpenPalette, and adding that Esc fails PaletteOwnsFocus.
