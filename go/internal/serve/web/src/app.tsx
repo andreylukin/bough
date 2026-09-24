@@ -2698,7 +2698,9 @@ function RuntimeStrip({ row, lines, paused, onRetry, onContext, work, actions, l
   // R3-G: the metrics fold into one "…", cache first, then tests, cost,
   // edits and context, until the title group (status and all) and the strip
   // each fit their room. A phone folds them all. A new pane width starts over.
-  const [fold, setFold] = useState(0);
+  // A phone starts folded: its first paint showed every metric, and the
+  // Details it owes, only after the check below ran.
+  const [fold, setFold] = useState(() => (typeof window !== "undefined" && window.matchMedia?.("(max-width:720px)").matches ? 5 : 0));
   // The chip's tab lives here: a fold (a phone, a narrow pane) moves the
   // chip under "Details" and back, which mounts it anew each time.
   const [chgScope, setChgScope] = useState<Scope>("session");
@@ -3882,6 +3884,45 @@ const noLines: Line[] = [];
 type Upload = { slot: number; tag: string; done: Promise<string> };
 const uploads = new Map<string, Set<Upload>>();
 
+/** The header's Settings button and, while `open`, its popover around `children`: Thread's `more`, drawn. */
+export function HeadMore({ id, open, moreRef, onToggle, onTabOut, children }: { id: string; open: boolean; moreRef?: React.RefObject<HTMLDivElement | null>;
+  onToggle: (e: React.MouseEvent) => void; /** Tab left the popover at either end. */ onTabOut: () => void; children: React.ReactNode }) {
+  return (
+    <div className="head-more" ref={moreRef}>
+      <button className="more" aria-label="Session settings" aria-expanded={open} aria-controls={"more-" + id} onClick={onToggle}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
+             strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" />
+        </svg>
+      </button>
+      {open && (
+        <div className="head-pop" role="dialog" aria-label="Session settings" id={"more-" + id} tabIndex={-1} onKeyDown={(e) => {
+          // Non-modal: tabbing past either end closes it, back on Settings.
+          if (e.key !== "Tab") return;
+          const all = [...e.currentTarget.querySelectorAll<HTMLElement>("button,input")].filter((el) => el.offsetParent);
+          const first = all[0], last = all[all.length - 1];
+          const here = document.activeElement;
+          if ((e.shiftKey && (here === first || here === e.currentTarget)) || (!e.shiftKey && here === last)) { e.preventDefault(); onTabOut(); }
+        }}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The way back from scrolling up: shown only while away, and it says so when something was recorded since. */
+export function JumpLatest({ away, fresh, onClick }: { away: boolean; fresh: boolean; onClick: () => void }) {
+  if (!away) return null;
+  return (
+    <button className="btn jump-latest" onClick={onClick} title={modKey() + "End"}
+            aria-label={fresh ? "New activity, jump to latest" : "Jump to latest"}>
+      <span aria-hidden="true">↓ </span>
+      <span className="jump-word">{fresh ? "New activity" : "Latest"}</span>
+    </button>
+  );
+}
+
 export function Thread({ row, lines: given, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, onPortal, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
   /** Loaded sessions: names the parent of a background agent and lists this session's agents. */
   rows?: Row[]; onOpenSession?: (id: string) => void;
@@ -4633,44 +4674,27 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
         {/* After the strip, so Tab follows the visual order: Work, Context, Cost, then Settings. */}
         {/* The model and effort pickers live in the composer toolbar; a phone's are under Settings. */}
         <div className="head-side">
-          <div className="head-more" ref={moreRef}>
-            <button className="more" aria-label="Session settings" aria-expanded={more} aria-controls={"more-" + row.id}
-                    onClick={(e) => { moreByKey.current = e.detail === 0; setMore((v) => !v); }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
-                   strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" />
+          <HeadMore id={row.id} open={more} moreRef={moreRef} onTabOut={() => closeMore(true)}
+                    onToggle={(e) => { moreByKey.current = e.detail === 0; setMore((v) => !v); }}>
+            <div className="head-pop-run"><Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" catalogue={catalogue} disabled={failedLoad} /></div>
+            <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="rest" catalogue={catalogue} />
+            <button className="head-pop-item" onClick={async () => {
+              closeMore(false);
+              // Empty is allowed: it hands the title back to the session.
+              await askText("Rename session", { initial: plainTitle(row.title), action: "Rename", allowEmpty: true, onSubmit: onRename });
+            }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 20h4L19 9l-4-4L4 16z" />
               </svg>
+              Rename…
             </button>
-            {more && (
-              <div className="head-pop" role="dialog" aria-label="Session settings" id={"more-" + row.id} tabIndex={-1} onKeyDown={(e) => {
-                // Non-modal: tabbing past either end closes it, back on Settings.
-                if (e.key !== "Tab") return;
-                const all = [...e.currentTarget.querySelectorAll<HTMLElement>("button,input")].filter((el) => el.offsetParent);
-                const first = all[0], last = all[all.length - 1];
-                const here = document.activeElement;
-                if ((e.shiftKey && (here === first || here === e.currentTarget)) || (!e.shiftKey && here === last)) { e.preventDefault(); closeMore(true); }
-              }}>
-                <div className="head-pop-run"><Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="model" catalogue={catalogue} disabled={failedLoad} /></div>
-                <Controls row={row} projects={projects} onModel={onModel} onEffort={onEffort} onAssign={onAssign} only="rest" catalogue={catalogue} />
-                <button className="head-pop-item" onClick={async () => {
-                  closeMore(false);
-                  // Empty is allowed: it hands the title back to the session.
-                  await askText("Rename session", { initial: plainTitle(row.title), action: "Rename", allowEmpty: true, onSubmit: onRename });
-                }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M4 20h4L19 9l-4-4L4 16z" />
-                  </svg>
-                  Rename…
-                </button>
-                <button className={"head-pop-item" + (row.archived ? "" : " head-pop-danger")} onClick={() => { closeMore(true); onArchive(); }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M4 5h16v4H4zM6 9v10h12V9M10 13h4" />
-                  </svg>
-                  {row.archived ? "Unarchive" : "Archive…"}
-                </button>
-              </div>
-            )}
-          </div>
+            <button className={"head-pop-item" + (row.archived ? "" : " head-pop-danger")} onClick={() => { closeMore(true); onArchive(); }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 5h16v4H4zM6 9v10h12V9M10 13h4" />
+              </svg>
+              {row.archived ? "Unarchive" : "Archive…"}
+            </button>
+          </HeadMore>
         </div>
       </header>
       {orbView === "why" && row.orb?.status === "failed" && <OrbFailure key={row.id} id={row.id} project={row.project} name={projects.find((p) => p.slug === row.project)?.name ?? row.orb.project} onRebuild={row.project ? rebuild : undefined} onRetry={onStopOrb ? async () => { if (!(await confirmStopOrb(row.jobs))) throw new Error("cancelled"); await api.stopOrb(row.id); } : undefined} rebuildErr={rebuildErr} />}
@@ -4926,13 +4950,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                   <span className="jump-word">Top</span>
                 </button>
               )}
-              {away && (
-                <button className="btn jump-latest" onClick={() => toLatest()} title={modKey() + "End"}
-                        aria-label={newest > awayAt.current ? "New activity, jump to latest" : "Jump to latest"}>
-                  <span aria-hidden="true">↓ </span>
-                  <span className="jump-word">{newest > awayAt.current ? "New activity" : "Latest"}</span>
-                </button>
-              )}
+              <JumpLatest away={away} fresh={newest > awayAt.current} onClick={() => toLatest()} />
               {/* One filled control: Stop is a square icon, Queue shows once there is a draft to queue. */}
               {live && (stopping === "failed"
                 ? <button className="btn composer-stop-retry" onClick={stop} title="Stop (Esc)" aria-keyshortcuts="Escape">Retry stop</button>
