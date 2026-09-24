@@ -179,7 +179,8 @@ export function ErrorNote({ title, err, children, action, secondary, className =
   return (
     <div className={("error-note state state-alert " + className).trim()}>
       <span className="state-glyph"><StateIcon kind="alert" /></span>
-      <h2 className="error-note-title" role="alert">{title}</h2>
+      {/* The live region is the title's text, not the heading: a heading may not take role=alert (axe aria-allowed-role). */}
+      <h2 className="error-note-title"><span role="alert">{title}</span></h2>
       {(children ?? (raw && humanError(err))) && <p className="error-note-body">{children ?? humanError(err)}</p>}
       {(action || secondary) && (
         <div className="state-actions">
