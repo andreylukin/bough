@@ -25,8 +25,15 @@ const storedNoticePoll = time.Second
 // parent it does not run (resumed in the TUI, a plain `bough -r`); a
 // mount-time read alone would leave that live session deaf until a
 // remount.
+//
+// The size mark moves only while job-notices is there to take what the
+// read finds: a mark moved during a tools-row reload left the notice
+// appended then undelivered until something else wrote to the file.
 func pollStoredNotices(h loop.History, notify func() func(string), stop <-chan struct{}) {
 	seen := fileSize(h)
+	if notify() == nil {
+		seen = -1
+	}
 	deliverStoredNotices(h, notify)
 	tick := time.NewTicker(storedNoticePoll)
 	defer tick.Stop()
@@ -35,7 +42,7 @@ func pollStoredNotices(h loop.History, notify func() func(string), stop <-chan s
 		case <-stop:
 			return
 		case <-tick.C:
-			if n := fileSize(h); n != seen {
+			if n := fileSize(h); n != seen && notify() != nil {
 				seen = n
 				deliverStoredNotices(h, notify)
 			}
