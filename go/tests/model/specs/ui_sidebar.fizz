@@ -120,8 +120,8 @@ role Sidebar:
         self.side = "full"
         # What the list says: "loading" | "unavailable" | "delayed" |
         # "empty" (No sessions yet.) | "nomatch" (No sessions match) |
-        # "rows" | "archived" (only the Archived section's own pending or
-        # failed load) | "rail" | "hidden".
+        # "rows" | "archived" (only the Archived section's own pending
+        # load; its failure is the list's, "delayed") | "rail" | "hidden".
         self.says = "loading"
         # Where A's row is on screen: "none" (not listed, or the sidebar
         # is not showing rows), "group", "pinned" (Needs you), "folded"
@@ -198,10 +198,12 @@ role Sidebar:
         self.rows = "unavailable"
         self.recompute()
 
-    # "Sessions unavailable · Retry".
+    # "Sessions unavailable · Retry". The click takes focus out of the
+    # filter field, as every click on the list does.
     atomic action Retry:
         require self.rows == "unavailable" and self.side == "full"
         self.rows = "loading"
+        self.inField = False
         self.recompute()
 
     # A later poll fails: "Updates delayed · synced … ago"; rows stay.
@@ -214,8 +216,10 @@ role Sidebar:
         self.rows = "delayed"
         self.recompute()
 
+    # Not while Archived's own read is failing or out: that read is the
+    # list's (one request carries both), and its answer is ArchivedLoaded.
     atomic fair action PollOk:
-        require self.rows == "delayed"
+        require self.rows == "delayed" and self.arch not in ("failed", "loading")
         self.rows = "ready"
         self.recompute()
 
@@ -494,17 +498,23 @@ role Sidebar:
     atomic fair action ArchivedLoaded:
         require self.arch == "loading"
         self.arch = "open"
+        self.rows = "ready"
         self.recompute()
 
+    # Archived is read with the list, in one request: its failure is the
+    # list's too, and the list says its updates are delayed.
     atomic action ArchivedFail:
         require self.arch == "loading" and self.search == "off"
         self.arch = "failed"
+        self.rows = "delayed"
         self.recompute()
 
-    # "Couldn't load archived · Retry".
+    # "Couldn't load archived · Retry". The retry is the list's read
+    # again: while it is out, neither says it failed.
     atomic action ArchivedRetry:
         require self.arch == "failed" and self.side == "full"
         self.arch = "loading"
+        self.rows = "ready"
         self.inField = False
         self.recompute()
 
