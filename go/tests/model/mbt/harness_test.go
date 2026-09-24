@@ -41,7 +41,38 @@ func TestMain(m *testing.M) {
 	// The lib's flags (--max-seq-runs, --seq-seed, ...) override a
 	// test's options from the command line when reproducing a failure.
 	fmbt.ParseFlags()
-	servetest.Main(m)
+	restore := shortTempDir()
+	code := m.Run()
+	restore()
+	os.Exit(code)
+}
+
+// shortTempDir points TMPDIR at a short symlink to itself when it is too
+// long to hold a unix socket. fmbt.RunTests listens on
+// $TMPDIR/fizzbee-mbt-<n>/plugin.sock, and a socket path is capped at 104
+// bytes on macOS: under a long TMPDIR (a sandbox's, a per-run one) every
+// run failed with "bind: invalid argument" before walking anything. The
+// link keeps the files where TMPDIR put them.
+func shortTempDir() (restore func()) {
+	long := os.TempDir()
+	if len(filepath.Join(long, "fizzbee-mbt-0123456789", "plugin.sock")) < 100 {
+		return func() {}
+	}
+	dir, err := os.MkdirTemp("/tmp", "bough-mbt-")
+	if err != nil {
+		return func() {}
+	}
+	link := filepath.Join(dir, "t")
+	if err := os.Symlink(long, link); err != nil {
+		os.Remove(dir)
+		return func() {}
+	}
+	os.Setenv("TMPDIR", link)
+	return func() {
+		os.Setenv("TMPDIR", long)
+		os.Remove(link)
+		os.Remove(dir)
+	}
 }
 
 // fizzTools returns the pinned fizz, fizzbee-mbt-server and runner, or
@@ -92,10 +123,11 @@ const mbtPort = 50051
 // lockMBT serialises MBT runs across every process on the machine: the
 // runner's server port is fixed, so two runs at once would walk each
 // other's graphs. The flock is released when the test ends, or when
-// the process dies.
+// the process dies. The lock lives in /tmp, not TMPDIR: runs under
+// different TMPDIRs share the port all the same.
 func lockMBT(t *testing.T) {
 	t.Helper()
-	f, err := os.OpenFile(filepath.Join(os.TempDir(), "bough-fizz-mbt-50051.lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(filepath.Join("/tmp", fmt.Sprintf("bough-fizz-mbt-%d.lock", mbtPort)), os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,9 +147,24 @@ func startGraphServer(t *testing.T, runDir string) {
 	t.Helper()
 	_, server := fizzTools(t)
 	addr := fmt.Sprintf("127.0.0.1:%d", mbtPort)
-	if c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond); err == nil {
+	// A run that keys the lock elsewhere (an older checkout's harness put
+	// it in TMPDIR, so runs under different TMPDIRs never saw each other)
+	// holds the port without the lock: wait it out rather than fail,
+	// while the test binary's -timeout leaves room for a walk.
+	wait := time.Now().Add(10 * time.Minute)
+	if d, ok := t.Deadline(); ok {
+		wait = d.Add(-5 * time.Minute)
+	}
+	for {
+		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err != nil {
+			break
+		}
 		c.Close()
-		t.Fatalf("port %d is already taken by something that is not holding the MBT lock", mbtPort)
+		if time.Now().After(wait) {
+			t.Fatalf("port %d is still taken by something that is not holding the MBT lock", mbtPort)
+		}
+		time.Sleep(time.Second)
 	}
 	var out bytes.Buffer
 	cmd := exec.Command(server, "--port", fmt.Sprint(mbtPort), "--states_file", runDir+"/")
