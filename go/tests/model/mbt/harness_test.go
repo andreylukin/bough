@@ -92,10 +92,12 @@ const mbtPort = 50051
 // lockMBT serialises MBT runs across every process on the machine: the
 // runner's server port is fixed, so two runs at once would walk each
 // other's graphs. The flock is released when the test ends, or when
-// the process dies.
+// the process dies. The lock lives in /tmp, not os.TempDir(): the port
+// is machine-wide, and runs given their own TMPDIR each took a
+// different lock and failed on each other's graph server.
 func lockMBT(t *testing.T) {
 	t.Helper()
-	f, err := os.OpenFile(filepath.Join(os.TempDir(), "bough-fizz-mbt-50051.lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile("/tmp/bough-fizz-mbt-50051.lock", os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
