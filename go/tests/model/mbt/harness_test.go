@@ -41,6 +41,18 @@ func TestMain(m *testing.M) {
 	// The lib's flags (--max-seq-runs, --seq-seed, ...) override a
 	// test's options from the command line when reproducing a failure.
 	fmbt.ParseFlags()
+	// The lib listens on $TMPDIR/fizzbee-mbt-<n>/plugin.sock, and a unix
+	// socket path is capped at 104 bytes on macOS: under a long TMPDIR
+	// (a per-run dir in a scratchpad) every runMBT failed with "bind:
+	// invalid argument". The fixed tail is ~35 bytes.
+	if len(os.TempDir()) > 60 {
+		if dir, err := os.MkdirTemp("/tmp", "mbt"); err == nil {
+			os.Setenv("TMPDIR", dir)
+			code := m.Run()
+			os.RemoveAll(dir)
+			os.Exit(code)
+		}
+	}
 	servetest.Main(m)
 }
 
@@ -92,10 +104,12 @@ const mbtPort = 50051
 // lockMBT serialises MBT runs across every process on the machine: the
 // runner's server port is fixed, so two runs at once would walk each
 // other's graphs. The flock is released when the test ends, or when
-// the process dies.
+// the process dies. The file is at a fixed path, not under os.TempDir:
+// a wrapper that gave each run its own TMPDIR (so it could reap what the
+// run left) gave each run its own lock too, and two runs met on the port.
 func lockMBT(t *testing.T) {
 	t.Helper()
-	f, err := os.OpenFile(filepath.Join(os.TempDir(), "bough-fizz-mbt-50051.lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile("/tmp/bough-fizz-mbt-50051.lock", os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,9 +129,18 @@ func startGraphServer(t *testing.T, runDir string) {
 	t.Helper()
 	_, server := fizzTools(t)
 	addr := fmt.Sprintf("127.0.0.1:%d", mbtPort)
-	if c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond); err == nil {
+	// A run that locks elsewhere (a checkout still taking the lock under
+	// its TMPDIR) can hold the port; it lets go within minutes, so wait
+	// for it, and fail only on something that never does.
+	for free := time.Now().Add(5 * time.Minute); ; time.Sleep(time.Second) {
+		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err != nil {
+			break
+		}
 		c.Close()
-		t.Fatalf("port %d is already taken by something that is not holding the MBT lock", mbtPort)
+		if time.Now().After(free) {
+			t.Fatalf("port %d is already taken by something that is not holding the MBT lock", mbtPort)
+		}
 	}
 	var out bytes.Buffer
 	cmd := exec.Command(server, "--port", fmt.Sprint(mbtPort), "--states_file", runDir+"/")
