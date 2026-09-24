@@ -5113,6 +5113,10 @@ export default function App() {
     finally { if (seq === readSeq.current) inFlight.current = false; if (!poll) await projectsRead; }
   }, [archived]);
 
+  // A retry is loading again, not still failed: the failure it answers
+  // stays off screen until this read fails too.
+  const retryList = useCallback(() => { setLoadErr(null); void refresh(); }, [refresh]);
+
   // While a session's event stream is open it carries that session's
   // changes, so the list poll slows down.
   const streaming = selected !== null;
@@ -5829,11 +5833,11 @@ export default function App() {
                view={view === "project" ? "projects" : view} wikiFlags={wikiFlags} onNew={newSession} onFind={() => setPalette(true)}
                onView={onView}
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)}
-               archivedState={!archived || rowsAll ? "ready" : loadErr ? "failed" : "loading"} onRetryArchived={() => void refresh()}
+               archivedState={!archived || rowsAll ? "ready" : loadErr ? "failed" : "loading"} onRetryArchived={retryList}
                onAck={(id) => act(() => api.ack(id), "mark it seen")}
                onShowList={() => setPane("list")} reveal={reveal} onOpenProject={goProject}
                onMove={(id, p) => act(() => api.assign(id, p), "move the session")}
-               loadedAt={loadedAt} loadErr={loadErr} onRetry={() => void refresh()} />
+               loadedAt={loadedAt} loadErr={loadErr} onRetry={retryList} />
       <main className="app-main">
       {lost !== null && view === "sessions" && !selected ? (
         <div className="thread empty">
