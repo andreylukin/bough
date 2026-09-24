@@ -135,6 +135,14 @@ type Options struct {
 	// Home holds .bough/projects and .bough/orbs; "" => HistDir's
 	// grandparent, which is HOME for the standard layout.
 	Home string
+	// HoldDir parks the supervisor at a named point while
+	// <HoldDir>/<point> exists: "claim" (a create has seen its child's
+	// history file and not yet claimed the child) and "reap" (a lease
+	// holder is reaped and its lease not yet dropped). Those windows
+	// last a poll tick or less, and the model test of archive and send
+	// racing a create (go/tests/model, archive_cross_tab_and_create_race)
+	// has to act inside them. "" (every real serve) never holds.
+	HoldDir string
 }
 
 var (
@@ -142,6 +150,8 @@ var (
 	ErrBadAnswer      = errors.New("serve: supervisor: a secret answer cannot contain a newline")
 	ErrUnknownSession = errors.New("serve: supervisor: unknown session")
 	ErrArchived       = errors.New("serve: supervisor: session is archived")
+	ErrStarting       = errors.New("serve: supervisor: session is still starting")
+	ErrStopping       = errors.New("serve: supervisor: session is stopping")
 )
 
 const (
@@ -179,6 +189,7 @@ type child struct {
 	metaID           string // a session id the child volunteered on a "meta" line
 	buffer           []pending
 	dropped          bool // the lease has already been handed back
+	dying            bool // killChild sent SIGKILL; the lease drops at the reap
 	// unread: a prompt was written that the child has not yet reported
 	// taking (no "input"/"steer" since). held: an interrupt that came in
 	// that gap, sent once the child takes the prompt. A SIGINT before
@@ -259,6 +270,12 @@ type Supervisor struct {
 	// spawnArgs is the extra argv and env a Create asked for, per id, so
 	// a respawn through ensure starts the session the same way.
 	spawnArgs map[string]spawnSpec
+
+	// creating is the ids createWithID has spawned a child for and not
+	// yet claimed. That child already writes the history file, so the
+	// row is listed and another tab can send to it; ensure must not
+	// spawn `-r <id>` beside it.
+	creating map[string]bool
 }
 
 type spawnSpec struct{ args, env []string }
@@ -310,6 +327,7 @@ func NewSupervisor(opt Options) (*Supervisor, error) {
 		meta:      map[string]SessionMeta{},
 		mains:     map[string]string{},
 		running:   map[string]bool{},
+		creating:  map[string]bool{},
 	}
 	if opt.MetaPath != "" {
 		if err := os.MkdirAll(filepath.Dir(opt.MetaPath), 0o755); err != nil {
@@ -466,7 +484,13 @@ func (s *Supervisor) createWithID(id, cwd, prompt string, extra, args []string) 
 		}
 	}
 	s.spawnArgs[id] = spawnSpec{args: slices.Clone(args), env: env}
+	s.creating[id] = true
 	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.creating, id)
+		s.mu.Unlock()
+	}()
 
 	ch, err := s.spawn(cwd, "", extra, args)
 	if err != nil {
@@ -476,6 +500,7 @@ func (s *Supervisor) createWithID(id, cwd, prompt string, extra, args []string) 
 	deadline := time.Now().Add(createTimeout)
 	for {
 		if _, err := os.Stat(path); err == nil {
+			s.hold("claim", ch.done)
 			if err := s.claim(ch, id); err != nil {
 				s.killChild(ch)
 				return "", err
@@ -498,6 +523,25 @@ func (s *Supervisor) createWithID(id, cwd, prompt string, extra, args []string) 
 			return "", fmt.Errorf("serve: supervisor: %s did not appear in %s", path, createTimeout)
 		}
 		time.Sleep(createPoll)
+	}
+}
+
+// hold waits while <HoldDir>/<point> exists (Options.HoldDir), for at
+// most a minute, or until done closes.
+func (s *Supervisor) hold(point string, done <-chan struct{}) {
+	if s.opt.HoldDir == "" {
+		return
+	}
+	p := filepath.Join(s.opt.HoldDir, point)
+	for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); {
+		if _, err := os.Stat(p); err != nil {
+			return
+		}
+		select {
+		case <-done:
+			return
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
 
@@ -554,6 +598,11 @@ func (s *Supervisor) claim(ch *child, id string) error {
 	if live, ok := s.kids[id]; ok && live != ch {
 		return fmt.Errorf("serve: supervisor: %s: %w", id, errors.New("session already leased"))
 	}
+	// Archived once its file listed the row, before this claim: the
+	// archive's Kill found no child to end, so the caller ends it.
+	if s.meta[id].Archived {
+		return fmt.Errorf("serve: supervisor: %s: %w", id, ErrArchived)
+	}
 	ch.id = id
 	s.kids[id] = ch
 	buffered := ch.buffer
@@ -584,8 +633,20 @@ func (s *Supervisor) ensure(id string) (*child, error) {
 		return nil, fmt.Errorf("serve: supervisor: closed")
 	}
 	if ch, ok := s.kids[id]; ok {
+		dying := ch.dying
 		s.mu.Unlock()
+		// Killed and not yet reaped: the lease is held until the reap,
+		// and a line written now goes to a process that never reads it.
+		if dying {
+			return nil, fmt.Errorf("serve: supervisor: %s: %w", id, ErrStopping)
+		}
 		return ch, nil
+	}
+	// Create's child is running unclaimed: a second one would be a
+	// second writer on its file, and Create's claim would then fail.
+	if s.creating[id] {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("serve: supervisor: %s: %w", id, ErrStarting)
 	}
 	// Send and Adopt check the flag too, but without the lock: one that
 	// read it just before SetArchived set it would spawn right after the
@@ -711,6 +772,12 @@ func (s *Supervisor) start(ch *child, dir, id string, extra, more []string) erro
 		// them under the readers and loses the child's last lines.
 		wg.Wait()
 		err := cmd.Wait()
+		s.mu.Lock()
+		leased := ch.id != "" && s.kids[ch.id] == ch
+		s.mu.Unlock()
+		if leased {
+			s.hold("reap", nil)
+		}
 		code := 0
 		if ee := new(exec.ExitError); errors.As(err, &ee) {
 			code = ee.ExitCode()
@@ -1191,6 +1258,9 @@ func (s *Supervisor) killChild(ch *child) {
 		<-ch.done
 		return
 	}
+	s.mu.Lock()
+	ch.dying = true
+	s.mu.Unlock()
 	if ch.cmd != nil && ch.cmd.Process != nil {
 		_ = ch.cmd.Process.Kill()
 	}
