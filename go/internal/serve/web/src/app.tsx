@@ -5890,11 +5890,16 @@ export default function App() {
                view={view === "project" ? "projects" : view} wikiFlags={wikiFlags} onNew={newSession} onFind={() => setPalette(true)}
                onView={onView}
                showArchived={archived} onToggleArchived={() => setArchived((v) => !v)}
-               archivedState={!archived || rowsAll ? "ready" : loadErr ? "failed" : "loading"} onRetryArchived={() => void refresh()}
+               // Its Retry says it is loading again while the read is out:
+               // "Couldn’t load archived" stayed until it answered.
+               archivedState={!archived || rowsAll ? "ready" : loadErr ? "failed" : "loading"} onRetryArchived={() => { setLoadErr(null); void refresh(); }}
                onAck={(id) => act(() => api.ack(id), "mark it seen")}
                onShowList={() => setPane("list")} reveal={reveal} onOpenProject={goProject}
                onMove={(id, p) => act(() => api.assign(id, p), "move the session")}
-               loadedAt={loadedAt} loadErr={loadErr} onRetry={() => void refresh()} />
+               // A first load that failed says it is loading again while the
+               // retry is out: "Sessions unavailable" stayed on screen until
+               // it answered, as if the click had done nothing.
+               loadedAt={loadedAt} loadErr={loadErr} onRetry={() => { if (loadedAt === null) setLoadErr(null); void refresh(); }} />
       <main className="app-main">
       {lost !== null && view === "sessions" && !selected ? (
         <div className="thread empty">
