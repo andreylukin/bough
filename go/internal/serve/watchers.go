@@ -43,6 +43,21 @@ func (a *API) StartWatchers(ctx context.Context, addr string) error {
 	if err := watch.CheckLoopback(addr); err != nil {
 		return err
 	}
+	e := a.WatchEngine()
+	go func() {
+		if err := e.Run(ctx, addr, watchTick); err != nil && ctx.Err() == nil {
+			fmt.Fprintln(os.Stderr, "bough serve: watchers:", err)
+		}
+	}()
+	return nil
+}
+
+// WatchEngine is the engine StartWatchers runs, wired to this API's
+// supervisor and the one GET /api/hooks reports, but neither loaded nor
+// ticking: StartWatchers runs it on a timer, and a test drives Load and
+// Tick itself (tests/model/mbt/watcher_wake_delivery_test.go), so a
+// poll and its deliver can be taken apart around a person's step.
+func (a *API) WatchEngine() *watch.Engine {
 	e := &watch.Engine{
 		Dir:  filepath.Join(a.home, ".bough", "watchers"),
 		Eval: codemode.New(watchEvalTimeout),
@@ -51,12 +66,7 @@ func (a *API) StartWatchers(ctx context.Context, addr string) error {
 		Busy: supWaker{a.sup},
 	}
 	a.watch = e
-	go func() {
-		if err := e.Run(ctx, addr, watchTick); err != nil && ctx.Err() == nil {
-			fmt.Fprintln(os.Stderr, "bough serve: watchers:", err)
-		}
-	}()
-	return nil
+	return e
 }
 
 // watcherStatus is the "watchers" list of GET /api/hooks; no engine

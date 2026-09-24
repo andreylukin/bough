@@ -143,10 +143,18 @@ func TestBusySessionQueuesThenReceives(t *testing.T) {
 	if len(wake.texts) != 0 {
 		t.Fatalf("busy session was interrupted: %q", wake.texts)
 	}
+	// The waiting wake shows in the status, so the hooks page can say
+	// the watcher fired rather than look like it saw nothing.
+	if q := e.Status()[0].Queued; len(q) != 1 {
+		t.Fatalf("status queued = %q, want the one waiting wake", q)
+	}
 	idle.busy = false
 	e.Tick(context.Background())
 	if len(wake.texts) != 1 {
 		t.Fatalf("want the queued wake delivered once idle, got %q", wake.texts)
+	}
+	if q := e.Status()[0].Queued; q == nil || len(q) != 0 {
+		t.Fatalf("status queued = %#v after delivery, want empty and non-nil", q)
 	}
 }
 
