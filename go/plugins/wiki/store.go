@@ -749,6 +749,15 @@ func (s *Store) schedule() (bool, string) {
 
 // Page reads one page with its citations resolved and its backlinks.
 func (s *Store) Page(rel string) (Page, error) {
+	// The Me page's "Write your profile" opens the profile before it
+	// exists; a not-found page has no editor, so the person could never
+	// write it from the web. It opens as the sections the brief reads,
+	// and is written only when saved.
+	if rel == ProfilePath {
+		if _, err := os.Stat(s.p.profile()); errors.Is(err, fs.ErrNotExist) {
+			return parsePage(rel, profileStarter), nil
+		}
+	}
 	path, err := s.pagePath(rel)
 	if err != nil {
 		return Page{}, err
@@ -800,11 +809,18 @@ func (s *Store) pagePath(rel string) (string, error) {
 // WritePage replaces a page's text and commits it, so the edit is one
 // reviewable change like an ingest.
 func (s *Store) WritePage(rel, body string) error {
+	if rel == ProfilePath {
+		// The one page saved before it exists (see Page), and
+		// topics/me may not exist yet either.
+		if err := os.MkdirAll(s.p.me(), 0o755); err != nil {
+			return err
+		}
+	}
 	path, err := s.pagePath(rel)
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(path); err != nil {
+	if _, err := os.Stat(path); err != nil && rel != ProfilePath {
 		return ErrNotFound
 	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {

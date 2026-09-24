@@ -240,6 +240,36 @@ func TestPagePathRefusesOutsideTopics(t *testing.T) {
 	}
 }
 
+// The Me page's empty state opens topics/me/profile.md before it
+// exists, so the page view must have something to edit and the save
+// must create the file. Any other missing page stays not found.
+func TestProfileIsWritableBeforeItExists(t *testing.T) {
+	t.Parallel()
+	s := Open(t.TempDir())
+	pg, err := s.Page(ProfilePath)
+	if err != nil {
+		t.Fatalf("Page(%s) with no profile: %v", ProfilePath, err)
+	}
+	if !strings.Contains(pg.Body, "## Not mine") {
+		t.Fatalf("the missing profile opens without its sections:\n%s", pg.Body)
+	}
+	if s.Me(time.Now()).HasProfile {
+		t.Fatal("reading the missing profile created it")
+	}
+	if err := s.WritePage(ProfilePath, pg.Body+"\nI own acme/web.\n"); err != nil {
+		t.Fatalf("WritePage(%s) with no profile: %v", ProfilePath, err)
+	}
+	if !s.Me(time.Now()).HasProfile {
+		t.Fatal("saving the profile did not create it")
+	}
+	if err := s.WritePage("topics/me/other.md", "x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("WritePage of another missing page: %v, want ErrNotFound", err)
+	}
+	if _, err := s.Page("topics/me/other.md"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Page of another missing page: %v, want ErrNotFound", err)
+	}
+}
+
 func TestSource(t *testing.T) {
 	s, _ := storeFixture(t)
 	src, err := s.Source("s1", 4)
