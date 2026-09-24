@@ -21,6 +21,13 @@ llm.dir=<path>`), renames it `<name>.taken`, and answers as it says:
 While a `block` turn is held, each `<name>.say-<n>` the test writes
 (`control.Say`) is streamed as one live assistant delta and renamed
 `<name>.said-<n>`: text the session shows and never records.
+`control.Stream` and `control.Think` send one text or thinking fragment
+the same way and wait for the row to take it; `control.Reset` starts a
+new attempt of the held request, as a provider retry does, so the
+engine drops what the old one streamed. A release with `items`
+(`[{"kind":"thinking","text":"…","summary":true},{"kind":"text","text":"…"}]`,
+then any `calls`) answers with exactly those items and streams nothing:
+a test streams a reply fragment by fragment and then records just that.
 
 With `hold_boot: true` on the row, a fresh session (one with
 `BOUGH_SESSION_ID` and no history file yet) stops before it writes its
