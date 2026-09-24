@@ -612,7 +612,7 @@ func TestMePagePathsCatchesWrongAdapter(t *testing.T) {
 	t.Parallel()
 	a := newMePageAdapter(t)
 	a.failWrites = true
-	for _, p := range loadPaths(t, "me_page") {
+	for _, p := range loadMePaths(t, "me_page") {
 		if err := walkMePath(a, p); err != nil {
 			t.Logf("caught: %v", err)
 			return
@@ -630,7 +630,7 @@ func TestMePagePathsCatchesWrongAdapter(t *testing.T) {
 func TestMePagePaths(t *testing.T) {
 	t.Parallel()
 	a := newMePageAdapter(t)
-	for i, p := range loadPaths(t, "me_page") {
+	for i, p := range loadMePaths(t, "me_page") {
 		if err := walkMePath(a, p); err != nil {
 			t.Fatalf("path %d (target %d): %v", i, p.Target, err)
 		}
@@ -657,7 +657,7 @@ type modelPath struct {
 	} `json:"trace"`
 }
 
-func loadPaths(t *testing.T, spec string) []modelPath {
+func loadMePaths(t *testing.T, spec string) []modelPath {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(filepath.Dir(specPath(spec)), "..", "testdata", spec, "paths.json"))
 	if err != nil {
