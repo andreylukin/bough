@@ -3532,7 +3532,7 @@ section:has(>.work-group-toggle,>h3>.work-group-toggle) .work-row-task{color:var
 .composer:has(> #composer:focus){outline:0;border-color:var(--line-strong)}
 #composer:focus,#composer:focus-visible{outline:none}
 .skills-filter:focus,.skills-filter:focus-visible{outline:none;box-shadow:inset 0 0 0 1px var(--line-strong)}
-.sel-search:focus-visible{outline:none}
+.sel-search:focus-visible{outline:none;box-shadow:inset 0 0 0 1px var(--line-strong)}
 /* skip links: both together, centred, clear of the sidebar */
 .skip-links{top:8px;left:50%;translate:-50% 0;gap:4px}
 .skip-links:focus-within{padding:4px;background:var(--raised);border-radius:10px;box-shadow:var(--shadow-pop)}
