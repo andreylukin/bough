@@ -475,6 +475,46 @@ func TestReopenAfterCancelKeepsCallsParked(t *testing.T) {
 	})
 }
 
+// A slash command run after the cancel, before the next process opens,
+// is not a turn: its "system" output must not read as the cancelled
+// turn having moved on. It did, and a serve child respawned after a
+// crash, a /model and another exit sent the dead turn's request again
+// beside the next input's (tests/model/mbt/send_into_dying_child_test.go).
+func TestReopenAfterCancelAndACommandKeepsCallsParked(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t,
+			fake.Step{Want: "long", Output: []ullmItem{fake.Call("h7", "hold", `{"text":"forever"}`)}},
+		)
+		r.rt.Submit("long thing")
+		r.waitFor("the store to hold the op as awaiting", func() bool {
+			b, _ := os.ReadFile(r.rt.StorePath())
+			return strings.Contains(string(b), `"Status":"awaiting"`)
+		})
+		r.rt.q.close()
+		r.rt.cancel()
+		<-r.rt.exited
+		r.hist.Append("cancelled", map[string]any{"interrupted": true})
+		// What headless records for "/model b" (plugins/ui hlDispatch and
+		// plugins/commands runModel).
+		r.hist.Append("command", map[string]any{"text": "/model b"})
+		r.hist.Append("model", map[string]any{"sets": []any{"llm.model=b"}})
+		r.hist.Append("system", map[string]any{"text": "model: fake · b"})
+		h, err := history.OpenExisting(r.hist.Path())
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := &rig{t: t, dir: r.dir, hist: h, evs: &events{}, kit: newTestkit(t), fake: r.fake}
+		c.open()
+		c.rt.gate.mu.Lock()
+		muted := c.rt.gate.parked && c.rt.gate.covered([]string{"call:h7"})
+		c.rt.gate.mu.Unlock()
+		if !muted {
+			t.Fatal("a request answering only the cancelled call would reach the model")
+		}
+	})
+}
+
 func writeEntries(t *testing.T, path string, es []history.Entry) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
