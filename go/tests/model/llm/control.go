@@ -220,6 +220,23 @@ func WaitTaken(t testing.TB, dir, name string, timeout time.Duration) {
 	t.Fatalf("llm-control: turn %q not taken after %s", name, timeout)
 }
 
+// ToolResults is what the request that took turn name carried as tool
+// results, call id to the text the model read. The row writes it as
+// <name>.request before it renames the turn taken.
+func ToolResults(dir, name string) (map[string]string, error) {
+	b, err := os.ReadFile(filepath.Join(dir, name+".request"))
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		ToolResults map[string]string `json:"tool_results"`
+	}
+	if err := json.Unmarshal(b, &r); err != nil {
+		return nil, fmt.Errorf("llm-control: %s.request: %w", name, err)
+	}
+	return r.ToolResults, nil
+}
+
 // bootDir holds the hold_boot handshake: <id>.waiting, its content the
 // session's role ("main" for a project's main thread, else "session"),
 // while a fresh session is held before its history file exists, and

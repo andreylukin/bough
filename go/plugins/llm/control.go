@@ -194,7 +194,7 @@ type controlCall struct {
 
 // take claims the next queued turn. A name the test is still writing
 // ends in .tmp and is skipped, so a half-written file is never read.
-func (c *controlLLM) take() (name string, t controlTurn, ok bool, err error) {
+func (c *controlLLM) take(r ullm.Request) (name string, t controlTurn, ok bool, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ents, err := os.ReadDir(c.dir)
@@ -220,11 +220,41 @@ func (c *controlLLM) take() (name string, t controlTurn, ok bool, err error) {
 	if err := json.Unmarshal(b, &t); err != nil {
 		return "", t, false, fmt.Errorf("llm-control: %s.json: %w", name, err)
 	}
+	// Written before .taken, so a test that saw the turn taken can read
+	// what the request told the model.
+	if err := writeRequest(filepath.Join(c.dir, name+".request"), r); err != nil {
+		return "", t, false, err
+	}
 	if err := os.Rename(src, filepath.Join(c.dir, name+".taken")); err != nil {
 		return "", t, false, err
 	}
 	c.n++
 	return name, t, true, nil
+}
+
+// writeRequest records the tool results a request carries, call id to
+// the text the model reads: what a hook's refusal or rewrite told the
+// model is visible nowhere else.
+func writeRequest(path string, r ullm.Request) error {
+	results := map[string]string{}
+	for _, it := range r.Input {
+		tr, ok := it.Data.(ullm.ToolResult)
+		if !ok {
+			continue
+		}
+		var text []string
+		for _, o := range tr.Output {
+			if o.Kind == ullm.ToolResultText {
+				text = append(text, o.Value)
+			}
+		}
+		results[tr.CallID] = strings.Join(text, "\n")
+	}
+	b, err := json.Marshal(map[string]any{"tool_results": results})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o644)
 }
 
 type controlAdapter struct {
@@ -240,7 +270,7 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 	if err := ctx.Err(); err != nil {
 		return ullm.Response{}, err
 	}
-	name, turn, ok, err := a.c.take()
+	name, turn, ok, err := a.c.take(r)
 	if err != nil {
 		return ullm.Response{}, err
 	}

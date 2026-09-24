@@ -31,6 +31,11 @@ Create waits for that file, so a test can hold a session in
 "starting"; a restart or reload of a session that has a file is not
 held.
 
+Each request that takes a turn also leaves `<name>.request`, written
+before `.taken`: the tool results it carried, call id to text
+(`ToolResults`), so a test can check what the model was told about a
+call.
+
 An empty queue answers `[llm-control: no turn queued in <dir>]` rather
 than waiting, so a test that queued too few turns fails instead of
 hanging. Session titles and other `Complete` calls never take a turn.
