@@ -19,6 +19,8 @@ import (
 	"unicode"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/andreylukin/bough/internal/testhold"
 )
 
 type Repo struct {
@@ -771,5 +773,7 @@ func atomicWrite(path string, b []byte, mode os.FileMode) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
+	// Model tests hold a write here, its temp file in the directory.
+	testhold.At("rename." + filepath.Base(filepath.Dir(path)) + "." + filepath.Base(path))
 	return os.Rename(tmp, path)
 }

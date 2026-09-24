@@ -8,6 +8,7 @@ import (
 
 	iorb "github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/internal/projectdef"
+	"github.com/andreylukin/bough/internal/testhold"
 	"github.com/andreylukin/bough/plugins/history"
 )
 
@@ -192,6 +193,8 @@ func chooseMode(flagProject string, flagLocal bool, sets setFlags) (mode, projec
 		if herr != nil {
 			return "", "", fmt.Errorf("project %s: home dir: %w", project, herr)
 		}
+		// Model tests hold a spawned child here, before it reads project.yml.
+		testhold.At("boot." + project)
 		if _, lerr := projectdef.Load(home, project); lerr != nil {
 			return "", "", fmt.Errorf("project %s: %w", project, lerr)
 		}

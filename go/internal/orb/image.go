@@ -14,6 +14,7 @@ import (
 
 	"github.com/andreylukin/bough/internal/container"
 	"github.com/andreylukin/bough/internal/projectdef"
+	"github.com/andreylukin/bough/internal/testhold"
 )
 
 type Build struct {
@@ -64,6 +65,8 @@ func EnsureImage(ctx context.Context, rt container.Runtime, home string, p proje
 		return tag, nil
 	}
 	dir := imagesDir(home, p.Slug)
+	// Model tests hold a build here, before it makes the image dir.
+	testhold.At("image." + p.Slug)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("orb: image %s: %w", tag, err)
 	}

@@ -27,6 +27,7 @@ import (
 	"github.com/andreylukin/bough/internal/container"
 	"github.com/andreylukin/bough/internal/orb"
 	"github.com/andreylukin/bough/internal/projectdef"
+	"github.com/andreylukin/bough/internal/testhold"
 	"github.com/andreylukin/bough/plugins/history"
 	"github.com/andreylukin/bough/plugins/llm"
 )
@@ -1445,8 +1446,12 @@ func (s *Supervisor) DeleteProject(slug string) error {
 	if err := s.EndProject(slug); err != nil {
 		return err
 	}
+	// Model tests hold each step of the delete open (testhold).
+	testhold.At("delete-ended." + slug)
+	if err := removeProjectDir(filepath.Join(projectdef.Root(s.home), slug), slug); err != nil {
+		return fmt.Errorf("serve: supervisor: delete project %s: %w", slug, err)
+	}
 	for _, dir := range []string{
-		filepath.Join(projectdef.Root(s.home), slug),
 		filepath.Join(s.home, ".bough", "orbs", "images", slug),
 		filepath.Join(s.home, ".bough", "orbs", "cache", slug),
 		filepath.Join(s.home, ".bough", "cache", slug),
@@ -1455,6 +1460,7 @@ func (s *Supervisor) DeleteProject(slug string) error {
 			return fmt.Errorf("serve: supervisor: delete project %s: %w", slug, err)
 		}
 	}
+	testhold.At("delete-removed." + slug)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.mains, slug)
@@ -1465,6 +1471,28 @@ func (s *Supervisor) DeleteProject(slug string) error {
 		}
 	}
 	return s.saveMetaLocked()
+}
+
+// removeProjectDir is os.RemoveAll of the project directory in its two
+// halves, the entries it reads and then the directory, so a model test
+// can hold the moment between them (project_delete_races.fizz). A file
+// created in that moment (a save's temp file, an agent's write) fails
+// the rmdir with ENOTEMPTY, as it fails RemoveAll's own.
+func removeProjectDir(dir, slug string) error {
+	ents, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, e := range ents {
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			return err
+		}
+	}
+	testhold.At("delete-emptied." + slug)
+	return os.Remove(dir)
 }
 
 // ErrUnknownProject is a slug with no directory.
@@ -1518,6 +1546,8 @@ func (s *Supervisor) Main(slug string) (string, error) {
 	lock := s.mainLock(slug)
 	lock.Lock()
 	defer lock.Unlock()
+	// Model tests hold a mint here, past the check, and after the persist.
+	testhold.At("main-checked." + slug)
 
 	s.mu.Lock()
 	id := s.mains[slug]
@@ -1538,6 +1568,7 @@ func (s *Supervisor) Main(slug string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	testhold.At("main-persisted." + slug)
 	// Outside s.mu: Create takes createMu and waits for the child's
 	// history file, which is seconds, not microseconds. The env says it
 	// is main here too: projectEnv derives it only for a restart, since
