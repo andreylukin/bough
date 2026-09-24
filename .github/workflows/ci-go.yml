@@ -137,6 +137,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: go/tests/web/package-lock.json
+      # The script's last steps walk the model paths in a browser and
+      # check the transcripts they leave.
+      - run: npm ci
+        working-directory: go/tests/web
+      - run: npx playwright install --with-deps --only-shell chromium
+        working-directory: go/tests/web
       - run: scripts/model-test.sh
 
   web-e2e:

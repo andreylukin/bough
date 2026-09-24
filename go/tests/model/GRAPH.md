@@ -265,4 +265,6 @@ tags (pseudo-versions only). The next lib commit, `ff30d4195ab2`
   reachable state matches the observed fields).
 - Fixtures: `testdata/light/` and `testdata/door/` are real v0.5.3 run
   dirs; `testdata/door/paths.json` is the generator's output, which the
-  tracecheck test replays.
+  tracecheck test replays. `testdata/<spec>/` for each
+  `specs/<spec>.fizz` is written by `scripts/model-test.sh gen <spec>`
+  and walked by the model tests ([`README.md`](README.md)).
