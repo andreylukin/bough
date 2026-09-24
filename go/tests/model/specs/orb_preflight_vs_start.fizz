@@ -18,7 +18,10 @@
 #     only on the first clone: syncCache's fetch goes through gitOut,
 #     which sets no GIT_TERMINAL_PROMPT=0 either, and the prompt sits
 #     until plugins/orb's 30-minute context kills it. Preflight says
-#     "warn: the cached clone is used" for exactly that remote.
+#     "warn: the cached clone is used" for exactly that remote. A remote
+#     whose URL carries a token never prompts: git answers the challenge
+#     with it and fails at once when it is refused (found by the Go walk;
+#     the spec had every "auth" remote hang).
 #   - The panel re-reads the detail on its own only when the definition's
 #     summary changes (projects.tsx useEffect on project.orb): a keychain,
 #     network, gh or runtime change stays shown stale until Re-check,
@@ -107,9 +110,11 @@ def start_outcome(p):
     if not p.rt:
         return "fail", "runtime"
     if p.repo == "remote":
-        if p.net == "auth":
+        # A URL carrying a token answers the challenge itself: git sends
+        # it, the server refuses it, and git fails without asking anyone.
+        if p.net == "auth" and not p.token:
             return "hang", "prompt"
-        if p.net == "offline" and not p.cached:
+        if p.net != "online" and not p.cached:
             return "fail", "clone"
     if not p.base:
         return "fail", "worktree"
@@ -237,7 +242,9 @@ role Project:
         r = start_outcome(self)
         self.start = r[0]
         self.cause = r[1]
-        if self.start == "ok" and self.repo == "remote":
+        # The clone is made before the worktree: a start that failed
+        # there still leaves the cache (found by the Go walk).
+        if self.repo == "remote" and (self.start == "ok" or self.cause == "worktree"):
             self.cached = True
 
     # plugins/orb's 30-minute context kills the prompting git.
