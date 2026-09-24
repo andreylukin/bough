@@ -75,6 +75,12 @@ type terAdapter struct {
 	// (the expansion the model was sent) instead of its typed words,
 	// which is what the page's RetryTurn does with turn.prompt.text.
 	retryExpanded bool
+	// archiveUnsent is the random run's deliberate bug: Archive is
+	// never sent. The runner's walks stop at their first disabled step
+	// and seldom get past two, so they almost never reach a card Retry
+	// (Type, Send, a failed Finish, RetryTurn); Archive is enabled from
+	// Init on, and the server's row says whether it happened.
+	archiveUnsent bool
 }
 
 const terFile = "notes.txt"
@@ -424,13 +430,14 @@ func (a *terAdapter) Archive() error {
 	if !a.gate.pass(!a.archived && a.status != "running" && a.draft == "" && a.failed == "" && !a.flushReady()) {
 		return nil
 	}
+	a.archived = true
+	if a.archiveUnsent {
+		return nil
+	}
 	ctx, cancel := actionCtx()
 	defer cancel()
-	if _, err := a.s.Archive(ctx, a.id); err != nil {
-		return err
-	}
-	a.archived = true
-	return nil
+	_, err := a.s.Archive(ctx, a.id)
+	return err
 }
 
 func (a *terAdapter) Unarchive() error {
@@ -812,16 +819,18 @@ func TestTranscriptEditRetry(t *testing.T) {
 	}
 }
 
-// A card Retry that resends the model's expansion instead of the typed
-// words must fail the random run too.
+// An Archive that is never sent must fail the random run (see
+// archiveUnsent for why not the card Retry's bug), and on state.
 func TestTranscriptEditRetryCatchesWrongAdapter(t *testing.T) {
 	t.Parallel()
 	fizzTools(t)
 	a := newTerAdapter(t)
-	a.retryExpanded = true
-	if err := runMBT(t, "transcript_edit_retry", a, terActions(a), terOptions()); err == nil {
-		t.Fatal("a run whose card Retry resends the expansion passed; the runner is not checking state")
+	a.archiveUnsent = true
+	err := runMBT(t, "transcript_edit_retry", a, terActions(a), terOptions())
+	if err == nil {
+		t.Fatal("a run whose Archive is never sent passed; the runner is not checking state")
 	}
+	t.Logf("caught: %v", err)
 }
 
 // The random runs rarely get past two steps; this walks the graph's
