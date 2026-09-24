@@ -16,6 +16,15 @@ llm.dir=<path>`), renames it `<name>.taken`, and answers as it says:
 | `{"mode":"slow","text":"a b c","delay_ms":300}` | streams `text` a word per `delay_ms` |
 | `{"mode":"block","text":"done"}` | holds until `<name>.release` exists, then finishes with `text`; a release written by `ReleaseWith` answers as its turn says instead (`{"mode":"error"}` fails it) |
 
+With `hold_boot: true` on the row, a fresh session (one with
+`BOUGH_SESSION_ID` and no history file yet) stops before it writes its
+history file, writes `boot/<id>.waiting` (content `main` for a
+project's main thread, else `session`) and waits for
+`boot/<id>.release` (`Booting`, `WaitBooting`, `ReleaseBoot`). serve's
+Create waits for that file, so a test can hold a session in
+"starting"; a restart or reload of a session that has a file is not
+held.
+
 An empty queue answers `[llm-control: no turn queued in <dir>]` rather
 than waiting, so a test that queued too few turns fails instead of
 hanging. Session titles and other `Complete` calls never take a turn.

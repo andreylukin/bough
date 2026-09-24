@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -90,4 +91,51 @@ func WaitTaken(t testing.TB, dir, name string, timeout time.Duration) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("llm-control: turn %q not taken after %s", name, timeout)
+}
+
+// bootDir holds the hold_boot handshake: <id>.waiting, its content the
+// session's role ("main" for a project's main thread, else "session"),
+// while a fresh session is held before its history file exists, and
+// <id>.release to let it go on.
+func bootDir(dir string) string { return filepath.Join(dir, "boot") }
+
+// Booting is the sessions held at boot and not yet released, id to role.
+func Booting(dir string) map[string]string {
+	out := map[string]string{}
+	ents, _ := os.ReadDir(bootDir(dir))
+	for _, e := range ents {
+		id, ok := strings.CutSuffix(e.Name(), ".waiting")
+		if !ok {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(bootDir(dir), id+".release")); err == nil {
+			continue
+		}
+		b, _ := os.ReadFile(filepath.Join(bootDir(dir), e.Name()))
+		out[id] = string(b)
+	}
+	return out
+}
+
+// WaitBooting waits until session id is held at boot and returns its
+// role.
+func WaitBooting(t testing.TB, dir, id string, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if role, ok := Booting(dir)[id]; ok {
+			return role
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("llm-control: session %q not held at boot after %s", id, timeout)
+	return ""
+}
+
+// ReleaseBoot lets a session held at boot go on to write its history.
+func ReleaseBoot(t testing.TB, dir, id string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(bootDir(dir), id+".release"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
