@@ -1,8 +1,9 @@
 package llm
 
-// llm-ollama and llm-script are built on the engine's adapters, which
-// need the unreal-agent harness, and that does not build for Windows at
-// the pin. A config naming either fails its row with the reason.
+// llm-ollama, llm-script and llm-control are built on the engine's
+// adapters, which need the unreal-agent harness, and that does not build
+// for Windows at the pin. A config naming one fails its row with the
+// reason.
 
 import (
 	"errors"
@@ -11,7 +12,7 @@ import (
 )
 
 func init() {
-	for _, n := range []string{"llm-ollama", "llm-script"} {
+	for _, n := range []string{"llm-ollama", "llm-script", "llm-control"} {
 		kernel.Register(n, func() kernel.Plugin { return unavailable(n) })
 	}
 }
