@@ -193,6 +193,7 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 
 	ad, prov, err := g.resolve()
 	if err != nil {
+		g.start(seq)
 		return g.answer(seq, project.Meta{Err: err.Error()}, nil), nil
 	}
 	model := ad.Model()
@@ -201,6 +202,7 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 	sticky := g.overflow != "" && g.overflow == model
 	g.mu.Unlock()
 	if sticky {
+		g.start(seq)
 		return g.answer(seq, project.Meta{Model: model, Provider: prov, Err: overflowText}, nil), nil
 	}
 
@@ -220,9 +222,7 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 		cancel()
 		err = context.Canceled
 	} else {
-		if g.sink != nil {
-			g.sink(agentllm.Delta{Seq: seq, Attempt: 1, Kind: agentllm.DeltaStart})
-		}
+		g.start(seq)
 		resp, err = ad.Respond(child, req, o)
 	}
 
@@ -288,6 +288,17 @@ func (g *Gate) Respond(ctx context.Context, req ullm.Request, o ullm.RequestOpti
 	}
 	g.emitMeta(project.Meta{ResponseID: resp.ID, Model: model, Provider: prov})
 	return resp, nil
+}
+
+// start says a request is going out: the actor opens a wake turn on it
+// when none is open. A request the Gate fails itself (resolve, a sticky
+// overflow) says so too, before its answer: otherwise the error it
+// records lands outside any turn, and the session reads failed with no
+// turn to show it or retry.
+func (g *Gate) start(seq uint64) {
+	if g.sink != nil {
+		g.sink(agentllm.Delta{Seq: seq, Attempt: 1, Kind: agentllm.DeltaStart})
+	}
 }
 
 // covered: every reason the request answers is one the Gate parked. An
