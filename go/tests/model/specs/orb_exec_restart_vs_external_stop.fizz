@@ -1,0 +1,310 @@
+# A project session's orb between two writers of state.json: the child
+# (the session's bough), whose exec seam (Orb.Command ->
+# ensureRunningLocked) restarts a container it finds not running, and a
+# stop made outside it: serve's Stop orb and reaper
+# (Supervisor.stopOrb), serve's Kill (stopKilledOrb) and `bough project
+# stop` (projectStop). orb_lifecycle treats a stop and an exec as single
+# steps; here each is the sequence of writes and runtime calls the code
+# makes, so the races between them are states. Background jobs killed
+# by these stops are the sibling flow
+# orb_exec_restart_vs_external_stop_jobs.
+#
+# The stop (orb.StopContainer, internal/orb/control.go:27):
+#   MarkStopped  read state.json, save it as prev, write it back with
+#                status stopped (writeState: updatedAt now, state.go:184)
+#   rt.Stop      ok, or an error; on an error an Inspect that says
+#                "missing" counts as ok, anything else Restores prev
+#                (writeJSON: prev's own updatedAt, not now, state.go:195)
+#   stoppedAt    serve only, AFTER StopContainer returned
+#                (supervisor.go:1179); the CLI records nothing in serve
+# The exec (ensureRunningLocked, orb.go:545), under o.mu:
+#   Inspect not running -> write starting(container); a missing container
+#   gets a new token (newTokenLocked, which also drops the proxy) and
+#   newly planned ports (ports.go:17) -> rt.Start (a reused container
+#   keeps its ports; a busy host port fails it with startErr's reason,
+#   ports.go:58) -> resumeLocked: write starting(resume), run resume.sh
+#   -> write running(ready) or failed(resume).
+#
+# Where the code disagreed with the mapped model (and the code won):
+#   - The CLI stop marks state.json but records no stoppedAt, so serve
+#     learns of it from the file alone.
+#   - There is no "stoppedAt unset" status of its own: until stoppedAt is
+#     recorded, orbState reads the file, which MarkStopped already made
+#     "stopped".
+#   - The token is not in state.json (a token file); the ports are. A
+#     child write carries the child's in-memory ports, a Restore the
+#     saved ones (a recreate during the stop, then a failed stop, lists
+#     the old container's ports).
+#   - The proxy lives in the child and is closed only by the child's own
+#     Orb.Stop and by a new token (a recreate); an external stop never
+#     closes it and a restart of the reused container keeps it. It is
+#     stale only if the runtime moves the gateway while the container is
+#     down, which nothing here observes, so it is not a field.
+#   - HostPortBecomesBusy is folded into RuntimeStartErr: a reused
+#     container on a busy port fails with startErr's reason; a recreated
+#     one plans the busy port out and starts.
+#   - The running snapshot is taken fresh here (up() reads the runtime):
+#     its TTL lag is orb_lifecycle's SnapshotCatchesUp.
+#
+# Kept out: two stops in flight at once (serve + CLI), the child's own
+# Orb.Stop on exit, portal writes (a read-modify-write that can undo a
+# mark it raced).
+#
+# Refuted here: strong forms fizz breaks on this spec as written (each
+# checked by appending it; see the flow's notes):
+#   FailedStopKeepsChildWrite  not (owner and file starting and step
+#     idle), i.e. a failed stop never puts back a state the child moved
+#     past: ServeStopOrb -> RuntimeStopErrButDown -> ChildExec ->
+#     CliProjectStop -> RuntimeStartErr -> RuntimeStopErr: the Restore
+#     writes starting(container) over the child's failed(container), and
+#     the row says starting with no start running.
+#   RestartedNotShownStopped   a live child's own running/starting is
+#     never shown stopped: ServeStopOrb -> RuntimeStopOk -> ChildExec ->
+#     RecordStoppedAt: stoppedAt is taken after rt.Stop returned, so it
+#     is newer than the restart's write and the restart reads stopped
+#     until the child writes again.
+#   UpOnlyWhileContainerRuns   not (owner, idle, no stop in flight, up,
+#     container stopped): ServeStopOrb -> RuntimeStopErrButDown: the
+#     Restore puts "running" back over a stopped container, and only the
+#     child's next exec corrects it, so the mapped liveness "row status
+#     converges to runtime truth within runningTTL" does not hold either
+#     (running trusts state.json, not the snapshot).
+
+# Fields (role Orb):
+#   owner   the child lives
+#   file    state.json status: running | stopped | starting | failed
+#   phase   state.json's phase for starting/failed: container | resume
+#   writer  who wrote state.json last: child | serve (MarkStopped, Kill)
+#   ctr     the container: running | stopped | missing
+#   step    the child's exec: idle | starting (rt.Start) | resuming
+#           (resume.sh)
+#   stop    the external stop: none | marked (rt.Stop in flight) | done
+#           (rt.Stop returned ok, serve's stoppedAt not yet recorded)
+#   by      who is stopping: "" | serve | cli
+#   pfile, pphase, pmark   what MarkStopped saved for a Restore
+#   mark    serve's stoppedAt >= state.json's updatedAt
+#   ctrok   the container was created with the child's current token
+#           and ports. The ports state.json lists are not a field: a
+#           child write lists the child's, a Restore the saved ones, so
+#           they are stale exactly when FailedStopKeepsChildWrite breaks.
+
+role Orb:
+    action Init:
+        self.owner = True
+        self.file = "running"
+        self.phase = ""
+        self.writer = "child"
+        self.ctr = "running"
+        self.step = "idle"
+        self.stop = "none"
+        self.by = ""
+        self.pfile = ""
+        self.pphase = ""
+        self.pmark = False
+        self.mark = False
+        self.ctrok = True
+
+    # --- the external stops ---
+
+    # Stop orb: the page offers it only while the row shows up.
+    atomic action ServeStopOrb:
+        require self.stop == "none" and up(self)
+        self.mark_stopped("serve")
+
+    # The reaper: state.json running or failed and quiet for the limit
+    # (idleness is orb_lifecycle's; here it may come at any time).
+    atomic action ReaperStop:
+        require self.stop == "none" and self.file in ("running", "failed")
+        self.mark_stopped("serve")
+
+    # `bough project stop <session>`, on any orb with a state.json.
+    atomic action CliProjectStop:
+        require self.stop == "none"
+        self.mark_stopped("cli")
+
+    # rt.Stop returns ok (or errs on a missing container, which Inspect
+    # then calls stopped already). serve still has stoppedAt to record.
+    atomic fair action RuntimeStopOk:
+        require self.stop == "marked"
+        if self.ctr == "running":
+            self.ctr = "stopped"
+        if self.by == "serve":
+            self.stop = "done"
+        else:
+            self.end_stop()
+
+    # rt.Stop errs and the container is still running: Restore.
+    atomic action RuntimeStopErr:
+        require self.stop == "marked" and self.ctr != "missing"
+        self.restore()
+
+    # rt.Stop errs (a timeout) but the container went down anyway and
+    # Inspect says stopped, not missing: Restore all the same.
+    atomic action RuntimeStopErrButDown:
+        require self.stop == "marked" and self.ctr == "running"
+        self.ctr = "stopped"
+        self.restore()
+
+    # Supervisor.stopOrb: stoppedAt = now, after StopContainer returned.
+    atomic fair action RecordStoppedAt:
+        require self.stop == "done"
+        self.mark = True
+        self.end_stop()
+
+    # serve's Kill (archive, a stopped agent): SIGKILL the child, then
+    # stopKilledOrb stops the container only if the runtime says it runs.
+    # One step: no child is left to race it.
+    atomic action KillChild:
+        require self.owner and self.stop == "none"
+        self.owner = False
+        self.step = "idle"
+        if self.ctr == "running":
+            self.file = "stopped"
+            self.writer = "serve"
+            self.ctr = "stopped"
+            self.mark = True
+
+    # `container rm`, an engine reset: the next exec must recreate it.
+    atomic action ContainerRemovedBehindBack:
+        require self.ctr != "missing"
+        self.ctr = "missing"
+        self.ctrok = False
+
+    # --- the child's exec seam ---
+
+    # ensureRunningLocked: Inspect says not running; write starting
+    # (container). A missing container gets a new token and newly
+    # planned ports (the token is the child's, not a field: ctrok).
+    atomic action ChildExec:
+        require self.owner and self.step == "idle" and self.ctr != "running"
+        self.step = "starting"
+        self.child_write("starting", "container")
+
+    # rt.Start returns ok: a recreate is created with the child's (new)
+    # token, a reuse keeps the one it was created with.
+    atomic fair action RuntimeStartOk:
+        require self.owner and self.step == "starting"
+        if self.ctr == "missing":
+            self.ctrok = True
+        self.ctr = "running"
+        self.step = "resuming"
+        self.child_write("starting", "resume")
+
+    # rt.Start fails (a busy forwarded port on a reused container, the
+    # runtime): failed(container) with startErr's reason.
+    atomic action RuntimeStartErr:
+        require self.owner and self.step == "starting"
+        self.step = "idle"
+        self.child_write("failed", "container")
+
+    atomic fair action ResumeOk:
+        require self.owner and self.step == "resuming" and self.ctr == "running"
+        self.step = "idle"
+        self.child_write("running", "")
+
+    # resume.sh exits non-zero on its own: "Setup failed", rightly.
+    atomic action ResumeFail:
+        require self.owner and self.step == "resuming" and self.ctr == "running"
+        self.step = "idle"
+        self.child_write("failed", "resume")
+
+    # A stop took the container down under resume.sh: runResume errs and
+    # the child writes failed(resume) all the same ("Setup failed").
+    atomic fair action ResumeKilled:
+        require self.owner and self.step == "resuming" and self.ctr != "running"
+        self.step = "idle"
+        self.child_write("failed", "resume")
+
+    # Helpers are atomic funcs: a plain func call is a yield point.
+
+    # MarkStopped: save the file, write it back stopped (updatedAt now,
+    # so past any earlier stoppedAt).
+    atomic func mark_stopped(by):
+        self.pfile = self.file
+        self.pphase = self.phase
+        self.pmark = self.mark
+        self.file = "stopped"
+        self.writer = "serve"
+        self.mark = False
+        self.stop = "marked"
+        self.by = by
+
+    # Restore: write prev back with its own updatedAt, whatever the child
+    # wrote meanwhile. The child never writes "stopped" here, so a saved
+    # stopped was serve's write.
+    atomic func restore():
+        self.file = self.pfile
+        self.phase = self.pphase
+        self.writer = "serve" if self.pfile == "stopped" else "child"
+        self.mark = self.pmark
+        self.end_stop()
+
+    # The stop is over: nothing is saved any more.
+    atomic func end_stop():
+        self.stop = "none"
+        self.by = ""
+        self.pfile = ""
+        self.pphase = ""
+        self.pmark = False
+
+    # writeState of the child's in-memory state: its status, its ports,
+    # updatedAt now (past any stoppedAt).
+    atomic func child_write(f, p):
+        self.file = f
+        self.phase = p
+        self.writer = "child"
+        self.mark = False
+
+# serve's orbState: the status a row shows (orbs.go:151).
+def status(o):
+    f = o.file
+    if f == "failed" or f == "stopped":
+        return f
+    if not o.owner or o.mark:
+        return "stopped"
+    return f
+
+# orbState's Up: running trusts state.json, failed and starting ask the
+# runtime, an owner gone keeps only what the runtime confirms, serve's
+# recorded stop is down.
+def up(o):
+    f = o.file
+    r = o.ctr == "running"
+    if f == "failed":
+        return r
+    if f not in ("running", "starting"):
+        return False
+    u = True if f == "running" else r
+    if not o.owner:
+        return u and r
+    if o.mark:
+        return False
+    return u
+
+action Init:
+    orb = Orb()
+
+# serve only writes status stopped; anything else it writes is a Restore
+# of what it replaced, which was the child's.
+always assertion ServeOnlyWritesStopped:
+    return orb.writer != "serve" or orb.file == "stopped"
+
+# A recreated container gets a fresh token and ports, a reused one keeps
+# them: a running container the child is not mid-starting was created
+# with the child's current token.
+always assertion ContainerHasChildsToken:
+    return orb.ctr != "running" or orb.step != "idle" or orb.ctrok
+
+# Under serve's recorded stop a live child's "running" state.json is
+# shown stopped and not up at once, with no snapshot wait.
+always assertion ServeStopShowsAtOnce:
+    return not (orb.owner and orb.mark and orb.file == "running") or (status(orb) == "stopped" and not up(orb))
+
+# After an external stop the child's next exec settles: running, or
+# failed with a reason.
+always eventually assertion ExecSettles:
+    return orb.step == "idle"
+
+# An external stop in flight ends (stoppedAt recorded, or restored).
+always eventually assertion StopEnds:
+    return orb.stop == "none"
