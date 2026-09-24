@@ -1,0 +1,423 @@
+---
+# The token bound (MAX_GEN) leaves a twice-recreated orb with nothing
+# left to recreate: that is rest, not a deadlock.
+deadlock_detection: false
+---
+
+# One project orb's way back to the host, as the session's child process
+# runs it (internal/orb): the egress proxy on the guest's gateway
+# (proxy.go), the /bough/exec relay the guest's `bough` shim posts to
+# (relay.go), and the per-container token both check (token.go).
+#
+# Where the code disagreed with the mapped model (and the code won):
+#   - There is no separate "ProxyClosed" state: Orb.Stop and
+#     newTokenLocked set o.proxy = nil, which is NoProxy again; the next
+#     resume (ensureProxyLocked) starts a fresh listener. proxy is
+#     none | up | stale.
+#   - ProxyLegacy is not only "a container created before tokens": Open
+#     reuses a container whose token file is gone with o.token = "", so
+#     the proxy it starts is open, while the container's create-time env
+#     still carries BOUGH_ORB_TOKEN (see NoTokenDowngrade).
+#   - The token the guest sends is o.token when set (execEnv adds it on
+#     every exec) and otherwise the one baked into the container's create
+#     env: own_token() below.
+#   - The relay checks body framing (400) BEFORE the allowlist (403), and
+#     both after the token (401). A missing host binary (os.Executable
+#     failing, 500) is left out: it does not happen on a real host.
+#   - A relayed command that outlives relayTimeout is SIGKILLed by
+#     exec.CommandContext; Wait then returns an *exec.ExitError with
+#     ExitCode() -1, so relayExec writes exit -1 and no stderr line, and
+#     the shim maps a negative code to exit 1 silently (TimeoutExplained).
+#   - ensureRunningLocked's restart after an external stop calls
+#     resumeLocked, whose ensureProxyLocked returns early while o.proxy
+#     is set: the listener stays on the gateway it was started on
+#     (ProxyWorksOrHostUnset).
+#
+# Known gaps are asserted twice: STRICT = True states the contract and
+# fails on the product as it is (the findings); STRICT = False, the
+# checked-in value, asserts how far each gap reaches, so the model still
+# catches a change that widens one.
+#
+# Fields (role Orb):
+#   proc      the session's child process is alive (it owns o.proxy)
+#   ctr       the container: missing | running | stopped
+#   gen       tokens made so far (newToken); bounded by MAX_GEN
+#   ctok      the token in the container's create env (0: none)
+#   tokfile   the orb dir's token file still holds ctok
+#   otok      o.token, what the child's proxy is started with (0: "")
+#   proxy     the child's listener: none | up (on the live gateway) |
+#             stale (on a gateway the guest no longer has)
+#   ptok      the token the listener checks (0: open, legacy)
+#   res       the last relayed call as the shim ends it: idle | unset
+#             (BOUGH_HOST unset) | connect_fail | unauthorized (401) |
+#             bad_request (400) | forbidden (403) | running (the host
+#             command runs) | ok (200) | timed_out (200, exit -1)
+#   sent      the token a call that got past the check carried (0 none,
+#             -1 a wrong one); at, gate: the container's token and the
+#             one the listener checked when it was made (a call in flight
+#             across a recreate keeps running: it was let in). All three
+#             and ran/scope are cleared once the call ends, and a call's
+#             outcome once the orb's life moves on, to keep the graph small
+#   ran       the host subcommand it started ("" none): mcp | project |
+#             browser | other
+#   scope     whose state it acts on: own | other ("" none). The browser's
+#             is AGENT_BROWSER_SESSION = X-Bough-Session, a header the
+#             guest writes; `bough project` takes any project's name
+#   hostrc    the host command's exit code (-1 killed by the timeout)
+#   rc        the shim's exit code
+#   explained the shim wrote why it failed on stderr
+#   sized     the 200 body carried Content-Length (not chunked)
+
+MAX_GEN = 2
+STRICT = False
+ALLOWED = ("mcp", "project", "browser")
+REFUSED = ("unset", "connect_fail", "unauthorized", "bad_request", "forbidden")
+
+role Orb:
+    action Init:
+        self.proc = False
+        self.ctr = "missing"
+        self.gen = 0
+        self.ctok = 0
+        self.tokfile = False
+        self.otok = 0
+        self.proxy = "none"
+        self.ptok = 0
+        self.res = "idle"
+        self.sent = 0
+        self.at = 0
+        self.gate = 0
+        self.ran = ""
+        self.scope = ""
+        self.hostrc = 0
+        self.rc = 0
+        self.explained = False
+        self.sized = True
+
+    # --- the orb's life, as the child and the host see it ---
+
+    # A container an older bough created, before tokens: no token in its
+    # env, no token file.
+    atomic action PreTokenContainer:
+        require self.gen == 0 and self.ctr == "missing" and not self.proc
+        self.ctr = "stopped"
+        self.settle()
+
+    # orb.Open (a session starts or resumes in a new process, so no
+    # listener yet): a missing container gets a fresh token; a reused one
+    # keeps what readToken finds. Start, then resumeLocked.
+    atomic action Open:
+        require not self.proc and (self.ctr != "missing" or self.gen < MAX_GEN)
+        self.open()
+        self.resume("same")
+
+    # The same, when the guest's resolv.conf gives no usable gateway:
+    # ensureProxyLocked gives up and BOUGH_HOST is left unset.
+    atomic action OpenNoGateway:
+        require not self.proc and (self.ctr != "missing" or self.gen < MAX_GEN)
+        self.open()
+        self.resume("none")
+
+    # The session ends cleanly: Orb.Stop stops the container and closes
+    # the listener.
+    atomic action SessionEnds:
+        require self.proc
+        self.proc = False
+        if self.ctr == "running":
+            self.ctr = "stopped"
+        self.close()
+        self.settle()
+
+    # The child dies without cleanup: its listener dies with it, the
+    # container is left as it was.
+    atomic action ChildCrash:
+        require self.proc
+        self.proc = False
+        self.close()
+        self.settle()
+
+    # Stop orb, the reaper, an engine restart: the container stops behind
+    # the child's back, which keeps its listener.
+    atomic action ExternalStop:
+        require self.ctr == "running"
+        self.ctr = "stopped"
+        self.settle()
+
+    # `container rm` behind the child's back (the orb dir stays).
+    atomic action ContainerRemoved:
+        require self.ctr != "missing"
+        self.ctr = "missing"
+        self.settle()
+
+    # The orb dir's token file is deleted while the container stays.
+    atomic action TokenFileLost:
+        require self.tokfile
+        self.tokfile = False
+        self.settle()
+
+    # The child's next exec finds the container down
+    # (ensureRunningLocked): a missing one is created with a new token,
+    # then Start and resumeLocked. The container may come back on the
+    # gateway it had or on a new one.
+    atomic action RestartSameGateway:
+        require restartable(self)
+        self.restart()
+        self.resume("same")
+
+    atomic action RestartNewGateway:
+        require restartable(self)
+        self.restart()
+        self.resume("new")
+
+    atomic action RestartNoGateway:
+        require restartable(self)
+        self.restart()
+        self.resume("none")
+
+    # --- the guest's `bough` shim posts to $BOUGH_HOST/bough/exec ---
+
+    atomic action CallMcp:
+        require callable(self)
+        self.call(own_token(self), "mcp", "own", False)
+
+    # Any subcommand but mcp/project/browser (`bough serve`, `bough
+    # update`): refused with 403.
+    atomic action CallOther:
+        require callable(self)
+        self.call(own_token(self), "other", "own", False)
+
+    # `bough project rm <another project> --yes`, `bough project stop
+    # <another session>`: the relay passes all of `bough project`.
+    atomic action CallProjectOther:
+        require callable(self)
+        self.call(own_token(self), "project", "other", False)
+
+    # BOUGH_SESSION=<another session> bough browser ...: the shim sends
+    # X-Bough-Session from the guest's env, and the relay uses it as is.
+    atomic action CallBrowserOtherSession:
+        require callable(self)
+        self.call(own_token(self), "browser", "other", False)
+
+    # Another VM on the bridge: a wrong token, or none.
+    atomic action CallWrongToken:
+        require callable(self)
+        self.call(-1, "mcp", "own", False)
+
+    atomic action CallNoToken:
+        require callable(self)
+        self.call(0, "mcp", "own", False)
+
+    # A VM that holds the previous container's token.
+    atomic action CallOldToken:
+        require callable(self) and self.gen >= 2
+        self.call(self.gen - 1, "mcp", "own", False)
+
+    # More than 8 MiB of framed args and stdin (MaxBytesReader), or a line
+    # that is not base64.
+    atomic action CallTooLarge:
+        require callable(self)
+        self.call(own_token(self), "mcp", "own", True)
+
+    # --- the host command ---
+
+    atomic action HostExitsOk:
+        require self.res == "running"
+        self.done(0)
+
+    atomic action HostExitsError:
+        require self.res == "running"
+        self.done(2)
+
+    # relayTimeout (10 min) passes: CommandContext kills it. Fair: the
+    # timer runs for as long as the command does.
+    atomic fair action HostTimeout:
+        require self.res == "running"
+        self.done(-1)
+
+    # --- helpers (atomic: a plain func call is a yield point) ---
+
+    atomic func open():
+        self.settle()
+        self.proc = True
+        if self.ctr == "missing":
+            self.new_token()
+        else:
+            self.otok = self.ctok if self.tokfile else 0
+        self.ctr = "running"
+
+    atomic func restart():
+        self.settle()
+        if self.ctr == "missing":
+            self.new_token()
+        self.ctr = "running"
+
+    # newTokenLocked: a new token file and env, and a listener started
+    # with the old token is closed.
+    atomic func new_token():
+        self.gen = self.gen + 1
+        self.ctok = self.gen
+        self.otok = self.gen
+        self.tokfile = True
+        self.proxy = "none"
+        self.ptok = 0
+
+    # The process's listener and o.token go with it (or with Orb.Stop).
+    atomic func close():
+        self.proxy = "none"
+        self.ptok = 0
+        self.otok = 0
+
+    # resumeLocked -> ensureProxyLocked (then writeShim, then resume.sh):
+    # a listener that exists is kept whatever the gateway now is.
+    atomic func resume(gw):
+        if self.proxy == "none":
+            if gw != "none":
+                self.proxy = "up"
+                self.ptok = self.otok
+        elif gw == "new":
+            self.proxy = "stale"
+
+    # The shim, then proxy.serve and relayExec, in the code's order. A
+    # refused call keeps only what the shim said; one that got past the
+    # token keeps what it carried, for the invariants.
+    atomic func call(sent, cmd, scope, bad):
+        self.forget()
+        self.rc = 1
+        self.explained = True
+        if self.proxy == "none":
+            self.res = "unset"
+        elif self.proxy == "stale":
+            self.res = "connect_fail"
+        elif self.ptok != 0 and sent != self.ptok:
+            self.res = "unauthorized"
+        else:
+            self.sent = sent
+            self.at = self.ctok
+            self.gate = self.ptok
+            if bad:
+                self.res = "bad_request"
+            elif cmd not in ALLOWED:
+                self.res = "forbidden"
+            else:
+                self.res = "running"
+                self.ran = cmd
+                self.scope = scope
+                self.rc = 0
+                self.explained = False
+
+    # The host command ends: the body is framed into a buffer and sent
+    # with Content-Length; the shim replays stdout, stderr and the code.
+    # A timeout is SIGKILL: exit -1, no stderr line, and the shim's
+    # negative-code branch exits 1.
+    atomic func done(code):
+        self.forget()
+        self.hostrc = code
+        self.sized = True
+        if code < 0:
+            self.res = "timed_out"
+            self.rc = 1
+            self.explained = False
+        else:
+            self.res = "ok"
+            self.rc = code
+            self.explained = True
+
+    atomic func forget():
+        self.res = "idle"
+        self.sent = 0
+        self.at = 0
+        self.gate = 0
+        self.ran = ""
+        self.scope = ""
+        self.hostrc = 0
+        self.rc = 0
+        self.explained = False
+
+    # The orb's life moved on: the last call's outcome is history. One in
+    # flight keeps running on the host.
+    atomic func settle():
+        if self.res != "running":
+            self.forget()
+
+# ensureRunningLocked runs on the child's next exec with the container
+# down; a missing one needs a token left under the bound.
+def restartable(o):
+    return o.proc and o.ctr != "running" and (o.ctr != "missing" or o.gen < MAX_GEN)
+
+# The token the guest's shim sends: o.token from the exec env when set,
+# else the one in the container's create env.
+def own_token(o):
+    return o.otok if o.otok != 0 else o.ctok
+
+# The guest runs its shim in an exec the child made (so the container
+# runs), one call at a time.
+def callable(o):
+    return o.proc and o.ctr == "running" and o.res != "running"
+
+# The call got past the token check.
+def reached(o):
+    return o.res in ("bad_request", "forbidden", "running", "ok", "timed_out")
+
+# A token-era container served by an open listener.
+def downgraded(o):
+    return o.ctok != 0 and o.proxy != "none" and o.ptok == 0
+
+action Init:
+    orb = Orb()
+
+# With a token, no request without that token reaches the relay or proxy.
+always assertion TokenGate:
+    return not reached(orb) or orb.gate == 0 or orb.sent == orb.gate
+
+# A container that has a token is never served by an open listener.
+# Gap: Open reusing a container whose token file is gone starts an open
+# proxy; confined, it happens only with the file gone.
+always assertion NoTokenDowngrade:
+    if not downgraded(orb):
+        return True
+    return not STRICT and not orb.tokfile
+
+# After a recreate the previous container's token no longer authenticates.
+# Gap: the downgraded (open) listener takes any token, old ones too;
+# confined, only a listener that checked none let it in.
+always assertion OldTokenRevoked:
+    if not (reached(orb) and orb.sent > 0 and orb.sent < orb.at):
+        return True
+    return not STRICT and orb.gate == 0
+
+# Only mcp, project and browser run on the host.
+always assertion OnlyAllowlisted:
+    return orb.ran in ("",) + ALLOWED
+
+# A relayed command acts for the calling orb, never one the guest names.
+# Gap: X-Bough-Session and `bough project <name>` are the guest's to
+# choose; confined, only browser and project reach another's state.
+always assertion RunsAsCaller:
+    if orb.scope != "other":
+        return True
+    return not STRICT and orb.ran in ("browser", "project")
+
+# The shim's exit code is the host command's, and the body is sized.
+always assertion ShimExitIsHosts:
+    return orb.res != "ok" or (orb.sized and orb.rc == orb.hostrc)
+
+# A failure the host side decided is explained on stderr, with exit 1.
+# Gap: a timed-out command exits the shim 1 with nothing said.
+always assertion FailuresExplained:
+    if orb.res in REFUSED:
+        return orb.rc == 1 and orb.explained
+    if orb.res == "timed_out":
+        return orb.rc == 1 and (orb.explained or not STRICT)
+    return True
+
+# After a resume the guest has a working proxy or no BOUGH_HOST at all.
+# Gap: a restart onto a new gateway keeps the old listener; confined, it
+# still checks the current token.
+always assertion ProxyWorksOrHostUnset:
+    if orb.proxy != "stale":
+        return True
+    return not STRICT and orb.ptok == orb.otok
+
+# Every relayed call returns (within relayTimeout plus slack).
+always eventually assertion CallReturns:
+    return orb.res != "running"
