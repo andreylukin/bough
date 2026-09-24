@@ -10,14 +10,31 @@
 # browser test, so the two children are not symmetric. A running cap of 1
 # makes the second child queue behind the first; a per-session budget of
 # 2 refuses a third spawn (429). The first child carries the whole
-# lifecycle (stop while booting or running, jobs and a failed turn in
-# its first turn, a second prompt, a process exit); the second is only
-# ever spawned during the first's first turn, so it always queues, and is
-# then drained (its boot folded into Drain) and run once, or dropped. Its
-# report is the same code path as the first's and is not modelled. The
-# first child is never queued, so it never leaves. Each action names the
-# child it moves: a oneof choice would add a node per choice to the
-# graph, and a browser test per path.
+# lifecycle (stop, a failed first turn, a second prompt, a process exit);
+# the second is only ever spawned during the first's first turn, so it
+# always queues, and is then run once, or dropped. Its report is the same
+# code path as the first's and is not modelled. The first child is never
+# queued, so it never leaves. Each action names the child it moves: a
+# oneof choice would add a node per choice to the graph, and a browser
+# test per path.
+#
+# Every state here is one a client can wait for and then read off the
+# API (the children rows, the parent's agent counts, its notices). What
+# serve does on its own right after a step, with nothing a client can
+# hold it on, is folded into that step:
+#   - Spawn returns after launch has written the prompt, so there is no
+#     booting state to act on; a Stop that races the boot is a window of
+#     one exec and is not modelled.
+#   - A Stop interrupts the turn and the cancel lands by itself (SIGINT
+#     ends the model call): stopped, not a "stopping" a client could act
+#     in.
+#   - A freed slot drains the queue at once (drainQueue runs from the
+#     event that freed it): the queued child is running in the same step.
+#   - The report runs from the closing event and lands in about a poll:
+#     a closed turn has its notice in the same step. A second one (after
+#     an exit) is what would break the counts.
+#   - Calls adopted as jobs need a model that calls tools; the controlled
+#     model only answers text, so jobs are not modelled.
 #
 # Refusals change nothing serve keeps (Spawn past the budget, AgentSpawns)
 # and are self-loops here: the adapter checks the HTTP status (429, 409).
@@ -25,29 +42,22 @@
 # first and second are serve's view of each child:
 #   none          no row (never spawned, or a queued child that was stopped)
 #   queued        meta.Task persisted, no process, no history
-#   booting       slot reserved, process starting, prompt not yet written
-#   booting_stop  booting, and a Stop arrived: launch kills it unprompted
 #   running       a turn is open
-#   stopping      running, and Stop interrupted it; the cancel is on its way
-#   jobs          the turn closed with calls adopted as jobs: still working
 #   done | error | stopped   the last turn closed that way
-#   idle          stopped while booting: the process is gone, no turn ran
 # *_slot is the child's entry in serve's running map: "serve" when serve
 # started it (spawn or queue drain, both gated on the cap), "msg" when a
 # message to an idle child opened a new turn (Send never checks the cap).
-# first_turns counts the first child's closed turns a parent must hear
-# about; first_notices the notices the parent got for them. A second
-# prompt is sent only after the first turn's notice (the parent reacts
-# to what it heard), and at most once, which keeps the counts at 0..2.
+# first_turns counts the first child's closed turns; first_notices the
+# notices the parent got for them. A second prompt is sent at most once,
+# which keeps the counts at 0..2.
 #
 # Where this disagrees with the code as of fizz/20260923f/f-example, the
-# spec says what the flow promises and the code is the finding (the MBT
-# stage is where it shows):
-#   - Message takes a slot. The code relies on an "input" event for that
+# spec says what the flow promises and the code is the finding:
+#   - Message takes a slot. The code relied on an "input" event for that
 #     (children.go childEventLocked) and the real headless child never
-#     prints one (supervisor.go emit), so a re-messaged child holds no
-#     slot, is not counted running, and Stop answers "idle" without
-#     interrupting it (stopChild): the Work dialog ends on "No reply".
+#     prints one (supervisor.go emit), so a re-messaged child held no
+#     slot, was not counted running, and Stop answered "idle" without
+#     interrupting it (stopChild): the Work dialog ended on "No reply".
 #   - The running cap is on serve's own starts (spawn, queue drain). A
 #     message to an idle child is let through past it, so the running
 #     map can hold more than the cap; ServeStartsWithinCap counts only
@@ -57,8 +67,7 @@ MAX_RUNNING = 1
 MAX_PER_SESSION = 2
 MAX_TURNS = 2
 
-OPEN = ("booting", "booting_stop", "running", "stopping", "jobs")
-CLOSED = ("done", "error", "stopped", "idle")
+CLOSED = ("done", "error", "stopped")
 
 role Parent:
     action Init:
@@ -80,10 +89,10 @@ role Parent:
     atomic action Spawn:
         if self.total >= MAX_PER_SESSION:
             return
-        require self.first == "none" or (self.first_slot != "" and self.first_turns == 0)
+        require self.first == "none" or (self.first == "running" and self.first_turns == 0)
         self.total += 1
         if self.first == "none":
-            self.first = "booting"
+            self.first = "running"
             self.first_slot = "serve"
         else:
             self.second = "queued"
@@ -94,42 +103,18 @@ role Parent:
         require self.first == "running"
         pass
 
-    # drainQueue, started by every freed slot: the queued child starts
-    # only while the running map has room. Its boot is folded in (the
-    # first child's Launch covers booting); it holds its slot throughout.
-    atomic fair action Drain:
-        require self.second == "queued" and self.first_slot == ""
-        self.second = "running"
-        self.second_slot = "serve"
-
-    # launch: the process is up and gets its prompt. A Stop that came
-    # while it booted wins: the child is killed before it reads its
-    # prompt, and its exit frees the slot and reports nothing (no turn
-    # ran).
-    atomic fair action Launch:
-        require self.first in ("booting", "booting_stop")
-        if self.first == "booting_stop":
-            self.first = "idle"
-            self.first_slot = ""
-        else:
-            self.first = "running"
-
-    # The first child's turn closes with "done". Also from stopping: a
-    # natural outcome wins over the cancel. Strongly fair: a turn that
-    # keeps adopting jobs still ends some time.
-    atomic fair<strong> action Finish:
-        require self.first in ("running", "stopping")
+    # The first child's turn closes with "done". Each close frees its
+    # slot, the queue drains into it, and the parent is told once
+    # (inlined: as a role func, fizz applied only its first assignment).
+    atomic fair action Finish:
+        require self.first == "running"
         self.first = "done"
         self.first_slot = ""
         self.first_turns += 1
-
-    # The second child's one turn closes and its notice lands with it:
-    # the report path is the first child's, and a separate step here
-    # doubled the graph for nothing new.
-    atomic fair action FinishSecond:
-        require self.second == "running"
-        self.second = "done"
-        self.second_slot = ""
+        self.first_notices += 1
+        if self.second == "queued":
+            self.second = "running"
+            self.second_slot = "serve"
 
     # The turn closes with an error entry in it: "failed" to the parent.
     atomic action Fail:
@@ -137,26 +122,28 @@ role Parent:
         self.first = "error"
         self.first_slot = ""
         self.first_turns += 1
+        self.first_notices += 1
+        if self.second == "queued":
+            self.second = "running"
+            self.second_slot = "serve"
 
-    # done with running > 0: the engine adopted calls as jobs. The agent
-    # keeps its slot and is not reported; the wake turn's close is.
-    atomic action Adopt:
-        require self.first == "running" and self.first_turns == 0
-        self.first = "jobs"
-
-    atomic fair action Wake:
-        require self.first == "jobs"
-        self.first = "running"
-
-    # user: Stop agent in the Work dialog -> POST /stop (stopChild).
-    # booting: flagged for launch. running: interrupted. Anything else
-    # answers "idle" and changes nothing.
+    # user: Stop agent in the Work dialog -> POST /stop (stopChild): a
+    # running child is interrupted and its turn closes "cancelled".
     atomic action Stop:
-        require self.first in ("booting", "running")
-        if self.first == "booting":
-            self.first = "booting_stop"
-        else:
-            self.first = "stopping"
+        require self.first == "running"
+        self.first = "stopped"
+        self.first_slot = ""
+        self.first_turns += 1
+        self.first_notices += 1
+        if self.second == "queued":
+            self.second = "running"
+            self.second_slot = "serve"
+
+    # The second child's one turn closes (its notice is not modelled).
+    atomic fair action FinishSecond:
+        require self.second == "running"
+        self.second = "done"
+        self.second_slot = ""
 
     # Stop on a queued child: dropped from the queue and meta, so no row,
     # and its place in the budget is given back.
@@ -165,33 +152,19 @@ role Parent:
         self.second = "none"
         self.total -= 1
 
-    # The interrupt lands: the turn closes with "cancelled".
-    atomic fair action Cancelled:
-        require self.first == "stopping"
-        self.first = "stopped"
-        self.first_slot = ""
-        self.first_turns += 1
-
     # The parent (or a person) sends the finished first child another
     # prompt. It opens a turn, so it takes a slot; Send does not wait for
     # one.
     atomic action Message:
-        require self.first in CLOSED and self.first_turns < MAX_TURNS and self.first_notices == self.first_turns
+        require self.first in CLOSED and self.first_turns < MAX_TURNS
         self.first = "running"
         self.first_slot = "msg"
-
-    # report + notifyFrom: the closing entry on disk is keyed by its seq
-    # and meta.Reported dedupes, so each closed turn is one notice (to a
-    # live parent's stdin, or appended to its history).
-    atomic fair action Report:
-        require self.first_notices < self.first_turns
-        self.first_notices += 1
 
     # The first child's process exits after its reported turn (killed,
     # crashed, or serve restarted under it): the exit re-triggers report,
     # which finds the closing seq in meta.Reported and sends nothing.
     atomic action Exit:
-        require self.first in CLOSED and self.first_turns > 0 and self.first_notices == self.first_turns
+        require self.first in CLOSED and self.first_turns > 0
         pass
 
 action Init:
@@ -204,12 +177,12 @@ always assertion ServeStartsWithinCap:
 # A child holds a running slot exactly while its turn is open, so the
 # parent row's running count is right and Stop reaches it.
 always assertion OpenTurnHoldsSlot:
-    return ((parent.first in OPEN) == (parent.first_slot != "")) and ((parent.second in OPEN) == (parent.second_slot != ""))
+    return ((parent.first == "running") == (parent.first_slot != "")) and ((parent.second == "running") == (parent.second_slot != ""))
 
-# Each child turn is reported at most once, even when its process exits
-# or serve restarts after the report.
-always assertion ReportedAtMostOnce:
-    return parent.first_notices <= parent.first_turns
+# Each closed child turn is reported exactly once, even when its process
+# exits or serve restarts after the report.
+always assertion EveryTurnReportedOnce:
+    return parent.first_notices == parent.first_turns
 
 # total is the rows the parent has; a stopped queued child leaves no row
 # and gives its budget back, and the budget is never exceeded.
@@ -221,14 +194,6 @@ always assertion BudgetCountsRows:
 always assertion DepthOne:
     return parent.grand == 0
 
-# A Stop request ends: the child shows stopped (or its natural outcome).
-always eventually assertion StopsLand:
-    return parent.first not in ("booting_stop", "stopping")
-
 # A queued child does not wait forever: a slot frees and drain starts it.
 always eventually assertion QueueDrains:
     return parent.second != "queued"
-
-# Every closed child turn (finished, failed or stopped) reaches the parent.
-always eventually assertion EveryTurnReported:
-    return parent.first_notices == parent.first_turns
