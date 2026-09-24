@@ -135,6 +135,14 @@ type Options struct {
 	// Home holds .bough/projects and .bough/orbs; "" => HistDir's
 	// grandparent, which is HOME for the standard layout.
 	Home string
+	// HoldDir parks the supervisor at a named point while
+	// <HoldDir>/<point> exists: "close" (Close has stopped taking work
+	// and has not yet killed its children). A shutting-down serve sits
+	// there for as long as its children take to die, port already
+	// closed, and the model test of a second serve process
+	// (go/tests/model, second_writer_process) has to act inside it.
+	// "" (every real serve) never holds.
+	HoldDir string
 }
 
 var (
@@ -498,6 +506,25 @@ func (s *Supervisor) createWithID(id, cwd, prompt string, extra, args []string) 
 			return "", fmt.Errorf("serve: supervisor: %s did not appear in %s", path, createTimeout)
 		}
 		time.Sleep(createPoll)
+	}
+}
+
+// hold waits while <HoldDir>/<point> exists (Options.HoldDir), for at
+// most a minute, or until done closes.
+func (s *Supervisor) hold(point string, done <-chan struct{}) {
+	if s.opt.HoldDir == "" {
+		return
+	}
+	p := filepath.Join(s.opt.HoldDir, point)
+	for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); {
+		if _, err := os.Stat(p); err != nil {
+			return
+		}
+		select {
+		case <-done:
+			return
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
 
@@ -1973,6 +2000,7 @@ func (s *Supervisor) Close() error {
 	}
 	s.mu.Unlock()
 
+	s.hold("close", nil)
 	for _, ch := range kids {
 		s.killChild(ch)
 	}

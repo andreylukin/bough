@@ -360,6 +360,7 @@ func serveForeground(home, addr string, insecure bool, host string) error {
 		MetaPath: filepath.Join(home, ".bough", "serve", "meta.json"),
 		Home:     home,
 		Runtime:  rt,
+		HoldDir:  os.Getenv("BOUGH_SERVE_TEST_HOLD"), // tests only: serve.Options.HoldDir
 	})
 	if err != nil {
 		return fmt.Errorf("serve: supervisor: %w", err)
