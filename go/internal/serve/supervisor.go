@@ -1101,11 +1101,11 @@ func (s *Supervisor) killChild(ch *child) {
 	if ch.cmd != nil && ch.cmd.Process != nil {
 		_ = ch.cmd.Process.Kill()
 	}
-	if ch.stdin != nil {
-		ch.inMu.Lock()
-		_ = ch.stdin.Close()
-		ch.inMu.Unlock()
-	}
+	// No stdin close here: the reap closes it. Closed right after the
+	// SIGKILL, it raced the signal (on macOS the child often read the EOF
+	// first) and the child shut down cleanly instead, and a clean
+	// shutdown deletes a history file holding only its meta entry: an
+	// archived fresh session vanished and archive answered 404.
 	<-ch.done
 }
 
