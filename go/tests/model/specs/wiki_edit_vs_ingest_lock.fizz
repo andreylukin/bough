@@ -1,0 +1,230 @@
+# A hand edit of one wiki page (the page editor's Save, Review's claim
+# decisions) against the ingest and brief runs that rewrite the same
+# wiki. Product: go/plugins/wiki/store.go (WritePage, EditClaim),
+# go/internal/serve/wiki.go (putWikiPage, the spawns), go/plugins/wiki/
+# run.go (Run, commit) and brief.go (Brief, runBrief).
+#
+# The two sides do not share a lock. A run (`bough wiki run` from the
+# scheduler or Activity's Ingest now, `bough wiki brief` from the Me
+# page's Refresh) takes .ingest.lock, runs a headless agent that writes
+# pages, and after the agent exits (or runTimeout kills it) commits with
+# `git add -A` and unlocks. The serve's page and claim writes take no
+# lock: they write the file and commit at once.
+#
+# This spec is what the wiki owes the person, not what it does today.
+# Where the product differs (see the notes on Save and ClaimAction) the
+# difference is a reported design gap: today Save sends no base, so it
+# is last-writer-wins over a run's rewrite; its commit is `add -A`, so
+# it sweeps a running agent's half-written files into "edit P"; and its
+# git errors are ignored, so a Save while the run's commit holds the
+# index stays uncommitted until the run's next "ingest ..." commit takes
+# it. Model-checking the product's behaviour instead fails
+# SaveNeverLosesALaterChange, EditCommitHoldsNoRunFiles,
+# SavedEditIsRecorded and IngestCommitHoldsNoHandEdit.
+#
+# The world: one page P with one flagged claim, and always something
+# for a run to do. The runs are external actors: a spawned process
+# reaches the lock (and exits if it is held), the agent ends by itself
+# or by runTimeout, the commit finishes. Those three are fair; what the
+# agent writes is not.
+#
+# Fields:
+#   editor     the page editor: "closed", "open" (holding the body it
+#              read), "stale" (Save answered 409: the page changed since
+#              the read), "gone" (Save answered 404).
+#   moved      P on disk differs from the body the open editor read.
+#   present    P is on disk (GET /api/wiki/page answers 200).
+#   flagged    P has a flagged claim (GET /api/wiki/review lists it).
+#   shown      Review shows that claim, with the lines it read.
+#   rmoved     P changed since Review read the claim's lines.
+#   spawned    a `bough wiki run|brief` process that has not reached the
+#              lock yet.
+#   held       processes holding .ingest.lock.
+#   run        the lock holder's phase: "" (none), "running" (its agent
+#              writes pages), "committing" (git add -A done, git commit
+#              in flight holding the index).
+#   dirty      files the running agent wrote that no commit holds yet.
+#   handdirty  a hand edit on disk that no commit holds yet.
+#   lost       ghost: a Save wrote over a change it had not read.
+#   unrecorded ghost: a Save answered ok and no "edit P" commit holds it.
+#   swepthand  ghost: a run's commit holds a hand edit.
+#   sweptrun   ghost: an "edit P" or "review: ..." commit holds a run's
+#              files.
+
+role Wiki:
+    action Init:
+        self.editor = "closed"
+        self.moved = False
+        self.present = True
+        self.flagged = True
+        self.shown = False
+        self.rmoved = False
+        self.spawned = False
+        self.held = 0
+        self.run = ""
+        self.dirty = False
+        self.handdirty = False
+        self.lost = False
+        self.unrecorded = False
+        self.swepthand = False
+        self.sweptrun = False
+
+    # P changed on disk: both readers' copies are now behind.
+    atomic func touched():
+        self.moved = self.editor != "closed"
+        self.rmoved = self.shown
+
+    # --- the person: the page editor ----------------------------------
+
+    atomic action Edit:
+        require self.editor == "closed" and self.present
+        self.editor = "open"
+        self.moved = False
+
+    atomic action Cancel:
+        require self.editor != "closed"
+        self.editor = "closed"
+        self.moved = False
+
+    # After a 409: read the page again, keep editing on the new body.
+    atomic action Reload:
+        require self.editor == "stale" and self.present
+        self.editor = "open"
+        self.moved = False
+
+    # PUT /api/wiki/page {path, body, base}. A missing page is 404 (the
+    # editor stays open with the error); a page that moved since the read
+    # is 409 like EditClaim; otherwise the write and an "edit P" commit of
+    # P alone. The write waits while a run's commit holds the git index.
+    # Today: no base, so the moved branch writes anyway (lost), and the
+    # commit is `add -A` (sweptrun = dirty) whose error is dropped while
+    # the index is held (unrecorded).
+    atomic action Save:
+        require self.editor == "open" and self.run != "committing"
+        if not self.present:
+            self.editor = "gone"
+        elif self.moved:
+            self.editor = "stale"
+        else:
+            self.lost = self.lost or self.moved
+            self.editor = "closed"
+            self.moved = False
+            self.rmoved = self.shown
+
+    # --- the person: Review -------------------------------------------
+
+    atomic action ReadReview:
+        require self.flagged and self.present and not self.shown
+        self.shown = True
+        self.rmoved = False
+
+    # POST /api/wiki/claim with the lines Review read: 404 when P is gone,
+    # 409 when they moved (the claim stays shown, disabled, until Review
+    # is read again), otherwise the decision and its "review: ..." commit
+    # (of P alone: today `add -A`, the same sweep as Save).
+    atomic action ClaimAction:
+        require self.shown and not self.rmoved and self.run != "committing"
+        self.shown = False
+        if self.present:
+            self.flagged = False
+            self.touched()
+
+    # Leaving Review (or re-reading it after a 409).
+    atomic action LeaveReview:
+        require self.shown
+        self.shown = False
+        self.rmoved = False
+
+    # --- starting a run -----------------------------------------------
+
+    # Activity's Ingest now: POST /api/wiki/ingest spawns `bough wiki run`.
+    atomic action IngestNow:
+        require not self.spawned
+        self.spawned = True
+
+    # The Me page's Refresh: POST /api/me/refresh spawns `bough wiki brief`.
+    atomic action RefreshBrief:
+        require not self.spawned
+        self.spawned = True
+
+    # launchd's 5-minute `bough wiki run`.
+    atomic action SchedulerTick:
+        require not self.spawned
+        self.spawned = True
+
+    # The process reaches tryLock: it holds it, or exits because it is
+    # held.
+    atomic fair action Lock:
+        require self.spawned
+        self.spawned = False
+        if self.held == 0:
+            self.held = 1
+            self.run = "running"
+
+    # --- the run's agent ----------------------------------------------
+
+    # The agent rewrites P (and whatever else it touches).
+    atomic action RunWritesPage:
+        require self.run == "running" and self.present
+        self.dirty = True
+        self.flagged = True
+        self.touched()
+
+    # The agent removes P (merged into another page, say).
+    atomic action RunDeletesPage:
+        require self.run == "running" and self.present
+        self.dirty = True
+        self.present = False
+        self.flagged = False
+        self.touched()
+
+    # The agent exits, or runTimeout kills it; either way Run then
+    # stages everything with `git add -A` and starts the commit.
+    atomic fair action RunEnds:
+        require self.run == "running"
+        self.run = "committing"
+        self.dirty = False
+        self.swepthand = self.swepthand or self.handdirty
+        self.handdirty = False
+
+    # The commit lands and the deferred unlock releases the lock.
+    atomic fair action RunCommits:
+        require self.run == "committing"
+        self.run = ""
+        self.held = 0
+
+action Init:
+    wiki = Wiki()
+
+# A Save never silently discards a change written after the editor read.
+always assertion SaveNeverLosesALaterChange:
+    return not wiki.lost
+
+# After Save answers ok, history has an "edit P" commit with its content.
+always assertion SavedEditIsRecorded:
+    return not wiki.unrecorded
+
+# An ingest or brief commit never contains a hand edit.
+always assertion IngestCommitHoldsNoHandEdit:
+    return not wiki.swepthand
+
+# A hand edit's commit never contains a running agent's files.
+always assertion EditCommitHoldsNoRunFiles:
+    return not wiki.sweptrun
+
+# The lock: at most one run at a time.
+always assertion OneRunHoldsTheLock:
+    return wiki.held <= 1
+
+# A run holds the lock exactly while it has a phase.
+always assertion LockHeldWhileRunning:
+    return (wiki.held == 1) == (wiki.run != "")
+
+# A spawned process reaches the lock or exits.
+always eventually assertion SpawnedReachesLock:
+    return not wiki.spawned
+
+# A held lock is released: the agent ends (runTimeout at worst) and the
+# commit finishes.
+always eventually assertion LockReleased:
+    return wiki.held == 0
