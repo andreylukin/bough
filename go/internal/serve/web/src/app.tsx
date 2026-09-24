@@ -26,7 +26,7 @@ import { ContextPage } from "./context";
 import { ChangesBody, ChangesPage, EditDiff, FileEdit, callEdits, countOf, nativeEdits, outputParts, useChanges } from "./changes";
 import { Palette, idTail, isTypingTarget, startFolders, useFullText, usePaletteKey, visit, type Command } from "./palette";
 import { WikiPage, parseWikiHash, wikiApi, wikiHash, type WikiRoute } from "./wiki";
-import { Elapsed, EmptyState, ErrorNote, InlineFail, Pending, RawDetails, Spinner, StateIcon, ago, elapsed, humanError, providerError } from "./loading";
+import { Elapsed, EmptyState, ErrorNote, InlineFail, Pending, RawDetails, Spinner, StartingStatus, StateIcon, ago, elapsed, humanError, providerError } from "./loading";
 import { PortalPane } from "./portal";
 
 export type View = "sessions" | "me" | "projects" | "project" | "hooks" | "wiki";
@@ -5846,9 +5846,7 @@ export default function App() {
       {narrow && (pane === "list" || view !== "sessions") && (
         <ViewNav phone view={pane === "list" ? "sessions" : view === "project" ? "projects" : view} onView={onView} wikiFlags={wikiFlags} />
       )}
-      {creating && (
-        <div className="updated" role="status"><Spinner /><span className="updated-text">Starting a session…</span></div>
-      )}
+      {creating && <StartingStatus />}
       {updated && (
         <div className="updated" role="status">
           <span className="updated-text">bough updated. Reload to get the new control room.</span>

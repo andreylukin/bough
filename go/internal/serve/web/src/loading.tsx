@@ -192,6 +192,11 @@ export function ErrorNote({ title, err, children, action, secondary, className =
   );
 }
 
+/** A create in flight: the palette has closed, and nothing else on the page says a child is starting. */
+export function StartingStatus() {
+  return <div className="updated" role="status"><Spinner /><span className="updated-text">Starting a session…</span></div>;
+}
+
 export function Spinner({ size = 12 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"

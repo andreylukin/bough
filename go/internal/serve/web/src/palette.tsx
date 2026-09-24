@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { useModal } from "./dialog";
 import type { Row, Status } from "./types";
-import { ago } from "./app";
+import { ago } from "./loading";
 import { hasOwnTitle, plainTitle, sessionTitle, titleKey } from "./render";
 import { StatusMark, shownStatus, statusWord } from "./status";
 import { isMac, paletteKeyOpens } from "./keys";
@@ -307,7 +307,7 @@ export function useFullText(q: string, open: boolean): { hits: SearchHit[]; stat
   return { hits: current ? hits : [], state: state === "loading" || current || state === "idle" ? state : "loading", retry: () => setTries((n) => n + 1) };
 }
 
-export function Palette({ open, onClose, rows, commands, onOpenSession, onStart, onStartIn, onOpenWikiPage, initialQuery = "", current = null, startIn, mode = "all", visited = [] }: {
+interface PaletteProps {
   open: boolean;
   /** "switch" is ⌘P: sessions only, in visit order. "new" is ⌥N: only the places to start. */
   mode?: "all" | "switch" | "new";
@@ -330,16 +330,16 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
   initialQuery?: string;
   /** The open session: it ranks below other matches and says it is the one you are in. */
   current?: string | null;
-}) {
+}
+
+export function Palette(props: PaletteProps) {
+  const { open, onClose, onStartIn, onOpenWikiPage, initialQuery = "", mode = "all" } = props;
   const [q, setQ] = useState(initialQuery);
   // The selection is a result, not a position: results that land late
   // (full-text, wiki) never move Enter onto something else.
   const [atId, setAtId] = useState<string | null>(null);
   const field = useRef<HTMLInputElement>(null);
-  const list = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(null);
-  const box = useRef<HTMLDivElement>(null);
-  useModal(box, open);
 
   // Focus goes back to the opener only once the palette is gone and the
   // page behind it is no longer inert.
@@ -363,9 +363,33 @@ export function Palette({ open, onClose, rows, commands, onOpenSession, onStart,
     return closeOnNavigate(window, onClose, window.matchMedia?.("(max-width:720px)") ?? null);
   }, [open, onClose]);
 
-  const { hits: found, state: searching, retry } = useFullText(q, open && mode !== "new" && !commandQuery(q).only);
+  const search = useFullText(q, open && mode !== "new" && !commandQuery(q).only);
   const pages = useWikiHits(q, open, Boolean(onOpenWikiPage) && mode === "all" && !commandQuery(q).only);
   const places = useDirs(q, open, Boolean(onStartIn));
+  return <PaletteView {...props} q={q} setQ={setQ} atId={atId} setAtId={setAtId} search={search} pages={pages} places={places} field={field} opener={opener} />;
+}
+
+/**
+ * The palette drawn from its state alone: what is typed, the row picked,
+ * and what the server has answered. Palette owns that state and its
+ * effects, so a test can render any state the palette reaches from here.
+ */
+export function PaletteView({ open, onClose, rows, commands, onOpenSession, onStart, onStartIn, onOpenWikiPage, current = null, startIn, mode = "all", visited = [],
+  q, setQ, atId, setAtId, search, pages, places, field, opener }: PaletteProps & {
+  q: string;
+  setQ: (q: string) => void;
+  atId: string | null;
+  setAtId: (id: string | null) => void;
+  search: { hits: SearchHit[]; state: SearchState; retry: () => void };
+  pages: WikiHit[];
+  places: { folder: DirHit | null; dirs: DirHit[]; home: string };
+  field: RefObject<HTMLInputElement | null>;
+  opener: RefObject<Element | null>;
+}) {
+  const list = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDivElement>(null);
+  useModal(box, open);
+  const { hits: found, state: searching, retry } = search;
 
   const hits = useMemo(() => {
     // project:, after: and status: narrow the sessions; the rest is matched.
