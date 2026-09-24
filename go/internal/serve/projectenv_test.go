@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -95,6 +96,28 @@ func TestProjectEnvSkipsMissingDirectory(t *testing.T) {
 	}
 	if got := f.sup.projectEnv(""); got != nil {
 		t.Errorf("projectEnv(no id) = %v, want none", got)
+	}
+}
+
+// The first start of main is told it is main too, not only a restart:
+// projectEnv has no id to go on in a Create, so the main thread's first
+// process ran as an ordinary project session (the model test's boot
+// hold saw it announce itself as "session").
+func TestMainsFirstStartKnowsItIsMain(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	slug := mkProject(t, f, "App")
+	code, body := f.do(t, "POST", "/api/projects/"+slug+"/message", `{"text":"hello"}`)
+	if code != http.StatusOK {
+		t.Fatalf("message = %d %v", code, body)
+	}
+	main, _ := body["main"].(string)
+	es, err := history.Read(filepath.Join(f.hist, main+".jsonl"))
+	if err != nil || len(es) == 0 {
+		t.Fatalf("main's history: %v %v", es, err)
+	}
+	if got := es[0].Data["project_main"]; got != "1" {
+		t.Errorf("main's first process started with BOUGH_PROJECT_MAIN=%q, want 1", got)
 	}
 }
 
