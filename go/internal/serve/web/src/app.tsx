@@ -5469,13 +5469,20 @@ export default function App() {
   // commands only appear when one is open, so the list never offers
   // something that would fail.
   const markCreated = (id: string) => { created.current.set(id, Date.now()); };
+  // A create answers only once its child has written history (up to
+  // serve's 10 s create timeout). The palette has closed by then, and
+  // with nothing on screen the page looked idle while a child was starting.
+  const [creating, setCreating] = useState(false);
   const start = (cwd: string, prompt: string, mode?: ModeValue) => act(async () => {
-    const created = await api.create(cwd, prompt, mode?.mode, mode?.project);
-    markCreated(created.id);
-    // The prompt shows where it will land while the new row is fetched.
-    if (prompt.trim()) setPending((m) => ({ ...m, [created.id]: [{ id: created.id, text: prompt, after: 0, at: new Date().toISOString() }] }));
-    if (mode?.mode === "project" && mode.project) goProject(mode.project, created.id);
-    else openSession(created.id);
+    setCreating(true);
+    try {
+      const created = await api.create(cwd, prompt, mode?.mode, mode?.project);
+      markCreated(created.id);
+      // The prompt shows where it will land while the new row is fetched.
+      if (prompt.trim()) setPending((m) => ({ ...m, [created.id]: [{ id: created.id, text: prompt, after: 0, at: new Date().toISOString() }] }));
+      if (mode?.mode === "project" && mode.project) goProject(mode.project, created.id);
+      else openSession(created.id);
+    } finally { setCreating(false); }
   }, "start a session");
   // New starts where the open session works, and the new session's header
   // shows that folder before anything is sent. With none open, the palette
@@ -5770,6 +5777,9 @@ export default function App() {
       <DialogHost />
       {narrow && (pane === "list" || view !== "sessions") && (
         <ViewNav phone view={pane === "list" ? "sessions" : view === "project" ? "projects" : view} onView={onView} wikiFlags={wikiFlags} />
+      )}
+      {creating && (
+        <div className="updated" role="status"><Spinner /><span className="updated-text">Starting a session…</span></div>
       )}
       {updated && (
         <div className="updated" role="status">
