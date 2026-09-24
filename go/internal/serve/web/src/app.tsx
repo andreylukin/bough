@@ -3618,6 +3618,8 @@ function WaitingDot() {
 }
 
 const WAITING_MODEL = "Model is thinking";
+/** The activity the engine sends as a model request starts (internal/unreal/session/actor.go). */
+const ENGINE_WAITING = "model is thinking";
 const WAITING_WHY = "Nothing has come back yet. A reasoning model can think for 10–25 s before its first word, and some models return no reasoning summary to stream meanwhile.";
 
 /** R2-B: the send was taken and nothing has come back yet. MB-STREAM: the wait is timed from 3s. */
@@ -5111,7 +5113,10 @@ export default function App() {
     const stop = subscribe(selected, (ev) => {
       // The small model's label for what the turn is doing right now. A
       // status, not a record: it changes nothing to catch up on.
-      if (ev.kind === "activity") { setActivity(ev.text); return; }
+      // The engine's own "model is thinking" only says a request is out
+      // and nothing came back: that is Waiting (worded the same on the
+      // page), and as a label of work it turned the header to Working.
+      if (ev.kind === "activity") { setActivity(ev.text === ENGINE_WAITING ? "" : ev.text); return; }
       // An engine's call carries the provider's call id (a string); the loop's per-block calls number theirs.
       const native = (ev.kind === "call" || ev.kind === "sub:call") && typeof ev.extra?.id === "string";
       // Live only, never refetched: a native call's start and its streamed output.
