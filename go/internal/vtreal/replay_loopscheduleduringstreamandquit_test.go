@@ -23,11 +23,12 @@ import (
 )
 
 // loopScheduleDuringStreamAndQuitConfig is resumeConfig with a slow
-// stream (200ms per word, ~6s for the tape's 30 words).
+// stream (100ms per word, ~3.5 s for the tape's 34 deltas): /loop is
+// typed a few hundred ms in, so the other 3 s at 200ms were waiting.
 func loopScheduleDuringStreamAndQuitConfig(tape, hist string) string {
 	return strings.Replace(resumeConfig(tape, hist),
 		fmt.Sprintf("config: {file: %q}\n- id: codemode", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: 200}\n- id: codemode", tape), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: 100}\n- id: codemode", tape), 1)
 }
 
 // loopScheduleDuringStreamAndQuitKinds counts entries by kind.

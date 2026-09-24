@@ -310,9 +310,12 @@ func scrollingCueLines(t *testing.T, a *app) int {
 func TestScrollingNewOutputDoesNotFollow(t *testing.T) {
 	t.Parallel()
 	tape := scrollingTape(t, t.TempDir(), 2, 200)
+	// 15ms a word: each turn streams ~3 s, and the scroll and the cue
+	// land within the first second of turn 2. Both turns are paced (the
+	// delay is per tape), so at 25ms the test spent 4 s more waiting.
 	cfg := strings.Replace(replayConfig(tape),
 		fmt.Sprintf("config: {file: %q}", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: 25}", tape), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: 15}", tape), 1)
 	a := startCfg(t, 100, 24, cfg)
 
 	a.typeText("ask 1")

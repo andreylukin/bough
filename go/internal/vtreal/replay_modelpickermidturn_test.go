@@ -69,8 +69,11 @@ func (a *app) modelPickerMidTurnStatus() string {
 func TestModelPickerMidTurn(t *testing.T) {
 	t.Parallel()
 	tape := modelPickerMidTurnTape(t)
+	// 80ms a word: ~5 s of stream against a picker phase of 1-2 s. At
+	// 150ms the test spent 5 s more waiting for w59; a stream that ends
+	// before the swap still fails below, loudly.
 	cfg := strings.Replace(replayConfig(tape), "config: {file: "+fmt.Sprintf("%q", tape)+"}",
-		"config: {file: "+fmt.Sprintf("%q", tape)+", delay_ms: 150}", 1)
+		"config: {file: "+fmt.Sprintf("%q", tape)+", delay_ms: 80}", 1)
 	a := startCfg(t, 120, 30, cfg)
 	a.check("boot")
 
