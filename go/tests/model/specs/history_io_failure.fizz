@@ -1,0 +1,275 @@
+# History I/O failures: appends that fail during a turn, and history
+# files serve cannot read, as the page and serve see them. One session,
+# its child, the disk under ~/.bough/history, and the page open on the
+# session. Every other spec assumes appends and history.Read succeed.
+#
+# This spec states what the product OWES. Where the code does something
+# else today, the comment on the action says so ("Today: ..."); each of
+# those is a one-line mutation of this spec that fizz rejects (see the
+# invariants), so the Go MBT run of this spec is expected to go red there
+# until the product is fixed.
+#
+# What the code does (read 2026-09-24, main 5471918e):
+#
+# - Store.Append (plugins/history/history.go) keeps the entry in memory
+#   whatever happens, writes one JSON line through a bufio.Writer, and on
+#   a write error Resets the writer (the lost line is dropped for good)
+#   and reports the FIRST error of a run of failures to the error sink.
+#   A later successful append clears `failing`. Nothing ever re-writes a
+#   dropped line.
+# - The ui row's sink (plugins/ui/live.go) publishes the error as a live
+#   Event{Kind:"error", Text:"history not saved: ..."}; serve's pump turns
+#   it into an "error" event on the session's stream. The page treats
+#   every event except deltas/activity/call starts as a CHANGE SIGNAL and
+#   refetches (app.tsx catchUp): the refetch reads the file, which does
+#   not hold the error, so the page never says recording stopped.
+# - A write that fails part way (ENOSPC after some bytes, or a crash
+#   mid-write) leaves a fragment with no newline. s.off is not advanced
+#   and the file is not truncated, so the next line is appended to the
+#   fragment: one glued line, which readEntries skips as corrupt. The
+#   entry written AFTER the failure is the one lost on read. Only
+#   OpenExisting (resume) drops a torn tail (dropTornTail).
+# - Status is derived from disk (internal/serve/status.go StatusOf): an
+#   input with no done after it is running while the child lives and
+#   interrupted once it is gone. A done that never reached disk therefore
+#   reads running while the child idles and interrupted after it exits,
+#   and the finished-turn signals (unseen, trouble) never fire.
+# - history.List globs *.jsonl. filepath.Glob ignores I/O errors, so an
+#   unreadable sessions dir lists as an EMPTY 200. A file readEntries
+#   cannot read (chmod 000, or one line over the scanner's 4 MiB cap:
+#   bufio.ErrTooLong) is skipped with a stderr note, so the session is
+#   missing from the list, and api.info (which only looks in List, and
+#   maps a List error to "not found" too) answers 404 "unknown session"
+#   on GET /api/sessions/{id}, /events and every per-session verb.
+#   OpenExisting fails on the same ErrTooLong, so the session cannot be
+#   resumed while its file is intact. Nothing in history caps what
+#   Append writes: a >4 MiB tool result writes a line history cannot
+#   read back.
+# - A corrupt line in the middle is skipped and the rest is read
+#   (readEntries continues): that part holds today.
+#
+# What the spec asks for instead (the fixes the MBT stage will drive):
+#
+# - A failed append is kept PENDING in memory and re-written, in order,
+#   before the next line and on a retry tick while the child lives
+#   (Flush), after truncating any torn fragment back to the last
+#   newline. So the disk catches up with the child once space frees, and
+#   a finished turn does not stay running.
+# - While entries are pending the page says history is not being saved
+#   (warn). serve keeps it for the session after the child exits with
+#   entries still pending (the loss is then permanent: DoneLost), until
+#   a later child's append lands.
+# - The list answers 500 with a reason when the dir cannot be read; a
+#   session whose file exists is listed and opens, or answers 500 with a
+#   reason (unreadable file); an entry of any size history wrote reads
+#   back; a corrupt line hides nothing after it.
+#
+# Mapped model -> this spec:
+# - Recording / WriteFails / TornOnDisk / GluedLine / DoneLost / TornTailLive
+#   / CorruptMidLine / OversizeLine / FileUnreadable / DirUnreadable /
+#   Repaired are values of disk, pending, tail, glued, child and fault.
+# - ErrorEventOnly, GluedLine, SessionVanished_404, EmptyList200 are the
+#   states the invariants forbid (reachable only in the mutations).
+# - ErrorEvent is folded into the failing append: the event reaches the
+#   subscribed page in the same step (no reader could see it pending).
+# - The page's CatchUp is folded into every append the same way; what
+#   the page shows of status is `status`, derived from disk as serve does.
+# - PartialWrite is its own step, Tear: the fragment is the same whether
+#   ENOSPC cut the line or a crash did, and the adapter can make one by
+#   appending bytes with no newline; which failing write tears is not
+#   something a test can choose.
+# - ResumedContextDiffers is Prompt on a gone child with pending set: the
+#   resumed child reads the disk, which lacks what was lost. Nothing
+#   observable distinguishes it beyond pending/warn, so it has no field.
+# - Read faults are one at a time (fault), and a new one waits until the
+#   page has seen the session healthy again: combinations are the union
+#   of their effects, and without the wait a fault re-injected before
+#   every poll would starve "the session reappears" in a way no product
+#   could fix.
+# - Subscribe is part of OpenSession (the page opens the session and its
+#   stream together).
+
+# status the page should show: what the child did.
+def truth(turn):
+    return turn
+
+# status serve derives from the file (StatusOf).
+def derive(ondisk, child):
+    if ondisk == "open":
+        if child == "alive":
+            return "running"
+        return "interrupted"
+    return "done"
+
+role Session:
+    action Init:
+        # One finished turn is on disk; the child is alive and idle.
+        self.disk = "ok"        # ok | full: whether writes can land
+        self.child = "alive"    # alive | gone
+        self.turn = "done"      # what the child did: running | done | interrupted
+        self.ondisk = "closed"  # the file's last turn: open (input, no done) | closed
+        self.tail = "clean"     # clean | torn: a fragment with no newline ends the file
+        self.glued = False      # a line written after a fragment is glued to it (unreadable)
+        self.pending = False    # the child holds entries the file lacks
+        self.warn = False       # the page says history is not being saved
+        self.fault = "none"     # none | corrupt | oversize | file | dir
+        self.list = "listed"    # GET /api/sessions: listed | missing | empty | error
+        self.open = "shown"     # GET /api/sessions/{id}: shown | partial | missing | toolong | error
+        self.status = "done"    # the row's status, derived from disk
+
+    # One write attempt by the live child: pending entries first, then
+    # the new one (turn already updated by the caller).
+    atomic func write():
+        if self.disk == "full":
+            # Today: the line is dropped (never pending) and the page is
+            # only told to refetch (warn stays False).
+            self.pending = True
+            self.warn = True
+        else:
+            # Today: no truncation; the first line lands glued to the
+            # fragment (self.glued = True) and is skipped on every read.
+            self.tail = "clean"
+            self.pending = False
+            self.warn = False
+            if self.turn == "running":
+                self.ondisk = "open"
+            else:
+                self.ondisk = "closed"
+        self.status = derive(self.ondisk, self.child)
+
+    # --- system: the disk ---
+
+    atomic action DiskFills:
+        require self.disk == "ok"
+        self.disk = "full"
+
+    atomic fair action DiskFrees:
+        require self.disk == "full"
+        self.disk = "ok"
+
+    # A write cut part way (ENOSPC mid-line, or a crash): a fragment
+    # with no newline ends the file.
+    atomic action Tear:
+        require self.tail == "clean"
+        self.tail = "torn"
+
+    # --- the child ---
+
+    # POST /api/sessions/{id}/prompt. A gone child is resumed first
+    # (ensure, `-r <id>`): OpenExisting drops a torn tail, reads the file
+    # (so what was pending is lost from its context), closes the dangling
+    # turn as cancelled and the input opens a new one; both are writes.
+    # With the file or the dir unreadable there is no session to send to.
+    # Today: an oversize line fails OpenExisting and the resume.
+    atomic action Prompt:
+        require self.turn != "running" and self.fault in ("none", "corrupt", "oversize")
+        if self.child == "gone":
+            self.child = "alive"
+            self.tail = "clean"
+            self.pending = False
+        self.turn = "running"
+        self.write()
+
+    # The turn ends (llm-control releases it) and the loop records done.
+    atomic fair action Finish:
+        require self.turn == "running"
+        self.turn = "done"
+        self.write()
+
+    # The store's retry tick: pending entries are written once space is
+    # back even when the child is idle. Strongly fair: DiskFills can
+    # disable it again and again. Today: does not exist.
+    atomic fair<strong> action Flush:
+        require self.child == "alive" and self.pending and self.disk == "ok"
+        self.write()
+
+    # The child exits or crashes. What it held pending is gone with it.
+    atomic action Exit:
+        require self.child == "alive"
+        self.child = "gone"
+        if self.turn == "running":
+            self.turn = "interrupted"
+        self.status = derive(self.ondisk, self.child)
+
+    # The turn writes one entry over 4 MiB (a huge tool result).
+    atomic action WriteHugeEntry:
+        require self.turn == "running" and self.disk == "ok" and self.fault == "none" and self.list == "listed" and self.open == "shown"
+        self.fault = "oversize"
+
+    # --- system: damage and repair ---
+
+    atomic action CorruptLine:
+        require self.fault == "none" and self.list == "listed" and self.open == "shown"
+        self.fault = "corrupt"
+
+    atomic action Chmod000:
+        require self.fault == "none" and self.list == "listed" and self.open == "shown"
+        self.fault = "file"
+
+    atomic action ChmodDir:
+        require self.fault == "none" and self.list == "listed" and self.open == "shown"
+        self.fault = "dir"
+
+    # chmod back, delete the bad line or the huge entry.
+    atomic fair action Repair:
+        require self.fault != "none"
+        self.fault = "none"
+
+    # --- the page ---
+
+    # The list poll (4 s). Today: dir -> "empty"; file, oversize -> "missing".
+    atomic fair action ListPoll:
+        if self.fault == "dir":
+            self.list = "error"
+        else:
+            self.list = "listed"
+
+    # Opening the session (GET + subscribe), or its catch-up after an
+    # event. Today: dir, file, oversize -> "missing" (404 unknown session).
+    atomic fair action OpenSession:
+        if self.fault in ("dir", "file"):
+            self.open = "error"
+        else:
+            self.open = "shown"
+
+action Init:
+    session = Session()
+
+# While appends fail the page shows history is not being saved.
+always assertion PageWarnsWhileNotSaving:
+    return not session.pending or session.warn
+
+# A line written after a failed (torn) one is readable.
+always assertion AppendAfterFailureReadable:
+    return not session.glued
+
+# The status read off disk is what the child did, or the page is saying
+# why it cannot be (history not saved).
+always assertion StatusAgreesOrWarned:
+    return session.status == truth(session.turn) or session.warn
+
+# The file always exists here: it is never "unknown" (404) nor left out
+# of a 200 list.
+always assertion SessionNeverUnknown:
+    return session.open != "missing" and session.list != "missing"
+
+# An unreadable dir is a 500 with a reason, never an empty 200.
+always assertion ListNeverEmptyOnDirError:
+    return session.list != "empty"
+
+# Every entry size history writes can be read back.
+always assertion EverySizeReadsBack:
+    return session.open != "toolong"
+
+# A corrupt line never hides the rest of its session.
+always assertion CorruptLineHidesNothing:
+    return session.open != "partial"
+
+# After Repair the session reappears and opens, with no reload.
+always eventually assertion SessionReappears:
+    return session.list == "listed" and session.open == "shown"
+
+# After DiskFrees what was lost reaches the file and the page: a live
+# child's status comes to agree with what it did.
+always eventually assertion StatusConverges:
+    return session.child == "gone" or session.status == truth(session.turn)
