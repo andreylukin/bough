@@ -147,10 +147,14 @@ func TestSubagentOverlayScrollWhileParentStreams(t *testing.T) {
 			a := startCfg(t, cols, 30, subagentOverlayScrollWhileParentStreamsConfig(hist, parent))
 			a.waitFor("subagent 3")
 
+			// Focus the card before the parent streams: the focus stays
+			// on it through the turn (enter with a draft sends), and
+			// each of the walk's settles waited out the stream's
+			// repaints, ~9 s of every run.
+			subagentsFocusCard(a, "subagent 2")
 			a.typeText("keep talking")
 			a.key(uv.KeyEnter, 0)
 			a.waitFor("PARENT-")
-			subagentsFocusCard(a, "subagent 2")
 			if strings.Contains(a.text(), "PARENT-END") {
 				t.Fatalf("parent finished before the overlay opened; the tape is too short:\n%s", a.text())
 			}
