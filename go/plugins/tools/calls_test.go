@@ -64,6 +64,7 @@ func callsRunner(t *testing.T) (cm *codemode.CodeMode, events func() []loop.Even
 // once in the history with its evidence: the tool, an id, how long it
 // took, a command's exit, an edit's added and removed lines.
 func TestCallEventsPerTool(t *testing.T) {
+	t.Parallel()
 	cm, events, recorded, _ := callsRunner(t)
 	path := filepath.Join(t.TempDir(), "f.txt")
 	code := `tools.bash("echo hi"); tools.write(` + jsStr(path) + `, "a\nb\n"); tools.patch(` + jsStr(path) + `, "b\n", "c\nd\n"); tools.view(` + jsStr(path) + `, 1, 2)`
@@ -123,6 +124,7 @@ func phase(ev loop.Event) string {
 // A failing call records what it said, without the tool's own prefix,
 // so a row can lead with the reason.
 func TestCallEventFailure(t *testing.T) {
+	t.Parallel()
 	cm, _, recorded, _ := callsRunner(t)
 	_, err := cm.Run(`tools.bash("exit 3")`)
 	if err == nil {
@@ -141,6 +143,7 @@ func TestCallEventFailure(t *testing.T) {
 // Inside a subagent the same calls are the child's: "sub:call", so a
 // parent's transcript keeps them under the subagent card.
 func TestCallEventsInSubagent(t *testing.T) {
+	t.Parallel()
 	cm, events, recorded, setSub := callsRunner(t)
 	setSub(true)
 	if _, err := cm.Run(`tools.bash("true")`); err != nil {
@@ -158,6 +161,7 @@ func TestCallEventsInSubagent(t *testing.T) {
 
 // A background job is not a call: it has job rows of its own.
 func TestCallEventsSkipBackgroundJobs(t *testing.T) {
+	t.Parallel()
 	cm, _, recorded, _ := callsRunner(t)
 	if _, err := cm.Run(`tools.bash("true", 5)`); err != nil {
 		t.Fatal(err)
@@ -172,6 +176,7 @@ func TestCallEventsSkipBackgroundJobs(t *testing.T) {
 // The tools row's job_grace / job_settle set the foreground wait and
 // the status settle; a bad value fails the row with its name.
 func TestJobGraceConfig(t *testing.T) {
+	t.Parallel()
 	ctx := kernel.NewContext()
 	ctx.Provide("codemode", codemode.New(5*time.Second))
 	provideHostProject(ctx)

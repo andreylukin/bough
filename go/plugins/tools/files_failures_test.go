@@ -54,6 +54,7 @@ func filesNotRoot(t *testing.T) {
 }
 
 func TestFilesViewFailures(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	t.Run("missing", func(t *testing.T) {
 		_, err := readView(filepath.Join(dir, "nope.txt"))
@@ -140,6 +141,7 @@ func TestFilesViewFailures(t *testing.T) {
 }
 
 func TestFilesWriteFailures(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	t.Run("read-only dir", func(t *testing.T) {
 		filesNotRoot(t)
@@ -239,6 +241,7 @@ func TestFilesWriteFailures(t *testing.T) {
 }
 
 func TestFilesPatchFailures(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "f.txt")
 	orig := "alpha\nbeta\ngamma\nbeta\n"
@@ -349,6 +352,7 @@ func TestFilesPatchFailures(t *testing.T) {
 // Two subagents (two Stats: each worker has its own codemode) patch
 // different lines of one file at once: neither edit may be lost.
 func TestFilesConcurrentPatchesFromTwoAgents(t *testing.T) {
+	t.Parallel()
 	for round := range 50 {
 		p := filepath.Join(t.TempDir(), "shared.txt")
 		var lines []string
@@ -377,6 +381,7 @@ func TestFilesConcurrentPatchesFromTwoAgents(t *testing.T) {
 // Through codemode: every failure reaches the script as a catchable
 // error carrying the tool's message, and the runtime stays usable.
 func TestFilesFailuresThroughCodemode(t *testing.T) {
+	t.Parallel()
 	ctx := kernel.NewContext()
 	ctx.Provide("codemode", codemode.New(5*time.Second))
 	provideHostProject(ctx) // write/patch exist only in a project session
@@ -413,6 +418,7 @@ func TestFilesFailuresThroughCodemode(t *testing.T) {
 }
 
 func TestFilesViewOneHugeLine(t *testing.T) {
+	t.Parallel()
 	p := filepath.Join(t.TempDir(), "oneline")
 	filesSeed(t, p, strings.Repeat("x", 20<<20))
 	out, err := readView(p)

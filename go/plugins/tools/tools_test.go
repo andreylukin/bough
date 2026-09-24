@@ -15,6 +15,7 @@ import (
 )
 
 func TestToolsViaCodemode(t *testing.T) {
+	t.Parallel()
 	ctx := kernel.NewContext()
 	ctx.Provide("codemode", codemode.New(5*time.Second))
 	provideHostProject(ctx) // write/patch exist only in a project session
@@ -63,6 +64,7 @@ func TestBashTimeoutMessage(t *testing.T) {
 }
 
 func TestTurnStats(t *testing.T) {
+	t.Parallel()
 	ctx := kernel.NewContext()
 	ctx.Provide("codemode", codemode.New(5*time.Second))
 	provideHostProject(ctx) // write/patch exist only in a project session
@@ -98,6 +100,7 @@ func jsStr(s string) string {
 // patch replaces exactly one occurrence, refuses zero or many, and
 // creates a file only with an empty old.
 func TestViewAndPatch(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "a.txt")
 	st := &Stats{}
@@ -141,6 +144,7 @@ func TestViewAndPatch(t *testing.T) {
 // (the whole process group) at once: a cancelled turn must not wait
 // out a sleep, and must not leave the sleep running.
 func TestBashDiesWithTheRunContext(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(t.Context())
 	st := &Stats{runCtx: func() context.Context { return ctx }}
 	marker := fmt.Sprintf("bough-cancel-test-%d", os.Getpid())
@@ -174,6 +178,7 @@ func TestBashDiesWithTheRunContext(t *testing.T) {
 // bash takes its script on stdin, so a NUL byte or a very long script
 // does not fail at exec.
 func TestWriteAndStdinBash(t *testing.T) {
+	t.Parallel()
 	st := &Stats{}
 	dir := t.TempDir()
 	p := dir + "/a/b/c.txt"
@@ -197,6 +202,7 @@ func TestWriteAndStdinBash(t *testing.T) {
 }
 
 func TestLineDiff(t *testing.T) {
+	t.Parallel()
 	got := lineDiff("a\nb\nc\nd\ne\n", "a\nb\nX\nd\ne\n")
 	want := "\n\n b\n-c\n+X\n d"
 	if got != want {
@@ -211,6 +217,7 @@ func TestLineDiff(t *testing.T) {
 }
 
 func TestLineDiffGap(t *testing.T) {
+	t.Parallel()
 	got := lineDiff("a\nb\nc\nd\ne\nf\ng\n", "A\nb\nc\nd\ne\nf\nG\n")
 	if want := "\n\n-a\n+A\n b\n…\n f\n-g\n+G"; got != want {
 		t.Fatalf("diff = %q, want %q", got, want)
@@ -220,6 +227,7 @@ func TestLineDiffGap(t *testing.T) {
 // A missing file names its real neighbours: a model that guessed
 // turn.go is told loop.go exists instead of guessing again.
 func TestViewMissingFileSuggestsNeighbours(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	for _, n := range []string{"loop.go", "cancel.go", "unrelated.md"} {
 		if err := os.WriteFile(dir+"/"+n, []byte("x"), 0o644); err != nil {
@@ -244,6 +252,7 @@ func TestViewMissingFileSuggestsNeighbours(t *testing.T) {
 // A not-found patch points at what is nearly there: "hellp" is a typo
 // of "hello", so the error shows that line's neighbourhood.
 func TestPatchNotFoundShowsClosestMatch(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := dir + "/f.txt"
 	if err := os.WriteFile(path, []byte("hello\nworld\n"), 0o644); err != nil {
@@ -262,6 +271,7 @@ func TestPatchNotFoundShowsClosestMatch(t *testing.T) {
 }
 
 func TestClosestMatch(t *testing.T) {
+	t.Parallel()
 	if line, ok := closestMatch("aa\nbb\ncc\n", "bb\ncc"); line != 3 || !ok {
 		t.Fatalf("closest to \"bb\\ncc\" = line %d, %v; want 3, true", line, ok)
 	}

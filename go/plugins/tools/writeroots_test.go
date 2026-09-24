@@ -47,6 +47,7 @@ func TestLocalWriteRootsConfineWrite(t *testing.T) {
 // directory and nothing else new: the context-md header names MEMORY.md
 // by path every turn, and "remember this" is the agent writing it.
 func TestProjectDirIsAWriteRoot(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	proj := filepath.Join(dir, "projects", "web")
 	if err := os.MkdirAll(proj, 0o755); err != nil {

@@ -27,10 +27,17 @@ func newTestStats(t *testing.T) *Stats {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
+	return statsIn(ctx)
+}
+
+// statsIn is newTestStats on a context the test cancels itself, to
+// play the session unmount.
+func statsIn(ctx context.Context) *Stats {
 	j := newJobs(ctx)
 	// These suites test the background path itself: no foreground
 	// grace and no settling, so a job is a job from the first call.
-	// The grace and the settle have tests of their own below.
+	// The grace and the settle have tests of their own below; with the
+	// defaults every "sleep 30" job cost a test the full 20 s grace.
 	j.grace, j.settleFor = 0, 0
 	return &Stats{jobs: j}
 }
@@ -39,6 +46,7 @@ func newTestStats(t *testing.T) *Stats {
 // output comes back from the call, and no finish notice wakes a later
 // turn for something the model already has.
 func TestBashLimitAnswersAQuickJob(t *testing.T) {
+	t.Parallel()
 	s := newTestStats(t)
 	s.jobs.grace = 5 * time.Second
 	out, err := s.bash("echo quick-one", 60)
@@ -65,6 +73,7 @@ func TestBashLimitAnswersAQuickJob(t *testing.T) {
 // One still running after the grace is handed back as a job, and its
 // finish then notifies as before: the grace is a wait, not a claim.
 func TestBashLimitHandsBackASlowJob(t *testing.T) {
+	t.Parallel()
 	s := newTestStats(t)
 	s.jobs.grace = 300 * time.Millisecond
 	start := time.Now()
@@ -101,6 +110,7 @@ func TestBashLimitHandsBackASlowJob(t *testing.T) {
 // job runs, they wait for its end (up to the settle) rather than
 // reporting "running" for a model turn each time.
 func TestJobsSettlesBeforeAnswering(t *testing.T) {
+	t.Parallel()
 	s := newTestStats(t)
 	s.jobs.settleFor = 5 * time.Second
 	if _, err := s.bash("sleep 0.5; echo settled", 60); err != nil {
@@ -128,6 +138,7 @@ func TestJobsSettlesBeforeAnswering(t *testing.T) {
 // A limit turns tools.bash into a background job: it returns at once,
 // long before the command it started could finish.
 func TestBashWithLimitReturnsImmediately(t *testing.T) {
+	t.Parallel()
 	s := newTestStats(t)
 	start := time.Now()
 	out, err := s.bash("sleep 30", 60)
@@ -151,6 +162,7 @@ func TestBashWithLimitReturnsImmediately(t *testing.T) {
 // A finished job queues a notice and signals the wake channel — the
 // two things the loop needs to bring the agent back.
 func TestFinishedJobNotifies(t *testing.T) {
+	t.Parallel()
 	s := newTestStats(t)
 	if _, err := s.bash("echo hello-from-job", 60); err != nil {
 		t.Fatalf("bash: %v", err)
@@ -172,6 +184,7 @@ func TestFinishedJobNotifies(t *testing.T) {
 // The watch pattern reports while the job is still running, and does
 // not stop it.
 func TestUntilFiresWhileRunning(t *testing.T) {
+	t.Parallel()
 	s := newTestStats(t)
 	if _, err := s.bash("echo READY; sleep 30", 60, "READY"); err != nil {
 		t.Fatalf("bash: %v", err)
@@ -193,6 +206,7 @@ func TestUntilFiresWhileRunning(t *testing.T) {
 
 // jobWait blocks until the job exits and hands back its output.
 func TestJobWait(t *testing.T) {
+	t.Parallel()
 	s := newTestStats(t)
 	if _, err := s.bash("sleep 0.2; echo done-waiting", 60); err != nil {
 		t.Fatalf("bash: %v", err)
@@ -208,6 +222,7 @@ func TestJobWait(t *testing.T) {
 
 // A killed job stops running and says why.
 func TestJobKill(t *testing.T) {
+	t.Parallel()
 	s := newTestStats(t)
 	if _, err := s.bash("sleep 30", 60); err != nil {
 		t.Fatalf("bash: %v", err)
@@ -228,6 +243,7 @@ func TestJobKill(t *testing.T) {
 
 // The limit kills a job that overruns it.
 func TestJobLimitKills(t *testing.T) {
+	t.Parallel()
 	s := newTestStats(t)
 	if _, err := s.bash("sleep 30", 0.2); err != nil {
 		t.Fatalf("bash: %v", err)
@@ -245,6 +261,7 @@ func TestJobLimitKills(t *testing.T) {
 
 // Without a limit bash is unchanged: foreground, output returned.
 func TestBashWithoutLimitIsForeground(t *testing.T) {
+	t.Parallel()
 	s := newTestStats(t)
 	out, err := s.bash("echo foreground")
 	if err != nil {
@@ -260,6 +277,7 @@ func TestBashWithoutLimitIsForeground(t *testing.T) {
 
 // A bad limit or a bad watch pattern is a clear error, not a job.
 func TestBadArguments(t *testing.T) {
+	t.Parallel()
 	s := newTestStats(t)
 	if _, err := s.bash("true", "not-a-duration"); err == nil {
 		t.Fatal("a nonsense limit must be an error")
@@ -272,6 +290,7 @@ func TestBadArguments(t *testing.T) {
 // Output far over the cap keeps both ends: the head says what the
 // command started doing, the tail says how it ended.
 func TestJobOutputKeepsBothEnds(t *testing.T) {
+	t.Parallel()
 	s := newTestStats(t)
 	if _, err := s.bash("seq 1 200000", 60); err != nil {
 		t.Fatalf("bash: %v", err)
@@ -326,6 +345,7 @@ func TestJobOutputSpillsWhenCut(t *testing.T) {
 // starting one. The job hangs off the plugin's context, so a cancelled
 // script context leaves it running.
 func TestBackgroundJobSurvivesTurnCancel(t *testing.T) {
+	t.Parallel()
 	s := newTestStats(t)
 	turn, cancel := context.WithCancel(context.Background())
 	s.runCtx = func() context.Context { return turn }
@@ -354,8 +374,9 @@ func TestBackgroundJobSurvivesTurnCancel(t *testing.T) {
 // Unmount cancels the jobs and waits for their kill to land: a process
 // exiting right after it must not leave a job command running.
 func TestWaitAfterCancelLeavesNoJobRunning(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Stats{jobs: newJobs(ctx)}
+	s := statsIn(ctx)
 	if _, err := s.bash("sleep 30", 60); err != nil {
 		t.Fatalf("bash: %v", err)
 	}
@@ -368,6 +389,7 @@ func TestWaitAfterCancelLeavesNoJobRunning(t *testing.T) {
 
 // firstLine's 80-byte cut must not split a ZWJ grapheme or a rune.
 func TestFirstLineCutsAtGraphemeBoundary(t *testing.T) {
+	t.Parallel()
 	family := "👩‍👩‍👧‍👦"
 	cmd := strings.Repeat("x", 70) + family + " tail"
 	got := firstLine(cmd)
