@@ -592,6 +592,11 @@ func (a *API) sessionBuildLog(w http.ResponseWriter, r *http.Request) {
 	// "ok" and stopped at once.
 	if a.building(st.Project) {
 		state = "building"
+	} else if state == "building" && st.Status != orb.StatusBuilding {
+		// build.json is the project's and a child killed mid-build leaves
+		// it "building": a session not building now waits on no build,
+		// and "building" here kept its log polling a dead one.
+		state = "interrupted"
 	}
 	text := ""
 	if f, err := os.Open(orb.ImageLogPath(home, st.Project)); err == nil {

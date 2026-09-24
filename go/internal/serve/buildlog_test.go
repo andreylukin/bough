@@ -60,6 +60,43 @@ func TestSessionBuildLog(t *testing.T) {
 	}
 }
 
+// build.json is the project's, and a start that died mid-build leaves it
+// "building". A later start of the session, or a failed one, is not
+// waiting on any build, and its log must not poll a dead one forever:
+// found by go/tests/model's orb lifecycle walk (a start after an owner
+// died mid-build showed "Building the image…" before it had built).
+func TestSessionBuildLogStaleBuilding(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	seedModeSession(t, f, "restarted", map[string]any{"cwd": "/w", "mode": "project", "project": "app"})
+	logPath := orb.ImageLogPath(f.home, "app")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(logPath), "build.json"), []byte(`{"tag":"t","hash":"h","state":"building"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, st := range []orb.Status{orb.StatusStarting, orb.StatusFailed, orb.StatusStopped} {
+		writeState(t, f.home, orb.State{Session: "restarted", Project: "app", Status: st, Phase: orb.PhaseSync, PID: os.Getpid(), UpdatedAt: time.Now()})
+		_, body := f.do(t, "GET", "/api/sessions/restarted/orb/build/log?offset=0", "")
+		if body["state"] == "building" {
+			t.Errorf("orb %s: build log state = building from a build nobody runs; body %v", st, body)
+		}
+	}
+	// Its own build, and one serve started, still read as building.
+	writeState(t, f.home, orb.State{Session: "restarted", Project: "app", Status: orb.StatusBuilding, PID: os.Getpid(), UpdatedAt: time.Now()})
+	if _, body := f.do(t, "GET", "/api/sessions/restarted/orb/build/log?offset=0", ""); body["state"] != "building" {
+		t.Errorf("orb building: build log state = %v, want building", body["state"])
+	}
+	writeState(t, f.home, orb.State{Session: "restarted", Project: "app", Status: orb.StatusStarting, PID: os.Getpid(), UpdatedAt: time.Now()})
+	f.sup.mu.Lock()
+	f.sup.building["app"] = true
+	f.sup.mu.Unlock()
+	if _, body := f.do(t, "GET", "/api/sessions/restarted/orb/build/log?offset=0", ""); body["state"] != "building" {
+		t.Errorf("serve rebuilding: build log state = %v, want building", body["state"])
+	}
+}
+
 func itoa(n int) string {
 	b := []byte{}
 	if n == 0 {
