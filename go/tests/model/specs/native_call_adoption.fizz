@@ -46,7 +46,8 @@ deadlock_detection: false
 #   child      alive | dead; gen counts respawns (0, then 1)
 #   foot_running  done.running of the turn that adopted (its footer)
 #   settled    how many of those the page counts as reported (footer)
-#   end_row    the call's recorded end row: none | fg | adopted
+#   end_row    the call's recorded end row: none | fg | adopted |
+#              interrupted (a lost call's, written by the next child)
 #   turn_dones dones recorded for the current (or last) turn
 #   behind     something was recorded the page has not fetched
 #   work       the Work dialog's word for the job, as of the last fetch
@@ -54,17 +55,16 @@ deadlock_detection: false
 #   still      the footer's "N calls still running" (foot_running - settled)
 #   prompts    user prompts sent; bounds the model
 #
-# Where this departs from the product today (these are findings, and
-# the MBT stage is expected to go red on them):
-# - ChildExits here records the adopted job finished{stopped}, as
-#   engine.go stopJobs means to ("background jobs die with it, said in
-#   history"). The product does not: the actor is closed (shutdown sets
-#   a.closed, so ended() and the finish never run) and Jobs.Stop knows
-#   nothing of adopted jobs. History keeps job N started; after a
-#   respawn RunningJobs lists it as running, the footer says "1 call
-#   still running" forever, and killJob answers ok for a job the new
-#   child does not have. RowJobsLiveChildOnly, AdoptedCallsEnd and
-#   StillRunningClears are the claims it breaks.
+# ChildExits records the adopted job finished{stopped}, as engine.go
+# stopJobs means to ("background jobs die with it, said in history").
+# The child cannot: a SIGKILL runs nothing, and a clean exit closes the
+# actor before its finish. serve writes it when it reaps the child
+# (endOrphanJobs); before that, history kept job N started, a respawn
+# listed it as running and the footer said "1 call still running"
+# forever. The resumed child then records the lost call interrupted
+# ("bough restarted before this call finished; it was not re-run").
+#
+# Where this departs from the product today:
 # - KillJob needs the job listed (a live child): serve's killJob goes
 #   through Supervisor.Send, which would spawn a fresh child just to
 #   deliver "/jobkill N" after an exit, and is refused 409 while an ask
@@ -193,6 +193,8 @@ role Session:
         self.child = "alive"
         self.gen = self.gen + 1
         self.prompts = self.prompts + 1
+        if self.call == "lost":
+            self.end_row = "interrupted"
         self.open("user")
 
     # --- the model (llm-control) ---
@@ -270,6 +272,7 @@ role Session:
         require self.kill_req
         if self.job == "running":
             self.killed = True
+            self.kill_req = False
             self.end_adopted("stopped")
         else:
             self.kill_req = False
@@ -338,10 +341,12 @@ always assertion FooterBounded:
             and (session.settled == 0 or session.job in ENDED))
 
 # An adopted call's end row says adopted (job N), a foreground call's
-# does not; a lost call has none.
+# does not; a lost call has none until the next child says interrupted.
 always assertion EndRowAdopted:
     if session.call == "ended":
         return session.end_row == ("fg" if session.job == "none" else "adopted")
+    if session.call == "lost":
+        return session.end_row == ("interrupted" if session.gen > 0 else "none")
     return session.end_row == "none"
 
 # A steer in the settle window keeps the call foreground: while a steer
