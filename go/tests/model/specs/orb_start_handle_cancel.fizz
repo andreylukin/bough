@@ -143,7 +143,10 @@ role Handle:
 
     atomic action Mount:
         require self.row == "init"
-        self.mode = oneof ["async", "headless"]
+        # Through a local: fizz drops a oneof assigned straight to a
+        # field (both forks reached mode "async", headless never ran).
+        m = oneof ["async", "headless"]
+        self.mode = m
         self.row = "applying"
 
     # rt.Available fails before Prepare: the row fails and nothing is
