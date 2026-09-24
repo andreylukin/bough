@@ -20,6 +20,14 @@ An empty queue answers `[llm-control: no turn queued in <dir>]` rather
 than waiting, so a test that queued too few turns fails instead of
 hanging. Session titles and other `Complete` calls never take a turn.
 
+A process can also be held **before its history file exists**: while
+`start.hold` is in the control dir (`HoldStart`), every process that
+mounts the row parks there (the llm row mounts before history) and
+announces itself as `start-<pid>.held` (`Held`, `WaitHeld`).
+`ReleaseStart` lets it go on; `ExitStart` makes it exit 3 instead. This
+is how the session-create flow puts serve's Create between spawn and
+history, or makes its child die there.
+
 The row lives in `plugins/llm/control.go` (only that package may import
 the harness); this package is the test side:
 
