@@ -33,6 +33,9 @@ var testImporters = []string{
 	"plugins/hooks",
 	"plugins/rules",
 	"plugins/skills",
+	// engine_cancel_mid_call walks the spec against an in-process
+	// Runtime: serve cannot reach that flow (its Stop exits the child).
+	"tests/model/mbt",
 }
 
 // vocabularyPlugins are the plugin packages internal/unreal/... may

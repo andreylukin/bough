@@ -33,6 +33,18 @@
 #     done (stop_interrupt.fizz), and the page refuses a prompt while
 #     stopping: late rows and PromptDuringCancel are reachable in the TUI
 #     and in-process, not through the web.
+#   - A call's result never cuts a request in flight (only an input
+#     does): it waits for that request's answer and goes out with the
+#     next one (`waiting`). A prompt or a steer sent meanwhile carries it;
+#     a cancel parks it with the rest of m.Reasons, so it is muted.
+#   - A cancel closes on the report of the last call it waited for,
+#     before that call's result asks the model: the result opens a wake
+#     turn of its own (or goes out with the prompt the close opened).
+#   - A pending cancel's turn cuts the request in flight, as any cancel
+#     does, and parks what is pending.
+#   (Found by the MBT walks against the engine,
+#   tests/model/mbt/engine_cancel_mid_call_test.go; the spec first had
+#   the result asking at once and the cancel waiting on its request.)
 #
 # Fields (Engine role):
 #   turn      idle | open | cancelling (a.open / a.cancelling)
@@ -43,8 +55,12 @@
 #   call      the one native call: none | running | cancelling (its turn's
 #             cancel is waiting on it) | late (the cancel closed without it)
 #   parked    that call's result is covered by the Gate's park
+#   waiting   that call reported while a request was in flight; its result
+#             goes out once that request has answered
 #   row       where the cancelled call's end row landed: "" | turn (before
-#             cancelled/done) | orphan | wake | next
+#             cancelled/done) | orphan | wake | next. A row that lands
+#             between turns while a request is in flight is "orphan"
+#             until the wake turn its result opens takes it in.
 #   shows     what that row says: "" | cancelled (canceled: true) | ok
 #   steer     one steer: none | typed (Runtime.Steer, not yet landed) |
 #             queued (steerQ, waiting on the request boundary) | note
@@ -82,6 +98,7 @@ role Engine:
         self.stray = False
         self.leak = False
         self.quiet = False
+        self.waiting = False
 
     atomic func open_user_turn():
         self.turns = self.turns + 1
@@ -90,11 +107,17 @@ role Engine:
         self.closes = 0
         if self.steer == "note" or self.steer == "parked":
             self.steer = "delivered"
+        # Either way a waiting result is taken: parked by the cancel below,
+        # or carried by the prompt's request.
+        self.waiting = False
         if self.pending_cancel:
+            # cancelTurn right after startTurn: the request in flight is
+            # cut and the new input parked with what is pending.
             self.pending_cancel = False
             self.quiet = True
             self.turn = "idle"
             self.closes = 1
+            self.req = False
         else:
             self.parked = False
             self.quiet = False
@@ -117,10 +140,22 @@ role Engine:
             self.closes = 0
         self.req = True
 
+    # The waiting result goes out once the request it waited on answered,
+    # unless that answer already led to a request that carries it.
+    atomic func send_waiting():
+        if self.waiting:
+            self.waiting = False
+            if not self.req:
+                if self.quiet and self.turn != "open":
+                    self.leak = True
+                if self.turn == "idle" and self.row == "orphan":
+                    self.row = "wake"
+                self.asked()
+
     atomic func reported(shows):
         if self.call == "cancelling":
             self.row = "turn"
-        elif self.turn == "idle" and self.parked:
+        elif self.turn == "idle" and (self.parked or self.req):
             self.row = "orphan"
         elif self.turn == "idle":
             self.row = "wake"
@@ -131,12 +166,23 @@ role Engine:
         self.shows = shows
         if self.parked:
             self.parked = False
+            if own and self.turn == "cancelling" and not self.req:
+                self.close_cancel()
+        elif own and self.turn == "cancelling" and not self.req:
+            # The close comes first; a prompt it opens carries the result
+            # (or, a pending cancel's, parks it).
+            opens = self.pending
+            self.close_cancel()
+            if not opens:
+                if self.quiet:
+                    self.leak = True
+                self.asked()
+        elif self.req:
+            self.waiting = True
         else:
             if self.quiet and self.turn != "open":
                 self.leak = True
             self.asked()
-        if own and self.turn == "cancelling" and not self.req:
-            self.close_cancel()
 
     atomic action Prompt:
         require self.turn == "idle" and self.turns < MAX_TURNS
@@ -169,6 +215,7 @@ role Engine:
         if self.steer == "queued":
             self.steer = "delivered"
             self.req = True
+        self.send_waiting()
 
     atomic action CallReturns:
         require self.turn == "open" and self.call == "running" and not self.req
@@ -186,9 +233,10 @@ role Engine:
         elif self.steer == "queued":
             self.steer = "delivered"
             self.req = True
-        elif self.call != "running":
+        elif self.call != "running" and not self.waiting:
             self.turn = "idle"
             self.closes = self.closes + 1
+        self.send_waiting()
 
     atomic action Stop:
         require self.turn == "open" or self.turn == "cancelling"
@@ -202,6 +250,8 @@ role Engine:
                 self.steer = "note"
             self.quiet = True
             self.req = False
+            # a result waiting on the cut request is in m.Reasons: parked
+            self.waiting = False
             if self.call == "running":
                 self.parked = True
                 self.call = "cancelling"
@@ -271,9 +321,10 @@ always eventually assertion PendingOpens:
 #
 # "After a cancel no request reaches the provider until a new input"
 # (not engine.leak) fails twice over:
-#   1. Prompt, CallStarts, Stop, JobFinishes, CallReportsCanceled: the
-#      adopted job's request unparks, so the cancelled call's result goes
-#      to the provider while the cancel is still closing.
+#   1. Prompt, CallStarts, Stop, JobFinishes, CallReportsCanceled,
+#      ModelAnswers: the adopted job's request unparks, so the cancelled
+#      call's result, which waited on that request, goes to the provider
+#      once it answers, in a wake turn the cancel's close did not stop.
 #   2. Prompt, CallStarts, Stop, PromptDuringCancel, CancelWaitExpires,
 #      Stop, CallReportsCanceled: the second cancel parks only its own
 #      turn's calls, not the late call the first cancel let go of, so its
