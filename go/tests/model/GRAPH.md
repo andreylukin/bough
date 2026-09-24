@@ -147,6 +147,22 @@ links out of it carry **no `type`** and are named after the choice:
 So an abstract step (action, observed state) is one `action` link plus the
 untyped links after it, matched at the settled `yield` node.
 
+### Roles
+
+Observed on [`specs/example.fizz`](specs/example.fizz), whose state is a
+`Session` role's. The global that holds the role is only a reference
+(`"state": {"session": "role Session#0"}`); the fields are in `roles`:
+
+```json
+"roles": [{"name": "Session", "ref": 0, "ref_string": "Session#0", "params": {},
+           "fields": {"status": "idle", "unseen": false, "viewing": false}}]
+```
+
+and role actions are named `Session#0.Prompt` on the links. Both
+consumers below flatten a role's fields into the state as
+`"Session#0.status"`, so a trace names role state and actions the way
+fizzbee-mbt does.
+
 ### The only JSON graph: `error-graph.json`
 
 Written on failure only. It is the failing path, a JSON array of links, each

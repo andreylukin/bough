@@ -9,7 +9,8 @@ import (
 )
 
 // The fixtures are real fizz v0.5.3 run dirs: light/ from
-// go/tests/model/example/Light.fizz, door/ from testdata/Door.fizz.
+// go/tests/model/example/Light.fizz, door/ from testdata/Door.fizz,
+// example/ from go/tests/model/specs/example.fizz.
 // Regenerate with scripts/fizz.sh fizz --output-dir <dir> <spec>.
 
 func load(t *testing.T, name string) *Graph {
@@ -113,6 +114,32 @@ func TestCheck(t *testing.T) {
 				t.Fatalf("Error() = %q does not name the action %q", v.Error(), v.Step.Action)
 			}
 		})
+	}
+}
+
+// example/ is go/tests/model/specs/example.fizz, whose state lives in a
+// role (fizzbee-mbt needs one). A role's fields read as
+// "<Role>#<i>.<field>" and its actions as "<Role>#<i>.<Action>", the
+// names the mbt server uses for both.
+func TestCheckRoleState(t *testing.T) {
+	t.Parallel()
+	g := load(t, "example")
+	legal := []Step{
+		{"Init", st("Session#0.status", "idle", "Session#0.unseen", false)},
+		{"Session#0.Prompt", st("Session#0.status", "running")},
+		{"Session#0.Finish", st("Session#0.status", "done", "Session#0.unseen", true)},
+		{"Session#0.View", st("Session#0.unseen", false, "Session#0.viewing", true)},
+	}
+	if v := g.Check(legal); v != nil {
+		t.Fatalf("legal role trace rejected: %v", v)
+	}
+	unseenWhileViewing := []Step{
+		{"Session#0.View", st("Session#0.viewing", true)},
+		{"Session#0.Prompt", st("Session#0.status", "running")},
+		{"Session#0.Finish", st("Session#0.unseen", true)},
+	}
+	if v := g.Check(unseenWhileViewing); v == nil || v.Index != 2 {
+		t.Fatalf("unseen while viewing: violation = %v, want one at step 2", v)
 	}
 }
 

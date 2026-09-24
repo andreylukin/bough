@@ -69,7 +69,12 @@ export function loadGraph(dir: string): Graph {
     for (const fl of fields(readFileSync(join(dir, f)))) {
       if (fl.num !== 1 || fl.wire !== 2) continue;
       const n = JSON.parse(utf8.decode(fl.bytes));
-      g.nodes.push({ index: g.nodes.length, name: n.name, state: n.state ?? {} });
+      // A global holding a role is only a reference ("role Session#0");
+      // the role's fields are the state, qualified the way fizzbee-mbt
+      // names them (tracecheck's decodeNodes does the same).
+      const state: Record<string, unknown> = { ...(n.state ?? {}) };
+      for (const r of n.roles ?? []) for (const [k, v] of Object.entries(r.fields ?? {})) state[`${r.ref_string}.${k}`] = v;
+      g.nodes.push({ index: g.nodes.length, name: n.name, state });
     }
   }
   for (const f of linkFiles) {

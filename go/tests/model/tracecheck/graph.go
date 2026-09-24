@@ -151,9 +151,24 @@ func (g *Graph) decodeNodes(b []byte) error {
 		var n struct {
 			Name  string         `json:"name"`
 			State map[string]any `json:"state"`
+			Roles []struct {
+				Ref    string         `json:"ref_string"`
+				Fields map[string]any `json:"fields"`
+			} `json:"roles"`
 		}
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return fmt.Errorf("node %d: %w", len(g.Nodes), err)
+		}
+		// A global holding a role is only a reference ("role Session#0");
+		// the role's fields are the state, qualified the way fizzbee-mbt
+		// names them so two instances of a role never collide.
+		if len(n.Roles) > 0 && n.State == nil {
+			n.State = map[string]any{}
+		}
+		for _, r := range n.Roles {
+			for k, v := range r.Fields {
+				n.State[r.Ref+"."+k] = v
+			}
 		}
 		g.Nodes = append(g.Nodes, Node{Index: len(g.Nodes), Name: n.Name, State: n.State})
 		return nil

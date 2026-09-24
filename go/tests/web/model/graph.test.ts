@@ -24,6 +24,20 @@ test('decodes the light run dir', () => {
   assert.deepEqual(g.links.map((l) => l.type), ['action', 'action', 'action']);
 });
 
+// example/ is go/tests/model/specs/example.fizz: its state is a role's,
+// which the node JSON keeps under roles[], not state. The generator reads
+// it the way go/tests/model/tracecheck does, "<Role>#<i>.<field>".
+test('decodes role fields as qualified state', () => {
+  const g = loadGraph(join(testdata, 'example'));
+  assert.deepEqual(g.nodes[0].state, {
+    session: 'role Session#0',
+    'Session#0.status': 'idle', 'Session#0.unseen': false, 'Session#0.viewing': false,
+  });
+  const out = generate(g);
+  assert.equal(out.coverage.transitions.uncovered.length, 0);
+  assert.ok(out.paths.every((p) => p.trace.slice(1).every((s) => s.action.startsWith('Session#0.'))));
+});
+
 test('light: one path covers the cycle', () => {
   const g = loadGraph(join(testdata, 'light'));
   const out = generate(g);

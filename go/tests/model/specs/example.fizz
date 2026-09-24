@@ -1,0 +1,48 @@
+# The worked example for model-based tests (go/tests/model/README.md): one
+# web session's lifecycle as the control room shows it. A prompt runs a
+# turn that ends done or error; a clean finish nobody was watching is
+# unseen, and looking at the session clears that.
+#
+# State lives in a role because fizzbee-mbt compares state per role: the
+# adapter's GetState is the Session role's, and its server panics on a
+# spec whose state is only global. viewing is the person having this
+# session's transcript on screen; the page acks an unseen finish as soon
+# as it is on screen, so a finish while viewing is never left unseen.
+
+role Session:
+    action Init:
+        self.status = "idle"
+        self.unseen = False
+        self.viewing = False
+
+    atomic action Prompt:
+        require self.status != "running"
+        self.status = "running"
+        self.unseen = False
+
+    atomic action Finish:
+        require self.status == "running"
+        self.status = "done"
+        self.unseen = not self.viewing
+
+    atomic action Fail:
+        require self.status == "running"
+        self.status = "error"
+
+    atomic action View:
+        require not self.viewing
+        self.viewing = True
+        self.unseen = False
+
+    atomic action Leave:
+        require self.viewing
+        self.viewing = False
+
+action Init:
+    session = Session()
+
+always assertion UnseenOnlyWhenDone:
+    return not session.unseen or session.status == "done"
+
+always assertion NeverUnseenWhileViewing:
+    return not (session.unseen and session.viewing)
