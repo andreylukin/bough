@@ -17,8 +17,8 @@
 #     `bough --headless --json`, and cmd/bough/main.go blocks on
 #     `<-sig` for SIGINT: it cancels the turn, lets [cancelled]/[done]
 #     print, unmounts and exits (130 mid-turn, 0 when idle). The next
-#     prompt respawns via ensure. Supervisor.Interrupt's doc and
-#     TestSupervisorInterruptKeepsTheLease (a fake child) say otherwise.
+#     prompt respawns via ensure. TestSupervisorInterruptKeepsTheLease
+#     (a fake child) says otherwise; tests/model/mbt checks the real one.
 #     Checked on the real binary: SIGINT to an idle headless child exits 0.
 #   - A SIGINT that reaches a child which has not taken its prompt (the
 #     hold expired) does not "run the prompt anyway": the child exits and
@@ -51,7 +51,11 @@ role Session:
     action Init:
         self.status = "idle"
         self.pending = False
-        self.alive = False
+        # A session the page creates has a child from the start: Create
+        # spawns it to learn the id. Ended while idle, a fresh session
+        # is gone (the child drops a history with no turn), so "idle
+        # with no child" is not a state the page can open.
+        self.alive = True
         self.replied = False
         self.held = False
         self.timer = False

@@ -21,7 +21,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -272,7 +272,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -486,7 +486,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -682,7 +682,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -878,7 +878,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -1073,7 +1073,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -1250,7 +1250,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -1427,7 +1427,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -1604,7 +1604,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -1781,7 +1781,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -1957,7 +1957,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -2115,7 +2115,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -2273,7 +2273,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -2431,7 +2431,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -2589,7 +2589,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -2747,7 +2747,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -2905,7 +2905,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -3063,7 +3063,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -3221,7 +3221,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -3379,7 +3379,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -3536,7 +3536,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -3675,7 +3675,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -3814,7 +3814,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -3953,7 +3953,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -4092,7 +4092,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -4231,7 +4231,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -4370,7 +4370,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -4509,7 +4509,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -4648,7 +4648,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -4787,7 +4787,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -4926,7 +4926,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -5065,7 +5065,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -5204,7 +5204,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -5342,7 +5342,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -5462,7 +5462,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -5582,7 +5582,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -5702,7 +5702,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -5822,7 +5822,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -5942,7 +5942,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -6062,7 +6062,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -6182,7 +6182,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -6301,7 +6301,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
@@ -6402,7 +6402,7 @@
           "action": "Init",
           "state": {
             "session": "role Session#0",
-            "Session#0.alive": false,
+            "Session#0.alive": true,
             "Session#0.cancelled": false,
             "Session#0.draft": "",
             "Session#0.held": false,
