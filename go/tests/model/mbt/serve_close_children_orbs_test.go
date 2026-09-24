@@ -257,8 +257,14 @@ func (a *sccoAdapter) Init() error {
 	if err := a.writeOrb(true, func(s *orb.State) { s.Status = orb.StatusBuilding }); err != nil {
 		return err
 	}
-	for _, id := range []*string{&a.b, &a.c} {
-		if *id, queued, err = a.sup.CreateChild(serve.CreateOptions{SpawnedBy: a.p, Prompt: "task"}, 0, 1); err != nil {
+	// Each agent's task names it: the browser walk tells their reports
+	// apart by the title they carry.
+	for _, x := range []struct {
+		id   *string
+		task string
+	}{{&a.b, "task b"}, {&a.c, "task c"}} {
+		id := x.id
+		if *id, queued, err = a.sup.CreateChild(serve.CreateOptions{SpawnedBy: a.p, Prompt: x.task}, 0, 1); err != nil {
 			return err
 		} else if !queued {
 			return fmt.Errorf("%s started past a running cap of 1", *id)
@@ -688,17 +694,29 @@ func (a *sccoAdapter) ResumeA() error {
 	if err != nil || !a.gate.pass(a.serve == "up" && o.a == "t") {
 		return err
 	}
-	entries, _ := history.Read(a.histPath(a.a))
-	turns := 0
-	for _, e := range entries {
-		if e.Kind == "input" {
-			turns++
-		}
-	}
+	turns := a.turns(a.a)
 	a.resumes++
 	if err := a.sup.Send(a.a, fmt.Sprintf("message %d", a.resumes)); err != nil {
 		return err
 	}
+	return a.resumed(turns)
+}
+
+func (a *sccoAdapter) turns(id string) int {
+	entries, _ := history.Read(a.histPath(id))
+	n := 0
+	for _, e := range entries {
+		if e.Kind == "input" {
+			n++
+		}
+	}
+	return n
+}
+
+// resumed is ResumeA after the message was sent (by the adapter, or by
+// the browser walk's composer): A's new process took it, and prepares
+// its orb again.
+func (a *sccoAdapter) resumed(turns int) error {
 	if err := a.waitTurns(a.a, turns+1); err != nil {
 		return err
 	}
