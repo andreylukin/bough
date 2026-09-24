@@ -128,9 +128,13 @@ func (a *API) children(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, row)
 			continue
 		}
-		// Started but its history file is not written yet: still a child.
+		// Started but its history file is not written yet: still a child,
+		// unless it ended before it could write one.
 		row := a.queuedRow(c.ID)
 		row.Queued, row.Status, row.Live = false, StatusRunning, a.sup.Live(c.ID)
+		if ended := a.sup.Meta(c.ID).Ended; ended != "" {
+			row.Status, row.Live = ended, false
+		}
 		rows = append(rows, row)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"children": rows})
@@ -152,6 +156,9 @@ func (a *API) agent(w http.ResponseWriter, r *http.Request) {
 	}
 	entries, _ := a.sup.Entries(id)
 	st, _ := StatusOf(entries, a.sup.Live(id))
+	if m.Ended != "" && !lastTurn(entries).hasEntry {
+		st = m.Ended
+	}
 	_, slug := sessionMode(entries)
 	out["status"] = st
 	out["title"] = a.sup.childTitle(id)

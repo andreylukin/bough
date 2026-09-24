@@ -49,6 +49,10 @@ const (
 	// thinking" activity line, which is all the real child prints while
 	// its first model request is in flight.
 	envThinking = "BOUGH_FAKE_THINKING"
+	// envHangBoot names a file: while it exists, a starting fake parks
+	// before it writes any history, the way a hung init or an orb that
+	// never comes up leaves a real child.
+	envHangBoot = "BOUGH_FAKE_HANGBOOT"
 )
 
 func TestMain(m *testing.M) {
@@ -78,6 +82,14 @@ func fakeChild() {
 		if fh, err := os.OpenFile(f, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
 			fmt.Fprintln(fh, id)
 			fh.Close()
+		}
+	}
+	if p := os.Getenv(envHangBoot); p != "" {
+		for {
+			if _, err := os.Stat(p); err != nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 	}
 	dir := os.Getenv(envHist)
