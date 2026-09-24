@@ -75,6 +75,12 @@ func Prepare(ctx context.Context, rt container.Runtime, home, session string, p 
 	o := &Orb{rt: rt, home: home, session: session, project: p, scratch: scratchDir}
 	o.prev, o.prevErr = ReadState(home, session)
 	o.state = State{Session: session, Project: p.Slug, Container: container.OrbName(session), PID: os.Getpid()}
+	// The image is the existing container's until Start settles another:
+	// a start that fails before the container must not forget it, or the
+	// next start takes the container for unproven and recreates it.
+	if o.prevErr == nil {
+		o.state.Image = o.prev.Image
+	}
 	if err := os.MkdirAll(Dir(home, session), 0o755); err != nil {
 		return nil, o.fail(err)
 	}
