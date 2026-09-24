@@ -209,6 +209,12 @@ func probe(addr string) string {
 	return ""
 }
 
+// openGrace is how long Open waits for the opener to exit before
+// treating it as a browser that stayed in the foreground. A var so the
+// failure test can outlast a loaded machine, where a failing opener has
+// taken longer than this to exit and was reported as success.
+var openGrace = 2 * time.Second
+
 // Open hands a page under the server to the desktop browser.
 func Open(url string) error {
 	cmd := "xdg-open"
@@ -230,7 +236,7 @@ func Open(url string) error {
 		if err != nil {
 			return fmt.Errorf("%s: %v %s", cmd, err, strings.TrimSpace(stderr.String()))
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(openGrace):
 	}
 	return nil
 }

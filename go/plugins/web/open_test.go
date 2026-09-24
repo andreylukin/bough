@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Open reports a browser that did not open: a missing opener, or one
@@ -12,6 +13,13 @@ import (
 func TestOpenReportsFailure(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PATH", dir)
+	// Under a loaded full-suite -race run the failing script took over
+	// the 2 s grace to exit, and Open took the "still lingering" branch.
+	// The test is about the exit status, not the grace, so it waits long.
+	// Not parallel (t.Setenv), so nothing else reads openGrace meanwhile.
+	grace := openGrace
+	openGrace = time.Minute
+	t.Cleanup(func() { openGrace = grace })
 	if err := Open("http://x/"); err == nil {
 		t.Fatal("no opener on PATH: want an error")
 	}
