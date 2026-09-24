@@ -1,0 +1,167 @@
+# Paste / drop text, images and files into the web composer.
+# Code: go/internal/serve/web/src/app.tsx Thread (take, attach, expand,
+# send, enqueue, the bough:draft-atts:<id> key) and
+# go/internal/serve/attachments.go (upload, uploadFile, attachment).
+#
+# One session's composer holding at most one tag is enough to show every
+# way a tag's content can be held, pending or missing:
+#
+#   tag   "none"      no tag in the draft
+#         "paste"     "[Pasted text #N +L lines]", its text held in pastes[]
+#                     (a paste over 800 chars or 12 lines; a shorter one
+#                     is inserted as plain text and is not modelled)
+#         "up_image"  "[Image #N]" whose slot is "" while POST /api/attachments runs
+#         "up_file"   "[File #N]" while POST /api/sessions/{id}/files?name= runs
+#         "image"     "[Image #N]", its slot holds ~/.bough/attachments/<f>
+#         "file"      "[File #N]", its slot holds ~/.bough/scratch/<id>/<name>
+#         "failed"    a tag whose slot stayed "": its upload failed
+#                     ("[Image #N] not attached: ...")
+#   can_send  Send and Queue are enabled: a tag in the draft and no upload
+#         in flight. Send stays enabled on a failed tag and refuses it.
+#   sent  the tag the last prompt carried, as its content: "paste" (the
+#         wrapped text), "image" / "file" ("[Image #N: path]"). Only a bug
+#         writes "placeholder", a bare tag whose content was missing.
+#   served what GET /api/attachments?path=<the sent path> answers: an image
+#         under ~/.bough/attachments is "image", a scratch file "refused"
+#         (404). Never "file".
+#   running a turn runs: Send steers it, Queue holds the message for later.
+#   viewing this session's thread is on screen. Thread is keyed by the
+#         session id and every draft key (bough:draft:, bough:draft-atts:)
+#         is per id, so leaving and coming back restores the draft, and
+#         nothing of it reaches another session: other is the draft another
+#         session's composer shows, and stays "none".
+#
+# Left out to keep the graph walkable: the attach error alert (transient,
+# cleared only by the next attach, no claim depends on it) and Edit of a
+# message without a paste (it comes back as plain text).
+#
+# Where the code disagrees with this spec (the flow's findings):
+#   - Queue (enqueue) never checks for a tag whose content is missing: it
+#     expands, which leaves the bare tag, and queues it. The spec holds
+#     Queue to Send's rule; the code breaks NoPlaceholderSent.
+#   - Return while an upload is in flight: the remounted Thread reads the
+#     slot "" from storage and its uploading count is 0, so the tag reads
+#     as missing even after the old instance's upload succeeds and stores
+#     the path. The spec keeps the upload pending across the remount, as
+#     UploadResolves needs.
+
+UPLOADING = ["up_image", "up_file"]
+
+role Composer:
+    action Init:
+        self.tag = "none"
+        self.can_send = False
+        self.sent = "none"
+        self.served = "none"
+        self.running = False
+        self.viewing = True
+        self.other = "none"
+
+    # fizz runs a func's statements as separate steps, so every action
+    # sets can_send inline instead of calling a helper.
+
+    atomic action PasteLong:
+        require self.viewing and self.tag == "none"
+        self.tag = "paste"
+        self.can_send = True
+
+    atomic action AttachImage:
+        require self.viewing and self.tag == "none"
+        self.tag = "up_image"
+        self.can_send = False
+
+    atomic action AttachFile:
+        require self.viewing and self.tag == "none"
+        self.tag = "up_file"
+        self.can_send = False
+
+    # An upload settles whether or not its thread is on screen.
+    atomic fair action UploadOk:
+        require self.tag in UPLOADING
+        if self.tag == "up_image":
+            self.tag = "image"
+        else:
+            self.tag = "file"
+        self.can_send = True
+
+    atomic fair action UploadFail:
+        require self.tag in UPLOADING
+        self.tag = "failed"
+        self.can_send = True
+
+    # Deleting a tag drops its content with it.
+    atomic action DeleteTag:
+        require self.viewing and self.tag in ["paste", "image", "file", "failed"]
+        self.tag = "none"
+        self.can_send = False
+
+    # Send (Enter), a steer while a turn runs. A tag whose content is
+    # missing is refused ("Attachment unavailable"), never sent bare.
+    atomic action Send:
+        require self.viewing and self.can_send
+        if self.tag != "failed":
+            self.sent = self.tag
+            if self.tag == "image":
+                self.served = "image"
+            elif self.tag == "file":
+                self.served = "refused"
+            else:
+                self.served = "none"
+            self.tag = "none"
+            self.can_send = False
+            self.running = True
+
+    # Queue (Cmd/Ctrl+Enter, or the Queue button) exists while a turn runs;
+    # the queued message goes when the turn ends.
+    atomic action Queue:
+        require self.viewing and self.running and self.can_send
+        if self.tag != "failed":
+            self.sent = self.tag
+            if self.tag == "image":
+                self.served = "image"
+            elif self.tag == "file":
+                self.served = "refused"
+            else:
+                self.served = "none"
+            self.tag = "none"
+            self.can_send = False
+
+    atomic action Finish:
+        require self.running
+        self.running = False
+
+    # Edit puts the last message back in the empty composer; its wrapped
+    # paste folds back to a chip (foldPastes).
+    atomic action Edit:
+        require self.viewing and not self.running and self.tag == "none" and self.sent == "paste"
+        self.tag = "paste"
+        self.can_send = True
+
+    # Switching to another session and back, with something in the draft.
+    atomic action Leave:
+        require self.viewing and self.tag != "none" and not self.running
+        self.viewing = False
+
+    atomic action Return:
+        require not self.viewing
+        self.viewing = True
+
+action Init:
+    composer = Composer()
+
+always assertion NoPlaceholderSent:
+    return composer.sent != "placeholder"
+
+always assertion SendDisabledWhileUploading:
+    return not (composer.can_send and composer.tag in UPLOADING)
+
+always assertion AttachmentsServeOnlyImages:
+    return composer.served != "file"
+
+always assertion DraftStaysInItsSession:
+    return composer.other == "none"
+
+# Every upload ends as a path or a failed tag. UploadOk and UploadFail
+# are fair: without that, a walk that only leaves and returns never settles.
+always eventually assertion UploadResolves:
+    return composer.tag not in UPLOADING
