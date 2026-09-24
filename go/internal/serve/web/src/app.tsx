@@ -308,8 +308,11 @@ export function sidebarSelected(view: View, lost: string | null, selected: strin
   return view !== "sessions" || lost !== null ? null : selected ?? lastId;
 }
 
-export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, saidElsewhere, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry, onOpenProject, onMove }: {
+export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, saidElsewhere, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry, onOpenProject, onMove, viewing }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
+  /** The session whose transcript is on screen (App's `viewing`): its finish is being acked. The
+   *  marked row is also the one you left, which is not on screen once you went home. */
+  viewing?: string;
   /** Project labels, so a project group is headed by its name. */
   projects?: Project[];
   /** The fleet's freshness: when the list last loaded (null before), and why the last refresh failed. */
@@ -749,7 +752,9 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
                 ? <span className="status"><svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="var(--red)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{STATUS.error.glyph}</svg><span className="visually-hidden">{why}</span></span>
                 : MARKED.has(r.status) ? <StatusMark status={r.status} size={16} bare />
                 // The open row is being looked at; its ack is already on the way.
-                : isUnseen(r) && !on ? <UnseenDot /> : null}
+                // Only while it is: the row you left stays marked, and while its
+                // ack had not landed it read as seen with the finish unacked.
+                : isUnseen(r) && !(viewing !== undefined ? r.id === viewing : on) ? <UnseenDot /> : null}
             </span>
             {/* Status metadata goes under the title, so a chip never cuts the name. */}
             <span className={stacked ? "row-stack" : "row-line"}>
@@ -5877,7 +5882,7 @@ export default function App() {
                onStart={palCwd || home ? (text) => start(palCwd || home, text) : undefined}
                onStartIn={(path) => { setPalCwd(path); setPalette(true); }}
                startIn={palCwd ? (palCwd === home ? "home" : palCwd.split("/").filter(Boolean).pop() || palCwd) : undefined} />
-      <Sidebar rows={visible} projects={projects} selected={sidebarSelected(view, lost, selected, lastId)} active={pane === "list"}
+      <Sidebar rows={visible} projects={projects} selected={sidebarSelected(view, lost, selected, lastId)} active={pane === "list"} viewing={viewing || ""}
                onSelect={(id) => {
                  openSession(id);
                  // A row there only for what was said lands on the line that said it.
