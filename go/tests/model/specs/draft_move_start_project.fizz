@@ -1,0 +1,170 @@
+# "Start project session" on a read-only local session's composer: pick a
+# project and a new orb session is created with the draft moved into its
+# composer, unsent. Code: go/internal/serve/web/src/app.tsx Thread (the
+# composer-local Select, draft / draft-ask / draft-atts keys, attach,
+# follow, expand, send) and App's onStartProject (api.create, the key
+# moves, goProject); confirmFailedBuild in orb.tsx.
+#
+# One tag in the old draft is enough to show every way its content can
+# be held, pending or missing:
+#
+#   old_tag  what the old (local) session's composer holds:
+#            "none"      empty
+#            "text"      typed text, no tag
+#            "paste"     "[Pasted text #1 +L lines]", its text in pastes[]
+#            "up_image"  "[Image #1]" whose slot is "" while its upload runs
+#            "image"     "[Image #1]", its slot holds the uploaded path
+#            "lost"      a tag whose upload failed: the alert says so and
+#                        Send refuses it ("Attachment unavailable")
+#   new_tag  the new session's composer, same values, plus "absent" (no
+#            new session yet). Only a bug writes "expanded" (a paste as its
+#            raw <pasted-text> wrapper, no longer a chip) or "bare" (a tag
+#            with no content and no error: the upload was still running).
+#   view     "old" | "confirm" (the failed-build dialog) | "creating" |
+#            "new" (the new session's thread is on screen)
+#   moved    the create succeeded and the draft moved
+#   typed    the old draft was ever non-empty: nothing but a move empties it
+#   old_keys any bough:draft*:<old id> key (draft, draft-ask, draft-atts)
+#            is still stored for the old session
+#   sent     what Send in the new session delivered: "none", "text",
+#            "paste" (the wrapped text), "image" ("[Image #1: path]").
+#            Only a bug writes "placeholder".
+#
+# Left out: typing more after the first tag or in the old session after the
+# move (a new draft there is a new flow), Queue, the turn the Send starts,
+# and the dialog's "Open orb" (it cancels like Cancel and navigates away).
+#
+# Where the code (as of this spec) disagrees, the flow's findings:
+#   - The draft moves as expand(draft), captured when the project is
+#     picked: a paste arrives as raw wrapper text ("expanded"), an image
+#     still uploading as a bare "[Image #1]" ("bare"), and the finished
+#     upload's path is written nowhere (the old draft-atts key is gone and
+#     the new session has none). The spec moves the tags as tags and lets
+#     the upload finish into the new draft.
+#   - bough:draft-ask:<old id> is not removed with the other two keys
+#     (old_keys stays True until the old session is opened again).
+#   - A lost tag moves bare; the new composer's Send refuses it the same
+#     way, so the spec keeps it "lost" on both sides.
+
+role Move:
+    action Init:
+        self.old_tag = "none"
+        self.new_tag = "absent"
+        self.view = "old"
+        self.moved = False
+        self.typed = False
+        self.old_keys = False
+        self.sent = "none"
+
+    atomic action Type:
+        require self.view == "old" and not self.moved and self.old_tag == "none"
+        self.old_tag = "text"
+        self.typed = True
+        self.old_keys = True
+
+    atomic action PasteLong:
+        require self.view == "old" and not self.moved and self.old_tag == "none"
+        self.old_tag = "paste"
+        self.typed = True
+        self.old_keys = True
+
+    atomic action PasteImage:
+        require self.view == "old" and not self.moved and self.old_tag == "none"
+        self.old_tag = "up_image"
+        self.typed = True
+        self.old_keys = True
+
+    # An upload settles whatever is on screen, in whichever draft holds its
+    # tag: before the move the old one, after it the new one.
+    atomic fair action UploadOk:
+        require self.old_tag == "up_image" or self.new_tag == "up_image"
+        if self.old_tag == "up_image":
+            self.old_tag = "image"
+        else:
+            self.new_tag = "image"
+
+    atomic fair action UploadFail:
+        require self.old_tag == "up_image" or self.new_tag == "up_image"
+        if self.old_tag == "up_image":
+            self.old_tag = "lost"
+        else:
+            self.new_tag = "lost"
+
+    # The Select offers every project; a healthy one starts at once, one
+    # whose last image build failed asks first.
+    atomic action PickProject:
+        require self.view == "old" and not self.moved
+        self.view = "creating"
+
+    atomic action PickFailedProject:
+        require self.view == "old" and not self.moved
+        self.view = "confirm"
+
+    atomic action StartAnyway:
+        require self.view == "confirm"
+        self.view = "creating"
+
+    atomic action CancelConfirm:
+        require self.view == "confirm"
+        self.view = "old"
+
+    # The draft moves as it is when the session exists, tags as tags.
+    atomic action CreateOk:
+        require self.view == "creating"
+        self.new_tag = self.old_tag
+        self.old_tag = "none"
+        self.old_keys = False
+        self.moved = True
+        self.view = "new"
+
+    # The error alert; the old session keeps everything.
+    atomic action CreateFail:
+        require self.view == "creating"
+        self.view = "old"
+
+    atomic action GoOld:
+        require self.moved and self.view == "new"
+        self.view = "old"
+
+    atomic action GoNew:
+        require self.moved and self.view == "old"
+        self.view = "new"
+
+    # Send is disabled while an upload runs; a lost tag is refused, never
+    # sent as its placeholder.
+    atomic action Send:
+        require self.view == "new" and self.new_tag in ["text", "paste", "image", "lost"]
+        if self.new_tag != "lost":
+            self.sent = self.new_tag
+            self.new_tag = "none"
+
+action Init:
+    move = Move()
+
+# The moved draft is the same draft: a paste stays a chip.
+always assertion PasteStaysTag:
+    return move.new_tag != "expanded"
+
+# An unfinished upload never moves as a bare placeholder, and nothing is
+# ever sent as one.
+always assertion NoBarePlaceholder:
+    return move.new_tag != "bare" and move.old_tag != "bare" and move.sent != "placeholder"
+
+# Only a successful move empties the old draft: a failed create or a
+# cancelled dialog leaves it whole.
+always assertion CreateFailRemovesNothing:
+    return move.moved or not move.typed or move.old_tag != "none"
+
+# After the move the old session holds no draft, attachments or draft-ask.
+always assertion OldKeepsNoHalfState:
+    return not move.moved or (move.old_tag == "none" and not move.old_keys)
+
+# No new session, no new draft.
+always assertion NewDraftOnlyAfterMove:
+    return move.moved or move.new_tag == "absent"
+
+# An upload started before the move ends as a path or a visible error in
+# whichever draft holds it. UploadOk/UploadFail are fair: a walk that only
+# switches sessions must still let it settle.
+always eventually assertion UploadEnds:
+    return move.old_tag != "up_image" and move.new_tag != "up_image"
