@@ -410,6 +410,11 @@ function FileCard({ row, file, scope, at, first, turn }: { row: Row; file: Chang
     return () => { live = false; };
   }, [open, row.id, file.path, scope, at, nonce, canDiff, turn]);
   return (
+    // The copy button sits beside the summary, over its end: inside it, a
+    // button nested in the summary's own button role is announced badly
+    // and trips axe's nested-interactive.
+    <div className="chg-card-wrap">
+    <CopyIcon text={file.path} />
     <details ref={ref} className="chg-card" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
       <summary className="chg-card-head" title={file.path}>
         <svg className="chg-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
@@ -425,7 +430,6 @@ function FileCard({ row, file, scope, at, first, turn }: { row: Row; file: Chang
             {!file.new && <span className={"rt-del" + (file.del ? "" : " rt-zero")}>−{file.del}</span>}
           </span>}
         </>)}
-        <span onClick={(e) => e.stopPropagation()}><CopyIcon text={file.path} /></span>
       </summary>
       {open && (file.patch === false ? null
         : !canDiff ? <p className="rt-label chg-card-note">Binary file: no text diff to show</p>
@@ -433,6 +437,7 @@ function FileCard({ row, file, scope, at, first, turn }: { row: Row; file: Chang
         : diff.failed ? <p className="chg-card-note"><InlineFail what="Couldn’t read the diff" onRetry={() => setNonce((n) => n + 1)} /></p>
         : <div className="chg-card-note"><Pending what="Diff" inline onRetry={() => setNonce((n) => n + 1)} /></div>)}
     </details>
+    </div>
   );
 }
 
@@ -502,7 +507,11 @@ export function ChangesBody({ row, data, scope, onScope, cards }: {
       </div>
       {r.failed && (
         <p className="rt-label">{r.files === null ? "Couldn’t read the changes" : "Stale: the last refresh failed"}{" "}
-          <button className="btn rt-stop" onClick={data.retry}>Retry</button></p>
+          <button className="btn rt-stop" onClick={(e) => {
+            // The button goes once the read answers: focus waits on the shown tab, not on the page's body.
+            e.currentTarget.closest(".chg")?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus();
+            data.retry();
+          }}>Retry</button></p>
       )}
       {r.files !== null && !r.repo && <p className="rt-label">This folder is not a Git repository, so there are no changes to show.</p>}
       {r.files !== null && r.repo && !files.length && (
