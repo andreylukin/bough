@@ -39,6 +39,9 @@ type Turn struct {
 	// request (a native spawn's child, or a code-mode spawn's step), and
 	// an unmarked turn only the session's own.
 	Child bool `json:"child,omitempty"`
+	// Match keeps the turn for a request one of whose user messages
+	// contains it: which session, or which of a spawnAll's children.
+	Match string `json:"match,omitempty"`
 }
 
 // Call is a tool call the model makes: a native tool by name, with its

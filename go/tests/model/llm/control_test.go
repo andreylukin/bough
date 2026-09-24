@@ -536,3 +536,22 @@ func TestControlCalls(t *testing.T) {
 		t.Fatalf("the bash call did not run: %q %v\n%s", b, err, out)
 	}
 }
+
+// A turn with a match answers only a request carrying it: one queued
+// for another session (a background agent's marker) is skipped, even
+// though it sorts first, and waits for its own.
+func TestControlMatch(t *testing.T) {
+	t.Parallel()
+	r := start(t)
+	Queue(t, r.dir(), "001", Turn{Mode: "ok", Text: "for the agent", Match: "agent-7"})
+	Queue(t, r.dir(), "002", Turn{Mode: "ok", Text: "for the parent", Match: "parent-3"})
+	r.send("hello parent-3")
+	r.waitFor("[assistant] for the parent")
+	code, out := r.finish()
+	if code != 0 || strings.Contains(out, "for the agent") {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if _, err := os.Stat(filepath.Join(r.dir(), "001.json")); err != nil {
+		t.Fatalf("the other session's turn was taken: %v", err)
+	}
+}

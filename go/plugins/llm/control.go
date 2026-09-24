@@ -155,7 +155,7 @@ var _ agentllm.Source = (*controlLLM)(nil)
 // steers the child's replies as it steers the parent's.
 func (c *controlLLM) Complete(ctx context.Context, system string, messages []Message) (string, error) {
 	if strings.Contains(system, "You are a bough subagent") {
-		return c.text(ctx, true, nil)
+		return c.text(ctx, true, userTexts(messages), nil)
 	}
 	return "control", nil
 }
@@ -165,18 +165,30 @@ func (c *controlLLM) Complete(ctx context.Context, system string, messages []Mes
 // answers with its text. ok, error and block work as on the engine; a
 // block's release answers with the release's text when it has one.
 func (c *controlLLM) Stream(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
-	return c.text(ctx, false, onDelta)
+	return c.text(ctx, false, userTexts(messages), onDelta)
+}
+
+// userTexts are the user messages of a text request, what a turn's
+// match is looked for in.
+func userTexts(messages []Message) []string {
+	var out []string
+	for _, m := range messages {
+		if m.Role == "user" {
+			out = append(out, m.Content)
+		}
+	}
+	return out
 }
 
 // text takes the next turn and answers it as text. A held turn first
 // streams an empty fragment, the sign a provider's stream has opened:
 // serve holds a Stop until the child shows the prompt became a turn,
 // and a code-mode turn shows nothing else before its reply.
-func (c *controlLLM) text(ctx context.Context, child bool, onDelta func(string)) (string, error) {
+func (c *controlLLM) text(ctx context.Context, child bool, users []string, onDelta func(string)) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	name, turn, ok, err := c.take(child)
+	name, turn, ok, err := c.take(child, users)
 	if err != nil {
 		return "", err
 	}
@@ -246,6 +258,9 @@ type controlTurn struct {
 	Calls []controlCall `json:"calls"`
 	// Child marks a subagent's reply (see take).
 	Child bool `json:"child"`
+	// Match, when set, keeps the turn for a request one of whose user
+	// messages contains it (see take).
+	Match string `json:"match"`
 }
 
 // controlCall is a tool call a release answers with, so a test can put
@@ -261,7 +276,11 @@ type controlCall struct {
 // child says whose request it is: a turn marked child answers only a
 // subagent's request, and an unmarked one only the session's own, so a
 // test can queue a child's reply without racing the parent for it.
-func (c *controlLLM) take(child bool) (name string, t controlTurn, ok bool, err error) {
+// users are the request's user messages: a turn with a match answers
+// only a request one of them contains it in, so a test tells apart
+// sessions (a parent and the background agents it starts) and the
+// children of one spawnAll, whose requests run at the same time.
+func (c *controlLLM) take(child bool, users []string) (name string, t controlTurn, ok bool, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ents, err := os.ReadDir(c.dir)
@@ -285,7 +304,7 @@ func (c *controlLLM) take(child bool) (name string, t controlTurn, ok bool, err 
 		if err := json.Unmarshal(b, &t); err != nil {
 			return "", t, false, fmt.Errorf("llm-control: %s.json: %w", name, err)
 		}
-		if t.Child != child {
+		if t.Child != child || (t.Match != "" && !slices.ContainsFunc(users, func(u string) bool { return strings.Contains(u, t.Match) })) {
 			continue
 		}
 		if err := os.Rename(src, filepath.Join(c.dir, name+".taken")); err != nil {
@@ -302,6 +321,17 @@ type controlAdapter struct {
 	opts agentllm.Options
 }
 
+// requestUsers are an engine request's user messages (see take).
+func requestUsers(r ullm.Request) []string {
+	var out []string
+	for _, it := range r.Input {
+		if m, ok := it.Data.(ullm.Message); ok && it.Type == ullm.ItemMessage && m.Role == ullm.RoleUser {
+			out = append(out, m.Text)
+		}
+	}
+	return out
+}
+
 func (a *controlAdapter) Provider() string { return "control" }
 func (a *controlAdapter) Model() string    { return "control" }
 func (a *controlAdapter) Close() error     { return nil }
@@ -310,7 +340,7 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 	if err := ctx.Err(); err != nil {
 		return ullm.Response{}, err
 	}
-	name, turn, ok, err := a.c.take(a.opts.Worker != "")
+	name, turn, ok, err := a.c.take(a.opts.Worker != "", requestUsers(r))
 	if err != nil {
 		return ullm.Response{}, err
 	}
