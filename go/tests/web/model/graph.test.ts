@@ -126,6 +126,20 @@ test('a path into a fork is extended to a settled state', () => {
   assert.deepEqual(out.coverage.transitions.uncovered, []);
 });
 
+// Link 0 is a transition like any other: the exhaustive walks once
+// dropped it with the initial state, so an action enabled only at Init
+// (a first Poll, an Ephemeral self-loop) was never walked in a browser.
+test('transitions cover takes link 0', () => {
+  const g: Graph = {
+    nodes: [0, 1].map((i) => ({ index: i, name: 'yield', state: { n: i } })),
+    links: [
+      { index: 0, src: 0, dest: 0, name: 'Stay', type: 'action' },
+      { index: 1, src: 0, dest: 1, name: 'Go', type: 'action' },
+    ],
+  };
+  assert.deepEqual(walks(g, 'transitions').coverage.transitions, { covered: 2, total: 2, uncovered: [] });
+});
+
 // Every checked-in graph: walks cover what they claim, and the Go twin
 // (tracecheck.Walks) replays them; see TestWalksCoverAndReplay.
 for (const name of readdirSync(testdata).filter((d) => existsSync(join(testdata, d, 'nodes_000000_of_000000.pb')))) {
@@ -136,7 +150,10 @@ for (const name of readdirSync(testdata).filter((d) => existsSync(join(testdata,
     const reached = new Set([0, ...states.paths.flatMap((p) => p.links.map((i) => g.links[i].dest))]);
     assert.equal(g.nodes.filter((n) => n.name === 'yield' && !reached.has(n.index)).length, 0, `${settled} settled states`);
     const all = walks(g, 'transitions');
-    assert.ok(all.coverage.transitions.uncovered.length <= g.links.length / 100 + 1, `${all.coverage.transitions.uncovered.length} links never taken`);
+    const reach = new Set([0]);
+    for (let grew = true; grew; ) { grew = false; for (const l of g.links) if (reach.has(l.src) && !reach.has(l.dest)) { reach.add(l.dest); grew = true; } }
+    const missed = all.coverage.transitions.uncovered.filter((i) => reach.has(g.links[i].src));
+    assert.deepEqual(missed.map((i) => `${i}: ${g.links[i].name}`), [], 'reachable links never taken');
     for (const p of [...states.paths, ...all.paths]) assert.ok(p.trace.length - 1 <= 50 || p.links.length === p.trace.length - 1 + p.links.filter((i) => g.links[i].type !== 'action').length, 'a walk over 50 steps is one unavoidable jump');
   });
 }
