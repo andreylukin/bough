@@ -16,22 +16,24 @@ import (
 // session's reads: nothing on the request path is serialized.
 func TestSlowSessionReadDoesNotBlockOthers(t *testing.T) {
 	f := newAPI(t)
-	f.seed(t, "slow", history.Entry{Seq: 1, Kind: "meta", Data: map[string]any{"cwd": "/slow"}})
-	f.seed(t, "fast", history.Entry{Seq: 1, Kind: "meta", Data: map[string]any{"cwd": "/fast"}})
+	// Directories that exist: a cwd that is gone is answered 410 up front.
+	slow, fast := t.TempDir(), t.TempDir()
+	f.seed(t, "slow", history.Entry{Seq: 1, Kind: "meta", Data: map[string]any{"cwd": slow}})
+	f.seed(t, "fast", history.Entry{Seq: 1, Kind: "meta", Data: map[string]any{"cwd": fast}})
 
 	release := make(chan struct{})
 	started := make(chan struct{}, 2)
 	oldE, oldC := sessionEdits, changesOf
 	t.Cleanup(func() { sessionEdits, changesOf = oldE, oldC })
-	sessionEdits = func(ctx context.Context, dir string, es []history.Entry) ([]Edit, bool) {
-		if dir == "/slow" {
+	sessionEdits = func(ctx context.Context, dir string, es []history.Entry) ([]Edit, bool, error) {
+		if dir == slow {
 			started <- struct{}{}
 			<-release
 		}
-		return nil, true
+		return nil, true, nil
 	}
 	changesOf = func(ctx context.Context, dir string) ([]Change, bool) {
-		if dir == "/slow" {
+		if dir == slow {
 			started <- struct{}{}
 			<-release
 		}

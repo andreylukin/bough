@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -86,9 +87,9 @@ func TestSessionEdits(t *testing.T) {
 		{Seq: 1, Kind: "input", Data: map[string]any{"text": "go", "checkpoint": tree}},
 		{Seq: 2, Kind: "done", Data: map[string]any{"files": []any{"a.go", filepath.Join(dir, "b.go")}}},
 	}
-	edits, ok := SessionEdits(context.Background(), dir, entries)
-	if !ok || len(edits) != 2 {
-		t.Fatalf("edits = %+v ok=%v, want a.go and b.go only", edits, ok)
+	edits, ok, err := SessionEdits(context.Background(), dir, entries)
+	if err != nil || !ok || len(edits) != 2 {
+		t.Fatalf("edits = %+v ok=%v err=%v, want a.go and b.go only", edits, ok, err)
 	}
 	if edits[0].Path != "a.go" || edits[0].Add != 1 || edits[0].New || !edits[0].Patch {
 		t.Fatalf("a.go = %+v", edits[0])
@@ -100,7 +101,7 @@ func TestSessionEdits(t *testing.T) {
 		t.Fatalf("session diff a.go = %q, %v", d, err)
 	}
 	// No checkpoint: the paths are known, the patches are not.
-	edits, _ = SessionEdits(context.Background(), dir, entries[1:])
+	edits, _, _ = SessionEdits(context.Background(), dir, entries[1:])
 	if len(edits) != 2 || edits[0].Patch {
 		t.Fatalf("without a checkpoint = %+v", edits)
 	}
@@ -108,7 +109,7 @@ func TestSessionEdits(t *testing.T) {
 
 func TestSessionEditsNoCwd(t *testing.T) {
 	entries := []history.Entry{{Kind: "done", Data: map[string]any{"files": []any{"a.go"}}}}
-	if edits, ok := SessionEdits(context.Background(), "", entries); ok || edits != nil {
+	if edits, ok, _ := SessionEdits(context.Background(), "", entries); ok || edits != nil {
 		t.Fatalf("no cwd read as a repository: %v %v", edits, ok)
 	}
 	if _, err := SessionDiff(context.Background(), "", entries, "a.go"); err == nil {
@@ -138,8 +139,8 @@ func TestSessionEditsNoCommit(t *testing.T) {
 		{Seq: 1, Kind: "input", Data: map[string]any{"text": "go", "checkpoint": tree}},
 		{Seq: 2, Kind: "done", Data: map[string]any{"files": []any{"a.go"}}},
 	}
-	edits, ok := SessionEdits(context.Background(), dir, entries)
-	if !ok || len(edits) != 1 || !edits[0].Patch || edits[0].Add != 2 || edits[0].Del != 0 {
+	edits, ok, err := SessionEdits(context.Background(), dir, entries)
+	if err != nil || !ok || len(edits) != 1 || !edits[0].Patch || edits[0].Add != 2 || edits[0].Del != 0 {
 		t.Fatalf("edits = %+v ok=%v, want a.go +2 with a patch", edits, ok)
 	}
 }
@@ -184,11 +185,11 @@ func TestTurnEdits(t *testing.T) {
 		{Seq: 4, Kind: "done", Data: map[string]any{"files": []any{"a.go", "b.go"}}},
 	}
 	ctx := context.Background()
-	first, ok := TurnEdits(ctx, dir, entries, 1)
-	if !ok || len(first) != 1 || first[0].Path != "a.go" || first[0].Add != 1 || !first[0].Patch {
+	first, ok, err := TurnEdits(ctx, dir, entries, 1)
+	if err != nil || !ok || len(first) != 1 || first[0].Path != "a.go" || first[0].Add != 1 || !first[0].Patch {
 		t.Fatalf("turn 1 = %+v ok=%v, want a.go +1 only", first, ok)
 	}
-	second, _ := TurnEdits(ctx, dir, entries, 3)
+	second, _, _ := TurnEdits(ctx, dir, entries, 3)
 	if len(second) != 2 || second[0].Add != 1 || !second[1].New {
 		t.Fatalf("turn 3 = %+v, want a.go +1 and new b.go", second)
 	}
@@ -200,7 +201,7 @@ func TestTurnEdits(t *testing.T) {
 	}
 	// A turn with no checkpoint of its own still lists its files, counts unknown.
 	nocp := append([]history.Entry{{Seq: 1, Kind: "input", Data: map[string]any{}}}, entries[1:]...)
-	if e, ok := TurnEdits(ctx, dir, nocp, 1); !ok || len(e) != 1 || e[0].Add != -1 || e[0].Patch {
+	if e, ok, _ := TurnEdits(ctx, dir, nocp, 1); !ok || len(e) != 1 || e[0].Add != -1 || e[0].Patch {
 		t.Fatalf("no-checkpoint turn = %+v ok=%v, want a.go with unknown counts", e, ok)
 	}
 }
@@ -221,6 +222,79 @@ func TestChangesOutliveACancelledRequest(t *testing.T) {
 		f.api.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil).WithContext(ctx))
 		if rec.Code != http.StatusOK {
 			t.Errorf("GET %s with the request cancelled: %d %s", p, rec.Code, rec.Body)
+		}
+	}
+}
+
+// changes_checkpoint_edge: a checkpoint git cannot read is a failed read,
+// never "this session changed nothing".
+func TestSessionEditsUnreadableCheckpoint(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gone := strings.Repeat("ab", 20)
+	entries := []history.Entry{
+		{Seq: 1, Kind: "input", Data: map[string]any{"text": "go", "checkpoint": gone}},
+		{Seq: 2, Kind: "done", Data: map[string]any{"files": []any{"a.go"}}},
+	}
+	if edits, ok, err := SessionEdits(context.Background(), dir, entries); err == nil {
+		t.Fatalf("edits from a missing checkpoint = %+v ok=%v, want an error", edits, ok)
+	}
+	if edits, ok, err := TurnEdits(context.Background(), dir, entries, 1); err == nil {
+		t.Fatalf("turn edits from a missing checkpoint = %+v ok=%v, want an error", edits, ok)
+	}
+}
+
+// changes_checkpoint_edge: an undone turn's files are back at its
+// checkpoint, so nothing of it is current, whatever a later checkpoint
+// kept of it.
+func TestTurnEditsUndone(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	snap := func() string {
+		tree, err := history.Snapshot(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tree
+	}
+	t1 := snap()
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t2 := snap()
+	entries := []history.Entry{
+		{Seq: 1, Kind: "input", Data: map[string]any{"checkpoint": t1}},
+		{Seq: 2, Kind: "done", Data: map[string]any{"files": []any{"a.go"}}},
+		{Seq: 3, Kind: "input", Data: map[string]any{"checkpoint": t2}},
+		{Seq: 4, Kind: "done", Data: map[string]any{"files": []any{}}},
+		{Seq: 5, Kind: "undo", Data: map[string]any{"seq_of_turn": float64(3), "files": []any{}}},
+		{Seq: 6, Kind: "undo", Data: map[string]any{"seq_of_turn": float64(1), "files": []any{"a.go"}}},
+	}
+	os.Remove(filepath.Join(dir, "a.go"))
+	if edits, ok, err := TurnEdits(context.Background(), dir, entries, 1); !errors.Is(err, ErrTurnUndone) || !ok {
+		t.Fatalf("undone turn 1 = %+v ok=%v err=%v, want ErrTurnUndone", edits, ok, err)
+	}
+}
+
+// changes_checkpoint_edge: a session whose working directory was removed
+// is a failed read, not "this folder is not a Git repository".
+func TestChangesCwdGone(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	gone := filepath.Join(t.TempDir(), "removed")
+	f.seed(t, "s", history.Entry{Seq: 1, Kind: "meta", Data: map[string]any{"cwd": gone}})
+	for _, p := range []string{"/api/sessions/s/changes", "/api/sessions/s/edits", "/api/sessions/s/edits?turn=1"} {
+		if code, body := f.do(t, "GET", p, ""); code == http.StatusOK {
+			t.Errorf("GET %s with the cwd removed: %d %v, want an error", p, code, body)
 		}
 	}
 }
