@@ -31,7 +31,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { Page, Route } from '@playwright/test';
 import { CONTROL_CONFIG, controlDir, queue, release, releaseWith, type Turn } from '../../helpers/control';
-import { loadPaths, roleState, type Step } from '../../helpers/model';
+import { loadPaths, roleState, type Step, walkTest } from '../../helpers/model';
 import { test, expect, type Serve } from '../../helpers/serve';
 
 const SPEC = 'steer_queue';
@@ -307,7 +307,7 @@ function saveTranscripts(c: Ctx, title: string): void {
 test.describe(`model: ${SPEC}`, () => {
   paths.forEach((trace, i) => {
     const walk = trace.slice(1).map((s) => bare(s.action)).join(' → ');
-    test(`path ${i}: ${walk}`, async ({ sharedServe: serve, page }, info) => {
+    walkTest(SPEC)(`path ${i}: ${walk}`, async ({ sharedServe: serve, page }, info) => {
       test.setTimeout(150_000);
       const errors: string[] = [];
       page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });

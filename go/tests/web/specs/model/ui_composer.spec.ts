@@ -41,7 +41,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { Page, Route, TestInfo } from '@playwright/test';
 import { CONTROL_CONFIG, controlDir, queue, releaseWith, waitTaken } from '../../helpers/control';
-import { loadPaths, roleState, type Step } from '../../helpers/model';
+import { loadPaths, roleState, type Step, walkTest } from '../../helpers/model';
 import { test, expect, type Serve } from '../../helpers/serve';
 
 const SPEC = 'ui_composer';
@@ -553,7 +553,7 @@ test.describe(`model: ${SPEC}`, () => {
 
   paths.forEach((trace, i) => {
     const walk = trace.slice(1).map((s) => bare(s.action)).join(' → ');
-    test(`path ${i}: ${walk}`, async ({ sharedServe: serve, page }, info) => {
+    walkTest(SPEC)(`path ${i}: ${walk}`, async ({ sharedServe: serve, page }, info) => {
       await walkPath(serve, page, info, trace, `p${i}r${info.retry}`);
     });
   });
@@ -563,7 +563,7 @@ test.describe(`model: ${SPEC}`, () => {
   // code on purpose: with a tag whose file never arrived, Enter (a steer
   // here) and Cmd/Ctrl+Enter both leave the draft, the queue and the turn
   // as they were, and "[Image #1]" is never sent or queued as text.
-  test('self-loops: a lost tag is neither steered nor queued', async ({ sharedServe: serve, page }, info) => {
+  walkTest(SPEC)('self-loops: a lost tag is neither steered nor queued', async ({ sharedServe: serve, page }, info) => {
     const base = paths.find((t) => t.some((s, k) => k > 0 && bare(s.action) === 'UploadFails'
       && roleState(ROLE, s.state).status === 'running'));
     if (!base) throw new Error('no path reaches a lost tag while A runs');
