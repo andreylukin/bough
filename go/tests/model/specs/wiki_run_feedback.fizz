@@ -1,0 +1,339 @@
+---
+deadlock_detection: false
+---
+
+# wiki_run_feedback: Ingest now (Index and Activity), a session's Ingest
+# on Review and Me's Refresh when the wiki's one lock is held by someone
+# else, and what the page says afterwards (go/tests/model/README.md).
+# Its twin, wiki_check_race, is Check citations: two checks out at once
+# and a result an ingest has since outdated. The flow was split there:
+# together they were 5168 states and share only "an ingest landed".
+#
+# wiki_review models an ingest run alone and me_page one brief; neither
+# has two starters meeting at .ingest.lock.
+#
+# Product:
+#   go/plugins/wiki/run.go Run: tryLock(.ingest.lock) or `return nil`:
+#     an ingest (the scheduler's tick, Ingest now, --only <session>) that
+#     finds the lock held exits 0 and says nothing anywhere.
+#   go/plugins/wiki/brief.go Brief: the same lock; held, it returns "an
+#     ingest or brief is already running" into ingest.log and exits.
+#   go/internal/serve/wiki.go wikiIngest / meRefresh answer ok as soon as
+#     spawnWiki has started the process, before it reaches the lock;
+#     spawnWiki counts only briefs (a.briefs, GET /api/me's `running`).
+#     A holder of the lock is a headless session in the wiki dir, so
+#     Activity lists an ingest or a brief as a running row.
+#   go/internal/serve/web/src/wiki.tsx WikiPage: `note` and `ingestErr`
+#     are WikiPage state: they live across the wiki's own screens and go
+#     when the view leaves the wiki (Me is another view). Activity's note
+#     is picked from activity.data.pending, the last read before the
+#     click, then activity.reload(). Index's Ingest now (the Indexing
+#     empty state, shown while there are no pages) sets ingestErr from a
+#     failed POST and clears it only on its own next click. Review's
+#     PendingRow says Started once the POST is ok.
+#   go/internal/serve/web/src/me.tsx MeView refresh: a fixed 20 s
+#     spinner; `running` read on reload and every 2 s while true.
+#
+# Fields (one Runs role):
+#   screen      index | activity | review | me. The screen reads its data
+#               on arrival (useLoad's key changes).
+#   lock        free | ingest | brief: who holds .ingest.lock.
+#   pending     a finished session waits to be ingested (the store).
+#   spawn       none | ingest | session | brief: a process the page
+#               started that has not reached the lock yet.
+#   fate        ghost: what the last process the page started did at the
+#               lock: "" (not there yet, or nothing started) | ran |
+#               dropped (held; exited silently) | idle (free, nothing
+#               pending) | refused (a brief that found it held).
+#   seenPending the current screen's last read of `pending` (Index's
+#               "N sessions are waiting", Activity's waiting count).
+#   seenBusy    the current screen's last read of a run: Activity's
+#               running row, Me's "Brief running".
+#               A screen that does not show one holds False.
+#   note        Activity's line: "" | started ("Started — the run appears
+#               here in a moment.") | nothing ("Nothing is waiting…").
+#   ingestErr   Index's "Ingest did not start: …" alert.
+#   listed      Review lists the pending session (read on arrival only).
+#   row         its button: "" | started.
+#   refreshing  Me's 20 s "Writing…" spinner.
+#
+# Abstractions, each to keep the graph small:
+# - The wiki has no pages in this flow: every run ends "No material"
+#   (most do), so Index stays the Indexing empty state, which shows the
+#   waiting count and not "Ingesting now". wiki_check_race has pages.
+# - One process from the page at a time, and the person leaves a screen
+#   only once it has settled (its reads caught up, nothing it started
+#   still on the way to the lock). A second click while one is out, or a
+#   move mid-flight, only multiplies paths; every interleaving at the
+#   lock is still here, because the other holder is started first.
+# - The scheduler's tick takes the lock only when it is free and a
+#   session waits; a tick that finds it held or nothing waiting changes
+#   nothing. Its own daily brief (Run's briefDue) is not modelled: every
+#   brief here is Me's Refresh.
+# - Every POST answers ok, except Index's Ingest now, whose POST may fail
+#   (IngestIndexFails; the adapter makes ingest.log unopenable for it,
+#   so spawnWiki cannot start the process).
+# - A run ends (RunEnds); a brief ends (BriefEnds). Hangs are
+#   runTimeout's and wiki_review's.
+#
+# Fairness: the processes (Reach, RunEnds, BriefEnds) and the page's own
+# timers (Settle, the polls) are fair; the person, a session finishing
+# and the scheduler are not.
+#
+# Where the mapped model was corrected against the code:
+# - The Indexing state (IngestIndex's) shows neither "Ingesting now" nor
+#   a run: only the waiting count. Its `ingestErr` is not cleared by a
+#   later success anywhere else, and it goes when the view leaves the
+#   wiki (Me), not only on its own next click.
+# - The refused brief's process is counted `running` only until it
+#   exits, which is at once: Me drops "Brief running" on the next 2 s
+#   read and says nothing else. The spinner is the fixed 20 s.
+# - The note's blindness is not only "read before the POST": the POST
+#   answers before the spawned run reaches the lock, so even a fresh
+#   read cannot know whether the run will ingest.
+# - `note` is not cleared by leaving Activity for another wiki screen
+#   (wiki_review's arrive() clears it): it is WikiPage state and comes
+#   back with Activity. It goes only when the view leaves the wiki.
+#
+# The product does not meet the mapped claims below; they are left out
+# so the check stays green, and each is spelled with the counterexample
+# fizz gave when it was added (the gaps are findings, not fixed here):
+#
+#   StartedMeansRun  not (note == "started" and fate == "dropped")
+#     Go(activity), IngestNow, SchedulerTick, Reach: the POST answered,
+#     the tick took the lock before the spawned run got there, and
+#     Activity says "Started — the run appears here in a moment" of a run
+#     that exited at the lock. With `and lock == "brief"` added:
+#     Go(me), Refresh, Reach, Go(activity), IngestNow, Reach: Ingest now
+#     while Me's brief holds the lock is the same silent drop.
+#   StartedMeansWork  not (note == "started" and fate == "idle")
+#     Go(activity), IngestNow, SchedulerTick, RunEnds, Reach: "Started",
+#     and the run found nothing waiting. The same from a stale read:
+#     Go(activity), SchedulerTick, RunEnds, IngestNow, Reach (the note
+#     is picked from the read before the click, which still counted the
+#     session the tick had ingested).
+#   RowStartedMeansRun  not (row == "started" and fate == "dropped")
+#     Go(review), IngestSession, SchedulerTick, Reach: the row says
+#     Started and the --only run was dropped at the lock; the session is
+#     not listed again until Review is re-entered.
+#   (liveness) RefusedBriefSaid  always eventually fate != "refused"
+#     Go(me), Refresh, Reach, (away and back: the spinner is gone, the
+#     brief still runs) Refresh, Reach, ... BriefEnds: the second brief
+#     is refused by the first and nothing on Me ever says it did not run;
+#     fate stays refused until the person starts something else.
+#   IngestErrClears  not (ingestErr and note != "")
+#     IngestIndexFails, Go(activity), IngestNow: Activity's start went
+#     through, and Index, back from Activity, still says "Ingest did not
+#     start".
+#
+# Each claim that is here was shown to fail on a one-line mutation:
+# HeldLockIsNotTaken (Reach ignoring a held lock), WikiStateStaysInTheWiki
+# (Go(me) keeping the note), SpinnerOnlyOnMe (Go keeping the spinner),
+# StartedRowIsListed (Go keeping the row), and the liveness claims with
+# Reach, RunEnds, Settle or ActivityPoll made unfair.
+
+SCREENS = ["index", "activity", "review", "me"]
+
+# Me counts only the briefs this serve spawned while their process
+# lives: from the spawn until the brief exits.
+def meBusy(r):
+    return r.spawn == "brief" or r.lock == "brief"
+
+# The current screen's read agrees with the store.
+def fresh(r):
+    if r.screen == "me":
+        return r.seenBusy == meBusy(r)
+    if r.screen == "activity":
+        return r.seenPending == r.pending and r.seenBusy == (r.lock != "free")
+    if r.screen == "index":
+        return r.seenPending == r.pending
+    return True
+
+role Runs:
+    action Init:
+        self.screen = "index"
+        self.lock = "free"
+        self.pending = True
+        self.spawn = "none"
+        self.fate = ""
+        self.seenPending = True
+        self.seenBusy = False
+        self.note = ""
+        self.ingestErr = False
+        self.listed = False
+        self.row = ""
+        self.refreshing = False
+
+    # The current screen reads the store: what it shows of it.
+    atomic func read():
+        if self.screen == "me":
+            self.seenPending = False
+            self.seenBusy = meBusy(self)
+        elif self.screen == "review":
+            self.seenPending = False
+            self.seenBusy = False
+        elif self.screen == "activity":
+            self.seenPending = self.pending
+            self.seenBusy = self.lock != "free"
+        else:
+            self.seenPending = self.pending
+            self.seenBusy = False
+
+    # --- the person: moving ----------------------------------------
+
+    # A typed hash or a link. Review's list and its row are
+    # WikiReviewView's; Me's spinner is MeView's; the note and the alert
+    # are WikiPage's and go only when the view leaves the wiki.
+    atomic action Go:
+        require self.spawn == "none" and fresh(self)
+        to = any [s for s in SCREENS if s != self.screen]
+        self.listed = False
+        self.row = ""
+        self.refreshing = False
+        if to == "me":
+            self.note = ""
+            self.ingestErr = False
+        self.screen = to
+        self.read()
+        if to == "review":
+            self.listed = self.pending
+
+    # --- the person: starting ----------------------------------------
+
+    # Index's Indexing state: POST /api/wiki/ingest, then index.reload().
+    atomic action IngestIndex:
+        require self.screen == "index" and self.spawn == "none"
+        self.ingestErr = False
+        self.spawn = "ingest"
+        self.fate = ""
+        self.read()
+
+    # The same click with the POST failing: the alert, and no process.
+    atomic action IngestIndexFails:
+        require self.screen == "index" and self.spawn == "none"
+        self.ingestErr = True
+
+    # Activity's Ingest now: the note is picked from the read the page
+    # already had, then Activity reads again.
+    atomic action IngestNow:
+        require self.screen == "activity" and self.spawn == "none"
+        self.note = "started" if self.seenPending else "nothing"
+        self.spawn = "ingest"
+        self.fate = ""
+        self.read()
+
+    # Review's Not compiled row: POST /api/wiki/ingest {session}.
+    atomic action IngestSession:
+        require self.screen == "review" and self.listed and self.row == "" and self.spawn == "none"
+        self.row = "started"
+        self.spawn = "session"
+        self.fate = ""
+
+    # Me's Refresh: POST /api/me/refresh, then me.reload() and the 20 s
+    # spinner.
+    atomic action Refresh:
+        require self.screen == "me" and not self.refreshing and self.spawn == "none"
+        self.refreshing = True
+        self.spawn = "brief"
+        self.fate = ""
+        self.read()
+
+    # --- the processes -----------------------------------------------
+
+    # The spawned process reaches .ingest.lock.
+    atomic fair action Reach:
+        require self.spawn != "none"
+        kind = self.spawn
+        self.spawn = "none"
+        if self.lock != "free":
+            self.fate = "refused" if kind == "brief" else "dropped"
+        elif kind == "brief":
+            self.lock = "brief"
+            self.fate = "ran"
+        elif self.pending:
+            self.lock = "ingest"
+            self.fate = "ran"
+        else:
+            self.fate = "idle"
+
+    # The launchd tick, whenever it comes.
+    atomic action SchedulerTick:
+        require self.lock == "free" and self.pending
+        self.lock = "ingest"
+
+    # A session finishes and waits.
+    atomic action SessionFinishes:
+        require not self.pending
+        self.pending = True
+
+    # The run ingests what waited ("No material": no page here).
+    atomic fair action RunEnds:
+        require self.lock == "ingest"
+        self.lock = "free"
+        self.pending = False
+
+    atomic fair action BriefEnds:
+        require self.lock == "brief"
+        self.lock = "free"
+
+    # --- the page's own timers ---------------------------------------
+
+    # Me's 20 s timer: the spinner stops and the page reads once more.
+    atomic fair action Settle:
+        require self.screen == "me" and self.refreshing
+        self.refreshing = False
+        self.read()
+
+    # Activity every 5 s.
+    atomic fair action ActivityPoll:
+        require self.screen == "activity" and not fresh(self)
+        self.read()
+
+    # The index every 15 s.
+    atomic fair action IndexPoll:
+        require self.screen == "index" and not fresh(self)
+        self.read()
+
+    # Me every 30 s, every 2 s while it last read a brief running.
+    atomic fair action MePoll:
+        require self.screen == "me" and not fresh(self)
+        self.read()
+
+action Init:
+    runs = Runs()
+
+# The lock is taken only by a process that found it free: a dropped
+# ingest or a refused brief leaves the lock with whoever had it.
+transition assertion HeldLockIsNotTaken(before, after):
+    if before.runs.lock != "free" and after.runs.lock != before.runs.lock:
+        return after.runs.lock == "free"
+    return True
+
+# A note or an alert never follows the person out of the wiki.
+always assertion WikiStateStaysInTheWiki:
+    return runs.screen != "me" or (runs.note == "" and not runs.ingestErr)
+
+# Refresh's spinner is Me's own: it is never on another screen.
+always assertion SpinnerOnlyOnMe:
+    return not runs.refreshing or runs.screen == "me"
+
+# A row says Started only on the Review that listed it.
+always assertion StartedRowIsListed:
+    return runs.row == "" or (runs.screen == "review" and runs.listed)
+
+# Every process the page starts reaches the lock.
+always eventually assertion SpawnsReachTheLock:
+    return runs.spawn == "none"
+
+# Whoever holds the lock lets it go.
+always eventually assertion LockFrees:
+    return runs.lock == "free"
+
+# Refresh's spinner stops.
+always eventually assertion SpinnerStops:
+    return not runs.refreshing
+
+# After any start the page reflects the outcome: the screen's reads
+# catch up with the store.
+always eventually assertion PageCatchesUp:
+    return fresh(runs)

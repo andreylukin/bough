@@ -1,0 +1,175 @@
+---
+deadlock_detection: false
+---
+
+# wiki_check_race: Check citations on the wiki index while another check
+# is out or an ingest rewrites the pages (go/tests/model/README.md). The
+# twin of wiki_run_feedback, split from it because together they were
+# 5168 states; they share only "an ingest landed".
+#
+# Product:
+#   go/internal/serve/web/src/wiki.tsx WikiIndexView runCheck: sets
+#     `checking`, POST /api/wiki/check, then setProblems, and in its
+#     finally clears `checking`, whichever check it was. The Check
+#     citations button is disabled while `checking`; the health line's
+#     "N pages rest on one citation" and "N pages nothing links to" links
+#     call the same runCheck and are never disabled. `problems` and
+#     `checking` are WikiIndexView's state: they go when the index
+#     unmounts, and an answer that comes later lands nowhere. Nothing
+#     re-runs or marks the result when the pages change: the index polls
+#     GET /api/wiki every 15 s, and that read carries no check.
+#   go/internal/serve/wiki.go wikiCheck reads the pages as they are.
+#
+# Fields (one Checks role):
+#   screen    index | away (another wiki screen: WikiIndexView unmounts).
+#   lock      free | ingest: the wiki's lock (wiki_run_feedback has its
+#             contention; here only whether an ingest is running).
+#   pending   a finished session waits (the store).
+#   checks    POST /api/wiki/check requests out from this index (0..2).
+#   checking  the button's "Checking…" spinner (and its disabled state).
+#   problems  the result shown: "" | fresh | stale (an ingest committed
+#             pages after the check read them).
+#   seenBusy, seenPending
+#             the index's last read: "Ingesting now", "N sessions
+#             waiting".
+#
+# Abstractions:
+# - The wiki has pages, with one that rests on one citation, so the
+#   health line's link is always there.
+# - The link is taken only while the button is disabled: at any other
+#   time it is the button's click (same request, same state).
+# - A check reads the pages when it answers; the window between its
+#   read and its answer is not modelled (an ingest landing in it only
+#   makes the result stale sooner).
+# - A run always writes a page (Land): a run that writes none changes
+#   nothing a check sees.
+#
+# Fairness: check answers, the run ending and the index poll are fair;
+# the person, a session finishing and the scheduler are not.
+#
+# The product does not meet the mapped claims below; they are left out
+# so the check stays green, and each is spelled with the counterexample
+# fizz gave when it was added (the gaps are findings, not fixed here):
+#
+#   OneCheckAtATime  checks <= 1
+#     RunCheck, CheckLink: the thin / orphans link starts a second POST
+#     /api/wiki/check while the first is out.
+#   SpinnerWhileOut  checks == 0 or checking
+#     RunCheck, CheckLink, CheckReturns: the first answer's finally
+#     clears "Checking…" while the second check is still out (and the
+#     button, enabled again, can send another).
+#   ProblemsFresh  problems != "stale"
+#     RunCheck, CheckReturns, SessionFinishes, SchedulerTick, Land: the
+#     result stays on screen after the ingest rewrote the pages it is
+#     about, with nothing saying when it was checked.
+#
+# Each claim that is here was shown to fail on a one-line mutation:
+# CheckingOnlyWhileOut (CheckReturns leaving the spinner on),
+# ChecksOnlyOnIndex (Leave keeping the result), and the liveness claims
+# with CheckReturns, Land or IndexPoll made unfair.
+
+def fresh(c):
+    return c.screen != "index" or (c.seenBusy == (c.lock != "free") and c.seenPending == c.pending)
+
+role Checks:
+    action Init:
+        self.screen = "index"
+        self.lock = "free"
+        self.pending = False
+        self.checks = 0
+        self.checking = False
+        self.problems = ""
+        self.seenBusy = False
+        self.seenPending = False
+
+    atomic func read():
+        if self.screen == "index":
+            self.seenBusy = self.lock != "free"
+            self.seenPending = self.pending
+        else:
+            self.seenBusy = False
+            self.seenPending = False
+
+    # --- the person ----------------------------------------------------
+
+    # To Activity (or any other wiki screen): the index unmounts.
+    atomic action Leave:
+        require self.screen == "index"
+        self.screen = "away"
+        self.checks = 0
+        self.checking = False
+        self.problems = ""
+        self.read()
+
+    # Back to the index: it reads on arrival.
+    atomic action Return:
+        require self.screen == "away"
+        self.screen = "index"
+        self.read()
+
+    # Check citations, the button: disabled while checking.
+    atomic action RunCheck:
+        require self.screen == "index" and not self.checking
+        self.checks += 1
+        self.checking = True
+
+    # The thin / orphans link: the same check, not disabled.
+    atomic action CheckLink:
+        require self.screen == "index" and self.checking and self.checks == 1
+        self.checks += 1
+
+    # --- the page's answers and timers ---------------------------------
+
+    # A check answers; its finally clears the spinner.
+    atomic fair action CheckReturns:
+        require self.checks > 0
+        self.checks -= 1
+        self.checking = False
+        self.problems = "fresh"
+
+    # The index every 15 s.
+    atomic fair action IndexPoll:
+        require not fresh(self)
+        self.read()
+
+    # --- the store -----------------------------------------------------
+
+    atomic action SessionFinishes:
+        require not self.pending
+        self.pending = True
+
+    atomic action SchedulerTick:
+        require self.lock == "free" and self.pending
+        self.lock = "ingest"
+
+    # The run commits its pages: a result on screen is now of pages that
+    # have changed.
+    atomic fair action Land:
+        require self.lock == "ingest"
+        self.lock = "free"
+        self.pending = False
+        if self.problems == "fresh":
+            self.problems = "stale"
+
+action Init:
+    checks = Checks()
+
+# The spinner is on only while a check is out.
+always assertion CheckingOnlyWhileOut:
+    return not checks.checking or checks.checks > 0
+
+# Checks and their result are the index's: none survive leaving it.
+always assertion ChecksOnlyOnIndex:
+    return checks.screen == "index" or (checks.checks == 0 and checks.problems == "" and not checks.checking)
+
+# The spinner stops.
+always eventually assertion SpinnerStops:
+    return not checks.checking
+
+# A running ingest ends.
+always eventually assertion LockFrees:
+    return checks.lock == "free"
+
+# The index's read catches up with the store.
+always eventually assertion IndexCatchesUp:
+    return fresh(checks)
