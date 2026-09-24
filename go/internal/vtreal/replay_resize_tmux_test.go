@@ -132,6 +132,30 @@ func resizeTmuxBarWidth(lines []string) int {
 
 // resizeTmuxSettled waits for a redrawn frame that has stopped moving.
 func resizeTmuxSettled(tm *tmuxApp, cols int) string {
+	return resizeTmuxSettledBy(tm, cols, func(s string) string { return s })
+}
+
+// resizeTmuxSettledStreaming is resizeTmuxSettled for a turn still
+// running: the status bar's spinner and elapsed chip tick on their own,
+// so frames are compared without them. Compared whole, a frame never
+// matched the one 80ms before and every settle ran to its 3.2 s cap —
+// 13 s of the mid-stream sweep, which forced the tape to stream for
+// 40 s to still be running when the sweep ended.
+func resizeTmuxSettledStreaming(tm *tmuxApp, cols int) string {
+	return resizeTmuxSettledBy(tm, cols, func(s string) string {
+		s = liveGlueElapsed.ReplaceAllString(s, "")
+		return strings.Map(func(r rune) rune {
+			if strings.ContainsRune(liveGlueSpinner, r) {
+				return '*'
+			}
+			return r
+		}, s)
+	})
+}
+
+// resizeTmuxSettledBy settles on frames that match once passed
+// through same, and returns the last frame as captured.
+func resizeTmuxSettledBy(tm *tmuxApp, cols int, same func(string) string) string {
 	tm.waitUntil(func(string) bool {
 		ls := strings.Split(resizeTmuxScreen(tm), "\n")
 		return composerRow(ls) >= 0 && resizeTmuxBarWidth(ls) >= cols-2
@@ -140,7 +164,7 @@ func resizeTmuxSettled(tm *tmuxApp, cols int) string {
 	for range 40 {
 		time.Sleep(80 * time.Millisecond)
 		cur := resizeTmuxScreen(tm)
-		if cur == prev {
+		if same(cur) == same(prev) {
 			return cur
 		}
 		prev = cur
@@ -152,7 +176,12 @@ func resizeTmuxSettled(tm *tmuxApp, cols int) string {
 // this size, whatever it was resized from.
 func resizeTmuxCheck(t *testing.T, tm *tmuxApp, where string, cols int) {
 	t.Helper()
-	s := resizeTmuxSettled(tm, cols)
+	resizeTmuxCheckScreen(t, resizeTmuxSettled(tm, cols), where, cols)
+}
+
+// resizeTmuxCheckScreen is resizeTmuxCheck on a frame already settled.
+func resizeTmuxCheckScreen(t *testing.T, s, where string, cols int) {
+	t.Helper()
 	ls := strings.Split(s, "\n")
 	if panicky.MatchString(s) {
 		t.Errorf("%s: crash text on screen:\n%s", where, s)
@@ -185,9 +214,15 @@ func resizeTmuxCheck(t *testing.T, tm *tmuxApp, where string, cols int) {
 // resizeTmuxSweep resizes through every size, checking after each.
 func resizeTmuxSweep(t *testing.T, tm *tmuxApp, where string) {
 	t.Helper()
+	resizeTmuxSweepBy(t, tm, where, resizeTmuxSettled)
+}
+
+// resizeTmuxSweepBy is resizeTmuxSweep settling each size with settle.
+func resizeTmuxSweepBy(t *testing.T, tm *tmuxApp, where string, settle func(*tmuxApp, int) string) {
+	t.Helper()
 	for _, sz := range resizeTmuxSizes {
 		tm.resize(sz[0], sz[1])
-		resizeTmuxCheck(t, tm, fmt.Sprintf("%s @ %dx%d", where, sz[0], sz[1]), sz[0])
+		resizeTmuxCheckScreen(t, settle(tm, sz[0]), fmt.Sprintf("%s @ %dx%d", where, sz[0], sz[1]), sz[0])
 		if t.Failed() {
 			return
 		}
@@ -235,13 +270,16 @@ func TestResizeTmuxMidStream(t *testing.T) {
 	tape := resizeTmuxTape(t)
 	yml := strings.Replace(replayConfig(tape),
 		fmt.Sprintf("config: {file: %q}", tape),
-		// 800 ms let a loaded CI runner finish the turn before the sweep.
-		fmt.Sprintf("config: {file: %q, delay_ms: 2000}", tape), 1)
+		// ~22 words: about 13 s of stream against a sweep of 1-3 s. At
+		// 2000 ms (38 s a run) the margin covered a sweep whose every
+		// settle waited out the spinner; resizeTmuxSettledStreaming
+		// no longer does. Too short fails loudly below, never passes.
+		fmt.Sprintf("config: {file: %q, delay_ms: 600}", tape), 1)
 	tm, home := resizeTmuxStart(t, 100, 30, yml)
 
 	resizeTmuxSend(tm, "run the tests and show me a very long separator line")
 	// Do not wait for the turn: sweep while the words are arriving.
-	resizeTmuxSweep(t, tm, "mid-stream")
+	resizeTmuxSweepBy(t, tm, "mid-stream", resizeTmuxSettledStreaming)
 	if t.Failed() {
 		return
 	}
