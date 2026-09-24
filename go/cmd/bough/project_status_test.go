@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/andreylukin/bough/internal/container"
+	"github.com/andreylukin/bough/internal/projectdef"
 	"github.com/andreylukin/bough/internal/secrets"
 )
 
@@ -32,6 +33,13 @@ func TestProjectStatusPreflight(t *testing.T) {
 	}
 	var out bytes.Buffer
 	if err := project(&out, strings.NewReader(""), []string{"create", "zz", repo}); err != nil {
+		t.Fatal(err)
+	}
+	// A new project lends gh, and its preflight shells out to the host's
+	// `gh auth token` (/opt/homebrew/bin first), so the result followed
+	// whoever ran the suite. Drop it here; orb.TestPreflight covers the gh
+	// check with hostCommand stubbed.
+	if err := mutate(&out, home, "zz", func(d *projectdef.Def) error { d.Identity = nil; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	for _, kv := range [][2]string{{"secrets.GOOD", "keychain:bough/zz/GOOD"}, {"secrets.MISSING", "keychain:bough/zz/MISSING"}} {
