@@ -1727,8 +1727,9 @@ func (s *Supervisor) SetArchived(id string, archived bool) error {
 	return s.Kill(id)
 }
 
-// Acknowledge marks everything the session has recorded so far as seen.
-func (s *Supervisor) Acknowledge(id string) error {
+// Acknowledge marks everything the session has recorded so far as seen,
+// or, with upTo > 0, only what a page showed: up to that seq.
+func (s *Supervisor) Acknowledge(id string, upTo int64) error {
 	entries, err := s.Entries(id)
 	if err != nil {
 		return err
@@ -1737,9 +1738,18 @@ func (s *Supervisor) Acknowledge(id string) error {
 	if n := len(entries); n > 0 {
 		last = entries[n-1].Seq
 	}
+	if upTo > 0 && upTo < last {
+		last = upTo
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m := s.meta[id]
+	// The entries were read outside s.mu: two acks racing a new entry
+	// can save out of order, and the one that read less must not take
+	// the ack back and bring a finish another tab saw back unseen.
+	if last <= m.Ack {
+		return nil
+	}
 	m.Ack = last
 	s.meta[id] = m
 	return s.saveMetaLocked()
