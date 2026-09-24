@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -534,5 +535,29 @@ func TestControlCalls(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(filepath.Dir(r.home), "cwd", "made.txt"))
 	if err != nil || string(b) != "shell" {
 		t.Fatalf("the bash call did not run: %q %v\n%s", b, err, out)
+	}
+}
+
+// Every taken turn leaves the user messages its request carried, so a
+// test can see what reached the model: a job notice sent at a request
+// boundary is recorded nowhere else.
+func TestControlRecordsRequest(t *testing.T) {
+	t.Parallel()
+	r := start(t)
+	Queue(t, r.dir(), "001", Turn{Mode: "ok", Calls: []Call{{Name: "bash", Args: map[string]any{"command": "true"}}}})
+	Queue(t, r.dir(), "002", Turn{Mode: "ok", Text: "seen"})
+	r.send("hello from the person")
+	r.waitFor("[assistant] seen")
+	if code, out := r.finish(); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	for _, name := range []string{"001", "002"} {
+		got, err := Request(r.dir(), name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.ContainsFunc(got, func(s string) bool { return strings.Contains(s, "hello from the person") }) {
+			t.Fatalf("request %s carried %q, want the prompt", name, got)
+		}
 	}
 }
