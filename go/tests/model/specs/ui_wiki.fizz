@@ -163,8 +163,9 @@ role Wiki:
 
     atomic action ReviewOpen:
         # "Open the newer entry" on a superseded flag: the page with the
-        # flag's cite, both reads started together.
+        # flag's cite, both reads started together. Not under the palette.
         require self.route == "review" and self.item == "open"
+        require not self.palette
         self.go("page", True)
 
     atomic action OpenCite:
@@ -264,7 +265,9 @@ role Wiki:
 
     atomic action Act:
         # "Mark as inference" or "Drop the claim": disabled while busy.
+        # Not under the palette: it is modal, its scrim takes the click.
         require self.route == "review" and self.item in ("open", "failed")
+        require not self.palette
         self.item = "busy"
 
     atomic action ActOk:
