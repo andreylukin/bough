@@ -403,3 +403,27 @@ test.describe('wiki index: a refused ingest', () => {
     expect(bad).toEqual([]);
   });
 });
+
+// ToReview goes through the palette once nothing is flagged. The palette
+// reset its query in an effect after opening, so the field it focused
+// still held the last query and the walk's typed "Review flagged claims"
+// was appended to it: only "Start a session" matched, and the click sent
+// the doubled text as a first message. Opening is one keydown here, read
+// back before any timer can run the deferred reset.
+test.describe('palette: reopened after a query', () => {
+  test('opens empty, before any key can land', async ({ serve, page }) => {
+    await page.goto(`${serve.url}/#/wiki`);
+    const field = page.locator('.pal-field');
+    await expect(page.locator('.thread-head h1', { hasText: 'Wiki' })).toBeVisible();
+    await page.keyboard.press('ControlOrMeta+k');
+    await field.fill('Review flagged claims');
+    await page.keyboard.press('Escape');
+    await expect(field).toHaveCount(0);
+    const value = await page.evaluate(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true }));
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      return (document.querySelector('.pal-field') as HTMLInputElement | null)?.value ?? 'no palette';
+    });
+    expect(value).toBe('');
+  });
+});

@@ -350,11 +350,18 @@ export function Palette(props: PaletteProps) {
     if (el?.isConnected && !document.querySelector("[aria-modal='true']")) el.focus?.();
   }, [open]);
 
+  // Reset while rendering the open, not in the effect below: the effect
+  // focused a field still showing the last query, and keys typed before
+  // its deferred reset render were appended to that stale text.
+  const [shown, setShown] = useState({ open, initialQuery });
+  if (shown.open !== open || shown.initialQuery !== initialQuery) {
+    setShown({ open, initialQuery });
+    if (open) { setQ(initialQuery); setAtId(null); }
+  }
+
   useEffect(() => {
     if (!open) return;
     opener.current = document.activeElement;
-    setQ(initialQuery);
-    setAtId(null);
     field.current?.focus();
   }, [open, initialQuery]);
 
