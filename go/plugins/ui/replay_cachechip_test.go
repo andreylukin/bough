@@ -9,6 +9,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/andreylukin/bough/plugins/history"
@@ -82,26 +83,28 @@ func TestCacheChip(t *testing.T) {
 	t.Run("TestCacheChipTickExpires", func(t *testing.T) {
 		t.Parallel()
 		// 0.5 s left in the window; the tick fires a second after it
-		// closes, so this waits about 1.5 s.
-		d := cacheChipResume(t, "cache-chip.jsonl", cacheTTL-500*time.Millisecond)
-		if p := d.plain(); !strings.Contains(p, "⚡ cache hot") {
-			t.Fatalf("0.5 s before the window closes: want hot\n%s", p)
-		}
-		cmd := d.m.cacheTick()
-		if cmd == nil {
-			t.Fatalf("no expiry tick scheduled\n%s", d.plain())
-		}
-		start := time.Now()
-		msg := cmd()
-		if _, ok := msg.(cacheTickMsg); !ok {
-			t.Fatalf("tick delivered %T, want cacheTickMsg\n%s", msg, d.plain())
-		}
-		if el := time.Since(start); el > 2*time.Second {
-			t.Errorf("tick took %v, want about 1.5 s\n%s", el, d.plain())
-		}
-		d.feed(msg)
-		if p := d.plain(); !strings.Contains(p, "❄ cache cold") || strings.Contains(p, "cache hot") {
-			t.Errorf("after the expiry tick: want cold\n%s", p)
-		}
+		// closes, so this waits about 1.5 s — of the bubble's fake clock.
+		synctest.Test(t, func(t *testing.T) {
+			d := cacheChipResume(t, "cache-chip.jsonl", cacheTTL-500*time.Millisecond)
+			if p := d.plain(); !strings.Contains(p, "⚡ cache hot") {
+				t.Fatalf("0.5 s before the window closes: want hot\n%s", p)
+			}
+			cmd := d.m.cacheTick()
+			if cmd == nil {
+				t.Fatalf("no expiry tick scheduled\n%s", d.plain())
+			}
+			start := time.Now()
+			msg := cmd()
+			if _, ok := msg.(cacheTickMsg); !ok {
+				t.Fatalf("tick delivered %T, want cacheTickMsg\n%s", msg, d.plain())
+			}
+			if el := time.Since(start); el > 2*time.Second {
+				t.Errorf("tick took %v, want about 1.5 s\n%s", el, d.plain())
+			}
+			d.feed(msg)
+			if p := d.plain(); !strings.Contains(p, "❄ cache cold") || strings.Contains(p, "cache hot") {
+				t.Errorf("after the expiry tick: want cold\n%s", p)
+			}
+		})
 	})
 }

@@ -184,27 +184,31 @@ func (d *drv) apply(t *rapid.T, st *propState, s propStep, checkQuit bool) {
 	}
 }
 
-// checkFrame asserts one frame invariant (by name) for the current state.
+// checkFrame asserts one frame invariant (by name, or "all" of them)
+// for the current state, from a single render.
 func checkFrame(t *rapid.T, d *drv, st *propState, which, step string) {
 	raw := d.view()
-	plain := d.plain()
+	plain := stripANSI(raw)
 	lines := strings.Split(raw, "\n")
-	switch which {
-	case "panic":
+	all := which == "all"
+	if all || which == "panic" {
 		if strings.Contains(plain, "✗ render failed") {
 			t.Fatalf("after %s: render panicked:\n%s", step, plain)
 		}
-	case "height":
+	}
+	if all || which == "height" {
 		if st.h >= 3 && len(lines) != st.h {
 			t.Fatalf("after %s: frame is %d lines for a %dx%d terminal:\n%s", step, len(lines), st.w, st.h, plain)
 		}
-	case "width":
+	}
+	if all || which == "width" {
 		for i, ln := range lines {
 			if w := ansi.StringWidth(ln); w > st.w {
 				t.Fatalf("after %s: line %d is %d cells wide in a %d-wide terminal:\n%q", step, i, w, st.w, ansi.Strip(ln))
 			}
 		}
-	case "control":
+	}
+	if all || which == "control" {
 		for i, ln := range lines {
 			for _, r := range ansi.Strip(ln) {
 				if r == '\t' || r == '\r' || r == 0 || r == 0x7f || (r < 0x20 && r != 0x1b) {
@@ -217,22 +221,26 @@ func checkFrame(t *rapid.T, d *drv, st *propState, which, step string) {
 
 func TestPropFrameInvariants(t *testing.T) {
 	t.Parallel()
-	for _, which := range []string{"panic", "height", "width", "control", "quit"} {
-		t.Run(which, func(t *testing.T) {
-			t.Parallel()
-			rapid.Check(t, func(rt *rapid.T) {
-				st := &propState{w: rapid.IntRange(propMinW, 200).Draw(rt, "w0"), h: rapid.IntRange(5, 60).Draw(rt, "h0")}
-				d := newDrv(t, st.w, st.h, cfgWith(t, nil, nil, histWith("/tmp/h.jsonl", "one", "two")))
-				checkFrame(rt, d, st, which, "init")
-				n := rapid.IntRange(1, 60).Draw(rt, "n")
-				for range n {
-					s := propStepGen(st.w, st.h).Draw(rt, "step")
-					d.apply(rt, st, s, which == "quit")
-					checkFrame(rt, d, st, which, s.kind)
-				}
-			})
-		})
-	}
+	// One sequence is checked against every invariant (panic, height,
+	// width, control, quit) after every step: the invariants used to be
+	// five subtests drawing five independent sets of 100 sequences, which
+	// gave each invariant the same 100 sequences' worth of coverage at
+	// five times the cost (~60 s under -race, the package's critical path).
+	// Still the package's slowest test (~9 s under -race, under 1 s
+	// without): 100 sequences of up to 60 steps, a full frame rendered
+	// after each, and the race detector costs lipgloss rendering ~12x.
+	// rapid has no per-test check count, so it cannot be sharded.
+	rapid.Check(t, func(rt *rapid.T) {
+		st := &propState{w: rapid.IntRange(propMinW, 200).Draw(rt, "w0"), h: rapid.IntRange(5, 60).Draw(rt, "h0")}
+		d := newDrv(t, st.w, st.h, cfgWith(t, nil, nil, histWith("/tmp/h.jsonl", "one", "two")))
+		checkFrame(rt, d, st, "all", "init")
+		n := rapid.IntRange(1, 60).Draw(rt, "n")
+		for range n {
+			s := propStepGen(st.w, st.h).Draw(rt, "step")
+			d.apply(rt, st, s, true)
+			checkFrame(rt, d, st, "all", s.kind)
+		}
+	})
 }
 
 // A typed draft is always visible: whatever printable text is in the

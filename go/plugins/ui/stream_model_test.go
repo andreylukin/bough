@@ -281,6 +281,8 @@ func splitAssistantProse(text string) string {
 	return ""
 }
 
+// ~5 s under -race (0.5 s without): 100 streamed replies with a frame
+// checked after every delta, all CPU in rendering — no waits to remove.
 func TestStreamModelProperty(t *testing.T) {
 	t.Parallel()
 	rapid.Check(t, func(rt *rapid.T) { streamModelCheck(t, rt, false) })
@@ -350,23 +352,28 @@ func TestStreamModelMarkdownPrefixes(t *testing.T) {
 		"\x1b[31mred\x1b]8;;http://x\x07L\x1b]8;;\x07 <thinking>t</thinking> <system-x>no</system-x> ```stop\ndone\n```",
 		"***\n~~~\ntilde fence\n~~~\n<details><summary>s</summary>\n\n* [ ] task\n</details>\n![img](x.png)",
 	}
+	// One parallel subtest per width and doc: every prefix of every doc
+	// is ~7 s of rendering under -race when walked in one goroutine.
 	for _, w := range []int{20, 100} {
-		d := newDrv(t, w, 20, cfgWith(t, nil, nil, nil))
-		for _, doc := range docs {
-			for i := 0; i <= len(doc); i++ {
-				p := doc[:i]
-				func() {
-					defer func() {
-						if r := recover(); r != nil {
-							t.Fatalf("w=%d prefix %q panicked: %v", w, p, r)
-						}
+		for di, doc := range docs {
+			t.Run(fmt.Sprintf("w%d/doc%d", w, di), func(t *testing.T) {
+				t.Parallel()
+				d := newDrv(t, w, 20, cfgWith(t, nil, nil, nil))
+				for i := 0; i <= len(doc); i++ {
+					p := doc[:i]
+					func() {
+						defer func() {
+							if r := recover(); r != nil {
+								t.Fatalf("w=%d prefix %q panicked: %v", w, p, r)
+							}
+						}()
+						liveView(p)
+						d.m.markdown(p)
+						d.m.render(&block{kind: "assistant", text: p, live: true}, d.m.cfg.Load())
+						d.m.render(&block{kind: "assistant", text: p}, d.m.cfg.Load())
 					}()
-					liveView(p)
-					d.m.markdown(p)
-					d.m.render(&block{kind: "assistant", text: p, live: true}, d.m.cfg.Load())
-					d.m.render(&block{kind: "assistant", text: p}, d.m.cfg.Load())
-				}()
-			}
+				}
+			})
 		}
 	}
 }

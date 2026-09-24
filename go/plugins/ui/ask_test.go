@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -124,15 +125,17 @@ func TestAskComposerNumberPicksOption(t *testing.T) {
 
 func TestAskEscDeclines(t *testing.T) {
 	t.Parallel()
-	d, fa := askDrv(t)
-	d.feed(askEvent())
-	d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if len(fa.texts) != 1 || fa.texts[0] != "(declined)" {
-		t.Fatalf("esc should answer (declined): %v", fa.texts)
-	}
-	if p := d.plain(); !strings.Contains(p, "❯? fav color? → (declined)") {
-		t.Errorf("declined ask should show the one-liner:\n%s", p)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d, fa := askDrv(t)
+		d.feed(askEvent())
+		d.press(tea.KeyPressMsg{Code: tea.KeyEscape})
+		if len(fa.texts) != 1 || fa.texts[0] != "(declined)" {
+			t.Fatalf("esc should answer (declined): %v", fa.texts)
+		}
+		if p := d.plain(); !strings.Contains(p, "❯? fav color? → (declined)") {
+			t.Errorf("declined ask should show the one-liner:\n%s", p)
+		}
+	})
 }
 
 func TestAskOptionClickAnswers(t *testing.T) {

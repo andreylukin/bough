@@ -6,6 +6,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -114,19 +115,21 @@ func TestRecallReplayedHistory(t *testing.T) {
 
 func TestUpInsideDraftMovesCursor(t *testing.T) {
 	t.Parallel()
-	d := defaultDrv(t)
-	d.say("older")
-	d.typeStr("a")
-	d.feed(keyShiftEnter())
-	d.typeStr("b")
-	d.press(keyUp()) // line 1 -> line 0, no recall
-	if d.m.input.Line() != 0 || d.m.input.Value() != "a\nb" {
-		t.Fatalf("up inside a draft should move the cursor: line %d value %q", d.m.input.Line(), d.m.input.Value())
-	}
-	d.press(keyUp()) // on the first line: recall
-	if got := d.m.input.Value(); got != "older" {
-		t.Errorf("up on the first line should recall, got %q", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := defaultDrv(t)
+		d.say("older")
+		d.typeStr("a")
+		d.feed(keyShiftEnter())
+		d.typeStr("b")
+		d.press(keyUp()) // line 1 -> line 0, no recall
+		if d.m.input.Line() != 0 || d.m.input.Value() != "a\nb" {
+			t.Fatalf("up inside a draft should move the cursor: line %d value %q", d.m.input.Line(), d.m.input.Value())
+		}
+		d.press(keyUp()) // on the first line: recall
+		if got := d.m.input.Value(); got != "older" {
+			t.Errorf("up on the first line should recall, got %q", got)
+		}
+	})
 }
 
 func TestUpWithNothingToRecallScrolls(t *testing.T) {
@@ -142,54 +145,58 @@ func TestUpWithNothingToRecallScrolls(t *testing.T) {
 
 func TestHomeEndJumpTranscriptWhenComposerEmpty(t *testing.T) {
 	t.Parallel()
-	d := defaultDrv(t)
-	fillTranscript(d, 40)
-	d.press(keyHome())
-	if d.m.vp.YOffset() != 0 {
-		t.Errorf("home should jump to the top, YOffset = %d", d.m.vp.YOffset())
-	}
-	d.press(keyEnd())
-	if !d.m.vp.AtBottom() {
-		t.Error("end should jump to the bottom")
-	}
-	d.press(keyHome())
-	d.typeStr("abc")
-	d.press(keyEnd())
-	if d.m.vp.YOffset() != 0 {
-		t.Error("end with a draft edits the line, not the transcript")
-	}
-	d.press(keyHome())
-	d.typeStr("X")
-	if got := d.m.input.Value(); got != "Xabc" {
-		t.Errorf("home with a draft should go to line start, got %q", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := defaultDrv(t)
+		fillTranscript(d, 40)
+		d.press(keyHome())
+		if d.m.vp.YOffset() != 0 {
+			t.Errorf("home should jump to the top, YOffset = %d", d.m.vp.YOffset())
+		}
+		d.press(keyEnd())
+		if !d.m.vp.AtBottom() {
+			t.Error("end should jump to the bottom")
+		}
+		d.press(keyHome())
+		d.typeStr("abc")
+		d.press(keyEnd())
+		if d.m.vp.YOffset() != 0 {
+			t.Error("end with a draft edits the line, not the transcript")
+		}
+		d.press(keyHome())
+		d.typeStr("X")
+		if got := d.m.input.Value(); got != "Xabc" {
+			t.Errorf("home with a draft should go to line start, got %q", got)
+		}
+	})
 }
 
 func TestEmacsEditingKeys(t *testing.T) {
 	t.Parallel()
-	d := defaultDrv(t)
-	d.typeStr("hello world")
-	d.press(keyCtrl('w'))
-	if got := d.m.input.Value(); got != "hello " {
-		t.Fatalf("ctrl+w: %q", got)
-	}
-	d.press(keyCtrl('u'))
-	if got := d.m.input.Value(); got != "" {
-		t.Fatalf("ctrl+u: %q", got)
-	}
-	d.typeStr("abc")
-	d.press(keyCtrl('a'))
-	d.press(keyCtrl('k'))
-	if got := d.m.input.Value(); got != "" {
-		t.Fatalf("ctrl+a then ctrl+k: %q", got)
-	}
-	d.typeStr("xy")
-	d.press(keyCtrl('a'))
-	d.press(keyCtrl('e'))
-	d.typeStr("z")
-	if got := d.m.input.Value(); got != "xyz" {
-		t.Fatalf("ctrl+e: %q", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := defaultDrv(t)
+		d.typeStr("hello world")
+		d.press(keyCtrl('w'))
+		if got := d.m.input.Value(); got != "hello " {
+			t.Fatalf("ctrl+w: %q", got)
+		}
+		d.press(keyCtrl('u'))
+		if got := d.m.input.Value(); got != "" {
+			t.Fatalf("ctrl+u: %q", got)
+		}
+		d.typeStr("abc")
+		d.press(keyCtrl('a'))
+		d.press(keyCtrl('k'))
+		if got := d.m.input.Value(); got != "" {
+			t.Fatalf("ctrl+a then ctrl+k: %q", got)
+		}
+		d.typeStr("xy")
+		d.press(keyCtrl('a'))
+		d.press(keyCtrl('e'))
+		d.typeStr("z")
+		if got := d.m.input.Value(); got != "xyz" {
+			t.Fatalf("ctrl+e: %q", got)
+		}
+	})
 }
 
 func TestLongPromptWrapsInTranscript(t *testing.T) {

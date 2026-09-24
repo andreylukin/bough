@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"testing/synctest"
 )
 
 // longTranscript feeds n replayed-shaped turns into a fresh driver.
@@ -26,19 +27,21 @@ func longTranscript(t *testing.T, n int) *drv {
 // block reuses its render: planting a marker in the cache shows up in
 // the transcript, so refresh did not render that block again.
 func TestRefreshReusesUnchangedBlocks(t *testing.T) {
-	d := longTranscript(t, 20)
-	if len(d.m.parts) == 0 {
-		t.Fatal("refresh cached no block renders")
-	}
-	for id, e := range d.m.parts {
-		e.part = fmt.Sprintf("CACHED-%d", id)
-		d.m.parts[id] = e
-	}
-	d.m.refresh()
-	got := d.m.vp.GetContent()
-	if n := strings.Count(got, "CACHED-"); n != len(d.m.parts) {
-		t.Errorf("refresh re-rendered unchanged blocks: %d of %d cached renders reused", n, len(d.m.parts))
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := longTranscript(t, 20)
+		if len(d.m.parts) == 0 {
+			t.Fatal("refresh cached no block renders")
+		}
+		for id, e := range d.m.parts {
+			e.part = fmt.Sprintf("CACHED-%d", id)
+			d.m.parts[id] = e
+		}
+		d.m.refresh()
+		got := d.m.vp.GetContent()
+		if n := strings.Count(got, "CACHED-"); n != len(d.m.parts) {
+			t.Errorf("refresh re-rendered unchanged blocks: %d of %d cached renders reused", n, len(d.m.parts))
+		}
+	})
 }
 
 // The cached render matches a fresh one after the changes that alter

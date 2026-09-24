@@ -11,14 +11,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 // voiceHoldSpaceInPickerAndAskDrv is a driver in voice hold mode with
 // the real startRecording and a sentinel-writing rec on PATH.
-func voiceHoldSpaceInPickerAndAskDrv(t *testing.T) (*drv, *fakeAsk, string) {
+func voiceHoldSpaceInPickerAndAskDrv(t *testing.T) (*drv, *fakeAsk, recProbe) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script recorder")
@@ -30,7 +29,7 @@ func voiceHoldSpaceInPickerAndAskDrv(t *testing.T) (*drv, *fakeAsk, string) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
-	startRecorder = startRecording
+	probe := probeRecorder(t, sentinel)
 	fa := &fakeAsk{}
 	cfg := cfgWith(t, nil, nil, nil)
 	cfg.ask = fa
@@ -43,7 +42,7 @@ func voiceHoldSpaceInPickerAndAskDrv(t *testing.T) (*drv, *fakeAsk, string) {
 			runCmd(d.m.cancelVoice())
 		}
 	})
-	return d, fa, sentinel
+	return d, fa, probe
 }
 
 // voiceHoldSpaceInPickerAndAskHold sends what a held space looks like:
@@ -55,14 +54,13 @@ func voiceHoldSpaceInPickerAndAskHold(d *drv) {
 	d.feed(tea.KeyPressMsg{Code: tea.KeySpace, Text: " ", IsRepeat: true})
 }
 
-func voiceHoldSpaceInPickerAndAskNoTake(t *testing.T, d *drv, sentinel string) {
+func voiceHoldSpaceInPickerAndAskNoTake(t *testing.T, d *drv, probe recProbe) {
 	t.Helper()
 	if d.m.v.recording {
 		t.Errorf("held space started a take (flash %q)", d.m.flash)
 		runCmd(d.m.cancelVoice())
 	}
-	time.Sleep(200 * time.Millisecond) // let a spawned recorder touch its sentinel
-	if _, err := os.Stat(sentinel); err == nil {
+	if probe.spawned() {
 		t.Errorf("a recorder was spawned")
 	}
 }
@@ -74,26 +72,26 @@ func TestVoiceHoldSpaceInPickerAndAsk(t *testing.T) {
 		wd, _ := os.Getwd()
 		os.Chdir(dir)
 		t.Cleanup(func() { os.Chdir(wd) })
-		d, _, sentinel := voiceHoldSpaceInPickerAndAskDrv(t)
+		d, _, probe := voiceHoldSpaceInPickerAndAskDrv(t)
 		d.typeStr("read @ma")
 		if !d.m.at.open {
 			t.Fatal("@ picker not open")
 		}
 		voiceHoldSpaceInPickerAndAskHold(d)
-		voiceHoldSpaceInPickerAndAskNoTake(t, d, sentinel)
+		voiceHoldSpaceInPickerAndAskNoTake(t, d, probe)
 		if got := d.m.input.Value(); got != "read @ma    " {
 			t.Errorf("draft = %q, want the four spaces typed after the filter", got)
 		}
 	})
 	t.Run("ask", func(t *testing.T) {
-		d, fa, sentinel := voiceHoldSpaceInPickerAndAskDrv(t)
+		d, fa, probe := voiceHoldSpaceInPickerAndAskDrv(t)
 		d.feed(askEvent())
 		if d.m.pendingAsk != "ask-1" {
 			t.Fatal("ask not pending")
 		}
 		d.typeStr("sea")
 		voiceHoldSpaceInPickerAndAskHold(d)
-		voiceHoldSpaceInPickerAndAskNoTake(t, d, sentinel)
+		voiceHoldSpaceInPickerAndAskNoTake(t, d, probe)
 		d.typeStr("green")
 		d.press(keyEnter())
 		if len(fa.texts) != 1 || fa.texts[0] != "sea    green" {

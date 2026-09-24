@@ -7,6 +7,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/andreylukin/bough/plugins/history"
 )
@@ -14,40 +15,44 @@ import (
 // It opens on "(current)": the present, walking back from there.
 func TestRewindOpensOnCurrent(t *testing.T) {
 	t.Parallel()
-	d := rewindDrv(t, "one", "two", "three")
-	d.press(keyEsc())
-	d.press(keyEsc())
-	if got, want := d.m.rw.pick, len(d.m.rw.rows); got != want {
-		t.Fatalf("cursor at %d, want %d ((current))", got, want)
-	}
-	if !strings.Contains(d.plain(), "❯ (current)") {
-		t.Errorf("(current) should be the selected row:\n%s", d.plain())
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := rewindDrv(t, "one", "two", "three")
+		d.press(keyEsc())
+		d.press(keyEsc())
+		if got, want := d.m.rw.pick, len(d.m.rw.rows); got != want {
+			t.Fatalf("cursor at %d, want %d ((current))", got, want)
+		}
+		if !strings.Contains(d.plain(), "❯ (current)") {
+			t.Errorf("(current) should be the selected row:\n%s", d.plain())
+		}
+	})
 }
 
 func TestRewindArrowsWalkTheTurns(t *testing.T) {
 	t.Parallel()
-	d := rewindDrv(t, "one", "two", "three")
-	d.press(keyEsc())
-	d.press(keyEsc())
+	synctest.Test(t, func(t *testing.T) {
+		d := rewindDrv(t, "one", "two", "three")
+		d.press(keyEsc())
+		d.press(keyEsc())
 
-	d.press(keyUp())
-	if !strings.Contains(d.plain(), "❯ three") {
-		t.Errorf("up from (current) selects the newest turn:\n%s", d.plain())
-	}
-	d.press(keyUp())
-	d.press(keyUp())
-	if !strings.Contains(d.plain(), "❯ one") {
-		t.Errorf("three ups reach the oldest turn:\n%s", d.plain())
-	}
-	d.press(keyUp()) // at the top: stays
-	if !strings.Contains(d.plain(), "❯ one") {
-		t.Errorf("up at the top should not wrap:\n%s", d.plain())
-	}
-	d.press(keyDown())
-	if !strings.Contains(d.plain(), "❯ two") {
-		t.Errorf("down walks forward again:\n%s", d.plain())
-	}
+		d.press(keyUp())
+		if !strings.Contains(d.plain(), "❯ three") {
+			t.Errorf("up from (current) selects the newest turn:\n%s", d.plain())
+		}
+		d.press(keyUp())
+		d.press(keyUp())
+		if !strings.Contains(d.plain(), "❯ one") {
+			t.Errorf("three ups reach the oldest turn:\n%s", d.plain())
+		}
+		d.press(keyUp()) // at the top: stays
+		if !strings.Contains(d.plain(), "❯ one") {
+			t.Errorf("up at the top should not wrap:\n%s", d.plain())
+		}
+		d.press(keyDown())
+		if !strings.Contains(d.plain(), "❯ two") {
+			t.Errorf("down walks forward again:\n%s", d.plain())
+		}
+	})
 }
 
 // Picking a row goes back to BEFORE that prompt, so undoing "two"
@@ -55,66 +60,74 @@ func TestRewindArrowsWalkTheTurns(t *testing.T) {
 // that is a fork at "one" (seq 1), not at "two".
 func TestRewindEnterGoesBackToBeforeThePrompt(t *testing.T) {
 	t.Parallel()
-	d := rewindDrv(t, "one", "two")
-	d.press(keyEsc())
-	d.press(keyEsc())
-	d.press(keyUp()) // "two", whose own input entry is seq 3
-	d.press(keyEnter())
-	if d.m.rw.open {
-		t.Error("enter should close the menu")
-	}
-	p := d.plain()
-	if !strings.Contains(p, "/tree 1") {
-		t.Errorf("before \"two\" is a fork at \"one\" (seq 1):\n%s", p)
-	}
-	if strings.Contains(p, "/tree 3") {
-		t.Errorf("forking AT the picked turn would keep it:\n%s", p)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := rewindDrv(t, "one", "two")
+		d.press(keyEsc())
+		d.press(keyEsc())
+		d.press(keyUp()) // "two", whose own input entry is seq 3
+		d.press(keyEnter())
+		if d.m.rw.open {
+			t.Error("enter should close the menu")
+		}
+		p := d.plain()
+		if !strings.Contains(p, "/tree 1") {
+			t.Errorf("before \"two\" is a fork at \"one\" (seq 1):\n%s", p)
+		}
+		if strings.Contains(p, "/tree 3") {
+			t.Errorf("forking AT the picked turn would keep it:\n%s", p)
+		}
+	})
 }
 
 // Before the first prompt there is no earlier turn: that point is a
 // session with nothing in it.
 func TestRewindToBeforeTheFirstPromptStartsFresh(t *testing.T) {
 	t.Parallel()
-	d := rewindDrv(t, "one", "two")
-	d.press(keyEsc())
-	d.press(keyEsc())
-	d.press(keyUp())
-	d.press(keyUp()) // "one", the oldest
-	d.press(keyEnter())
-	if p := d.plain(); !strings.Contains(p, "/new") {
-		t.Errorf("before the first prompt is a fresh session:\n%s", p)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := rewindDrv(t, "one", "two")
+		d.press(keyEsc())
+		d.press(keyEsc())
+		d.press(keyUp())
+		d.press(keyUp()) // "one", the oldest
+		d.press(keyEnter())
+		if p := d.plain(); !strings.Contains(p, "/new") {
+			t.Errorf("before the first prompt is a fresh session:\n%s", p)
+		}
+	})
 }
 
 // Enter on "(current)" changes nothing: it is the way out that is not
 // a decision.
 func TestRewindEnterOnCurrentDoesNothing(t *testing.T) {
 	t.Parallel()
-	d := rewindDrv(t, "one")
-	d.press(keyEsc())
-	d.press(keyEsc())
-	d.press(keyEnter())
-	if d.m.rw.open {
-		t.Error("the menu should close")
-	}
-	if p := d.plain(); strings.Contains(p, "/tree") {
-		t.Errorf("(current) should not fork anything:\n%s", p)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := rewindDrv(t, "one")
+		d.press(keyEsc())
+		d.press(keyEsc())
+		d.press(keyEnter())
+		if d.m.rw.open {
+			t.Error("the menu should close")
+		}
+		if p := d.plain(); strings.Contains(p, "/tree") {
+			t.Errorf("(current) should not fork anything:\n%s", p)
+		}
+	})
 }
 
 func TestRewindEscCancels(t *testing.T) {
 	t.Parallel()
-	d := rewindDrv(t, "one")
-	d.press(keyEsc())
-	d.press(keyEsc())
-	d.press(keyEsc())
-	if d.m.rw.open {
-		t.Error("esc should close the menu")
-	}
-	if p := d.plain(); strings.Contains(p, "/tree") {
-		t.Errorf("cancelling must not fork:\n%s", p)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := rewindDrv(t, "one")
+		d.press(keyEsc())
+		d.press(keyEsc())
+		d.press(keyEsc())
+		if d.m.rw.open {
+			t.Error("esc should close the menu")
+		}
+		if p := d.plain(); strings.Contains(p, "/tree") {
+			t.Errorf("cancelling must not fork:\n%s", p)
+		}
+	})
 }
 
 // Each row says what its turn wrote, so you can see which points have
@@ -122,25 +135,27 @@ func TestRewindEscCancels(t *testing.T) {
 // back is /undo.
 func TestRewindRowsShowWhatEachTurnWrote(t *testing.T) {
 	t.Parallel()
-	h := fakeHist{path: "/tmp/s.jsonl", entries: []history.Entry{
-		{Seq: 1, Kind: "input", Data: map[string]any{"text": "wrote nothing"}},
-		{Seq: 2, Kind: "done", Data: map[string]any{"files": []string{}}},
-		{Seq: 3, Kind: "input", Data: map[string]any{"text": "wrote one"}},
-		{Seq: 4, Kind: "done", Data: map[string]any{"files": []string{"only.go"}}},
-		{Seq: 5, Kind: "input", Data: map[string]any{"text": "wrote several"}},
-		{Seq: 6, Kind: "done", Data: map[string]any{"files": []string{"a.go", "b.go", "c.go"}}},
-	}}
-	cfg := cfgWith(t, nil, nil, h)
-	cfg.cmds = reg(t, "tree", "new")
-	d := newDrv(t, 100, 30, cfg)
-	d.press(keyEsc())
-	d.press(keyEsc())
-	p := d.plain()
-	for _, want := range []string{"no files written", "wrote only.go", "wrote 3 files"} {
-		if !strings.Contains(p, want) {
-			t.Errorf("the menu should say %q:\n%s", want, p)
+	synctest.Test(t, func(t *testing.T) {
+		h := fakeHist{path: "/tmp/s.jsonl", entries: []history.Entry{
+			{Seq: 1, Kind: "input", Data: map[string]any{"text": "wrote nothing"}},
+			{Seq: 2, Kind: "done", Data: map[string]any{"files": []string{}}},
+			{Seq: 3, Kind: "input", Data: map[string]any{"text": "wrote one"}},
+			{Seq: 4, Kind: "done", Data: map[string]any{"files": []string{"only.go"}}},
+			{Seq: 5, Kind: "input", Data: map[string]any{"text": "wrote several"}},
+			{Seq: 6, Kind: "done", Data: map[string]any{"files": []string{"a.go", "b.go", "c.go"}}},
+		}}
+		cfg := cfgWith(t, nil, nil, h)
+		cfg.cmds = reg(t, "tree", "new")
+		d := newDrv(t, 100, 30, cfg)
+		d.press(keyEsc())
+		d.press(keyEsc())
+		p := d.plain()
+		for _, want := range []string{"no files written", "wrote only.go", "wrote 3 files"} {
+			if !strings.Contains(p, want) {
+				t.Errorf("the menu should say %q:\n%s", want, p)
+			}
 		}
-	}
+	})
 }
 
 // A background job's wake-up is recorded as an input, but nobody typed
@@ -176,85 +191,93 @@ func TestRewindShowsTheTypedPrompt(t *testing.T) {
 // transcript is the whole of the work you just undid.
 func TestRewindPrepopulatesTheComposer(t *testing.T) {
 	t.Parallel()
-	d := rewindDrv(t, "add the parser", "fix the tests")
-	d.press(keyEsc())
-	d.press(keyEsc())
-	d.press(keyUp()) // "fix the tests"
-	d.press(keyEnter())
-	if got := d.m.input.Value(); got != "fix the tests" {
-		t.Fatalf("composer = %q, want the prompt that was rewound past", got)
-	}
-	// And it is editable text, not a recall browse: typing appends.
-	d.typeStr(" again")
-	if got := d.m.input.Value(); got != "fix the tests again" {
-		t.Errorf("the prepopulated draft should be editable, got %q", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		d := rewindDrv(t, "add the parser", "fix the tests")
+		d.press(keyEsc())
+		d.press(keyEsc())
+		d.press(keyUp()) // "fix the tests"
+		d.press(keyEnter())
+		if got := d.m.input.Value(); got != "fix the tests" {
+			t.Fatalf("composer = %q, want the prompt that was rewound past", got)
+		}
+		// And it is editable text, not a recall browse: typing appends.
+		d.typeStr(" again")
+		if got := d.m.input.Value(); got != "fix the tests again" {
+			t.Errorf("the prepopulated draft should be editable, got %q", got)
+		}
+	})
 }
 
 // The WHOLE prompt, not the one line the menu row showed.
 func TestRewindPrepopulatesTheFullPrompt(t *testing.T) {
 	t.Parallel()
-	full := "first line of the ask\nsecond line\nthird line"
-	h := fakeHist{path: "/tmp/s.jsonl", entries: []history.Entry{
-		{Seq: 1, Kind: "input", Data: map[string]any{"text": "earlier"}},
-		{Seq: 2, Kind: "done", Data: map[string]any{}},
-		{Seq: 3, Kind: "input", Data: map[string]any{"text": full}},
-		{Seq: 4, Kind: "done", Data: map[string]any{}},
-	}}
-	cfg := cfgWith(t, nil, nil, h)
-	cfg.cmds = reg(t, "tree", "new")
-	d := newDrv(t, 100, 30, cfg)
-	d.press(keyEsc())
-	d.press(keyEsc())
-	d.press(keyUp())
-	if !strings.Contains(d.plain(), "❯ first line of the ask") {
-		t.Fatalf("the row shows one line:\n%s", d.plain())
-	}
-	d.press(keyEnter())
-	if got := d.m.input.Value(); got != full {
-		t.Errorf("the composer should get every line:\n got %q\nwant %q", got, full)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		full := "first line of the ask\nsecond line\nthird line"
+		h := fakeHist{path: "/tmp/s.jsonl", entries: []history.Entry{
+			{Seq: 1, Kind: "input", Data: map[string]any{"text": "earlier"}},
+			{Seq: 2, Kind: "done", Data: map[string]any{}},
+			{Seq: 3, Kind: "input", Data: map[string]any{"text": full}},
+			{Seq: 4, Kind: "done", Data: map[string]any{}},
+		}}
+		cfg := cfgWith(t, nil, nil, h)
+		cfg.cmds = reg(t, "tree", "new")
+		d := newDrv(t, 100, 30, cfg)
+		d.press(keyEsc())
+		d.press(keyEsc())
+		d.press(keyUp())
+		if !strings.Contains(d.plain(), "❯ first line of the ask") {
+			t.Fatalf("the row shows one line:\n%s", d.plain())
+		}
+		d.press(keyEnter())
+		if got := d.m.input.Value(); got != full {
+			t.Errorf("the composer should get every line:\n got %q\nwant %q", got, full)
+		}
+	})
 }
 
 // A skill's body is not part of what you typed, so it is not what comes
 // back either.
 func TestRewindPrepopulatesTheTypedPromptOnly(t *testing.T) {
 	t.Parallel()
-	h := fakeHist{path: "/tmp/s.jsonl", entries: []history.Entry{
-		{Seq: 1, Kind: "input", Data: map[string]any{"text": "earlier"}},
-		{Seq: 2, Kind: "done", Data: map[string]any{}},
-		{Seq: 3, Kind: "input", Data: map[string]any{
-			"text":  "please frobnicate\n\n[skill: frobnicate]\nlots of body",
-			"typed": "please frobnicate",
-		}},
-		{Seq: 4, Kind: "done", Data: map[string]any{}},
-	}}
-	cfg := cfgWith(t, nil, nil, h)
-	cfg.cmds = reg(t, "tree", "new")
-	d := newDrv(t, 100, 30, cfg)
-	d.press(keyEsc())
-	d.press(keyEsc())
-	d.press(keyUp())
-	d.press(keyEnter())
-	if got := d.m.input.Value(); got != "please frobnicate" {
-		t.Errorf("composer = %q, want the typed line alone", got)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		h := fakeHist{path: "/tmp/s.jsonl", entries: []history.Entry{
+			{Seq: 1, Kind: "input", Data: map[string]any{"text": "earlier"}},
+			{Seq: 2, Kind: "done", Data: map[string]any{}},
+			{Seq: 3, Kind: "input", Data: map[string]any{
+				"text":  "please frobnicate\n\n[skill: frobnicate]\nlots of body",
+				"typed": "please frobnicate",
+			}},
+			{Seq: 4, Kind: "done", Data: map[string]any{}},
+		}}
+		cfg := cfgWith(t, nil, nil, h)
+		cfg.cmds = reg(t, "tree", "new")
+		d := newDrv(t, 100, 30, cfg)
+		d.press(keyEsc())
+		d.press(keyEsc())
+		d.press(keyUp())
+		d.press(keyEnter())
+		if got := d.m.input.Value(); got != "please frobnicate" {
+			t.Errorf("composer = %q, want the typed line alone", got)
+		}
+	})
 }
 
 // Cancelling, or picking "(current)", leaves the composer alone.
 func TestRewindLeavesTheComposerAloneWhenNothingChanges(t *testing.T) {
 	t.Parallel()
-	for _, key := range []string{"esc", "enter"} { // esc cancels; enter on (current)
-		d := rewindDrv(t, "one", "two")
-		d.press(keyEsc())
-		d.press(keyEsc())
-		if key == "esc" {
+	synctest.Test(t, func(t *testing.T) {
+		for _, key := range []string{"esc", "enter"} { // esc cancels; enter on (current)
+			d := rewindDrv(t, "one", "two")
 			d.press(keyEsc())
-		} else {
-			d.press(keyEnter())
+			d.press(keyEsc())
+			if key == "esc" {
+				d.press(keyEsc())
+			} else {
+				d.press(keyEnter())
+			}
+			if got := d.m.input.Value(); got != "" {
+				t.Errorf("%s should not fill the composer, got %q", key, got)
+			}
 		}
-		if got := d.m.input.Value(); got != "" {
-			t.Errorf("%s should not fill the composer, got %q", key, got)
-		}
-	}
+	})
 }
