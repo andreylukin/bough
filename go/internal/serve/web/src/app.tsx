@@ -5759,8 +5759,11 @@ export default function App() {
           onOpen={openSession}
           onBack={goList}
           onAssign={(id, p) => act(() => api.assign(id, p), "move the session")}
-          onCreate={async (name) => { const p = await api.newProject(name); await refresh(); return p; }}
-          onRename={async (slug, name) => { await api.renameProject(slug, name); await refresh(); }}
+          // Refused ones re-read too, as act does: a 409 for a project an
+          // agent wrote, or a rename refused because its yaml broke, is the
+          // server knowing something this list does not show yet.
+          onCreate={async (name) => { try { return await api.newProject(name); } finally { await refresh(); } }}
+          onRename={async (slug, name) => { try { await api.renameProject(slug, name); } finally { await refresh(); } }}
           onAssignMany={async (ids, p) => {
             // Per session: what moved is done, what did not stays selected there.
             const out = await Promise.allSettled(ids.map((id) => api.assign(id, p)));

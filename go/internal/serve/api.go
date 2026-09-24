@@ -815,7 +815,7 @@ func statusFor(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, ErrUnknownProject):
 		return http.StatusNotFound
-	case errors.Is(err, ErrBadName):
+	case errors.Is(err, ErrBadName), errors.Is(err, ErrBrokenProject):
 		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError

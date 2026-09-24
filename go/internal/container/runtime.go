@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
 	"runtime"
 )
@@ -123,11 +124,19 @@ var ErrNotImplemented = errors.New("container: runtime not implemented yet")
 
 // Default picks the runtime for this OS: Apple on darwin; on linux
 // podman when on PATH, else the nerdctl stub; otherwise Unsupported.
+//
+// BOUGH_CONTAINER=none picks Unsupported everywhere. The serve-level
+// test suites run the real binary, and without it a project listing
+// asks the host's engine about images: on a laptop that is the
+// person's own containers answering a test.
 func Default() Runtime {
-	return pick(runtime.GOOS, exec.LookPath)
+	return pick(runtime.GOOS, exec.LookPath, os.Getenv("BOUGH_CONTAINER"))
 }
 
-func pick(goos string, look func(string) (string, error)) Runtime {
+func pick(goos string, look func(string) (string, error), engine string) Runtime {
+	if engine == "none" {
+		return Unsupported{OS: goos + " (BOUGH_CONTAINER=none)"}
+	}
 	switch goos {
 	case "darwin":
 		return NewApple()

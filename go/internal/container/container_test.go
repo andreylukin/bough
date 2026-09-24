@@ -86,8 +86,15 @@ func TestPick(t *testing.T) {
 		}
 		return "", exec.ErrNotFound
 	}
-	if pick("darwin", none).Name() != "apple" || pick("linux", podman).Name() != "podman" || pick("linux", none).Name() != "unsupported" {
+	if pick("darwin", none, "").Name() != "apple" || pick("linux", podman, "").Name() != "podman" || pick("linux", none, "").Name() != "unsupported" {
 		t.Fatal("pick mismatch")
+	}
+	// BOUGH_CONTAINER=none: a test serve never reaches the host's engine,
+	// even on a machine that has one.
+	for _, goos := range []string{"darwin", "linux"} {
+		if r := pick(goos, podman, "none"); r.Name() != "unsupported" {
+			t.Fatalf("%s with BOUGH_CONTAINER=none picked %s", goos, r.Name())
+		}
 	}
 	if OrbName("s1") != "bough-orb-s1" {
 		t.Fatal(OrbName("s1"))

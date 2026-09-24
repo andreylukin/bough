@@ -6,7 +6,7 @@
 // example.
 import * as fs from 'fs';
 import * as path from 'path';
-import type { Page } from '@playwright/test';
+import type { Page, TestInfo } from '@playwright/test';
 import { test, expect, type Serve } from './serve';
 
 const modelDir = path.resolve(__dirname, '..', '..', 'model');
@@ -27,6 +27,20 @@ export interface Flow<C> {
   role: string;
   /** bough.yml for the test's serve (see helpers/control.ts). */
   config?: string;
+  /** Extra environment for that serve. */
+  env?: Record<string, string>;
+  /**
+   * One serve per worker instead of one per test: init must then bring
+   * the shared serve back to the spec's initial state itself. Worth it
+   * for a flow with many short paths, where the boot is most of a test.
+   */
+  shared?: boolean;
+  /**
+   * How far each read moves the page's clock (default POLL_STEP_MS). A
+   * flow whose spec models a poll as its own action sets 0: reads that
+   * ran the poll would make it happen where the path says it has not.
+   */
+  pollStepMs?: number;
   /** The Init step: bring the page to the spec's initial state. */
   init(page: Page, serve: Serve): Promise<C>;
   /** One per action of the role, keyed by the bare action name. */
@@ -71,12 +85,17 @@ const POLL_STEP_MS = 5_000;
 
 /** One test per generated path of flow.spec. */
 export function modelTests<C>(flow: Flow<C>): void {
+  const opts = { config: flow.config, env: flow.env };
+  // A worker option cannot be set inside a describe (it would force a
+  // new worker), so it is set here, at the top of the spec file.
+  if (flow.shared) test.use({ workerServeOpts: opts });
   test.describe(`model: ${flow.spec}`, () => {
-    if (flow.config) test.use({ serveOpts: { config: flow.config } });
+    if (!flow.shared && (flow.config || flow.env)) test.use({ serveOpts: opts });
 
     loadPaths(flow.spec).forEach((trace, i) => {
       const walk = trace.slice(1).map((s) => s.action.slice(flow.role.length + 1)).join(' → ');
-      test(`path ${i}: ${walk}`, async ({ serve, page }, info) => {
+      const title = `path ${i}: ${walk}`;
+      const run = async (serve: Serve, page: Page, info: TestInfo) => {
         const errors: string[] = [];
         let c: C | undefined;
         page.on('console', (m) => {
@@ -105,7 +124,8 @@ export function modelTests<C>(flow: Flow<C>): void {
             // state is polled, each read a few page-seconds after the
             // last; a wrong one fails with the last read.
             await expect.poll(async () => {
-              await page.clock.fastForward(POLL_STEP_MS);
+              const step = flow.pollStepMs ?? POLL_STEP_MS;
+              if (step > 0) await page.clock.fastForward(step);
               return flow.read(c);
             }, { message: `${where}: state`, timeout: 10_000 }).toEqual(roleState(flow.role, step.state));
             await invariants(page, flow.status(c), errors, where);
@@ -114,7 +134,9 @@ export function modelTests<C>(flow: Flow<C>): void {
           await flow.cleanup?.(c);
           saveTranscripts(serve, flow.spec, flow.sessions(c), info.title);
         }
-      });
+      };
+      if (flow.shared) test(title, ({ sharedServe, page }, info) => run(sharedServe, page, info));
+      else test(title, ({ serve, page }, info) => run(serve, page, info));
     });
   });
 }

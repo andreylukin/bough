@@ -1,0 +1,3337 @@
+{
+  "paths": [
+    {
+      "target": 66,
+      "links": [
+        0,
+        9,
+        30,
+        49,
+        66
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "saved",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.File",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "saved",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Delete",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        }
+      ]
+    },
+    {
+      "target": 67,
+      "links": [
+        0,
+        9,
+        30,
+        49,
+        67
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "saved",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.File",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "saved",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.FixYaml",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 68,
+      "links": [
+        0,
+        9,
+        30,
+        50,
+        68
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "saved",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Refresh",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "saved",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.File",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "saved",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 69,
+      "links": [
+        0,
+        9,
+        30,
+        50,
+        69
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "saved",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Refresh",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "saved",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Delete",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        }
+      ]
+    },
+    {
+      "target": 70,
+      "links": [
+        0,
+        9,
+        30,
+        50,
+        70
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "saved",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Refresh",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "saved",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.FixYaml",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 45,
+      "links": [
+        0,
+        6,
+        24,
+        45
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.File",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 46,
+      "links": [
+        0,
+        6,
+        24,
+        46
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 47,
+      "links": [
+        0,
+        6,
+        24,
+        47
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Delete",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        }
+      ]
+    },
+    {
+      "target": 48,
+      "links": [
+        0,
+        6,
+        24,
+        48
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "saved",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 51,
+      "links": [
+        0,
+        11,
+        31,
+        51
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.CreateTaken",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.CreateTaken",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 52,
+      "links": [
+        0,
+        11,
+        31,
+        52
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.CreateTaken",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.File",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 53,
+      "links": [
+        0,
+        11,
+        31,
+        53
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.CreateTaken",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.RenameBroken",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 54,
+      "links": [
+        0,
+        11,
+        31,
+        54
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.CreateTaken",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Delete",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        }
+      ]
+    },
+    {
+      "target": 55,
+      "links": [
+        0,
+        11,
+        31,
+        55
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.CreateTaken",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.DeleteMistyped",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 56,
+      "links": [
+        0,
+        11,
+        31,
+        56
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.CreateTaken",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "saved",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 57,
+      "links": [
+        0,
+        11,
+        31,
+        57
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.CreateTaken",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.FixYaml",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 58,
+      "links": [
+        0,
+        11,
+        31,
+        58
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.CreateTaken",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveYamlInvalid",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 59,
+      "links": [
+        0,
+        11,
+        32,
+        59
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.File",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Delete",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        }
+      ]
+    },
+    {
+      "target": 60,
+      "links": [
+        0,
+        11,
+        32,
+        60
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.File",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "saved",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 61,
+      "links": [
+        0,
+        11,
+        32,
+        61
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.File",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.FixYaml",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 62,
+      "links": [
+        2,
+        12,
+        37,
+        62
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.CreateFromRepo",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 63,
+      "links": [
+        2,
+        12,
+        37,
+        63
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.CreateFromRepo",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Delete",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        }
+      ]
+    },
+    {
+      "target": 64,
+      "links": [
+        2,
+        12,
+        37,
+        64
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.CreateFromRepo",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "saved",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 65,
+      "links": [
+        2,
+        14,
+        41,
+        65
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.CreateFromRepo",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "saved",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Refresh",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "saved",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 19,
+      "links": [
+        0,
+        6,
+        19
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.CreateTaken",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 20,
+      "links": [
+        0,
+        6,
+        20
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.File",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 21,
+      "links": [
+        0,
+        6,
+        21
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 22,
+      "links": [
+        0,
+        6,
+        22
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Delete",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        }
+      ]
+    },
+    {
+      "target": 23,
+      "links": [
+        0,
+        6,
+        23
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.DeleteMistyped",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 25,
+      "links": [
+        0,
+        6,
+        25
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveYamlInvalid",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 26,
+      "links": [
+        0,
+        6,
+        26
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 27,
+      "links": [
+        0,
+        9,
+        27
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.File",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 28,
+      "links": [
+        0,
+        9,
+        28
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 29,
+      "links": [
+        0,
+        9,
+        29
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Delete",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        }
+      ]
+    },
+    {
+      "target": 33,
+      "links": [
+        0,
+        11,
+        33
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.RenameBroken",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 34,
+      "links": [
+        0,
+        11,
+        34
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Refresh",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 35,
+      "links": [
+        2,
+        12,
+        35
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.CreateFromRepo",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 36,
+      "links": [
+        2,
+        12,
+        36
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.CreateFromRepo",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Delete",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        }
+      ]
+    },
+    {
+      "target": 38,
+      "links": [
+        2,
+        12,
+        38
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.CreateFromRepo",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 39,
+      "links": [
+        2,
+        14,
+        39
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.CreateFromRepo",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Rename",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Beta",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 40,
+      "links": [
+        2,
+        14,
+        40
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.CreateFromRepo",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveMemory",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "saved",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Delete",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        }
+      ]
+    },
+    {
+      "target": 42,
+      "links": [
+        2,
+        15,
+        42
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.CreateFromRepo",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Refresh",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 43,
+      "links": [
+        3,
+        17,
+        43
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.AgentCreate",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "none",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "none",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.CreateTaken",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 44,
+      "links": [
+        3,
+        17,
+        44
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.AgentCreate",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "none",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.AgentBreak",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "none",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Refresh",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "broken",
+            "Project#0.memory": "",
+            "Project#0.name": "alpha",
+            "Project#0.shown": "broken",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 4,
+      "links": [
+        0,
+        4
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.CreateTaken",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 5,
+      "links": [
+        0,
+        5
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.File",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 7,
+      "links": [
+        0,
+        7
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Delete",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        }
+      ]
+    },
+    {
+      "target": 8,
+      "links": [
+        0,
+        8
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.DeleteMistyped",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 10,
+      "links": [
+        0,
+        10
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.Create",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.SaveYamlInvalid",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 13,
+      "links": [
+        2,
+        13
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.CreateFromRepo",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "filed",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Delete",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        }
+      ]
+    },
+    {
+      "target": 16,
+      "links": [
+        3,
+        16
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.AgentCreate",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "none",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.CreateTaken",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 18,
+      "links": [
+        3,
+        18
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.AgentCreate",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "none",
+            "Project#0.slug": "alpha"
+          }
+        },
+        {
+          "action": "Project#0.Refresh",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "ok",
+            "Project#0.memory": "",
+            "Project#0.name": "Alpha",
+            "Project#0.shown": "ok",
+            "Project#0.slug": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "target": 1,
+      "links": [
+        1
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        },
+        {
+          "action": "Project#0.CreateBadName",
+          "state": {
+            "project": "role Project#0",
+            "Project#0.convo": "loose",
+            "Project#0.disk": "none",
+            "Project#0.memory": "",
+            "Project#0.name": "",
+            "Project#0.shown": "none",
+            "Project#0.slug": ""
+          }
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "states": {
+      "covered": 19,
+      "total": 19,
+      "uncovered": []
+    },
+    "transitions": {
+      "covered": 71,
+      "total": 71,
+      "uncovered": []
+    }
+  }
+}

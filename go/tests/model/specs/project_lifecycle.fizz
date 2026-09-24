@@ -1,0 +1,183 @@
+# A project's life as the control room and an agent see it: created,
+# renamed, broken and fixed, given a MEMORY.md, deleted — and the one
+# local conversation filed under it, which must outlive it
+# (go/docs/orbs.md, AGENTS.md "A project is a directory").
+#
+# One project slot, slug "alpha": "Alpha" is the only name offered for a
+# new project, so a second create is the 409 and never a second slot.
+#
+#   disk    project.yml under ~/.bough/projects/alpha: "none" | "ok" |
+#           "broken" (does not parse). GET /api/projects reads it on every
+#           call, so the API's list IS disk.
+#   name    the display name the list carries: the name: line, or the slug
+#           when the yaml does not parse (projectOf -> DisplayName).
+#   slug    "alpha" while the directory exists, "" once it is gone.
+#   shown   what the page's project list last read. Every person's action
+#           refreshes it (act/onCreate/onRename call refresh); an agent's
+#           write with the file tools does not, which is why it lags.
+#   memory  MEMORY.md: "" or "saved". Only an explicit save writes it.
+#   convo   one local conversation: "loose" (in no project) or "filed".
+#
+# Refusals leave the model where it was and are separate actions so each
+# is walked: CreateTaken (409), CreateBadName (400: "!!!" has no letter or
+# digit to name a directory after; the dialog refuses a blank name before
+# it is sent), RenameBroken (SetName re-parses the file and refuses),
+# SaveYamlInvalid (400 with the validation list), DeleteMistyped (the
+# dialog refuses a confirm that is not the slug; nothing is sent). What is
+# refused does not depend on MEMORY.md or the filed conversation, so the
+# refusals are walked only from states with neither: from every state
+# each would add a browser path and prove nothing new.
+#
+# A person mostly acts on a current page (the list re-reads after every
+# action). Two stale pages are walked on purpose: an agent's project on
+# disk but not yet listed, where Create comes back 409 for a project the
+# page does not show; and a listed project whose yaml an agent just broke,
+# where Rename is refused and File still works.
+#
+# Not modelled: migrateProjects (a one-shot boot migration of the v1 label
+# table, unit-tested in projects_test.go), archive (no caller in the web),
+# project-mode threads (they need an orb runtime), and ordering two
+# projects of the same name (a sort in Supervisor.Projects; one slot
+# cannot show it).
+
+role Project:
+    action Init:
+        self.disk = "none"
+        self.name = ""
+        self.slug = ""
+        self.shown = "none"
+        self.memory = ""
+        self.convo = "loose"
+
+    # 'New project…' (palette, Projects page, composer) -> POST /api/projects.
+    atomic action Create:
+        require self.disk == "none"
+        self.disk = "ok"
+        self.name = "Alpha"
+        self.slug = "alpha"
+        self.shown = self.disk
+
+    atomic action CreateTaken:
+        require self.disk != "none" and self.memory == "" and self.convo == "loose"
+        self.shown = self.disk
+
+    atomic action CreateBadName:
+        require self.disk == "none" and self.shown == self.disk
+        pass
+
+    # 'Create project from <repo>': the project, then its repo's loose
+    # sessions filed into it.
+    atomic action CreateFromRepo:
+        require self.disk == "none" and self.shown == self.disk and self.convo == "loose"
+        self.disk = "ok"
+        self.name = "Alpha"
+        self.slug = "alpha"
+        self.convo = "filed"
+        self.shown = self.disk
+
+    # Move the loose conversation into the project (Projects page).
+    atomic action File:
+        require self.shown != "none" and self.disk != "none" and self.convo == "loose"
+        self.convo = "filed"
+        self.shown = self.disk
+
+    # Rename… rewrites the name: line; the directory keeps its slug.
+    atomic action Rename:
+        require self.shown != "none" and self.disk == "ok"
+        self.name = "Beta" if self.name == "Alpha" else "Alpha"
+        self.shown = self.disk
+
+    atomic action RenameBroken:
+        require self.shown != "none" and self.disk == "broken" and self.memory == "" and self.convo == "loose"
+        self.shown = self.disk
+
+    # Delete… with the slug typed back: the directory (and MEMORY.md with
+    # it), images and caches go; the conversation stays, unassigned.
+    atomic action Delete:
+        require self.shown == self.disk and self.disk != "none"
+        self.disk = "none"
+        self.name = ""
+        self.slug = ""
+        self.memory = ""
+        self.convo = "loose"
+        self.shown = self.disk
+
+    atomic action DeleteMistyped:
+        require self.shown == self.disk and self.disk != "none" and self.memory == "" and self.convo == "loose"
+        pass
+
+    # PUT orb/files/MEMORY.md: prose, never validated, so it saves even
+    # while project.yml is broken.
+    atomic action SaveMemory:
+        require self.shown == self.disk and self.disk != "none" and self.memory == ""
+        self.memory = "saved"
+        self.shown = self.disk
+
+    # PUT orb/files/project.yml with a valid definition fixes a broken one.
+    atomic action FixYaml:
+        require self.shown == self.disk and self.disk == "broken"
+        self.disk = "ok"
+        self.name = "Alpha"
+        self.shown = self.disk
+
+    atomic action SaveYamlInvalid:
+        require self.shown == self.disk and self.disk != "none" and self.memory == "" and self.convo == "loose"
+        self.shown = self.disk
+
+    # An agent writes ~/.bough/projects/alpha/project.yml with the file
+    # tools; serve is not told.
+    atomic action AgentCreate:
+        require self.disk == "none"
+        self.disk = "ok"
+        self.name = "Alpha"
+        self.slug = "alpha"
+
+    # An agent (or a hand edit) leaves project.yml unparseable.
+    atomic action AgentBreak:
+        require self.disk == "ok"
+        self.disk = "broken"
+        self.name = "alpha"
+
+    # The page's 30 s projects poll (app.tsx refresh(poll)).
+    atomic fair action Refresh:
+        require self.shown != self.disk
+        self.shown = self.disk
+
+action Init:
+    project = Project()
+
+# The directory is the project: its slug is fixed at creation and a
+# rename only ever changes the name.
+always assertion SlugNeverChanges:
+    return project.disk == "none" or project.slug == "alpha"
+
+transition assertion SlugIsForever(before, after):
+    return before.project.slug == "" or after.project.slug == "" or before.project.slug == after.project.slug
+
+# Nothing of a deleted project outlives its directory: no name, no
+# MEMORY.md for a same-named successor to inherit, no conversation still
+# filed under the slug (a ghost group in the sidebar).
+always assertion NothingOutlivesTheDirectory:
+    return project.disk != "none" or (project.name == "" and project.memory == "" and project.convo != "filed")
+
+# Delete never removes a conversation.
+always assertion ConversationsSurvive:
+    return project.convo in ("loose", "filed")
+
+# A list read shows the disk as it is — a broken definition included,
+# which stays listed with its error rather than dropping out.
+transition assertion ListIsDisk(before, after):
+    return after.project.shown == before.project.shown or after.project.shown == after.project.disk
+
+# MEMORY.md changes only in a save of MEMORY.md (nothing else moves but
+# the list refresh that follows it) or when the directory goes: no turn,
+# poll or other write fills it in.
+transition assertion MemoryOnlyExplicit(before, after):
+    b = before.project
+    a = after.project
+    return b.memory == a.memory or a.disk == "none" or (b.disk == a.disk and b.name == a.name and b.convo == a.convo)
+
+# A project an agent made (or broke, or fixed) on disk reaches the page
+# without anyone acting: the 30 s poll catches the list up.
+always eventually assertion ListCatchesUp:
+    return project.shown == project.disk
