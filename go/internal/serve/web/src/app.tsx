@@ -18,7 +18,7 @@ import { lastTestRun } from "./runs";
 import { agentWakeNotes, agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
 import { ExecNote, JobLines, JobRow, LIFE_WORD, WorkButton, WorkContext, WorkDialog, WorkGlyph, WorkState, agentReports, jobIdOf, spokenDuration, splitExecNote, stateText, useChildren, useStopStore, useWork, useWorkAnnouncer, type WorkCtx } from "./work-ui";
 import { SkillPicker } from "./skills";
-import { AttChip, PromptWords, foldPastes, parsePrompt, promptNodes, wrapPaste } from "./prompt";
+import { AttChip, PromptWords, foldPastes, lostTags, parsePrompt, promptNodes, wrapPaste } from "./prompt";
 import { Mentions, triggerAt, type Trigger } from "./mention";
 import { FireInspection, HooksPage, type Fire, type Load, type Save } from "./hooks";
 import { MeView } from "./me";
@@ -1467,7 +1467,7 @@ export function Entry({ line, codes, nested, until }: { line: Line; codes: strin
             <path d="M12 3v6.5M12 14.5V21M3 12h6.5M14.5 12H21" />
           </svg>
         </span>
-        <p className="prompt-bubble steer-bubble"><PromptWords text={line.text} /></p>
+        <p className="prompt-bubble steer-bubble"><PromptWords text={line.text} /><SentImages text={line.text} /></p>
       </div>
     );
   }
@@ -2044,6 +2044,14 @@ function Thumb({ path, n }: { path: string; n: number }) {
       )}
     </a>
   );
+}
+
+/** The pictures a message carries, as its recorded prompt shows them: a
+ *  steer, a send still on its way and a queued message would otherwise
+ *  show a bare "[Image #N]", which reads as an image that never went. */
+function SentImages({ text }: { text: string }) {
+  const { images } = parsePrompt(text);
+  return images.length ? <span className="prompt-images">{images.map((p, i) => <Thumb key={i} path={p} n={i + 1} />)}</span> : null;
 }
 
 /** A result's text minus the code history prefixes onto it. */
@@ -3652,6 +3660,7 @@ function SendingPrompt({ p, accepted = false, clamp = true, onClip, clipped, onT
       <div className="prompt">
         <div className="prompt-text prompt-bubble">
           <p className={clamp ? "prompt-clamp" : ""} ref={(el) => { if (el) onClip?.(el); }}><PromptWords text={p.text} /></p>
+          <SentImages text={p.text} />
           {clipped && <button className="link" onClick={onToggle}>{clamp ? "Show full prompt" : "Show less"}</button>}
         </div>
         {/* The recorded prompt's action row keeps its height here, so the body does not drop when it lands. */}
@@ -3819,6 +3828,10 @@ function OrbFailure({ id, project, name, onRebuild, onRetry, rebuildErr }: { id:
 }
 
 const noLines: Line[] = [];
+
+/** A composer upload in flight, by session: see Thread's follow. */
+type Upload = { slot: number; tag: string; done: Promise<string> };
+const uploads = new Map<string, Set<Upload>>();
 
 export function Thread({ row, lines: given, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, onPortal, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
   /** Loaded sessions: names the parent of a background agent and lists this session's agents. */
@@ -4350,7 +4363,38 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   // Main's Start thread button and what it last said (see StartThreadCtx).
   const startThread = useContext(StartThreadCtx);
   const [threadNote, setThreadNote] = useState("");
-  const [attachErr, setAttachErr] = useState("");
+  // Back from another session, a tag whose upload failed meanwhile (or
+  // before) still says so: the alert that said it died with the old Thread.
+  const [attachErr, setAttachErr] = useState(() => {
+    if (uploads.get(row.id)?.size) return "";
+    const lost = lostTags(draft.trim(), images.current, pastes.current);
+    return lost.length ? `Attachment unavailable: remove ${lost.join(", ")}` : "";
+  });
+  // An upload is followed by whichever Thread shows its session: the one
+  // that started it, or the one mounted on the way back.
+  const alive = useRef(true);
+  const follow = async (u: Upload) => {
+    setUploading((n) => n + 1);
+    try {
+      const path = await u.done;
+      // Stored slot by slot, so an unmounted Thread's stale refs never
+      // overwrite what the mounted one has since.
+      try {
+        const a = JSON.parse(localStorage.getItem(attsKey) ?? "null") as { pastes: string[]; images: string[] } | null;
+        if (a && a.images[u.slot] === "") { a.images[u.slot] = path; localStorage.setItem(attsKey, JSON.stringify(a)); }
+      } catch { /* storage off */ }
+      if (alive.current) images.current[u.slot] = path;
+    } catch (err) {
+      if (alive.current) setAttachErr(`${u.tag} not attached: ${(err as Error).message}`);
+    } finally {
+      if (alive.current) setUploading((n) => n - 1);
+    }
+  };
+  useEffect(() => {
+    alive.current = true;
+    uploads.get(row.id)?.forEach((u) => void follow(u));
+    return () => { alive.current = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const insert = (s: string) => {
     const el = composer.current;
     const from = el?.selectionStart ?? draft.length, to = el?.selectionEnd ?? draft.length;
@@ -4369,15 +4413,12 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     const slots = files.map(() => images.current.push("") - 1);
     insert(slots.map((i, k) => `[${tag(files[k], i)}] `).join(""));
     for (const [k, f] of files.entries()) {
-      setUploading((n) => n + 1);
-      try {
-        images.current[slots[k]] = isImage(f) ? await api.attach(f) : await api.attachFile(row.id, f);
-        try { localStorage.setItem(attsKey, JSON.stringify({ pastes: pastes.current, images: images.current })); } catch { /* storage off */ }
-      } catch (err) {
-        setAttachErr(`${tag(f, slots[k])} not attached: ${(err as Error).message}`);
-      } finally {
-        setUploading((n) => n - 1);
-      }
+      const u: Upload = { slot: slots[k], tag: tag(f, slots[k]), done: isImage(f) ? api.attach(f) : api.attachFile(row.id, f) };
+      const set = uploads.get(row.id) ?? new Set<Upload>();
+      uploads.set(row.id, set.add(u));
+      const followed = follow(u);
+      void u.done.catch(() => {}).finally(() => set.delete(u));
+      await followed;
     }
   };
   // A paste and a drop carry the same DataTransfer; a drop has no default
@@ -4406,9 +4447,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     // Enter reaches here even while the Send button is disabled.
     if (!t || busy || uploading || askChanged || row.archived) return;
     // A tag whose content is gone is never sent as its placeholder.
-    const lost = [...t.matchAll(/\[(?:Image|File) #(\d+)\]|\[Pasted text #(\d+) \+\d+ lines\]/g)]
-      .filter((m) => m[1] ? !images.current[+m[1] - 1] : pastes.current[+m[2] - 1] === undefined);
-    if (lost.length) { setAttachErr(`Attachment unavailable: remove ${lost.map((m) => m[0]).join(", ")}`); return; }
+    const lost = lostTags(t, images.current, pastes.current);
+    if (lost.length) { setAttachErr(`Attachment unavailable: remove ${lost.join(", ")}`); return; }
     setDraft("");
     const full = expand(t);
     pastes.current = []; images.current = [];
@@ -4429,6 +4469,9 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const enqueue = () => {
     const t = draft.trim();
     if (!t || uploading || draftAsk || askChanged) return;
+    // Held to send's rule: queued, a lost tag would go out as its placeholder.
+    const lost = lostTags(t, images.current, pastes.current);
+    if (lost.length) { setAttachErr(`Attachment unavailable: remove ${lost.join(", ")}`); return; }
     setDraft("");
     const full = expand(t);
     pastes.current = []; images.current = [];
@@ -4715,7 +4758,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><circle cx="6" cy="6" r="4.75" /><path d="M6 3.5V6l1.75 1.25" strokeLinecap="round" /></svg>
                   <span className="visually-hidden">Queued</span>
                 </span>
-                <span className="queued-text">{m.text}</span>
+                <span className="queued-text"><PromptWords text={m.text} /></span>
+                <SentImages text={m.text} />
                 {/* Edit never lands on a newer draft, as with a failed send. */}
                 <button className="link composer-edit" disabled={Boolean(draft.trim())} title={draft.trim() ? "Send or clear the current draft first" : undefined}
                   onClick={() => { toDraft(m.text); setQueued((q) => q.filter((x) => x.id !== m.id)); composer.current?.focus(); }}><span className="edit-word">Edit</span>{draft.trim() && <span className="edit-why">Clear the draft to edit</span>}</button>
