@@ -529,15 +529,6 @@ func (a *orbImageBuildAdapter) OpenOrb() error {
 	return nil
 }
 
-// qualify names a role state the way the graph does: Project#0.<field>.
-func qualify(st map[string]any) map[string]any {
-	out := map[string]any{}
-	for k, v := range st {
-		out["Project#0."+k] = v
-	}
-	return out
-}
-
 // recorded wraps an action so that every step the gate let through is
 // written down with the state read right after it: the walk as the
 // server lived it, which the test replays on the graph itself rather
