@@ -358,6 +358,10 @@ export function Palette(props: PaletteProps) {
     field.current?.focus();
   }, [open, initialQuery]);
 
+  // Another mode is another list: a row picked in the last one (⌥N's
+  // "New project") must not come back as Enter's when that mode does.
+  useEffect(() => { setAtId(null); }, [mode]);
+
   useEffect(() => {
     if (!open) return;
     return closeOnNavigate(window, onClose, window.matchMedia?.("(max-width:720px)") ?? null);
