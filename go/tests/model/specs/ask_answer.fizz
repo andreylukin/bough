@@ -1,0 +1,205 @@
+# The agent asks the person a question (tools.ask, then tools.secret) and
+# the person answers from the web. Recipe: go/tests/model/README.md.
+#
+# One question lives in three places, and this spec keeps all three
+# because they do not always agree:
+#   open   the child's Asker (plugins/ask): the tool call blocked on it.
+#   armed  serve's s.asks[id] (supervisor.go emitLocked/Answer/drop): it
+#          gates POST /prompt (409) and POST /answer (409 on another id,
+#          ErrNoAsk when nothing is armed or the child is gone).
+#   ask    the row's ask (StatusOf over history, api.go rowOf): what the
+#          page shows, and what makes the status needs-you.
+# q1 is a plain question with options, q2 a secret (tools.secret). Each
+# is asked at most once, so the graph stays finite.
+#
+# draft is the composer: "" blank, "msg" a draft that is a message, "q1"
+# or "q2" a draft that answers that question (app.tsx draftAsk: decided
+# when you start typing, from the question on screen then). inflight is
+# the POST the page sent and serve has not handled yet ("q2nl": an
+# answer to the secret with a newline in it). A refused POST (409/400)
+# changes nothing the model tracks: the page reports it and keeps
+# nothing armed.
+#
+# The last four fields are what an ask/answer entry in history would
+# betray, sticky once set: msgAnswered (a message was taken as an
+# answer), wrongAnswer (an answer written for one question answered
+# another), secretLogged (history kept a secret's text rather than
+# "[secret stored]") and split (a secret reached the child with a
+# newline in it). The product never sets any of them; they exist so the
+# invariants can say so, and so the adapter can read them off history.
+
+role Session:
+    action Init:
+        self.status = "running"
+        self.alive = True
+        self.asked = 0
+        self.open = ""
+        self.armed = ""
+        self.ask = ""
+        self.draft = ""
+        self.inflight = ""
+        self.msgAnswered = False
+        self.wrongAnswer = False
+        self.secretLogged = False
+        self.split = False
+
+    # The model calls tools.ask: the child records kind "ask" and emits
+    # it; serve arms it and the row turns needs-you. Asks never overlap
+    # (a block blocks on its ask; native asks go oneAtATime).
+    atomic action AskPlain:
+        require self.alive and self.status == "running" and self.open == "" and self.asked == 0
+        self.asked = 1
+        self.open = "q1"
+        self.armed = "q1"
+        self.ask = "q1"
+        self.status = "needs-you"
+
+    atomic action AskSecret:
+        require self.alive and self.status == "running" and self.open == "" and self.asked == 1
+        self.asked = 2
+        self.open = "q2"
+        self.armed = "q2"
+        self.ask = "q2"
+        self.status = "needs-you"
+
+    # Starting a draft decides what it is: an answer to the question on
+    # screen, or a message when there is none.
+    atomic action Type:
+        require self.draft == "" and self.inflight == ""
+        if self.ask != "":
+            self.draft = self.ask
+        else:
+            self.draft = "msg"
+
+    # The draft was written for another question (or none): "Use for
+    # this question" / "Keep as message" (app.tsx askChanged note).
+    atomic action UseForQuestion:
+        require self.draft != "" and self.ask != "" and self.draft != self.ask
+        self.draft = self.ask
+
+    atomic action KeepAsMessage:
+        require self.draft != "" and self.draft != "msg" and self.draft != self.ask
+        self.draft = "msg"
+
+    # Enter / Send. Disabled while askChanged or a send is in flight; an
+    # answer draft POSTs /answer {text, ask: draftAsk}, a message /prompt.
+    atomic action Send:
+        require self.inflight == "" and self.draft != ""
+        require (self.draft == "msg" and self.ask == "") or self.draft == self.ask
+        self.inflight = self.draft
+        self.draft = ""
+
+    # The same, with a multi-line answer to the secret.
+    atomic action SendMultiline:
+        require self.inflight == "" and self.draft == "q2" and self.ask == "q2"
+        self.inflight = "q2nl"
+        self.draft = ""
+
+    # serve handles the POST the page sent.
+    atomic fair action Deliver:
+        require self.inflight != ""
+        if self.inflight == "msg":
+            if self.armed != "":
+                # api.go prompt: 409 while an ask is armed.
+                pass
+            elif self.open != "":
+                # Unreachable while armed tracks open: the child would
+                # read the line as the answer.
+                self.record(self.open, "msg", False)
+            else:
+                # Steers the running turn, or starts one (respawning the
+                # child when it is gone).
+                self.alive = True
+                self.status = "running"
+        else:
+            target = self.inflight
+            if target == "q2nl":
+                target = "q2"
+            if self.armed == "" or self.armed != target:
+                # ErrNoAsk (nothing armed, or the child is gone) or a
+                # newer question is armed (api.go answer): 409.
+                pass
+            elif self.inflight == "q2nl" and self.armed == "q2":
+                # A secret with a newline: ErrBadAnswer, 400.
+                pass
+            else:
+                # Answer writes the line and disarms. The child hands it
+                # to whatever ask it has open (hlAnswerPending never
+                # looks at the POSTed id); with none open (a stale arm,
+                # see Resolve) Asker.Answer fails and the answer is lost.
+                self.armed = ""
+                if self.open != "":
+                    self.record(self.open, target, self.inflight == "q2nl")
+        self.inflight = ""
+
+    # The ask resolves with no answer: tools.ask timed out, and the
+    # block's result (code mode) or the ask call's end (engine) is
+    # recorded. History stops showing it; serve's arm is only cleared by
+    # done/cancelled/error/exit, so it stays armed until the turn ends.
+    atomic fair action Resolve:
+        require self.alive and self.open != ""
+        self.open = ""
+        self.ask = ""
+        self.status = "running"
+
+    atomic fair action Finish:
+        require self.alive and self.status == "running" and self.open == ""
+        self.status = "done"
+        self.armed = ""
+        self.ask = ""
+
+    # The child is gone (crash, restart) while its question is on
+    # screen. drop() disarms; StatusOf keeps a question only while its
+    # child is alive, so the open turn reads interrupted. (An exit with
+    # no question armed is the lifecycle spec's business, not this one.)
+    atomic action Exit:
+        require self.alive and self.status == "needs-you"
+        self.alive = False
+        self.open = ""
+        self.armed = ""
+        self.ask = ""
+        self.status = "interrupted"
+
+    # The Asker records ask/answer and the blocked call returns: the
+    # question leaves the screen and the turn runs on.
+    # Asker.Answer keeps "[secret stored]" for a secret, never the text.
+    atomic func record(question, source, newline):
+        if newline:
+            self.split = True
+        if source == "msg":
+            self.msgAnswered = True
+        elif source != question:
+            self.wrongAnswer = True
+        self.open = ""
+        self.ask = ""
+        self.status = "running"
+
+action Init:
+    session = Session()
+
+# While an ask is armed the next stdin line is the answer, so /prompt is
+# refused: a message never becomes an answer.
+always assertion MessageNeverAnswers:
+    return not session.msgAnswered
+
+# An answer written for question A is never delivered to question B.
+always assertion AnswerReachesItsQuestion:
+    return not session.wrongAnswer
+
+# needs-you only while the asking child is alive to hear the answer, and
+# the question on screen is exactly what makes the status needs-you.
+always assertion NeedsYouOnlyWhileAlive:
+    return (session.status == "needs-you") == (session.ask != "") and (session.ask == "" or session.alive)
+
+# A secret answer is never logged and never carries a newline.
+always assertion SecretNeverLogged:
+    return not session.secretLogged and not session.split
+
+# An armed ask eventually resolves (answer, timeout, cancel, exit) and
+# needs-you clears; serve's arm clears too, at the latest when the turn
+# ends.
+always eventually assertion NeedsYouClears:
+    return session.status != "needs-you"
+
+always eventually assertion ArmClears:
+    return session.armed == ""
