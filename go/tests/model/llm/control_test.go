@@ -251,3 +251,23 @@ func TestControlBlock(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }
+
+// A turn with calls makes them: the engine runs the tool in the
+// session's cwd and asks again, and the next queued turn answers. This
+// is how a test has the agent edit a file through the shell.
+func TestControlCalls(t *testing.T) {
+	t.Parallel()
+	r := start(t)
+	Queue(t, r.dir(), "001", Turn{Mode: "ok", Calls: []Call{{Name: "bash", Args: map[string]any{"command": "printf shell > made.txt"}}}})
+	Queue(t, r.dir(), "002", Turn{Mode: "ok", Text: "made it"})
+	r.send("hello")
+	r.waitFor("[assistant] made it")
+	code, out := r.finish()
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(r.home), "cwd", "made.txt"))
+	if err != nil || string(b) != "shell" {
+		t.Fatalf("the bash call did not run: %q %v\n%s", b, err, out)
+	}
+}

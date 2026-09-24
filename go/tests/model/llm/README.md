@@ -14,6 +14,7 @@ llm.dir=<path>`), renames it `<name>.taken`, and answers as it says:
 | `{"mode":"ok","text":"done"}` | finishes with `text` |
 | `{"mode":"error","error":"boom"}` | fails; the turn errors and headless exits 1 |
 | `{"mode":"slow","text":"a b c","delay_ms":300}` | streams `text` a word per `delay_ms` |
+| `{"mode":"ok","calls":[{"name":"bash","args":{"command":"…"}}]}` | makes those tool calls; the engine runs them and its next request takes the next queued turn |
 | `{"mode":"block","text":"done"}` | holds until `<name>.release` exists, then finishes with `text`; a release written by `ReleaseWith` answers as its turn says instead (`{"mode":"error"}` fails it) |
 
 An empty queue answers `[llm-control: no turn queued in <dir>]` rather

@@ -17,12 +17,22 @@ import (
 )
 
 // Turn is one queued model response. Mode is "ok", "error", "slow" or
-// "block".
+// "block". Calls, on an "ok" turn, are tool calls the response makes
+// instead of text: the engine runs them and asks again, and the next
+// queued turn answers that request.
 type Turn struct {
 	Mode    string `json:"mode"`
 	Text    string `json:"text,omitempty"`
 	Error   string `json:"error,omitempty"`
 	DelayMS int    `json:"delay_ms,omitempty"`
+	Calls   []Call `json:"calls,omitempty"`
+}
+
+// Call is one tool call: the engine's tool name ("bash", "write", ...)
+// and its arguments.
+type Call struct {
+	Name string         `json:"name"`
+	Args map[string]any `json:"args"`
 }
 
 // Dir is the control dir the row reads when its config names none.

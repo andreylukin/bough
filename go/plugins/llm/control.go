@@ -85,10 +85,18 @@ func (c *controlLLM) AgentAdapter(o agentllm.Options) (agentllm.Adapter, error) 
 }
 
 type controlTurn struct {
-	Mode    string `json:"mode"`
-	Text    string `json:"text"`
-	Error   string `json:"error"`
-	DelayMS int    `json:"delay_ms"`
+	Mode    string        `json:"mode"`
+	Text    string        `json:"text"`
+	Error   string        `json:"error"`
+	DelayMS int           `json:"delay_ms"`
+	Calls   []controlCall `json:"calls"`
+}
+
+// controlCall is a tool call an "ok" turn makes, so a test can have the
+// agent run a real tool (a shell edit the write tools never report).
+type controlCall struct {
+	Name string          `json:"name"`
+	Args json.RawMessage `json:"args"`
 }
 
 // take claims the next queued turn. A name the test is still writing
@@ -150,6 +158,9 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 	}
 	switch turn.Mode {
 	case "ok", "":
+		if len(turn.Calls) > 0 {
+			return a.calls(ctx, name, turn.Calls)
+		}
 		return a.reply(ctx, turn.Text, 0)
 	case "error":
 		return ullm.Response{}, errors.New(turn.Error)
@@ -210,6 +221,30 @@ func (a *controlAdapter) reply(ctx context.Context, text string, delay time.Dura
 		Output: []ullm.Item{{Type: ullm.ItemMessage, Data: ullm.Message{Role: ullm.RoleAssistant, Text: text}}},
 		Usage:  u,
 	}, nil
+}
+
+// calls answers with tool calls only; the engine runs them and makes the
+// next request, which takes the next queued turn.
+func (a *controlAdapter) calls(ctx context.Context, name string, cs []controlCall) (ullm.Response, error) {
+	seq := agentllm.SeqOf(ctx)
+	var out []ullm.Item
+	for i, c := range cs {
+		id := fmt.Sprintf("control_%s_%d", name, i+1)
+		args := string(c.Args)
+		if args == "" {
+			args = "{}"
+		}
+		if a.opts.Sink != nil {
+			a.opts.Sink(agentllm.Delta{Seq: seq, Attempt: 1, Kind: agentllm.DeltaToolStart, CallID: id, Name: c.Name})
+		}
+		out = append(out, ullm.Item{Type: ullm.ItemToolCall, Data: ullm.ToolCall{CallID: id, Name: c.Name, Arguments: args}})
+	}
+	u := ullm.Usage{InputTokens: 1, OutputTokens: 1}
+	a.c.mu.Lock()
+	addAgentUsage(&a.c.usage, u)
+	n := a.c.n
+	a.c.mu.Unlock()
+	return ullm.Response{ID: fmt.Sprintf("control-%d", n), Stop: ullm.StopComplete, Output: out, Usage: u}, nil
 }
 
 func controlWords(s string) []string {
