@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/andreylukin/bough/kernel"
@@ -198,26 +199,31 @@ func TestStoredNoticesNoNotifySeam(t *testing.T) {
 
 // A notice appended while the session is already running (a TUI
 // parent serve does not run) reaches it without a remount, once.
+// The session polls its file on a real ticker (storedNoticePoll); the
+// bubble's fake clock runs those polls without waiting them out.
 func TestStoredNoticeDeliveredWhileRunning(t *testing.T) {
 	t.Parallel()
-	path := seedNotices(t)
-	no := newNotifyNotices()
-	kinds, done, stop := mountStored(t, path, no)
-	defer stop()
-	waitDone(t, done, kinds)
-	if _, err := history.AppendFile(path, "notice", map[string]any{"id": "n3", "to": "parent", "text": "late"}); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(5 * time.Second)
-	for !strings.HasSuffix(strings.Join(no.delivered(), "|"), "|late") {
-		if time.Now().After(deadline) {
-			t.Fatalf("delivered %q, want the late notice", no.delivered())
+	synctest.Test(t, func(t *testing.T) {
+		path := seedNotices(t)
+		no := newNotifyNotices()
+		kinds, done, stop := mountStored(t, path, no)
+		defer stop()
+		waitDone(t, done, kinds)
+		if _, err := history.AppendFile(path, "notice", map[string]any{"id": "n3", "to": "parent", "text": "late"}); err != nil {
+			t.Fatal(err)
 		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	waitDone(t, done, kinds)
-	time.Sleep(1500 * time.Millisecond) // another poll: must not re-deliver
-	if got := strings.Join(no.delivered(), "|"); got != "first|second|late" {
-		t.Fatalf("delivered %q", got)
-	}
+		deadline := time.Now().Add(5 * time.Second)
+		for !strings.HasSuffix(strings.Join(no.delivered(), "|"), "|late") {
+			if time.Now().After(deadline) {
+				t.Fatalf("delivered %q, want the late notice", no.delivered())
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		waitDone(t, done, kinds)
+		time.Sleep(3 * storedNoticePoll) // more polls: must not re-deliver
+		synctest.Wait()
+		if got := strings.Join(no.delivered(), "|"); got != "first|second|late" {
+			t.Fatalf("delivered %q", got)
+		}
+	})
 }

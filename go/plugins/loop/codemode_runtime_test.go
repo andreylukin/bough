@@ -100,6 +100,7 @@ func TestCodemodeRuntimeLoopCapsOutput(t *testing.T) {
 // esc mid-block: the turn ends cancelled within a bound, and the same
 // VM runs the next block.
 func TestCodemodeRuntimeLoopCancelSpin(t *testing.T) {
+	t.Parallel()
 	cm := codemode.New(30 * time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(200*time.Millisecond, cancel)
