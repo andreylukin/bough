@@ -18,7 +18,7 @@ import { lastTestRun } from "./runs";
 import { agentWakeNotes, agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
 import { ExecNote, JobLines, JobRow, LIFE_WORD, WorkButton, WorkContext, WorkDialog, WorkGlyph, WorkState, agentReports, jobIdOf, spokenDuration, splitExecNote, stateText, useChildren, useStopStore, useWork, useWorkAnnouncer, type WorkCtx } from "./work-ui";
 import { SkillPicker } from "./skills";
-import { AttChip, PromptWords, foldPastes, parsePrompt, promptNodes, wrapPaste } from "./prompt";
+import { AttChip, PromptWords, foldPastes, lostTags, parsePrompt, promptNodes, wrapPaste } from "./prompt";
 import { Mentions, triggerAt, type Trigger } from "./mention";
 import { FireInspection, HooksPage, type Fire, type Load, type Save } from "./hooks";
 import { MeView } from "./me";
@@ -4386,9 +4386,8 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     // Enter reaches here even while the Send button is disabled.
     if (!t || busy || uploading || askChanged || row.archived) return;
     // A tag whose content is gone is never sent as its placeholder.
-    const lost = [...t.matchAll(/\[(?:Image|File) #(\d+)\]|\[Pasted text #(\d+) \+\d+ lines\]/g)]
-      .filter((m) => m[1] ? !images.current[+m[1] - 1] : pastes.current[+m[2] - 1] === undefined);
-    if (lost.length) { setAttachErr(`Attachment unavailable: remove ${lost.map((m) => m[0]).join(", ")}`); return; }
+    const lost = lostTags(t, images.current, pastes.current);
+    if (lost.length) { setAttachErr(`Attachment unavailable: remove ${lost.join(", ")}`); return; }
     setDraft("");
     const full = expand(t);
     pastes.current = []; images.current = [];
@@ -4409,6 +4408,9 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const enqueue = () => {
     const t = draft.trim();
     if (!t || uploading || draftAsk || askChanged) return;
+    // Held to send's rule: queued, a lost tag would go out as its placeholder.
+    const lost = lostTags(t, images.current, pastes.current);
+    if (lost.length) { setAttachErr(`Attachment unavailable: remove ${lost.join(", ")}`); return; }
     setDraft("");
     const full = expand(t);
     pastes.current = []; images.current = [];

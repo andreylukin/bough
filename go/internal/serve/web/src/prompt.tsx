@@ -13,6 +13,13 @@ export function wrapPaste(text: string, lines: number) {
   return `<pasted-text lines="${lines}">\n${text}\n</pasted-text>`;
 }
 
+/** The draft's "[Image #N]", "[File #N]" and "[Pasted text #N +L lines]" tags whose content is gone (a failed upload, an empty slot): sending one would send the placeholder. */
+export function lostTags(text: string, images: string[], pastes: string[]) {
+  return [...text.matchAll(/\[(?:Image|File) #(\d+)\]|\[Pasted text #(\d+) \+\d+ lines\]/g)]
+    .filter((m) => m[1] ? !images[+m[1] - 1] : pastes[+m[2] - 1] === undefined)
+    .map((m) => m[0]);
+}
+
 /** A sent prompt back into the composer: each wrapped paste becomes its tag again, its text handed to `keep`, which returns the tag's number. */
 export function foldPastes(text: string, keep: (body: string) => number) {
   return text.replace(PASTE, (_, n, body) => `[Pasted text #${keep(body)} +${n} lines]`);
