@@ -7,7 +7,32 @@ package ui
 import (
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
+
+// A pasted multi-line command with control bytes in it: the Shell
+// header shows the first line only, cleaned, and no control byte
+// reaches the frame. The paste is TestPropFrameInvariants' shrunk
+// failure verbatim: the header carried the whole command, wrapped, and
+// its width clip left a raw \x7f on the row under it.
+func TestBangHeaderKeepsTheCommandToOneCleanLine(t *testing.T) {
+	t.Parallel()
+	d := newDrv(t, 21, 5, cfgWith(t, nil, nil, histWith("/tmp/h.jsonl", "one", "two")))
+	d.typeStr("!")
+	d.feed(tea.PasteMsg{Content: "```js\n\x7f\n\n\x1b[31mred\x1b[0m\x1b]8;;http://x\alink\x1b]8;;\a\n\n\x00 \x1b[31mred\x1b[0m\n\n6a62411102b918e218704951119a207953e61d7f0cfc110911736a8a099820d1f7dbf8ee330c7741\ny z13-K. 日本語 v 6712a66510a046f8350001100023f16810010e7b21001dc603331a7d311400992d401ac851a50bb5"})
+	next, _ := d.m.Update(keyEnter()) // the shell itself is not run
+	d.m = next.(model)
+	d.feed(keyTab())
+	p := ansi.Strip(d.view())
+	if !strings.Contains(p, "Shell · ```js") {
+		t.Errorf("header should name the command's first line, cleaned:\n%s", p)
+	}
+	if strings.ContainsAny(p, "\x7f\x1b") {
+		t.Errorf("control bytes reached the frame:\n%q", p)
+	}
+}
 
 func TestBangRunsShellAndRendersLabeledBlock(t *testing.T) {
 	t.Parallel()

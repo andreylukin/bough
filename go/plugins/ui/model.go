@@ -577,7 +577,10 @@ func (m *model) header(b *block, th theme) string {
 	}
 	if cmd, ok := strings.CutPrefix(b.label, "! "); ok && b.kind == "result" {
 		// A "!" shell result: the header says what ran and how it
-		// ended; the output lives only in the body, never twice.
+		// ended; the output lives only in the body, never twice. A
+		// pasted multi-line command names its first line, cleaned: the
+		// rest would spill raw bytes onto the rows under the header.
+		cmd = sanitizeText(strings.SplitN(cmd, "\n", 2)[0])
 		head = fmt.Sprintf("%s Shell · %s · %s · %d %s", glyph, cmd, bangExit(b.text), n, unit)
 	} else if b.kind != "code" || tag == "code js" {
 		head += ": " + strings.SplitN(b.text, "\n", 2)[0]
