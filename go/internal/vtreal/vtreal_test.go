@@ -207,7 +207,9 @@ func (a *app) settled() string {
 	same := 0
 	for time.Since(began) < 60*every {
 		time.Sleep(10 * time.Millisecond)
-		if time.Since(a.term.LastOutput()) >= quiet && time.Since(began) >= quiet {
+		// A terminal that never stamped (no output yet, or one built
+		// without stampWriter) has no byte clock: samples only.
+		if last := a.term.LastOutput(); last.UnixNano() != 0 && time.Since(last) >= quiet && time.Since(began) >= quiet {
 			return a.text()
 		}
 		if time.Since(prevAt) < every {

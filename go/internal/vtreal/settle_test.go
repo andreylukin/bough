@@ -30,6 +30,31 @@ func settleApp(t *testing.T, script string) *app {
 	return &app{t: t, term: term, cmd: cmd, cols: 40, rows: 5}
 }
 
+// On a throttled terminal (64 bytes every 50ms) the screen keeps
+// changing until the output has drained: settled must wait for the
+// tail, whatever terminal it runs on.
+func TestSettledWaitsForASlowDrain(t *testing.T) {
+	t.Parallel()
+	term, err := slowterminalNew(t, 40, 5, 64, 50*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "-c", `printf 'HEAD'; i=0; while [ $i -lt 20 ]; do printf '0123456789'; i=$((i+1)); done; printf 'TAIL'; exec sleep 30`)
+	if err := term.Start(cmd); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+		_ = term.Close()
+	})
+	a := &app{t: t, term: term, cmd: cmd, cols: 40, rows: 5}
+	a.waitFor("HEAD")
+	if s := a.settled(); !strings.Contains(s, "TAIL") {
+		t.Fatalf("settled returned before a throttled terminal drained:\n%s", s)
+	}
+}
+
 // A pause shorter than the quiet window is not the end of the frame:
 // the renderer can stall between painting two halves of one screen.
 func TestSettledWaitsOutAShortPause(t *testing.T) {

@@ -92,8 +92,8 @@ func retryBackoffThenResizeAndQuitTerminal(t *testing.T, cols, rows int, raw io.
 	})
 	term.Emu = emu
 	setTitle := func(s string) { term.mu.Lock(); term.title = s; term.mu.Unlock() }
-	go io.Copy(io.MultiWriter(newTitleFilter(emu, setTitle), raw), pty) //nolint:errcheck // app output → emulator + raw
-	go io.Copy(pty, emu)                                                //nolint:errcheck // keys → app
+	go io.Copy(io.MultiWriter(newTitleFilter(stampWriter{emu, &term.lastOut}, setTitle), raw), pty) //nolint:errcheck // app output → emulator + raw
+	go io.Copy(pty, emu)                                                                            //nolint:errcheck // keys → app
 	return term
 }
 

@@ -63,7 +63,7 @@ func slowterminalNew(tb testing.TB, cols, rows, chunk int, every time.Duration) 
 	})
 	t.Emu = emu
 	setTitle := func(s string) { t.mu.Lock(); t.title = s; t.mu.Unlock() }
-	out := newTitleFilter(emu, setTitle)
+	out := newTitleFilter(stampWriter{emu, &t.lastOut}, setTitle)
 	go func() {
 		buf := make([]byte, chunk)
 		for {
