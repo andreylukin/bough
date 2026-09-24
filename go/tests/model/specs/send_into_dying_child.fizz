@@ -35,6 +35,11 @@
 #   - Stop on a line lost in the tail finds the child with unread set
 #     and no turn (cancelled cleared inTurn): the interrupt is HELD, a
 #     200, and the page sits on "Stopping" with the lost line unlanded.
+#     Stop on a lost line after a /model respawned the child finds a
+#     live idle child with nothing unread: the SIGINT makes it exit.
+#   - A turn TailTake started does not stay open: the unmount cancels
+#     it and records "cancelled", so Exit leaves it stopped, not
+#     interrupted (found by the server walk).
 #   - /think writes no history entry at all (plugins/commands/think.go),
 #     so meta.Effort never survives any respawn, dying window or not.
 #     Only /model is modelled; Effort is a finding, not a state.
@@ -62,6 +67,8 @@
 #             next child replays it) | lost (meta b, never recorded:
 #             the next child runs a)
 #   stopping  the page's Stop state: "" | stopping | failed ("Retry stop")
+#   modelFirst  the /model line is ahead of the prompt line in the same
+#             pipe. stdin is FIFO: a child reads the earlier line first.
 
 role Session:
     action Init:
@@ -75,6 +82,7 @@ role Session:
         self.line = ""
         self.model = "a"
         self.stopping = ""
+        self.modelFirst = False
 
     # ensure: a dropped lease respawns with -r, whose history store
     # closes a dangling turn as cancelled {interrupted: true}.
@@ -86,12 +94,11 @@ role Session:
 
     # Send's write on whatever ensure handed back.
     atomic func deliver():
-        if self.child == "alive":
+        if self.child in ("alive", "tail"):
             self.send = "accepted"
-            self.line = "queued"
-        elif self.child == "tail":
-            self.send = "accepted"
-            self.line = "tail"
+            self.line = "queued" if self.child == "alive" else "tail"
+            if self.model in ("queued", "tail"):
+                self.modelFirst = True
         else:
             # EPIPE: the process exited, drop has not run.
             self.send = "failed"
@@ -136,6 +143,7 @@ role Session:
         elif self.child == "tail":
             self.model = "tail"
         # dead: EPIPE, a 500, meta unchanged.
+        self.modelFirst = self.model in ("queued", "tail") and self.line not in ("queued", "tail")
 
     # POST /answer on the armed ask.
     atomic action Answer:
@@ -160,7 +168,9 @@ role Session:
         if self.child == "none":
             # 404 unknown session: "Retry stop".
             self.stopping = "failed"
-        elif self.child == "alive" and self.status == "running":
+        elif self.child == "alive":
+            # A running turn, or a respawned idle child while the page
+            # still shows a lost line: nothing unread, so a SIGINT.
             self.sigint = True
         # tail or dead: a held interrupt (unread, no turn) or a SIGINT to
         # an exiting process: 200, and nothing happens.
@@ -171,18 +181,27 @@ role Session:
     # the input.
     atomic fair action Take:
         require self.line == "queued" and self.child == "alive"
+        require not (self.model == "queued" and self.modelFirst)
         self.line = ""
         self.send = ""
         self.status = "running"
         self.lostAnswer = False
 
+    # Not behind the prompt line, and not behind an answer the SIGINT
+    # beat (that answer is read, and dropped, only after the cancel).
     atomic fair action ModelRead:
         require self.model == "queued" and self.child == "alive"
+        require not (self.line == "queued" and not self.modelFirst)
+        require not (self.lostAnswer and self.sigint)
         self.model = "b"
+        self.modelFirst = False
 
+    # The child reads its stdin long before a model request comes back
+    # with a call: a /model written before the ask is read before it
+    # arms. (Read after, the child would take the line as the answer.)
     atomic action Ask:
         require self.status == "running" and self.child == "alive" and not self.sigint
-        require not self.ask
+        require not self.ask and self.model != "queued"
         self.ask = True
 
     atomic action Finish:
@@ -195,16 +214,25 @@ role Session:
     atomic fair action ChildSignal:
         require self.sigint and self.child == "alive"
         self.sigint = False
-        self.ask = False
-        self.status = "stopped"
-        self.child = "tail"
-        if self.model == "queued":
-            self.model = "tail"
+        if self.status == "running":
+            self.ask = False
+            self.status = "stopped"
+            self.child = "tail"
+            if self.model == "queued":
+                self.model = "tail"
+        else:
+            # An idle child has no turn to cancel: it unmounts and exits
+            # at once, with no tail, and a /model it had not read dies.
+            self.child = "dead"
+            if self.model == "queued":
+                self.model = "lost"
+            self.modelFirst = False
 
     # A tail line read before Unmount disposes hlInputs: the loop records
     # its input and starts a turn that the unmount kills.
     atomic action TailTake:
         require self.line == "tail" and self.child == "tail"
+        require not (self.model == "tail" and self.modelFirst)
         self.line = ""
         self.send = ""
         self.status = "running"
@@ -214,16 +242,23 @@ role Session:
     # "model" entry is recorded, and the next child replays it.
     atomic action TailModelRead:
         require self.model == "tail" and self.child == "tail"
+        require not (self.line == "tail" and not self.modelFirst)
         self.model = "b"
+        self.modelFirst = False
 
-    # Unmount done, exit 130. What the tail did not read dies with it.
+    # Unmount done, exit 130. What the tail did not read dies with it. A
+    # turn it took (TailTake) is cancelled by the unmount, which records
+    # "cancelled" before the history row goes.
     atomic fair action Exit:
         require self.child == "tail"
         self.child = "dead"
+        if self.status == "running":
+            self.status = "stopped"
         if self.line == "tail":
             self.line = "lost"
         if self.model == "tail":
             self.model = "lost"
+        self.modelFirst = False
 
     # SIGKILL, OOM or a panic.
     atomic action Crash:
@@ -234,6 +269,7 @@ role Session:
             self.line = "lost"
         if self.model == "queued":
             self.model = "lost"
+        self.modelFirst = False
 
     # The exit goroutine: pumps drained, cmd.Wait, the "exit" event
     # (deletes the ask), drop. An open turn now reads interrupted.
