@@ -32,6 +32,14 @@ const (
 	briefUntil = 19
 )
 
+// ProfilePath is the profile, relative to the wiki: the one page a
+// person writes from nothing (the Me page's empty state opens it).
+const ProfilePath = "topics/me/profile.md"
+
+// profileStarter is what the profile opens as before it exists: the
+// three sections the brief skill reads for relevance.
+const profileStarter = "# Me\n\nWho you are: your teams, channels, Slack and Linear ids, the repos you own.\n\n## Mine\n\n## Not mine\n\n## Watch\n"
+
 func (p paths) me() string      { return filepath.Join(p.wiki, "topics", "me") }
 func (p paths) profile() string { return filepath.Join(p.me(), "profile.md") }
 

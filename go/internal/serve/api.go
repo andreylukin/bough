@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/andreylukin/bough/internal/orb"
@@ -42,6 +43,10 @@ type API struct {
 	defaults func(dir string) ModelDefault
 	// brief writes today's brief now (spawnBrief); a field for the same reason.
 	brief func() error
+	// briefs counts the brief processes this serve started that have not
+	// exited: the Me page shows a job while it runs, since its spinner is
+	// only a timer. A tick's brief started elsewhere is not counted.
+	briefs atomic.Int32
 	// running is the runtime's running containers as of runningAt, the
 	// snapshot containerUp answers from (see orbs.go).
 	runningMu sync.Mutex

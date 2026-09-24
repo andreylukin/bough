@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/andreylukin/bough/plugins/wiki"
@@ -158,7 +159,10 @@ func (a *API) wikiIngest(w http.ResponseWriter, r *http.Request) {
 
 // me is GET /api/me: the brief and signals the Me page renders.
 func (a *API) me(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, a.wikiStore().Me(time.Now()))
+	writeJSON(w, http.StatusOK, struct {
+		wiki.Me
+		Running bool `json:"running,omitempty"`
+	}{a.wikiStore().Me(time.Now()), a.briefs.Load() > 0})
 }
 
 // meRefresh is POST /api/me/refresh: write today's brief now.
@@ -222,13 +226,15 @@ func (a *API) spawnIngest(only string) error {
 	if only != "" {
 		args = append(args, "--only", only)
 	}
-	return a.spawnWiki(args...)
+	return a.spawnWiki(nil, args...)
 }
 
-// spawnBrief runs `bough wiki brief` detached, the same way.
-func (a *API) spawnBrief() error { return a.spawnWiki("wiki", "brief") }
+// spawnBrief runs `bough wiki brief` detached, the same way, counted in
+// a.briefs until it exits.
+func (a *API) spawnBrief() error { return a.spawnWiki(&a.briefs, "wiki", "brief") }
 
-func (a *API) spawnWiki(args ...string) error {
+// spawnWiki starts `bough <args>`; live, when set, counts it while it runs.
+func (a *API) spawnWiki(live *atomic.Int32, args ...string) error {
 	exe := a.sup.opt.Exe
 	if exe == "" {
 		var err error
@@ -251,6 +257,15 @@ func (a *API) spawnWiki(args ...string) error {
 		logf.Close()
 		return err
 	}
-	go func() { _ = cmd.Wait(); logf.Close() }()
+	if live != nil {
+		live.Add(1)
+	}
+	go func() {
+		_ = cmd.Wait()
+		logf.Close()
+		if live != nil {
+			live.Add(-1)
+		}
+	}()
 	return nil
 }
