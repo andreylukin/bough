@@ -904,9 +904,11 @@ func (s *Supervisor) emitLocked(id, kind, text string, extra map[string]any) {
 	switch kind {
 	case "ask":
 		s.asks[id] = askFrom(ev)
-	case "done", "cancelled", "error", "exit":
+	case "done", "cancelled", "exit":
 		// The turn (or the process) ended: stop routing stdin to an
-		// ask nobody is waiting on any more.
+		// ask nobody is waiting on any more. Not "error": the child's
+		// stderr arrives as that kind (a config reload's "bough:
+		// reloaded" line), and a turn's error is followed by its done.
 		delete(s.asks, id)
 	case "result", "call":
 		// The ask returned with no answer (a timeout): a code block's

@@ -557,6 +557,27 @@ func TestSupervisorAskEndWithoutAnswerDisarms(t *testing.T) {
 	}
 }
 
+// A line the child writes to stderr is relayed as an "error" event, and
+// the child is still blocked on its ask: a config hot reload ("bough:
+// reloaded bough.yml") disarmed it, the page lost the question, Answer
+// said "no pending ask" and a /prompt went through to be eaten as the
+// answer. Found by tests/model/mbt/child_notice_delivery_test.go (Ask,
+// ReloadEnd, Answer).
+func TestSupervisorStderrLeavesAskArmed(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.sup.mu.Lock()
+	f.sup.emitLocked("sess-err", "ask", "which?", map[string]any{"id": "ask-1"})
+	f.sup.mu.Unlock()
+	f.sup.pumpStderr(newChild("sess-err"), strings.NewReader("bough: reloaded bough.yml\n"))
+	if f.sup.PendingAsk("sess-err") == nil {
+		t.Fatal("a stderr line disarmed the pending ask")
+	}
+	if !hasKind(f.sup.Recent("sess-err"), "error") {
+		t.Fatal("the stderr line was not relayed")
+	}
+}
+
 func TestSupervisorNonJSONStdoutIsSurfaced(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, envNoise+"=1")
