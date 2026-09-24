@@ -1,0 +1,324 @@
+# A prompt, an answer or a /model written to a child that is exiting
+# while it still holds the lease. Recipe: go/tests/model/README.md.
+#
+# A child leaves in two ways, and serve keeps its lease through both
+# until the exit goroutine (internal/serve/supervisor.go start) has
+# drained both pipes, reaped the process and run drop:
+#   - Stop: Interrupt SIGINTs it; cmd/bough/main.go cancels the turn,
+#     lets [cancelled]/[done] print (AwaitCancelled, up to 3 s), unmounts
+#     every row and exits 130. That is the TAIL.
+#   - a crash (SIGKILL, OOM, a panic): the process is gone at once, and
+#     the lease is held only until the pumps see EOF and drop runs.
+# Either way the process ends up exited with drop still to run: DEAD.
+# ensure (supervisor.go) returns kids[id] in every one of these states:
+# it never asks whether the child is on its way out.
+#
+# Where the code disagrees with the mapped model, the code wins:
+#   - "stdin is never read again" after SIGINT is false. headlessPump
+#     (plugins/ui/headless.go) reads stdin until the process exits. A
+#     line that arrives before Unmount disposes hlInputs is submitted to
+#     the loop, which may record its input and start a turn that Unmount
+#     then kills (TailTake); one that arrives after spins in hlSubmit
+#     until os.Exit and is gone (Exit). Either way POST /prompt said 200.
+#     A /model read in the tail can still dispatch and record its
+#     "model" entry (TailModelRead). A turn fast enough to finish inside
+#     AwaitCancelled's 3 s is left out: llm-control holds every turn.
+#   - "Answer in the window deletes the ask" happens only between the
+#     SIGINT and "cancelled": the "cancelled" entry already deletes
+#     s.asks, so an answer in the tail is ErrNoAsk. Before it, the pipe
+#     is open, the write succeeds, Answer deletes the ask and the
+#     cancelled turn never reads it (AnswerWhileSignalled).
+#   - After a crash the pipe's read end is closed: a write is EPIPE, so
+#     /prompt, /answer and /model are 500s, not 200s, and nothing is
+#     saved or deleted (SetModel saves meta only after Send succeeds).
+#     The page shows "Not sent"; its Retry respawns once drop has run.
+#   - Stop on a line lost in the tail finds the child with unread set
+#     and no turn (cancelled cleared inTurn): the interrupt is HELD, a
+#     200, and the page sits on "Stopping" with the lost line unlanded.
+#   - /think writes no history entry at all (plugins/commands/think.go),
+#     so meta.Effort never survives any respawn, dying window or not.
+#     Only /model is modelled; Effort is a finding, not a state.
+#
+# Fields (Session role):
+#   child     the lease's process: alive | tail (SIGINT acted on,
+#             cancelled recorded, exiting) | dead (exited, drop not yet
+#             run) | none (dropped: the next ensure respawns with -r)
+#   status    the turn as StatusOf reads it: idle | running | done |
+#             stopped (cancelled) | interrupted (an open turn, no live
+#             child). With an ask armed the row says needs-you; the
+#             adapter maps that back to running.
+#   sigint    a Stop's SIGINT is on its way to a running turn
+#   ask       serve's armed ask (s.asks[id])
+#   lostAnswer  a /answer was a 200 and the turn never read it (reset
+#             when the next turn starts)
+#   send      the page's current prompt: "" | accepted (200, not landed:
+#             "Waiting") | failed (the "Not sent" row)
+#   line      where the accepted prompt is: "" (landed or none) |
+#             queued (a live child will read it) | tail (in the pipe of
+#             an exiting child) | lost (its process is gone, unread)
+#   model     the one /model switch, a -> b: a (meta a, runs a) |
+#             queued (meta b, a live child will read it) | tail (meta b,
+#             in an exiting child's pipe) | b (meta b, recorded: the
+#             next child replays it) | lost (meta b, never recorded:
+#             the next child runs a)
+#   stopping  the page's Stop state: "" | stopping | failed ("Retry stop")
+
+role Session:
+    action Init:
+        # A session the page creates has a child from the start.
+        self.child = "alive"
+        self.status = "idle"
+        self.sigint = False
+        self.ask = False
+        self.lostAnswer = False
+        self.send = ""
+        self.line = ""
+        self.model = "a"
+        self.stopping = ""
+
+    # ensure: a dropped lease respawns with -r, whose history store
+    # closes a dangling turn as cancelled {interrupted: true}.
+    atomic func ensure():
+        if self.child == "none":
+            self.child = "alive"
+            if self.status == "interrupted":
+                self.status = "stopped"
+
+    # Send's write on whatever ensure handed back.
+    atomic func deliver():
+        if self.child == "alive":
+            self.send = "accepted"
+            self.line = "queued"
+        elif self.child == "tail":
+            self.send = "accepted"
+            self.line = "tail"
+        else:
+            # EPIPE: the process exited, drop has not run.
+            self.send = "failed"
+
+    # --- the person ---
+
+    # Send with nothing live on the page (live = an unlanded send or a
+    # running row; Settle runs before a person can type again).
+    atomic action Prompt:
+        require self.send == "" and self.status != "running" and self.stopping == ""
+        self.ensure()
+        self.deliver()
+
+    # "Not sent" row, Retry: the same request again.
+    atomic action Retry:
+        require self.send == "failed"
+        self.ensure()
+        self.deliver()
+
+    # "Not sent" row, Edit: the text goes back to the draft.
+    atomic action Edit:
+        require self.send == "failed"
+        self.send = ""
+
+    # The page still shows the lost prompt as "Waiting" (live), so the
+    # person's next send goes out as a steer; with the lease dropped,
+    # ensure respawns and the line runs as a prompt. It is the only way
+    # the page's unlanded row is ever replaced.
+    atomic action Resend:
+        require self.send == "accepted" and self.line == "lost" and self.child == "none"
+        self.ensure()
+        self.deliver()
+
+    # The model picker: POST /model writes "/model b" through Send (409
+    # while an ask is armed) and saves meta.Model only if the write
+    # succeeded. One switch, so the graph stays finite.
+    atomic action SetModel:
+        require self.model == "a" and not self.ask
+        self.ensure()
+        if self.child == "alive":
+            self.model = "queued"
+        elif self.child == "tail":
+            self.model = "tail"
+        # dead: EPIPE, a 500, meta unchanged.
+
+    # POST /answer on the armed ask.
+    atomic action Answer:
+        require self.ask and self.child == "alive" and not self.sigint
+        self.ask = False
+
+    # The same answer after Stop's SIGINT, before "cancelled": the pipe is
+    # open, the write is a 200 and Answer deletes the ask, but the turn
+    # is being cancelled and never reads it.
+    atomic action AnswerWhileSignalled:
+        require self.ask and self.child == "alive" and self.sigint
+        self.ask = False
+        self.lostAnswer = True
+
+    # Stop (Esc, the button, the palette), on a running row or an
+    # unlanded send. A line a live child has not taken yet is the hold
+    # stop_interrupt.fizz models, and is left out here.
+    atomic action Stop:
+        require (self.send == "accepted" or self.status == "running") and self.stopping != "stopping"
+        require not (self.child == "alive" and self.line == "queued")
+        self.stopping = "stopping"
+        if self.child == "none":
+            # 404 unknown session: "Retry stop".
+            self.stopping = "failed"
+        elif self.child == "alive" and self.status == "running":
+            self.sigint = True
+        # tail or dead: a held interrupt (unread, no turn) or a SIGINT to
+        # an exiting process: 200, and nothing happens.
+
+    # --- the child ---
+
+    # The live child reads the prompt: the turn opens and the page lands
+    # the input.
+    atomic fair action Take:
+        require self.line == "queued" and self.child == "alive"
+        self.line = ""
+        self.send = ""
+        self.status = "running"
+        self.lostAnswer = False
+
+    atomic fair action ModelRead:
+        require self.model == "queued" and self.child == "alive"
+        self.model = "b"
+
+    atomic action Ask:
+        require self.status == "running" and self.child == "alive" and not self.sigint
+        require not self.ask
+        self.ask = True
+
+    atomic action Finish:
+        require self.status == "running" and self.child == "alive" and not self.sigint and not self.ask
+        self.status = "done"
+
+    # The SIGINT reaches the running turn: "cancelled" (which deletes the
+    # armed ask), and the child starts its exit. A /model still in the
+    # pipe is now read, if at all, by the tail.
+    atomic fair action ChildSignal:
+        require self.sigint and self.child == "alive"
+        self.sigint = False
+        self.ask = False
+        self.status = "stopped"
+        self.child = "tail"
+        if self.model == "queued":
+            self.model = "tail"
+
+    # A tail line read before Unmount disposes hlInputs: the loop records
+    # its input and starts a turn that the unmount kills.
+    atomic action TailTake:
+        require self.line == "tail" and self.child == "tail"
+        self.line = ""
+        self.send = ""
+        self.status = "running"
+        self.lostAnswer = False
+
+    # A tail /model dispatched before the commands row unmounts: its
+    # "model" entry is recorded, and the next child replays it.
+    atomic action TailModelRead:
+        require self.model == "tail" and self.child == "tail"
+        self.model = "b"
+
+    # Unmount done, exit 130. What the tail did not read dies with it.
+    atomic fair action Exit:
+        require self.child == "tail"
+        self.child = "dead"
+        if self.line == "tail":
+            self.line = "lost"
+        if self.model == "tail":
+            self.model = "lost"
+
+    # SIGKILL, OOM or a panic.
+    atomic action Crash:
+        require self.child == "alive"
+        self.child = "dead"
+        self.sigint = False
+        if self.line == "queued":
+            self.line = "lost"
+        if self.model == "queued":
+            self.model = "lost"
+
+    # The exit goroutine: pumps drained, cmd.Wait, the "exit" event
+    # (deletes the ask), drop. An open turn now reads interrupted.
+    atomic fair action Drop:
+        require self.child == "dead"
+        self.child = "none"
+        self.ask = False
+        if self.status == "running":
+            self.status = "interrupted"
+
+    # --- the page ---
+
+    # `stopping` clears once nothing is live.
+    atomic fair action Settle:
+        require self.send != "accepted" and self.status != "running" and self.stopping != ""
+        self.stopping = ""
+
+action Init:
+    session = Session()
+
+# Nothing is ever written to, or left waiting in, a process that has
+# exited: its pipe is EPIPE, and what it had not read is lost.
+always assertion NothingWaitsInAnExitedChild:
+    return not (session.child in ("dead", "none") and (session.line in ("queued", "tail") or session.model in ("queued", "tail")))
+
+# An armed ask belongs to a running turn of a child that can still read
+# the answer, or to a crashed one whose exit event has not run yet.
+always assertion AskOnlyInARunningTurn:
+    return not (session.ask and (session.status != "running" or session.child in ("tail", "none")))
+
+# An open turn with a live child is never read as interrupted: the
+# respawn closes the dangling turn as stopped.
+always assertion InterruptedHasNoLiveChild:
+    return not (session.status == "interrupted" and session.child == "alive")
+
+# Only an answer that raced Stop's SIGINT is lost: a live running turn
+# that nobody stopped never had its answer swallowed.
+always assertion AnswersLostOnlyToAStop:
+    return not (session.lostAnswer and session.status == "running" and session.child == "alive" and not session.sigint)
+
+# The lease is released: a tail exits, and a dead child is dropped.
+always eventually assertion LeaseReleased:
+    return session.child in ("alive", "none")
+
+# A Stop's SIGINT is acted on (or dies with a crashed child).
+always eventually assertion SignalActedOn:
+    return not session.sigint
+
+# A /model line is read or dies with its process: it never waits.
+always eventually assertion ModelLineSettles:
+    return session.model not in ("queued", "tail")
+
+# The mapped claims the code breaks. Each was added as an assertion and
+# fails; fizz's shortest counterexamples:
+#
+# ensure never hands out an exiting child:
+#   always assertion NoDyingHandout: not (line == "tail" or model == "tail")
+#   Prompt, SetModel, Take, Stop, ChildSignal (the /model still in the
+#   pipe now waits on the tail); or a Prompt after ChildSignal: a 200
+#   into a process that is unmounting.
+#
+# A 200 from /prompt means a process will read the line:
+#   always assertion AcceptedIsRead: not (send == "accepted" and line == "lost")
+#   Prompt, Crash. The tail loses it the same way: Prompt, Take, Stop,
+#   ChildSignal, Prompt, Exit. Nothing tells the page: an exit is not an
+#   input, so its "Waiting" row never lands.
+#
+# meta.Model is what the next live child runs:
+#   always assertion ModelMatches: model != "lost"
+#   SetModel, Crash; or through the tail: Prompt, Take, Stop, ChildSignal,
+#   SetModel, Exit. meta says b; the -r child finds no "model" entry to
+#   replay (cmd/bough/modelresume.go) and runs a.
+#
+# A 200 from /answer reaches the turn:
+#   always assertion NoLostAnswer: not lostAnswer
+#   Prompt, Take, Ask, Stop, AnswerWhileSignalled.
+#
+# Every accepted prompt eventually lands or becomes a visible failure:
+#   always eventually assertion AcceptedLands: send != "accepted"
+#   ... Prompt, Crash, Stop, Drop: "Waiting" forever unless the person
+#   sends again (Resend is not fair).
+#
+# The page's "Stopping" always clears:
+#   always eventually assertion StoppingClears: stopping != "stopping"
+#   ... Prompt, Crash, Stop (a 200 from the dead child's lease: unread
+#   and no turn, so held), Drop: the lost line keeps the page live, and
+#   Stop stays disabled on "Stopping". After Drop, a Stop is a 404
+#   ("Retry stop"), as mapped.
