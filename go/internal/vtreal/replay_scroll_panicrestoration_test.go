@@ -183,10 +183,16 @@ func TestScrollPanicRestoration(t *testing.T) {
 			case <-time.After(15 * time.Second):
 				t.Fatalf("process did not die after the forced panic:\n%s", a.text())
 			}
+			// Let the emulator drain the restore bytes: up to 2 s, but no
+			// longer than it takes the restored state and the stack to
+			// show (a flat 2 s here was most of each case). A restore that
+			// never comes is judged at the deadline as before.
 			var s Snapshot
-			for range 40 { // let the emulator drain the restore bytes
+			for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
 				s = a.term.Snapshot()
-				time.Sleep(50 * time.Millisecond)
+				if !s.AltScreen && s.CursorVis && strings.Contains(a.text(), "goroutine ") {
+					break
+				}
 			}
 			var bad []string
 			if s.AltScreen {
