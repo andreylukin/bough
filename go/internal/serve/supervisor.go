@@ -1825,6 +1825,13 @@ func (s *Supervisor) saveMetaLocked() error {
 // still writing.
 func (s *Supervisor) Close() error {
 	s.mu.Lock()
+	// Closed before the kills: each killed agent's exit frees a running
+	// slot and starts a drain, which would launch the next queued child
+	// outside the snapshot below (never killed) and clear its persisted
+	// task, so the restart had nothing to requeue. The queue is only
+	// dropped in memory; meta.json keeps it for the next serve.
+	s.closed = true
+	s.queue = nil
 	kids := make([]*child, 0, len(s.kids))
 	for _, ch := range s.kids {
 		kids = append(kids, ch)
@@ -1837,8 +1844,6 @@ func (s *Supervisor) Close() error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.closed = true
-	s.queue = nil
 	for id, st := range s.deltas {
 		if st.timer != nil {
 			st.timer.Stop()
