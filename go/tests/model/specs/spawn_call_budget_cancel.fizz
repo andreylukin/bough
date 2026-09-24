@@ -6,15 +6,16 @@
 # Code:
 #   go/plugins/workers/background.go startAgent (serveTimeout 30 s, the
 #     request runs under the block's turn context, so Esc cancels it too)
-#   go/internal/serve/children_api.go createChild, children.go CreateChild
-#     (reserves the slot, saves meta, launches: none of it reads
-#     r.Context())
-#   go/plugins/workers/workers.go spawn (refund on "subagent llm:"),
-#     spawnAll (budget taken up front, reports[i] by position, the serve
-#     loop drains every goroutine after a cancel), the "done" listener
-#     that zeroes spawns
+#   go/internal/serve/children_api.go createChild (a client gone before
+#     serve made the child makes none; gone before the answer, the child
+#     is withdrawn: children.go WithdrawChild)
+#   go/plugins/workers/workers.go spawn and spawnAll (refund on
+#     "subagent llm:"; spawnAll takes the budget up front, reports[i] by
+#     position, the serve loop drains every goroutine after a cancel), the
+#     "done" listener that resets spawns to the native spawns still running
 #   go/plugins/workers/native.go nativeSpawn (c.Worker guard, budget,
-#     no refund)
+#     refund); go/internal/unreal/session/children.go Run (a child whose
+#     provider call failed ends as an error, "subagent llm: …")
 #   go/internal/unreal/session/actor.go settle/closeTurn: a foreground
 #     call still running when the model goes idle is adopted as a job and
 #     the turn closes with a "done" while it runs.
@@ -23,8 +24,16 @@
 # c2: tools.spawn blocks the parent's block, so it only ever uses c1;
 # spawnAll is modelled with two tasks (c1, c2); a native spawn takes the
 # first free slot, and the engine runs native calls in parallel. The
-# session's engine is fixed by its first foreground spawn ("loop" for
-# spawn/spawnAll, "unreal" for native): a session never has both.
+# session runs on the loop (code mode: spawn, spawnAll) or on the engine
+# (native spawn), as its loop row says when it is created: a session
+# never has both. Code mode runs one block at a time, so while a block
+# waits on a spawn or on a background create nothing else foreground
+# starts; the engine's calls run side by side.
+#
+# A native child still running when its turn closes is adopted as a job
+# ("adopted"): it keeps its slot in the next turn's budget. Esc is serve's
+# Stop, which interrupts the session's process: the turn is cancelled and
+# the process exits, so every child dies with it, adopted ones too.
 #
 # Budget bookkeeping: spawns is the per-turn counter workers keeps; used
 # is the children that ran this turn and closed normally. A child the
@@ -39,21 +48,20 @@
 # model it failed. At most two attempts, so a retry after a failure is in
 # the graph.
 #
-# Where the code disagrees, this spec says what the flow promises and the
-# code is the finding (each is also the red-first mutation of the
-# invariant it breaks):
-#   - GiveUp on a created request: CreateChild ignores r.Context(), so the
-#     child keeps running while the model reads "background spawn: context
-#     deadline exceeded"; a retry makes a second child and burns the
-#     per-session budget, and the first child's "[agent … finished]"
-#     notice names an id the parent never saw. The spec withdraws the
-#     child (ToldFailedLeavesNoChild, NoticesOnlyForKnown).
-#   - Refund: only tools.spawn refunds a provider-killed child; spawnAll
-#     reports it as "Status: failed" and native returns the error, both
-#     keeping the slot (BudgetMatchesWork).
-#   - A turn that closes with an adopted native spawn still running fires
-#     "done", and the listener zeroes spawns while the child runs, so the
-#     wake turn can start max_spawns more (BudgetMatchesWork).
+# Where the code disagreed (found by the server walk, and fixed with it;
+# each is the red-first mutation of the invariant it broke):
+#   - GiveUp or Esc on a request in flight: createChild ignored
+#     r.Context(), so the child ran on while the model read "background
+#     spawn: …"; a retry made a second child and burned the per-session
+#     budget, and the first child's "[agent … finished]" named an id the
+#     parent never saw (ToldFailedLeavesNoChild, NoticesOnlyForKnown).
+#   - Refund: only tools.spawn refunded a provider-killed child; spawnAll
+#     reported it as "Status: failed" keeping the slot, and a native child
+#     whose provider call failed ended as a done child with an empty
+#     report (BudgetMatchesWork).
+#   - A turn that closed with an adopted native spawn still running fired
+#     "done", and the listener zeroed spawns while the child ran, so the
+#     wake turn could start max_spawns more (BudgetMatchesWork).
 
 MAX_SPAWNS = 2
 MAX_BG_ATTEMPTS = 2
@@ -61,10 +69,10 @@ MAX_BG_ATTEMPTS = 2
 role Parent:
     action Init:
         self.turn = "idle"        # idle | running (a model turn is open)
-        self.engine = ""          # "" | loop | unreal
+        self.engine = ""          # "" (not created yet) | loop | unreal
         self.spawns = 0
         self.used = 0
-        self.c1 = "none"          # none | running
+        self.c1 = "none"          # none | running | adopted
         self.c2 = "none"
         self.fan = "none"         # none | running | returned | cancelled
         self.results = ["", ""]   # spawnAll's reports, by task
@@ -76,19 +84,28 @@ role Parent:
         self.bg_known = 0         # running children whose id the model has
         self.bg_orphan_notices = 0
 
+    # person: the session is created on the loop (code mode).
+    atomic action UseLoop:
+        require self.engine == ""
+        self.engine = "loop"
+
+    # person: the session is created on the engine.
+    atomic action UseEngine:
+        require self.engine == ""
+        self.engine = "unreal"
+
     # user: a prompt opens a turn.
     atomic action Prompt:
-        require self.turn == "idle"
+        require self.engine != "" and self.turn == "idle"
         self.turn = "running"
 
     # agent: tools.spawn(task). Blocks the block (inChild), so nothing
     # else foreground runs. Past the budget it throws and nothing changes.
     atomic action Spawn:
-        require self.turn == "running" and self.engine in ("", "loop")
+        require self.turn == "running" and self.engine == "loop" and self.bg_req == "idle"
         require self.c1 == "none" and self.c2 == "none" and self.fan != "running"
         if self.spawns >= MAX_SPAWNS:
             return
-        self.engine = "loop"
         self.spawns += 1
         self.c1 = "running"
         self.fan = "none"
@@ -96,11 +113,10 @@ role Parent:
     # agent: tools.spawnAll([t1, t2]). The whole budget is taken up front,
     # or refused whole.
     atomic action SpawnAll:
-        require self.turn == "running" and self.engine in ("", "loop")
+        require self.turn == "running" and self.engine == "loop" and self.bg_req == "idle"
         require self.c1 == "none" and self.c2 == "none" and self.fan != "running"
         if self.spawns + 2 > MAX_SPAWNS:
             return
-        self.engine = "loop"
         self.spawns += 2
         self.c1 = "running"
         self.c2 = "running"
@@ -109,11 +125,10 @@ role Parent:
 
     # agent: the engine's native spawn tool; calls run in parallel.
     atomic action NativeSpawn:
-        require self.turn == "running" and self.engine in ("", "unreal")
+        require self.turn == "running" and self.engine == "unreal"
         require self.c1 == "none" or self.c2 == "none"
         if self.spawns >= MAX_SPAWNS:
             return
-        self.engine = "unreal"
         self.spawns += 1
         if self.c1 == "none":
             self.c1 = "running"
@@ -123,14 +138,14 @@ role Parent:
     # agent (inside a child): tools.spawn or a native spawn. Refused by
     # inChild / c.Worker; nothing changes.
     atomic action ChildSpawns:
-        require self.c1 == "running" or self.c2 == "running"
+        require self.c1 != "none" or self.c2 != "none"
         pass
 
     # c1 closes with its reply. A native child that was adopted (its turn
     # closed while it ran) wakes the parent with its result. The last
     # spawnAll child returns spawnAll, in task order.
     atomic fair action Child1Done:
-        require self.c1 == "running"
+        require self.c1 != "none"
         self.c1 = "none"
         self.used += 1
         if self.fan == "running":
@@ -141,7 +156,7 @@ role Parent:
             self.turn = "running"
 
     atomic fair action Child2Done:
-        require self.c2 == "running"
+        require self.c2 != "none"
         self.c2 = "none"
         self.used += 1
         if self.fan == "running":
@@ -154,7 +169,7 @@ role Parent:
     # system: c1's provider call fails ("subagent llm: …"). The child did
     # no work: its slot is refunded, whichever tool started it.
     atomic action Child1LLMFails:
-        require self.c1 == "running"
+        require self.c1 != "none"
         self.c1 = "none"
         self.spawns -= 1
         if self.fan == "running":
@@ -166,8 +181,8 @@ role Parent:
 
     # user: Esc. The turn's context is cancelled: every in-process child
     # dies with it and spawnAll's goroutines all unwind (spawnAll throws
-    # "cancelled"); an in-flight create is given up (see GiveUp); the
-    # turn ends, and its done resets the budget.
+    # "cancelled"); an in-flight create is given up (see GiveUp); the turn
+    # ends, and its done resets the budget.
     atomic action Esc:
         require self.turn == "running"
         if self.fan == "running":
@@ -190,15 +205,20 @@ role Parent:
     atomic fair action Done:
         require self.turn == "running" and self.fan != "running" and self.bg_req == "idle"
         require self.engine == "unreal" or (self.c1 == "none" and self.c2 == "none")
-        live = len([c for c in (self.c1, self.c2) if c == "running"])
-        self.spawns = live
+        if self.c1 == "running":
+            self.c1 = "adopted"
+        if self.c2 == "running":
+            self.c2 = "adopted"
+        self.spawns = len([c for c in (self.c1, self.c2) if c != "none"])
         self.used = 0
         self.turn = "idle"
 
     # agent: tools.spawn(task, {background: true}) or a native spawn with
-    # background: POST /api/sessions {spawnedBy}.
+    # background: POST /api/sessions {spawnedBy}. Under the loop it is a
+    # call inside a block, so no foreground child can be running beside it.
     atomic action SpawnBg:
         require self.turn == "running" and self.bg_req == "idle" and self.bg_attempts < MAX_BG_ATTEMPTS
+        require self.engine == "unreal" or (self.c1 == "none" and self.c2 == "none")
         self.bg_req = "in_flight"
         self.bg_attempts += 1
 
@@ -258,7 +278,7 @@ always assertion NoticesOnlyForKnown:
 # ran this turn and closed normally (a provider-killed one is refunded on
 # every path), and is never exceeded.
 always assertion BudgetMatchesWork:
-    live = len([c for c in (parent.c1, parent.c2) if c == "running"])
+    live = len([c for c in (parent.c1, parent.c2) if c != "none"])
     return parent.spawns == live + parent.used and parent.spawns <= MAX_SPAWNS
 
 # A child cannot start agents (depth 1).
