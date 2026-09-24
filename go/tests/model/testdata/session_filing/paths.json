@@ -1,14 +1,142 @@
 {
   "paths": [
     {
+      "target": 115,
+      "links": [
+        1,
+        7,
+        20,
+        43,
+        70,
+        95,
+        115
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.Drop",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "a",
+            "Session#0.live": true,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "a",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "a",
+            "Session#0.live": true,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "a",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        }
+      ]
+    },
+    {
       "target": 116,
       "links": [
         1,
         7,
         20,
         43,
-        75,
-        101,
+        70,
+        95,
         116
       ],
       "trace": [
@@ -113,11 +241,11 @@
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
-            "Session#0.byrepo": true,
+            "Session#0.byrepo": false,
             "Session#0.injected": "a",
             "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
+            "Session#0.page": "a",
+            "Session#0.project": "a",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
@@ -131,12 +259,12 @@
     {
       "target": 117,
       "links": [
-        1,
-        7,
-        20,
-        43,
-        75,
-        101,
+        2,
+        10,
+        26,
+        51,
+        80,
+        102,
         117
       ],
       "trace": [
@@ -160,6 +288,25 @@
           }
         },
         {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
           "action": "Session#0.Drop",
           "state": {
             "b": "role Project#0",
@@ -175,7 +322,7 @@
             "Session#1.live": false,
             "Session#1.page": "a",
             "Session#1.project": "a",
-            "Project#0.made": false
+            "Project#0.made": true
           }
         },
         {
@@ -194,7 +341,7 @@
             "Session#1.live": false,
             "Session#1.page": "a",
             "Session#1.project": "a",
-            "Project#0.made": false
+            "Project#0.made": true
           }
         },
         {
@@ -208,25 +355,6 @@
             "Session#0.live": true,
             "Session#0.page": "",
             "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "a",
-            "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
@@ -263,8 +391,8 @@
         10,
         26,
         51,
-        85,
-        108,
+        80,
+        102,
         118
       ],
       "trace": [
@@ -372,8 +500,8 @@
             "Session#0.byrepo": false,
             "Session#0.injected": "a",
             "Session#0.live": true,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
+            "Session#0.page": "b",
+            "Session#0.project": "b",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
@@ -388,11 +516,11 @@
       "target": 119,
       "links": [
         2,
-        10,
-        26,
-        51,
-        85,
-        108,
+        11,
+        29,
+        55,
+        86,
+        109,
         119
       ],
       "trace": [
@@ -435,35 +563,16 @@
           }
         },
         {
-          "action": "Session#0.Drop",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
           "action": "Session#0.Start",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
             "Session#0.byrepo": false,
-            "Session#0.injected": "a",
+            "Session#0.injected": "b",
             "Session#0.live": true,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
+            "Session#0.page": "b",
+            "Session#0.project": "b",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
@@ -479,7 +588,7 @@
             "local": "role Session#0",
             "orb": "role Session#1",
             "Session#0.byrepo": true,
-            "Session#0.injected": "a",
+            "Session#0.injected": "b",
             "Session#0.live": true,
             "Session#0.page": "",
             "Session#0.project": "",
@@ -492,35 +601,54 @@
           }
         },
         {
+          "action": "Project#0.Delete",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
           "action": "Session#0.Assign",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
             "Session#0.byrepo": false,
-            "Session#0.injected": "a",
+            "Session#0.injected": "b",
             "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
+            "Session#0.page": "a",
+            "Session#0.project": "a",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
             "Session#1.page": "a",
             "Session#1.project": "a",
-            "Project#0.made": true
+            "Project#0.made": false
           }
         }
       ]
     },
     {
-      "target": 100,
+      "target": 94,
       "links": [
         1,
         7,
         20,
         43,
-        73,
-        100
+        68,
+        94
       ],
       "trace": [
         {
@@ -621,14 +749,14 @@
       ]
     },
     {
-      "target": 102,
+      "target": 96,
       "links": [
         1,
         7,
         20,
         43,
-        75,
-        102
+        70,
+        96
       ],
       "trace": [
         {
@@ -748,14 +876,14 @@
       ]
     },
     {
-      "target": 103,
+      "target": 97,
       "links": [
         1,
         7,
         20,
         43,
-        75,
-        103
+        70,
+        97
       ],
       "trace": [
         {
@@ -875,14 +1003,14 @@
       ]
     },
     {
-      "target": 104,
+      "target": 98,
       "links": [
         1,
         7,
         20,
         43,
-        75,
-        104
+        70,
+        98
       ],
       "trace": [
         {
@@ -1002,14 +1130,14 @@
       ]
     },
     {
-      "target": 105,
+      "target": 99,
       "links": [
         1,
         7,
         20,
         43,
-        75,
-        105
+        70,
+        99
       ],
       "trace": [
         {
@@ -1114,8 +1242,8 @@
             "local": "role Session#0",
             "orb": "role Session#1",
             "Session#0.byrepo": true,
-            "Session#0.injected": "a",
-            "Session#0.live": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
             "Session#0.page": "",
             "Session#0.project": "",
             "Session#1.byrepo": false,
@@ -1129,12 +1257,609 @@
       ]
     },
     {
-      "target": 106,
+      "target": 100,
       "links": [
         2,
         9,
         23,
         46,
+        75,
+        100
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": true,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 101,
+      "links": [
+        2,
+        9,
+        23,
+        46,
+        75,
+        101
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": true,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 103,
+      "links": [
+        2,
+        10,
+        26,
+        51,
+        80,
+        103
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Drop",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "a",
+            "Session#0.live": true,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "a",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Drop",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "a",
+            "Session#0.live": true,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 104,
+      "links": [
+        2,
+        10,
+        26,
+        51,
+        80,
+        104
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Drop",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "a",
+            "Session#0.live": true,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "a",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Stop",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 105,
+      "links": [
+        2,
+        10,
+        26,
+        51,
+        80,
+        105
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Drop",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "a",
+            "Session#0.live": true,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "a",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#1.ApiMove",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "a",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 106,
+      "links": [
+        2,
+        10,
+        26,
+        51,
         80,
         106
       ],
@@ -1178,603 +1903,6 @@
           }
         },
         {
-          "action": "Session#0.Assign",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Assign",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        }
-      ]
-    },
-    {
-      "target": 107,
-      "links": [
-        2,
-        9,
-        23,
-        46,
-        80,
-        107
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Assign",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Assign",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        }
-      ]
-    },
-    {
-      "target": 109,
-      "links": [
-        2,
-        10,
-        26,
-        51,
-        85,
-        109
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Drop",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "a",
-            "Session#0.live": true,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Assign",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "a",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Drop",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "a",
-            "Session#0.live": true,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        }
-      ]
-    },
-    {
-      "target": 110,
-      "links": [
-        2,
-        10,
-        26,
-        51,
-        85,
-        110
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Drop",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "a",
-            "Session#0.live": true,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Assign",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "a",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Stop",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        }
-      ]
-    },
-    {
-      "target": 111,
-      "links": [
-        2,
-        10,
-        26,
-        51,
-        85,
-        111
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Drop",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "a",
-            "Session#0.live": true,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Assign",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "a",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#1.ApiMove",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "a",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        }
-      ]
-    },
-    {
-      "target": 112,
-      "links": [
-        2,
-        10,
-        26,
-        51,
-        85,
-        112
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
           "action": "Session#0.Drop",
           "state": {
             "b": "role Project#0",
@@ -1853,13 +1981,610 @@
       ]
     },
     {
+      "target": 107,
+      "links": [
+        2,
+        11,
+        29,
+        55,
+        82,
+        107
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 108,
+      "links": [
+        2,
+        11,
+        29,
+        55,
+        82,
+        108
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 110,
+      "links": [
+        2,
+        11,
+        29,
+        55,
+        86,
+        110
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Project#0.Delete",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.Drop",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 111,
+      "links": [
+        2,
+        11,
+        29,
+        55,
+        86,
+        111
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Project#0.Delete",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 112,
+      "links": [
+        2,
+        11,
+        29,
+        55,
+        86,
+        112
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Project#0.Delete",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.Stop",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        }
+      ]
+    },
+    {
       "target": 113,
       "links": [
         2,
         11,
         29,
         55,
-        87,
+        86,
         113
       ],
       "trace": [
@@ -1940,22 +2665,41 @@
           }
         },
         {
-          "action": "Session#0.Assign",
+          "action": "Project#0.Delete",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
-            "Session#0.byrepo": false,
+            "Session#0.byrepo": true,
             "Session#0.injected": "b",
             "Session#0.live": true,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
+            "Session#0.page": "",
+            "Session#0.project": "",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
             "Session#1.page": "a",
             "Session#1.project": "a",
-            "Project#0.made": true
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#1.ApiMove",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
           }
         }
       ]
@@ -1965,9 +2709,9 @@
       "links": [
         2,
         11,
-        29,
-        55,
-        87,
+        30,
+        60,
+        89,
         114
       ],
       "trace": [
@@ -2029,114 +2773,6 @@
           }
         },
         {
-          "action": "Session#0.Assign",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Assign",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        }
-      ]
-    },
-    {
-      "target": 115,
-      "links": [
-        2,
-        11,
-        30,
-        60,
-        94,
-        115
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
           "action": "Session#0.Drop",
           "state": {
             "b": "role Project#0",
@@ -2196,13 +2832,13 @@
       ]
     },
     {
-      "target": 74,
+      "target": 69,
       "links": [
         1,
         7,
         20,
         43,
-        74
+        69
       ],
       "trace": [
         {
@@ -2303,13 +2939,13 @@
       ]
     },
     {
-      "target": 76,
+      "target": 71,
       "links": [
         1,
         7,
         20,
         43,
-        76
+        71
       ],
       "trace": [
         {
@@ -2410,13 +3046,13 @@
       ]
     },
     {
-      "target": 77,
+      "target": 72,
       "links": [
         1,
         7,
         20,
         43,
-        77
+        72
       ],
       "trace": [
         {
@@ -2517,12 +3153,402 @@
       ]
     },
     {
-      "target": 78,
+      "target": 73,
       "links": [
         2,
         9,
         23,
         44,
+        73
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 74,
+      "links": [
+        2,
+        9,
+        23,
+        44,
+        74
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 76,
+      "links": [
+        2,
+        9,
+        23,
+        46,
+        76
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Drop",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": true,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 77,
+      "links": [
+        2,
+        9,
+        23,
+        46,
+        77
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Stop",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 78,
+      "links": [
+        2,
+        9,
+        23,
+        46,
         78
       ],
       "trace": [
@@ -2584,16 +3610,35 @@
           }
         },
         {
-          "action": "Session#0.Assign",
+          "action": "Session#0.Start",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
-            "Session#0.byrepo": false,
+            "Session#0.byrepo": true,
             "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#1.ApiMove",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
@@ -2610,7 +3655,7 @@
         2,
         9,
         23,
-        44,
+        46,
         79
       ],
       "trace": [
@@ -2672,22 +3717,41 @@
           }
         },
         {
-          "action": "Session#0.Assign",
+          "action": "Session#0.Start",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
-            "Session#0.byrepo": false,
+            "Session#0.byrepo": true,
             "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
             "Session#1.page": "a",
             "Session#1.project": "a",
             "Project#0.made": true
+          }
+        },
+        {
+          "action": "Project#0.Delete",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
           }
         }
       ]
@@ -2696,9 +3760,9 @@
       "target": 81,
       "links": [
         2,
-        9,
-        23,
-        46,
+        10,
+        26,
+        51,
         81
       ],
       "trace": [
@@ -2741,16 +3805,16 @@
           }
         },
         {
-          "action": "Session#0.Assign",
+          "action": "Session#0.Drop",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
-            "Session#0.byrepo": true,
+            "Session#0.byrepo": false,
             "Session#0.injected": "",
             "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
+            "Session#0.page": "a",
+            "Session#0.project": "a",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
@@ -2765,27 +3829,8 @@
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Drop",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
             "Session#0.byrepo": false,
-            "Session#0.injected": "",
+            "Session#0.injected": "a",
             "Session#0.live": true,
             "Session#0.page": "a",
             "Session#0.project": "a",
@@ -2796,56 +3841,6 @@
             "Session#1.project": "a",
             "Project#0.made": true
           }
-        }
-      ]
-    },
-    {
-      "target": 82,
-      "links": [
-        2,
-        9,
-        23,
-        46,
-        82
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
         },
         {
           "action": "Session#0.Assign",
@@ -2853,49 +3848,11 @@
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "a",
             "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Stop",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
+            "Session#0.page": "b",
+            "Session#0.project": "b",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
@@ -2910,9 +3867,9 @@
       "target": 83,
       "links": [
         2,
-        9,
-        23,
-        46,
+        11,
+        29,
+        55,
         83
       ],
       "trace": [
@@ -2955,32 +3912,32 @@
           }
         },
         {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
           "action": "Session#0.Assign",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
             "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
+            "Session#0.injected": "b",
             "Session#0.live": true,
             "Session#0.page": "",
             "Session#0.project": "",
@@ -2993,16 +3950,16 @@
           }
         },
         {
-          "action": "Session#1.ApiMove",
+          "action": "Session#0.Drop",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "b",
             "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
+            "Session#0.page": "a",
+            "Session#0.project": "a",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
@@ -3017,9 +3974,9 @@
       "target": 84,
       "links": [
         2,
-        9,
-        23,
-        46,
+        11,
+        29,
+        55,
         84
       ],
       "trace": [
@@ -3062,7 +4019,45 @@
           }
         },
         {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
           "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Stop",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
@@ -3079,55 +4074,17 @@
             "Session#1.project": "a",
             "Project#0.made": true
           }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Project#0.Delete",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
         }
       ]
     },
     {
-      "target": 86,
+      "target": 85,
       "links": [
         2,
-        10,
-        26,
-        51,
-        86
+        11,
+        29,
+        55,
+        85
       ],
       "trace": [
         {
@@ -3169,7 +4126,95 @@
           }
         },
         {
-          "action": "Session#0.Drop",
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#1.ApiMove",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 87,
+      "links": [
+        2,
+        11,
+        30,
+        57,
+        87
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
@@ -3177,8 +4222,8 @@
             "Session#0.byrepo": false,
             "Session#0.injected": "",
             "Session#0.live": false,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
+            "Session#0.page": "b",
+            "Session#0.project": "b",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
@@ -3194,7 +4239,26 @@
             "local": "role Session#0",
             "orb": "role Session#1",
             "Session#0.byrepo": false,
-            "Session#0.injected": "a",
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Drop",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "b",
             "Session#0.live": true,
             "Session#0.page": "a",
             "Session#0.project": "a",
@@ -3212,11 +4276,11 @@
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "a",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "b",
             "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
+            "Session#0.page": "",
+            "Session#0.project": "",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
@@ -3232,8 +4296,8 @@
       "links": [
         2,
         11,
-        29,
-        55,
+        30,
+        57,
         88
       ],
       "trace": [
@@ -3295,25 +4359,6 @@
           }
         },
         {
-          "action": "Session#0.Assign",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
           "action": "Session#0.Drop",
           "state": {
             "b": "role Project#0",
@@ -3331,75 +4376,6 @@
             "Session#1.project": "a",
             "Project#0.made": true
           }
-        }
-      ]
-    },
-    {
-      "target": 89,
-      "links": [
-        2,
-        11,
-        29,
-        55,
-        89
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
         },
         {
           "action": "Session#0.Assign",
@@ -3407,30 +4383,11 @@
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
-            "Session#0.byrepo": true,
+            "Session#0.byrepo": false,
             "Session#0.injected": "b",
             "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Stop",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
+            "Session#0.page": "b",
+            "Session#0.project": "b",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
@@ -3446,8 +4403,8 @@
       "links": [
         2,
         11,
-        29,
-        55,
+        30,
+        60,
         90
       ],
       "trace": [
@@ -3509,16 +4466,16 @@
           }
         },
         {
-          "action": "Session#0.Assign",
+          "action": "Session#0.Drop",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
-            "Session#0.byrepo": true,
+            "Session#0.byrepo": false,
             "Session#0.injected": "b",
             "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
+            "Session#0.page": "a",
+            "Session#0.project": "a",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
@@ -3528,22 +4485,41 @@
           }
         },
         {
-          "action": "Session#1.ApiMove",
+          "action": "Project#0.Delete",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
-            "Session#0.byrepo": true,
+            "Session#0.byrepo": false,
             "Session#0.injected": "b",
             "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
+            "Session#0.page": "a",
+            "Session#0.project": "a",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
             "Session#1.page": "a",
             "Session#1.project": "a",
-            "Project#0.made": true
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.Stop",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
           }
         }
       ]
@@ -3553,8 +4529,8 @@
       "links": [
         2,
         11,
-        29,
-        55,
+        30,
+        60,
         91
       ],
       "trace": [
@@ -3616,453 +4592,6 @@
           }
         },
         {
-          "action": "Session#0.Assign",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Project#0.Delete",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        }
-      ]
-    },
-    {
-      "target": 92,
-      "links": [
-        2,
-        11,
-        30,
-        57,
-        92
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Drop",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Assign",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        }
-      ]
-    },
-    {
-      "target": 93,
-      "links": [
-        2,
-        11,
-        30,
-        57,
-        93
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Drop",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Assign",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        }
-      ]
-    },
-    {
-      "target": 95,
-      "links": [
-        2,
-        11,
-        30,
-        60,
-        95
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Drop",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Project#0.Delete",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.Stop",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        }
-      ]
-    },
-    {
-      "target": 96,
-      "links": [
-        2,
-        11,
-        30,
-        60,
-        96
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
           "action": "Session#0.Drop",
           "state": {
             "b": "role Project#0",
@@ -4122,120 +4651,13 @@
       ]
     },
     {
-      "target": 97,
-      "links": [
-        2,
-        11,
-        33,
-        61,
-        97
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Project#0.Delete",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.Assign",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        }
-      ]
-    },
-    {
-      "target": 98,
+      "target": 92,
       "links": [
         3,
         16,
         39,
-        69,
-        98
+        64,
+        92
       ],
       "trace": [
         {
@@ -4336,13 +4758,13 @@
       ]
     },
     {
-      "target": 99,
+      "target": 93,
       "links": [
         3,
         16,
         39,
-        69,
-        99
+        64,
+        93
       ],
       "trace": [
         {
@@ -5495,11 +5917,98 @@
       ]
     },
     {
+      "target": 61,
+      "links": [
+        3,
+        15,
+        35,
+        61
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.Drop",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": true,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        }
+      ]
+    },
+    {
       "target": 62,
       "links": [
-        2,
-        11,
-        33,
+        3,
+        16,
+        38,
         62
       ],
       "trace": [
@@ -5523,51 +6032,13 @@
           }
         },
         {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
           "action": "Session#0.Start",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Project#0.Delete",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
             "Session#0.byrepo": true,
-            "Session#0.injected": "b",
+            "Session#0.injected": "",
             "Session#0.live": true,
             "Session#0.page": "",
             "Session#0.project": "",
@@ -5580,22 +6051,41 @@
           }
         },
         {
-          "action": "Session#0.Drop",
+          "action": "Session#0.FromRepo",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
             "Session#0.byrepo": false,
-            "Session#0.injected": "b",
+            "Session#0.injected": "",
             "Session#0.live": true,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
+            "Session#0.page": "b",
+            "Session#0.project": "b",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
             "Session#1.page": "a",
             "Session#1.project": "a",
-            "Project#0.made": false
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Assign",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
           }
         }
       ]
@@ -5603,9 +6093,9 @@
     {
       "target": 63,
       "links": [
-        2,
-        11,
-        33,
+        3,
+        16,
+        38,
         63
       ],
       "trace": [
@@ -5629,51 +6119,13 @@
           }
         },
         {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
           "action": "Session#0.Start",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Project#0.Delete",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
             "Session#0.byrepo": true,
-            "Session#0.injected": "b",
+            "Session#0.injected": "",
             "Session#0.live": true,
             "Session#0.page": "",
             "Session#0.project": "",
@@ -5692,7 +6144,7 @@
             "local": "role Session#0",
             "orb": "role Session#1",
             "Session#0.byrepo": false,
-            "Session#0.injected": "b",
+            "Session#0.injected": "",
             "Session#0.live": true,
             "Session#0.page": "b",
             "Session#0.project": "b",
@@ -5703,111 +6155,24 @@
             "Session#1.project": "a",
             "Project#0.made": true
           }
-        }
-      ]
-    },
-    {
-      "target": 64,
-      "links": [
-        2,
-        11,
-        33,
-        64
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
         },
         {
-          "action": "Session#0.FromRepo",
+          "action": "Session#0.Assign",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
             "Session#0.byrepo": false,
             "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
+            "Session#0.live": true,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
             "Session#1.page": "a",
             "Session#1.project": "a",
             "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Project#0.Delete",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.Stop",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
           }
         }
       ]
@@ -5815,9 +6180,9 @@
     {
       "target": 65,
       "links": [
-        2,
-        11,
-        33,
+        3,
+        16,
+        39,
         65
       ],
       "trace": [
@@ -5841,6 +6206,25 @@
           }
         },
         {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": true,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
           "action": "Session#0.FromRepo",
           "state": {
             "b": "role Project#0",
@@ -5848,7 +6232,7 @@
             "orb": "role Session#1",
             "Session#0.byrepo": false,
             "Session#0.injected": "",
-            "Session#0.live": false,
+            "Session#0.live": true,
             "Session#0.page": "b",
             "Session#0.project": "b",
             "Session#1.byrepo": false,
@@ -5860,16 +6244,16 @@
           }
         },
         {
-          "action": "Session#0.Start",
+          "action": "Session#0.Drop",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
             "Session#0.byrepo": false,
-            "Session#0.injected": "b",
+            "Session#0.injected": "",
             "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
+            "Session#0.page": "a",
+            "Session#0.project": "a",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
@@ -5879,41 +6263,22 @@
           }
         },
         {
-          "action": "Project#0.Delete",
+          "action": "Session#0.Stop",
           "state": {
             "b": "role Project#0",
             "local": "role Session#0",
             "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "a",
+            "Session#0.project": "a",
             "Session#1.byrepo": false,
             "Session#1.injected": "",
             "Session#1.live": false,
             "Session#1.page": "a",
             "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#1.ApiMove",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "b",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
+            "Project#0.made": true
           }
         }
       ]
@@ -5922,8 +6287,8 @@
       "target": 66,
       "links": [
         3,
-        15,
-        35,
+        16,
+        39,
         66
       ],
       "trace": [
@@ -5966,373 +6331,6 @@
           }
         },
         {
-          "action": "Session#0.Drop",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.Assign",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        }
-      ]
-    },
-    {
-      "target": 67,
-      "links": [
-        3,
-        16,
-        38,
-        67
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Assign",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        }
-      ]
-    },
-    {
-      "target": 68,
-      "links": [
-        3,
-        16,
-        38,
-        68
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Assign",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        }
-      ]
-    },
-    {
-      "target": 70,
-      "links": [
-        3,
-        16,
-        39,
-        70
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.FromRepo",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "b",
-            "Session#0.project": "b",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Drop",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        },
-        {
-          "action": "Session#0.Stop",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": false,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "a",
-            "Session#0.project": "a",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": true
-          }
-        }
-      ]
-    },
-    {
-      "target": 71,
-      "links": [
-        3,
-        16,
-        39,
-        71
-      ],
-      "trace": [
-        {
-          "action": "Init",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": false,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
-          "action": "Session#0.Start",
-          "state": {
-            "b": "role Project#0",
-            "local": "role Session#0",
-            "orb": "role Session#1",
-            "Session#0.byrepo": true,
-            "Session#0.injected": "",
-            "Session#0.live": true,
-            "Session#0.page": "",
-            "Session#0.project": "",
-            "Session#1.byrepo": false,
-            "Session#1.injected": "",
-            "Session#1.live": false,
-            "Session#1.page": "a",
-            "Session#1.project": "a",
-            "Project#0.made": false
-          }
-        },
-        {
           "action": "Session#0.FromRepo",
           "state": {
             "b": "role Project#0",
@@ -6392,12 +6390,12 @@
       ]
     },
     {
-      "target": 72,
+      "target": 67,
       "links": [
         3,
         16,
         39,
-        72
+        67
       ],
       "trace": [
         {
@@ -7148,6 +7146,92 @@
       ]
     },
     {
+      "target": 33,
+      "links": [
+        2,
+        11,
+        33
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        },
+        {
+          "action": "Session#0.FromRepo",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Session#0.Start",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": false,
+            "Session#0.injected": "b",
+            "Session#0.live": true,
+            "Session#0.page": "b",
+            "Session#0.project": "b",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": true
+          }
+        },
+        {
+          "action": "Project#0.Delete",
+          "state": {
+            "b": "role Project#0",
+            "local": "role Session#0",
+            "orb": "role Session#1",
+            "Session#0.byrepo": true,
+            "Session#0.injected": "",
+            "Session#0.live": false,
+            "Session#0.page": "",
+            "Session#0.project": "",
+            "Session#1.byrepo": false,
+            "Session#1.injected": "",
+            "Session#1.live": false,
+            "Session#1.page": "a",
+            "Session#1.project": "a",
+            "Project#0.made": false
+          }
+        }
+      ]
+    },
+    {
       "target": 34,
       "links": [
         3,
@@ -7631,7 +7715,7 @@
             "orb": "role Session#1",
             "Session#0.byrepo": true,
             "Session#0.injected": "",
-            "Session#0.live": true,
+            "Session#0.live": false,
             "Session#0.page": "",
             "Session#0.project": "",
             "Session#1.byrepo": false,

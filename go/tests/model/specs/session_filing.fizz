@@ -119,8 +119,12 @@ role Project:
         self.made = False
 
     # Delete on the Projects page: DeleteProject removes the directory and
-    # takes every session filed in it out. A running child keeps the env it
-    # started with.
+    # takes every session filed in it out. It first ends every session of
+    # the project (EndProject -> projectSessions, which includes the local
+    # sessions filed there), so a filed child does not outlive the
+    # directory its BOUGH_PROJECT_DIR names: the next message starts it
+    # unfiled. (Stage 2's MBT run found this; the first draft kept the
+    # child running with the old env.)
     atomic action Delete:
         require self.made
         self.made = False
@@ -128,6 +132,8 @@ role Project:
             local.project = ""
             local.page = ""
             local.byrepo = True
+            local.live = False
+            local.injected = ""
 
 action Init:
     local = Session(mode="local")
