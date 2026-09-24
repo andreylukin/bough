@@ -180,6 +180,7 @@ type ltsGet struct {
 type ltsFetch struct {
 	sess  int
 	since int64 // the real cursor, a history seq
+	stale bool  // sent by a selection since left
 }
 
 type liveTranscriptSyncAdapter struct {
@@ -568,9 +569,9 @@ func (a *liveTranscriptSyncAdapter) GetState() (map[string]any, error) {
 		}
 		get = map[string]any{"sess": a.get.sess, "snap": snap}
 	}
-	fetch := map[string]any{"sess": -1, "since": 0}
+	fetch := map[string]any{"sess": -1, "since": 0, "live": false}
 	if a.fetch != nil {
-		fetch = map[string]any{"sess": a.fetch.sess, "since": a.cursor(a.fetch.sess, a.fetch.since)}
+		fetch = map[string]any{"sess": a.fetch.sess, "since": a.cursor(a.fetch.sess, a.fetch.since), "live": !a.fetch.stale}
 	}
 	return map[string]any{
 		"disk": a.disk, "ring": list(a.ring), "sel": a.sel, "conn": a.conn,
@@ -719,6 +720,9 @@ func (a *liveTranscriptSyncAdapter) Switch() error {
 	a.sel = 1 - a.sel
 	a.lines, a.loaded, a.timer, a.paused = nil, false, false, false
 	a.conn, a.inbox = "live", nil
+	if a.fetch != nil {
+		a.fetch.stale = true // the old run's: its answer is ignored whenever it lands
+	}
 	if err := a.replay(a.sel); err != nil {
 		return err
 	}
@@ -802,7 +806,7 @@ func (a *liveTranscriptSyncAdapter) CatchUpOk() error {
 	}
 	f := a.fetch
 	a.fetch = nil
-	if f.sess != a.sel {
+	if f.stale {
 		return nil // `live` is false: the response is ignored
 	}
 	a.paused = false
@@ -828,7 +832,7 @@ func (a *liveTranscriptSyncAdapter) CatchUpFail() error {
 	}
 	f := a.fetch
 	a.fetch = nil
-	if f.sess == a.sel {
+	if !f.stale {
 		a.paused, a.timer = true, true
 	}
 	return nil

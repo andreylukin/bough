@@ -23,7 +23,8 @@ deadlock_detection: false
 # arms a 120ms catch-up, GET ?since=<last line's seq>, whose entries are
 # appended deduped by history seq. A failed catch-up pauses the thread
 # ("Updates paused") and re-arms on a 4s..30s backoff; Retry forces one.
-# Responses for a session no longer selected are ignored (`live`).
+# Responses to an earlier selection are ignored (`live`), even when the
+# same session is selected again.
 #
 # The mapped states are field values: Unsubscribed sel == -1; Live conn
 # "live"; SubscriberDropped conn "dropped" with frames still in the
@@ -145,8 +146,9 @@ role Sync:
         self.loaded = False   # the first GET for sel landed
         # initial GET in flight: record(sess, snap); sess -1 = none, snap -1 = not read yet
         self.get = record(sess=-1, snap=-1)
-        # catch-up in flight: record(sess, since); sess -1 = none
-        self.fetch = record(sess=-1, since=0)
+        # catch-up in flight: record(sess, since, live); sess -1 = none,
+        # live False once the selection that sent it is gone
+        self.fetch = record(sess=-1, since=0, live=False)
         self.timer = False    # catch-up armed
         self.paused = False   # "Updates paused"
 
@@ -189,6 +191,11 @@ role Sync:
         self.inbox = []
         self.timer = replay(self.sel, self.ring, self.timer)
         self.get = record(sess=self.sel, snap=-1)
+        # A catch-up still in flight belongs to the run just cleaned up:
+        # that run's `live` drops its answer, even when the same session
+        # is selected again.
+        if self.fetch.sess >= 0:
+            self.fetch = record(sess=self.fetch.sess, since=self.fetch.since, live=False)
         lost = False
 
     atomic fair<strong> action InitialServe:
@@ -223,18 +230,18 @@ role Sync:
     atomic fair<strong> action CatchUpFire:
         require self.timer and self.fetch.sess < 0
         self.timer = False
-        self.fetch = record(sess=self.sel, since=last_seq(self.lines))
+        self.fetch = record(sess=self.sel, since=last_seq(self.lines), live=True)
 
     atomic action Retry:
         require self.paused and self.fetch.sess < 0
         self.timer = False
-        self.fetch = record(sess=self.sel, since=last_seq(self.lines))
+        self.fetch = record(sess=self.sel, since=last_seq(self.lines), live=True)
 
     atomic fair<strong> action CatchUpOk:
         require self.fetch.sess >= 0
         f = self.fetch
-        self.fetch = record(sess=-1, since=0)
-        if f.sess == self.sel:
+        self.fetch = record(sess=-1, since=0, live=False)
+        if f.live:
             self.paused = False
             n = disk_of(f.sess, self.disk)
             have = [l.seq for l in self.lines]
@@ -248,8 +255,8 @@ role Sync:
     atomic action CatchUpFail:
         require self.fetch.sess >= 0
         f = self.fetch
-        self.fetch = record(sess=-1, since=0)
-        if f.sess == self.sel:
+        self.fetch = record(sess=-1, since=0, live=False)
+        if f.live:
             self.paused = True
             self.timer = True
 
