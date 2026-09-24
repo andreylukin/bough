@@ -37,7 +37,7 @@ deadlock_detection: false
 # and slices `drop` runs off the preview (superseded -= drop). A response
 # with no entries changes neither. A failed catch-up re-arms.
 #
-# Fields: the engine's side (cur, disk, n, turn, steered) and the page's
+# Fields: the engine's side (cur, disk, n, turn, steered, queued) and the page's
 # (stream, sup, seen, timer, fetch, drop, header, cut). A fragment is an
 # int, 1..MAXFRAG in arrival order, so "text" is a list of them; a run is
 # record(kind, frags); an entry is record(kind, frags, partial). The
@@ -86,7 +86,14 @@ deadlock_detection: false
 # - a response of only unsummarized thinking records nothing and sends no
 #   change signal: its run stays on screen, unsealed, and the next
 #   request's first thinking fragment EXTENDS it (one run across two
-#   requests) until a later record's catch-up drops both.
+#   requests) until a later record's catch-up drops both. But only when a
+#   queued steer is what asks the model again (actor.go response): every
+#   other way a turn goes on past a response records something first. A
+#   response the turn goes on from made a tool call, and the call's
+#   recorded end (project.go call: a "call" entry) seals like any
+#   record. So Respond appends a "call" entry unless a steer is `queued`
+#   (found by the server walk, which cannot make the engine ask again
+#   without one or the other).
 # - a delta-reset clears sealed runs too (recorded, not yet fetched):
 #   their text blinks out until that catch-up lands. Allowed by the
 #   mapped claim ("except by a reset").
@@ -150,6 +157,7 @@ role Preview:
         self.n = 0             # fragments streamed so far
         self.turn = "running"  # running | done
         self.steered = False
+        self.queued = False    # the steer's input waits for the request's boundary
         # --- page ---
         self.stream = []       # the preview: runs on screen
         self.sup = 0           # `superseded`: sealed runs
@@ -192,6 +200,12 @@ role Preview:
                 else:
                     for f in r.frags:
                         unsummarized.append(f)
+            # The turn goes on past the response through its tool call,
+            # whose end is recorded, unless the queued steer carries it
+            # on (see the corrections).
+            if not self.queued:
+                recs.append(record(kind="call", frags=[], partial=False))
+            self.queued = False
             self.cur = []
             self.disk = self.disk + recs
             if len(recs) > 0:
@@ -211,6 +225,7 @@ role Preview:
         # the first run streams (see the abstractions).
         require self.turn == "running" and not self.steered and len(self.cur) > 0 and self.n == 1
         self.steered = True
+        self.queued = True
         self.disk = self.disk + [record(kind="input", frags=[], partial=False)]
         self.sup = seal(self.stream)
         self.timer = True
@@ -231,6 +246,7 @@ role Preview:
         if len(text) > 0:
             recs = [record(kind="assistant", frags=text, partial=True)]
         self.cur = []
+        self.queued = False
         self.disk = self.disk + recs + [record(kind="done", frags=[], partial=False)]
         self.turn = "done"
         self.sup = seal(self.stream)
@@ -238,6 +254,9 @@ role Preview:
 
     atomic fair<strong> action Finish:
         require self.turn == "running" and len(self.cur) == 0
+        # A queued steer asks the model once more first; that answer
+        # records nothing.
+        self.queued = False
         self.disk = self.disk + [record(kind="done", frags=[], partial=False)]
         self.turn = "done"
         self.sup = seal(self.stream)
