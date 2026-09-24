@@ -192,8 +192,11 @@ func Transcript(entries []history.Entry, sinceSeq int64, limit int) []Line {
 			break
 		}
 		// Typed job entries are serve bookkeeping; the transcript shows
-		// the loop's text job note for the same event.
-		if typedJob(e) {
+		// the loop's text job note for the same event. An engine call
+		// adopted as a job (it names its call) has no note: its typed
+		// entries are its only record, and the page's Work and the
+		// adopting turn's "still running" footer read them by call.
+		if _, adopted := e.Data["call"].(string); typedJob(e) && !adopted {
 			if c, ok := e.Data["cmd"].(string); ok && c != "" {
 				if cmds == nil {
 					cmds = map[string]string{}

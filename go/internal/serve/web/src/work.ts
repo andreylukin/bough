@@ -142,6 +142,11 @@ export function jobsFromLines(lines: Line[], session: string, live: boolean, run
           // Killed by Stop orb: the user's doing, not the job's failure.
           w.life = d.stopped === true ? "stopped" : d.exit === 0 ? "finished" : "failed";
           w.exitNote = undefined;
+        } else if (d.stopped === true) {
+          // A killed adopted call is cancelled before it exits, and a job
+          // serve ends at its child's reap never exited: stopped all the same.
+          w.life = "stopped";
+          w.exitNote = undefined;
         } else if (w.exit === undefined && w.life !== "failed") {
           w.life = "unknown";
           w.exitNote = "Exit not recorded.";
