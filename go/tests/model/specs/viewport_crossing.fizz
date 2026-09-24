@@ -1,0 +1,286 @@
+# The control room while the window crosses 720 px (phone: one pane) and
+# 480 px (the Work sheet) with state held: which pane shows against what
+# the hash names, a page, an open overlay, and the sidebar's closed flag
+# (go/internal/serve/web/src/app.tsx). narrow_layout and ui_narrow model
+# a fixed phone; this flow is the crossing itself.
+#
+# One Vp role, all client state:
+#
+#   width     "wide" (>720) | "phone" (481-720) | "tiny" (<=480)
+#   view      "sessions" | "page"   page is Me or a project page: routes
+#             that are not .thread, so data-pane=list does not hide them
+#   selected  a session is open (only on sessions)
+#   pane      "list" | "thread"     App's `pane`. It is state at every
+#             width, but only the (max-width:720px) CSS reads it.
+#   hash      "root" (#/) | "session" (#/s/<id>) | "page" (#/me, ...)
+#   closed    the bough:side-closed flag. It folds the sidebar to a rail
+#             only on a desktop (`folded = closed && !narrow`); on a phone
+#             it is kept but not drawn.
+#   overlay   "none" | "settings" (the More popover) | "work" (Work:
+#             popover above 480 px, sheet at or below) | "details" (the
+#             strip's "More session details", folded there at phone
+#             width) | "palette"
+#   fitted    the open overlay sits inside the viewport
+#   focus     "page" | "overlay" | "lost": inside the open overlay, on
+#             the page (its opener after a close), or dropped to <body>
+#   last      "resize" | "reload" | "other": the last step's kind
+#   prev_hash the hash before the last resize ("" otherwise)
+#   pushed    the last step pushed a history entry
+#   prev_screen what was on screen before the last reload ("" otherwise)
+#
+# Left out on purpose, each a finding (proved by re-enabling it, see
+# the flow's notes):
+#   - "/" with a session open (any width) calls onShowList, pane=list,
+#     while the hash still names the session. On a desktop nothing shows
+#     it; narrowing then shows the list under #/s/<id>, and a reload
+#     shows the thread. SlashKey is modelled only at "#/". Allowing it on
+#     a session breaks PaneIsHashPane.
+#   - "/" on Me or a project page (any width) sets pane=list while the
+#     view stays: on a phone both panes show. Allowing it breaks OnePane.
+#   - Widening past 720 px with the strip's Details open: the ResizeObserver
+#     resets the fold, "Details" unmounts with its popover and the focused
+#     summary, and focus drops to <body>. Allowing it breaks FocusHeld.
+#     (Narrowing with the Edits chip's desktop popover open is the same
+#     unmount in the other direction; that chip is not modelled.)
+#   - A reload at "#/" on a desktop is arrival: it opens the session that
+#     most needs you, so widening off the phone list and reloading does
+#     not show the list beside the Overview. Modelled as the product does
+#     it; ReloadShowsScreen names the exception.
+
+role Vp:
+    action Init:
+        # A desktop with one session open (#/s/<id>).
+        self.width = "wide"
+        self.view = "sessions"
+        self.selected = True
+        self.pane = "thread"
+        self.hash = "session"
+        self.closed = False
+        self.overlay = "none"
+        self.fitted = True
+        self.focus = "page"
+        self.last = "other"
+        self.prev_hash = ""
+        self.pushed = False
+        self.prev_screen = ""
+
+    # --- the window ----------------------------------------------------
+
+    atomic action ResizeNarrow:
+        # Over 720 to 481-720.
+        require self.width == "wide"
+        resize(self, "phone")
+
+    atomic action ResizeBelow480:
+        # To 480 or less, from either wider band.
+        require self.width != "tiny"
+        resize(self, "tiny")
+
+    atomic action ResizeAbove480:
+        require self.width == "tiny"
+        resize(self, "phone")
+
+    atomic action ResizeWide:
+        # Past 720, from either phone band. Details open is left out (see
+        # above).
+        require self.width != "wide" and self.overlay != "details"
+        resize(self, "wide")
+
+    # --- getting around ------------------------------------------------
+
+    atomic action OpenSession:
+        # A row in the list: the sidebar on a desktop (not folded to the
+        # rail, which has no rows), the list pane on a phone.
+        require self.overlay == "none" and list_visible(self)
+        go(self, "sessions", True, "thread")
+
+    atomic action Back:
+        # goList: a phone's Back on a thread or a page.
+        require self.overlay == "none" and self.width != "wide" and self.pane == "thread"
+        go(self, "sessions", False, "list")
+
+    atomic action OpenPage:
+        # Me or a project: the sidebar's nav on a desktop (the rail keeps
+        # it), the phone ViewNav on the list or a page. onView pushes the
+        # page's hash and sets pane=thread.
+        require self.overlay == "none" and self.view == "sessions" and (self.width == "wide" or self.pane == "list")
+        go(self, "page", False, "thread")
+
+    atomic action SlashKey:
+        # "/" opens search: unfolds the sidebar (closed=false), shows the
+        # list. Only at "#/" (see above).
+        require self.overlay == "none" and self.hash == "root"
+        self.closed = False
+        self.pane = "list"
+        other(self)
+
+    atomic action CmdB:
+        # Folds and unfolds the sidebar. On a phone the flag flips with
+        # nothing to see, and the next desktop width shows it.
+        require self.overlay == "none"
+        self.closed = not self.closed
+        other(self)
+
+    atomic action Reload:
+        # The hash decides the view and the pane; overlays are gone.
+        # A desktop at "#/" is arrival: the top session opens (replaceState).
+        self.prev_screen = screen(self)
+        if self.hash == "root" and self.width == "wide":
+            self.hash = "session"
+        self.view = "page" if self.hash == "page" else "sessions"
+        self.selected = self.hash == "session"
+        self.pane = "list" if self.hash == "root" else "thread"
+        self.overlay = "none"
+        self.fitted = True
+        self.focus = "page"
+        self.last = "reload"
+        self.prev_hash = ""
+        self.pushed = False
+
+    # --- overlays ------------------------------------------------------
+
+    atomic action OpenSettings:
+        require self.overlay == "none" and on_session(self)
+        open_overlay(self, "settings")
+
+    atomic action OpenWork:
+        require self.overlay == "none" and on_session(self)
+        open_overlay(self, "work")
+
+    atomic action OpenDetails:
+        # A phone folds every metric under "Details" (fold=5).
+        require self.overlay == "none" and on_session(self) and self.width != "wide"
+        open_overlay(self, "details")
+
+    atomic action OpenPalette:
+        require self.overlay == "none"
+        open_overlay(self, "palette")
+
+    atomic action CloseOverlay:
+        # Escape: every overlay gives focus back to its opener.
+        require self.overlay != "none"
+        self.overlay = "none"
+        self.fitted = True
+        self.focus = "page"
+        other(self)
+
+    atomic fair action Refit:
+        # The overlay's own resize listener: Settings refits its height on
+        # visualViewport resize, the Work popover re-anchors on window
+        # resize (and on the sheet/popover switch, a layout effect).
+        require self.overlay != "none" and not self.fitted
+        self.fitted = True
+
+
+def resize(a, w):
+    was_phone = a.width != "wide"
+    now_phone = w != "wide"
+    a.width = w
+    if a.overlay == "palette" and was_phone != now_phone:
+        # closeOnNavigate listens to the (max-width:720px) query: crossing
+        # it closes the palette and focus goes back to its opener.
+        a.overlay = "none"
+        a.focus = "page"
+        a.fitted = True
+    elif a.overlay == "settings" or a.overlay == "work":
+        # Same element, CSS re-anchors it, focus stays inside; its
+        # listener refits it after the resize (Refit).
+        a.fitted = False
+    # palette across 480 and details within the phone bands are placed by
+    # CSS: they stay open and fitted.
+    a.last = "resize"
+    a.prev_hash = a.hash
+    a.pushed = False
+    a.prev_screen = ""
+
+def go(a, view, selected, pane):
+    a.view = view
+    a.selected = selected
+    a.pane = pane
+    if view == "page":
+        a.hash = "page"
+    elif selected:
+        a.hash = "session"
+    else:
+        a.hash = "root"
+    a.last = "other"
+    a.prev_hash = ""
+    a.pushed = True
+    a.prev_screen = ""
+
+def other(a):
+    a.last = "other"
+    a.prev_hash = ""
+    a.pushed = False
+    a.prev_screen = ""
+
+def open_overlay(a, o):
+    a.overlay = o
+    a.fitted = True
+    a.focus = "overlay"
+    other(a)
+
+def on_session(a):
+    # The thread head (More, Work, the strip) is on screen.
+    return a.view == "sessions" and a.selected and (a.width == "wide" or a.pane == "thread")
+
+def list_visible(a):
+    if a.width == "wide":
+        return not a.closed
+    return a.pane == "list"
+
+def hash_pane(h):
+    return "list" if h == "root" else "thread"
+
+def derived_hash(a):
+    if a.view == "page":
+        return "page"
+    return "session" if a.selected else "root"
+
+def screen(a):
+    # What a person sees, overlays aside.
+    if a.width != "wide":
+        if a.pane == "list":
+            return "list"
+        return a.view
+    rail = "rail" if a.closed else "side"
+    if a.view == "page":
+        return "desk-page-" + rail
+    return ("desk-session-" if a.selected else "desk-overview-") + rail
+
+
+action Init:
+    vp = Vp()
+
+# On a phone exactly one pane shows: data-pane=list hides only .thread,
+# so the list pane is only ever the sessions view.
+always assertion OnePane:
+    return vp.width == "wide" or vp.pane == "thread" or vp.view == "sessions"
+
+# On a phone the pane that shows is the one the hash names.
+always assertion PaneIsHashPane:
+    return vp.width == "wide" or vp.pane == hash_pane(vp.hash)
+
+# The hash is written from the view and the selection.
+always assertion HashNamesView:
+    return vp.hash == derived_hash(vp)
+
+# A resize never changes the hash and never pushes history.
+always assertion ResizeKeepsHash:
+    return vp.last != "resize" or (vp.hash == vp.prev_hash and not vp.pushed)
+
+# Focus is inside the open overlay, or on the page with none open; it is
+# never dropped to <body>.
+always assertion FocusHeld:
+    return vp.focus != "lost" and ((vp.overlay != "none") == (vp.focus == "overlay"))
+
+# A reload shows what was on screen, but for a desktop's arrival at "#/".
+always assertion ReloadShowsScreen:
+    if vp.last != "reload":
+        return True
+    arrival = vp.width == "wide" and vp.prev_screen.startswith("desk-overview-")
+    return screen(vp) == vp.prev_screen or arrival
+
+# After a resize every open overlay is fitted or closed.
+always eventually assertion OverlayFitted:
+    return vp.overlay == "none" or vp.fitted
