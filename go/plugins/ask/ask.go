@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -325,6 +326,13 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 	}
 	if h, err := kernel.Get[appender](ctx, "history"); err == nil {
 		a.hist = h
+		// Ids are unique in the session's history, not per Asker: a
+		// remounted row or a respawned process continues after the asks
+		// the transcript has. A restart at ask-1 let a draft kept for the
+		// old ask-1 (the page keys it by id) answer a new question.
+		if r, ok := h.(interface{ Entries() []history.Entry }); ok {
+			a.seq = lastAskSeq(r.Entries())
+		}
 	}
 	a.project, _ = kernel.Get[string](ctx, "session-project")
 	// The loop documents tools.ask (and the separate-arguments nudge)
@@ -347,8 +355,38 @@ func (plugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 		}
 		ctx.Effect(off)
 	}
+	// A disposed Asker can never be answered (the ui routes to the new
+	// one), so its open asks end now rather than at the timeout: the
+	// blocked call returns an error and its recorded end tells serve.
+	ctx.Effect(a.cancelAll)
 	ctx.Provide("ask-answers", a)
 	return nil
+}
+
+// cancelAll fails every pending ask, as Cancel does one.
+func (a *Asker) cancelAll() {
+	a.mu.Lock()
+	pending := a.pending
+	a.pending = map[string]pend{}
+	a.mu.Unlock()
+	for _, p := range pending {
+		close(p.ch)
+	}
+}
+
+// lastAskSeq is the highest n of an "ask-n" id in entries.
+func lastAskSeq(entries []history.Entry) int64 {
+	var last int64
+	for _, e := range entries {
+		if e.Kind != "ask" {
+			continue
+		}
+		id, _ := e.Data["id"].(string)
+		if n, err := strconv.ParseInt(strings.TrimPrefix(id, "ask-"), 10, 64); err == nil && n > last {
+			last = n
+		}
+	}
+	return last
 }
 
 // asInt accepts the integer shapes YAML and JS configs arrive as.
