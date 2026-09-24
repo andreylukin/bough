@@ -9,12 +9,12 @@
 // llm-control, a timeout fires on cue through BOUGH_TEST_ASK_EXPIRE_DIR,
 // and the secret lands in a file keychain.
 //
-// Three pages: tab0 and tab1 are the two answerers, each with its POST
-// held by a route until the spec delivers it, and the harness's own page
-// is a watcher reloaded before every read. A live page's transcript
-// follows serve's event stream, which stops at a held stdout line, so
-// what history already says (the question, how many were asked, where a
-// line landed) is what a fresh load of the thread shows.
+// Four pages: tab0 and tab1 are the two answerers and tabM sends the
+// message, each POST held by a route until the spec delivers it, and
+// the harness's own page is a watcher reloaded before every read. A
+// live page's transcript follows serve's event stream, which stops at a
+// held stdout line, so what history already says (the question, how
+// many were asked, where a line landed) is what a fresh load shows.
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -46,6 +46,7 @@ interface Ctx {
   page: Page;                // the watcher
   tab0: Page;
   tab1: Page;
+  tabM: Page;                // the tab messages are sent from
   serve: Serve;
   id: string;
   cwd: string;
@@ -302,13 +303,14 @@ async function deliver(c: Ctx, which: 't0' | 't1'): Promise<void> {
   if (before !== h.q && before !== '' && (await armed(c)) === '') c.wrongDA = true;
 }
 
-async function hold(c: Ctx, tab: Page, which: 't0' | 't1'): Promise<void> {
+async function hold(c: Ctx, tab: Page, which: 't0' | 't1' | 'tM'): Promise<void> {
   await tab.route(new RegExp(`/api/sessions/${c.id}/(answer|prompt)$`), (route) => {
     const body = JSON.parse(route.request().postData() ?? '{}');
     if (route.request().url().endsWith('/prompt')) {
       c.prompt = { route, tab, text: body.text };
       return;
     }
+    if (which === 'tM') throw new Error('the message tab sent an answer');
     c[which] = { route, tab, q: c.shown[which], text: body.text };
   });
 }
@@ -334,7 +336,7 @@ modelTests<Ctx>({
     const cwd = path.join(serve.work, `aaar${++walks}`);
     fs.mkdirSync(cwd, { recursive: true });
     const c: Ctx = {
-      page, tab0: page, tab1: page, serve, id: '', cwd, dir: controlDir(serve.home), held: '', next: '', n: 0, errors: [],
+      page, tab0: page, tab1: page, tabM: page, serve, id: '', cwd, dir: controlDir(serve.home), held: '', next: '', n: 0, errors: [],
       t0: null, t1: null, shown: { t0: '', t1: '' }, prompt: null, prompted: false, lines: ['start'], wrote: [], dupWrite: false, unarmed: false, wrongDA: false,
     };
     queueNext(c);
@@ -347,7 +349,8 @@ modelTests<Ctx>({
 
     c.tab0 = await page.context().newPage();
     c.tab1 = await page.context().newPage();
-    for (const [tab, which] of [[c.tab0, 't0'], [c.tab1, 't1']] as const) {
+    c.tabM = await page.context().newPage();
+    for (const [tab, which] of [[c.tab0, 't0'], [c.tab1, 't1'], [c.tabM, 'tM']] as const) {
       // A refusal the spec models (409) is logged by Chromium, and the
       // page says so beside the question.
       tab.on('console', (m) => { if (m.type() === 'error' && !/status of 409 /.test(m.text())) c.errors.push(`${which}: ${m.text()}`); });
@@ -415,25 +418,22 @@ modelTests<Ctx>({
     DeliverTab0: (c) => deliver(c, 't0'),
     DeliverTab1: (c) => deliver(c, 't1'),
 
-    // A message: typed into a tab's composer and sent as a steer, from a
-    // tab with no answer of its own in flight (its composer waits for
-    // that). A page showing a question offers no way to send one (a
-    // draft started there is its answer), so when neither tab can, the
-    // message comes from another client, as the CLI's `bough send` or a
-    // tab that polled late would send it.
+    // A message: typed into the third tab's composer and sent as a
+    // steer. It is a tab of its own because a tab waits for its own
+    // request (an answer in flight disables its composer, a message in
+    // flight its options), which the spec's answerers do not. A page
+    // showing a question offers no way to send one (a draft started
+    // there is its answer), so then the message comes from another
+    // client, as the CLI's `bough send` or a tab that polled late would.
     async SendPrompt(c) {
       c.prompted = true;
       const text = `msg-${++c.n}`;
-      let tab: Page | null = null;
-      for (const [t, h] of [[c.tab1, c.t1], [c.tab0, c.t0]] as const) {
-        if (!h && !(await t.locator('.transcript .ask').count())) { tab = t; break; }
-      }
-      if (!tab) {
+      if (await c.tabM.locator('.transcript .ask').count()) {
         c.prompt = { route: null, tab: null, text };
         return;
       }
-      await tab.locator('#composer').fill(text);
-      await tab.locator('.composer .btn-primary').click();
+      await c.tabM.locator('#composer').fill(text);
+      await c.tabM.locator('.composer .btn-primary').click();
       await until('the message to be sent', () => c.prompt !== null);
     },
 
@@ -475,6 +475,7 @@ modelTests<Ctx>({
     for (const f of fs.readdirSync(expireDir)) fs.rmSync(path.join(expireDir, f), { force: true });
     await c.tab0.close().catch(() => {});
     await c.tab1.close().catch(() => {});
+    await c.tabM.close().catch(() => {});
     const work = fs.realpathSync(c.cwd);
     let out = '';
     try { out = execFileSync('lsof', ['-a', '-d', 'cwd', '-c', 'bough', '-Fpn'], { encoding: 'utf8' }); } catch { /* none */ }
