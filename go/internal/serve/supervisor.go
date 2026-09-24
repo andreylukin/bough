@@ -904,9 +904,11 @@ func (s *Supervisor) emitLocked(id, kind, text string, extra map[string]any) {
 	switch kind {
 	case "ask":
 		s.asks[id] = askFrom(ev)
-	case "done", "cancelled", "error", "exit":
+	case "done", "cancelled", "exit":
 		// The turn (or the process) ended: stop routing stdin to an
-		// ask nobody is waiting on any more.
+		// ask nobody is waiting on any more. Not "error": every stderr
+		// line is one (a config reload's "bough: reloaded" too), and
+		// the ask it interrupts is still blocked on the next line.
 		delete(s.asks, id)
 	case "result", "call":
 		// The ask returned with no answer (a timeout): a code block's
@@ -1244,16 +1246,55 @@ func (s *Supervisor) StartedIn(id string) string {
 // PendingAsk is the ask this session is blocked on, from the event
 // stream rather than history: it is the live process that will read
 // the next line.
+//
+// An arm whose ask history has since closed is dropped: the close can
+// happen while the child's ui row is between dispose and remount (a
+// config reload), when no event reaches serve to say so.
 func (s *Supervisor) PendingAsk(id string) *Ask {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	a, ok := s.asks[id]
+	s.mu.Unlock()
 	if !ok || a == nil {
+		return nil
+	}
+	if entries, err := s.Entries(id); err == nil && askClosedIn(entries, a.ID) {
+		s.mu.Lock()
+		if s.asks[id] == a {
+			delete(s.asks, id)
+		}
+		s.mu.Unlock()
 		return nil
 	}
 	cp := *a
 	cp.Options = append([]string(nil), a.Options...)
 	return &cp
+}
+
+// askClosedIn reports whether history records the end of ask askID:
+// after its last "ask" entry, its answer, the native call's end, a
+// block's result or the turn's close. An ask history does not have is
+// not closed: the arm is all there is to go on.
+func askClosedIn(entries []history.Entry, askID string) bool {
+	asked, closed := false, false
+	for _, e := range entries {
+		switch e.Kind {
+		case "ask":
+			if str(e.Data["id"]) == askID {
+				asked, closed = true, false
+			}
+		case "ask/answer":
+			if str(e.Data["id"]) == askID {
+				closed = true
+			}
+		case "call":
+			if t := str(e.Data["tool"]); t == "ask" || t == "secret" {
+				closed = true
+			}
+		case "result", "done", "cancelled":
+			closed = true
+		}
+	}
+	return asked && closed
 }
 
 // Recent is a copy of the session's event ring, oldest first.
