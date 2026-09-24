@@ -1,0 +1,306 @@
+---
+# The bounds (MAX_MSGS, MAX_ADOPTS, one Q) end every behaviour with both
+# children at rest: that is the end of the flow, not a deadlock.
+deadlock_detection: false
+---
+
+# Stopping background agents, as the parent's Work dialog and serve see
+# it: the Stop button's state machine (Stopping, Retry, No reply), Stop
+# on a queued agent, and a child whose turn closed with calls adopted as
+# jobs (it is still working: "waiting"), then woken when they finish.
+#
+# Code: go/internal/serve/web/src/work-ui.tsx (useStopStore,
+# StopWorkButton), work.ts (agentsFromRows: row life and canStop),
+# app.tsx (agentReports: the Result a row shows), children_api.go
+# (stopAgent), children.go (childEventLocked, report, stopChild,
+# drainQueue), supervisor.go (Send, Interrupt), and the engine's
+# closeTurn/adopt/wake (internal/unreal/session/actor.go).
+#
+# background_agents covers the spawn budget, the queue and depth; this
+# flow is what it leaves out: jobs, and the page's own stop entries.
+#
+# Two children. A (fields a*) carries the whole stop and job story; Q
+# (q*) is spawned while A holds the only slot (running cap 1), so it
+# queues, and is then stopped while queued, or drained and run.
+#
+# Bounds: A adopts a job at most once and is messaged at most once,
+# enough for every ordering of "job still running" against "turn open".
+#
+# Folded into one step (nothing a client can hold them on):
+#   - a Stop that reaches serve (StopLands) with a slot held: SIGINT, the
+#     turn (or the idle wait) ends, the process exits and its jobs die,
+#     the report lands, the page's next read clears the entry, and the
+#     freed slot drains the queue;
+#   - a close's report, and the freed slot's drain;
+#   - a job that finishes while a turn is open is steered into it as a
+#     [notice]; one that finishes while idle opens a wake turn.
+# Held on purpose by a test (page.route in the browser, the adapter's own
+# bookkeeping in Go): the POST /stop, so "Stopping" and its 15 s timer
+# are states, and so the POST can fail (Retry).
+#
+# Where the code disagrees, this spec says what the flow promises and the
+# code is the finding (checked against the code on main, 2026-09-24):
+#   1. A waiting child (done with running>0) holds its slot in serve
+#      (childEventLocked returns early) but its row reads "finished"
+#      (StatusOf says done; agentsFromRows has canStop false): the Work
+#      dialog shows no Stop for an agent serve counts as running.
+#      Promise: RowShowsSlot.
+#   2. A message to a waiting child opens a turn whose done (running=0,
+#      only its own calls count) frees the slot while the old job still
+#      runs; drain may start Q; the job's wake turn then runs with no
+#      slot, the row says running with Stop, and Stop answers "idle"
+#      without interrupting: "Stopping" until the wake closes by itself
+#      or 15 s pass and it says "No reply". Promise: SlotIsWork and
+#      StoppingHasRequest.
+#   3. Stop on a waiting child SIGINTs an idle process: it exits, its
+#      jobs die, and the exit's report finds the interim done closed and
+#      tells the parent "finished" with the interim reply. Promise: the
+#      notice says stopped (StopSaysStopped).
+#   4. useStopStore never clears an "error" entry (the filter skips it),
+#      and a POST that fails after the record already cleared the entry
+#      writes a fresh "error": a finished agent keeps a Retry button.
+#      Promise: StopEntryNeedsWorker.
+#   5. A stopped queued agent vanishes from byKey, so its entry is never
+#      cleared and flips to "timeout" 15 s later. No row renders it, so
+#      it is invisible (a leak, not a wrong screen); modelled as cleared.
+#   6. A row keeps the parent's last report as its Result while a new
+#      turn runs (a re-messaged or woken child shows the old reply under
+#      "Result"). Promise: ShownReportIsCurrent.
+#
+# Fields:
+#   a          A's last turn as its history says: none | open | done | stopped
+#   a_job      A has an adopted call still running
+#   a_slot     A is in serve's running map (agentCounts' running)
+#   a_row      A's Work row: none | running | finished | stopped
+#   a_stop     A's stop entry: "" | stopping | error | timeout
+#   a_req      a POST /stop for A is in flight
+#   a_turns    turns A opened (spawn, message, wake)
+#   a_shown    the turn whose report A's row shows as Result, 0 for none
+#   a_notices  reports the parent got for A; a_finals the ones it is owed
+#   a_word     the last report's word: "" | finished | stopped
+#   a_msgs, a_adopts   bounds
+#   q          none | queued | running | done | stopped | gone (dropped)
+#   q_stop, q_req      Q's stop entry and request, as A's
+
+MAX_MSGS = 1
+MAX_ADOPTS = 1
+
+role Parent:
+    action Init:
+        self.a = "none"
+        self.a_job = False
+        self.a_slot = False
+        self.a_row = "none"
+        self.a_stop = ""
+        self.a_req = False
+        self.a_turns = 0
+        self.a_shown = 0
+        self.a_notices = 0
+        self.a_finals = 0
+        self.a_word = ""
+        self.a_msgs = 0
+        self.a_adopts = 0
+        self.q = "none"
+        self.q_stop = ""
+        self.q_req = False
+
+    # agent: tools.spawn({background}) with a free slot: A runs.
+    atomic action SpawnA:
+        require self.a == "none"
+        self.a = "open"
+        self.a_slot = True
+        self.a_row = "running"
+        self.a_turns = 1
+
+    # A second spawn while A holds the only slot: Q queues.
+    atomic action SpawnQ:
+        require self.q == "none" and self.a_slot
+        self.q = "queued"
+
+    # A's turn closes with no call of its own still running (done,
+    # running=0). The parent is told; A keeps its slot while an older
+    # adopted job still runs; otherwise the slot frees and the queue
+    # drains into it, and the row's stop entry is over.
+    atomic fair action FinishA:
+        require self.a == "open"
+        self.a = "done"
+        self.a_finals += 1
+        self.a_notices += 1
+        self.a_word = "finished"
+        self.a_shown = self.a_turns
+        if not self.a_job:
+            self.a_slot = False
+            self.a_row = "finished"
+            self.a_stop = ""
+            if self.q == "queued":
+                self.q = "running"
+
+    # The turn settles with a call still running: the call becomes a job
+    # and the turn closes (done, running=1). An interim close: no report,
+    # the slot stays, the row stays running.
+    atomic action AdoptA:
+        require self.a == "open" and not self.a_job and self.a_adopts < MAX_ADOPTS
+        self.a = "done"
+        self.a_job = True
+        self.a_adopts += 1
+
+    # The adopted job finishes: inside an open turn it is a [notice];
+    # with no turn open it wakes A into a turn of its own.
+    atomic fair action JobEnds:
+        require self.a_job
+        self.a_job = False
+        if self.a != "open":
+            self.a = "open"
+            self.a_turns += 1
+            self.a_shown = 0
+
+    # The parent (tools.message) or a person sends A another prompt; a
+    # stopped A is respawned. The new turn holds a slot (Send does not
+    # wait for one).
+    atomic action MessageA:
+        require self.a in ("done", "stopped") and self.a_msgs < MAX_MSGS
+        self.a = "open"
+        self.a_turns += 1
+        self.a_shown = 0
+        self.a_slot = True
+        self.a_row = "running"
+        self.a_msgs += 1
+
+    # user: Stop on A's running row: "Stopping", the 15 s timer, POST.
+    atomic action ClickStopA:
+        require self.a_row == "running" and self.a_stop == ""
+        self.a_stop = "stopping"
+        self.a_req = True
+
+    # user: Retry after a failed stop.
+    atomic action RetryA:
+        require self.a_stop == "error" and self.a_row == "running" and not self.a_req
+        self.a_stop = "stopping"
+        self.a_req = True
+
+    # The POST is answered. "running": serve holds A's slot and SIGINTs
+    # it (open turn or idle wait alike); the turn ends cancelled, the
+    # process exits, its job dies, the parent is told "stopped" and the
+    # queue drains. "idle": A holds no slot, so it is not working and its
+    # row already left running; the entry is already gone.
+    atomic fair action StopLandsA:
+        require self.a_req
+        self.a_req = False
+        if self.a_slot:
+            self.a = "stopped"
+            self.a_job = False
+            self.a_slot = False
+            self.a_row = "stopped"
+            self.a_stop = ""
+            self.a_finals += 1
+            self.a_notices += 1
+            self.a_word = "stopped"
+            self.a_shown = self.a_turns
+            if self.q == "queued":
+                self.q = "running"
+
+    # The POST fails: "Retry", while there is still something to stop.
+    atomic action StopFailsA:
+        require self.a_req
+        self.a_req = False
+        if self.a_stop != "":
+            self.a_stop = "error"
+
+    # 15 s with the request unanswered: "No reply", until the record ends it.
+    atomic fair action TimeoutA:
+        require self.a_stop == "stopping"
+        self.a_stop = "timeout"
+
+    atomic action ClickStopQ:
+        require self.q in ("queued", "running") and self.q_stop == ""
+        self.q_stop = "stopping"
+        self.q_req = True
+
+    atomic action RetryQ:
+        require self.q_stop == "error" and self.q in ("queued", "running") and not self.q_req
+        self.q_stop = "stopping"
+        self.q_req = True
+
+    # "queued": dropped from the queue and meta, the row goes and so does
+    # its entry. "running" (drained since the click): interrupted.
+    # Anything else: already ended, nothing to do.
+    atomic fair action StopLandsQ:
+        require self.q_req
+        self.q_req = False
+        if self.q == "queued":
+            self.q = "gone"
+            self.q_stop = ""
+        elif self.q == "running":
+            self.q = "stopped"
+            self.q_stop = ""
+
+    atomic action StopFailsQ:
+        require self.q_req
+        self.q_req = False
+        if self.q_stop != "":
+            self.q_stop = "error"
+
+    atomic fair action TimeoutQ:
+        require self.q_stop == "stopping"
+        self.q_stop = "timeout"
+
+    # Q's one turn closes by itself.
+    atomic fair action FinishQ:
+        require self.q == "running"
+        self.q = "done"
+        self.q_stop = ""
+
+action Init:
+    parent = Parent()
+
+# A holds a running slot exactly while it works: a turn open, or a job
+# adopted from a closed one. So a waiting child holds one slot, a woken
+# or re-messaged one still holds it, and Stop reaches it.
+always assertion SlotIsWork:
+    return parent.a_slot == (parent.a == "open" or parent.a_job)
+
+# The Work row says running (and offers Stop) exactly while serve counts
+# A running.
+always assertion RowShowsSlot:
+    return (parent.a_row == "running") == parent.a_slot
+
+# A stop entry lives only while its worker is still running or queued:
+# the record ending it clears Stopping, No reply and Retry alike.
+always assertion StopEntryNeedsWorker:
+    a_ok = parent.a_stop == "" or parent.a_row == "running"
+    q_ok = parent.q_stop == "" or parent.q in ("queued", "running")
+    return a_ok and q_ok
+
+# "Stopping" means a request is on its way: an answer of "idle" never
+# leaves a row spinning.
+always assertion StoppingHasRequest:
+    return (parent.a_stop != "stopping" or parent.a_req) and (parent.q_stop != "stopping" or parent.q_req)
+
+# Every close A is owed a report for is reported once; an interim close
+# (running>0) is not one of them.
+always assertion ReportedOnce:
+    return parent.a_notices == parent.a_finals and parent.a_finals <= parent.a_turns
+
+# Once A has stopped working, the last report says how: stopped when the
+# stop ended it, even when it was only waiting on a job.
+always assertion StopSaysStopped:
+    if parent.a == "open" or parent.a_job or parent.a_notices == 0:
+        return True
+    return (parent.a_word == "stopped") == (parent.a == "stopped")
+
+# The Result on A's row is the report of its latest turn, never an
+# earlier one while a newer turn runs or waits.
+always assertion ShownReportIsCurrent:
+    return parent.a_shown == 0 or (parent.a_shown == parent.a_turns and parent.a != "open")
+
+# Every stop entry leaves "Stopping" (an answer, or the 15 s timer).
+always eventually assertion StoppingEnds:
+    return parent.a_stop != "stopping" and parent.q_stop != "stopping"
+
+# A child waiting on its jobs is eventually woken and done with them.
+always eventually assertion WaitingEnds:
+    return not parent.a_job
+
+# The queued child does not wait forever.
+always eventually assertion QueueDrains:
+    return parent.q != "queued"
