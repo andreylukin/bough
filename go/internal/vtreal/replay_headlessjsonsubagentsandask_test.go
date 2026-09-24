@@ -39,6 +39,10 @@ func headlessJSONSubagentsAndAskConfig(tape string) string {
 - id: ask
   plugin: ask
   config: {timeout_minutes: 1}
+# The tape speaks code mode; engine-unreal (the default loop row)
+# cannot drive a replay llm row.
+- id: loop
+  plugin: loop
 - id: session-title
   plugin: session-title
   disabled: true
@@ -62,7 +66,7 @@ func headlessJSONSubagentsAndAskRun(t *testing.T, answer string, idle int, extra
 	if err := os.WriteFile(cfg, []byte(headlessJSONSubagentsAndAskConfig(tape)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, append([]string{"-config", cfg, "--headless"}, extra...)...)
 	cmd.Dir = home

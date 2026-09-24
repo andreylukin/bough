@@ -75,6 +75,10 @@ func askThenModelPickerSwapAnswerConfig(tape, srv string) string {
 - id: ask
   plugin: ask
   config: {timeout_minutes: 1}
+# The tape speaks code mode; engine-unreal (the default loop row)
+# cannot drive a replay llm row.
+- id: loop
+  plugin: loop
 - id: session-title
   plugin: session-title
   disabled: true
