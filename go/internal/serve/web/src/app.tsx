@@ -882,21 +882,27 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
           const dup = (r: Row) => (seen.get(nameKey(r)) ?? 0) > 1;
           return (
             <div role="group">
-              {fresh.map((r) => session(r, dup(r)))}
-              {older.length > 0 && (
-                <button type="button" className="ws-older" role="treeitem" aria-expanded={olderOpen}
-                        onClick={foldToggle(olderKey, () => toggleFold(olderKey))}>
-                  <Icon d={ICONS.chevron} size={12} />{olderOpen ? `Hide ${older.length} ${more}` : `${older.length} ${more}`}
-                </button>
-              )}
-              {olderOpen && older.map((r) => session(r, dup(r)))}
-              {/* A long expansion folds from its foot too, so the way back is never a scroll away. */}
-              {olderOpen && older.length > 8 && (
-                <button type="button" className="ws-older" role="treeitem" aria-expanded={olderOpen}
-                        onClick={foldToggle(olderKey, () => toggleFold(olderKey))}>
-                  <Icon d={ICONS.chevron} size={12} />{`Hide ${more}`}
-                </button>
-              )}
+              {/* One keyed list, not fresh and older as two: opening an
+                  older row makes it selected, which is never tucked, and
+                  moving between two lists remounted it, dropping the
+                  focus the click had just put on it. */}
+              {[
+                ...fresh.map((r) => session(r, dup(r))),
+                older.length > 0 && (
+                  <button key="older-head" type="button" className="ws-older" role="treeitem" aria-expanded={olderOpen}
+                          onClick={foldToggle(olderKey, () => toggleFold(olderKey))}>
+                    <Icon d={ICONS.chevron} size={12} />{olderOpen ? `Hide ${older.length} ${more}` : `${older.length} ${more}`}
+                  </button>
+                ),
+                ...(olderOpen ? older.map((r) => session(r, dup(r))) : []),
+                // A long expansion folds from its foot too, so the way back is never a scroll away.
+                olderOpen && older.length > 8 && (
+                  <button key="older-foot" type="button" className="ws-older" role="treeitem" aria-expanded={olderOpen}
+                          onClick={foldToggle(olderKey, () => toggleFold(olderKey))}>
+                    <Icon d={ICONS.chevron} size={12} />{`Hide ${more}`}
+                  </button>
+                ),
+              ]}
             </div>
           );
         })()}
