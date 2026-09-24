@@ -28,6 +28,10 @@ deadlock_detection: false
 # THIS SPEC IS THE INTENDED BEHAVIOUR. Where the product (at 5471918e)
 # differs, the difference is a finding, and the spec mutation that
 # models the product's behaviour is named next to the action it changes:
+# (B1, B3 and B4 are fixed since, found red by
+# tests/model/mbt/ask_beside_parallel_calls_test.go: a native ask names
+# its call and only that call's end, or the turn's, clears it; "error"
+# clears nothing; providerError leaves a turn with a Blocking call open.)
 #   B1 run_js's end (a recorded "result") clears all three:
 #      supervisor.go emitLocked deletes s.asks on every "result",
 #      status.go StatusOf drops pending on every "result",
@@ -40,20 +44,35 @@ deadlock_detection: false
 #      A recorded error note (a hook blocking a steer, a refusal note)
 #      clears serve's arm and hlAsk; history keeps the ask, so again
 #      needs-you with buttons that 409.
-#   B4 a provider error after the sibling's end (the harness re-asks the
-#      model with the sibling's result) runs providerError
-#      (unreal/session/actor.go): it adopts every foreground call,
-#      Blocking or not, as a job and closes the turn with an error; the
-#      error and the done clear every arm, and the Asker keeps blocking
-#      with no route for an answer until its 10-minute timeout.
+#   B4 a provider error on a request in flight while the ask is open
+#      runs providerError (unreal/session/actor.go): it adopts every
+#      foreground call, Blocking or not, as a job and closes the turn
+#      with an error; the error and the done clear every arm, and the
+#      Asker keeps blocking with no route for an answer until its
+#      10-minute timeout.
 # A bash sibling's end is a "call" with tool bash: nothing disarms on
 # it, in the product or here.
+#
+# When the model is asked again (heartbeat is off by default): the
+# harness's coordinator (coordinator/loop.go, toolCallRunGracePeriod)
+# holds a reply's finished calls back for one second, waiting for the
+# others; after that each call's end makes a request at once, the ask
+# still open or not. An input (a steer) makes one at once too. A result
+# or a steer that arrives while a request is in flight waits for its
+# answer (unsent, queued) and goes out then. The reply here includes
+# that second: the walks against the server take it before the next
+# step, so a sibling that ends within it is not modelled.
 #
 # Fields beyond the four above:
 #   status   the row: running | needs-you | done | error | stopped
 #   sibling  the other call: none | running | ok | failed | cancelled
 #   tool     the sibling's tool: "" | js | bash
+#   inflight a model request is in flight (held by the test's llm)
+#   queued   a steer waits for the request in flight to answer
+#   unsent   a call ended while a request was in flight
 #   perr     a provider error was recorded while the ask was open
+#   noted    an error note was recorded in the turn (StatusOf reads the
+#            turn as error once it closes, like perr)
 #   sent     the person sent a message (at most one: bounds the graph)
 #   steeredPast  sticky: a message went to the child as a steer or a new
 #                turn while the Asker still blocked
@@ -74,25 +93,36 @@ role Session:
         self.ask = False
         self.sibling = "none"
         self.tool = ""
+        self.inflight = True
+        self.queued = False
+        self.unsent = False
         self.perr = False
+        self.noted = False
         self.sent = False
         self.steeredPast = False
         self.msgAnswered = False
         self.lost = False
 
     # Model: one reply with an ask and a run_js (code mode's tool on the
-    # engine) or a bash call. Both start at once.
+    # engine) or a bash call. Both start at once. The reply answers the
+    # request in flight; a steer queued behind it goes out now.
     atomic action ReplyWithAskAndRunJS:
-        require self.status == "running" and self.asker == "none"
+        require self.status == "running" and self.asker == "none" and self.inflight
         self.asker = "pending"
         self.sibling = "running"
         self.tool = "js"
+        self.inflight = self.queued
+        self.queued = False
+        self.unsent = False
 
     atomic action ReplyWithAskAndBash:
-        require self.status == "running" and self.asker == "none"
+        require self.status == "running" and self.asker == "none" and self.inflight
         self.asker = "pending"
         self.sibling = "running"
         self.tool = "bash"
+        self.inflight = self.queued
+        self.queued = False
+        self.unsent = False
 
     # The Asker puts the question in (oneAtATime, then putIn): the "ask"
     # entry is recorded and emitted; serve arms it, hlPrint sets hlAsk.
@@ -107,26 +137,30 @@ role Session:
     # Engine.SiblingEnd. The sibling can end before or after the ask is
     # open. run_js records a "result" (plus a live "error" when it
     # failed); bash records a "call" with tool bash. None of these is
-    # the ask's end, so nothing about the ask changes.
+    # the ask's end, so nothing about the ask changes. The model is asked
+    # again with the sibling's result, the ask still open.
     # Product (B1/B2): if self.tool == "js": self.lose_ask(True, True, True)
     atomic fair action SiblingEndOk:
         require self.sibling == "running"
         self.sibling = "ok"
+        self.reask()
 
     atomic action SiblingEndFail:
         require self.sibling == "running"
         self.sibling = "failed"
+        self.reask()
 
-    # Provider.FailsAfterSiblingEnd: the harness asked the model again
-    # with the sibling's result, and the request failed. The error is
-    # recorded; the Blocking ask keeps the turn open (as evaluate() does
-    # for a blocking call) and stays answerable; the answer goes to the
-    # model with the next request.
+    # Provider.Fails: the request in flight failed. The error
+    # is recorded; the Blocking ask keeps the turn open (as evaluate()
+    # does for a blocking call) and stays answerable, and a sibling still
+    # running stays in the turn; the next call's end asks the model
+    # again.
     # Product (B4): self.asker = "job"; self.lose_ask(True, True, True);
-    #               self.status = "error"
+    #               self.status = "error"; self.inflight = False
     atomic action ProviderFails:
-        require self.asker == "open" and self.sibling in ("ok", "failed") and not self.perr
+        require self.asker == "open" and self.inflight and not self.perr
         self.perr = True
+        self.answered_without_calls()
 
     # System.StderrLine: the child writes a line on stderr; serve emits
     # it as "error" (live, never in history). Not the ask's end.
@@ -135,12 +169,16 @@ role Session:
         require self.asker == "open"
         pass
 
-    # System.HookErrorNote: a recorded "error" entry mid-turn (a hook
-    # blocking a steer, a refusal note). Not the ask's end.
+    # System.HookErrorNote: a recorded "error" entry mid-turn. A hook
+    # blocking a steer records one, but no steer reaches the child while
+    # the ask is armed; the one that can land while an ask is open is a
+    # provider refusal of the request in flight, which answers it. Not
+    # the ask's end.
     # Product (B3): self.armed = False; self.hl = False
     atomic action HookErrorNote:
-        require self.asker == "open"
-        pass
+        require self.asker == "open" and self.inflight
+        self.noted = True
+        self.answered_without_calls()
 
     # User.Answer: the page's buttons/composer while the row is
     # needs-you. POST /answer: 409 unless serve is armed; the line then
@@ -151,6 +189,7 @@ role Session:
             self.asker = "answered"
             self.lose_ask(True, True, True)
             self.status = "running"
+            self.reask()
 
     # User.SendMessage: the page sends a message only while no question
     # is on screen (ask_answer's Send). /prompt is 409 while serve is
@@ -165,10 +204,18 @@ role Session:
             self.asker = "answered"
             self.lose_ask(True, True, True)
             self.status = "running"
+            self.reask()
         else:
             if self.asker in ("open", "job"):
                 self.steeredPast = True
-            # A steer while running; a new turn otherwise.
+            # A steer while running goes out now, or at the boundary of
+            # the request in flight; otherwise it is a new turn.
+            if self.status == "running" and self.inflight:
+                self.queued = True
+            # StatusOf reads errors from the last input on, a steer's too.
+            self.perr = False
+            self.noted = False
+            self.inflight = True
             self.status = "running"
 
     # Asker.Timeout: 10 minutes pass with no answer. The call ends with
@@ -182,6 +229,7 @@ role Session:
         self.lose_ask(True, True, True)
         if self.status == "needs-you":
             self.status = "running"
+        self.reask()
 
     # User.Stop: the turn is cancelled; the ask's call and the sibling
     # end cancelled, and "cancelled" clears every arm.
@@ -192,17 +240,45 @@ role Session:
         if self.sibling == "running":
             self.sibling = "cancelled"
         self.lose_ask(True, True, True)
-        self.status = "stopped"
+        # StatusOf: an error in the turn outranks its cancel.
+        if self.perr or self.noted:
+            self.status = "error"
+        else:
+            self.status = "stopped"
+        self.settled()
 
     # The turn ends once nothing holds it: a reply was made, the ask is
     # resolved and the sibling has ended.
     atomic fair action Finish:
         require self.status == "running" and self.asker not in ("none", "pending", "open") and self.sibling != "running"
         self.lose_ask(True, True, True)
-        if self.perr:
+        self.settled()
+        if self.perr or self.noted:
             self.status = "error"
         else:
             self.status = "done"
+
+    # A call ended (the sibling, or the ask): see "When the model is asked
+    # again" above.
+    atomic func reask():
+        if self.status not in ("running", "needs-you"):
+            return
+        if self.inflight:
+            self.unsent = True
+        else:
+            self.inflight = True
+
+    # The request in flight was answered with no calls: a result or a
+    # steer that waited for it goes out now.
+    atomic func answered_without_calls():
+        self.inflight = self.unsent or self.queued
+        self.unsent = False
+        self.queued = False
+
+    atomic func settled():
+        self.inflight = False
+        self.queued = False
+        self.unsent = False
 
     atomic func lose_ask(arm, head, row):
         if arm:
