@@ -3745,6 +3745,17 @@ export function stoppedPrompt(lines: Line[]): string {
 }
 
 /** "503 Service Unavailable" or a bare "503" reads as what happened, code last. */
+/**
+ * A retried message back in the queue ahead of every younger one. Queued
+ * ids start with their enqueue time; any other id (a direct send, which
+ * only happens with nothing queued) goes first.
+ */
+export function requeue<M extends { id: string }>(q: M[], m: M): M[] {
+  const at = (id: string) => (/^\d+-/.test(id) ? parseInt(id, 10) : -1);
+  const i = q.filter((x) => at(x.id) < at(m.id)).length;
+  return [...q.slice(0, i), m, ...q.slice(i)];
+}
+
 function sendError(e?: string) {
   const m = /^(\d{3})\b\s*(.*)$/.exec(e ?? "");
   if (!m) return e || "No response";
@@ -3857,7 +3868,9 @@ const noLines: Line[] = [];
 type Upload = { slot: number; tag: string; done: Promise<string> };
 const uploads = new Map<string, Set<Upload>>();
 
-export function Thread({ row, lines: given, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, onPortal, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
+export function Thread({ row, lines: given, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, onPortal, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject, offline = false }: {
+  /** A send failed on the network and no poll has answered since: the queue waits. */
+  offline?: boolean;
   /** Loaded sessions: names the parent of a background agent and lists this session's agents. */
   rows?: Row[]; onOpenSession?: (id: string) => void;
   row: Row; lines: Line[]; loading?: boolean; stream?: DeltaRun[];
@@ -4305,7 +4318,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const [answering, setAnswering] = useState<{ ask: string; text: string } | null>(null);
   // `ask` is the question the answer was written for, captured when it was
   // written: the server refuses it once a newer question has replaced it.
-  const deliver = async (t: string, answer: boolean, ask = row.ask?.id, retried?: Failure) => {
+  const deliver = async (t: string, answer: boolean, ask = row.ask?.id, retried?: Failure, queuedId?: string) => {
     if (retried) drop(retried);
     // An answer to a question that has since been replaced goes back to
     // the draft, unless you are already writing something newer there.
@@ -4314,8 +4327,9 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
       else setFailures((q) => [...q, { ...retried, error: "That question expired" }]);
       return;
     }
-    // A retry is the same request, so it keeps its id.
-    const id = retried?.id ?? (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+    // A retry is the same request, so it keeps its id; so does a queued
+    // message, whose id orders it when a retry puts it back.
+    const id = retried?.id ?? queuedId ?? (typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
     if (!answer) setSending((q) => [...q, { id, text: t, after: newest, steer: live, seen: inputs.map((l) => `${l.seq}|${l.at}`), at: new Date().toISOString() }]);
     else setAnswering({ ask: ask ?? "", text: t });
     const req = Promise.resolve(answer ? onAnswer(t, ask) : onSend(t));
@@ -4506,12 +4520,15 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const flushing = useRef(false);
   const doneTurns = turns.filter((t) => t.done).length;
   useEffect(() => { flushing.current = false; }, [running, doneTurns, failures.length]);
+  // Held while the row is archived or serve is unreachable: flushing is
+  // reset by each failure, and without the hold every queued message was
+  // posted, refused and turned into a "Not sent" row, one per render.
   useEffect(() => {
-    if (running || loading || busy || row.ask || flushing.current || unlanded.length || !queued.length) return;
+    if (running || loading || busy || row.ask || row.archived || offline || flushing.current || unlanded.length || !queued.length) return;
     flushing.current = true;
     const [next, ...rest] = queued;
     setQueued(rest);
-    void deliver(next.text, false);
+    void deliver(next.text, false, undefined, undefined, next.id);
   }); // eslint-disable-line react-hooks/exhaustive-deps
   // A Stop can swallow a line already written to the child: no input is
   // ever recorded for it, and its row said "Sending…" until a reload lost
@@ -4768,7 +4785,12 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
             </details>
             <span className="send-failed-actions">
               {/* The row goes with the button that had focus: focus lands in the composer, never on the page. */}
-              <button className="btn" disabled={busy} onClick={() => { void deliver(failed.text, failed.answer, failed.ask, failed); composer.current?.focus(); }}>Retry</button>
+              {/* A message waits its turn in the queue: posted at once, it steered whatever turn was running. */}
+              <button className="btn" disabled={busy} onClick={() => {
+                if (failed.answer) void deliver(failed.text, true, failed.ask, failed);
+                else { drop(failed); setQueued((q) => requeue(q, { id: failed.id ?? `retry-${Date.now()}`, text: failed.text })); }
+                composer.current?.focus();
+              }}>Retry</button>
               {/* Edit never lands on a newer draft: two prompts glued together is a third nobody wrote. */}
               <button className="btn composer-edit" disabled={Boolean(draft.trim())} title={draft.trim() ? "Send or clear the current draft first" : undefined}
                 onClick={() => { toDraft(failed.text); setDraftAsk(failed.answer ? failed.ask ?? "" : ""); drop(failed); composer.current?.focus(); }}><span className="edit-word">Edit</span>{draft.trim() && <span className="edit-why">Clear the draft to edit</span>}</button>
@@ -5037,6 +5059,8 @@ export default function App() {
     return () => clearTimeout(id);
   }, [err]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  // A send failed on the network; the next read that answers clears it.
+  const [sendOffline, setSendOffline] = useState(false);
   // When the list last refreshed; null until the first read lands.
   const [loadedAt, setLoadedAt] = useState<number | null>(null);
   const [looked, setLooked] = useState<Row | null>(null);
@@ -5099,15 +5123,19 @@ export default function App() {
     try {
       const rs = await api.sessions(archived);
       if (seq !== readSeq.current) return;
-      setRows(rs); setLoadErr(null); setRowsAll(archived); setLoadedAt(Date.now());
+      setRows(rs); setLoadErr(null); setSendOffline(false); setRowsAll(archived); setLoadedAt(Date.now());
       // The open session can leave the list (archiving it does) while it
       // stays on screen, and its row is then `looked`, which only its
       // event stream refreshed: an archived session sends none, so the
       // thread kept saying it was not archived and kept counting agents
       // that had stopped. Read its row with the list instead.
       const open = openRef.current;
+      // An action's read waits for it: after a send refused because another
+      // tab archived the session, the flush must see archived before it
+      // posts the next queued message.
       if (open && !rs.some((r) => r.id === open)) {
-        api.session(open, lastSeq.current).then((r) => { if (openRef.current === open) setLooked(r.session); }, () => {});
+        const read = api.session(open, lastSeq.current).then((r) => { if (openRef.current === open) setLooked(r.session); }, () => {});
+        if (!poll) await read;
       }
     } catch (e) { if (seq === readSeq.current) setLoadErr(e instanceof Error ? e.message : String(e)); }
     finally { if (seq === readSeq.current) inFlight.current = false; if (!poll) await projectsRead; }
@@ -5556,7 +5584,11 @@ export default function App() {
   const deliverTo = async (id: string, fn: () => Promise<unknown>): Promise<string | null> => {
     setLocked((m) => ({ ...m, [id]: true }));
     try { await fn(); return null; }
-    catch (e) { return e instanceof Error ? e.message : String(e); }
+    catch (e) {
+      // No HTTP status: serve never answered.
+      if (!(e as { status?: number }).status) setSendOffline(true);
+      return e instanceof Error ? e.message : String(e);
+    }
     finally { setLocked((m) => ({ ...m, [id]: false })); await refresh(); }
   };
   // Sends not yet recorded, per session and outside the thread, so
@@ -5774,7 +5806,7 @@ export default function App() {
       onRetry={() => (loadedFor === r.id ? retryRef.current() : setLoadTry((n) => n + 1))} stream={stream} activity={runningCall ? callStep({ data: { tool: runningCall.tool }, text: runningCall.detail }) : activity} projects={projects} busy={busy || Boolean(locked[r.id])} onBack={goList}
       sending={pending[r.id] ?? []}
       setSending={(f) => setPending((m) => ({ ...m, [r.id]: f(m[r.id] ?? []) }))}
-      onSend={(t) => deliverTo(r.id, () => api.prompt(r.id, t))}
+      onSend={(t) => deliverTo(r.id, () => api.prompt(r.id, t))} offline={sendOffline}
       onAnswer={(t, ask) => deliverTo(r.id, () => api.answer(r.id, t, ask))}
       onInterrupt={() => act(() => api.interrupt(r.id), "stop the turn")}
       onArchive={() => archiveRow(r)}
