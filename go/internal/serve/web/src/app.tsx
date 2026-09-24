@@ -5253,7 +5253,11 @@ export default function App() {
         return;
       }
       if (ev.kind === "done" || ev.kind === "cancelled") setNativeRunning((m) => liveNative(m, ev));
-      superseded = runs;
+      // A native call's end is recorded whenever the call finishes, and an
+      // engine call runs beside the next request: its end is not built from
+      // the fragments on screen. Sealing them there dropped the reply the
+      // model was still writing.
+      if (!native) superseded = runs;
       clearTimeout(timer);
       timer = setTimeout(catchUp, 120);
     });
