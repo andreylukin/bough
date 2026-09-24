@@ -1,0 +1,382 @@
+# The wiki as the web client shows it (#/wiki, #/wiki/p/<path>[~<sid>~<seq>],
+# #/wiki/review, #/wiki/activity): which screen is up, whether its read
+# has answered, the cited-entry pane, the page's editor / history / "Page
+# actions" menu, one review item's buttons, the activity note and the
+# palette the wiki searches through. Recipe: go/tests/model/README.md.
+#
+# Code this is checked against:
+#   web/src/wiki.tsx  WikiPage (routes, useLoad per screen, note),
+#                     WikiPageView (editing, saving, err, showHistory, menu),
+#                     WikiSourcePane (Escape), WikiReviewView (busy per
+#                     flag), WikiActivityView, useLoad, Loading
+#   web/src/app.tsx   goWiki (every wiki move pushes a hash), the palette
+#                     (onSearch sets its query and opens it)
+#   web/src/palette.tsx  useWikiHits, Escape (preventDefault, so the pane's
+#                     listener leaves it alone)
+#   dist/index.html   .wk-narrow/.wk-wide, and at <=720px
+#                     .wk-split[data-source="1"] .wk-doc{display:none}
+#
+# What is and is not a state here:
+# - data is the current screen's useLoad: "loading" (no data; Loading or
+#   Pending keeps the screen's header), "error" (no data, the read failed:
+#   ErrorNote + Retry), "missing" (a page read answered 404: "This page
+#   doesn't exist" with Search / Back, never Retry), "loaded". Every move
+#   changes useLoad's key, which drops the data, so every move is "loading".
+#   A poll that fails after data keeps the data and shows nothing, and a
+#   poll that answers the same thing changes nothing: neither is a step.
+# - The source pane is up when the route has a cite AND the page has
+#   loaded (open = Boolean(cite) && Boolean(page)); its read runs from the
+#   moment the route names the cite.
+# - panel/menu/saving/alert are WikiPageView's own state. It stays mounted
+#   from page to page (the effect on `at` resets editing and history, not
+#   err or menu) and unmounts on any other screen. menu and alert render
+#   only inside a loaded page.
+# - note is WikiPage's: it survives leaving Activity and coming back.
+# - item is the one review flag's row: "none" (no row), "open", "busy"
+#   (a claim POST in flight: both buttons disabled), "failed" ("Did not
+#   save — ..."). The server's side is flag: the claim is still flagged.
+# - The server is modelled only where a poll carries it to this surface:
+#   a flag lands while the index (15 s poll) is up. Review does not poll.
+#
+# Pruned, because every transition is a browser path (each "Pruned:" on an
+# action says what it leaves out): the page's panels, menu, resize and the
+# pane are explored from one page, and only the crumb leaves it; a failed
+# save is followed by Cancel, Edit and one page-to-page link; the entry
+# answers after the page; Cmd-K only over the cite pane.
+#
+# All state lives in the Wiki role (fizzbee-mbt compares role state).
+
+role Wiki:
+    action Init:
+        self.viewport = "wide"      # "wide" | "narrow" (<=720px)
+        self.route = "index"        # "index" | "review" | "activity" | "page"
+        self.data = "loading"       # "loading" | "error" | "missing" | "loaded"
+        self.cite = False           # the page route names a cited entry
+        self.source = "none"        # "none" | "loading" | "error" | "loaded"
+        self.panel = "none"         # "none" | "edit" | "history"
+        self.saving = False         # Save pressed, PUT in flight
+        self.alert = False          # "hk2-alert": the last Save's error
+        self.menu = False           # "Page actions" menu state
+        self.item = "none"          # "none" | "open" | "busy" | "failed"
+        self.note = ""              # "" | "started" | "failed"
+        self.palette = False
+        # Server side: one claim is flagged for review.
+        self.flag = True
+        # Must stay False: Escape closed the pane under the palette.
+        self.escape_under_dialog = False
+
+    # goWiki: pushes the hash; WikiPage re-keys its reads.
+    atomic func go(route, cite):
+        # Page to page is the same WikiPageView with a new `at`: editing
+        # and history reset, err and menu stay. Anything else mounts or
+        # unmounts it, and its state goes.
+        self.panel = "none"
+        if not (route == "page" and self.route == "page"):
+            self.alert = False
+            self.menu = False
+        self.route = route
+        self.data = "loading"
+        self.cite = cite
+        if cite:
+            self.source = "loading"
+        else:
+            self.source = "none"
+        self.saving = False
+        self.item = "none"
+        self.palette = False
+
+    # --- reads --------------------------------------------------------
+
+    atomic action Loaded:
+        require self.data == "loading"
+        self.data = "loaded"
+        if self.route == "review" and self.flag:
+            self.item = "open"
+
+    atomic action LoadFail:
+        # Pruned: a page with a cite fails the same way as one without.
+        require self.data == "loading" and not self.cite and not self.alert
+        self.data = "error"
+
+    atomic action PageMissing:
+        # 404 / "not a page path": pageMissing(err) is true.
+        require self.route == "page" and self.data == "loading"
+        require not self.cite and not self.alert
+        self.data = "missing"
+
+    atomic action Retry:
+        # ErrorNote's Retry; a missing page offers none.
+        require self.data == "error"
+        self.data = "loading"
+
+    atomic action SourceLoaded:
+        # Pruned: the entry is modelled answering after the page.
+        require self.source == "loading" and self.data == "loaded"
+        self.source = "loaded"
+
+    atomic action SourceFail:
+        require self.source == "loading" and self.data == "loaded"
+        require self.viewport == "wide"
+        self.source = "error"
+
+    atomic action SourceRetry:
+        # Pending's Retry, inside the pane.
+        require self.source == "error" and not self.palette
+        self.source = "loading"
+
+    # --- moving around ------------------------------------------------
+
+    atomic action OpenPage:
+        # A row on the index, a "+ new" link on Activity.
+        require self.route in ("index", "activity") and self.data == "loaded"
+        require self.flag and self.note == ""
+        self.go("page", False)
+
+    atomic action FollowLink:
+        # A page-to-page link in the body. Pruned: taken only with a
+        # failed save's alert up, the case where the page's own state
+        # travels.
+        require self.route == "page" and self.data == "loaded"
+        require self.alert and self.panel == "none"
+        self.go("page", False)
+
+    atomic action ToReview:
+        # "Review N flagged claims": only when the index counts a flag.
+        require self.route == "index" and self.data == "loaded"
+        require self.flag and self.note == ""
+        self.go("review", False)
+
+    atomic action ToActivity:
+        require self.route == "index" and self.data == "loaded" and self.flag
+        self.go("activity", False)
+
+    atomic action CrumbIndex:
+        # The "Wiki" crumb: on every screen's header but the index's,
+        # loaded or not (Loading and the page head carry it too).
+        # Pruned: left from a page with nothing open on it.
+        require self.route != "index"
+        require not self.palette and self.item != "busy"
+        require self.panel == "none" and not self.cite
+        require not self.menu and not self.alert
+        require self.viewport == "wide"
+        self.go("index", False)
+
+    atomic action ReviewOpen:
+        # "Open the newer entry" on a superseded flag: the page with the
+        # flag's cite, both reads started together. Not under the palette.
+        require self.route == "review" and self.item == "open"
+        require not self.palette
+        self.go("page", True)
+
+    atomic action OpenCite:
+        # A citation chip (hidden under the editor).
+        require self.route == "page" and self.data == "loaded"
+        require self.panel == "none" and not self.cite
+        require not self.palette and not self.menu and not self.alert
+        self.cite = True
+        self.source = "loading"
+
+    atomic action CloseSource:
+        # The pane's X, or Escape with nothing else owning the key.
+        require self.cite and self.data == "loaded"
+        require not self.palette and not self.menu
+        require self.panel == "none"
+        self.cite = False
+        self.source = "none"
+
+    atomic action Escape:
+        # Escape with the palette up: the palette closes and prevents the
+        # default, and the pane's listener skips a prevented key.
+        require self.palette
+        self.palette = False
+
+    # --- the page -----------------------------------------------------
+
+    atomic action Edit:
+        # The wide "Edit" button, or the menu's item (which also closes
+        # the menu). Edit closes history. Pruned: from a page without the
+        # cite pane (EditorVisible below shows History doing the same).
+        require self.route == "page" and self.data == "loaded"
+        require self.panel != "edit" and not self.cite and not self.palette
+        if self.viewport == "narrow":
+            require self.menu and not self.alert
+            self.menu = False
+        else:
+            require not self.menu
+        self.panel = "edit"
+
+    atomic action History:
+        # "History" (aria-expanded) toggles; the section's X closes.
+        require self.route == "page" and self.data == "loaded"
+        require self.panel != "edit" and not self.palette and not self.alert
+        require self.source != "loading"
+        if self.viewport == "narrow" and self.panel == "none":
+            require self.menu
+            self.menu = False
+        elif self.panel == "none":
+            require not self.menu
+        if self.panel == "history":
+            self.panel = "none"
+        else:
+            self.panel = "history"
+
+    atomic action ToggleMenu:
+        # The "..." button, narrow only, hidden while editing. Nothing
+        # else closes the menu: no Escape, no outside click.
+        require self.route == "page" and self.data == "loaded"
+        require self.viewport == "narrow" and self.panel == "none"
+        require not self.palette and not self.alert
+        require self.source != "loading"
+        self.menu = not self.menu
+
+    atomic action Resize:
+        require self.route == "page" and self.data == "loaded"
+        require not self.palette and self.panel == "none"
+        require not self.menu and not self.alert
+        require self.source != "loading"
+        if self.viewport == "wide":
+            self.viewport = "narrow"
+        else:
+            self.viewport = "wide"
+
+    atomic action Save:
+        # Save: disabled while saving. Pruned: saved from a wide screen.
+        require self.panel == "edit" and not self.saving
+        require self.viewport == "wide"
+        self.saving = True
+        self.alert = False
+
+    atomic action SaveOk:
+        # The editor closes; page.reload() swaps the data in place.
+        require self.saving
+        self.saving = False
+        self.panel = "none"
+
+    atomic action SaveFail:
+        require self.saving
+        self.saving = False
+        self.alert = True
+
+    atomic action Cancel:
+        require self.panel == "edit" and not self.saving
+        self.panel = "none"
+
+    # --- review -------------------------------------------------------
+
+    atomic action Act:
+        # "Mark as inference" or "Drop the claim": disabled while busy.
+        # Not under the palette: it is modal, its scrim takes the click.
+        require self.route == "review" and self.item in ("open", "failed")
+        require not self.palette
+        self.item = "busy"
+
+    atomic action ActOk:
+        # The claim is rewritten; review.reload() drops the row.
+        require self.item == "busy"
+        self.flag = False
+        self.item = "none"
+
+    atomic action ActFail:
+        require self.item == "busy"
+        self.item = "failed"
+
+    atomic action SearchHistory:
+        # "Search history" on an unsupported/uncited flag: the palette
+        # opens on the claim's text.
+        require self.route == "review" and self.item == "open"
+        require not self.palette
+        self.palette = True
+
+    # --- search -------------------------------------------------------
+
+    atomic action SearchMissing:
+        # "Search the wiki" on a page that does not exist.
+        require self.data == "missing" and not self.palette
+        self.palette = True
+
+    atomic action CmdK:
+        # Pruned: only over the cite pane, where who owns Escape matters.
+        require self.cite and self.source == "loaded" and self.data == "loaded"
+        require not self.palette and self.panel == "none"
+        require self.viewport == "wide"
+        self.palette = True
+
+    atomic action PickHit:
+        # A "Wiki" row in the palette: onOpenWikiPage, the palette closes.
+        require self.palette
+        self.go("page", False)
+
+    # --- activity -----------------------------------------------------
+
+    atomic action IngestNow:
+        # POST /api/wiki/ingest answered; the note says a run started.
+        # (With nothing pending it says so instead; not modelled.)
+        require self.route == "activity" and self.data == "loaded"
+        require self.note == ""
+        self.note = "started"
+
+    atomic action IngestFail:
+        require self.route == "activity" and self.data == "loaded"
+        require self.note == ""
+        self.note = "failed"
+
+    # --- the server ---------------------------------------------------
+
+    atomic action FlagLands:
+        # An ingest writes an unsupported claim; the index's poll shows it.
+        require self.route == "index" and self.data == "loaded"
+        require not self.flag
+        self.flag = True
+
+action Init:
+    wiki = Wiki()
+
+# The cited-entry read runs exactly when the route names a cite.
+always assertion SourceFollowsCite:
+    return (wiki.source != "none") == (wiki.route == "page" and wiki.cite)
+
+# The editor and history exist only over a loaded page.
+always assertion PanelsNeedLoadedPage:
+    return (wiki.panel == "none" and not wiki.saving) or (wiki.route == "page" and wiki.data == "loaded")
+
+# A save is in flight only from the editor.
+always assertion SavingOnlyInEditor:
+    return not wiki.saving or wiki.panel == "edit"
+
+# "doesn't exist" is a page's answer; the other screens only fail.
+always assertion MissingOnlyForPages:
+    return wiki.data != "missing" or wiki.route == "page"
+
+# A review row, and its buttons, only on a loaded Review for a claim the
+# server still flags: no enabled button acts on a resolved claim.
+always assertion ItemOnlyForAFlag:
+    return wiki.item == "none" or (wiki.route == "review" and wiki.data == "loaded" and wiki.flag)
+
+# The palette is the one dialog: Escape under it never reaches the pane.
+always assertion EscapeOwnedByPalette:
+    return not wiki.escape_under_dialog
+
+# KNOWN GAPS (not asserted; fizz fails each, the shortest path given):
+#
+# EditorVisible: on a phone the cite pane hides the doc (.wk-doc
+# display:none), but the header still offers Edit and History, which open
+# into the hidden doc; nothing on screen changes.
+#   return not (wiki.viewport == "narrow" and wiki.cite and
+#               wiki.data == "loaded" and wiki.panel != "none")
+#   fizz: Loaded, OpenPage, Loaded, OpenCite, SourceLoaded, Resize,
+#   ToggleMenu, History.
+#
+# SaveErrorBelongsToEditor: `err` is cleared only by the next Save, so a
+# failed save's alert stays after Cancel, and follows to another page
+# through a body link (WikiPageView stays mounted).
+#   return not wiki.alert or wiki.panel == "edit"
+#   fizz: Loaded, OpenPage, Loaded, Edit, Save, SaveFail, Cancel.
+#
+# ActivityNoteIsFresh: `note` lives in WikiPage, so "Started — the run
+# appears here in a moment." is still there on the next visit to Activity.
+#   return wiki.note == "" or wiki.route == "activity"
+#   fizz: Loaded, ToActivity, Loaded, IngestNow, CrumbIndex.
+#
+# MenuClosesWithItsHost (not modelled beyond ToggleMenu): nothing closes
+# the "Page actions" menu but its own button and items, so Escape with it
+# open closes the cite pane behind it instead.
