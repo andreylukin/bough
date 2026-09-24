@@ -257,6 +257,21 @@ func hlPrint(ev Event) {
 		// just gives up after the failure still ends the turn on it.
 		hlTurnErr.Store(false)
 		hlLine(hlOut, ev.Kind, ev.Text, nil)
+	case "done":
+		// serve keeps a background agent whose calls became jobs
+		// (running > 0, or jobs > 0 from an earlier turn) in its slot,
+		// and an interim close unreported; without these every close
+		// read as the end.
+		var extra map[string]any
+		for _, k := range []string{"running", "jobs", "wake"} {
+			if v, ok := ev.Data[k]; ok {
+				if extra == nil {
+					extra = map[string]any{}
+				}
+				extra[k] = v
+			}
+		}
+		hlLine(hlOut, ev.Kind, ev.Text, extra)
 	default:
 		hlLine(hlOut, ev.Kind, ev.Text, nil)
 	}
