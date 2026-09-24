@@ -290,6 +290,11 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 				if then.Call != nil {
 					return a.call(ctx, then.Text, *then.Call)
 				}
+				// Calls on a release: a held turn that goes on to run
+				// several tools at once, as a model's parallel calls do.
+				if len(then.Calls) > 0 {
+					return a.calls(ctx, name, then.Calls)
+				}
 				if then.Mode == "call" {
 					return a.callTurn(ctx, name, then)
 				}
