@@ -3859,7 +3859,7 @@ const noLines: Line[] = [];
 type Upload = { slot: number; tag: string; done: Promise<string> };
 const uploads = new Map<string, Set<Upload>>();
 
-export function Thread({ row, lines: given, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, onPortal, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
+export function Thread({ row: shown, lines: given, loading = false, loadError, paused, onRetry, stream = [], activity = "", projects, onAck, onSend, onAnswer, onInterrupt, onArchive, onRename, onModel, onEffort, onAssign, onBack, onContext, onPortal, busy, jump, sending = [], setSending = () => {}, onStopOrb, rows = [], onOpenSession, onStartProject, onNewProject }: {
   /** Loaded sessions: names the parent of a background agent and lists this session's agents. */
   rows?: Row[]; onOpenSession?: (id: string) => void;
   row: Row; lines: Line[]; loading?: boolean; stream?: DeltaRun[];
@@ -3883,6 +3883,14 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   /** This session's unrecorded sends, kept by the app across session switches. */
   sending?: Pending[]; setSending?: (f: (q: Pending[]) => Pending[]) => void;
 }) {
+  // An answer serve took (a 200) has left serve's arm, but the question
+  // stays open in history until the turn reads the answer, which a Stop
+  // can beat for good. Shown meanwhile, its options were live and every
+  // click a 409. Keyed by its seq too: a respawned child numbers its asks
+  // afresh, and the next question hid under the old one's id.
+  const [answered, setAnswered] = useState("");
+  const askKeyOf = (a?: { id: string; seq: number }) => (a ? `${a.id}@${a.seq}` : "");
+  const row = useMemo(() => (answered && askKeyOf(shown.ask) === answered ? { ...shown, ask: undefined } : shown), [shown, answered]);
   // The parent still holds the session just left for a render: never show it under this title.
   const lines = loading ? noLines : given;
   // Read once the transcript is: id and length change in the same render, so a switch reads each once.
@@ -4325,6 +4333,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
     inflight.current.add(req);
     const error = await req.finally(() => inflight.current.delete(req));
     if (answer) setAnswering(null);
+    if (answer && !error && ask === row.ask?.id) setAnswered(askKeyOf(row.ask));
     if (error) setSending((q) => q.filter((p) => p.id !== id));
     else if (!answer) setSending((q) => q.map((p) => (p.id === id ? { ...p, accepted: true } : p)));
     // Each request is its own row; a retry that fails again replaces its own.
