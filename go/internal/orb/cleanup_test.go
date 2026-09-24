@@ -161,3 +161,38 @@ func TestPlanRemoveDirtyWorktree(t *testing.T) {
 		t.Fatal("branch deleted")
 	}
 }
+
+// A delete takes the remote repo's cache clone with it: a bough/ branch
+// with a commit only there is listed until it is pushed, and one that
+// never moved off the base is not.
+func TestUnpushedBranches(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	home := t.TempDir()
+	remote := t.TempDir()
+	git(t, remote, "clone", "-q", "--bare", newRepo(t), "app.git")
+	p := newProject(t, home, "up", "  - remote: "+filepath.Join(remote, "app.git")+"\n")
+	rt := container.NewFake()
+	o, err := Open(ctx, rt, home, "s1", p, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(ctx, rt, home, "s2", p, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := UnpushedBranches(ctx, home, "up"); err != nil || len(got) != 0 {
+		t.Fatalf("fresh branches: %v, %v", got, err)
+	}
+	wt := o.State().Primary
+	os.WriteFile(filepath.Join(wt, "w"), []byte("w"), 0o644)
+	git(t, wt, "add", "-A")
+	git(t, wt, "commit", "-qm", "w")
+	got, err := UnpushedBranches(ctx, home, "up")
+	if err != nil || len(got) != 1 || got[0] != "bough/s1 in app" {
+		t.Fatalf("committed, not pushed: %v, %v", got, err)
+	}
+	git(t, wt, "push", "-q", "origin", "bough/s1")
+	if got, err := UnpushedBranches(ctx, home, "up"); err != nil || len(got) != 0 {
+		t.Fatalf("pushed: %v, %v", got, err)
+	}
+}

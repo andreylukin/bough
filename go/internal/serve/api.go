@@ -650,7 +650,7 @@ func (a *API) rowOf(in history.SessionInfo, d *rowDigest) Row {
 	// where its orb and its worktrees came from, so the membership serve
 	// stores cannot contradict it.
 	project := meta.Project
-	if d.mode == "project" && d.project != "" {
+	if d.mode == "project" && d.project != "" && meta.ProjectDeleted != d.project {
 		project = d.project
 	}
 	var rowOrb *RowOrb
@@ -824,7 +824,8 @@ func statusFor(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, ErrBadAnswer):
 		return http.StatusBadRequest
-	case errors.Is(err, ErrNoAsk), errors.Is(err, ErrArchived), errors.Is(err, ErrProjectExists), errors.Is(err, ErrProjectSession):
+	case errors.Is(err, ErrNoAsk), errors.Is(err, ErrArchived), errors.Is(err, ErrProjectExists), errors.Is(err, ErrProjectSession),
+		errors.Is(err, ErrUnpushed), errors.Is(err, ErrProjectDeleted):
 		return http.StatusConflict
 	case errors.Is(err, ErrUnknownProject):
 		return http.StatusNotFound

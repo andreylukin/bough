@@ -413,7 +413,9 @@ func (a *API) orbsOf(slug string) []OrbState {
 			continue
 		}
 		st := a.orbState(d.Name())
-		if st.Session != "" && st.Project == slug {
+		// An orb of a deleted project is not the project of the same
+		// name that was created since.
+		if st.Session != "" && st.Project == slug && a.sup.Meta(st.Session).ProjectDeleted != slug {
 			st.Title = a.sup.childTitle(st.Session)
 			out = append(out, st)
 		}
