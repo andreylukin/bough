@@ -35,6 +35,10 @@ type Turn struct {
 	// Bash, on a release, answers with one bash tool call running it.
 	Bash  string `json:"bash,omitempty"`
 	Calls []Call `json:"calls,omitempty"`
+	// Child makes the turn a subagent's: it answers only a subagent's
+	// request (a native spawn's child, or a code-mode spawn's step), and
+	// an unmarked turn only the session's own.
+	Child bool `json:"child,omitempty"`
 }
 
 // Call is a tool call the model makes: a native tool by name, with its

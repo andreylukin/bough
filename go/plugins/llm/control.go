@@ -150,8 +150,70 @@ var _ agentllm.Source = (*controlLLM)(nil)
 // Complete does not take a turn, for the reason llm-script's does not:
 // title and status jobs fall back to the main llm, and one that took a
 // queued turn would leave the session's request answering the wrong one.
+// The one exception is a code-mode subagent's step (workers asks
+// through Complete, with its identity in the system prompt): a test
+// steers the child's replies as it steers the parent's.
 func (c *controlLLM) Complete(ctx context.Context, system string, messages []Message) (string, error) {
+	if strings.Contains(system, "You are a bough subagent") {
+		return c.text(ctx, true, nil)
+	}
 	return "control", nil
+}
+
+// Stream is the code-mode loop's request (plugins/loop): a reply is
+// text and its js blocks are the calls, so each request takes a turn and
+// answers with its text. ok, error and block work as on the engine; a
+// block's release answers with the release's text when it has one.
+func (c *controlLLM) Stream(ctx context.Context, system string, messages []Message, onDelta func(string)) (string, error) {
+	return c.text(ctx, false, onDelta)
+}
+
+// text takes the next turn and answers it as text. A held turn first
+// streams an empty fragment, the sign a provider's stream has opened:
+// serve holds a Stop until the child shows the prompt became a turn,
+// and a code-mode turn shows nothing else before its reply.
+func (c *controlLLM) text(ctx context.Context, child bool, onDelta func(string)) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	name, turn, ok, err := c.take(child)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "[llm-control: no turn queued in " + c.dir + "]", nil
+	}
+	if onDelta != nil && turn.Mode == "block" {
+		onDelta("")
+	}
+	switch turn.Mode {
+	case "ok", "", "slow":
+		return turn.Text, nil
+	case "error":
+		return "", errors.New(turn.Error)
+	case "block":
+		release := filepath.Join(c.dir, name+".release")
+		tick := time.NewTicker(10 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			if b, err := os.ReadFile(release); err == nil {
+				var then controlTurn
+				if len(b) > 0 && json.Unmarshal(b, &then) == nil && then.Mode == "error" {
+					return "", errors.New(then.Error)
+				}
+				if then.Text != "" {
+					return then.Text, nil
+				}
+				return turn.Text, nil
+			}
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-tick.C:
+			}
+		}
+	}
+	return "", fmt.Errorf("llm-control: %s.json: mode %q has no text answer (want ok, error, slow or block)", name, turn.Mode)
 }
 
 func (c *controlLLM) Model() string { return "control" }
@@ -182,6 +244,8 @@ type controlTurn struct {
 	// of text, so a test can have the agent run a real tool (a shell edit
 	// the write tools never report).
 	Calls []controlCall `json:"calls"`
+	// Child marks a subagent's reply (see take).
+	Child bool `json:"child"`
 }
 
 // controlCall is a tool call a release answers with, so a test can put
@@ -194,7 +258,10 @@ type controlCall struct {
 
 // take claims the next queued turn. A name the test is still writing
 // ends in .tmp and is skipped, so a half-written file is never read.
-func (c *controlLLM) take() (name string, t controlTurn, ok bool, err error) {
+// child says whose request it is: a turn marked child answers only a
+// subagent's request, and an unmarked one only the session's own, so a
+// test can queue a child's reply without racing the parent for it.
+func (c *controlLLM) take(child bool) (name string, t controlTurn, ok bool, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ents, err := os.ReadDir(c.dir)
@@ -207,24 +274,27 @@ func (c *controlLLM) take() (name string, t controlTurn, ok bool, err error) {
 			names = append(names, n)
 		}
 	}
-	if len(names) == 0 {
-		return "", t, false, nil
-	}
 	slices.Sort(names)
-	name = names[0]
-	src := filepath.Join(c.dir, name+".json")
-	b, err := os.ReadFile(src)
-	if err != nil {
-		return "", t, false, err
+	for _, name := range names {
+		src := filepath.Join(c.dir, name+".json")
+		b, err := os.ReadFile(src)
+		if err != nil {
+			return "", t, false, err
+		}
+		t = controlTurn{}
+		if err := json.Unmarshal(b, &t); err != nil {
+			return "", t, false, fmt.Errorf("llm-control: %s.json: %w", name, err)
+		}
+		if t.Child != child {
+			continue
+		}
+		if err := os.Rename(src, filepath.Join(c.dir, name+".taken")); err != nil {
+			return "", t, false, err
+		}
+		c.n++
+		return name, t, true, nil
 	}
-	if err := json.Unmarshal(b, &t); err != nil {
-		return "", t, false, fmt.Errorf("llm-control: %s.json: %w", name, err)
-	}
-	if err := os.Rename(src, filepath.Join(c.dir, name+".taken")); err != nil {
-		return "", t, false, err
-	}
-	c.n++
-	return name, t, true, nil
+	return "", controlTurn{}, false, nil
 }
 
 type controlAdapter struct {
@@ -240,7 +310,7 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 	if err := ctx.Err(); err != nil {
 		return ullm.Response{}, err
 	}
-	name, turn, ok, err := a.c.take()
+	name, turn, ok, err := a.c.take(a.opts.Worker != "")
 	if err != nil {
 		return ullm.Response{}, err
 	}
@@ -289,6 +359,9 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 				}
 				if then.Call != nil {
 					return a.call(ctx, then.Text, *then.Call)
+				}
+				if len(then.Calls) > 0 {
+					return a.calls(ctx, name, then.Calls)
 				}
 				if then.Mode == "call" {
 					return a.callTurn(ctx, name, then)
