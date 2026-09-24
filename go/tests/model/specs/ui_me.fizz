@@ -1,0 +1,288 @@
+# The Me page (#/me) as the browser shows it: the first read, an empty
+# profile, the brief written by a run Refresh asks for (running, then
+# written or failed), the steering line, and triage of a signal row (pin,
+# the Dismiss menu). Recipe: go/tests/model/README.md.
+#
+# Code this is checked against:
+#   web/src/me.tsx    MeView (useLoad poll 30 s, refresh's 20 s "Writing…",
+#                     the triage override), MePage (what renders when),
+#                     Signal (pin, Dismiss menu), Steer (the form)
+#   web/src/wiki.tsx  useLoad: data stays after a failed poll, err is only
+#                     shown while there is no data
+#   serve/wiki.go     me, meRefresh, meTriage, meSteer
+#   plugins/wiki/brief.go  Store.Me: hasProfile, the newest brief, stale
+#
+# Two halves of state. The server's (srv_*, run) is what GET /api/me would
+# answer now and whether a brief run is writing. The page's (everything
+# else) is what the person sees and can press; it catches up with the
+# server only on a read: the 30 s poll, Retry, the reload 20 s after
+# Refresh, and the answer to a triage.
+#
+# What is left out, and why:
+# - The viewport. Under 1080 px the rail (Projects, Sources, Earlier) is
+#   hidden; nothing modelled here lives in the rail, and the main column
+#   is the same at every width.
+# - The rail's project lines (the only place session status reaches this
+#   page): they are counts of the fleet, with no control that can fail.
+# - Pending's 20 s "taking too long": the same Retry as "error".
+# - A second signal row. It is what shows two Dismiss menus open at once
+#   (see KNOWN GAPS); with one row the menu flag is the row's.
+# - The steer request's in-flight state: the input and button are
+#   disabled while it runs and nothing else changes, so it is atomic.
+# - Undismiss: the page has no control for it.
+# - Leaving the route: MeView unmounts and everything below "the page"
+#   starts over from Init's values on return; the server half is kept.
+# - The day turning: an earlier day's brief renders like today's with a
+#   "Last brief is from …" stamp, and no control depends on it.
+# - Steering and triage while a run is in flight, and a Refresh with a
+#   menu, a note or a pin up: a run does not read the page, so those
+#   crossings only multiply paths (every path is one browser test).
+#
+# All state lives in the Me role (fizzbee-mbt compares role state).
+
+role Me:
+    action Init:
+        # --- the server ---
+        # profile.md exists; the page starts on a wiki with none.
+        self.srv_profile = False
+        # Today's brief is written ("today") or not ("none").
+        self.srv_brief = "none"
+        # The one signal row in signals.json with its triage: "none" (no
+        # signals.json yet), "shown", "pinned", "dismissed".
+        self.srv_signal = "none"
+        # A `bough wiki brief` run: "idle" or "running".
+        self.run = "idle"
+
+        # --- the page ---
+        # data: "loading" (spinner), "error" (Couldn't read the brief +
+        # Retry), "loaded" (MePage with data). A failed poll after the
+        # first good read stays "loaded": useLoad keeps the data.
+        self.data = "loading"
+        # What the last good read showed (meaningless until "loaded").
+        self.profile = False
+        self.brief = "none"
+        self.signal = "none"
+        # Refresh pressed: the button says "Writing…" and is disabled for
+        # 20 s, then the page reloads. A client timer, not the run.
+        self.refreshing = False
+        # The row's Dismiss menu (role=menu) is open.
+        self.menu = False
+        # The steering line's note: "" | "said" (Filed under …,
+        # role=status) | "error" (role=alert, the text kept).
+        self.steer = ""
+
+    # --- reads ------------------------------------------------------------
+
+    atomic fair action Poll:
+        # useLoad's read answered: the page shows the server as it is.
+        # While refreshing the page reloads at the end of the 20 s
+        # anyway (RefreshSettle); a poll then is the same read, so it is
+        # not a separate edge. A poll that changes nothing is left out.
+        require not self.refreshing
+        require (self.data != "loaded" or self.profile != self.srv_profile
+                 or self.brief != self.srv_brief or self.signal != self.srv_signal)
+        self.data = "loaded"
+        self.profile = self.srv_profile
+        self.brief = self.srv_brief
+        self.signal = self.srv_signal
+
+    atomic action PollFail:
+        # Only the first read's failure shows: MePage renders `error`
+        # only without data. A later failure changes nothing on screen
+        # (KNOWN GAPS: StaleReadSays), so it is a self-loop, left out.
+        require self.data == "loading"
+        self.data = "error"
+
+    atomic action Retry:
+        # The Retry button on "Couldn't read the brief".
+        require self.data == "error"
+        self.data = "loading"
+
+    # --- profile and brief ------------------------------------------------
+
+    atomic action WriteProfile:
+        # "Write your profile" opens topics/me/profile.md in the wiki (a
+        # route away from this page); it is saved there, in another tab,
+        # or by an agent. For this page it is a server event the next
+        # read shows.
+        # Modelled from the screen that asks for it, once it is up.
+        require self.data == "loaded" and not self.profile
+        require not self.srv_profile
+        self.srv_profile = True
+
+    atomic action Refresh:
+        # The bar's Refresh, or "Write it now" in No brief yet today:
+        # POST /api/me/refresh starts a run. Refresh is rendered only
+        # with a profile and is disabled while refreshing. "Write it now"
+        # is not disabled while refreshing, but pressing it then only
+        # restarts the same 20 s against the running brief's lock, so
+        # that edge ends in the same state and is left out. Pressing
+        # Refresh again after the 20 s while the first run still writes
+        # starts nothing new (the lock), so it is modelled from idle.
+        require self.run == "idle"
+        require self.data == "loaded"
+        require self.profile
+        require not self.refreshing
+        # A run does not read the page: modelled with no menu open, no
+        # steering note and no pin, so its paths do not multiply by them.
+        require not self.menu and self.steer == "" and self.signal != "pinned"
+        self.refreshing = True
+        self.run = "running"
+
+    atomic fair action RefreshSettle:
+        # The 20 s timer: "Writing…" goes back to Refresh and the page
+        # reads again (a failure of that read is invisible, as PollFail).
+        require self.refreshing
+        self.refreshing = False
+        self.data = "loaded"
+        self.profile = self.srv_profile
+        self.brief = self.srv_brief
+        self.signal = self.srv_signal
+
+    atomic action BriefDone:
+        # The run wrote today's brief and signals.json; a row's triage is
+        # keyed by its citation, so it survives a new run.
+        require self.run == "running"
+        self.run = "idle"
+        self.srv_brief = "today"
+        if self.srv_signal == "none":
+            self.srv_signal = "shown"
+
+    atomic action BriefFail:
+        # The run exits without writing (a source down, the model
+        # failing): the server's files are as they were.
+        require self.run == "running"
+        self.run = "idle"
+
+    # --- steering ---------------------------------------------------------
+
+    atomic action SteerOk:
+        # Type a sentence, Add to Watch / Not mine: POST /api/me/steer
+        # answers with the section; the box empties and says where it
+        # went. The request is atomic: the box and button are disabled
+        # while it runs and nothing else changes.
+        require self.data == "loaded" and self.profile and self.brief != "none"
+        require self.steer != "said"
+        require self.run == "idle" and not self.refreshing
+        require self.signal == "shown" and not self.menu
+        self.steer = "said"
+
+    atomic action SteerFail:
+        # The profile could not be written: the text stays for another
+        # try and the error shows as an alert until the next send
+        # (typing clears "said", never the error).
+        require self.data == "loaded" and self.profile and self.brief != "none"
+        require self.steer != "error"
+        require self.run == "idle" and not self.refreshing
+        require self.signal == "shown" and not self.menu
+        self.steer = "error"
+
+    # --- triage -----------------------------------------------------------
+
+    atomic action Pin:
+        # The star: POST /api/me/triage pin. Not optimistic: the answer
+        # carries the triage file and the page shows it from that answer.
+        require self.data == "loaded"
+        require self.signal == "shown"
+        require self.run == "idle" and not self.refreshing and self.steer == ""
+        self.srv_signal = "pinned"
+        self.signal = "pinned"
+
+    atomic action Unpin:
+        require self.data == "loaded"
+        require self.signal == "pinned"
+        require self.run == "idle" and not self.refreshing and self.steer == ""
+        self.srv_signal = "shown"
+        self.signal = "shown"
+
+    atomic action MenuToggle:
+        # The row's ✕ opens the Dismiss menu; the same button closes it.
+        # Escape and a click elsewhere do nothing (KNOWN GAPS).
+        require self.data == "loaded"
+        require self.signal == "shown"
+        require self.run == "idle" and not self.refreshing and self.steer == ""
+        self.menu = not self.menu
+
+    atomic action Dismiss:
+        # A menu item ("Just this one", or a rule about the repo or
+        # author): the menu closes at once and the row goes when the
+        # answer lands.
+        require self.menu
+        self.menu = False
+        self.srv_signal = "dismissed"
+        self.signal = "dismissed"
+
+action Init:
+    me = Me()
+
+# --- what is always true on screen ---------------------------------------
+
+# One screen at a time: spinner, error with Retry, "Tell the brief whose
+# work this is", "No brief yet today", or the brief. MePage renders the
+# no-profile empty state and the brief independently, so a brief on
+# screen must come with a profile or both show.
+always assertion OneScreen:
+    return me.data != "loaded" or (me.brief == "none" or me.profile)
+
+# Refresh (and Writing…) exists only once a read said there is a profile:
+# without one the page offers "Write your profile" instead.
+always assertion RefreshNeedsProfile:
+    return not me.refreshing or (me.data == "loaded" and me.profile)
+
+# The steering line is rendered only under a brief with a profile, so a
+# note in it means both are on screen. It also never posts to a server
+# without a profile (that is a 409).
+always assertion SteerNeedsBrief:
+    return me.steer == "" or (me.data == "loaded" and me.profile
+                              and me.brief != "none" and me.srv_profile)
+
+# The Dismiss menu belongs to a row that is on screen.
+always assertion MenuNeedsRow:
+    return not me.menu or (me.data == "loaded" and me.signal in ("shown", "pinned"))
+
+# Triage is never optimistic: a pin or dismissal on screen is the server's.
+always assertion TriageIsServers:
+    return me.signal not in ("pinned", "dismissed") or me.srv_signal == me.signal
+
+# The page never shows a profile, brief or row the server does not have.
+always assertion NothingInvented:
+    return ((me.brief == "none" or me.srv_brief != "none")
+            and (me.signal == "none" or me.srv_signal != "none")
+            and (not me.profile or me.srv_profile))
+
+# Whatever the reads do, the page ends up showing what the server has:
+# the poll is fair, so a written profile or brief is never kept off the
+# page forever.
+always eventually assertion CatchesUp:
+    return me.data == "loaded" and me.brief == me.srv_brief and me.profile == me.srv_profile
+
+# KNOWN GAPS (not asserted; each was added to a copy of this spec and
+# fizz failed it on the trace shown).
+#
+# WritingMeansRunning: "Writing…" is a 20 s timer, not the run. A brief
+# takes minutes, so Refresh comes back while the run still writes, and
+# a run that failed says nothing either way.
+#   always assertion WritingMeansRunning:
+#       return me.run != "running" or me.refreshing
+# fizz: Poll, WriteProfile, Poll, Refresh, RefreshSettle.
+#
+# RefreshFailSays: POST /api/me/refresh failing (spawn error, 500) shows
+# "Writing…" for 20 s and then nothing: refresh() has no catch and
+# onRefresh voids the promise. With an action RefreshFail (as Refresh,
+# but run stays "idle" and self.lost = True, which nothing on the page
+# clears) and
+#   always assertion RefreshFailSays:
+#       return not me.lost
+# fizz: Poll, WriteProfile, Poll, RefreshFail. A triage whose POST fails
+# is dropped the same way (onTriage's promise has no catch), and so is a
+# poll that fails after the first good read (useLoad keeps the data and
+# sets err, which MePage reads only without data).
+#
+# MenuClosesOnEscape: the Dismiss menu has no Escape or outside-click
+# handler, and each row keeps its own, so with two rows two menus can
+# be open at once. With an action Escape (require self.menu;
+# self.escaped = True, the menu left as it is) and
+#   always assertion MenuClosesOnEscape:
+#       return not (me.escaped and me.menu)
+# fizz: Poll, WriteProfile, Poll, Refresh, BriefDone, RefreshSettle,
+# MenuToggle, Escape.
