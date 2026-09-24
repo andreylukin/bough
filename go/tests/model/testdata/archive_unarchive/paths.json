@@ -1,0 +1,4460 @@
+{
+  "paths": [
+    {
+      "target": 75,
+      "links": [
+        0,
+        3,
+        7,
+        14,
+        23,
+        41,
+        52,
+        62,
+        75
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.AgentFinish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Confirm",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Cancel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 76,
+      "links": [
+        0,
+        3,
+        7,
+        14,
+        23,
+        41,
+        52,
+        62,
+        76
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.AgentFinish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Confirm",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Confirm",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 77,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        26,
+        45,
+        53,
+        64,
+        77
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.StopAndArchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Cancel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 78,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        26,
+        45,
+        53,
+        64,
+        78
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.StopAndArchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Confirm",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 79,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        27,
+        47,
+        57,
+        67,
+        79
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.AgentFinish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Cancel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 80,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        27,
+        47,
+        57,
+        67,
+        80
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.AgentFinish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.StopAndArchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 81,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        27,
+        47,
+        57,
+        67,
+        81
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.AgentFinish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 61,
+      "links": [
+        0,
+        3,
+        7,
+        14,
+        23,
+        41,
+        52,
+        61
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.AgentFinish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Confirm",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 63,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        26,
+        45,
+        53,
+        63
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.StopAndArchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 65,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        26,
+        45,
+        54,
+        65
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.StopAndArchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Cancel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 66,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        26,
+        45,
+        54,
+        66
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.StopAndArchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Confirm",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 68,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        27,
+        47,
+        57,
+        68
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Cancel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 69,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        27,
+        47,
+        57,
+        69
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.StopAndArchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "stopped",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 70,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        27,
+        47,
+        57,
+        70
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 71,
+      "links": [
+        0,
+        3,
+        8,
+        18,
+        31,
+        49,
+        60,
+        71
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.AgentStart",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 72,
+      "links": [
+        0,
+        3,
+        8,
+        18,
+        31,
+        49,
+        60,
+        72
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Cancel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 73,
+      "links": [
+        0,
+        3,
+        8,
+        18,
+        31,
+        49,
+        60,
+        73
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.StopAndArchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 74,
+      "links": [
+        0,
+        3,
+        8,
+        18,
+        31,
+        49,
+        60,
+        74
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 55,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        27,
+        47,
+        55
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 56,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        27,
+        47,
+        56
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.AgentFinish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 58,
+      "links": [
+        0,
+        3,
+        8,
+        18,
+        31,
+        49,
+        58
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 59,
+      "links": [
+        0,
+        3,
+        8,
+        18,
+        31,
+        49,
+        59
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.AgentStart",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 40,
+      "links": [
+        0,
+        3,
+        7,
+        14,
+        23,
+        40
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.AgentFinish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Cancel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 42,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        24,
+        42
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.AgentFinish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Cancel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 43,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        24,
+        43
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.AgentFinish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.StopAndArchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 44,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        24,
+        44
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.AgentFinish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 46,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        27,
+        46
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.AgentFinish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 48,
+      "links": [
+        0,
+        3,
+        8,
+        18,
+        31,
+        48
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.ArchiveOnly",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.AgentStart",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 50,
+      "links": [
+        0,
+        4,
+        11,
+        21,
+        39,
+        50
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Confirm",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Cancel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 51,
+      "links": [
+        0,
+        4,
+        11,
+        21,
+        39,
+        51
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Confirm",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Confirm",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 22,
+      "links": [
+        0,
+        3,
+        7,
+        14,
+        22
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.AgentFinish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 25,
+      "links": [
+        0,
+        3,
+        7,
+        15,
+        25
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Cancel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 28,
+      "links": [
+        0,
+        3,
+        8,
+        18,
+        28
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.AgentStart",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 29,
+      "links": [
+        0,
+        3,
+        8,
+        18,
+        29
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Cancel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 30,
+      "links": [
+        0,
+        3,
+        8,
+        18,
+        30
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "choice",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.StopAndArchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 32,
+      "links": [
+        0,
+        4,
+        9,
+        19,
+        32
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.AgentFinish",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "done",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 33,
+      "links": [
+        0,
+        4,
+        9,
+        19,
+        33
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Cancel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 34,
+      "links": [
+        0,
+        4,
+        9,
+        19,
+        34
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Confirm",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 35,
+      "links": [
+        0,
+        4,
+        9,
+        20,
+        35
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.AgentStart",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 36,
+      "links": [
+        0,
+        4,
+        9,
+        20,
+        36
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Cancel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 37,
+      "links": [
+        0,
+        4,
+        9,
+        20,
+        37
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Confirm",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 38,
+      "links": [
+        0,
+        4,
+        11,
+        21,
+        38
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Confirm",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 13,
+      "links": [
+        0,
+        3,
+        7,
+        13
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 16,
+      "links": [
+        0,
+        3,
+        8,
+        16
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 17,
+      "links": [
+        0,
+        3,
+        8,
+        17
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Spawn",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "queued",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.AgentStart",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "running",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 10,
+      "links": [
+        0,
+        4,
+        10
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Cancel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 12,
+      "links": [
+        1,
+        6,
+        12
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Confirm",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": true,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": false,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Unarchive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        }
+      ]
+    },
+    {
+      "target": 2,
+      "links": [
+        0,
+        2
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        },
+        {
+          "action": "Session#0.Prompt",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": true,
+            "Session#0.listed": true,
+            "Session#0.live": true
+          }
+        }
+      ]
+    },
+    {
+      "target": 5,
+      "links": [
+        1,
+        5
+      ],
+      "trace": [
+        {
+          "action": "Init",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Archive",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "confirm",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        },
+        {
+          "action": "Session#0.Cancel",
+          "state": {
+            "session": "role Session#0",
+            "Session#0.agent": "none",
+            "Session#0.archived": false,
+            "Session#0.dialog": "none",
+            "Session#0.history": false,
+            "Session#0.listed": true,
+            "Session#0.live": false
+          }
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "states": {
+      "covered": 34,
+      "total": 34,
+      "uncovered": []
+    },
+    "transitions": {
+      "covered": 82,
+      "total": 82,
+      "uncovered": []
+    }
+  }
+}
