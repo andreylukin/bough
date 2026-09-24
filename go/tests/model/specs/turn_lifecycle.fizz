@@ -1,0 +1,244 @@
+# Prompting a web session, as the page shows it: a send on its way, the
+# turn that runs, what streams and what is recorded, and how it ends.
+# One session, one send at a time. Steering (a send while running),
+# asks, Stop and delta-reset are left out: flows of their own, or engine
+# retries llm-control cannot drive. To keep the graph walkable (every
+# path is a browser test) a send starts from a caught-up transcript,
+# text does not stream while a call runs, and a failed turn fails
+# before any output.
+#
+# status is the row's status. The server never stores it: StatusOf
+# (go/internal/serve/status.go) derives it from history plus the
+# supervisor's lease, and every action below moves it only the way
+# StatusOf would read the entries that action records:
+#   input opens a turn            -> running (a live child holds the lease)
+#   done                          -> done
+#   an error entry, then done     -> error (there is no turn-level error)
+#   cancelled                     -> stopped (here only via adoption)
+#   an open turn, no live child   -> interrupted
+# Adopting an interrupted session for a new send (Send -> ensure -> -r)
+# does not make it running: the resumed child's history store closes
+# the dangling turn as cancelled {interrupted: true}, so it reads
+# stopped until the new input lands.
+#
+# send is the page's record of this send (app.tsx deliver()):
+#   sending   POST /prompt in flight            "Sending…"
+#   accepted  the server took it, no input yet  "Waiting"
+#   recorded  the input is in history, the page has not fetched it
+#   failed    the request failed: the "Not sent" row, Retry / Edit
+# It lands (none) when a catch-up brings the recorded input.
+#
+# behind: something was recorded that the transcript on screen does not
+# have yet. Every recorded event schedules a catch-up (GET ?since=); one
+# that fails retries on a 4 s..30 s backoff, so CatchUp is fair.
+#
+# stream is the streamed reply text on screen (deltas, never recorded):
+#   fresh      fragments nothing recorded yet contains
+#   rec        fragments the entry just recorded contains (the page set
+#              its supersede mark on that event)
+#   rec_fresh  both: the next entry began streaming before the refetch
+# call is an engine call's running row (a "call" start with a string
+# id, shown by id): native while it runs, native_done once its end is
+# recorded but not fetched, when the running row still stands in for
+# it. The loop's per-block call row is left out: any event but a delta
+# clears it, and it only shows inside a live turn.
+#
+# head and steer are what the page derives from the rest: the header's
+# word and whether the composer says "Steer the running turn…".
+
+NONE = "none"
+PENDING = ("sending", "accepted", "recorded")
+
+# composerStatus (app.tsx), with the header's rule that an error status
+# wins over a send it never started. activity (the small model's label)
+# is left out: it only turns Waiting into Working.
+def composer(status, send, stream):
+    if status == "error":
+        return ""
+    if status != "running" and send in PENDING:
+        if send == "sending":
+            return "Sending"
+        return "Waiting"
+    if status != "running":
+        return ""
+    if stream != "":
+        return "Working"
+    return "Waiting"
+
+def header(status, send, stream):
+    c = composer(status, send, stream)
+    if c in ("Sending", "Waiting") or status == "running":
+        return c if c else "Working"
+    return status.capitalize()
+
+role Session:
+    action Init:
+        self.status = "idle"
+        self.send = NONE
+        self.stream = ""
+        self.call = NONE
+        self.behind = False
+        self.head = "Idle"
+        self.steer = False
+
+    atomic func derive():
+        self.head = header(self.status, self.send, self.stream)
+        self.steer = self.status == "running" or composer(self.status, self.send, self.stream) == "Waiting"
+
+    # --- the person ---
+
+    # Enter/Send in the composer: deliver() records the send, then POSTs.
+    atomic action Send:
+        require self.send == NONE and self.status != "running" and not self.behind
+        self.send = "sending"
+        self.derive()
+
+    # "Not sent" row, Retry: the same request again, same id.
+    atomic action Retry:
+        require self.send == "failed"
+        self.send = "sending"
+        self.derive()
+
+    # "Not sent" row, Edit: the text goes back to an empty draft.
+    atomic action Edit:
+        require self.send == "failed"
+        self.send = NONE
+        self.derive()
+
+    # --- the request ---
+
+    # 200 from POST /prompt: Send adopted the session if nothing held its
+    # lease and wrote the line to the child's stdin.
+    atomic fair action Accept:
+        require self.send == "sending"
+        self.send = "accepted"
+        if self.status == "interrupted":
+            self.status = "stopped"
+        self.derive()
+
+    # A refused or failed request (409 archived, a network error).
+    atomic action Refuse:
+        require self.send == "sending"
+        self.send = "failed"
+        self.derive()
+
+    # --- the child ---
+
+    # The input is recorded: the turn is open and the child is alive.
+    atomic fair action Input:
+        require self.send == "accepted"
+        self.send = "recorded"
+        self.status = "running"
+        self.behind = True
+        self.derive()
+
+    # assistant-delta / thinking-delta: live only, Seq 0, not in the ring.
+    atomic action Delta:
+        require self.status == "running" and self.call == NONE
+        if self.stream == "":
+            self.stream = "fresh"
+        elif self.stream == "rec":
+            self.stream = "rec_fresh"
+        self.derive()
+
+    # The assistant/thinking entry the fragments were building.
+    atomic action Reply:
+        require self.status == "running" and self.stream in ("fresh", "rec_fresh")
+        self.stream = "rec"
+        self.behind = True
+        self.derive()
+
+    # An engine call start (phase start, a string id): a running row by id.
+    atomic action NativeCall:
+        require self.status == "running" and self.call == NONE and self.stream == ""
+        self.call = "native"
+        self.derive()
+
+    # The call's end is recorded; its running row stays until the
+    # refetch brings the record with its id.
+    atomic action CallEnd:
+        require self.status == "running" and self.call == "native"
+        self.call = "native_done"
+        self.behind = True
+        self.derive()
+
+    # A turn's closing entries. Leaving running clears the stream (the
+    # page's status effect); done/cancelled clear the running call rows
+    # (a native call still running goes on as a job, in Work).
+    atomic action Finish:
+        require self.status == "running"
+        self.close("done")
+
+    # The provider's error before any output (llm-control's error turn).
+    atomic action Fail:
+        require self.status == "running" and self.stream == "" and self.call == NONE
+        self.close("error")
+
+    # The child is gone mid-turn: a crash, an archive kill, a serve
+    # restart. The open turn with no lease reads interrupted. This is
+    # what the page should do; today it does not: nativeRunning is
+    # cleared only on done/cancelled (app.tsx liveNative and the
+    # subscribe handler), so a native row keeps spinning here, and after
+    # a serve restart no event comes to trigger the catch-up at all.
+    atomic action Crash:
+        require self.status == "running"
+        self.close("interrupted")
+
+    atomic func close(to):
+        self.status = to
+        self.stream = ""
+        self.call = NONE
+        self.behind = True
+        self.derive()
+
+    # --- the page ---
+
+    # A GET ?since= that lands. The recorded entries and the removal of
+    # the fragments and running rows they supersede are one commit, and
+    # a recorded input lands the send it came from.
+    atomic fair action CatchUp:
+        require self.behind
+        self.behind = False
+        if self.stream == "rec":
+            self.stream = ""
+        elif self.stream == "rec_fresh":
+            self.stream = "fresh"
+        if self.call == "native_done":
+            self.call = NONE
+        if self.send == "recorded":
+            self.send = NONE
+        self.derive()
+
+action Init:
+    session = Session()
+
+# A send on its way is work: the header never says the last turn's Done.
+always assertion NoDoneWhileSending:
+    return not (session.send in PENDING and session.head == "Done")
+
+# Streamed text is shown once: fragments an entry on screen already
+# contains are gone in the commit that brought the entry.
+always assertion StreamNeverTwice:
+    return not (session.stream in ("rec", "rec_fresh") and not session.behind)
+
+# A native running row gives way to its recorded call line (same id).
+always assertion NativeRowReplaced:
+    return not (session.call == "native_done" and not session.behind)
+
+# A turn's live parts (stream, running call rows) end with the turn,
+# however it ended, a dead child included.
+always assertion LiveOnlyWhileRunning:
+    return session.status == "running" or (session.stream == "" and session.call == NONE)
+
+# "Steer the running turn…" only while a turn runs or a send is waiting.
+always assertion SteerOnlyWhenLive:
+    return not session.steer or session.status == "running" or session.send in ("accepted", "recorded")
+
+# After a turn records anything (its done/cancelled/error included) the
+# transcript catches up.
+always eventually assertion TranscriptCatchesUp:
+    return not session.behind
+
+# Every send lands or becomes a "Not sent" row.
+always eventually assertion SendsResolve:
+    return session.send not in PENDING
