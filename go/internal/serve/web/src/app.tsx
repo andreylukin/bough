@@ -4274,7 +4274,12 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const isCmd = (p: Pending) => /^\/[a-z]/i.test(p.text.trim());
   const cmdLanded = (p: Pending) => { const verb = p.text.trim().split(/\s+/)[0]; return lines.some((l) => l.kind === "command" && l.seq > p.after && (l.text ?? "").trim().split(/\s+/)[0] === verb); };
   const prompts = sending.filter((p) => !isCmd(p));
-  const unlanded = loading ? sending : sending.filter((p) => isCmd(p) ? !cmdLanded(p) : inputs.filter((l) => l.seq > p.after).length <= prompts.indexOf(p) && !sameText(p));
+  // A command whose child died before reading it never records its line;
+  // an input beyond those owed to the prompts sent before it means stdin
+  // went past it, so it is claimed like a lost prompt. Without this a lost
+  // first "/" line said "Sending…" beside the next turn until a reload.
+  const cmdPassed = (p: Pending) => inputs.filter((l) => l.seq > p.after).length > sending.slice(0, sending.indexOf(p)).filter((q) => !isCmd(q)).length;
+  const unlanded = loading ? sending : sending.filter((p) => isCmd(p) ? !cmdLanded(p) && !cmdPassed(p) : inputs.filter((l) => l.seq > p.after).length <= prompts.indexOf(p) && !sameText(p));
   // R3-C: a turn is live from the moment its prompt is sent, not only once
   // the row says running: Esc in that gap must stop it, and a message sent
   // then steers it.
