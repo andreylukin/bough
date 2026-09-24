@@ -4610,7 +4610,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
             {/* Questions carry paths and commands in backticks; raw, they read as noise. */}
             <div className="ask-q"><Markdown text={row.ask.text} /></div>
             {row.ask.secret && <SecretAnswer key={row.ask.id} askId={row.ask.id} onAnswer={onAnswer} />}
-            {!row.ask.secret && row.ask.options.length > 0 && (
+            {!row.ask.secret && row.ask.options?.length ? (
               <div className="ask-options">
                 {/* Equal alternatives, so none of them is dressed as the primary action. */}
                 {row.ask.options.map((o) => (
@@ -4620,7 +4620,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
                   </button>
                 ))}
               </div>
-            )}
+            ) : null}
           </div>
         )}
         <div ref={end} />
