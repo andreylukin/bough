@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/andreylukin/bough/internal/agentllm"
@@ -25,35 +26,37 @@ import (
 // its completion wakes the model in a turn of its own, done{wake}.
 func TestSettleAdoptsThenWakes(t *testing.T) {
 	t.Parallel()
-	r := newRigWith(t, []rigOpt{settle(200 * time.Millisecond)},
-		fake.Step{Want: "serve", Output: []ullmItem{fake.Call("h1", "hold", `{"text":"npm run dev"}`)}},
-		fake.Step{Want: "held and released", Output: []ullmItem{fake.Text("the server stopped")}},
-	)
-	r.rt.Submit("serve it")
-	r.waitDone(1)
-	d := r.last("done")
-	if d.Data["running"] != 1 && d.Data["running"] != float64(1) {
-		t.Fatalf("done %v\n%s", d.Data, r.dump())
-	}
-	job := r.last("job")
-	if job.Data["event"] != "started" || job.Data["call"] != "h1" || job.Data["cmd"] != "npm run dev" {
-		t.Fatalf("job %v", job.Data)
-	}
-	close(r.kit.release)
-	r.waitDone(2)
-	if got, want := r.turnKinds(), []string{"input", "job", "done", "call", "job", "input", "assistant", "done"}; !slices.Equal(got, want) {
-		t.Fatalf("kinds %v, want %v\n%s", got, want, r.dump())
-	}
-	wake := r.last("input")
-	if wake.Data["wake"] != true || wake.Data["reason"] != "call" || !strings.Contains(wake.Data["text"].(string), "job 1000 finished: npm run dev") {
-		t.Fatalf("wake input %v", wake.Data)
-	}
-	if r.last("done").Data["wake"] != true {
-		t.Fatalf("wake done %v", r.last("done").Data)
-	}
-	if c := r.last("call"); c.Data["adopted"] != true {
-		t.Fatalf("adopted call row %v", c.Data)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		r := newRigWith(t, []rigOpt{settle(200 * time.Millisecond)},
+			fake.Step{Want: "serve", Output: []ullmItem{fake.Call("h1", "hold", `{"text":"npm run dev"}`)}},
+			fake.Step{Want: "held and released", Output: []ullmItem{fake.Text("the server stopped")}},
+		)
+		r.rt.Submit("serve it")
+		r.waitDone(1)
+		d := r.last("done")
+		if d.Data["running"] != 1 && d.Data["running"] != float64(1) {
+			t.Fatalf("done %v\n%s", d.Data, r.dump())
+		}
+		job := r.last("job")
+		if job.Data["event"] != "started" || job.Data["call"] != "h1" || job.Data["cmd"] != "npm run dev" {
+			t.Fatalf("job %v", job.Data)
+		}
+		close(r.kit.release)
+		r.waitDone(2)
+		if got, want := r.turnKinds(), []string{"input", "job", "done", "call", "job", "input", "assistant", "done"}; !slices.Equal(got, want) {
+			t.Fatalf("kinds %v, want %v\n%s", got, want, r.dump())
+		}
+		wake := r.last("input")
+		if wake.Data["wake"] != true || wake.Data["reason"] != "call" || !strings.Contains(wake.Data["text"].(string), "job 1000 finished: npm run dev") {
+			t.Fatalf("wake input %v", wake.Data)
+		}
+		if r.last("done").Data["wake"] != true {
+			t.Fatalf("wake done %v", r.last("done").Data)
+		}
+		if c := r.last("call"); c.Data["adopted"] != true {
+			t.Fatalf("adopted call row %v", c.Data)
+		}
+	})
 }
 
 // A provider error is a turn-level failure: error then done{stop:error},
@@ -194,29 +197,31 @@ func TestModelSwapNoRestart(t *testing.T) {
 // coordinator restarts at idle and the next request carries the tool.
 func TestToolSetChangeRestartsAtIdle(t *testing.T) {
 	t.Parallel()
-	r := newRig(t,
-		fake.Step{Want: "first", Output: []ullmItem{fake.Text("ok")}},
-		fake.Step{Match: func(req ullmRequest) error {
-			for _, tl := range req.Tools {
-				if tl.Name == "wordcount" {
-					return nil
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t,
+			fake.Step{Want: "first", Output: []ullmItem{fake.Text("ok")}},
+			fake.Step{Match: func(req ullmRequest) error {
+				for _, tl := range req.Tools {
+					if tl.Name == "wordcount" {
+						return nil
+					}
 				}
-			}
-			return errf("the new tool is not offered")
-		}, Output: []ullmItem{fake.Text("ok again")}},
-	)
-	r.rt.Submit("first")
-	r.waitDone(1)
-	if _, err := r.kit.reg.Register(agenttools.Tool{Name: "wordcount", Description: "count words",
-		Schema: agenttools.Object(nil, map[string]any{}),
-		Call: func(context.Context, agenttools.Call) (agenttools.Result, error) {
-			return agenttools.Result{Text: "0"}, nil
-		}}); err != nil {
-		t.Fatal(err)
-	}
-	r.waitFor("the restart", func() bool { return r.count("engine") == 2 })
-	r.rt.Submit("second")
-	r.waitDone(2)
+				return errf("the new tool is not offered")
+			}, Output: []ullmItem{fake.Text("ok again")}},
+		)
+		r.rt.Submit("first")
+		r.waitDone(1)
+		if _, err := r.kit.reg.Register(agenttools.Tool{Name: "wordcount", Description: "count words",
+			Schema: agenttools.Object(nil, map[string]any{}),
+			Call: func(context.Context, agenttools.Call) (agenttools.Result, error) {
+				return agenttools.Result{Text: "0"}, nil
+			}}); err != nil {
+			t.Fatal(err)
+		}
+		r.waitFor("the restart", func() bool { return r.count("engine") == 2 })
+		r.rt.Submit("second")
+		r.waitDone(2)
+	})
 }
 
 // A /model swap remounts the rows that read the llm, and their tools
@@ -224,32 +229,34 @@ func TestToolSetChangeRestartsAtIdle(t *testing.T) {
 // a change, so the coordinator keeps running and no error is recorded.
 func TestToolSetBlipDoesNotRestart(t *testing.T) {
 	t.Parallel()
-	r := newRig(t,
-		fake.Step{Want: "first", Output: []ullmItem{fake.Text("ok")}},
-		fake.Step{Want: "second", Output: []ullmItem{fake.Text("ok again")}},
-	)
-	r.rt.Submit("first")
-	r.waitDone(1)
-	echo, ok := r.kit.reg.Lookup("echo")
-	if !ok {
-		t.Fatal("no echo tool")
-	}
-	// Three blips, each a tool that appears and is gone 20ms later.
-	for range 3 {
-		off, err := r.kit.reg.Register(agenttools.Tool{Name: "echo_blip", Description: echo.Description,
-			Schema: echo.Schema, Call: echo.Call})
-		if err != nil {
-			t.Fatal(err)
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t,
+			fake.Step{Want: "first", Output: []ullmItem{fake.Text("ok")}},
+			fake.Step{Want: "second", Output: []ullmItem{fake.Text("ok again")}},
+		)
+		r.rt.Submit("first")
+		r.waitDone(1)
+		echo, ok := r.kit.reg.Lookup("echo")
+		if !ok {
+			t.Fatal("no echo tool")
 		}
-		time.Sleep(20 * time.Millisecond)
-		off()
-	}
-	r.stays("no restart", toolSettle+500*time.Millisecond, func() bool { return r.count("engine") == 1 })
-	r.rt.Submit("second")
-	r.waitDone(2)
-	if r.count("engine") != 1 || r.count("error") != 0 {
-		t.Fatalf("history\n%s", r.dump())
-	}
+		// Three blips, each a tool that appears and is gone 20ms later.
+		for range 3 {
+			off, err := r.kit.reg.Register(agenttools.Tool{Name: "echo_blip", Description: echo.Description,
+				Schema: echo.Schema, Call: echo.Call})
+			if err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(20 * time.Millisecond)
+			off()
+		}
+		r.stays("no restart", toolSettle+500*time.Millisecond, func() bool { return r.count("engine") == 1 })
+		r.rt.Submit("second")
+		r.waitDone(2)
+		if r.count("engine") != 1 || r.count("error") != 0 {
+			t.Fatalf("history\n%s", r.dump())
+		}
+	})
 }
 
 // A subagent runs on a child coordinator and writes sub:* rows.
@@ -421,49 +428,51 @@ func TestRestartFailsAwaitingCallAsInterrupted(t *testing.T) {
 // remaining step must see both.
 func TestReopenAfterCancelKeepsCallsParked(t *testing.T) {
 	t.Parallel()
-	r := newRig(t,
-		fake.Step{Want: "long", Output: []ullmItem{fake.Call("h7", "hold", `{"text":"forever"}`)}},
-		fake.Step{Want: "go on", Match: func(req ullmRequest) error {
-			if !strings.Contains(fake.Render(req), "interrupted") {
-				return errf("the interrupted result is not in the request")
-			}
-			return nil
-		}, Output: []ullmItem{fake.Text("carrying on")}},
-	)
-	r.rt.Submit("long thing")
-	r.waitFor("the call to start", func() bool {
-		r.kit.mu.Lock()
-		defer r.kit.mu.Unlock()
-		return slices.Contains(r.kit.calls, "hold")
+	synctest.Test(t, func(t *testing.T) {
+		r := newRig(t,
+			fake.Step{Want: "long", Output: []ullmItem{fake.Call("h7", "hold", `{"text":"forever"}`)}},
+			fake.Step{Want: "go on", Match: func(req ullmRequest) error {
+				if !strings.Contains(fake.Render(req), "interrupted") {
+					return errf("the interrupted result is not in the request")
+				}
+				return nil
+			}, Output: []ullmItem{fake.Text("carrying on")}},
+		)
+		r.rt.Submit("long thing")
+		r.waitFor("the call to start", func() bool {
+			r.kit.mu.Lock()
+			defer r.kit.mu.Unlock()
+			return slices.Contains(r.kit.calls, "hold")
+		})
+		r.waitFor("the store to hold the op as awaiting", func() bool {
+			b, _ := os.ReadFile(r.rt.StorePath())
+			return strings.Contains(string(b), `"Status":"awaiting"`)
+		})
+		r.rt.q.close()
+		r.rt.cancel()
+		<-r.rt.exited
+		// What the history row writes when it opens a turn a dead process
+		// left open.
+		r.hist.Append("cancelled", map[string]any{"interrupted": true})
+		h, err := history.OpenExisting(r.hist.Path())
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := &rig{t: t, dir: r.dir, hist: h, evs: &events{}, kit: newTestkit(t), fake: r.fake}
+		c.open()
+		c.rt.gate.mu.Lock()
+		muted := c.rt.gate.parked && c.rt.gate.covered([]string{"call:h7"})
+		c.rt.gate.mu.Unlock()
+		if !muted {
+			t.Fatal("a request answering only the cancelled call would reach the model")
+		}
+		c.rt.Submit("go on")
+		c.waitFor("the reply", func() bool { return c.count("assistant") >= 1 })
+		c.stays("no request of its own", 300*time.Millisecond, func() bool { return len(c.fake.Requests()) == 2 })
+		if a := c.last("assistant"); a.Data["text"] != "carrying on" {
+			t.Fatalf("history\n%s", c.dump())
+		}
 	})
-	r.waitFor("the store to hold the op as awaiting", func() bool {
-		b, _ := os.ReadFile(r.rt.StorePath())
-		return strings.Contains(string(b), `"Status":"awaiting"`)
-	})
-	r.rt.q.close()
-	r.rt.cancel()
-	<-r.rt.exited
-	// What the history row writes when it opens a turn a dead process
-	// left open.
-	r.hist.Append("cancelled", map[string]any{"interrupted": true})
-	h, err := history.OpenExisting(r.hist.Path())
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := &rig{t: t, dir: r.dir, hist: h, evs: &events{}, kit: newTestkit(t), fake: r.fake}
-	c.open()
-	c.rt.gate.mu.Lock()
-	muted := c.rt.gate.parked && c.rt.gate.covered([]string{"call:h7"})
-	c.rt.gate.mu.Unlock()
-	if !muted {
-		t.Fatal("a request answering only the cancelled call would reach the model")
-	}
-	c.rt.Submit("go on")
-	c.waitFor("the reply", func() bool { return c.count("assistant") >= 1 })
-	c.stays("no request of its own", 300*time.Millisecond, func() bool { return len(c.fake.Requests()) == 2 })
-	if a := c.last("assistant"); a.Data["text"] != "carrying on" {
-		t.Fatalf("history\n%s", c.dump())
-	}
 }
 
 func writeEntries(t *testing.T, path string, es []history.Entry) {

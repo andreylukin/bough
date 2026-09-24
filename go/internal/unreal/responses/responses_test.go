@@ -135,8 +135,9 @@ func TestTapAttemptCountsRetries(t *testing.T) {
 		first := n == 1
 		mu.Unlock()
 		if first {
-			w.Header().Set("Retry-After", "1")
-			http.Error(w, `{"error":{"message":"upstream hiccup","type":"server_error"}}`, http.StatusInternalServerError)
+			// A rate limit whose message hints 1ms: the smallest retry
+			// delay the harness takes (Retry-After is whole seconds).
+			http.Error(w, `{"error":{"message":"Rate limit reached. Please try again in 1ms.","type":"requests","code":"rate_limit_exceeded"}}`, http.StatusTooManyRequests)
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")

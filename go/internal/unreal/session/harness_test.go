@@ -203,6 +203,9 @@ func (r *rig) count(kind string) int {
 }
 
 // waitFor polls until cond holds, failing with the history on timeout.
+// A test that waits out the session's timers (turn settle, the
+// harness's 1s grace) or asserts with stays runs inside synctest.Test:
+// these sleeps are then on the bubble's fake clock and cost nothing.
 func (r *rig) waitFor(what string, cond func() bool) {
 	r.t.Helper()
 	deadline := time.Now().Add(10 * time.Second)

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	ullm "github.com/unreallabsai/unreal-agent/harness/llm"
@@ -32,49 +33,51 @@ import (
 // done, then opens a turn of its own.
 func TestNoticeDuringCancelWaitsForTheClose(t *testing.T) {
 	t.Parallel()
-	jobs := &fakeJobs{wake: make(chan struct{}, 1)}
-	started := make(chan struct{}, 1)
-	r := newRigWith(t, []rigOpt{func(d *Deps) { d.Jobs = func() Jobs { return jobs } }},
-		fake.Step{Want: "slow", Output: []ullmItem{fake.Call("s1", "stubborn", `{"text":"make"}`)}},
-		fake.Step{Want: "job 9 finished", Output: []ullmItem{fake.Text("noted")}},
-	)
-	obj := agenttools.Object(nil, map[string]any{"text": agenttools.Prop("string", "text")})
-	if _, err := r.kit.reg.Register(agenttools.Tool{Name: "stubborn", Description: "dies slowly", Schema: obj,
-		Call: func(ctx context.Context, c agenttools.Call) (agenttools.Result, error) {
-			started <- struct{}{}
-			<-ctx.Done()
-			time.Sleep(600 * time.Millisecond) // a call that ignores its ctx for a while
-			return agenttools.Result{}, ctx.Err()
-		}}); err != nil {
-		t.Fatal(err)
-	}
-	r.rt.Submit("slow thing")
-	<-started
-	r.rt.Cancel()
-	time.Sleep(100 * time.Millisecond)
-	jobs.notify("job 9 finished: make (exit 0)")
-	r.waitDone(2)
-	es := r.entries()
-	firstDone := slices.IndexFunc(es, func(e history.Entry) bool { return e.Kind == "done" })
-	inputs := 0
-	for _, e := range es[:firstDone] {
-		switch e.Kind {
-		case "assistant", "job":
-			t.Fatalf("the notice reached the cancelled turn at entry %d\n%s", e.Seq, r.dump())
-		case "input":
-			inputs++
+	synctest.Test(t, func(t *testing.T) {
+		jobs := &fakeJobs{wake: make(chan struct{}, 1)}
+		started := make(chan struct{}, 1)
+		r := newRigWith(t, []rigOpt{func(d *Deps) { d.Jobs = func() Jobs { return jobs } }},
+			fake.Step{Want: "slow", Output: []ullmItem{fake.Call("s1", "stubborn", `{"text":"make"}`)}},
+			fake.Step{Want: "job 9 finished", Output: []ullmItem{fake.Text("noted")}},
+		)
+		obj := agenttools.Object(nil, map[string]any{"text": agenttools.Prop("string", "text")})
+		if _, err := r.kit.reg.Register(agenttools.Tool{Name: "stubborn", Description: "dies slowly", Schema: obj,
+			Call: func(ctx context.Context, c agenttools.Call) (agenttools.Result, error) {
+				started <- struct{}{}
+				<-ctx.Done()
+				time.Sleep(600 * time.Millisecond) // a call that ignores its ctx for a while
+				return agenttools.Result{}, ctx.Err()
+			}}); err != nil {
+			t.Fatal(err)
 		}
-	}
-	if inputs != 1 {
-		t.Fatalf("an input landed inside the cancelled turn\n%s", r.dump())
-	}
-	if r.count("cancelled") != 1 {
-		t.Fatalf("history\n%s", r.dump())
-	}
-	in := r.last("input")
-	if in.Data["reason"] != "notice" || r.last("assistant").Data["text"] != "noted" {
-		t.Fatalf("the notice never got its turn\n%s", r.dump())
-	}
+		r.rt.Submit("slow thing")
+		<-started
+		r.rt.Cancel()
+		time.Sleep(100 * time.Millisecond)
+		jobs.notify("job 9 finished: make (exit 0)")
+		r.waitDone(2)
+		es := r.entries()
+		firstDone := slices.IndexFunc(es, func(e history.Entry) bool { return e.Kind == "done" })
+		inputs := 0
+		for _, e := range es[:firstDone] {
+			switch e.Kind {
+			case "assistant", "job":
+				t.Fatalf("the notice reached the cancelled turn at entry %d\n%s", e.Seq, r.dump())
+			case "input":
+				inputs++
+			}
+		}
+		if inputs != 1 {
+			t.Fatalf("an input landed inside the cancelled turn\n%s", r.dump())
+		}
+		if r.count("cancelled") != 1 {
+			t.Fatalf("history\n%s", r.dump())
+		}
+		in := r.last("input")
+		if in.Data["reason"] != "notice" || r.last("assistant").Data["text"] != "noted" {
+			t.Fatalf("the notice never got its turn\n%s", r.dump())
+		}
+	})
 }
 
 // A resumed session's first done counts only its own turn: the usage
@@ -167,45 +170,47 @@ func (c *fakeTrees) Changed(before string) []string {
 // nor Changes knows it.
 func TestAdoptedCallWritesLandInTheWakeTurn(t *testing.T) {
 	t.Parallel()
-	work := t.TempDir()
-	stats := &fakeStats{}
-	trees := &fakeTrees{dir: work, trees: map[string]map[string]string{}}
-	release := make(chan struct{})
-	r := newRigWith(t, []rigOpt{settle(200 * time.Millisecond), func(d *Deps) {
-		d.Stats = func() TurnStats { return stats }
-		d.Checkpoints = func() Checkpointer { return trees }
-	}},
-		fake.Step{Want: "generate", Output: []ullmItem{fake.Call("g1", "gen", `{"text":"go generate"}`)}},
-		fake.Step{Want: "generated", Output: []ullmItem{fake.Text("gen.go is ready")}},
-	)
-	obj := agenttools.Object(nil, map[string]any{"text": agenttools.Prop("string", "text")})
-	if _, err := r.kit.reg.Register(agenttools.Tool{Name: "gen", Description: "writes gen.go when released", Schema: obj,
-		Call: func(ctx context.Context, c agenttools.Call) (agenttools.Result, error) {
-			<-release
-			if err := os.WriteFile(filepath.Join(work, "gen.go"), []byte("package x\n"), 0o644); err != nil {
-				return agenttools.Result{}, err
-			}
-			stats.ran.Store(true)
-			return agenttools.Result{Text: "generated"}, nil
-		}}); err != nil {
-		t.Fatal(err)
-	}
-	r.rt.Submit("generate it")
-	r.waitDone(1)
-	close(release)
-	r.waitDone(2)
-	var files [][]string
-	for _, e := range r.entries() {
-		if e.Kind == "done" {
-			var fs []string
-			b, _ := json.Marshal(e.Data["files"])
-			_ = json.Unmarshal(b, &fs)
-			files = append(files, fs)
+	synctest.Test(t, func(t *testing.T) {
+		work := t.TempDir()
+		stats := &fakeStats{}
+		trees := &fakeTrees{dir: work, trees: map[string]map[string]string{}}
+		release := make(chan struct{})
+		r := newRigWith(t, []rigOpt{settle(200 * time.Millisecond), func(d *Deps) {
+			d.Stats = func() TurnStats { return stats }
+			d.Checkpoints = func() Checkpointer { return trees }
+		}},
+			fake.Step{Want: "generate", Output: []ullmItem{fake.Call("g1", "gen", `{"text":"go generate"}`)}},
+			fake.Step{Want: "generated", Output: []ullmItem{fake.Text("gen.go is ready")}},
+		)
+		obj := agenttools.Object(nil, map[string]any{"text": agenttools.Prop("string", "text")})
+		if _, err := r.kit.reg.Register(agenttools.Tool{Name: "gen", Description: "writes gen.go when released", Schema: obj,
+			Call: func(ctx context.Context, c agenttools.Call) (agenttools.Result, error) {
+				<-release
+				if err := os.WriteFile(filepath.Join(work, "gen.go"), []byte("package x\n"), 0o644); err != nil {
+					return agenttools.Result{}, err
+				}
+				stats.ran.Store(true)
+				return agenttools.Result{Text: "generated"}, nil
+			}}); err != nil {
+			t.Fatal(err)
 		}
-	}
-	if len(files) != 2 || !slices.Contains(files[1], "gen.go") {
-		t.Fatalf("done files %v, want gen.go on the wake turn\n%s", files, r.dump())
-	}
+		r.rt.Submit("generate it")
+		r.waitDone(1)
+		close(release)
+		r.waitDone(2)
+		var files [][]string
+		for _, e := range r.entries() {
+			if e.Kind == "done" {
+				var fs []string
+				b, _ := json.Marshal(e.Data["files"])
+				_ = json.Unmarshal(b, &fs)
+				files = append(files, fs)
+			}
+		}
+		if len(files) != 2 || !slices.Contains(files[1], "gen.go") {
+			t.Fatalf("done files %v, want gen.go on the wake turn\n%s", files, r.dump())
+		}
+	})
 }
 
 // A <system-*> span the model writes in its own reply is a fabricated
@@ -258,38 +263,40 @@ func TestActivityClearsWhenTheResponseLands(t *testing.T) {
 // it went out stops it before the provider sees it.
 func TestCancelBeforeInflightIsLatched(t *testing.T) {
 	t.Parallel()
-	fk := fake.New(t, fake.Step{Output: []ullmItem{fake.Call("e1", "echo", `{"text":"after esc"}`)}})
-	entered := make(chan struct{}, 1)
-	r := &Runtime{cfg: Config{}.withDefaults(), sid: "gate"}
-	r.d.LLM = func() (agentllm.Source, string, error) {
-		select {
-		case entered <- struct{}{}:
-			time.Sleep(300 * time.Millisecond)
-		default:
+	synctest.Test(t, func(t *testing.T) {
+		fk := fake.New(t, fake.Step{Output: []ullmItem{fake.Call("e1", "echo", `{"text":"after esc"}`)}})
+		entered := make(chan struct{}, 1)
+		r := &Runtime{cfg: Config{}.withDefaults(), sid: "gate"}
+		r.d.LLM = func() (agentllm.Source, string, error) {
+			select {
+			case entered <- struct{}{}:
+				time.Sleep(300 * time.Millisecond)
+			default:
+			}
+			return fakeSource{fk}, "fake", nil
 		}
-		return fakeSource{fk}, "fake", nil
-	}
-	g := newGate(r, "w", nil)
-	var metas []string
-	g.meta = func(m project.Meta) {
-		if m.Partial {
-			metas = append(metas, "partial")
+		g := newGate(r, "w", nil)
+		var metas []string
+		g.meta = func(m project.Meta) {
+			if m.Partial {
+				metas = append(metas, "partial")
+			}
 		}
-	}
-	done := make(chan ullm.Response, 1)
-	go func() {
-		resp, _ := g.Respond(context.Background(), ullm.Request{Input: []ullm.Item{{Type: ullm.ItemMessage, Data: ullm.Message{Role: ullm.RoleUser, Text: "go"}}}}, ullm.RequestOptions{})
-		done <- resp
-	}()
-	<-entered
-	g.CancelInflight()
-	resp := <-done
-	if n := len(fk.Requests()); n != 0 {
-		t.Fatalf("%d provider requests after Esc", n)
-	}
-	if len(resp.Output) != 0 || !slices.Equal(metas, []string{"partial"}) {
-		t.Fatalf("response %+v metas %v, want an empty stopped answer", resp, metas)
-	}
+		done := make(chan ullm.Response, 1)
+		go func() {
+			resp, _ := g.Respond(context.Background(), ullm.Request{Input: []ullm.Item{{Type: ullm.ItemMessage, Data: ullm.Message{Role: ullm.RoleUser, Text: "go"}}}}, ullm.RequestOptions{})
+			done <- resp
+		}()
+		<-entered
+		g.CancelInflight()
+		resp := <-done
+		if n := len(fk.Requests()); n != 0 {
+			t.Fatalf("%d provider requests after Esc", n)
+		}
+		if len(resp.Output) != 0 || !slices.Equal(metas, []string{"partial"}) {
+			t.Fatalf("response %+v metas %v, want an empty stopped answer", resp, metas)
+		}
+	})
 }
 
 // guardStats is turn-stats with a project session's read rule: only
