@@ -35,6 +35,20 @@ type Turn struct {
 	// Bash, on a release, answers with one bash tool call running it.
 	Bash  string `json:"bash,omitempty"`
 	Calls []Call `json:"calls,omitempty"`
+	// Answer, on an "api" turn, ends its first attempt at once.
+	Answer *Answer `json:"answer,omitempty"`
+}
+
+// Answer ends one HTTP attempt of an "api" turn: a turn that goes
+// through the real Messages API adapter and its retry loop (two
+// attempts), served in process by the row. Kind is "ok" (Text, then
+// Calls when set), "transient" (529 before output, an in-stream
+// overloaded_error after: retried), "fatal" (400: not retried),
+// "overflow" (400 prompt is too long), "refused" or "max_tokens".
+type Answer struct {
+	Kind  string `json:"kind"`
+	Text  string `json:"text,omitempty"`
+	Calls []Call `json:"calls,omitempty"`
 }
 
 // Call is a tool call the model makes: a native tool by name, with its
@@ -265,4 +279,61 @@ func ReleaseBoot(t testing.TB, dir, id string) {
 	if err := os.WriteFile(filepath.Join(bootDir(dir), id+".release"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// WaitAttempt waits until HTTP attempt k of api turn name has reached
+// the row and is held there.
+func WaitAttempt(t testing.TB, dir, name string, k int, timeout time.Duration) {
+	t.Helper()
+	waitFile(t, filepath.Join(dir, fmt.Sprintf("%s.attempt-%d", name, k)), timeout)
+}
+
+// Attempts is how many HTTP attempts api turn name has made.
+func Attempts(dir, name string) int {
+	n, _ := filepath.Glob(filepath.Join(dir, name+".attempt-*"))
+	return len(n)
+}
+
+// AnswerWith ends the held attempt of api turn name as a says; the
+// next attempt, if the adapter retries, is held again.
+func AnswerWith(t testing.TB, dir, name string, a Answer) {
+	t.Helper()
+	b, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := filepath.Join(dir, name+".answer-tmp")
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, filepath.Join(dir, name+".answer")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// WaitRetryWait waits until the adapter is waiting to retry api turn
+// name (it retries only when the test says, with Retry).
+func WaitRetryWait(t testing.TB, dir, name string, timeout time.Duration) {
+	t.Helper()
+	waitFile(t, filepath.Join(dir, name+".waiting"), timeout)
+}
+
+// Retry ends the adapter's wait before its retry of api turn name.
+func Retry(t testing.TB, dir, name string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name+".retry"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func waitFile(t testing.TB, p string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(p); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("llm-control: %s not there after %s", filepath.Base(p), timeout)
 }

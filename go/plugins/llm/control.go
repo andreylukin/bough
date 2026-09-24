@@ -6,10 +6,12 @@ package llm
 // engine request takes the lexically first <name>.json in the control
 // dir (renaming it <name>.taken, so the test can see the call is in
 // flight) and answers as it says: finish with text, fail, stream slowly,
-// call one tool, or hold until <name>.release appears. llm-script's tape is fixed at
-// mount; this one is fed while the session runs, which is what cancel,
-// steer and "the model is still thinking" tests need. The test side is
-// go/tests/model/llm. Config: dir (default ~/.bough/llm-control), and
+// call one tool, hold until <name>.release appears, or go through the
+// real Messages API adapter one HTTP attempt at a time (control_api.go).
+// llm-script's tape is fixed at mount; this one is fed while the session
+// runs, which is what cancel, steer and "the model is still thinking"
+// tests need. The test side is go/tests/model/llm. Config: dir (default
+// ~/.bough/llm-control), model (default "control"), and
 // hold_boot (hold a fresh session before its history file; see holdBoot).
 
 import (
@@ -60,7 +62,14 @@ func (p *controlPlugin) Apply(ctx *kernel.Context, cfg map[string]any) error {
 			return err
 		}
 	}
-	ctx.Provide(serviceKey(cfg), &controlLLM{dir: dir, tag: newControlTag()})
+	// model names the row's model ("control" by default): /model <id>
+	// swaps it, which is how a test moves a session onto a model whose
+	// context has not overflowed.
+	model, _ := cfg["model"].(string)
+	if model == "" {
+		model = "control"
+	}
+	ctx.Provide(serviceKey(cfg), &controlLLM{dir: dir, tag: newControlTag(), model: model})
 	return nil
 }
 
@@ -132,7 +141,8 @@ func holdBoot(ctx *kernel.Context, dir string) error {
 }
 
 type controlLLM struct {
-	dir string
+	dir   string
+	model string
 	// tag makes this process's response ids its own. A provider's ids
 	// are unique; numbering from 1 in every process was not, and a
 	// respawned child's first call reused the id of the call its
@@ -154,7 +164,7 @@ func (c *controlLLM) Complete(ctx context.Context, system string, messages []Mes
 	return "control", nil
 }
 
-func (c *controlLLM) Model() string { return "control" }
+func (c *controlLLM) Model() string { return c.model }
 func (c *controlLLM) Ready() error  { return nil }
 
 func (c *controlLLM) Usage() Usage {
@@ -182,6 +192,9 @@ type controlTurn struct {
 	// of text, so a test can have the agent run a real tool (a shell edit
 	// the write tools never report).
 	Calls []controlCall `json:"calls"`
+	// Answer, on an "api" turn, ends its first attempt at once instead
+	// of holding it (control_api.go).
+	Answer *controlAnswer `json:"answer"`
 }
 
 // controlCall is a tool call a release answers with, so a test can put
@@ -233,10 +246,10 @@ type controlAdapter struct {
 }
 
 func (a *controlAdapter) Provider() string { return "control" }
-func (a *controlAdapter) Model() string    { return "control" }
+func (a *controlAdapter) Model() string    { return a.c.model }
 func (a *controlAdapter) Close() error     { return nil }
 
-func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.RequestOptions) (ullm.Response, error) {
+func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, o ullm.RequestOptions) (ullm.Response, error) {
 	if err := ctx.Err(); err != nil {
 		return ullm.Response{}, err
 	}
@@ -261,6 +274,8 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 		return a.reply(ctx, turn.Text, time.Duration(turn.DelayMS)*time.Millisecond)
 	case "call":
 		return a.callTurn(ctx, name, turn)
+	case "api":
+		return a.api(ctx, name, turn, r, o)
 	case "block":
 		release := filepath.Join(a.c.dir, name+".release")
 		stream := filepath.Join(a.c.dir, name+".stream")
@@ -314,7 +329,7 @@ func (a *controlAdapter) Respond(ctx context.Context, r ullm.Request, _ ullm.Req
 			}
 		}
 	}
-	return ullm.Response{}, fmt.Errorf("llm-control: %s.json: unknown mode %q (want ok, error, slow, call or block)", name, turn.Mode)
+	return ullm.Response{}, fmt.Errorf("llm-control: %s.json: unknown mode %q (want ok, error, slow, call, api or block)", name, turn.Mode)
 }
 
 // say streams each <name>.say-<n> a held turn has been handed as one

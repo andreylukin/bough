@@ -32,6 +32,10 @@ type Config struct {
 	MaxAttempts int              // 0 = the §7.2 schedule
 	IdleTimeout time.Duration    // 0 = 5m until probe P3 sizes it
 	Options     agentllm.Options
+	// Wait is the pause before a retry; nil sleeps. llm-control holds it
+	// until the test lets the retry go, so a model test can stand in the
+	// wait (and stop the turn there) instead of racing a timer.
+	Wait func(ctx context.Context, d time.Duration) error
 }
 
 // defaultIdleTimeout bounds silence inside a started stream. The SDK
@@ -103,7 +107,11 @@ func New(c Config) (agentllm.Adapter, error) {
 	if c.IdleTimeout <= 0 {
 		c.IdleTimeout = defaultIdleTimeout
 	}
-	return &adapter{c: c, wait: sleep, now: time.Now, dropped: &processDropped}, nil
+	wait := sleep
+	if c.Wait != nil {
+		wait = c.Wait
+	}
+	return &adapter{c: c, wait: wait, now: time.Now, dropped: &processDropped}, nil
 }
 
 func (a *adapter) Provider() string { return "anthropic" }

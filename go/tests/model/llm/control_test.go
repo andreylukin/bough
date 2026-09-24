@@ -536,3 +536,82 @@ func TestControlCalls(t *testing.T) {
 		t.Fatalf("the bash call did not run: %q %v\n%s", b, err, out)
 	}
 }
+
+// An api turn goes through the Messages API adapter's retry loop: a
+// fragment, an overloaded_error in the stream, the retry's wait (held
+// until Retry), then the second attempt answers. The first attempt's
+// fragment is reset before the retry.
+func TestControlAPIRetry(t *testing.T) {
+	t.Parallel()
+	r := start(t, "--json")
+	Queue(t, r.dir(), "001", Turn{Mode: "api"})
+	r.send("hello")
+	WaitAttempt(t, r.dir(), "001", 1, 30*time.Second)
+	Stream(t, r.dir(), "001", "first try ", 30*time.Second)
+	r.waitFor(`"text":"first try "`)
+	AnswerWith(t, r.dir(), "001", Answer{Kind: "transient"})
+	WaitRetryWait(t, r.dir(), "001", 30*time.Second)
+	r.waitFor(`"kind":"delta-reset"`)
+	Retry(t, r.dir(), "001")
+	WaitAttempt(t, r.dir(), "001", 2, 30*time.Second)
+	AnswerWith(t, r.dir(), "001", Answer{Kind: "ok", Text: "second try"})
+	r.waitFor(`"text":"second try"`)
+	code, out := r.finish()
+	if code != 0 {
+		t.Fatalf("exit %d:\n%s", code, out)
+	}
+	if n := Attempts(r.dir(), "001"); n != 2 {
+		t.Fatalf("%d attempts, want 2", n)
+	}
+}
+
+// Two transient failures spend the api turns' two attempts: the turn
+// errors after the second, with no third request.
+func TestControlAPIRetriesExhausted(t *testing.T) {
+	t.Parallel()
+	r := start(t)
+	Queue(t, r.dir(), "001", Turn{Mode: "api"})
+	r.send("hello")
+	WaitAttempt(t, r.dir(), "001", 1, 30*time.Second)
+	AnswerWith(t, r.dir(), "001", Answer{Kind: "transient"})
+	WaitRetryWait(t, r.dir(), "001", 30*time.Second)
+	Retry(t, r.dir(), "001")
+	WaitAttempt(t, r.dir(), "001", 2, 30*time.Second)
+	AnswerWith(t, r.dir(), "001", Answer{Kind: "transient"})
+	r.waitFor("[error]")
+	code, out := r.finish()
+	if code != 1 {
+		t.Fatalf("exit %d, want 1 for an errored turn:\n%s", code, out)
+	}
+	if n := Attempts(r.dir(), "001"); n != 2 {
+		t.Fatalf("%d attempts, want 2:\n%s", n, out)
+	}
+}
+
+// An api turn's other answers, each given to the first attempt at once:
+// a refusal, a context overflow and a 400 record an error; max_tokens
+// records the cut reply and its note.
+func TestControlAPIAnswers(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		kind, want string
+		code       int
+	}{
+		{"refused", "the model declined", 1},
+		{"overflow", "no longer fits the model's context window", 1},
+		{"max_tokens", "reply cut off at max_tokens", 0},
+		{"fatal", "the request was refused", 1},
+	} {
+		t.Run(c.kind, func(t *testing.T) {
+			t.Parallel()
+			r := start(t)
+			Queue(t, r.dir(), "001", Turn{Mode: "api", Answer: &Answer{Kind: c.kind, Text: "some text"}})
+			r.send("hello")
+			r.waitFor(c.want)
+			code, out := r.finish()
+			if code != c.code {
+				t.Fatalf("exit %d, want %d:\n%s", code, c.code, out)
+			}
+		})
+	}
+}
