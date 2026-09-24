@@ -1,0 +1,357 @@
+---
+# The bounds (one job, MAX_PROMPTS, MAX_STOPS, MAX_BUDGET) end every
+# behaviour in an idle session with nothing left to do: that is rest,
+# not a deadlock.
+deadlock_detection: false
+---
+
+# Background bash jobs under engine-unreal (the default loop row), one
+# session in serve, as its history and the Work dialog see them.
+#
+# The model calls bash with background: true (plugins/tools/native.go
+# nativeBash): the call answers at once with a job id and the command
+# runs detached (jobs.go start). An `until` regexp fires one "matched"
+# notice the first time the output matches (jobWriter.Write); the exit,
+# the limit or a kill queues one "finished" notice (start's Wait
+# goroutine). Notices sit in Jobs.pending until the engine's watch
+# goroutine sees the wake signal and posts notice() to the actor
+# (internal/unreal/session/build.go watch, actor.go notice):
+#   - no turn open: a wake turn of its own; its input is recorded
+#     wake:true reason:notice, and its done wake:true (doneData);
+#   - a turn open: the text is recorded as a "job" note and queued in
+#     noticeQ until the request in flight answers (steerOrQueue), then
+#     sent as a "[notice]" input at that boundary (response);
+#   - a cancel closing: noticeWaits, taken once cancelled/done are
+#     written (checkCancel).
+# Stop in serve is SIGINT (supervisor.go Interrupt), and the headless
+# child exits on it (cmd/bough/main.go: cancel, AwaitCancelled,
+# Unmount): the engine row's unmount closes the Runtime and then
+# stopJobs kills every job ("killed when bough quit") and writes each
+# notice still pending as a plain "job" entry, never an input
+# (plugins/engine/engine.go stopJobs). A cancel that keeps the child is
+# the step or cost budget (actor.go budgetStop).
+#
+# One session, at most one job. Fields (Session role):
+#   child    the headless child: alive | exiting (SIGINT taken, unmount
+#            not yet run) | gone (the flow ends there: a prompt would
+#            respawn it, with no job left to model)
+#   turn     none | user | wake (a notice opened it) | cancelling
+#   job      none | running | exited | limit (killed after its limit) |
+#            killed (job_kill by the model, or the Work dialog's Stop,
+#            which serve sends as "/jobkill N") | quit (killed when the
+#            child exited)
+#   until    the job was started with an until pattern
+#   typed    the typed job entries written: none | started | finished
+#   pending  notices in Jobs.pending: "match" | "finish"
+#   queued   notices recorded as a "job" note, waiting in noticeQ
+#   waits    noticeWaits: news arrived while a cancel was closing
+#   model    notices sent to the model as inputs (a wake input, or a
+#            "[notice]" input at a boundary)
+#   lost     notices recorded as a "job" note that a cancel dropped
+#            from noticeQ and that never reach the model
+#   quit_log notices stopJobs wrote as "job" entries at exit
+#   wakes    wake turns opened
+#   last     how the last turn closed: "" | user | wake | cancelled
+#   prompts, stops, budget  bounds on the person and the budget stop
+#
+# Where the code disagrees with the mapped model, the code wins:
+#   - A job the person (or the model) kills DOES produce a finish
+#     notice and wakes an idle agent: jobKill cancels the job's context,
+#     Wait returns "signal: killed", and only `stopped` (a job Stop orb
+#     killed, project sessions) or `claimed` (tools.bash's foreground
+#     grace, code mode only) suppresses the notice. "No notice for a
+#     user-stopped job" holds only for Stop orb, which this flow (host
+#     session) does not reach.
+#   - The notice owner check (Take/Wake filter on j.owner) cannot
+#     differ in serve: a child mounts one session for its life, so
+#     "a notice goes only to the owning session" holds by construction
+#     here and is not a field.
+#   - "Notice waits for cancel" is reachable in serve only through the
+#     budget stop: after a SIGINT the held notice is delivered as a wake
+#     turn (child exiting, turn wake) that the exit's shutdown cancels
+#     before the model answers.
+#   - Model.Job/Jobs are reads: Poll below, a response like any other.
+#
+# Findings the model exposes (the claims are left out so the check
+# stays green; each counterexample is fizz's):
+#   - cancelTurn clears noticeQ without moving it to notes (steers go
+#     to notes): a notice queued when a turn is cancelled (a budget
+#     stop, a Stop, the exit's shutdown) is recorded as a "job" note and
+#     never reaches the model. `len(lost) == 0` fails on Prompt,
+#     BashBackground, KillJob, NoticeDelivered, Stop (BudgetStop in
+#     place of Stop keeps the child and loses it just the same).
+#   - Stop in serve kills every background job: a dev server started
+#     turns earlier dies with a Stop of an unrelated later turn, and its
+#     notice is only a "job" entry (quit_log), not an input.
+#     `job != "quit"` fails on Prompt, BashBackground, Stop,
+#     CancelCloses, ChildExits.
+#   - notice() -> send() puts the id in unobserved before ensureRun;
+#     when ensureRun fails the wake turn never closes (quiescent needs
+#     unobserved empty). Not modelled (the failure needs a broken engine
+#     store); an action that opens a wake turn nothing closes breaks
+#     TurnsClose after Prompt, BashBackground, KillJob, Reply.
+
+MAX_PROMPTS = 1
+MAX_STOPS = 1
+MAX_BUDGET = 1
+
+role Session:
+    action Init:
+        self.child = "alive"
+        self.turn = "none"
+        self.job = "none"
+        self.until = False
+        self.typed = "none"
+        self.pending = []
+        self.queued = []
+        self.waits = False
+        self.model = []
+        self.lost = []
+        self.quit_log = []
+        self.wakes = 0
+        self.last = ""
+        self.prompts = 0
+        self.stops = 0
+        self.budget = 0
+
+    # boundary (inlined below; fizz 0.5.3 drops a role func's writes
+    # to self): a request answered, so the notices that waited for it go
+    # in as "[notice]" inputs (actor.go response). finish (inlined): a
+    # job's process ended, with its typed finished entry and its notice.
+
+    # ---- the person ----
+
+    # The prompt that starts the flow. One is enough to reach every
+    # notice path (the wake turns do the rest); a second, respawning the
+    # child after a Stop, tripled the graph and adds no job behaviour.
+    atomic action Prompt:
+        require self.turn == "none" and self.child == "alive"
+        require self.prompts < MAX_PROMPTS
+        self.prompts = self.prompts + 1
+        self.turn = "user"
+
+    # Stop: SIGINT. The child cancels the turn in flight (cancelTurn:
+    # noticeQ cleared) and will exit once the cancel has closed.
+    atomic action Stop:
+        require self.child == "alive" and self.stops < MAX_STOPS
+        self.stops = self.stops + 1
+        self.child = "exiting"
+        if self.turn == "user" or self.turn == "wake":
+            self.lost = self.lost + self.queued
+            self.queued = []
+            self.turn = "cancelling"
+
+    # The Work dialog's Stop on a running job: "/jobkill N" on the
+    # child's stdin, dispatched even mid-turn (headless.go hlLineIn).
+    atomic action KillJob:
+        require self.child == "alive" and self.job == "running"
+        self.job = "killed"
+        self.typed = "finished"
+        self.pending = self.pending + ["finish"]
+
+    # ---- the model (llm-control) ----
+
+    # The model answers only in a live child: once SIGINT is taken the
+    # request in flight is cut (cancelTurn) or cancelled by the exit's
+    # shutdown, and a held llm-control turn never answers into it.
+
+    # bash {background: true, until?}: the job starts, the call answers.
+    atomic action BashBackground:
+        require self.turn == "user" or self.turn == "wake"
+        require self.child == "alive"
+        require self.job == "none"
+        self.model = self.model + self.queued
+        self.queued = []
+        self.job = "running"
+        self.typed = "started"
+        u = any [False, True]
+        self.until = u
+
+    # job_kill on the running job.
+    atomic action JobKill:
+        require self.turn == "user" or self.turn == "wake"
+        require self.child == "alive"
+        require self.job == "running"
+        self.model = self.model + self.queued
+        self.queued = []
+        self.job = "killed"
+        self.typed = "finished"
+        self.pending = self.pending + ["finish"]
+
+    # job / jobs: a read, answered like any tool call.
+    atomic action Poll:
+        require self.turn == "user" or self.turn == "wake"
+        require self.child == "alive"
+        require self.job != "none"
+        self.model = self.model + self.queued
+        self.queued = []
+
+    # A final text reply. Notices sent at this boundary keep the turn
+    # open (unobserved inputs: the coordinator asks again); otherwise it
+    # closes, its done wake:true when a notice opened it.
+    atomic fair action Reply:
+        require self.turn == "user" or self.turn == "wake"
+        require self.child == "alive"
+        if len(self.queued) > 0:
+            self.model = self.model + self.queued
+            self.queued = []
+        else:
+            self.last = self.turn
+            self.turn = "none"
+
+    # ---- the job ----
+
+    atomic action OutputMatchesUntil:
+        require self.job == "running" and self.until
+        require "match" not in self.pending + self.queued + self.model + self.lost + self.quit_log
+        self.pending = self.pending + ["match"]
+
+    atomic action JobExits:
+        require self.job == "running"
+        self.job = "exited"
+        self.typed = "finished"
+        self.pending = self.pending + ["finish"]
+
+    atomic fair action LimitExpires:
+        require self.job == "running"
+        self.job = "limit"
+        self.typed = "finished"
+        self.pending = self.pending + ["finish"]
+
+    # ---- the engine and serve ----
+
+    # The step or cost budget cancels the turn; the child lives on.
+    atomic action BudgetStop:
+        require self.turn == "user" or self.turn == "wake"
+        require self.child == "alive" and self.budget < MAX_BUDGET
+        self.budget = self.budget + 1
+        self.lost = self.lost + self.queued
+        self.queued = []
+        self.turn = "cancelling"
+
+    # The watch goroutine's wake: notice() on the actor.
+    atomic fair action NoticeDelivered:
+        require self.child != "gone" and len(self.pending) > 0
+        require not (self.turn == "cancelling" and self.waits)
+        if self.turn == "cancelling":
+            self.waits = True
+        elif self.turn == "none":
+            self.model = self.model + self.pending
+            self.pending = []
+            self.wakes = self.wakes + 1
+            self.turn = "wake"
+        else:
+            self.queued = self.queued + self.pending
+            self.pending = []
+
+    # The cut request answered (or cancelWait passed): cancelled and done
+    # are written, and news held behind the cancel is taken.
+    atomic fair action CancelCloses:
+        require self.turn == "cancelling"
+        self.turn = "none"
+        self.last = "cancelled"
+        if self.waits:
+            self.waits = False
+            if len(self.pending) > 0:
+                self.model = self.model + self.pending
+                self.pending = []
+                self.wakes = self.wakes + 1
+                self.turn = "wake"
+
+    # After the cancel's done the child unmounts: the Runtime's shutdown
+    # cancels a turn a notice opened meanwhile, stopJobs kills the job
+    # and writes what is still pending as "job" entries; then it exits.
+    atomic fair action ChildExits:
+        require self.child == "exiting" and self.turn != "cancelling"
+        if self.turn == "wake":
+            self.turn = "none"
+            self.last = "cancelled"
+        if self.job == "running":
+            self.job = "quit"
+            self.typed = "finished"
+            self.pending = self.pending + ["finish"]
+        # shutdown's cancelTurn drops noticeQ, as any cancel does.
+        self.lost = self.lost + self.queued
+        self.queued = []
+        self.quit_log = self.quit_log + self.pending
+        self.pending = []
+        self.waits = False
+        self.child = "gone"
+
+action Init:
+    session = Session()
+
+# Each job produces at most one finish notice.
+always assertion OneFinishNotice:
+    s = session
+    n = 0
+    for x in s.pending + s.queued + s.model + s.lost + s.quit_log:
+        if x == "finish":
+            n = n + 1
+    return n <= 1
+
+# until fires at most once, and only for a job that has a pattern.
+always assertion UntilOnce:
+    s = session
+    n = 0
+    for x in s.pending + s.queued + s.model + s.lost + s.quit_log:
+        if x == "match":
+            n = n + 1
+    return n <= 1 and (n == 0 or session.until)
+
+# The typed started/finished entries match the job and its notice.
+always assertion TypedMatchesJob:
+    s = session
+    n = 0
+    for x in s.pending + s.queued + s.model + s.lost + s.quit_log:
+        if x == "finish":
+            n = n + 1
+    if s.job == "none":
+        return s.typed == "none" and n == 0
+    if s.job == "running":
+        return s.typed == "started" and n == 0
+    return s.typed == "finished" and n == 1
+
+# A notice never lands inside a cancelled turn: nothing is queued for a
+# turn being cancelled, and nothing reaches the model while it closes.
+always assertion NoNoticeInCancel:
+    return not (session.turn == "cancelling" and len(session.queued) > 0)
+
+transition assertion NoInputWhileCancelling(before, after):
+    if before.session.turn == "cancelling" and after.session.turn == "cancelling":
+        return len(after.session.model) == len(before.session.model)
+    return True
+
+# Notices are queued in a turn only while one is open.
+always assertion QueuedOnlyInTurn:
+    s = session
+    return len(s.queued) == 0 or s.turn == "user" or s.turn == "wake"
+
+# A wake turn is opened only by a notice, and a turn closed "wake" was one.
+always assertion WakeHasNotice:
+    s = session
+    if s.turn == "wake" or s.last == "wake":
+        return s.wakes > 0 and len(s.model) > 0
+    return True
+
+# Notices are written as bare "job" entries only by an exiting child.
+transition assertion QuitLogOnlyAtExit(before, after):
+    if len(after.session.quit_log) > len(before.session.quit_log):
+        return before.session.child == "exiting" and after.session.child == "gone"
+    return True
+
+# Every queued notice becomes an input (or, at an exit, a job entry).
+always eventually assertion NoticesSettle:
+    return len(session.pending) == 0 and len(session.queued) == 0
+
+# Every job finishes or is killed.
+always eventually assertion JobEnds:
+    return session.job != "running"
+
+# A notice held behind a cancel is taken once the cancel closes.
+always eventually assertion HeldNoticeTaken:
+    return not session.waits
+
+# Every turn closes, a wake turn included.
+always eventually assertion TurnsClose:
+    return session.turn == "none"
