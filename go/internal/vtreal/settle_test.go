@@ -72,3 +72,32 @@ func TestSettledWaitsForTheReplyToInput(t *testing.T) {
 		t.Fatalf("settled returned before the reply to input sent just before it:\n%s", s)
 	}
 }
+
+// A spinner and an elapsed timer tick on their own for as long as a
+// turn or a job runs. A screen where only they move is as settled as
+// it gets: settled returns it after a longer calm window instead of
+// running to its 3.6 s cap.
+func TestSettledSeesPastTickingChrome(t *testing.T) {
+	t.Parallel()
+	a := settleApp(t, `i=0; while :; do for c in ⠋ ⠙ ⠹ ⠸; do printf '\r%s job 1 · %ds STEADY' $c $((i/20)); i=$((i+1)); sleep 0.05; done; done`)
+	a.waitFor("STEADY")
+	began := time.Now()
+	s := a.settled()
+	if took := time.Since(began); took > 2*time.Second {
+		t.Fatalf("settled took %s on a screen where only a spinner and a timer moved", took)
+	}
+	if !strings.Contains(s, "STEADY") {
+		t.Fatalf("settled screen lost the text:\n%s", s)
+	}
+}
+
+// Text that keeps changing is not chrome: a counter that runs for
+// 1.5 s holds settled until it stops.
+func TestSettledWaitsOutChangingText(t *testing.T) {
+	t.Parallel()
+	a := settleApp(t, `i=0; while [ $i -lt 30 ]; do printf '\rcount %d' $i; i=$((i+1)); sleep 0.05; done; exec sleep 30`)
+	a.waitFor("count 1")
+	if s := a.settled(); !strings.Contains(s, "count 29") {
+		t.Fatalf("settled returned while the text was still changing:\n%s", s)
+	}
+}

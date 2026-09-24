@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -192,10 +193,17 @@ func (a *app) waitUntil(pred func(screen string) bool, what string) {
 // a third of the package's test time. The window starts at the call,
 // not at the last output, so input sent just before is still answered.
 // The samples stay for output that never stops but changes no text.
+//
+// While a turn or a job runs, the spinner and the elapsed timers tick
+// on their own and no two samples match; every such call used to run
+// to the 3.6 s cap. A screen where only those moved for calm (600ms,
+// five times the strict window, so a frame still being painted is not
+// mistaken for one) is returned as settled.
 func (a *app) settled() string {
-	const quiet, every = 120 * time.Millisecond, 60 * time.Millisecond
+	const quiet, every, calm = 120 * time.Millisecond, 60 * time.Millisecond, 600 * time.Millisecond
 	began := time.Now()
 	prev, prevAt := a.text(), began
+	calmSince := began
 	same := 0
 	for time.Since(began) < 60*every {
 		time.Sleep(10 * time.Millisecond)
@@ -213,10 +221,33 @@ func (a *app) settled() string {
 			}
 		} else {
 			same = 0
+			if untick(cur) != untick(prev) {
+				calmSince = time.Now()
+			} else if time.Since(calmSince) >= calm {
+				return cur
+			}
 		}
 		prev, prevAt = cur, time.Now()
 	}
 	return prev
+}
+
+// spinnerFrames are bubbles' MiniDot, the only spinner the ui draws.
+const spinnerFrames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+// elapsedChip is a running timer: "12s", "2m05s".
+var elapsedChip = regexp.MustCompile(`\b(\d+m\d\ds|\d+s)\b`)
+
+// untick blanks what moves on a screen by itself: spinner frames and
+// elapsed timers.
+func untick(s string) string {
+	s = elapsedChip.ReplaceAllString(s, "#s")
+	return strings.Map(func(r rune) rune {
+		if strings.ContainsRune(spinnerFrames, r) {
+			return '*'
+		}
+		return r
+	}, s)
 }
 
 func (a *app) typeText(s string) { a.term.SendText(s) }
