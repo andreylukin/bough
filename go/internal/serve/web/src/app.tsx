@@ -5543,10 +5543,10 @@ export default function App() {
         if (n) act(() => api.newProject(n));
       } },
     { id: "go:sessions", group: "Navigation", label: "Sessions", run: () => goList() },
-    { id: "go:projects", group: "Navigation", label: "Projects",
-      run: () => { setView("projects"); setPane("thread"); } },
-    { id: "go:hooks", group: "Navigation", label: "Hooks",
-      run: () => { setView("hooks"); setPane("thread"); } },
+    // The nav links' own move, so they push: setting the view alone let
+    // the write-back replace the entry, and Back skipped the page you left.
+    { id: "go:projects", group: "Navigation", label: "Projects", run: () => onView("projects") },
+    { id: "go:hooks", group: "Navigation", label: "Hooks", run: () => onView("hooks") },
     { id: "go:wiki", group: "Navigation", label: "Wiki", run: () => goWiki({ at: "index" }) },
     { id: "help:keys", group: "Navigation", label: "Keyboard shortcuts", hint: "?",
       run: () => showShortcuts(modKey()) },
