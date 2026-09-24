@@ -6,6 +6,7 @@ import "testing"
 // Take must not reset the count it diffs, or a turn's second block would
 // look like it ran nothing.
 func TestBashCountsSurviveTake(t *testing.T) {
+	t.Parallel()
 	s := &Stats{}
 	if n, _ := s.Bash(); n != 0 {
 		t.Fatalf("fresh runs = %d, want 0", n)

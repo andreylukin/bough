@@ -288,6 +288,10 @@ func TestNativeBashPolicy(t *testing.T) {
 func TestAdoptSharesNumberingAndKills(t *testing.T) {
 	t.Parallel()
 	_, reg, st := mountNative(t, nil)
+	// job and jobs settle on a running job for 10 s by default; here both
+	// jobs are meant to be running (or just killed), so the settle only
+	// padded the test by 20 s. It has its own test in jobs_test.go.
+	st.jobs.settleFor = 0
 	var mu sync.Mutex
 	var recs []map[string]any
 	st.jobs.record = func(kind string, data map[string]any) {

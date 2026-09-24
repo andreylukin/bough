@@ -52,6 +52,7 @@ func bashFailRun(t *testing.T, cm *codemode.CodeMode, code string, bound time.Du
 }
 
 func TestBashFailExitCodes(t *testing.T) {
+	t.Parallel()
 	cm, st := bashFailRig(t)
 	notExec := filepath.Join(t.TempDir(), "noexec.sh")
 	if err := os.WriteFile(notExec, []byte("echo hi\n"), 0o644); err != nil {
@@ -90,6 +91,7 @@ func TestBashFailExitCodes(t *testing.T) {
 
 // A caught failure is data: the script goes on and sees the message.
 func TestBashFailCaughtIsData(t *testing.T) {
+	t.Parallel()
 	cm, _ := bashFailRig(t)
 	out, err := cm.Run(`let m; try { tools.bash("echo boom >&2; exit 3") } catch (e) { m = String(e) }; "caught:" + m`)
 	if err != nil || !strings.Contains(out, "caught:") || !strings.Contains(out, "exit status 3") || !strings.Contains(out, "boom") {
@@ -98,6 +100,7 @@ func TestBashFailCaughtIsData(t *testing.T) {
 }
 
 func TestBashFailOddOutput(t *testing.T) {
+	t.Parallel()
 	cm, _ := bashFailRig(t)
 	t.Run("stderr-on-success", func(t *testing.T) {
 		out, err, _ := bashFailRun(t, cm, `tools.bash("echo warn >&2")`, 5*time.Second)
@@ -126,6 +129,7 @@ func TestBashFailOddOutput(t *testing.T) {
 }
 
 func TestBashFailArgs(t *testing.T) {
+	t.Parallel()
 	cm, _ := bashFailRig(t)
 	// No argument / null: a clean error or a no-op, never a panic or hang.
 	bashFailRun(t, cm, `try { tools.bash() } catch (e) {}`, 5*time.Second)
@@ -139,6 +143,7 @@ func TestBashFailArgs(t *testing.T) {
 
 // Every call is a fresh sh: cd and export do not leak into the next.
 func TestBashFailNoStateLeak(t *testing.T) {
+	t.Parallel()
 	cm, _ := bashFailRig(t)
 	if _, err := cm.Run(`tools.bash("cd /; export BOUGH_LEAK=1")`); err != nil {
 		t.Fatal(err)
@@ -155,6 +160,7 @@ func TestBashFailNoStateLeak(t *testing.T) {
 // stdin is /dev/null, the script a file: a command that reads stdin must
 // not hang, and must not eat the rest of the script.
 func TestBashFailStdin(t *testing.T) {
+	t.Parallel()
 	cm, _ := bashFailRig(t)
 	t.Run("does-not-hang", func(t *testing.T) {
 		bashFailRun(t, cm, `try { tools.bash("cat") } catch (e) {}`, 5*time.Second)
@@ -170,6 +176,7 @@ func TestBashFailStdin(t *testing.T) {
 // A command that backgrounds a child holding stdout open: the call
 // must return promptly with success.
 func TestBashFailDaemonHoldsStdout(t *testing.T) {
+	t.Parallel()
 	cm, _ := bashFailRig(t)
 	marker := "bough-bashfail-daemon-" + filepath.Base(t.TempDir())
 	t.Cleanup(func() { exec.Command("pkill", "-f", marker).Run() })
@@ -187,6 +194,7 @@ func errString(err error) string {
 }
 
 func TestBashFailPolicyDenies(t *testing.T) {
+	t.Parallel()
 	cm, st := bashFailRig(t)
 	home, project := t.TempDir(), t.TempDir()
 	dir := filepath.Join(project, ".codex", "rules")
@@ -221,6 +229,7 @@ func TestBashFailDeletedCwd(t *testing.T) {
 }
 
 func TestBashFailBackgroundJob(t *testing.T) {
+	t.Parallel()
 	s := newTestStats(t)
 	for _, tc := range []struct{ cmd, want string }{
 		{"echo bg-err >&2; exit 7", "7"},
@@ -244,6 +253,7 @@ func TestBashFailBackgroundJob(t *testing.T) {
 
 // Soak: the 60 s foreground kill for real.
 func TestBashFailSoakTimeout(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("BOUGH_SOAK_TOOLS_BASH") != "1" {
 		t.Skip("BOUGH_SOAK_TOOLS_BASH=1")
 	}
