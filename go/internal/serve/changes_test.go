@@ -2,6 +2,8 @@ package serve
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -200,5 +202,25 @@ func TestTurnEdits(t *testing.T) {
 	nocp := append([]history.Entry{{Seq: 1, Kind: "input", Data: map[string]any{}}}, entries[1:]...)
 	if e, ok := TurnEdits(ctx, dir, nocp, 1); !ok || len(e) != 1 || e[0].Add != -1 || e[0].Patch {
 		t.Fatalf("no-checkpoint turn = %+v ok=%v, want a.go with unknown counts", e, ok)
+	}
+}
+
+// A restart cancels every request in flight (serveForeground's
+// BaseContext ends with Shutdown, so event streams let go). A read cut
+// short by that answered 504 "took longer than 5s (a large working
+// tree?)" to a page that had asked a moment before serve stopped.
+// Shutdown waits for short requests, so the read finishes and answers.
+func TestChangesOutliveACancelledRequest(t *testing.T) {
+	t.Parallel()
+	f := newAPI(t)
+	f.seed(t, "s", history.Entry{Seq: 1, Kind: "meta", Data: map[string]any{"cwd": t.TempDir()}})
+	for _, p := range []string{"/api/sessions/s/changes", "/api/sessions/s/edits"} {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		rec := httptest.NewRecorder()
+		f.api.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil).WithContext(ctx))
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s with the request cancelled: %d %s", p, rec.Code, rec.Body)
+		}
 	}
 }
