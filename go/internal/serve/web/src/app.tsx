@@ -5261,6 +5261,13 @@ export default function App() {
     retryRef.current = () => { clearTimeout(timer); backoff = 4000; catchUp(); };
     return () => { live = false; clearTimeout(retry); clearTimeout(timer); stop(); };
   }, [selected, loadTry]);
+  // A line recorded with no event after it reached the page only with the
+  // next one: the headless child prints no input, and a model that has not
+  // answered yet sends nothing, so a prompt the turn had already taken
+  // still read "Steer pending…". The list poll's entry count says more
+  // was recorded.
+  const openEntries = rows.find((r) => r.id === selected)?.entries ?? 0;
+  useEffect(() => { if (openEntries && loadedFor === selected) retryRef.current(); }, [openEntries]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The filter reads transcripts too, as ⌘K does: what you remember is
   // often something said ("bg-done"), which no title or branch holds.
