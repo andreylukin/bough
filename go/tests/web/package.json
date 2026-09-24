@@ -6,6 +6,7 @@
   "scripts": {
     "test": "playwright test",
     "test:headed": "playwright test --headed",
+    "test:model": "node --test 'model/**/*.test.ts'",
     "report": "playwright show-report"
   },
   "devDependencies": {

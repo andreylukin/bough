@@ -1,0 +1,32 @@
+# A branching toy for the path generator and trace checker: three states,
+# six links, and one action (Slam) that reaches two different states from
+# the same state, so a trace checker has to track a set of candidate nodes
+# and the generator has more than one shortest prefix to choose between.
+
+always assertion ValidDoor:
+    return door in ("open", "closed")
+
+action Init:
+    door = "closed"
+    locked = False
+
+atomic action Open:
+    require door == "closed" and not locked
+    door = "open"
+
+atomic action Close:
+    require door == "open"
+    door = "closed"
+
+atomic action Lock:
+    require door == "closed" and not locked
+    locked = True
+
+atomic action Unlock:
+    require locked
+    locked = False
+
+atomic action Slam:
+    require door == "open"
+    door = "closed"
+    locked = any [True, False]

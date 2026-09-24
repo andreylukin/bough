@@ -1,0 +1,4 @@
+
+Ô{"channel_messages":{},"channels":{},"current":0,"failedInvariants":null,"name":"yield","returns":"{}","roles":null,"state":{"color":"red"},"stats":{"totalActions":0,"counts":{}},"threads":[],"witness":[[false]]}
+Ú{"channel_messages":{},"channels":{},"current":0,"failedInvariants":null,"name":"yield","returns":"{}","roles":[],"state":{"color":"green"},"stats":{"totalActions":1,"counts":{"Go":1}},"threads":[],"witness":[[false]]}
+ä{"channel_messages":{},"channels":{},"current":0,"failedInvariants":null,"name":"yield","returns":"{}","roles":[],"state":{"color":"yellow"},"stats":{"totalActions":2,"counts":{"Go":1,"Slow":1}},"threads":[],"witness":[[false]]}

@@ -11,3 +11,5 @@
 *.png binary
 *.gz binary
 *.ico binary
+# fizz state graphs: protobuf whose length bytes can be 0x0d 0x0a.
+*.pb binary
