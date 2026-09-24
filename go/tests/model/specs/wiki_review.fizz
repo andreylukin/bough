@@ -1,0 +1,254 @@
+# The wiki in the control room (web/src/wiki.tsx, serve/wiki.go, the
+# store in plugins/wiki): moving between the index, a page, a cited
+# entry, Review and Activity; acting on a flagged claim; and the ingests
+# the page starts but does not run.
+#
+# The world: one page with one flagged claim, one good citation and one
+# dangling one, and no finished session waiting. The ingest is an
+# external actor: POST /api/wiki/ingest spawns `bough wiki run` detached
+# (spawnWiki), which takes the wiki's lock or exits (Run), and may never
+# finish on its own. runTimeout is what ends a run that hangs, so Stop is
+# fair and Land is not.
+#
+# Scope, to keep one browser test per path affordable: the store changes
+# (sessions finish, ingests run, the nav count re-reads) only while
+# Review or Activity is on screen, the two screens that show it, and you
+# leave them once that work has settled. The page screens are walked with
+# the store as seeded. Interleaving everything everywhere is 1158 states
+# and 4860 paths, and no claim below depends on it.
+#
+# Fields:
+#   screen     "list" (anywhere outside the wiki), "index", "page",
+#              "source" / "source_error" (the page with its source pane on
+#              a good / dangling citation), "missing" (a page path with no
+#              page: 404), "editing" (the page's editor), "review",
+#              "activity".
+#   back       the route Browser Back returns to; "" when it is deeper
+#              than the model keeps (one entry).
+#   came       ghost: the screen the last move left.
+#   flagged    the store has a flagged claim (GET /api/wiki/review).
+#   listed     Review shows that claim. Review reads on arrival and after
+#              a successful action; it does not poll.
+#   moved      an ingest rewrote the page since Review read it.
+#   conflict   the shown claim's last action came back 409.
+#   pending    a finished session is waiting to be ingested.
+#   spawned    a `bough wiki run` has been started and not reached the lock.
+#   ingesting  runs holding the lock: Activity's "Ingesting" rows.
+#   note       Activity's line after Ingest now: "started" | "nothing".
+#   badge      the nav item shows a review count (GET /api/wiki, 60 s).
+#   injected   ghost: a session's context carried wiki text.
+#   stalewrite ghost: a review decision was written to lines the client
+#              was not shown.
+
+LIVE = ["review", "activity"]
+WIKI = ["index", "page", "missing", "source", "source_error", "editing", "review", "activity"]
+
+# Nothing in flight, and the nav count agrees with the store.
+def settled(w):
+    return not w.spawned and w.ingesting == 0 and w.badge == w.flagged
+
+# The store as seeded: the page screens are walked only against it.
+def seeded(w):
+    return settled(w) and w.flagged and not w.pending
+
+role Wiki:
+    action Init:
+        self.screen = "list"
+        self.back = ""
+        self.came = ""
+        self.flagged = True
+        self.listed = False
+        self.moved = False
+        self.conflict = False
+        self.pending = False
+        self.spawned = False
+        self.ingesting = 0
+        self.note = ""
+        self.badge = True
+        self.injected = False
+        self.stalewrite = False
+
+    # A screen's own state goes when you leave it: Review's list and its
+    # per-claim errors, Activity's note. Review reads the store afresh.
+    atomic func arrive(to):
+        self.listed = to == "review" and self.flagged
+        self.moved = False
+        self.conflict = False
+        self.note = ""
+        self.screen = to
+
+    # goWiki (and a typed hash): every move pushes a history entry, so
+    # Back returns to the screen you left.
+    atomic func go(to):
+        self.back = self.screen
+        self.came = self.screen
+        self.arrive(to)
+
+    # EditClaim's write. stalewrite records whether the lines it changed
+    # were still the ones Review showed.
+    atomic func decide():
+        self.stalewrite = self.stalewrite or self.moved
+        self.flagged = False
+        self.listed = False
+
+    # --- the person: moving --------------------------------------------
+
+    atomic action Nav:
+        require self.screen == "list"
+        self.go("index")
+
+    atomic action OpenPage:
+        require self.screen in ["index", "review"] and seeded(self)
+        self.go("page")
+
+    # #/wiki/p/<path> for a path with no page behind it.
+    atomic action OpenMissing:
+        require self.screen == "index" and seeded(self)
+        self.go("missing")
+
+    # #/wiki/p/<path>~<session>~<seq>: GET /api/wiki/source.
+    atomic action Cite:
+        require self.screen == "page"
+        self.go("source")
+
+    atomic action CiteDangling:
+        require self.screen == "page"
+        self.go("source_error")
+
+    # Escape or Close on the source pane is onRoute: a push, not a pop.
+    atomic action CloseSource:
+        require self.screen in ["source", "source_error"]
+        self.go("page")
+
+    # The editor is the page view's own state, not a route. Save is PUT
+    # /api/wiki/page and returns to the page.
+    atomic action Edit:
+        require self.screen == "page"
+        self.screen = "editing"
+
+    atomic action Save:
+        require self.screen == "editing"
+        self.screen = "page"
+
+    atomic action ToIndex:
+        require self.screen in ["page", "missing", "source", "source_error", "review", "activity"] and (self.screen not in LIVE or settled(self))
+        self.go("index")
+
+    atomic action ToReview:
+        require self.screen == "index"
+        self.go("review")
+
+    atomic action ToActivity:
+        require self.screen == "index"
+        self.go("activity")
+
+    atomic action Back:
+        require self.screen in WIKI and self.back != "" and (self.screen not in LIVE or settled(self))
+        to = self.back
+        # Review and Activity are entered only from the index, so the
+        # entry under them is always the index; under any other screen
+        # the model does not know.
+        self.back = "index" if to in LIVE else ""
+        self.came = self.back
+        self.arrive(to)
+
+    # --- the person: acting ------------------------------------------
+
+    # POST /api/wiki/claim with the lines Review showed. EditClaim
+    # compares them with the file and answers 409 when an ingest moved
+    # them; the flag then stays, its buttons disabled until Review is
+    # read again.
+    atomic action MarkInference:
+        require self.screen == "review" and self.listed and not self.conflict
+        if self.moved:
+            self.conflict = True
+        else:
+            self.decide()
+
+    atomic action Drop:
+        require self.screen == "review" and self.listed and not self.conflict
+        if self.moved:
+            self.conflict = True
+        else:
+            self.decide()
+
+    # Activity's Ingest now. The note comes from the last read's pending
+    # count, whatever the spawned run then finds.
+    atomic action IngestNow:
+        require self.screen == "activity" and not self.spawned
+        self.spawned = True
+        self.note = "started" if self.pending else "nothing"
+
+    # Review's Not compiled row: POST /api/wiki/ingest {session}.
+    atomic action IngestSession:
+        require self.screen == "review" and self.pending and not self.spawned
+        self.spawned = True
+
+    # --- the store and the ingest ------------------------------------
+
+    # A session finishes and is pending (Activity's "waiting" count). Its context is built by
+    # context-md from AGENTS.md and MEMORY.md; wiki pages are not read.
+    atomic action Session:
+        require self.screen == "activity" and not self.pending
+        self.pending = True
+        self.injected = False
+
+    # The spawned run reaches the lock. Held: it exits, the second
+    # ingest is a no-op. Nothing pending: it exits without a run.
+    # Otherwise its headless session is the run Activity shows.
+    atomic fair action Start:
+        require self.spawned
+        self.spawned = False
+        if self.ingesting == 0 and self.pending:
+            self.ingesting = 1
+
+    # The run writes its pages and commits: the claim is flagged again,
+    # and its lines have moved under a Review that shows it.
+    atomic action Land:
+        require self.screen in LIVE and self.ingesting > 0
+        self.ingesting -= 1
+        self.pending = False
+        self.flagged = True
+        self.moved = self.listed
+
+    # runTimeout: a run that never finishes stops counting as running.
+    atomic fair action Stop:
+        require self.screen in LIVE and self.ingesting > 0
+        self.ingesting -= 1
+
+    # The nav count, re-read every 60 s.
+    atomic fair action Poll:
+        require self.screen in LIVE and self.badge != self.flagged
+        self.badge = self.flagged
+
+action Init:
+    wiki = Wiki()
+
+# A review decision lands only on the lines the client was shown.
+always assertion ReviewWritesOnlyShownLines:
+    return not wiki.stalewrite
+
+# The wiki is never part of a session's context.
+always assertion WikiNeverInjected:
+    return not wiki.injected
+
+# The wiki lock: one run at a time.
+always assertion OneIngestAtATime:
+    return wiki.ingesting <= 1
+
+# Every move pushed: Back returns to the screen you left.
+always assertion BackReturnsWhereYouCame:
+    return wiki.back == "" or wiki.back == wiki.came
+
+# A started ingest gets past the lock (and shows as a run when anything
+# was pending).
+always eventually assertion SpawnedRunsStart:
+    return not wiki.spawned
+
+# A run ends, landed or timed out.
+always eventually assertion RunsEnd:
+    return wiki.ingesting == 0
+
+# The nav count catches up with the store.
+always eventually assertion BadgeCatchesUp:
+    return wiki.badge == wiki.flagged
