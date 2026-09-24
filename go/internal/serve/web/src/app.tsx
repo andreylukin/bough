@@ -4274,7 +4274,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const isCmd = (p: Pending) => /^\/[a-z]/i.test(p.text.trim());
   const cmdLanded = (p: Pending) => { const verb = p.text.trim().split(/\s+/)[0]; return lines.some((l) => l.kind === "command" && l.seq > p.after && (l.text ?? "").trim().split(/\s+/)[0] === verb); };
   const prompts = sending.filter((p) => !isCmd(p));
-  const unlanded = loading ? sending : sending.filter((p) => isCmd(p) ? !cmdLanded(p) : inputs.filter((l) => l.seq > p.after).length <= prompts.indexOf(p) && !sameText(p));
+  const unlanded = loading ? sending : sending.filter((p) => isCmd(p) ? !cmdLanded(p) : inputs.filter((l) => l.seq > p.after && !p.seen?.includes(`${l.seq}|${l.at}`)).length <= prompts.indexOf(p) && !sameText(p));
   // R3-C: a turn is live from the moment its prompt is sent, not only once
   // the row says running: Esc in that gap must stop it, and a message sent
   // then steers it.
@@ -4294,7 +4294,25 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
   const liveHost = liveBodyFn ? unlanded.filter((p) => !p.steer).at(-1) : undefined;
   useEffect(() => { window.dispatchEvent(new Event(TRANSCRIPT_GREW)); }, [stream, lines.length, sending.length]);
   const landedIds = sending.filter((p) => !unlanded.includes(p)).map((p) => p.id).join(" ");
-  useEffect(() => { if (landedIds) { const ids = new Set(landedIds.split(" ")); setSending((q) => q.filter((p) => !ids.has(p.id))); } }, [landedIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A landed send leaves the queue and the sends behind it move up a place,
+  // so the input it landed on must not count for them: a steer sent before
+  // the first prompt's input was fetched took that input for its own once
+  // the prompt left, and its "Steer pending…" vanished while serve had not
+  // seen it. Each landed send's input (oldest first) joins what the sends
+  // still waiting have seen.
+  useEffect(() => {
+    if (!landedIds) return;
+    const ids = new Set(landedIds.split(" "));
+    setSending((q) => {
+      const taken: string[] = [];
+      for (const p of q) {
+        if (!ids.has(p.id) || isCmd(p)) continue;
+        const l = inputs.find((l) => l.seq > p.after && !p.seen?.includes(`${l.seq}|${l.at}`) && !taken.includes(`${l.seq}|${l.at}`));
+        if (l) taken.push(`${l.seq}|${l.at}`);
+      }
+      return q.filter((p) => !ids.has(p.id)).map((p) => (taken.length ? { ...p, seen: [...(p.seen ?? []), ...taken] } : p));
+    });
+  }, [landedIds]); // eslint-disable-line react-hooks/exhaustive-deps
   const [fullPending, setFullPending] = useState("");
   // Offered whenever the clamp actually hides something, whatever the length.
   const [clipped, setClipped] = useState<Record<string, boolean>>({});
