@@ -141,6 +141,8 @@ export const isNativeCall = (l: Line) => isCall(l) && typeof l.data?.id === "str
 /** A native call still running: the live start, never recorded. */
 export const callRunning = (l: Line) => l.data?.phase === "start";
 export const callFailed = (l: Line) => typeof l.data?.error === "string" || (typeof l.data?.exit === "number" && l.data.exit !== 0);
+/** Stopped by the person: a call's or a program's end that is a stop, not a failure. */
+export const canceled = (l?: Line) => l?.data?.canceled === true;
 /** "Running go test ./...": what a call in flight is doing. */
 export const callStep = (l: { data?: Record<string, unknown>; text: string }) => [presentTense(callVerb(String(l.data?.tool ?? ""))), l.text].filter(Boolean).join(" ");
 
@@ -766,10 +768,10 @@ export function splitWork(items: Item[], codes: string[], live: boolean): Segmen
         else if (isNativeCall(l)) {
           // No block around it: the call is the action, and its own record says whether it failed.
           actions++;
-          if (callFailed(l)) failed++;
+          if (callFailed(l) && !canceled(l)) failed++;
           step = callRunning(l) ? callStep(l) : pastTense(callStep(l));
         } else if (l.kind === "call") step = callStep(l); // the runtime's word beats the label read off the source
-        else if (l.kind === "result") { step = pastTense(step); if ((typeof l.data?.exit === "number" && l.data.exit !== 0) || thrownError(l)) failed++; }
+        else if (l.kind === "result") { step = pastTense(step); if (!canceled(l) && ((typeof l.data?.exit === "number" && l.data.exit !== 0) || thrownError(l))) failed++; }
         else if (l.kind === "job") {
           const id = typeof l.data?.id === "number" ? String(l.data.id) : /^job (\d+) /.exec(l.text)?.[1];
           if (!id || !jobs.has(id)) actions++;

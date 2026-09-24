@@ -12,7 +12,7 @@ import { DialogHost, askChoice, askConfirm, askText, showShortcuts } from "./dia
 import { focusComposerKey, isMac, newSessionKey, sheetKey, switchKey, treeKey } from "./keys";
 import { Welcome, welcomeDismissed } from "./welcome";
 import { clampToViewport } from "./popover";
-import { Markdown, programRan, codeLabel, callVerb, callFailed, callRunning, callsHeadline, callStep, isCall, isNativeCall, presentTense, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, cleanError, isAgentNotice, storedNotices, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
+import { Markdown, programRan, codeLabel, callVerb, callFailed, canceled, callRunning, callsHeadline, callStep, isCall, isNativeCall, presentTense, groupSubs, groupTools, groupTurns, isHookLine, isQuiet, untitled, blank, sessionUsage, usageOf, tokenCount, money, duration, plainTitle, stepCount, stripRunFences, splitBareProgram, foldRetries, foldModelSwitch, splitWork, thrownError, cleanError, isAgentNotice, storedNotices, workHeadline, type Segment, sessionTitle, titleKey, hasOwnTitle, type Item, type SubAgent, type Turn, lineCount } from "./render";
 import { Code, parseCall, langForPath, toolCallLabel } from "./code";
 import { lastTestRun } from "./runs";
 import { agentWakeNotes, agentsFromRows, jobWakeNotes, jobsFromLines, subagentsFromTurn, useReviewed, workCounts, workIndex, type Worker } from "./work";
@@ -1821,7 +1821,7 @@ function callFacts(code: Line, result?: Line, calls: Line[] = []): CallFacts {
   const call = parseCall(code.text);
   const exit = typeof result?.data?.exit === "number" ? (result.data.exit as number) : undefined;
   const ms = typeof result?.data?.ms === "number" ? (result.data.ms as number) : undefined;
-  const failed = (exit !== undefined && exit !== 0) || Boolean(thrownError(result));
+  const failed = !canceled(result) && ((exit !== undefined && exit !== 0) || Boolean(thrownError(result)));
   // Recorded calls name the block by what it actually did; the first one
   // leads, and " +N" says how many more there were (the gist convention).
   if (calls.length) {
@@ -1891,7 +1891,7 @@ function nativeFacts(l: Line): CallFacts {
   return {
     verb: callVerb(str(d.tool)), gist: l.text, cmd: str(d.cmd) || l.text,
     exit: typeof d.exit === "number" ? d.exit : undefined, ms: typeof d.ms === "number" ? d.ms : undefined,
-    failed: !callRunning(l) && callFailed(l), preview: out.slice(0, 3).join("\n") || undefined,
+    failed: !callRunning(l) && !canceled(l) && callFailed(l), preview: out.slice(0, 3).join("\n") || undefined,
   };
 }
 
@@ -2251,9 +2251,11 @@ export function ToolCall({ code, result, calls = [], live, stopped, current, spa
   // and how long it ran. Older results carry neither and show neither.
   const exit = typeof result?.data?.exit === "number" ? (result.data.exit as number) : undefined;
   const ms = typeof result?.data?.ms === "number" ? (result.data.ms as number) : undefined;
-  // A block that threw failed, whatever exit its bash calls had.
-  const rawThrown = thrownError(result);
-  const failed = (exit !== undefined && exit !== 0) || Boolean(rawThrown);
+  // A block that threw failed, whatever exit its bash calls had; one
+  // the person stopped did not fail, and says it was cancelled.
+  const stoppedHere = canceled(result);
+  const rawThrown = stoppedHere ? undefined : thrownError(result);
+  const failed = !stoppedHere && ((exit !== undefined && exit !== 0) || Boolean(rawThrown));
   const thrown = rawThrown && cleanError(rawThrown);
   // A question nobody answered is an outcome, not an exception to parse.
   const timedOut = /ask: no answer after (\S+)/.exec(out);
@@ -2299,6 +2301,7 @@ export function ToolCall({ code, result, calls = [], live, stopped, current, spa
         </> : !label && <span className="mono block-detail" title={call.gist}>{timedOut ? timedOut[1] : phone ? tailPath(gistOf(call.gist)) : gistOf(call.gist)}</span>}
         {thrown && <span className="tool-thrown" title={thrown}>{firstLine(thrown)}</span>}
         {failed && <FailMark />}
+        {stoppedHere && <span className="tool-unrecorded tool-stopped"><StopMark />Cancelled</span>}
         {(exitBad || meta.some(Boolean)) && (
           <span className="num tool-meta">{exitBad && <span className="tool-meta-failed">exit {exit}</span>}{exitBad && meta.some(Boolean) ? " · " : ""}{meta.filter(Boolean).join(" · ")}</span>
         )}
