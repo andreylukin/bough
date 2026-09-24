@@ -386,6 +386,7 @@ func LastTurn(entries []history.Entry) (reply string, errored bool) {
 // The event is only the trigger: the closing entry on disk decides, so
 // the reply the parent reads is the one the child actually recorded.
 func (s *Supervisor) report(id, parent, trigger string) {
+	s.hold("report-"+id, nil)
 	deadline := time.Now().Add(reportWait)
 	var key int64
 	var word string

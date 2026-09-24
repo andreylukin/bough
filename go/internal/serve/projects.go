@@ -160,6 +160,7 @@ func (a *API) archiveProject(w http.ResponseWriter, r *http.Request) {
 	if main != "" {
 		ids = append(ids, main)
 	}
+	a.sup.hold("archive-flagging", nil)
 	for _, id := range ids {
 		// A queued thread that was dropped is gone for good: stopChild
 		// removed its row and it never wrote a history file. Anything

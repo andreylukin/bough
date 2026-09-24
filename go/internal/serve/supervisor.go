@@ -135,6 +135,15 @@ type Options struct {
 	// Home holds .bough/projects and .bough/orbs; "" => HistDir's
 	// grandparent, which is HOME for the standard layout.
 	Home string
+	// HoldDir parks the supervisor at a named point while
+	// <HoldDir>/<point> exists, and says so with <point>.at: the archive
+	// handler's phases ("archive-ending", "archive-killing",
+	// "archive-flagging"), a thread's report ("report-<id>") and a line
+	// Send accepted and the child has not read ("send-<id>"). Those
+	// windows last microseconds, and the model test of archiving a live
+	// project (go/tests/model, project_archive_live) has to act inside
+	// them. "" (every real serve) never holds.
+	HoldDir string
 }
 
 var (
@@ -1001,6 +1010,15 @@ func (s *Supervisor) Send(id, text string) error {
 		}
 		s.mu.Unlock()
 	}
+	if s.holding("send-" + id) {
+		// The test hold stands for the pipe: the line is accepted, and
+		// the child reads it (or dies first) when the hold goes.
+		go func() {
+			s.hold("send-"+id, ch.done)
+			_ = s.writePrompt(ch, text)
+		}()
+		return nil
+	}
 	if err := s.writePrompt(ch, text); err != nil {
 		if took {
 			s.mu.Lock()
@@ -1549,6 +1567,37 @@ func (s *Supervisor) Main(slug string) (string, error) {
 	return id, nil
 }
 
+// holding says whether <HoldDir>/<point> exists (Options.HoldDir).
+func (s *Supervisor) holding(point string) bool {
+	if s.opt.HoldDir == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(s.opt.HoldDir, point))
+	return err == nil
+}
+
+// hold waits while <HoldDir>/<point> exists (Options.HoldDir), for at
+// most a minute, or until done closes, with <point>.at written while it
+// waits.
+func (s *Supervisor) hold(point string, done <-chan struct{}) {
+	if !s.holding(point) {
+		return
+	}
+	p := filepath.Join(s.opt.HoldDir, point)
+	_ = os.WriteFile(p+".at", nil, 0o644)
+	defer os.Remove(p + ".at")
+	for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); {
+		if _, err := os.Stat(p); err != nil {
+			return
+		}
+		select {
+		case <-done:
+			return
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 // MainID is the project's main thread WITHOUT creating one: "" when it
 // has none yet, or when the recorded one's history file is gone.
 func (s *Supervisor) MainID(slug string) string {
@@ -1637,11 +1686,14 @@ func (s *Supervisor) projectSessions(slug, main string) []string {
 func (s *Supervisor) EndProject(slug string) error {
 	main := s.MainID(slug)
 	var errs []error
-	for _, id := range s.projectSessions(slug, main) {
+	ids := s.projectSessions(slug, main)
+	s.hold("archive-ending", nil)
+	for _, id := range ids {
 		if err := s.EndChild(id); err != nil {
 			errs = append(errs, err)
 		}
 	}
+	s.hold("archive-killing", nil)
 	if main == "" {
 		return errors.Join(errs...)
 	}
