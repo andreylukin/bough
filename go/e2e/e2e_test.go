@@ -1,12 +1,11 @@
-// Package e2e execs the real bough binary. TestMain builds it once
-// per run; every test gets its own temp HOME, temp cwd, config copy,
-// and process, so all tests run in parallel.
+// Package e2e execs the real bough binary: testbin's one cached build,
+// shared with the other suites. Every test gets its own temp HOME, temp
+// cwd, config copy, and process, so all tests run in parallel.
 package e2e
 
 import (
 	"bytes"
 	"fmt"
-	"hash/fnv"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +17,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/andreylukin/bough/internal/testbin"
 )
 
 var (
@@ -35,35 +36,14 @@ func TestMain(m *testing.M) {
 	// Children inherit this: none may take the user's page server port.
 	os.Setenv("BOUGH_WEB_ADDR", "127.0.0.1:0")
 
-	if bin := os.Getenv("BOUGH_BIN"); bin != "" {
-		boughBin = bin
-		exit(m.Run())
-	}
-	// One directory per checkout, kept between runs: go build leaves an
-	// up-to-date binary alone, so a rerun skips the link (about 2 s)
-	// instead of redoing it into a fresh temp dir. go build replaces a
-	// stale one by rename, so a run still executing the old file keeps
-	// its inode.
-	h := fnv.New64a()
-	h.Write([]byte(repoRoot))
-	dir := filepath.Join(os.TempDir(), fmt.Sprintf("bough-e2e-bin-%x", h.Sum64()))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// One build per content key, shared by every package that needs the
+	// binary (internal/testbin); BOUGH_BIN still wins when set.
+	bin, err := testbin.Path()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "e2e:", err)
 		os.Exit(1)
 	}
-	// ".exe" on Windows, or the file builds and then cannot be
-	// executed: "executable file not found in %PATH%", which was
-	// about half of the Windows failures on its own.
-	boughBin = filepath.Join(dir, "bough"+exeSuffix())
-	// No symbol table or DWARF: nothing here debugs the binary, and
-	// linking without them takes about half the time (tracebacks still
-	// name functions; they come from pclntab).
-	build := exec.Command("go", "build", "-ldflags=-s -w", "-o", boughBin, "./cmd/bough")
-	build.Dir = repoRoot
-	if out, err := build.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "e2e: build: %v\n%s", err, out)
-		os.Exit(1)
-	}
+	boughBin = bin
 	exit(m.Run())
 }
 
@@ -347,11 +327,3 @@ var ansiRE = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x
 
 // stripANSI removes escape sequences from raw terminal output.
 func stripANSI(s string) string { return ansiRE.ReplaceAllString(s, "") }
-
-// exeSuffix is ".exe" on Windows and "" everywhere else.
-func exeSuffix() string {
-	if runtime.GOOS == "windows" {
-		return ".exe"
-	}
-	return ""
-}
