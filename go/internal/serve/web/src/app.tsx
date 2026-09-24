@@ -5265,7 +5265,11 @@ export default function App() {
     if (lost !== null) return; // the unknown route stays in the URL it came from
     const want = view === "hooks" ? "#/hooks"
       : view === "me" ? "#/me"
-      : view === "project" ? (projectFocus ? `#/projects/${projectSlug}/t/${projectFocus.id}` : `#/projects/${projectSlug}`)
+      // The session the page shows (ProjectView's onShow), not the one it
+      // was opened on: from the focus, switching threads or '‹ All
+      // threads' left the URL on the first thread, so a reload or a
+      // shared link reopened that one.
+      : view === "project" ? (selected ? `#/projects/${projectSlug}/t/${selected}` : `#/projects/${projectSlug}`)
       : view === "projects" ? (orbOpen ? `#/projects/${orbOpen}/orb` : "#/projects")
       : view === "wiki" ? `#/${wikiHash(wikiRoute)}`
       : selected ? `#/s/${selected}${sub ? `/${sub}` : ""}`
@@ -5274,7 +5278,7 @@ export default function App() {
     routed.current = true;
     const next = hashToReplace(window.location.hash, want, sub, first);
     if (next !== null) window.history.replaceState(null, "", next);
-  }, [view, selected, sub, wikiRoute, lost, projectSlug, projectFocus]);
+  }, [view, selected, sub, wikiRoute, lost, projectSlug]);
 
   // Moving around the wiki pushes, like opening a conversation: Back
   // from a cited entry returns to the page, and from a page to the index.
