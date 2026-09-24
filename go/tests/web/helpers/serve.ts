@@ -29,6 +29,11 @@ export interface ServeOpts {
    *  Defaults to an llm-echo row so no test reaches a provider. */
   config?: string;
   readyTimeoutMs?: number;
+  /** Extra environment for the serve process (after the key scrub). */
+  env?: Record<string, string>;
+  /** serve's working directory, relative to HOME (default HOME itself):
+   *  the folder the welcome offers first. */
+  cwd?: string;
 }
 
 export interface Serve {
@@ -83,8 +88,11 @@ export async function startServe(
 
   const port = await freePort();
   const url = `http://127.0.0.1:${port}`;
-  // cwd = HOME, which has no ./bough.yml, so ~/.bough/bough.yml is the one in force.
-  const child: ChildProcess = spawn(boughBin, ['serve', '--run', `127.0.0.1:${port}`], { cwd: home, env: hermeticEnv(home) });
+  // cwd is HOME or a folder under it, neither with a ./bough.yml, so
+  // ~/.bough/bough.yml is the one in force.
+  const cwd = path.join(home, opts.cwd ?? '');
+  fs.mkdirSync(cwd, { recursive: true });
+  const child: ChildProcess = spawn(boughBin, ['serve', '--run', `127.0.0.1:${port}`], { cwd, env: { ...hermeticEnv(home), ...opts.env } });
   const chunks: string[] = [];
   child.stdout?.on('data', (d) => chunks.push(String(d)));
   child.stderr?.on('data', (d) => chunks.push(String(d)));
