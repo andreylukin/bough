@@ -1,0 +1,307 @@
+# Turn limits on the unreal engine (the default loop row): the step
+# budget, per-call deadlines, the Stop hook's continue and the stop
+# schema's retries. One session; config max_steps: 2, stop_retries: 1,
+# a Stop hook, a stop-schema, call_timeout short enough to fire.
+#
+# Code (internal/unreal/session, internal/unreal/boughcall):
+#   gate.go Respond      every model request passes the Gate. steps >=
+#                        max_steps (or spend >= max_cost_usd) answers it
+#                        with an empty muted response and posts
+#                        budgetStop; otherwise steps++ and it goes out.
+#   actor.go openTurn    TurnReset: steps = 0 for a prompt's turn.
+#   actor.go openWake    a turn the coordinator started itself (a
+#                        heartbeat, an adopted call finishing) opens on
+#                        the Gate's DeltaStart, AFTER the Gate admitted
+#                        its request, then writes steps = 1.
+#   actor.go budgetStop  -> cancelTurn(reason): park, cancel the turn's
+#                        running calls; checkCancel closes once they
+#                        report: a "system" note ("step budget reached
+#                        (max_steps 2); stopped") and done{stop:max_steps}.
+#   actor.go closeTurn   running == 0 and stop == "": the Stop hook is
+#                        asked once per turn (stopUsed); a continue is a
+#                        nudge, i.e. a new input to the model. Then the
+#                        stop-schema: a miss is re-asked while tries <
+#                        stop_retries, else an "error" note and done.
+#   boughcall.go         each call runs under its own call_timeout
+#                        context, unless the tool is blocking or the
+#                        model passed the tool's own `timeout` arg
+#                        (ownsTimeout: bash {timeout}). A timeout is the
+#                        call's error result; siblings keep running.
+#
+# Fields (Session role):
+#   status    the row's status as serve's StatusOf derives it: idle |
+#             running (a bough turn is open) | done | error. A budget
+#             stop writes no error and no cancelled: it reads "done".
+#   steps     the Gate's request count since the last TurnReset
+#   thinking  a model request is in flight (admitted by the Gate)
+#   unread    something the model has not been shown yet: a call's
+#             result, or a nudge (hook continue / schema retry). It is
+#             what makes the coordinator ask the model again.
+#   a         a call under call_timeout: "" | running | ok | timeout |
+#             cancelled (by a budget stop)
+#   b         a second call: an ordinary one (own false) or a bash call
+#             the model gave its own timeout arg (own true); adds "limit"
+#             for its own deadline passing
+#   own       b owns its timeout (call_timeout does not apply to it)
+#   cancelling a budget stop is waiting for the turn's calls to report
+#   hooked    the Stop hook's continue was used this turn (stopUsed)
+#   hooks     Stop-hook nudges this turn
+#   tries     schema retries this turn
+#   dones     done entries written for the current / last turn
+#   why       why the last turn closed: "" | "max_steps" | "schema"
+#             (the "system" budget note / the "error" schema note)
+#   wake      the open turn is a wake (done.wake)
+#   waking    a wake's request was admitted; its DeltaStart (openWake)
+#             is still posted to the actor
+#   lost      a wake request the Gate refused (see WakeLost below)
+#
+# Where the code disagrees with the mapped model, the code wins:
+#   - max_cost_usd is not modelled: it is the same Gate branch with a
+#     different note, and llm-control reports no cost, so no test could
+#     drive it.
+#   - "openWake writes gate.steps directly; a race with a prompt could
+#     reset the wrong turn" does not happen: a prompt that lands between
+#     the wake's admission and its DeltaStart opens its own turn
+#     (TurnReset), the DeltaStart then finds the turn open and skips
+#     openWake, and the superseded wake request is dropped. Prompt
+#     during `waking` below is that window; StepsBounded holds on it.
+#   - What the mapped model does not say: budgets are reset only when a
+#     turn opens, and a wake's request is gated BEFORE its turn opens,
+#     against the steps the previous turn left. A turn that used all of
+#     max_steps (budget-stopped, or finished on its last step) makes
+#     every later wake a muted response: no turn, no note, nothing on
+#     the page; the heartbeat / finished job waits for the next prompt.
+#     fizz's counterexample to the stronger claim `not lost` is a turn
+#     that ended well: Prompt, StopHookContinues, Request, Reply (done,
+#     steps 2), Wake (muted).
+#   - Only the Gate's refusal ends a turn over budget; a call finishing
+#     while the turn cancels is parked, not shown to the model.
+#   - Out of scope: the cancel's 5 s deadline (cancelWait), a final
+#     reply while calls still run (the coordinator waits for them), user
+#     Stop and steers (stop_interrupt, steer_queue).
+
+MAX_STEPS = 2
+STOP_RETRIES = 1
+RUNNING = "running"
+
+role Session:
+    action Init:
+        self.status = "idle"
+        self.steps = 0
+        self.thinking = False
+        self.unread = False
+        self.a = ""
+        self.b = ""
+        self.own = False
+        self.cancelling = False
+        self.hooked = False
+        self.hooks = 0
+        self.tries = 0
+        self.dones = 0
+        self.why = ""
+        self.wake = False
+        self.waking = False
+        self.lost = False
+
+    # A person's prompt opens a turn: TurnReset, then the Gate admits its
+    # first request. In the waking window it supersedes the wake's
+    # request (the DeltaStart then finds the turn open).
+    atomic action Prompt:
+        require self.status != RUNNING
+        self.status = RUNNING
+        self.waking = False
+        self.wake = False
+        self.lost = False
+        self.steps = 1
+        self.thinking = True
+        self.unread = False
+        self.a = ""
+        self.b = ""
+        self.own = False
+        self.hooked = False
+        self.hooks = 0
+        self.tries = 0
+        self.dones = 0
+        self.why = ""
+
+    # A heartbeat (or an adopted call finishing) makes the coordinator
+    # ask the model with no bough turn open. The Gate checks the steps
+    # the last turn left: over budget, the request is muted and
+    # budgetStop finds no open turn, so nothing opens.
+    atomic action Wake:
+        require self.status != RUNNING and not self.thinking and not self.lost
+        if self.steps >= MAX_STEPS:
+            self.lost = True
+        else:
+            self.steps += 1
+            self.thinking = True
+            self.waking = True
+
+    # The Gate's DeltaStart reaches the actor: openWake opens the turn
+    # (TurnReset) and counts the request already out as step 1.
+    atomic fair action WakeOpens:
+        require self.waking
+        self.waking = False
+        self.status = RUNNING
+        self.wake = True
+        self.steps = 1
+        self.unread = False
+        self.a = ""
+        self.b = ""
+        self.own = False
+        self.hooked = False
+        self.hooks = 0
+        self.tries = 0
+        self.dones = 0
+        self.why = ""
+
+    # The model answers with tool calls: call a, and b too when b is
+    # free. The coordinator runs them in parallel and does not wait.
+    atomic action ToolLoop:
+        require self.thinking and not self.waking
+        require self.a != RUNNING
+        self.thinking = False
+        self.a = RUNNING
+        if self.b != RUNNING:
+            self.b = RUNNING
+            self.own = False
+
+    # The model answers with a bash call carrying its own timeout arg.
+    atomic action BashWithTimeout:
+        require self.thinking and not self.waking
+        require self.b != RUNNING
+        self.thinking = False
+        self.b = RUNNING
+        self.own = True
+
+    atomic action FinishA:
+        require self.a == RUNNING
+        self.a = "ok"
+        if not self.cancelling:
+            self.unread = True
+
+    atomic action FinishB:
+        require self.b == RUNNING
+        self.b = "ok"
+        if not self.cancelling:
+            self.unread = True
+
+    # call_timeout passes: the call's result is an error ("<tool>: timed
+    # out after <d>"), which the model is shown like any result.
+    atomic action CallTimeout:
+        require self.a == RUNNING
+        self.a = "timeout"
+        if not self.cancelling:
+            self.unread = True
+
+    atomic action CallTimeoutB:
+        require self.b == RUNNING and not self.own
+        self.b = "timeout"
+        if not self.cancelling:
+            self.unread = True
+
+    # The bash call's own timeout arg passes.
+    atomic action BashLimit:
+        require self.b == RUNNING and self.own
+        self.b = "limit"
+        if not self.cancelling:
+            self.unread = True
+
+    # The coordinator asks the model again about what it has not seen.
+    # The Gate refuses it once the turn has used max_steps.
+    atomic fair action Request:
+        require self.status == RUNNING and not self.thinking and not self.cancelling
+        require self.unread
+        self.unread = False
+        if self.steps >= MAX_STEPS:
+            self.cancelling = True
+        else:
+            self.steps += 1
+            self.thinking = True
+
+    # The budget stop cancels the turn's running calls; each reports.
+    atomic fair action CancelA:
+        require self.cancelling and self.a == RUNNING
+        self.a = "cancelled"
+
+    atomic fair action CancelB:
+        require self.cancelling and self.b == RUNNING
+        self.b = "cancelled"
+
+    # checkCancel: every cancelled call reported; the budget note and
+    # done{stop: max_steps}.
+    atomic fair action BudgetDone:
+        require self.cancelling and self.a != RUNNING and self.b != RUNNING
+        self.cancelling = False
+        self.unread = False
+        self.status = "done"
+        self.why = "max_steps"
+        self.dones += 1
+
+    # The model answers with text. With calls still running or results
+    # unshown, the turn goes on; otherwise closeTurn: the Stop hook says
+    # nothing and the reply matches the schema.
+    atomic action Reply:
+        require self.thinking and not self.waking
+        self.thinking = False
+        if self.a != RUNNING and self.b != RUNNING and not self.unread:
+            self.status = "done"
+            self.dones += 1
+
+    # A closing reply the Stop hook answers with a continue: a nudge.
+    atomic action StopHookContinues:
+        require self.thinking and not self.waking and not self.hooked
+        require self.a != RUNNING and self.b != RUNNING and not self.unread
+        self.thinking = False
+        self.hooked = True
+        self.hooks += 1
+        self.unread = True
+
+    # A closing reply that misses the stop-schema: re-asked while tries
+    # remain, then an "error" note and done.
+    atomic action ReplyNotMatchingSchema:
+        require self.thinking and not self.waking
+        require self.a != RUNNING and self.b != RUNNING and not self.unread
+        self.thinking = False
+        if self.tries < STOP_RETRIES:
+            self.tries += 1
+            self.unread = True
+        else:
+            self.status = "error"
+            self.why = "schema"
+            self.dones += 1
+
+action Init:
+    session = Session()
+
+# No request goes out once the turn has used max_steps.
+always assertion StepsBounded:
+    return session.steps <= MAX_STEPS
+
+# A turn closes once, and a budget stop closes as done (no error, no
+# cancelled) with the budget named on it.
+always assertion BudgetStopReadsDone:
+    return session.dones <= 1 and (session.why != "max_steps" or session.status == "done")
+
+# The Stop hook nudges at most once a turn; schema misses are re-asked
+# at most stop_retries times, and only a spent retry marks an error.
+always assertion NudgesBounded:
+    return session.hooks <= 1 and session.tries <= STOP_RETRIES and (session.status != "error" or session.why == "schema")
+
+# A timed-out call is its own error result: nothing but a budget stop
+# cancels a sibling, and call_timeout never cuts a call that owns its
+# timeout.
+always assertion TimeoutIsolated:
+    cancelled = session.a == "cancelled" or session.b == "cancelled"
+    return (not cancelled or session.cancelling or session.why == "max_steps") and not (session.own and session.b == "timeout")
+
+# Budgets start over when a turn opens, and a wake's first request is
+# counted. The Gate refuses a wake only on the steps a spent turn left
+# (the stronger `not session.lost` fails: see the header).
+always assertion BudgetsReset:
+    open_counted = session.status != RUNNING or session.steps >= 1
+    return open_counted and (not session.lost or (session.steps >= MAX_STEPS and session.status != RUNNING))
+
+# A budget-stopped turn always closes.
+always eventually assertion BudgetStopCloses:
+    return not session.cancelling
