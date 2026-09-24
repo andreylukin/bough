@@ -232,8 +232,8 @@ func (s *Supervisor) launch(ch *child, q queuedChild) error {
 		// from the project page is an empty room. It opens no turn, so
 		// it emits none of the done/cancelled/exit events that give a
 		// slot back, and holding one would leak it until serve
-		// restarts. The "input" event takes a slot again the moment the
-		// thread is messaged.
+		// restarts. Send takes a slot again the moment the thread is
+		// messaged.
 		s.mu.Lock()
 		delete(s.running, ch.id)
 		s.mu.Unlock()

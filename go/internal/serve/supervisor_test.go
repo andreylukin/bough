@@ -38,9 +38,9 @@ const (
 	// to read each line, as the real child does: an interrupt in either
 	// gap cancels nothing (or kills it) unless serve holds it back.
 	envSlowSig = "BOUGH_FAKE_SLOWSIG"
-	// envNoInput makes the slow-signal fake behave like the real
-	// headless child, which never prints an "input" line: the first
-	// sign a prompt became a turn is its streamed output.
+	// envNoInput makes the slow-signal fake (and envTurns' turns) behave
+	// like the real headless child, which never prints an "input" line:
+	// the first sign a prompt became a turn is its streamed output.
 	envNoInput = "BOUGH_FAKE_NOINPUT"
 )
 
@@ -173,7 +173,9 @@ func fakeTurn(path, line string) {
 		appendEntry(path, history.Entry{Seq: nextSeq(path), At: time.Now(), Kind: kind, Data: data})
 	}
 	rec("input", map[string]any{"text": line})
-	say(map[string]any{"kind": "input", "text": line})
+	if os.Getenv(envNoInput) == "" {
+		say(map[string]any{"kind": "input", "text": line})
+	}
 	switch {
 	case strings.HasPrefix(line, "HANG"):
 	case strings.HasPrefix(line, "EXIT"):
