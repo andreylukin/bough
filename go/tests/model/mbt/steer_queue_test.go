@@ -851,7 +851,7 @@ type genPath struct {
 
 func loadPaths(t *testing.T, spec string) []genPath {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(specPath(spec), "..", "..", "testdata", spec, "paths.json"))
+	b, err := pathsJSON(spec)
 	if err != nil {
 		t.Fatal(err)
 	}

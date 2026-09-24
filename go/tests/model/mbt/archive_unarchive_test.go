@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -689,7 +688,7 @@ func TestArchiveUnarchivePathsCatchWrongAdapter(t *testing.T) {
 }
 
 func walkArchivePaths(a *archiveUnarchiveAdapter) error {
-	b, err := os.ReadFile(filepath.Join("..", "testdata", "archive_unarchive", "paths.json"))
+	b, err := pathsJSON("archive_unarchive")
 	if err != nil {
 		return err
 	}

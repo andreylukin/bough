@@ -886,7 +886,7 @@ func wrTestdata() string {
 }
 
 func wrPaths(t *testing.T) []wrTrace {
-	b, err := os.ReadFile(filepath.Join(wrTestdata(), "paths.json"))
+	b, err := pathsJSON("wiki_review")
 	if err != nil {
 		t.Fatal(err)
 	}

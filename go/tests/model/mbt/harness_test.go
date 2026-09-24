@@ -315,3 +315,24 @@ func waitRow(s *servetest.Server, id, what string, ok func(serve.Row) bool) (ser
 	}
 	return row, nil
 }
+
+// pathsJSON is the walks over testdata/<spec>'s checked-in graph, in the
+// shape the generator's paths.json had ({"paths":[{"trace":[...]}]}), so
+// each flow's decoder reads it unchanged. The paths are derived at test
+// time rather than checked in: the per-target files were 745k lines, and a
+// walk replaces dozens of per-target paths that each rebooted serve.
+// MODEL_COVER=transitions takes every link instead of reaching every
+// settled state; that exhaustive run is the nightly one.
+func pathsJSON(spec string) ([]byte, error) {
+	g, err := tracecheck.Load(filepath.Join(filepath.Dir(specPath(spec)), "..", "testdata", spec))
+	if err != nil {
+		return nil, err
+	}
+	cover := tracecheck.CoverStates
+	if os.Getenv("MODEL_COVER") == string(tracecheck.CoverTransitions) {
+		cover = tracecheck.CoverTransitions
+	}
+	return json.Marshal(struct {
+		Paths []tracecheck.Walk `json:"paths"`
+	}{g.Walks(cover, 0)})
+}

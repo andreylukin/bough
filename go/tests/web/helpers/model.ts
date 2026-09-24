@@ -8,16 +8,22 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect, type Serve } from './serve';
+import { loadGraph, walks, type Cover } from '../model/graph';
 
 const modelDir = path.resolve(__dirname, '..', '..', 'model');
 
 export interface Step { action: string; state: Record<string, unknown> }
 
-/** The covering paths checked in for specs/<spec>.fizz. */
+/**
+ * The walks over specs/<spec>.fizz's checked-in graph (testdata/<spec>),
+ * derived here rather than checked in: one test per covering path was
+ * ~4,400 browser tests that no longer finished, and each walk replaces
+ * dozens of them. The default reaches every settled state;
+ * MODEL_COVER=transitions takes every link (the nightly run).
+ */
 export function loadPaths(spec: string): Step[][] {
-  const file = path.join(modelDir, 'testdata', spec, 'paths.json');
-  const out = JSON.parse(fs.readFileSync(file, 'utf8')) as { paths: { trace: Step[] }[] };
-  return out.paths.map((p) => p.trace);
+  const cover: Cover = process.env.MODEL_COVER === 'transitions' ? 'transitions' : 'states';
+  return walks(loadGraph(path.join(modelDir, 'testdata', spec)), cover).paths.map((p) => p.trace);
 }
 
 export interface Flow<C> {

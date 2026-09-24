@@ -1013,7 +1013,7 @@ func ltsTestdata() string {
 
 func ltsPaths(t *testing.T) []ltsPath {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(ltsTestdata(), "paths.json"))
+	raw, err := pathsJSON("live_transcript_sync")
 	if err != nil {
 		t.Fatal(err)
 	}

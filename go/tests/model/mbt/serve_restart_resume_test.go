@@ -584,7 +584,7 @@ func TestServeRestartResume(t *testing.T) {
 func TestServeRestartResumePaths(t *testing.T) {
 	t.Parallel()
 	fizzTools(t)
-	b, err := os.ReadFile(filepath.Join(filepath.Dir(specPath("x")), "..", "testdata", "serve_restart_resume", "paths.json"))
+	b, err := pathsJSON("serve_restart_resume")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,8 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -535,7 +533,7 @@ func checkNarrowLayoutHistories(t *testing.T, a *narrowLayoutAdapter) {
 // is not the path's.
 func walkNarrowLayoutPaths(t *testing.T, a *narrowLayoutAdapter) error {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(filepath.Dir(specPath("x")), "..", "testdata", "narrow_layout", "paths.json"))
+	b, err := pathsJSON("narrow_layout")
 	if err != nil {
 		return err
 	}

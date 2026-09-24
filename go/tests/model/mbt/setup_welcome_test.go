@@ -489,7 +489,7 @@ type swPath struct {
 // swPaths are the generated paths that cover every state and transition.
 func swPaths(t *testing.T) []swPath {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(swFixtures(), "paths.json"))
+	raw, err := pathsJSON("setup_welcome")
 	if err != nil {
 		t.Fatal(err)
 	}

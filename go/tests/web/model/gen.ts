@@ -1,26 +1,25 @@
-// Usage: node model/gen.ts <fizz run dir> [out.json]
-// Writes the covering paths as JSON (to stdout without out.json) and a
-// one-line coverage report to stderr, or to stdout when writing a file.
-import { writeFileSync } from 'node:fs';
-import { loadGraph, generate } from './graph.ts';
+// Usage: node model/gen.ts <fizz run dir>
+// Prints the walks the tests derive from a graph (default: every settled
+// state; MODEL_COVER=transitions: every link) as JSON on stdout, and a
+// one-line coverage report for each cover on stderr. Nothing is written
+// to the tree: the tests derive the same walks at run time.
+import { loadGraph, walks, type Cover } from './graph.ts';
 
-const [dir, outFile] = process.argv.slice(2);
+const [dir] = process.argv.slice(2);
 if (!dir) {
-  process.stderr.write('usage: node model/gen.ts <fizz run dir> [out.json]\n');
+  process.stderr.write('usage: node model/gen.ts <fizz run dir>\n');
   process.exit(2);
 }
 try {
-  const out = generate(loadGraph(dir));
-  const json = JSON.stringify(out, null, 2) + '\n';
-  const { states, transitions } = out.coverage;
-  const report = `states ${states.covered}/${states.total}, transitions ${transitions.covered}/${transitions.total}, paths ${out.paths.length}\n`;
-  if (outFile) {
-    writeFileSync(outFile, json);
-    process.stdout.write(report);
-  } else {
-    process.stdout.write(json);
-    process.stderr.write(report);
+  const g = loadGraph(dir);
+  for (const cover of ['states', 'transitions'] as Cover[]) {
+    const out = walks(g, cover);
+    const steps = out.paths.reduce((n, p) => n + p.trace.length - 1, 0);
+    const { states, transitions } = out.coverage;
+    process.stderr.write(`${cover}: walks ${out.paths.length}, steps ${steps}, states ${states.covered}/${states.total}, transitions ${transitions.covered}/${transitions.total}\n`);
   }
+  const cover: Cover = process.env.MODEL_COVER === 'transitions' ? 'transitions' : 'states';
+  process.stdout.write(JSON.stringify(walks(g, cover), null, 2) + '\n');
 } catch (e) {
   process.stderr.write(`gen: ${(e as Error).message}\n`);
   process.exit(1);

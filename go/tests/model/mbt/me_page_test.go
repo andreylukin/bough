@@ -659,7 +659,7 @@ type modelPath struct {
 
 func loadMePaths(t *testing.T, spec string) []modelPath {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(filepath.Dir(specPath(spec)), "..", "testdata", spec, "paths.json"))
+	b, err := pathsJSON(spec)
 	if err != nil {
 		t.Fatal(err)
 	}

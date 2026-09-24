@@ -658,7 +658,7 @@ type stopInterruptPath struct {
 // drove nothing, none more than two). The paths cover every transition.
 func walkStopInterruptPaths(t *testing.T, a *stopInterruptAdapter) (mismatches []string) {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(filepath.Dir(specPath("stop_interrupt")), "..", "testdata", "stop_interrupt", "paths.json"))
+	b, err := pathsJSON("stop_interrupt")
 	if err != nil {
 		t.Fatal(err)
 	}

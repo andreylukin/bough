@@ -483,7 +483,7 @@ func TestContextInspector(t *testing.T) {
 // fizz tools: TestSpecFixtures keeps paths.json the spec's.
 func TestContextInspectorPaths(t *testing.T) {
 	t.Parallel()
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(specPath("x")), "..", "testdata", "context_inspector", "paths.json"))
+	raw, err := pathsJSON("context_inspector")
 	if err != nil {
 		t.Fatal(err)
 	}

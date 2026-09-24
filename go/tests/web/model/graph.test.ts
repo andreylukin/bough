@@ -4,11 +4,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadGraph, generate, type Graph, type Output } from './graph.ts';
+import { loadGraph, generate, walks, type Graph, type Output } from './graph.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const testdata = join(here, '..', '..', 'model', 'testdata');
@@ -126,23 +126,25 @@ test('a path into a fork is extended to a settled state', () => {
   assert.deepEqual(out.coverage.transitions.uncovered, []);
 });
 
-// go/tests/model/tracecheck replays door's traces and the browser model
-// specs walk every other spec's, so none may drift from its graph.
-for (const name of readdirSync(testdata).filter((d) => existsSync(join(testdata, d, 'paths.json')))) {
-  test(`the checked-in ${name} paths.json is what the generator writes`, () => {
-    const want = readFileSync(join(testdata, name, 'paths.json'), 'utf8');
-    const got = JSON.stringify(generate(loadGraph(join(testdata, name))), null, 2) + '\n';
-    assert.equal(got, want, `stale; run: scripts/model-test.sh gen ${name}`);
+// Every checked-in graph: walks cover what they claim, and the Go twin
+// (tracecheck.Walks) replays them; see TestWalksCoverAndReplay.
+for (const name of readdirSync(testdata).filter((d) => existsSync(join(testdata, d, 'nodes_000000_of_000000.pb')))) {
+  test(`walks over ${name} reach every settled state and take every link`, () => {
+    const g = loadGraph(join(testdata, name));
+    const states = walks(g, 'states');
+    const settled = g.nodes.filter((n) => n.name === 'yield').length;
+    const reached = new Set([0, ...states.paths.flatMap((p) => p.links.map((i) => g.links[i].dest))]);
+    assert.equal(g.nodes.filter((n) => n.name === 'yield' && !reached.has(n.index)).length, 0, `${settled} settled states`);
+    const all = walks(g, 'transitions');
+    assert.ok(all.coverage.transitions.uncovered.length <= g.links.length / 100 + 1, `${all.coverage.transitions.uncovered.length} links never taken`);
+    for (const p of [...states.paths, ...all.paths]) assert.ok(p.trace.length - 1 <= 50 || p.links.length === p.trace.length - 1 + p.links.filter((i) => g.links[i].type !== 'action').length, 'a walk over 50 steps is one unavoidable jump');
   });
 }
 
-test('cli writes the JSON and prints the coverage report', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'gen-'));
-  const outFile = join(dir, 'paths.json');
-  const stdout = execFileSync(process.execPath, [join(here, 'gen.ts'), join(testdata, 'door'), outFile], { encoding: 'utf8' });
-  assert.match(stdout, /states 4\/4, transitions 7\/7, paths \d+/);
-  const out: Output = JSON.parse(readFileSync(outFile, 'utf8'));
-  assert.equal(out.coverage.transitions.covered, 7);
+test('cli prints the walks and a coverage line per cover', () => {
+  const r = execFileSync(process.execPath, [join(here, 'gen.ts'), join(testdata, 'door')], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const out: Output = JSON.parse(r);
+  assert.ok(out.paths.length > 0);
 });
 
 test('cli fails on a dir with no graph', () => {

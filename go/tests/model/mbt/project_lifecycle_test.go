@@ -501,7 +501,7 @@ func TestProjectLifecycleCatchesWrongAdapter(t *testing.T) {
 // cover every transition of the graph. It needs no fizz tools.
 func TestProjectLifecyclePaths(t *testing.T) {
 	t.Parallel()
-	b, err := os.ReadFile(filepath.Join(filepath.Dir(specPath("x")), "..", "testdata", "project_lifecycle", "paths.json"))
+	b, err := pathsJSON("project_lifecycle")
 	if err != nil {
 		t.Fatal(err)
 	}

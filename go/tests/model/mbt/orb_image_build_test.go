@@ -621,7 +621,7 @@ type orbImageBuildPath struct {
 // and returns the first step whose state is not the spec's.
 func walkOrbImageBuildPaths(t *testing.T, a *orbImageBuildAdapter) error {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(filepath.Dir(specPath("orb-image-build")), "..", "testdata", "orb-image-build", "paths.json"))
+	b, err := pathsJSON("orb-image-build")
 	if err != nil {
 		t.Fatal(err)
 	}

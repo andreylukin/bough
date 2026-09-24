@@ -703,7 +703,7 @@ func TestSkillsMentionsPathsCatchWrongAdapter(t *testing.T) {
 // spec's, or an action that failed.
 func walkSkillsMentionsPaths(t *testing.T, a *skillsMentionsAdapter) error {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(specPath("x")), "..", "testdata", "skills_mentions", "paths.json"))
+	raw, err := pathsJSON("skills_mentions")
 	if err != nil {
 		t.Fatal(err)
 	}

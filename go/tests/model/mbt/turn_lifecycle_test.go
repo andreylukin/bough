@@ -796,7 +796,7 @@ type pathModel interface {
 // after Init and after each action, compares m's state with the node
 // the path reaches. It stops at the first path that disagrees.
 func walkPaths(m pathModel, spec, role string, actions map[string]fmbt.ActionFunc) error {
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(specPath(spec)), "..", "testdata", spec, "paths.json"))
+	raw, err := pathsJSON(spec)
 	if err != nil {
 		return err
 	}

@@ -606,7 +606,7 @@ func TestHooksPageCatchesWrongAdapter(t *testing.T) {
 // spec's after every step. TestSpecFixtures keeps that graph current.
 func walkHooksPagePaths(t *testing.T, a *hooksPageAdapter) []string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(hooksPageTestdata(), "paths.json"))
+	b, err := pathsJSON("hooks_page")
 	if err != nil {
 		t.Fatal(err)
 	}

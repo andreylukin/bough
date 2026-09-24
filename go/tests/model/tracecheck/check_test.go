@@ -2,7 +2,6 @@ package tracecheck
 
 import (
 	"encoding/json"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -164,39 +163,5 @@ func TestCheckNumbersFromJSONOrGo(t *testing.T) {
 	}
 	if v := g.Check([]Step{{"Inc", st("n", 2)}}); v == nil {
 		t.Fatal("wrong number accepted")
-	}
-}
-
-// testdata/door/paths.json is written by go/tests/web/model/gen.ts (its
-// test fails when the file drifts). Every trace it emits must be legal
-// here, and breaking one must be caught at the step that was broken.
-func TestGeneratedPathsReplay(t *testing.T) {
-	t.Parallel()
-	g := load(t, "door")
-	b, err := os.ReadFile("../testdata/door/paths.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out struct {
-		Paths []struct {
-			Trace []Step `json:"trace"`
-		} `json:"paths"`
-	}
-	if err := json.Unmarshal(b, &out); err != nil {
-		t.Fatal(err)
-	}
-	if len(out.Paths) == 0 {
-		t.Fatal("paths.json has no paths")
-	}
-	for i, p := range out.Paths {
-		if v := g.Check(p.Trace); v != nil {
-			t.Fatalf("generated path %d rejected: %v", i, v)
-		}
-		bad := append([]Step(nil), p.Trace...)
-		last := len(bad) - 1
-		bad[last].Action = bad[1].Action + "Twice" // no such action
-		if v := g.Check(bad); v == nil || v.Index != last {
-			t.Fatalf("path %d with a broken last step: violation %v, want at step %d", i, v, last)
-		}
 	}
 }

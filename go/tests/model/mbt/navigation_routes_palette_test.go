@@ -614,7 +614,7 @@ func TestNavigationRoutesPalette(t *testing.T) {
 func TestNavigationRoutesPalettePaths(t *testing.T) {
 	t.Parallel()
 	fizzTools(t)
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(specPath("x")), "..", "testdata", "navigation_routes_palette", "paths.json"))
+	raw, err := pathsJSON("navigation_routes_palette")
 	if err != nil {
 		t.Fatal(err)
 	}

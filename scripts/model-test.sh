@@ -9,8 +9,9 @@
 #     4. the TS path generator's tests
 #     5. the Playwright model specs (go/tests/web/specs/model/)
 #     6. the history-trace check of the transcripts step 5 left behind
-#   scripts/model-test.sh gen <spec>   re-check specs/<spec>.fizz and rewrite
-#                                      testdata/<spec>/ (graph + paths.json)
+#   scripts/model-test.sh gen <spec>   re-check specs/<spec>.fizz, rewrite its
+#                                      graph in testdata/<spec>/ and print the
+#                                      walks the tests will derive from it
 #
 # The fizz tools come from scripts/fizz.sh (pinned, sha256-checked, cached
 # outside the repo); the first run downloads them. The Playwright step
@@ -45,7 +46,7 @@ if [ "${1:-}" = gen ]; then
   check "$name" "$tmp/run"
   mkdir -p "$model/testdata/$name"
   cp "$tmp/run"/nodes_*.pb "$tmp/run"/adjacency_lists_*.pb "$model/testdata/$name/"
-  (cd "$root/go/tests/web" && node model/gen.ts "$model/testdata/$name" "$model/testdata/$name/paths.json")
+  (cd "$root/go/tests/web" && node model/gen.ts "$model/testdata/$name" >/dev/null)
   exit 0
 fi
 [ $# -eq 0 ] || { echo "usage: scripts/model-test.sh [gen <spec>]" >&2; exit 2; }

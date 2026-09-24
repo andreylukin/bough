@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -566,7 +565,7 @@ func init() { historyProjections["session_create"] = sessionCreateHistory }
 // Timeout after OtherWrites and ChildExits on every run.
 func walkSessionCreatePaths(t *testing.T, a *sessionCreateAdapter) error {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(filepath.Dir(specPath("x")), "..", "testdata", "session_create", "paths.json"))
+	b, err := pathsJSON("session_create")
 	if err != nil {
 		return err
 	}

@@ -456,7 +456,7 @@ type unseenTroubleAckPath struct {
 
 func loadUnseenTroubleAckPaths(t *testing.T) []unseenTroubleAckPath {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(filepath.Dir(specPath("x")), "..", "testdata", "unseen_trouble_ack", "paths.json"))
+	b, err := pathsJSON("unseen_trouble_ack")
 	if err != nil {
 		t.Fatal(err)
 	}

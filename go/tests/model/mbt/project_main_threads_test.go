@@ -1064,7 +1064,7 @@ func pmtDiff(want, have map[string]any) string {
 // pmtPaths is the generator's paths for the spec, as traces.
 func pmtPaths(t *testing.T) [][]tracecheck.Step {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(filepath.Dir(specPath("x")), "..", "testdata", "project_main_threads", "paths.json"))
+	b, err := pathsJSON("project_main_threads")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -175,3 +175,65 @@ export function generate(g: Graph): Output {
     },
   };
 }
+
+export type Cover = 'states' | 'transitions';
+
+// Walks: a few long paths from the initial state instead of one path per
+// target. Each walk keeps going to the nearest thing it has not covered
+// yet (a settled state, or an action link) and starts over from Init when
+// it runs out of reachable targets or reaches maxSteps actions. One walk
+// is one test, so the suite pays one serve boot and one page load per
+// walk rather than per target, and repeats no prefix it already walked.
+export function walks(g: Graph, cover: Cover, maxSteps = 50): Output {
+  const out = outLinks(g);
+  const reach = bfs(g, [0], () => true);
+  const want = new Set<number>(cover === 'states'
+    ? g.nodes.filter((n) => reach.has(n.index) && n.name === 'yield').map((n) => n.index)
+    : g.links.filter((l) => reach.has(l.src)).map((l) => l.index));
+  const coveredLinks = new Set<number>();
+  const seen = new Set<number>([0]);
+  const done = (links: number[]) => {
+    for (const i of links) { coveredLinks.add(i); seen.add(g.links[i].dest); want.delete(cover === 'states' ? g.links[i].dest : i); }
+  };
+  want.delete(0);
+  const paths: Path[] = [];
+  let stuck = 0;
+  while (want.size && stuck < 2) {
+    let cur = 0, steps = 0;
+    const links: number[] = [];
+    for (;;) {
+      if (steps >= maxSteps) break;
+      // Nearest target from here: BFS in file order, so runs are stable.
+      const parent = bfs(g, [cur], () => true);
+      let hit: number[] | null = null;
+      for (const [n] of parent) {
+        if (cover === 'states' ? want.has(n) : out[n].some((l) => want.has(l.index))) {
+          hit = chain(g, parent, n);
+          if (cover === 'transitions') hit.push(out[n].find((l) => want.has(l.index))!.index);
+          if (!hit.length) hit = null;
+          break;
+        }
+      }
+      if (!hit) break;
+      // A long jump to the next target is cheaper as the start of a fresh
+      // walk (a new test, in parallel) than as the tail of this one.
+      const cost = hit.filter((i) => g.links[i].type === 'action').length;
+      if (steps > 0 && steps + cost > maxSteps) break;
+      links.push(...hit);
+      done(hit);
+      cur = g.links[hit[hit.length - 1]].dest;
+      steps += hit.filter((i) => g.links[i].type === 'action').length;
+    }
+    const tail = settleTail(g, cur);
+    links.push(...tail);
+    done(tail);
+    if (!links.length) { stuck++; continue; }
+    stuck = 0;
+    paths.push({ target: links[links.length - 1], links, trace: trace(g, links) });
+  }
+  const tally = (total: number, has: (i: number) => boolean): Tally => {
+    const uncovered = [...Array(total).keys()].filter((i) => !has(i));
+    return { covered: total - uncovered.length, total, uncovered };
+  };
+  return { paths, coverage: { states: tally(g.nodes.length, (i) => seen.has(i)), transitions: tally(g.links.length, (i) => coveredLinks.has(i)) } };
+}

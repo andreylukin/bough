@@ -747,7 +747,7 @@ func TestAskAnswerCatchesWrongAdapter(t *testing.T) {
 // TestSpecFixtures keeps it the graph of the current spec.
 func askAnswerPaths(t *testing.T) [][]tracecheck.Step {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(filepath.Dir(specPath("ask_answer")), "..", "testdata", "ask_answer", "paths.json"))
+	b, err := pathsJSON("ask_answer")
 	if err != nil {
 		t.Fatal(err)
 	}

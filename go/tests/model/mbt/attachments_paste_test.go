@@ -806,7 +806,7 @@ var apStutters = []struct {
 // the first path that disagrees.
 func walkAttachmentsPastePaths(t *testing.T, a *attachmentsPasteAdapter, actions map[string]fmbt.ActionFunc) error {
 	const role = "Composer#0"
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(specPath("attachments_paste")), "..", "testdata", "attachments_paste", "paths.json"))
+	raw, err := pathsJSON("attachments_paste")
 	if err != nil {
 		return err
 	}
