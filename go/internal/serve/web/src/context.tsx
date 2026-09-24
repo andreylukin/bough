@@ -243,21 +243,27 @@ export function ContextPage({ session, model, used, onBack }: { session: string;
       .catch(() => setLimit(undefined));
   }, [model]);
   const [err, setErr] = useState("");
+  // The error stays up while a retry is out, so this is what says one is.
+  const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(() => {
+    setBusy(true);
     contextApi.get(session).then((d) => { setData(d); setErr(""); })
-      .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)));
+      .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy(false));
   }, [session]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  if (!data) return <Pending title="Context" what="context" err={err} onBack={onBack} onRetry={refresh} />;
+  if (!data) return <Pending title="Context" what="context" err={err} busy={busy} onBack={onBack} onRetry={refresh} />;
   return <ContextView data={data} onBack={onBack} used={used} limit={limit} />;
 }
 
 /** Loading or failed: the header and Back stay, so the page is never a dead end. */
-export function Pending({ title, what, err, onBack, onRetry }: {
+export function Pending({ title, what, err, busy = false, onBack, onRetry }: {
   title: string; what: string; err: string; onBack?: () => void; onRetry: () => void;
+  /** A retry is out: the error stays until it answers, so the button says so and cannot send a second. */
+  busy?: boolean;
 }) {
   return (
     <div className="thread">
@@ -267,7 +273,7 @@ export function Pending({ title, what, err, onBack, onRetry }: {
       </header>
       <div className="scroll proj-body">
         {err
-          ? <p className="err">{title} did not load: {err} <button className="link" onClick={onRetry}>Retry</button></p>
+          ? <p className="err">{title} did not load: {err} <button className="link" onClick={onRetry} disabled={busy} aria-busy={busy || undefined}>{busy ? "Retrying…" : "Retry"}</button></p>
           : <Waiting what={what.replace(/^./, (c) => c.toUpperCase())} />}
       </div>
     </div>
