@@ -28,6 +28,31 @@ func TestInTurnOnCall(t *testing.T) {
 	}
 }
 
+// The engine says "model is thinking" when the turn's first request goes
+// out, long before its first token: a Stop then must reach the child.
+// Held, it did nothing for holdLimit (20 s) while the model thought
+// (found by go/tests/model/mbt steer_queue). A cleared label ("") is
+// not turn output: it also retires the line after a turn ends.
+func TestInTurnOnModelThinking(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ch := &child{id: "s-thinking", done: make(chan struct{}), unread: true}
+	f.sup.emit(ch, "activity", "", nil)
+	f.sup.mu.Lock()
+	unread := ch.unread
+	f.sup.mu.Unlock()
+	if !unread {
+		t.Fatal("a cleared activity label took the prompt")
+	}
+	f.sup.emit(ch, "activity", "model is thinking", nil)
+	f.sup.mu.Lock()
+	unread, in := ch.unread, ch.inTurn
+	f.sup.mu.Unlock()
+	if unread || !in {
+		t.Fatalf("unread=%v inTurn=%v, want the prompt taken and a turn open", unread, in)
+	}
+}
+
 // Call output streams like reply text, coalesced per call: two calls
 // running at once must not merge into one row's tail.
 func TestCallDeltasCoalescePerCall(t *testing.T) {

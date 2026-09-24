@@ -774,6 +774,18 @@ func (s *Supervisor) emit(ch *child, kind, text string, extra map[string]any) {
 			s.releaseLocked(ch)
 		}
 		ch.inTurn = true
+	case "activity":
+		// The engine's "model is thinking" goes out with the turn's
+		// first request, which can think for many seconds before any
+		// delta; a Stop held until then did nothing for holdLimit. An
+		// empty label only clears the line, also after a turn ended.
+		if text != "" {
+			if ch.unread {
+				ch.unread = false
+				s.releaseLocked(ch)
+			}
+			ch.inTurn = true
+		}
 	}
 	switch kind {
 	case "input":
