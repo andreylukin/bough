@@ -102,7 +102,10 @@ role Phone:
                 self.shown = "loading"
             elif self.transcript == "error":
                 self.shown = "error"
-            elif self.pending:
+            # A steer on its way joins a turn that is already working:
+            # the header keeps saying so (composerStatus), only a send
+            # that would start a turn reads "Sending".
+            elif self.pending and self.status != "running":
                 self.shown = "sending"
             elif self.status == "running":
                 self.shown = "working"
@@ -207,20 +210,27 @@ role Phone:
         self.transcript = "error"
         self.paint()
 
-    # The ErrorNote's Retry.
+    # The ErrorNote's Retry. The tap takes focus off the composer, and
+    # the keyboard goes with it (the browser walk: focus on Retry).
     atomic action RetryLoad:
         require self.route == "thread" and self.transcript == "error"
         require not self.dialog and not self.work
+        if self.focus == "composer":
+            self.focus = "page"
+            self.keyboard = False
         self.transcript = "loading"
         self.paint()
 
     # ---- the composer ----------------------------------------------------
 
     # A tap into the textarea (disabled once archived). The tap closes an
-    # open popover first; a modal's scrim would take it.
+    # open popover first; a modal's scrim would take it. The model
+    # picker's list, fitted above the keyboard, covers the whole composer
+    # on a phone: a tap there picks a model (the browser walk found no
+    # point of the field on top).
     atomic action TapComposer:
         require self.route == "thread" and not self.archived
-        require not self.dialog and not self.work
+        require not self.dialog and not self.work and not self.picker
         require self.focus != "composer"
         self.shut()
         self.focus = "composer"
@@ -257,11 +267,18 @@ role Phone:
         self.status = "idle"
         self.paint()
 
-    # Stop: interrupt answers once the turn has stopped. No layer is up
-    # while a turn runs (see the abstractions), so nothing else changes.
+    # Stop: interrupt answers once the turn has stopped ("Stopped", which
+    # is idle here: not running). No layer is up while a turn runs (see
+    # the abstractions). The tap takes focus off the composer, and a turn
+    # stopped before any reply gives its prompt back to the composer
+    # (restoreOnStop), so there is a draft to send again.
     atomic action Stop:
         require self.stop and self.status == "running" and not self.pending
         self.status = "idle"
+        self.draft = True
+        if self.focus == "composer":
+            self.focus = "page"
+            self.keyboard = False
         self.paint()
 
     # ---- layers over the thread ------------------------------------------
@@ -423,7 +440,7 @@ always assertion StatusTrue:
         return phone.shown == ("running" if phone.status == "running" else "done")
     if phone.route != "thread" or phone.transcript != "loaded":
         return True
-    if phone.pending:
+    if phone.pending and phone.status != "running":
         return phone.shown == "sending"
     return phone.shown == ("working" if phone.status == "running" else "done")
 
