@@ -1445,6 +1445,12 @@ func (s *Supervisor) DeleteProject(slug string) error {
 	if err := s.EndProject(slug); err != nil {
 		return err
 	}
+	// The unassigning is saved before anything is removed: a save that
+	// fails answers an error with the project and its sessions' filing
+	// as they were, so the page's Retry finds the project to delete.
+	if err := s.unassignProject(slug); err != nil {
+		return err
+	}
 	for _, dir := range []string{
 		filepath.Join(projectdef.Root(s.home), slug),
 		filepath.Join(s.home, ".bough", "orbs", "images", slug),
@@ -1455,16 +1461,36 @@ func (s *Supervisor) DeleteProject(slug string) error {
 			return fmt.Errorf("serve: supervisor: delete project %s: %w", slug, err)
 		}
 	}
+	return nil
+}
+
+// unassignProject takes every session out of slug and forgets its main
+// thread, and saves; a failed save undoes both.
+func (s *Supervisor) unassignProject(slug string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	main, hadMain := s.mains[slug]
 	delete(s.mains, slug)
+	var moved []string
 	for sid, m := range s.meta {
 		if m.Project == slug {
 			m.Project = ""
 			s.meta[sid] = m
+			moved = append(moved, sid)
 		}
 	}
-	return s.saveMetaLocked()
+	if err := s.saveMetaLocked(); err != nil {
+		if hadMain {
+			s.mains[slug] = main
+		}
+		for _, sid := range moved {
+			m := s.meta[sid]
+			m.Project = slug
+			s.meta[sid] = m
+		}
+		return err
+	}
+	return nil
 }
 
 // ErrUnknownProject is a slug with no directory.
@@ -1496,10 +1522,15 @@ func (s *Supervisor) AssignProject(sessionID, slug string) error {
 func (s *Supervisor) setProject(sessionID, slug string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	m := s.meta[sessionID]
+	old, had := s.meta[sessionID]
+	m := old
 	m.Project = slug
 	s.meta[sessionID] = m
-	return s.saveMetaLocked()
+	if err := s.saveMetaLocked(); err != nil {
+		s.restoreMetaLocked(sessionID, old, had)
+		return err
+	}
+	return nil
 }
 
 // Main is the project's main thread, created on first use. It is one
@@ -1678,15 +1709,38 @@ func (s *Supervisor) SetModel(id, plugin, model string) error {
 	if plugin != "" {
 		cmd = "/model " + plugin + " " + model
 	}
-	if err := s.Send(id, cmd); err != nil {
+	return s.pick(id, cmd, func(m *SessionMeta) *string { return &m.Model }, model)
+}
+
+// pick saves a model or effort choice (field of the session's meta) and
+// then tells the child. Saved first: a failed save answers an error with
+// the child told nothing, so it never runs a model the list does not
+// name. A Send that fails (the session archived, an ask pending, no
+// child to start) takes the saved choice back.
+func (s *Supervisor) pick(id, cmd string, field func(*SessionMeta) *string, val string) error {
+	s.mu.Lock()
+	old, had := s.meta[id]
+	m := old
+	*field(&m) = val
+	s.meta[id] = m
+	if err := s.saveMetaLocked(); err != nil {
+		s.restoreMetaLocked(id, old, had)
+		s.mu.Unlock()
 		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	m := s.meta[id]
-	m.Model = model
-	s.meta[id] = m
-	return s.saveMetaLocked()
+	s.mu.Unlock()
+	if err := s.Send(id, cmd); err != nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		m := s.meta[id]
+		*field(&m) = *field(&old)
+		s.meta[id] = m
+		if serr := s.saveMetaLocked(); serr != nil {
+			return errors.Join(err, serr)
+		}
+		return err
+	}
+	return nil
 }
 
 // SetEffort asks a session for more or less reasoning, via /think.
@@ -1695,15 +1749,7 @@ func (s *Supervisor) SetEffort(id, level string) error {
 	if level == "" || !llm.ValidEffort(level) {
 		return fmt.Errorf("serve: supervisor: %q is not a reasoning level (have %s)", level, strings.Join(llm.Levels(), ", "))
 	}
-	if err := s.Send(id, "/think "+level); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	m := s.meta[id]
-	m.Effort = level
-	s.meta[id] = m
-	return s.saveMetaLocked()
+	return s.pick(id, "/think "+level, func(m *SessionMeta) *string { return &m.Effort }, level)
 }
 
 // SetArchived hides a session. Archiving kills its child first: an
@@ -1714,17 +1760,35 @@ func (s *Supervisor) SetEffort(id, level string) error {
 // refuse an archived session, so a Send (another tab, the CLI) or the
 // session's own spawn landing while the child dies can no longer leave
 // an archived session with a live child or a running agent.
+//
+// A failed save puts the flag back and kills nothing: the page is told
+// the archive failed, so the list must not show it archived (a restart
+// would take it back) and the session must keep its child.
 func (s *Supervisor) SetArchived(id string, archived bool) error {
 	s.mu.Lock()
-	m := s.meta[id]
+	old, had := s.meta[id]
+	m := old
 	m.Archived = archived
 	s.meta[id] = m
 	err := s.saveMetaLocked()
+	if err != nil {
+		s.restoreMetaLocked(id, old, had)
+	}
 	s.mu.Unlock()
 	if err != nil || !archived {
 		return err
 	}
 	return s.Kill(id)
+}
+
+// restoreMetaLocked undoes a change to one session's meta whose save
+// failed; caller holds s.mu.
+func (s *Supervisor) restoreMetaLocked(id string, old SessionMeta, had bool) {
+	if had {
+		s.meta[id] = old
+	} else {
+		delete(s.meta, id)
+	}
 }
 
 // Acknowledge marks everything the session has recorded so far as seen.
@@ -1739,10 +1803,16 @@ func (s *Supervisor) Acknowledge(id string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	m := s.meta[id]
+	old, had := s.meta[id]
+	m := old
 	m.Ack = last
 	s.meta[id] = m
-	return s.saveMetaLocked()
+	// A failed ack leaves the mark: the page says it could not clear it.
+	if err := s.saveMetaLocked(); err != nil {
+		s.restoreMetaLocked(id, old, had)
+		return err
+	}
+	return nil
 }
 
 // migrateProjects folds the version-1 label table into
