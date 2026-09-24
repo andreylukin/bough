@@ -48,14 +48,15 @@
 # - The welcome's Skip (welcome "off") is left out: the flow is about the
 #   gate, and "off" only turns it off for good.
 #
-# What this spec says the page SHOULD do and main does not (findings, for
-# the MBT and browser stages to prove against the product):
-# - showWelcome counts every unarchived row (`!rows.some(r => !r.archived)`),
-#   hidden empties included: after a serve restart the sidebar says "No
-#   sessions yet." and the welcome is not shown. Here the gate counts only
+# What this spec said the page should do where the page did not, both
+# found by the server walk (mbt/empty_session_lifecycle_test.go) and fixed
+# with one rule for all the lists, hiddenEmpty in web/src/palette.tsx:
+# - showWelcome counted every unarchived row (`!rows.some(r => !r.archived)`),
+#   hidden empties included: after a serve restart the sidebar said "No
+#   sessions yet." and the welcome was not shown. Here the gate counts only
 #   what the sidebar would list with no filter and nothing open (listed0).
-# - A renamed empty session disappears from the sidebar and Recent once its
-#   child is gone: both hide `r.empty && !r.live` whatever meta.Title says.
+# - A renamed empty session disappeared from the sidebar and Recent once its
+#   child was gone: both hid `r.empty && !r.live` whatever meta.Title said.
 #   Here a title lists it (NamedNeverHidden).
 #
 # What is modelled as main does it, and is a gap reported, not asserted
@@ -124,10 +125,13 @@ role Empty:
         self.welcome = welcome(self)
 
     # Another row, the overview, or Back: the session is no longer open.
-    # Its child keeps running.
+    # Its child keeps running. With nothing open the page's stream closes,
+    # and the list poll's effect re-reads the list at once (app.tsx, the
+    # refresh effect on `streaming`), so the rows catch up here too.
     atomic action NavigateAway:
         require self.open
         self.open = False
+        self.seen = self.live
         self.sidebar = sidebar(self)
         self.recent = recent(self)
         self.welcome = welcome(self)
@@ -174,10 +178,12 @@ role Empty:
         self.welcome = welcome(self)
 
     # Rename from the open session's header or the row's menu: only a
-    # session the person can see.
+    # session the person can see. Like every act of the page's own, it
+    # re-reads the list after (onRename: rename, then refresh).
     atomic action Rename:
         require not self.titled and not self.archived and (self.open or self.sidebar == "listed")
         self.titled = True
+        self.seen = self.live
         self.sidebar = sidebar(self)
         self.recent = recent(self)
         self.welcome = welcome(self)
