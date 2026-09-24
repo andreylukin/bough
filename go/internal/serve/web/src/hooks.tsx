@@ -249,10 +249,50 @@ function Source({ path, event, load, save, dryrun, definition = false, inRun = f
   };
 
   return (
+    <SourceView id={id} path={path} definition={definition} inRun={inRun}
+      state={{ open, body, note, err, saving, asked, running }}
+      onToggle={expand} onRead={read}
+      // A dry run's error is about the text it ran; left up after an edit it
+      // read as the verdict on code nobody has run yet.
+      onEdit={(text) => { setBody(text); setNote(""); setErr(""); }}
+      onSave={() => {
+        setNote(""); setErr(""); setSaving(true);
+        save(path, body!).then(() => setNote("Saved.")).catch((e: unknown) =>
+          setErr(e instanceof Error ? e.message : String(e))).finally(() => setSaving(false));
+      }}
+      onDryRun={dryrun && event ? () => {
+        setNote(""); setErr(""); setRunning((n) => n + 1);
+        dryrun(path, event).then((r) => {
+          if (r.error) { setErr(r.error); return; }
+          setNote(`Dry run finished in ${r.ms}ms: ${JSON.stringify(r.result)}`);
+        }).catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)))
+          .finally(() => setRunning((n) => n - 1));
+      } : undefined} />
+  );
+}
+
+/** Everything Source holds, so each of its states can be rendered on its own. */
+export interface SourceState {
+  open: boolean; body: string | null; note: string; err: string; saving: boolean;
+  /** Whether a read was ever sent. */
+  asked: boolean;
+  /** Dry runs still out. */
+  running: number;
+}
+
+/** Source's markup as a function of its state; Source owns the state and the requests. */
+export function SourceView({ id, path, definition = false, inRun = false, state, onToggle, onRead, onEdit, onSave, onDryRun }: {
+  id: string; path: string; definition?: boolean; inRun?: boolean; state: SourceState;
+  onToggle: () => void; onRead: () => void; onEdit: (text: string) => void; onSave: () => void;
+  /** Absent when there is no event to dry-run the file against. */
+  onDryRun?: () => void;
+}) {
+  const { open, body, note, err, saving, asked, running } = state;
+  return (
     <div className={definition ? "hk-src hk-definition" : "hk-src"}>
       <div className="hk-source-head">
         <span className="mono hk-path" title={path}>{path}</span>
-        <button className="hk-toggle" aria-expanded={open} aria-controls={id} onClick={expand}>
+        <button className="hk-toggle" aria-expanded={open} aria-controls={id} onClick={onToggle}>
           {definition ? (open ? "Hide definition" : "Open definition") : (open ? "Hide file" : "Open file")}
         </button>
       </div>
@@ -261,31 +301,18 @@ function Source({ path, event, load, save, dryrun, definition = false, inRun = f
         {err && body !== null && <p className="err" role="alert">{err}</p>}
         {body === null
           ? err
-            ? <p className="err hk-loaderr" role="alert">Could not open the file — {err} <button className="btn btn-sm" onClick={read}>Retry</button></p>
-            : asked && <Waiting what="File" inline timeout={15_000} onRetry={read} />
+            ? <p className="err hk-loaderr" role="alert">Could not open the file — {err} <button className="btn btn-sm" onClick={onRead}>Retry</button></p>
+            : asked && <Waiting what="File" inline timeout={15_000} onRetry={onRead} />
           : (
             <>
               <label className="visually-hidden" htmlFor={`${id}-body`}>File contents</label>
               <textarea id={`${id}-body`} className="hk-edit mono" rows={10} spellCheck={false}
                         value={body} disabled={saving}
-                        // A dry run's error is about the text it ran; left up after an edit it
-                        // read as the verdict on code nobody has run yet.
-                        onChange={(e) => { setBody(e.target.value); setNote(""); setErr(""); }} />
+                        onChange={(e) => onEdit(e.target.value)} />
               <div className="hk-acts">
-                <button className="btn btn-primary" disabled={saving} onClick={() => {
-                  setNote(""); setErr(""); setSaving(true);
-                  save(path, body).then(() => setNote("Saved.")).catch((e: unknown) =>
-                    setErr(e instanceof Error ? e.message : String(e))).finally(() => setSaving(false));
-                }}>{saving ? "Saving…" : "Save"}</button>
-                {dryrun && event && (
-                  <button className="btn" aria-busy={running > 0 || undefined} onClick={() => {
-                    setNote(""); setErr(""); setRunning((n) => n + 1);
-                    dryrun(path, event).then((r) => {
-                      if (r.error) { setErr(r.error); return; }
-                      setNote(`Dry run finished in ${r.ms}ms: ${JSON.stringify(r.result)}`);
-                    }).catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)))
-                      .finally(() => setRunning((n) => n - 1));
-                  }}>{running > 0 ? "Running…" : "Dry run"}</button>
+                <button className="btn btn-primary" disabled={saving} onClick={onSave}>{saving ? "Saving…" : "Save"}</button>
+                {onDryRun && (
+                  <button className="btn" aria-busy={running > 0 || undefined} onClick={onDryRun}>{running > 0 ? "Running…" : "Dry run"}</button>
                 )}
                 {note && <span className="hk-note" role="status">{note}</span>}
               </div>
@@ -861,6 +888,14 @@ export function HooksPage({ onBack, rows = [] }: { onBack?: () => void; rows?: {
 
   useEffect(() => { refresh(); const t = setInterval(() => { if (!document.hidden) refresh(); }, POLL_MS); return () => clearInterval(t); }, [refresh]);
 
+  return <HooksPageView data={data} err={err} at={at} onBack={onBack} titles={titles} onRetry={refresh} />;
+}
+
+/** HooksPage's markup as a function of what it last read; `timeout` is the list's "taking too long". */
+export function HooksPageView({ data, err, at, onBack, titles, onRetry, timeout }: {
+  data: HooksData | null; err: string; at: number; onBack?: () => void; titles?: Record<string, string>;
+  onRetry: () => void; timeout?: number;
+}) {
   if (!data) {
     return (
       <div className="thread">
@@ -868,9 +903,9 @@ export function HooksPage({ onBack, rows = [] }: { onBack?: () => void; rows?: {
           <Back onBack={onBack} />
           <div className="head-main"><h1>Hooks</h1></div>
         </header>
-        <div className="scroll proj-body"><Waiting what="Hooks" err={err} onRetry={refresh} lines={6} /></div>
+        <div className="scroll proj-body"><Waiting what="Hooks" err={err} onRetry={onRetry} timeout={timeout} lines={6} /></div>
       </div>
     );
   }
-  return <HooksView data={data} onBack={onBack} titles={titles} stale={err ? { at, err } : undefined} onRetry={refresh} />;
+  return <HooksView data={data} onBack={onBack} titles={titles} stale={err ? { at, err } : undefined} onRetry={onRetry} />;
 }
