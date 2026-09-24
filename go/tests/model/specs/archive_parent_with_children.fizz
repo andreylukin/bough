@@ -67,6 +67,9 @@ role Parent:
         self.orb = "none"
         self.b = "none"
         self.thread = "none"
+        # The thread is in the in-flight request's Children snapshot: it
+        # existed when SetArchived ran, so the loop ends it after b.
+        self.tsnap = False
         # A report was appended to the parent's file while it was dead.
         self.unread = False
 
@@ -98,8 +101,13 @@ role Parent:
     # A person starts a thread for this main from the project page while
     # Stop and archive is ending the snapshot: opt.Thread passes the
     # archived check, and the thread is not in the list being ended.
+    # Only while a exists: the thread is then always younger than a and
+    # b (ids are time-ordered, and no agent is spawned after a loop), so
+    # a later snapshot ends it last; a thread with the slot to itself
+    # would also make a later SpawnA queue, which the model does not
+    # have.
     atomic action ThreadLate:
-        require self.req in ("loop_a", "loop_b") and self.thread == "none"
+        require self.req in ("loop_a", "loop_b") and self.thread == "none" and self.a != "none"
         if self.a in ("booting", "running") or self.b in ("booting", "running"):
             self.thread = "queued"
         else:
@@ -140,10 +148,11 @@ role Parent:
 
     # Settings / palette / sidebar: askConfirm when the row counts no
     # running or queued agent, else askChoice. agentCounts counts the
-    # running map, which holds a booting child too.
+    # running map, which holds a booting child too, and every child of
+    # the main, a person's thread included.
     atomic action Archive:
         require not self.archived and self.dialog == "none" and self.req == "none"
-        if self.a in ("booting", "running") or self.b in ("queued", "booting", "running"):
+        if self.a in ("booting", "running") or self.b in ("queued", "booting", "running") or self.thread in ("queued", "running"):
             self.dialog = "choice"
         else:
             self.dialog = "confirm"
@@ -182,6 +191,7 @@ role Parent:
         self.live = False
         if self.stop:
             self.req = "loop_a"
+            self.tsnap = self.thread != "none"
         else:
             self.req = "none"
             self.listed = False
@@ -192,19 +202,21 @@ role Parent:
     # its task (no history, so no report); a running one is interrupted
     # and killed (its turn reports "stopped"); an idle one is killed (the
     # exit finds its turn already reported). Kill's stopKilledOrb stops
-    # the orb. The freed slot drains b mid-loop.
+    # the orb. A booting or running a held the slot, which drains b (or
+    # the thread) mid-loop; an idle one held none.
     atomic fair action EndA:
         require self.req == "loop_a"
         if self.a == "running":
             self.unread = True
+        if self.a in ("booting", "running"):
+            if self.b == "queued":
+                self.b = "booting"
+            elif self.thread == "queued":
+                self.thread = "running"
         if self.a != "none":
             self.a = "ended"
         if self.orb in ("up", "leaked"):
             self.orb = "down"
-        if self.b == "queued":
-            self.b = "booting"
-        elif self.thread == "queued":
-            self.thread = "running"
         self.req = "loop_b"
 
     # The same EndChild, but the container will not stop (stopKilledOrb
@@ -216,19 +228,24 @@ role Parent:
         require self.req == "loop_a" and self.a != "none" and self.orb in ("up", "leaked")
         if self.a == "running":
             self.unread = True
+        if self.a in ("booting", "running"):
+            if self.b == "queued":
+                self.b = "booting"
+            elif self.thread == "queued":
+                self.thread = "running"
         self.a = "ended"
         self.orb = "leaked"
-        if self.b == "queued":
-            self.b = "booting"
-        elif self.thread == "queued":
-            self.thread = "running"
         self.req = "none"
+        self.tsnap = False
         self.listed = False
         self.done = "failed"
 
-    # EndChild(b), the last of the snapshot: a queued b is dropped (no
-    # row, no report), a booting one stopReq'd and killed, a running one
-    # interrupted and killed (reports "stopped"). 200.
+    # EndChild(b): a queued b is dropped (no row, no report), a booting
+    # one stopReq'd and killed, a running one interrupted and killed
+    # (reports "stopped"). Then EndChild(thread) when the snapshot has
+    # it (a Retry, or a later archive): a queued thread has just been
+    # drained into b's slot and is killed booting, before it writes
+    # anything; a running one reports "stopped". 200.
     atomic fair action EndB:
         require self.req == "loop_b"
         if self.b == "queued":
@@ -236,9 +253,14 @@ role Parent:
         elif self.b in ("booting", "running", "idle"):
             if self.b == "running":
                 self.unread = True
-            self.b = "ended"
-            if self.thread == "queued":
+            if self.thread == "queued" and not self.tsnap and self.b != "idle":
                 self.thread = "running"
+            self.b = "ended"
+        if self.tsnap:
+            if self.thread == "running":
+                self.unread = True
+            self.thread = "ended"
+        self.tsnap = False
         self.req = "none"
         self.listed = False
         self.done = "ok_stop"
@@ -306,10 +328,11 @@ transition assertion ArchivedParentSpawnsNothing(before, after):
         return True
     return not (before.parent.a == "none" and after.parent.a != "none") and not (before.parent.b == "none" and after.parent.b != "none")
 
-# Only a stopping request's loop kills or drops a child: Archive only
-# (and the confirm path) leave every child as it was.
+# Only a stopping request's loop kills or drops a child (a person's
+# thread included): Archive only (and the confirm path) leave every
+# child as it was.
 transition assertion OnlyStopLoopEndsChildren(before, after):
-    ended = (before.parent.a != "ended" and after.parent.a == "ended") or (before.parent.b != "ended" and after.parent.b == "ended") or (before.parent.b == "queued" and after.parent.b == "none")
+    ended = (before.parent.a != "ended" and after.parent.a == "ended") or (before.parent.b != "ended" and after.parent.b == "ended") or (before.parent.b == "queued" and after.parent.b == "none") or (before.parent.thread != "ended" and after.parent.thread == "ended")
     if not ended:
         return True
     return before.parent.req in ("loop_a", "loop_b")
@@ -344,11 +367,14 @@ always eventually assertion OrbsSettle:
 #     running (or is drained into a's slot) while the page, refreshed,
 #     shows the row archived under "Couldn't archive" without saying
 #     which agents are still going (EndAOrbFails). Retry does end them.
+#   - Children(main) includes a person's threads, so the main's row
+#     counts a running thread as its agent (Archive asks "choice"), and
+#     Stop and archive on a main ends threads a person started, once they
+#     are in its snapshot (EndB with tsnap).
 #   - Not modelled, read off the code and not run: every project
 #     child's end inspects and may stop its orb twice (Kill's
 #     stopKilledOrb, 1 min, then EndChild's own, 30 s), one child after
 #     another, inside one
-#     HTTP request; Children(main) includes a person's threads, so Stop
-#     and archive on a main ends threads a person started; agentCounts
+#     HTTP request; agentCounts
 #     omits a booting empty thread that /api/sessions lists as running
 #     (startingIDs), so its parent gets "confirm" instead of "choice".
