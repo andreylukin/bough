@@ -1,0 +1,442 @@
+# The control room on a phone (390px wide): one session, as the CLIENT
+# shows it and lets the person act on it (go/tests/model/README.md).
+#
+# Code this is checked against (go/internal/serve/web/src):
+#   app.tsx   App: narrow = (max-width:720px), pane "list" | "thread",
+#             goList / openSession / onView, the hash router (read()),
+#             ViewNav phone (the bottom bar), Palette props, DialogHost.
+#             Thread: Back, the header status, Session settings (head-pop,
+#             closeMore, the visualViewport fit), RuntimeStrip + usePopovers
+#             (the Details disclosure), WorkButton + WorkDialog, the
+#             composer (textarea, Stop, Send/Steer and their disabled
+#             rules), archiveRow -> askConfirm.
+#   work-ui.tsx WorkDialog: sheet under 480px, aria-modal, focus on the
+#             heading, Escape closes and refocuses the Work button.
+#   palette.tsx closeOnNavigate (hashchange, popstate, the 720px query).
+#   select.tsx Select: placed against visible() (the keyboard shrinks
+#             it), refits on visualViewport resize, refocuses its button.
+#   dialog.tsx DialogHost: modal, focus on Cancel for a safe confirm.
+#   dist/index.html @media (max-width:720px): .app[data-pane=list]
+#             .thread{display:none}, [data-pane=thread] .sidebar
+#             {display:none}, .sidebar{width:100%} (the list IS the page),
+#             .back shown, .phone-nav fixed at the bottom.
+#
+# route is what fills the screen: "list" (#/, the sidebar as a page, the
+# bottom bar under it), "thread" (#/s/<id>, Back in the header, no bottom
+# bar so nothing covers the composer) and "hooks" (#/hooks, one of the
+# other views: bottom bar and Back both).
+#
+# The layers over a route, top to bottom: picker (the next-turn model
+# Select inside Session settings), dialog (askConfirm), work (the Work
+# bottom sheet), palette (New session's palette), settings (head-pop) and
+# details (the strip's "Details" disclosure). focus names the layer, or
+# "composer", or "page" (the app root, the header, a row: anything that
+# raises no keyboard). keyboard is the on-screen keyboard; it shrinks the
+# visual viewport. fit is the viewport the open layer last sized itself
+# to ("full" or "short"), "" with nothing open.
+#
+# Abstractions, each a place the code has more than the spec:
+# - One session, with one finished turn, recorded usage (so the strip
+#   folds its chips behind Details on a phone: fold 5) and recorded work
+#   (so the Work button shows). The list shows its row.
+# - Layers (Settings, Details, Work) open only on a loaded transcript of
+#   a quiet session: idle, no send in flight, an empty composer. What a
+#   layer shows and does is the same while a turn runs or a draft waits
+#   under it, and crossing every layer with every composer state tripled
+#   the graph (192 states, 633 paths) for no claim. The header's
+#   Settings button exists while loading too; nothing it offers differs.
+#   Server events cannot fire under a layer as a result: Accept needs a
+#   send in flight, Finish a running turn.
+# - A send is one pending entry: steer and send both lock the session
+#   (deliverTo) until serve answers; a refused send is left out (it only
+#   shows a Retry beside the composer, a flow of its own).
+# - Choosing a model in the picker and Escape both close it with focus
+#   back on its button inside Settings: one action, ClosePicker.
+# - The list's filter, other sessions and the project/wiki/me views are
+#   left out: Hooks stands for a view that is not the conversation.
+# - A tap outside an open popover closes it before the tap lands
+#   (mousedown listeners in usePopovers and the Settings effect), so
+#   actions that start with a tap close settings/details themselves.
+#
+# KNOWN GAP (not modelled, reported): DialogHost does not close on
+# popstate, so a browser Back (the phone's edge swipe) with the archive
+# confirm up leaves it over the list. Back here requires no dialog.
+
+role Phone:
+    action Init:
+        self.route = "list"
+        self.back = False
+        self.nav = True
+        # The transcript: "none" off the thread, "loading", "loaded",
+        # "error" (ErrorNote with Retry).
+        self.transcript = "none"
+        # Server state of the session that this surface shows.
+        self.status = "idle"
+        self.archived = False
+        # A send the page shows before serve answered (optimistic).
+        self.pending = False
+        self.draft = False
+        self.settings = False
+        self.picker = False
+        self.details = False
+        self.work = False
+        self.palette = False
+        self.dialog = False
+        self.focus = "page"
+        self.keyboard = False
+        self.fit = ""
+        # What the page shows (painted from the above, as React renders):
+        # shown is the session's status word where one is on screen,
+        # send the primary composer button ("off" = disabled or absent),
+        # stop the Stop button.
+        self.shown = "done"
+        self.send = "off"
+        self.stop = False
+
+    # The render: what the page shows follows from the state above.
+    atomic func paint():
+        if self.route == "thread":
+            # "Loading transcript…" (role=status), 200 ms in: the header
+            # names no status until the transcript is read.
+            if self.transcript == "loading":
+                self.shown = "loading"
+            elif self.transcript == "error":
+                self.shown = "error"
+            elif self.pending:
+                self.shown = "sending"
+            elif self.status == "running":
+                self.shown = "working"
+            else:
+                self.shown = "done"
+            loaded = self.transcript == "loaded"
+            if loaded and self.draft and not self.pending and not self.archived:
+                if self.status == "running":
+                    self.send = "steer"
+                else:
+                    self.send = "send"
+            else:
+                self.send = "off"
+            self.stop = loaded and (self.status == "running" or self.pending)
+        elif self.route == "list":
+            if self.status == "running":
+                self.shown = "running"
+            else:
+                self.shown = "done"
+            self.send = "off"
+            self.stop = False
+        else:
+            self.shown = ""
+            self.send = "off"
+            self.stop = False
+
+    # Every layer shut, as a route change unmounts them all.
+    atomic func shut():
+        self.settings = False
+        self.picker = False
+        self.details = False
+        self.work = False
+        self.palette = False
+        self.focus = "page"
+        self.keyboard = False
+        self.fit = ""
+
+    # ---- navigation ------------------------------------------------------
+
+    # A row in the list (openSession): the thread pane, Back, no bar.
+    atomic action Open:
+        require self.route == "list" and not self.palette
+        self.route = "thread"
+        self.back = True
+        self.nav = False
+        self.transcript = "loading"
+        self.focus = "page"
+        self.paint()
+
+    # Back in the header, the bottom bar's Sessions on Hooks, or the
+    # browser's Back: goList / the router's "" branch. A modal dialog's
+    # scrim takes the tap (see KNOWN GAP for the swipe).
+    atomic action Back:
+        require self.route != "list" and not self.dialog
+        self.shut()
+        self.route = "list"
+        self.back = False
+        self.nav = True
+        self.transcript = "none"
+        self.paint()
+
+    # The bottom bar's Hooks, from the list.
+    atomic action GoHooks:
+        require self.route == "list" and not self.palette
+        self.route = "hooks"
+        self.back = True
+        self.nav = True
+        self.paint()
+
+    # The list's New session: the palette, its field focused.
+    atomic action NewSession:
+        require self.route == "list" and not self.palette
+        self.palette = True
+        self.focus = "palette"
+        self.keyboard = True
+        self.fit = "short"
+
+    # Escape or a tap on the scrim.
+    atomic action ClosePalette:
+        require self.palette
+        self.shut()
+
+    # Picking the session in the palette opens it.
+    atomic action PalettePick:
+        require self.palette
+        self.shut()
+        self.route = "thread"
+        self.back = True
+        self.nav = False
+        self.transcript = "loading"
+        self.paint()
+
+    # ---- the transcript (server) -----------------------------------------
+
+    atomic action Loaded:
+        require self.route == "thread" and self.transcript == "loading"
+        self.transcript = "loaded"
+        self.paint()
+
+    atomic action LoadFail:
+        require self.route == "thread" and self.transcript == "loading"
+        self.transcript = "error"
+        self.paint()
+
+    # The ErrorNote's Retry.
+    atomic action RetryLoad:
+        require self.route == "thread" and self.transcript == "error"
+        require not self.dialog and not self.work
+        self.transcript = "loading"
+        self.paint()
+
+    # ---- the composer ----------------------------------------------------
+
+    # A tap into the textarea (disabled once archived). The tap closes an
+    # open popover first; a modal's scrim would take it.
+    atomic action TapComposer:
+        require self.route == "thread" and not self.archived
+        require not self.dialog and not self.work
+        require self.focus != "composer"
+        self.shut()
+        self.focus = "composer"
+        self.keyboard = True
+        self.paint()
+
+    # The keyboard's Done (or a swipe): the textarea blurs.
+    atomic action HideKeyboard:
+        require self.focus == "composer"
+        self.focus = "page"
+        self.keyboard = False
+
+    atomic action Type:
+        require self.focus == "composer" and not self.draft
+        self.draft = True
+        self.paint()
+
+    # Send (or Steer while running): the prompt shows at once, locked.
+    atomic action Send:
+        require self.focus == "composer" and self.send != "off"
+        self.pending = True
+        self.draft = False
+        self.paint()
+
+    # Serve took it: a send starts the turn; a steer joins the running one.
+    atomic action Accept:
+        require self.pending
+        self.pending = False
+        self.status = "running"
+        self.paint()
+
+    atomic action Finish:
+        require self.status == "running" and not self.pending
+        self.status = "idle"
+        self.paint()
+
+    # Stop: interrupt answers once the turn has stopped. No layer is up
+    # while a turn runs (see the abstractions), so nothing else changes.
+    atomic action Stop:
+        require self.stop and self.status == "running" and not self.pending
+        self.status = "idle"
+        self.paint()
+
+    # ---- layers over the thread ------------------------------------------
+
+    # The sliders button: Session settings, focus moved in, sized to what
+    # is visible. The composer blurs, so the keyboard goes.
+    atomic action OpenSettings:
+        require self.route == "thread" and self.transcript == "loaded"
+        require self.status == "idle" and not self.pending and not self.draft
+        require not self.settings and not self.dialog and not self.work
+        self.shut()
+        self.settings = True
+        self.focus = "settings"
+        self.fit = "full"
+
+    # Escape, a tap outside or the sliders button again.
+    atomic action CloseSettings:
+        require self.settings and not self.picker
+        self.shut()
+
+    # The next-turn model Select inside Settings: its search field takes
+    # focus, the keyboard shrinks the viewport, both refit to it.
+    atomic action OpenPicker:
+        require self.settings and not self.picker
+        self.picker = True
+        self.focus = "picker"
+        self.keyboard = True
+        self.fit = "short"
+
+    # Escape or a pick: focus back on the picker's button in Settings.
+    atomic action ClosePicker:
+        require self.picker
+        self.picker = False
+        self.focus = "settings"
+        self.keyboard = False
+        self.fit = "full"
+
+    # Archive… in Settings: Settings closes, the confirm asks.
+    atomic action Archive:
+        require self.settings and not self.picker and not self.archived
+        self.shut()
+        self.dialog = True
+        self.focus = "dialog"
+        self.fit = "full"
+
+    atomic action CancelArchive:
+        require self.dialog
+        self.dialog = False
+        self.focus = "page"
+        self.fit = ""
+
+    # Archive in the confirm: the composer turns read-only.
+    atomic action ConfirmArchive:
+        require self.dialog
+        self.dialog = False
+        self.archived = True
+        self.focus = "page"
+        self.fit = ""
+        self.paint()
+
+    # The strip's Details: the folded chips in a popover clamped to the
+    # viewport, focus on its summary.
+    atomic action OpenDetails:
+        require self.route == "thread" and self.transcript == "loaded"
+        require self.status == "idle" and not self.pending and not self.draft
+        require not self.details and not self.dialog and not self.work
+        self.shut()
+        self.details = True
+        self.focus = "details"
+        self.fit = "full"
+
+    atomic action CloseDetails:
+        require self.details
+        self.shut()
+
+    # The Work button: a modal bottom sheet, focus on its heading.
+    atomic action OpenWork:
+        require self.route == "thread" and self.transcript == "loaded"
+        require self.status == "idle" and not self.pending and not self.draft
+        require not self.dialog and not self.work
+        self.shut()
+        self.work = True
+        self.focus = "work"
+        self.fit = "full"
+
+    atomic action CloseWork:
+        require self.work
+        self.shut()
+
+action Init:
+    phone = Phone()
+
+# ---- what must always be true on screen -----------------------------------
+
+# At most one layer is up, besides the picker, which lives inside
+# Settings: never two dialogs or popovers fighting for the screen.
+always assertion OneLayer:
+    n = len([x for x in (phone.settings, phone.details, phone.work, phone.palette, phone.dialog) if x])
+    return n <= 1 and (not phone.picker or phone.settings)
+
+# Focus is on the top layer: the picker over Settings, else whichever
+# layer is up; with none up it is on the page or the composer.
+always assertion FocusOnTopLayer:
+    if phone.picker:
+        return phone.focus == "picker"
+    if phone.settings:
+        return phone.focus == "settings"
+    if phone.details:
+        return phone.focus == "details"
+    if phone.work:
+        return phone.focus == "work"
+    if phone.palette:
+        return phone.focus == "palette"
+    if phone.dialog:
+        return phone.focus == "dialog"
+    return phone.focus in ("page", "composer")
+
+# The keyboard is up only for a field that takes typing.
+always assertion KeyboardOnlyForTyping:
+    return phone.keyboard == (phone.focus in ("composer", "palette", "picker"))
+
+# Every open layer is sized to the viewport as it is now (the keyboard
+# shrinks it): nothing runs under the keyboard or off the screen.
+always assertion LayersFitViewport:
+    up = phone.settings or phone.details or phone.work or phone.palette or phone.dialog
+    if not up:
+        return phone.fit == ""
+    if phone.keyboard:
+        return phone.fit == "short"
+    return phone.fit == "full"
+
+# Layers belong to the route that draws them: a route change shuts them.
+always assertion LayersBelongToRoute:
+    thread_layer = phone.settings or phone.picker or phone.details or phone.work or phone.dialog
+    if thread_layer and phone.route != "thread":
+        return False
+    if phone.palette and phone.route != "list":
+        return False
+    return phone.focus != "composer" or phone.route == "thread"
+
+# One pane at a time, always with a way on: the list is the root (the
+# bottom bar, no Back); the conversation has Back and no bar over its
+# composer; any other view has both.
+always assertion WayOut:
+    if phone.route == "list":
+        return phone.nav and not phone.back
+    if phone.route == "thread":
+        return phone.back and not phone.nav
+    return phone.back and phone.nav
+
+# A status is always on screen where the session is: its row on the
+# list, and in the thread a loading line, the error, or the header word.
+always assertion StatusVisible:
+    return phone.route == "hooks" or phone.shown != ""
+
+# The status shown is the server's, never a stale word.
+always assertion StatusTrue:
+    if phone.route == "list":
+        return phone.shown == ("running" if phone.status == "running" else "done")
+    if phone.route != "thread" or phone.transcript != "loaded":
+        return True
+    if phone.pending:
+        return phone.shown == "sending"
+    return phone.shown == ("working" if phone.status == "running" else "done")
+
+# No control enabled that would fail: Send needs a loaded transcript, a
+# draft, no send in flight and a session that is not archived; its word
+# says whether it starts a turn or steers one; Stop has something live to
+# stop; an archived composer takes no typing.
+always assertion NoDeadControl:
+    if phone.send != "off":
+        if phone.route != "thread" or phone.transcript != "loaded" or not phone.draft or phone.pending or phone.archived:
+            return False
+        if phone.send != ("steer" if phone.status == "running" else "send"):
+            return False
+    if phone.stop and not (phone.route == "thread" and phone.transcript == "loaded" and (phone.status == "running" or phone.pending)):
+        return False
+    return not (phone.archived and phone.focus == "composer")
