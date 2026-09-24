@@ -543,11 +543,12 @@ test.describe(`model: ${SPEC}`, () => {
   // told apart by the Composer's fields alone (all a page can show) they
   // are 120 states and 454 transitions, and those are what the walks are
   // counted against (UI_COMPOSER_COVERAGE).
-  test('the paths cover the spec', () => {
-    const cov = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../model/testdata', SPEC, 'paths.json'), 'utf8')).coverage;
-    expect(cov.states.covered).toBe(cov.states.total);
-    expect(cov.transitions.covered).toBe(cov.transitions.total);
-    expect([allNodes.size, allEdges.size]).toEqual([120, 454]);
+  test('the walks cover the spec', () => {
+    // Every settled state, always; every transition only on the
+    // exhaustive run (MODEL_COVER=transitions), where the walks take
+    // every link.
+    expect(allNodes.size).toBe(120);
+    if (process.env.MODEL_COVER === 'transitions') expect(allEdges.size).toBe(454);
   });
 
   paths.forEach((trace, i) => {

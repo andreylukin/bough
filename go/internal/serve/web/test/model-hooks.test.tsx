@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { loadGraph } from "../../../../tests/web/model/graph.ts";
 import { renderToStaticMarkup } from "react-dom/server";
 // No DOM under bun: markdown sanitising is not what these assert.
 mock.module("dompurify", () => ({ default: { sanitize: (s: string) => s } }));
@@ -8,8 +8,7 @@ const { ViewNav } = await import("../src/app");
 import type { HooksData, SourceState } from "../src/hooks";
 
 // go/tests/model/specs/ui_hooks.fizz at the component level: every
-// reachable state of the graph (every node on the checked-in covering
-// paths) is rendered from props built from that node, and the node's
+// reachable settled state of the graph is rendered from props built from that node, and the node's
 // meaning is asserted on the markup. The browser walk
 // (tests/web/specs/model/ui_hooks.spec.ts) drives the same graph through
 // a real serve; this one names a broken render in milliseconds and needs
@@ -17,17 +16,15 @@ import type { HooksData, SourceState } from "../src/hooks";
 
 type Node = { route: string; list: string; panel: string; file: string; edited: boolean; save: string; dry: string };
 
-const graph = JSON.parse(readFileSync(new URL("../../../../tests/model/testdata/ui_hooks/paths.json", import.meta.url), "utf8")) as {
-  paths: { trace: { state: Record<string, unknown> }[] }[];
-  coverage: { states: { total: number } };
-};
+// Every settled state of the graph, read from the checked-in graph itself
+// (the walks the browser spec takes are derived from the same file).
+const graph = loadGraph(new URL("../../../../tests/model/testdata/ui_hooks", import.meta.url).pathname);
 const nodes = new Map<string, Node>();
-for (const p of graph.paths) {
-  for (const { state } of p.trace) {
-    const n: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(state)) if (k.startsWith("Page#0.")) n[k.slice(7)] = v;
-    nodes.set(JSON.stringify(n, Object.keys(n).sort()), n as Node);
-  }
+for (const { name, state } of graph.nodes) {
+  if (name !== "yield") continue;
+  const n: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(state)) if (k.startsWith("Page#0.")) n[k.slice(7)] = v;
+  nodes.set(JSON.stringify(n, Object.keys(n).sort()), n as Node);
 }
 
 const EVENT = "pre-code-exec";
@@ -226,8 +223,8 @@ function checkSource(n: Node, html: string) {
 const noop = () => {};
 
 describe("ui_hooks.fizz, every node rendered", () => {
-  test("the covering paths reach every state of the graph", () => {
-    expect(nodes.size).toBe(graph.coverage.states.total);
+  test("the graph has states to render", () => {
+    expect(nodes.size).toBeGreaterThan(1);
   });
 
   for (const [key, n] of nodes) {
