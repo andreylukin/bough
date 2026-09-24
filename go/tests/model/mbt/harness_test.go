@@ -95,7 +95,9 @@ const mbtPort = 50051
 // the process dies.
 func lockMBT(t *testing.T) {
 	t.Helper()
-	f, err := os.OpenFile(filepath.Join(os.TempDir(), "bough-fizz-mbt-50051.lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	// /tmp, not os.TempDir(): the port is machine-wide, and two runs with
+	// their own TMPDIR each got a lock of their own and collided on it.
+	f, err := os.OpenFile("/tmp/bough-fizz-mbt-50051.lock", os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
