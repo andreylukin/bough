@@ -39,6 +39,10 @@ export interface Flow<C> {
   sessions(c: C): string[];
   /** Let anything still held (a blocked turn) go before serve stops. */
   cleanup?(c: C): Promise<void>;
+  /** Console errors the flow causes on purpose and the page cannot
+   *  prevent: Chromium logs every request to a stopped serve as
+   *  "Failed to load resource: net::ERR_CONNECTION_REFUSED". */
+  allowConsole?: RegExp;
 }
 
 /** The role's fields out of a graph state, keyed by bare field name. */
@@ -70,7 +74,7 @@ export function modelTests<C>(flow: Flow<C>): void {
       const walk = trace.slice(1).map((s) => s.action.slice(flow.role.length + 1)).join(' → ');
       test(`path ${i}: ${walk}`, async ({ serve, page }, info) => {
         const errors: string[] = [];
-        page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+        page.on('console', (m) => { if (m.type() === 'error' && !flow.allowConsole?.test(m.text())) errors.push(m.text()); });
         page.on('pageerror', (e) => errors.push(String(e)));
 
         // The page's timers run on a clock the walk can move: a row the
