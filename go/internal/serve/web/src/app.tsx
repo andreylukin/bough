@@ -5460,7 +5460,13 @@ export default function App() {
   const archiveRow = async (r: Row) => {
     // The list shows the change as soon as the server takes it: a poll
     // already in flight could otherwise land stale after act's refresh.
-    const mark = (archived: boolean) => setRows((rs) => rs.map((x) => x.id === r.id ? { ...x, archived } : x));
+    // The open session's own lookup too: once the refresh drops an
+    // archived row from the list, the page shows that copy, and a session
+    // with no child sends no event that would re-read it.
+    const mark = (archived: boolean) => {
+      setRows((rs) => rs.map((x) => x.id === r.id ? { ...x, archived } : x));
+      setLooked((l) => l?.id === r.id ? { ...l, archived } : l);
+    };
     if (r.archived) return act(async () => { await api.unarchive(r.id); mark(false); }, "unarchive");
     const n = (r.agents?.running ?? 0) + (r.agents?.queued ?? 0);
     if (n === 0) {
