@@ -413,6 +413,14 @@ var (
 )
 
 func List(dir string) ([]SessionInfo, error) {
+	// Glob swallows a directory it cannot read and answers no matches,
+	// which made an unreadable history an empty one; only a missing
+	// directory is a home with no sessions yet.
+	if f, err := os.Open(dir); err == nil {
+		f.Close()
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("history: list %s: %w", dir, err)
+	}
 	paths, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
 	if err != nil {
 		return nil, fmt.Errorf("history: list %s: %w", dir, err)
