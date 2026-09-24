@@ -233,7 +233,10 @@ func TestSlowTerminalConverges(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			tape := c.tape(t)
-			run := func(slow bool) *app {
+			// The fast and slow runs are independent processes: both
+			// start before either is waited on, so the two streams
+			// overlap instead of queueing (the long one is ~4 s each).
+			begin := func(slow bool) *app {
 				a := slowterminalStart(t, 100, 30, cancelConfig(tape, c.delay), slow)
 				a.typeText(c.input)
 				a.key(uv.KeyEnter, 0)
@@ -241,6 +244,9 @@ func TestSlowTerminalConverges(t *testing.T) {
 					time.Sleep(200 * time.Millisecond)
 					a.typeText("typed during")
 				}
+				return a
+			}
+			finish := func(a *app, slow bool) {
 				if !a.waitDone(1, 60*time.Second) {
 					t.Fatalf("slow=%v: turn never finished:\n%s", slow, a.text())
 				}
@@ -252,11 +258,11 @@ func TestSlowTerminalConverges(t *testing.T) {
 					a.key(uv.KeyEsc, 0)
 					a.waitFor("draft cleared")
 				}
-				return a
 			}
-			fa := run(false)
+			fa, sa := begin(false), begin(true)
+			finish(fa, false)
 			fast, fastRSS := slowterminalNorm(fa.settled()), slowterminalRSS(t, fa)
-			sa := run(true)
+			finish(sa, true)
 			sa.slowterminalConverge(fast, 30*time.Second)
 			sa.check("slow converged")
 			slowRSS := slowterminalRSS(t, sa)
