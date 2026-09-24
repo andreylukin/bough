@@ -96,22 +96,27 @@ role Session:
 
     # --- the child ----------------------------------------------------
 
-    # A prompt from the composer: Send spawns the child (ensure). Refused
-    # (409) while archived, and the composer is disabled then.
-    atomic action Prompt:
-        require not self.archived and not self.live
-        self.live = True
-
-    # The live child's turn ends and is recorded: a clean finish marks
-    # the row unseen, a failed one troubled. Two actions, not a oneof
-    # (fizzbee-mbt checks a step against the fork's intermediate node).
+    # A prompt from the composer and the turn it starts, ended and
+    # recorded: Send spawns the child when none is up (ensure), and a
+    # clean finish marks the row unseen, a failed one troubled. Refused
+    # (409) while archived, and the composer is disabled then. Two
+    # actions, not a oneof (fizzbee-mbt checks a step against the fork's
+    # intermediate node).
+    #
+    # The prompt is not a step of its own: no line reaches a child
+    # without being recorded (an empty one is a turn, a "/" command a
+    # "command" entry that brings an acked failure's trouble back), so
+    # "the child is up and the mark unchanged" is not a state the server
+    # can be put in.
     atomic action Finish:
-        require self.live and not self.archived
+        require not self.archived
+        self.live = True
         self.mark = "unseen"
         self.markDisk = "unseen"
 
     atomic action Fail:
-        require self.live and not self.archived
+        require not self.archived
+        self.live = True
         self.mark = "trouble"
         self.markDisk = "trouble"
 
