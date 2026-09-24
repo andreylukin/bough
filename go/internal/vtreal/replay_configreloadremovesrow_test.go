@@ -41,12 +41,15 @@ func configreloadremovesrowTape(t *testing.T) string {
 	return p
 }
 
-// configreloadremovesrowStart boots on the tape with a 100ms word delay.
+// configreloadremovesrowStart boots on the tape with a 50ms word delay:
+// ~2.2 s of stream, and a reload lands in ~0.3 s (fsnotify + debounce),
+// so an edit written at w02 still lands mid-turn. At 100ms most of each
+// subtest was waiting for w39.
 func configreloadremovesrowStart(t *testing.T) (*app, string) {
 	t.Helper()
 	tape := configreloadremovesrowTape(t)
 	yml := strings.Replace(replayConfig(tape), fmt.Sprintf("config: {file: %q}", tape),
-		fmt.Sprintf("config: {file: %q, delay_ms: 100}", tape), 1)
+		fmt.Sprintf("config: {file: %q, delay_ms: 50}", tape), 1)
 	if !strings.Contains(yml, "delay_ms") {
 		t.Fatalf("could not slow the llm row:\n%s", yml)
 	}
@@ -71,9 +74,16 @@ func configreloadremovesrowUntil(a *app, line, want string) {
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		configreloadremovesrowCmd(a, line)
-		time.Sleep(700 * time.Millisecond)
-		if strings.Contains(strings.ReplaceAll(a.text(), "\n", ""), want) {
-			return
+		// Give each try 700ms to answer, but stop at the answer — once
+		// the line has left the composer, so the draft is not read as one.
+		for try := time.Now(); time.Since(try) < 700*time.Millisecond; time.Sleep(20 * time.Millisecond) {
+			s := a.text()
+			if ls := strings.Split(s, "\n"); composerRow(ls) >= 0 && strings.Contains(ls[composerRow(ls)], line) {
+				continue
+			}
+			if strings.Contains(strings.ReplaceAll(s, "\n", ""), want) {
+				return
+			}
 		}
 	}
 	a.t.Fatalf("%q never showed %q:\n%s", line, want, a.text())
@@ -96,7 +106,7 @@ func configreloadremovesrowRepaint(a *app) {
 		if err := a.term.Resize(c, a.rows); err != nil {
 			a.t.Fatal(err)
 		}
-		time.Sleep(300 * time.Millisecond)
+		a.settled()
 	}
 }
 
