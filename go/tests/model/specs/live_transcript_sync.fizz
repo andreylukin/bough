@@ -1,0 +1,320 @@
+---
+deadlock_detection: false
+---
+
+# live_transcript_sync: how an open thread in the web UI stays equal to
+# the session's transcript on disk (go/tests/model/README.md).
+#
+# Server (go/internal/serve): the supervisor turns child output into
+# events. A recorded kind takes the next seq, enters the replay ring (500
+# in the product) and fans out to every subscriber (supervisor.go
+# emitLocked, fanoutLocked). A streaming delta is buffered 50ms, never
+# recorded, and fans out with Seq 0 (deltas.go); a recorded event flushes
+# the buffer first; delta-reset is live only. A subscriber whose channel
+# is full (256 in the product, CAP here) is closed and removed, never
+# waited for. GET /api/sessions/{id}/events subscribes BEFORE it replays
+# the ring, writes Seq-0 frames with no SSE id line (api.go events,
+# writeEvent) and ignores Last-Event-ID: every EventSource reconnect
+# replays the whole ring.
+#
+# Page (web/src/app.tsx, the `selected` effect): selecting a session
+# clears the lines, resets the cursor, GETs the whole transcript and
+# subscribes. An event is a change signal, not a line: a recorded one
+# arms a 120ms catch-up, GET ?since=<last line's seq>, whose entries are
+# appended deduped by history seq. A failed catch-up pauses the thread
+# ("Updates paused") and re-arms on a 4s..30s backoff; Retry forces one.
+# Responses for a session no longer selected are ignored (`live`).
+#
+# The mapped states are field values: Unsubscribed sel == -1; Live conn
+# "live"; SubscriberDropped conn "dropped" with frames still in the
+# channel; Reconnecting conn "dropped" with none; CatchingUp fetch !=
+# None; Paused paused; Switched loaded False after a Switch.
+#
+# Abstractions, each to keep the graph small:
+# - one live session (#0) whose child records MAXREC entries; session #1
+#   is a finished session with STATIC_DISK entries, there to switch to.
+# - MAXREC = RING = 1: one entry is enough for every race below, and
+#   ring eviction changes none of the claims (a reconnect's catch-up
+#   reads the file, not the ring).
+# - a recorded event and a transcript entry are one-to-one, so a ring
+#   frame carries the history seq it announces. In the product the two
+#   numberings differ (supervisor seq vs history seq) and the page never
+#   mixes them; neither does this model.
+# - the 50ms delta buffer is one flushed frame (Ephemeral), and a
+#   delta-reset is the same frame (Seq 0, live only); what the page draws
+#   from them is a preview the next record replaces, so it is not state
+#   here. The flush-before-record order only matters to that preview.
+# - a stream that ends for any other reason (an idle proxy the ": ping"
+#   heartbeat failed to keep open, the network) is, to the page, the same
+#   as the server dropping a stalled subscriber: EventSource retries and
+#   the ring comes again. Only the channel-full drop is modelled.
+# - one catch-up in flight: in the product a second timer can fire while
+#   one is pending; both append deduped. Backoff timing is not modelled:
+#   a failed catch-up just re-arms.
+# - one initial GET slot: Switch replaces it, which is what the page's
+#   `live` guard makes of the old one. Its read (InitialServe) is a step
+#   apart from its landing (InitialOk) because the page REPLACES its
+#   lines with that read.
+#
+# Fairness: the page's own steps (responses landing, timers firing, the
+# EventSource retrying, reading its stream) are strongly fair; the person
+# (Open, Switch, Retry), the child (Ephemeral, Record) and the network
+# (CatchUpFail) are not. Strong, not weak: a person switching forever
+# disables each page step again and again, and weak fairness would let
+# that starve it. A catch-up that fails every time it is asked is the one
+# outage the liveness claims do not survive.
+#
+# Corrections to the mapped model, from the code:
+# - "Subscribed(replaying ring)" -> "Live" is one step (replay()): the
+#   handler writes the ring before it reads its channel, and a frame
+#   fanned out in between is written twice — duplicates the page folds
+#   into one catch-up, never a loss. A separate replay state only added
+#   interleavings nothing observes.
+# - "SubscriberDropped" keeps the frames already in the channel: the
+#   handler reads a closed Go channel dry before it ends the response.
+# - a replayed `call` start whose end was evicted cannot happen by
+#   eviction: the ring drops oldest first, so an end never leaves while
+#   its start stays.
+#
+# Where the product does not hold, ConvergesToDisk says so (see its
+# comment): an initial GET that lands after a catch-up throws the
+# catch-up's lines away.
+
+MAXREC = 1      # entries the live session records
+RING = 1        # replay ring capacity (500 in the product)
+CAP = 1         # subscriber channel buffer (256 in the product)
+STATIC_DISK = 1 # entries of the finished session #1
+
+# Helpers are plain functions: a fizz func called from an atomic action
+# still yields, and fizz would interleave other actions inside it.
+
+def frame(kind, seq):
+    # writeEvent: an SSE id line only for a recorded seq (None = no line).
+    id = None
+    if seq > 0:
+        id = seq
+    return record(kind=kind, seq=seq, id=id)
+
+def fanout(sel, conn, inbox, f):
+    # fanoutLocked, to session #0's subscriber: returns (conn, inbox).
+    if sel == 0 and conn == "live":
+        if len(inbox) < CAP:
+            return (conn, inbox + [f])
+        # A full channel is closed and removed; the scanner goes on.
+        return ("dropped", inbox)
+    return (conn, inbox)
+
+def armed(timer, f):
+    # Only a recorded kind is something to catch up on.
+    return timer or f.kind == "rec"
+
+def replay(sel, ring, timer):
+    # GET .../events: subscribe, then write the whole ring (Last-Event-ID
+    # is ignored). Returns the page's catch-up timer after it.
+    if sel == 1:
+        ring = [frame("rec", STATIC_DISK)]
+    for f in ring:
+        timer = armed(timer, f)
+    return timer
+
+def disk_of(sess, disk):
+    if sess == 0:
+        return disk
+    return STATIC_DISK
+
+def last_seq(lines):
+    # The cursor: the last line's seq, 0 with none.
+    n = 0
+    for l in lines:
+        n = l.seq
+    return n
+
+role Sync:
+    action Init:
+        self.disk = 0         # entries on disk, session #0
+        self.ring = []        # replay ring of session #0 (frames)
+        self.sel = -1         # selected session; -1 = none (Unsubscribed)
+        self.conn = "none"    # none | live | dropped
+        self.inbox = []       # the subscriber's channel: frames not yet read
+        self.lines = []       # the page's lines: record(sess, seq)
+        self.loaded = False   # the first GET for sel landed
+        self.get = None       # initial GET in flight: record(sess, snap); snap -1 = not read yet
+        self.fetch = None     # catch-up in flight: record(sess, since)
+        self.timer = False    # catch-up armed
+        self.paused = False   # "Updates paused"
+
+    # --- server: session #0's child ---
+
+    atomic action Ephemeral:
+        # A flushed delta run (or a delta-reset): Seq 0, fanned out live,
+        # never recorded.
+        require self.disk < MAXREC
+        f = frame("delta", 0)
+        (self.conn, self.inbox) = fanout(self.sel, self.conn, self.inbox, f)
+
+    atomic action Record:
+        require self.disk < MAXREC
+        self.disk = self.disk + 1
+        f = frame("rec", self.disk)
+        self.ring = (self.ring + [f])[-RING:]
+        (self.conn, self.inbox) = fanout(self.sel, self.conn, self.inbox, f)
+
+    # --- the page ---
+
+    atomic action Open:
+        require self.sel == -1
+        self.sel = 0
+        self.conn = "live"
+        self.timer = replay(self.sel, self.ring, self.timer)
+        self.get = record(sess=0, snap=-1)
+
+    atomic action Switch:
+        require self.sel >= 0
+        # The effect's cleanup closes the EventSource (the server drops
+        # the subscription and its channel); the new run clears the
+        # lines, the cursor and the pause, GETs and subscribes.
+        self.sel = 1 - self.sel
+        self.lines = []
+        self.loaded = False
+        self.timer = False
+        self.paused = False
+        self.conn = "live"
+        self.inbox = []
+        self.timer = replay(self.sel, self.ring, self.timer)
+        self.get = record(sess=self.sel, snap=-1)
+        lost = False
+
+    atomic fair<strong> action InitialServe:
+        require self.get != None and self.get.snap == -1
+        n = disk_of(self.get.sess, self.disk)
+        self.get = record(sess=self.get.sess, snap=n)
+
+    atomic fair<strong> action InitialOk:
+        require self.get != None and self.get.snap >= 0
+        g = self.get
+        self.get = None
+        # setLines(r.entries): a replace, not a merge. A catch-up that
+        # landed first may have added lines this older read lacks.
+        if len([l for l in self.lines if l.seq > g.snap]) > 0:
+            lost = True
+        self.lines = [record(sess=g.sess, seq=s) for s in range(1, g.snap + 1)]
+        self.loaded = True
+
+    atomic fair<strong> action Deliver:
+        require len(self.inbox) > 0
+        f = self.inbox[0]
+        self.inbox = self.inbox[1:]
+        self.timer = armed(self.timer, f)
+
+    atomic fair<strong> action Reconnect:
+        # EventSource retries once the stream ended. Last-Event-ID is
+        # ignored, so the whole ring comes again.
+        require self.conn == "dropped" and len(self.inbox) == 0
+        self.conn = "live"
+        self.timer = replay(self.sel, self.ring, self.timer)
+
+    atomic fair<strong> action CatchUpFire:
+        require self.timer and self.fetch == None
+        self.timer = False
+        self.fetch = record(sess=self.sel, since=last_seq(self.lines))
+
+    atomic action Retry:
+        require self.paused and self.fetch == None
+        self.timer = False
+        self.fetch = record(sess=self.sel, since=last_seq(self.lines))
+
+    atomic fair<strong> action CatchUpOk:
+        require self.fetch != None
+        f = self.fetch
+        self.fetch = None
+        if f.sess == self.sel:
+            self.paused = False
+            n = disk_of(f.sess, self.disk)
+            have = [l.seq for l in self.lines]
+            add = [record(sess=f.sess, seq=s) for s in range(f.since + 1, n + 1) if s not in have]
+            self.lines = self.lines + add
+            if len(add) > 0:
+                # Healed. A catch-up asked before the clobber, from the
+                # cursor it moved back, brings nothing and heals nothing.
+                lost = False
+
+    atomic action CatchUpFail:
+        require self.fetch != None
+        f = self.fetch
+        self.fetch = None
+        if f.sess == self.sel:
+            self.paused = True
+            self.timer = True
+
+action Init:
+    sync = Sync()
+    # Ghost (not product state, not compared by MBT): the page's first
+    # read replaced lines a catch-up had already added, and no catch-up
+    # has added them back since. See ConvergesToDisk.
+    lost = False
+
+# Seq-0 frames never carry an SSE id line: a reconnecting EventSource
+# must never resume from text that was never recorded.
+always assertion EphemeralFramesHaveNoId:
+    for f in sync.inbox + sync.ring:
+        if f.seq == 0 and f.id != None:
+            return False
+    return True
+
+# Seq-0 frames never enter the ring, so a late joiner never replays a
+# delta-reset (or a delta) for text it never saw.
+always assertion RingHoldsRecordsOnly:
+    for f in sync.ring:
+        if f.seq == 0 or f.kind != "rec":
+            return False
+    return True
+
+# Transcript entries are unique by history seq, whatever was replayed.
+always assertion LinesUniqueBySeq:
+    seen = []
+    for l in sync.lines:
+        if l.seq in seen:
+            return False
+        seen.append(l.seq)
+    return True
+
+# A stalled subscriber never blocks the stdout scanner: fan-out never
+# queues past the channel's buffer (it drops the subscriber instead).
+always assertion ScannerNeverBlocked:
+    return len(sync.inbox) <= CAP
+
+# Switching never shows the previous session's lines under the new
+# header: until the first read lands the thread shows none.
+always assertion NoForeignLines:
+    if not sync.loaded:
+        return True
+    for l in sync.lines:
+        if l.sess != sync.sel:
+            return False
+    return True
+
+# A dropped or reconnected subscriber converges to the transcript on disk.
+#
+# Except when `lost`, a product gap this model found. Open (or Switch)
+# GETs the whole transcript and subscribes at once. If the GET's read is
+# taken before an entry is recorded, and its response lands after the
+# catch-up that entry's event triggered, setLines replaces the caught-up
+# lines with the older read and the cursor goes back with them. Nothing
+# arms another catch-up until the next recorded event, so after a turn's
+# last entry the thread stays one entry short with nothing saying so.
+# Without `or lost` fizz fails this; the shortest such run is Open,
+# InitialServe, Record, Deliver, CatchUpFire, CatchUpOk, InitialOk, after
+# which only the person or the child can move anything.
+# The mapped claim "converges after the next recorded event" holds: a
+# later entry's catch-up adds the missing one back and clears `lost`.
+always eventually assertion ConvergesToDisk:
+    if sync.sel == -1 or lost:
+        return True
+    n = STATIC_DISK
+    if sync.sel == 0:
+        n = sync.disk
+    return sync.loaded and [l.seq for l in sync.lines] == list(range(1, n + 1))
+
+# "Updates paused" clears after the next successful catch-up.
+always eventually assertion PausedClears:
+    return not sync.paused
