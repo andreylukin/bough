@@ -293,11 +293,18 @@ func streamPtyRedraw(tm *tmuxApp, cols, rows int, where string) {
 	if before == after {
 		return
 	}
-	// A repaint still on its way is not a stale cell: give it up to 2 s
+	// A repaint still on its way is not a stale cell: give it up to 10 s
 	// and report only what persists. It usually lands within a few
-	// captures, so stop waiting as soon as the screen is back.
-	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline) && tm.screen() != before; {
+	// captures, so stop waiting as soon as the screen is back. After
+	// the 5000-line reply a loaded run took over 2 s to re-lay the
+	// transcript out for the second resize: the capture was still the
+	// rows-1 layout, one row short at the bottom, and read as stale.
+	began := time.Now()
+	for deadline := began.Add(10 * time.Second); time.Now().Before(deadline) && tm.screen() != before; {
 		time.Sleep(20 * time.Millisecond)
+	}
+	if d := time.Since(began); d > 2*time.Second {
+		tm.t.Logf("%s: the forced redraw took %v to land", where, d.Round(time.Millisecond))
 	}
 	if late := tm.settled(); late == before {
 		tm.t.Logf("%s: repaint after the forced redraw took over a settle window to land", where)
