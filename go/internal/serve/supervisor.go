@@ -135,6 +135,14 @@ type Options struct {
 	// Home holds .bough/projects and .bough/orbs; "" => HistDir's
 	// grandparent, which is HOME for the standard layout.
 	Home string
+	// HoldDir parks the supervisor at a named point while
+	// <HoldDir>/<point> exists, and says so with <point>.at: Stop and
+	// archive before it ends each child of its snapshot
+	// ("archive-end-<id>"). That window lasts microseconds, and the
+	// model test of archiving a parent racing its children
+	// (go/tests/model, archive_parent_with_children) has to act inside
+	// it. "" (every real serve) never holds.
+	HoldDir string
 }
 
 var (
@@ -1588,6 +1596,37 @@ func (s *Supervisor) mainLock(slug string) *sync.Mutex {
 	lock := &sync.Mutex{}
 	s.mainLocks[slug] = lock
 	return lock
+}
+
+// holding says whether <HoldDir>/<point> exists (Options.HoldDir).
+func (s *Supervisor) holding(point string) bool {
+	if s.opt.HoldDir == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(s.opt.HoldDir, point))
+	return err == nil
+}
+
+// hold waits while <HoldDir>/<point> exists (Options.HoldDir), for at
+// most a minute, or until done closes, with <point>.at written while it
+// waits.
+func (s *Supervisor) hold(point string, done <-chan struct{}) {
+	if !s.holding(point) {
+		return
+	}
+	p := filepath.Join(s.opt.HoldDir, point)
+	_ = os.WriteFile(p+".at", nil, 0o644)
+	defer os.Remove(p + ".at")
+	for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); {
+		if _, err := os.Stat(p); err != nil {
+			return
+		}
+		select {
+		case <-done:
+			return
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }
 
 func (s *Supervisor) historyExists(id string) bool {
