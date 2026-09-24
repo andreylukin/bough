@@ -308,7 +308,20 @@ export function sidebarSelected(view: View, lost: string | null, selected: strin
   return view !== "sessions" || lost !== null ? null : selected ?? lastId;
 }
 
-export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, saidElsewhere, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry, onOpenProject, onMove, viewing }: {
+/**
+ * The Sidebar's own state at mount, for a render that starts mid-interaction:
+ * the component-level model test (test/model-sidebar.test.tsx) renders every
+ * state of ui_sidebar.fizz statically, where no click, hover, drag or timer
+ * can reach these. App never passes it.
+ */
+export interface SidebarSeed {
+  searching?: boolean; slow?: boolean; archFolded?: boolean;
+  card?: { id: string; top: number; left: number } | null;
+  /** The id of the row being dragged, and the group key it is over. */
+  dragging?: string | null; dropAt?: string | null;
+}
+
+export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query, onQuery, said, saidElsewhere, showArchived, onToggleArchived, archivedState = "ready", onRetryArchived, view = "sessions", onView, wikiFlags = 0, onNew, onAck, active = true, onShowList, reveal, loadedAt = 0, loadErr = null, onRetry, onOpenProject, onMove, viewing, seed }: {
   rows: Row[]; selected: string | null; onSelect: (id: string) => void;
   /** The session on screen, when it is not simply `selected`: back on Home the row you left stays marked as your place, but nobody is looking at it. */
   viewing?: string;
@@ -345,6 +358,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   onOpenProject?: (slug: string) => void;
   /** Move a session into a project ("" takes it out): what dropping a row on a group does. */
   onMove?: (id: string, project: string) => void;
+  seed?: SidebarSeed;
 }) {
   // Status lives in the glyphs and the order; the sections are only
   // where a session ran, and whether it is still recent.
@@ -437,7 +451,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   }, []);
 
   // Search sits behind the toolbar; a filter in force keeps it open.
-  const [searching, setSearching] = useState(false);
+  const [searching, setSearching] = useState(seed?.searching ?? false);
   const searchRef = useRef<HTMLInputElement>(null);
   const showSearch = searching || Boolean(query);
   useEffect(() => { if (searching) searchRef.current?.focus(); }, [searching]);
@@ -473,7 +487,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   // summary says where it stands. One card for the whole list, fixed to
   // the viewport beside the row, because the list scrolls and would clip
   // anything hung off a row. It waits a beat so skimming does not flash it.
-  const [card, setCard] = useState<{ id: string; top: number; left: number } | null>(null);
+  const [card, setCard] = useState<{ id: string; top: number; left: number } | null>(seed?.card ?? null);
   const peekTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const quiet = useRef(false);
   // Moving from row to row swaps the card at once, never showing the last row's content at the new spot.
@@ -524,7 +538,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
     setWsFolded((cur) => { const next = flip(cur, key); writeSet("bough:ws-folded", next); return next; });
   };
 
-  const [archFolded, setArchFolded] = useState(false);
+  const [archFolded, setArchFolded] = useState(seed?.archFolded ?? false);
   // Showing archived from anywhere (the palette too) shows the section open.
   useEffect(() => { if (showArchived) setArchFolded(false); }, [showArchived]);
   // Archived included from a filter ("Include") lasts as long as that filter.
@@ -537,7 +551,7 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   }, [searchOn]);
 
   // A first load says so only once it is slow enough to notice.
-  const [slow, setSlow] = useState(false);
+  const [slow, setSlow] = useState(seed?.slow ?? false);
   useEffect(() => {
     if (loadedAt !== null) return;
     const t = setTimeout(() => setSlow(true), 200);
@@ -549,8 +563,8 @@ export function Sidebar({ rows, projects = [], selected, onSelect, onTurn, query
   const [scrolled, setScrolled] = useState(false);
 
   // The row being dragged onto a group, and the group it is over.
-  const [dragging, setDragging] = useState<Row | null>(null);
-  const [dropAt, setDropAt] = useState<string | null>(null);
+  const [dragging, setDragging] = useState<Row | null>(() => rows.find((r) => r.id === seed?.dragging) ?? null);
+  const [dropAt, setDropAt] = useState<string | null>(seed?.dropAt ?? null);
 
   // A long log shows its last turns; the rest wait behind one line.
   const [allTurns, setAllTurns] = useState<Set<string>>(() => new Set());
