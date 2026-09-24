@@ -9,9 +9,9 @@ import { Spinner } from "./loading";
 
 export interface Skill { name: string; summary: string; manual: boolean }
 
-export function SkillPicker({ onPick, disabled = false }: { onPick: (name: string, known: string[]) => void; disabled?: boolean }) {
+export function SkillPicker({ session, onPick, disabled = false }: { session: string; onPick: (name: string, known: string[]) => void; disabled?: boolean }) {
   const [open, setOpen] = useState(false);
-  const { all, error, retry } = useSkills(open);
+  const { all, error, retry } = useSkills(open, session);
   const [q, setQ] = useState("");
   const [at, setAt] = useState(0);
   const trigger = useRef<HTMLButtonElement>(null);

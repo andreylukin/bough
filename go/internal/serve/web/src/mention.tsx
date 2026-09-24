@@ -64,25 +64,32 @@ interface FileRow { path: string; dir: boolean }
  * One catalogue serves the / picker and the Skills button alike, and a
  * failed read is kept as a failure, not shown as "none installed".
  */
-let catalogue: Promise<SkillRow[]> | null = null;
-export function useSkills(on: boolean) {
+let catalogue: { session: string; p: Promise<SkillRow[]> } | null = null;
+export function useSkills(on: boolean, session: string) {
   const [all, setAll] = useState<SkillRow[] | null>(null);
   const [error, setError] = useState(false);
   const [tries, setTries] = useState(0);
   useEffect(() => {
     if (!on) return;
     let live = true;
-    // Bounded: a read that never answers is shown as a failure with Retry, not "Loading" forever.
-    catalogue ??= fetch("/api/skills", { signal: AbortSignal.timeout(15_000) }).then((r) => {
-      if (!r.ok) throw new Error(String(r.status));
-      return r.json();
-    // An empty answer is not cached: skills installed since show on the next open.
-    }).then((d) => { const v = d.skills ?? []; if (!v.length) catalogue = null; return v; });
+    // The session's skills: serve's own cwd is HOME, so without it the
+    // repo's .claude/skills were missing and a switched-off skill was
+    // offered. Another session's catalogue is not this one's.
+    if (catalogue?.session !== session) {
+      // Bounded: a read that never answers is shown as a failure with Retry, not "Loading" forever.
+      const p: Promise<SkillRow[]> = fetch(`/api/skills?session=${encodeURIComponent(session)}`, { signal: AbortSignal.timeout(15_000) }).then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      // An empty answer is not cached: skills installed since show on the next open.
+      }).then((d) => { const v = d.skills ?? []; if (!v.length && catalogue?.p === p) catalogue = null; return v; });
+      catalogue = { session, p };
+    }
+    const p = catalogue.p;
     setError(false);
-    catalogue.then((v) => { if (live) setAll(v); })
-      .catch(() => { catalogue = null; if (live) setError(true); });
+    p.then((v) => { if (live) setAll(v); })
+      .catch(() => { if (catalogue?.p === p) catalogue = null; if (live) setError(true); });
     return () => { live = false; };
-  }, [on, tries]);
+  }, [on, session, tries]);
   return { all, error, retry: () => setTries((n) => n + 1) };
 }
 
@@ -121,7 +128,9 @@ function useFiles(on: boolean, token: string, session: string) {
   const files = useMemo<Choice[] | null>(() => hits && hits.map((f) => ({
     value: f.path, label: f.path, hint: f.dir ? "directory" : "",
   })), [hits]);
-  return { files, error, retry: () => setTries((n) => n + 1) };
+  // A retry is a new read: drop the failure, or the picker keeps saying
+  // "Couldn’t load" while it is asking again.
+  return { files, error, retry: () => { setGot(null); setError(false); setTries((n) => n + 1); } };
 }
 
 export function Mentions({ trigger, session, onPick, onClose, onOpen, onActive }: {
@@ -136,7 +145,7 @@ export function Mentions({ trigger, session, onPick, onClose, onOpen, onActive }
 }) {
   const [at, setAt] = useState(0);
   const box = useRef<HTMLDivElement>(null);
-  const { all: skills, error: skillsErr, retry: retrySkills } = useSkills(trigger?.kind === "/");
+  const { all: skills, error: skillsErr, retry: retrySkills } = useSkills(trigger?.kind === "/", session);
   const { files, error: filesErr, retry: retryFiles } = useFiles(trigger?.kind === "@", trigger?.token ?? "", session);
 
   const token = (trigger?.token ?? "").toLowerCase();

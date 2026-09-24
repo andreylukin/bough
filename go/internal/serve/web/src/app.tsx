@@ -4771,7 +4771,7 @@ export function Thread({ row, lines: given, loading = false, loadError, paused, 
             }} />
           <div className="composer-bar">
             <div className="composer-tools">
-              <SkillPicker disabled={failedLoad} onPick={(name, known) => {
+              <SkillPicker session={row.id} disabled={failedLoad} onPick={(name, known) => {
                 // A skill runs only as the lead word, so a pick replaces a
                 // skill already there, never a leading path like /tmp/x.
                 setDraft((d) => {
