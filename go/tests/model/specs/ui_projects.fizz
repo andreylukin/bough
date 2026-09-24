@@ -1,0 +1,265 @@
+# The Projects page (#/projects) as the person sees it, client side:
+# the empty state, the listed project, its ⋯ menu, and the three text
+# dialogs it opens: New project, Rename project and Delete "<name>"?
+# (the page has no project archive; Delete… is it). Read off
+# web/src/projects.tsx (ProjectsView, GroupMenu), web/src/dialog.tsx
+# (askText, DialogHost) and web/src/app.tsx (refresh, act, the toast).
+#
+# One project slot, slug "alpha": its name is "Alpha" or "Beta" (Rename
+# toggles), and a second create is the server's 409, never a second slot.
+#
+#   disk    the server's project: "none" | "Alpha" | "Beta".
+#   shown   what the list last read: "none" (the "No projects yet." row
+#           with its own New project… button) or the project's section
+#           (the head's New project… button, name, Open/Orb, ⋯ menu).
+#   menu    the ⋯ popover (role=menu: Rename…, Delete…) is open.
+#   dialog  the one DialogHost dialog: "none" | "create" | "rename" |
+#           "delete". It is portalled, so it outlives the section that
+#           opened it.
+#   draft   the text box, classified: "blocked" (primary disabled: blank,
+#           or a rename still reading the current name), "good" (a new
+#           name; for delete, the slug typed back), "bad" (create: "!!!",
+#           the server's 400; delete: a mistyped slug, which the dialog
+#           refuses itself). A rename has no bad name: any non-blank name
+#           saves.
+#   saving  a create or rename is out: the primary reads "Creating…"/
+#           "Renaming…", the box is read-only, Cancel is disabled, and
+#           Escape and the scrim do nothing (aria-busy on the dialog).
+#   failed  the dialog's "Not saved: …" alert; the draft is kept. It
+#           clears on the next submit and when the dialog closes.
+#   toast   the app's "Couldn't delete the project" toast (act's error),
+#           until dismissed or a later delete succeeds.
+#   focus   document.activeElement: "input" (the dialog's box), "more"
+#           (the ⋯ button), "new" (a New project… button), "none" (body).
+#   opener  while a dialog is up, what had focus when it opened, which
+#           the host refocuses on close if it is still in the document:
+#           "empty" (the empty state's button), "head" (the head's
+#           button), "item" (a menuitem, unmounted as the dialog opens,
+#           so a rename or delete always drops focus to the body).
+#
+# Abstractions: an action's list re-read lands with its answer (app.tsx
+# refresh() re-reads projects after every create, rename and delete,
+# refused ones included); only a change made elsewhere lags, until the
+# 30 s poll (ListLands). A delete's dialog closes as it sends (onSubmit
+# calls onDelete without awaiting it) and its answer is taken as landing
+# in the same step. Another tab or an agent changes the server only
+# between the person's steps, and only where it changes what a dialog
+# does: a create racing a create (409), a rename or delete racing a
+# delete (404: the dialog's alert, or the toast).
+#
+# Not modelled: the session rows, filter and bulk move (their own flows);
+# the Orb section and Open (they leave this surface); viewport class (a
+# phone only restacks the empty row, nothing appears or disappears);
+# session status (it only feeds the OrbUp chip and the count in the
+# delete body, which enable and disable nothing here); a failed projects
+# read (app.tsx drops it: the page keeps what it had, nothing on screen
+# changes); the first read in flight (it has no state of its own: the
+# page shows "No projects yet." until it lands).
+
+# No dialog, or one of this kind nothing has been typed into yet.
+def untouched(p, kind):
+    return p.dialog == "none" or (p.dialog == kind and p.draft == "blocked" and not p.failed and not p.saving)
+
+role Page:
+    action Init:
+        self.disk = "none"
+        self.shown = "none"
+        self.menu = False
+        self.dialog = "none"
+        self.draft = "blocked"
+        self.saving = False
+        self.failed = False
+        self.toast = False
+        self.focus = "none"
+        self.opener = "none"
+
+    # New project…: the empty state's or the head's (exactly one shows).
+    # The pointerdown on it closes an open ⋯ menu first. Walked only once
+    # a delete's toast is dismissed: the toast changes nothing it does.
+    atomic action NewProject:
+        require self.dialog == "none" and not self.toast
+        self.menu = False
+        self.opener = "empty" if self.shown == "none" else "head"
+        self.dialog = "create"
+        self.draft = "blocked"
+        self.focus = "input"
+
+    atomic action OpenMenu:
+        require self.dialog == "none" and self.shown != "none" and not self.menu
+        self.menu = True
+        self.focus = "more"
+
+    # Escape (or the ⋯ button again): closed, focus back on ⋯.
+    atomic action CloseMenu:
+        require self.menu
+        self.menu = False
+        self.focus = "more"
+
+    atomic action Rename:
+        require self.menu
+        self.menu = False
+        self.opener = "item"
+        self.dialog = "rename"
+        self.draft = "blocked"
+        self.focus = "input"
+
+    atomic action Delete:
+        require self.menu
+        self.menu = False
+        self.opener = "item"
+        self.dialog = "delete"
+        self.draft = "blocked"
+        self.focus = "input"
+
+    # Typing into a blocked box; retyping is Clear, then type again.
+    atomic action TypeGood:
+        require self.dialog != "none" and not self.saving and self.draft == "blocked"
+        self.draft = "good"
+
+    atomic action TypeBad:
+        require self.dialog in ("create", "delete") and not self.saving and self.draft == "blocked"
+        self.draft = "bad"
+
+    # Select all, Backspace. (A rename's box typed back to the current
+    # name reads the same: blocked.)
+    atomic action Clear:
+        require self.dialog != "none" and not self.saving and self.draft != "blocked"
+        self.draft = "blocked"
+
+    # Enter in the box. A create or rename waits for the server; a delete
+    # never waits: onSubmit refuses a mistyped slug itself, and the slug
+    # closes the dialog and sends.
+    atomic action Submit:
+        require self.dialog != "none" and not self.saving and self.draft != "blocked"
+        if self.dialog != "delete":
+            self.saving = True
+            self.failed = False
+        elif self.draft == "bad":
+            self.failed = True
+        else:
+            self.toast = self.disk == "none"
+            self.disk = "none"
+            self.shown = "none"
+            self.close()
+
+    # Escape, Cancel or the scrim: nothing is sent.
+    atomic action Cancel:
+        require self.dialog != "none" and not self.saving
+        self.close()
+
+    # The server answers a create or a rename, and the list re-reads.
+    # Saved closes the dialog; refused keeps it, with the draft and the
+    # alert.
+    atomic fair action Respond:
+        require self.saving
+        self.saving = False
+        ok = False
+        if self.dialog == "create":
+            ok = self.draft == "good" and self.disk == "none"
+            if ok:
+                self.disk = "Alpha"
+        else:
+            ok = self.disk != "none"
+            if ok:
+                self.disk = "Beta" if self.disk == "Alpha" else "Alpha"
+        self.relist()
+        if ok:
+            self.close()
+        else:
+            self.failed = True
+
+    atomic action DismissToast:
+        require self.toast
+        self.toast = False
+
+    # The 30 s poll catches the list up with a change made elsewhere.
+    atomic fair action ListLands:
+        require self.shown != self.disk
+        self.relist()
+
+    # Another tab or an agent writes ~/.bough/projects/alpha. Into an open
+    # dialog it is walked only before anything is typed: what the race
+    # does to the dialog does not depend on the draft.
+    atomic action ElsewhereCreate:
+        require self.disk == "none" and not self.toast and untouched(self, "create")
+        self.disk = "Alpha"
+
+    atomic action ElsewhereDelete:
+        require self.disk != "none" and (untouched(self, "rename") or untouched(self, "delete"))
+        self.disk = "none"
+
+    # Helpers are atomic funcs: a plain func call is a yield point.
+    #
+    # The list shows the server. A section that goes takes its ⋯ menu and
+    # the focus on it; the list going empty or not swaps one New project…
+    # button for another element, so focus on it is lost too. A rename
+    # (Alpha to Beta) re-renders the same elements.
+    atomic func relist():
+        if (self.shown == "none") != (self.disk == "none"):
+            self.menu = False
+            if self.focus in ("more", "new"):
+                self.focus = "none"
+        self.shown = self.disk
+
+    # The dialog goes; focus returns to its opener if it is still there:
+    # the empty state's button only while the list is empty, the head's
+    # only while it is not, a menuitem never.
+    atomic func close():
+        back = (self.opener == "empty" and self.shown == "none") or (self.opener == "head" and self.shown != "none")
+        self.focus = "new" if back else "none"
+        self.dialog = "none"
+        self.draft = "blocked"
+        self.failed = False
+        self.opener = "none"
+
+action Init:
+    page = Page()
+
+# The ⋯ menu and a dialog are never up together: opening a dialog closes
+# the menu, and the page behind a dialog is inert.
+always assertion MenuOrDialog:
+    return not (page.menu and page.dialog != "none")
+
+# A menu hangs off a listed section; with nothing listed there is no ⋯.
+always assertion MenuOnlyOnListed:
+    return not page.menu or page.shown != "none"
+
+# Focus is in the dialog (its box) exactly while one is up: never behind
+# it, never left on a box that is gone.
+always assertion FocusInDialog:
+    return (page.dialog != "none") == (page.focus == "input")
+
+# An open menu was opened from its ⋯ button, which keeps focus.
+always assertion MenuHoldsFocus:
+    return not page.menu or page.focus == "more"
+
+# No enabled control that would do nothing: a request goes out only from
+# a create or rename whose primary was enabled (not blocked), and a
+# dialog knows who opened it exactly while it is up.
+always assertion SavingOnlyFromEnabled:
+    return not page.saving or (page.dialog in ("create", "rename") and page.draft != "blocked")
+
+always assertion OpenerOnlyWhileUp:
+    return (page.dialog == "none") == (page.opener == "none")
+
+# "Not saved" is said inside the dialog that failed, never left behind.
+always assertion FailureInsideDialog:
+    return not page.failed or page.dialog != "none"
+
+# A create/rename dialog closes by itself only when the server saved it.
+transition assertion ClosedMeansSaved(before, after):
+    b = before.page
+    a = after.page
+    return not (b.saving and a.dialog == "none") or a.disk != b.disk
+
+# The list only ever shows what the server has.
+transition assertion ListIsDisk(before, after):
+    return after.page.shown == before.page.shown or after.page.shown == after.page.disk
+
+# Every create or rename is answered: no dialog stays "Creating…".
+always eventually assertion NothingHangs:
+    return not page.saving
+
+# The list catches up with the server without anyone acting.
+always eventually assertion ListCatchesUp:
+    return page.shown == page.disk
