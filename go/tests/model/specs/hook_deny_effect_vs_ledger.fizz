@@ -1,0 +1,230 @@
+---
+# A call that has been answered, read by the model and looked at on both
+# surfaces is where a walk ends: that is rest, not a deadlock.
+deadlock_detection: false
+---
+
+# hook_deny_effect_vs_ledger: one pre-code-exec hook file decides about one
+# call, and three things must say the same: whether the call ran, what the
+# model was told, and what the ledger (history "hook" entries, the turn's
+# Hooks chip, the Hooks page) says the hook decided. Recipe:
+# go/tests/model/README.md.
+#
+# Code this is checked against:
+#   plugins/hooks/hooks.go    decision() (the ledger's word), Fire's file
+#                             loop (a block/deny key stops later hooks, a
+#                             throw is recorded and the next hook runs)
+#   plugins/loop/loop.go      the pre-code-exec site before each block
+#                             (code mode: "deny" refuses, "code" rewrites)
+#   internal/unreal/hookbridge/hookbridge.go  PreTool (engine: "deny"
+#                             refuses, "args" rewrites)
+#   internal/serve/web/src/app.tsx  TurnHooks (the chip and its red badge)
+#   internal/serve/web/src/hooks.tsx  the Hooks page's ledger
+#
+# THIS SPEC IS THE CONTRACT, NOT TODAY'S PRODUCT. Where they differ (as of
+# main 5471918e) the MBT stage is expected to go red:
+# 1. {deny: true}: decision() records "denied" and Fire stops the later
+#    hooks, but loop.go and PreTool refuse only a string, so the call RUNS.
+#    Here any deny that is a string or true refuses (reason "denied" when
+#    it has none, as PreTool already does for "").
+# 2. {deny: false}: decision() keys on presence, so it records "denied"
+#    and stops later hooks while the call runs. Here false decides
+#    nothing: ledger "passed", later hooks run.
+# 3. {block: "..."} on pre-code-exec: recorded "blocked", later hooks
+#    stopped, nobody reads it, the call RUNS. Here it refuses like a deny
+#    (fail closed: whoever wrote "block" meant the call not to run). The
+#    other reading, "block is not a pre-code-exec decision, record
+#    passed", satisfies the same invariants; choosing is a product call.
+# 4. {code: "..."} on the engine: the payload carries "code", so
+#    decision() records "rewrote", but PreTool applies only "args": the
+#    call runs as sent. Here the ledger says "rewrote" only for the key
+#    the fire site applies (loop: code, engine: args).
+# 5. TurnHooks' red badge tests d === "block" || d === "deny", but the
+#    ledger writes "blocked"/"denied": a denial is counted in the quiet
+#    grey part ("1 denied") with no badge. Here a refusal is "failed".
+# Mapped model corrections: "rewrite" is two results (code, args) because
+# each engine applies a different key; "deny_nonstring" is two (true,
+# false) because they must end differently; a second, pass-through hook
+# ("later", after the first by base name) is modelled because the stop
+# on block/deny is half the bug. Hooks.Fire, ApplyDecision and PreTool are
+# one atomic Call: they run in one goroutine with nothing observable in
+# between (the ledger drain lands in history before the result note).
+#
+# The first hook is a file under .bough/hooks/pre-code-exec/ whose result
+# is `hook`; the later one returns nothing. What the model reads is
+# checked on the next model request (llm-control records it).
+#
+# All state lives in the Turn role (fizzbee-mbt compares role state).
+
+REFUSES = ["deny_str", "deny_true", "block"]
+RESULTS = ["pass", "deny_str", "deny_true", "deny_false", "block", "rewrite_code", "rewrite_args", "throw"]
+
+role Turn:
+    action Init:
+        # "loop" (code mode, --set loop.plugin=loop) | "engine" (the
+        # default engine-unreal row). Picked before anything else.
+        self.engine = "loop"
+        # The first hook's file: "none" (no file) or one of RESULTS.
+        self.hook = "none"
+        # off.yml carries hook:pre-code-exec/<first> (User.ToggleOff).
+        self.off = False
+        # "setup" | "called" (the call was decided and ran or not; the
+        # result is waiting for the model) | "read" (the next model
+        # request carried it).
+        self.phase = "setup"
+        # "" before the call | "no" | "as_sent" | "rewritten".
+        self.ran = ""
+        # The first hook's ledger entry: "" before the call | "none" (no
+        # entry: no file, or off) | "passed" | "denied" | "blocked" |
+        # "rewrote" | "error".
+        self.ledger = ""
+        # The later hook ran (and recorded "passed").
+        self.later_fired = False
+        # What the model read for the call: "" | "output" | "hook_denied"
+        # (code mode's "[hook denied: <reason>]") | "blocked_by_hook"
+        # (the engine's "Error: blocked by hook: <reason>").
+        self.model_saw = ""
+        # The turn's Hooks chip once looked at: "unseen" | "absent" (no
+        # fire worth a row) | "quiet" (count only) | "failed" (red badge).
+        self.chip = "unseen"
+        # The Hooks page's decision for the first hook once looked at:
+        # "unseen", else the ledger word it shows.
+        self.page = "unseen"
+
+    # --- setup (the person) -----------------------------------------------
+
+    atomic action UseEngine:
+        require self.phase == "setup" and self.engine == "loop" and self.hook == "none"
+        self.engine = "engine"
+
+    atomic action WriteHook:
+        require self.phase == "setup" and self.hook == "none"
+        # A local first: fizz 0.5.3 drops `self.hook = any RESULTS`
+        # (every branch led back to hook "none").
+        result = any RESULTS
+        self.hook = result
+
+    atomic action ToggleOff:
+        require self.phase == "setup" and self.hook != "none" and not self.off
+        self.off = True
+
+    # --- the call (Model.RunBlock / NativeCall -> Hooks.Fire -> apply) ----
+
+    atomic action Call:
+        require self.phase == "setup"
+        self.phase = "called"
+        live = self.hook != "none" and not self.off
+        # Hooks.Fire: the first hook's entry, and whether it stops the
+        # later ones. Only the key the fire site applies is a rewrite.
+        applies = "code" if self.engine == "loop" else "args"
+        if not live:
+            self.ledger = "none"
+        elif self.hook == "throw":
+            self.ledger = "error"
+        elif self.hook == "block":
+            self.ledger = "blocked"
+        elif self.hook in ("deny_str", "deny_true"):
+            self.ledger = "denied"
+        elif self.hook == "rewrite_" + applies:
+            self.ledger = "rewrote"
+        else:
+            self.ledger = "passed"
+        self.later_fired = self.ledger not in ("blocked", "denied")
+        # Loop.ApplyDecision / Engine.PreTool, reading the merged result.
+        refuse = live and self.hook in REFUSES
+        if refuse:
+            self.ran = "no"
+        elif live and self.hook == "rewrite_" + applies:
+            self.ran = "rewritten"
+        else:
+            self.ran = "as_sent"
+
+    # The next model request carries the call's result. Weakly fair: once
+    # called, nothing else can happen to the turn until it is read.
+    atomic fair action ModelReads:
+        require self.phase == "called"
+        self.phase = "read"
+        if self.ran != "no":
+            self.model_saw = "output"
+        elif self.engine == "loop":
+            self.model_saw = "hook_denied"
+        else:
+            self.model_saw = "blocked_by_hook"
+
+    # --- the control room (Page.RenderTurnHooks, the Hooks page) ---------
+
+    atomic action ViewTurn:
+        require self.phase == "read" and self.chip == "unseen"
+        # TurnHooks drops fires that decided, errored, said and output
+        # nothing: a pass-through hook that returned nothing, and the
+        # later hook, which always does.
+        if self.ledger in ("denied", "blocked", "error"):
+            self.chip = "failed"
+        elif self.ledger in ("none",) or (self.ledger == "passed" and self.hook == "pass"):
+            self.chip = "absent"
+        else:
+            self.chip = "quiet"
+
+    atomic action ViewHooksPage:
+        require self.phase == "read" and self.page == "unseen"
+        self.page = self.ledger
+
+action Init:
+    turn = Turn()
+
+# The ledger says denied/blocked iff the call did not run.
+always assertion LedgerRefusalIffNotRun:
+    if turn.phase == "setup":
+        return True
+    return (turn.ledger in ("denied", "blocked")) == (turn.ran == "no")
+
+# The ledger says rewrote iff what ran was not what was sent.
+always assertion LedgerRewroteIffRewritten:
+    if turn.phase == "setup":
+        return True
+    return (turn.ledger == "rewrote") == (turn.ran == "rewritten")
+
+# A refusal stops the later hooks, and nothing else does.
+always assertion LaterHooksStopOnlyOnRefusal:
+    if turn.phase == "setup":
+        return True
+    return turn.later_fired == (turn.ran != "no")
+
+# Code mode and the engine refuse the same results: whether a call runs
+# depends on the hook's result, never on which engine read it.
+always assertion EnginesAgreeOnRefusal:
+    if turn.phase == "setup":
+        return True
+    return (turn.ran == "no") == (turn.hook in REFUSES and not turn.off)
+
+# A hook turned off never runs, records or decides.
+always assertion OffHookNeverRecords:
+    if turn.phase == "setup" or not turn.off:
+        return True
+    return turn.ledger == "none" and turn.ran == "as_sent" and turn.later_fired
+
+# A denial, a block or a hook error shows the red badge, and nothing
+# else does.
+always assertion DenialShowsFailure:
+    if turn.chip == "unseen":
+        return True
+    return (turn.chip == "failed") == (turn.ledger in ("denied", "blocked", "error"))
+
+# The Hooks page shows the decision the ledger holds.
+always assertion PageShowsLedger:
+    return turn.page == "unseen" or turn.page == turn.ledger
+
+# The model is told of a refusal in its engine's documented words, and
+# reads output otherwise.
+always assertion ModelReadsTheDocumentedWords:
+    if turn.phase != "read":
+        return True
+    if turn.ran != "no":
+        return turn.model_saw == "output"
+    if turn.engine == "loop":
+        return turn.model_saw == "hook_denied"
+    return turn.model_saw == "blocked_by_hook"
+
+# Liveness: a refused call's refusal reaches the model.
+always eventually assertion RefusalReachesModel:
+    return turn.ran != "no" or turn.model_saw in ("hook_denied", "blocked_by_hook")
