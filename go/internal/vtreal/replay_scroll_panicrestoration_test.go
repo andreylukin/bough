@@ -165,6 +165,7 @@ func startPanic(t *testing.T, at string) *app {
 }
 
 func TestScrollPanicRestoration(t *testing.T) {
+	t.Parallel()
 	for _, at := range []string{"update", "view", "cmd", "pump", "goroutine"} {
 		t.Run(at, func(t *testing.T) {
 			t.Parallel()

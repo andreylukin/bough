@@ -190,6 +190,7 @@ func kittyProtocolDisabledOnExitAfterCrashPanicAssert(t *testing.T, a *app, raw 
 }
 
 func TestKittyProtocolDisabledOnExitAfterCrashPanic(t *testing.T) {
+	t.Parallel()
 	t.Run("ctrl+c", func(t *testing.T) {
 		t.Parallel()
 		a, raw := kittyProtocolDisabledOnExitAfterCrashPanicStart(t, bin)

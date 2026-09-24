@@ -31,6 +31,7 @@ func dragAndMotionAlive(t *testing.T, a *app, where string) {
 }
 
 func TestScrollDragAndMotion(t *testing.T) {
+	t.Parallel()
 	const cols, rows = 80, 24
 	a := scrollingApp(t, cols, rows, 6)
 	scrollingWheel(a, 5, true)
@@ -84,6 +85,7 @@ func TestScrollDragAndMotion(t *testing.T) {
 // terminal multiplexer and checks bough survives and its composer
 // stays clean.
 func TestScrollDragAndMotionTmux(t *testing.T) {
+	t.Parallel()
 	tm := startTmux(t, 80, 24)
 	for i := range 8 {
 		tm.keys("-l", fmt.Sprintf("line %d %s", i, strings.Repeat("word ", 30)))

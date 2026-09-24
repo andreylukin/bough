@@ -678,6 +678,7 @@ func foldPtyTmux(t *testing.T, cols, rows int, yml string) *tmuxApp {
 // Slow (~2 s a check): BOUGH_FOLD_PTY_RAPID=1 with -rapid.checks=N.
 // The default run plays one fixed sequence instead.
 func TestFoldPtyRapid(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("BOUGH_FOLD_PTY_RAPID") == "" {
 		if msg := foldPtyOps(t, []int{0, 2, 3, 5, 1, 6, 4, 0, 0, 3}); msg != "" {
 			t.Fatal(msg)

@@ -99,8 +99,9 @@ type app struct {
 
 func start(t *testing.T, cols, rows int) *app { return startCfg(t, cols, rows, config) }
 
-// startCfg boots bough with the given bough.yml in a fresh $HOME.
-func startCfg(t *testing.T, cols, rows int, yml string) *app {
+// startCfg boots bough with the given bough.yml in a fresh $HOME; env
+// (KEY=value) goes to the child only, so the test can stay parallel.
+func startCfg(t *testing.T, cols, rows int, yml string, env ...string) *app {
 	t.Helper()
 	home := t.TempDir()
 	cfg := filepath.Join(home, "bough.yml")
@@ -117,6 +118,7 @@ func startCfg(t *testing.T, cols, rows int, yml string) *app {
 		"HOME="+home, "TERM=xterm-256color", "COLORTERM=truecolor",
 		"NO_COLOR=", "BOUGH_VERBOSE=",
 	)
+	cmd.Env = append(cmd.Env, env...)
 	if err := term.Start(cmd); err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +214,7 @@ func (a *app) settled() string {
 		} else {
 			same = 0
 		}
-		prev = cur
+		prev, prevAt = cur, time.Now()
 	}
 	return prev
 }

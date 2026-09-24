@@ -16,6 +16,7 @@ import (
 )
 
 func TestHelpPanelDismissible(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	pool := filepath.Join(home, ".claude", "skills")
 	for name, body := range map[string]string{

@@ -6,6 +6,7 @@ import (
 )
 
 func TestTitleFilterLiftsSplitUTF8Titles(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	var titles []string
 	f := newTitleFilter(&out, func(s string) { titles = append(titles, s) })

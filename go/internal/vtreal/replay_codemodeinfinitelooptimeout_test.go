@@ -94,14 +94,16 @@ func TestCodemodeInfiniteLoopTimeoutEsc(t *testing.T) {
 // The step timeout ends the loop with a visible message; the model
 // sees the error and its next block runs on the same runtime.
 func TestCodemodeInfiniteLoopTimeoutFires(t *testing.T) {
+	t.Parallel()
 	t.Run("small timeout env", func(t *testing.T) {
-		t.Setenv("BOUGH_CODEMODE_TIMEOUT", "2s")
-		a := startCfg(t, 100, 30, codemodeInfiniteLoopTimeoutConfig(t))
+		t.Parallel()
+		a := startCfg(t, 100, 30, codemodeInfiniteLoopTimeoutConfig(t), "BOUGH_CODEMODE_TIMEOUT=2s")
 		codemodeInfiniteLoopTimeoutSpin(a)
 		codemodeInfiniteLoopTimeoutWait(a, "timeout after 2s", 10*time.Second)
 		codemodeInfiniteLoopTimeoutRecovers(a, 1)
 	})
 	t.Run("default 30s", func(t *testing.T) {
+		t.Parallel()
 		if os.Getenv("BOUGH_SOAK_CODEMODE_INFINITE_LOOP_TIMEOUT") == "" {
 			t.Skip("soak: waits out the 30s default timeout; set BOUGH_SOAK_CODEMODE_INFINITE_LOOP_TIMEOUT=1")
 		}
